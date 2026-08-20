@@ -71,13 +71,27 @@ jobs:
         run: python -m PyInstaller packaging/uploader.spec --noconfirm
 
       - name: Show what PyInstaller produced
-        # The layout is the thing we cannot verify off-Windows: the installer
-        # assumes the exe sits at the top of dist/OBSYouTubeUploader with
-        # dependencies under _internal/. Print it so a mismatch is visible in
-        # the log rather than surfacing as a broken shortcut after install.
+        # The layout is the thing that cannot be verified off-Windows.
+        # Confirmed on 2026-08-20 against PyInstaller 6.x: the executable sits
+        # at the top of dist/OBSYouTubeUploader (so installer.iss's
+        # {app}\{#AppExe} shortcut target is right) and everything else,
+        # including the bundled bin/ffmpeg, goes under _internal/. At runtime
+        # sys._MEIPASS points at _internal, so app.resolve_binary()'s
+        # bundle_dir()/bin resolves to _internal/bin and matches.
+        # Fails the build if the ffmpeg binaries are not where the app looks.
+        shell: pwsh
         run: |
-          dir dist\OBSYouTubeUploader
-          dir dist\OBSYouTubeUploader\bin
+          Write-Host "--- dist/OBSYouTubeUploader ---"
+          Get-ChildItem dist\OBSYouTubeUploader
+          Write-Host "--- _internal/bin (where resolve_binary looks at runtime) ---"
+          $bin = "dist\OBSYouTubeUploader\_internal\bin"
+          if (-not (Test-Path $bin)) {
+            throw "Bundled ffmpeg not found at $bin - resolve_binary() would fall back to PATH and stitching would be silently unavailable"
+          }
+          Get-ChildItem $bin
+          foreach ($exe in @("ffmpeg.exe", "ffprobe.exe")) {
+            if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
+          }
 
       - name: Build installer
         run: iscc packaging/installer.iss
