@@ -236,3 +236,24 @@ def test_missing_directory_yields_nothing(tmp_path):
     sel = combatlog.select_logs(tmp_path / "nope", _utc(2026, 8, 20, 21, 0),
                                 _utc(2026, 8, 20, 21, 30))
     assert sel.logs == [] and sel.dropped == 0
+
+
+def test_stat_guard_still_excludes_a_log_that_would_be_excluded_anyway(tmp_path):
+    """MAX_SESSION_SPAN skips stat() for a filename this far before the
+    window, but the log's mtime is also long before the window, so the
+    existing last-write predicate would have excluded it regardless --
+    the guard changes performance, not the result."""
+    _log(tmp_path, "20260601_100000_1.txt", "Ancient Pilot",
+         "2026.06.01 10:00:00", _epoch(_utc(2026, 6, 1, 11, 0)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert sel.logs == []
+
+
+def test_session_just_inside_the_guard_boundary_is_still_selected(tmp_path):
+    """A session almost MAX_SESSION_SPAN old, still being written during the
+    window, must not be dropped by the guard -- this is the off-by-one that
+    would silently drop a real (if implausibly long-running) log."""
+    _log(tmp_path, "20260721_205600_1.txt", "Marathon Pilot",
+         "2026.07.21 20:56:00", _epoch(_utc(2026, 8, 20, 21, 10)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert [s.listener for s in sel.logs] == ["Marathon Pilot"]

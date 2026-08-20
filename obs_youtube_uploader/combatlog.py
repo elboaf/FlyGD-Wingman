@@ -9,12 +9,15 @@ Measured on a real folder: a log whose header reads 20:42:50 has an mtime of
 21:55:16 UTC / 17:55:16 local. Only the UTC reading is coherent.
 """
 import datetime
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 UTC = datetime.timezone.utc
+
+logger = logging.getLogger(__name__)
 
 # Real logs are CRLF, so both patterns tolerate trailing whitespace.
 _LISTENER_RE = re.compile(r"^\s*Listener:\s*(.+?)\s*$")
@@ -90,6 +93,15 @@ def find_gamelogs_dir(home: Path | None = None) -> Path | None:
 WINDOW_PADDING = datetime.timedelta(minutes=5)
 MAX_FILES = 64
 
+# Stat-avoidance only, NOT a correctness filter. entry.stat() is ~4.6ms on a
+# WSL 9p mount, so stat'ing every file in a folder spanning months costs ~25s.
+# A log can only overlap the window if its session was still being written
+# then, so one that started this long before it can be skipped without a
+# stat. Deliberately generous: the bound only needs to exceed the longest
+# plausible continuous EVE client session, and being wrong costs one missing
+# log, so 30 days rather than something tight.
+MAX_SESSION_SPAN = datetime.timedelta(days=30)
+
 # EVE names gamelogs YYYYMMDD_HHMMSS_<characterID>.txt, and that timestamp is
 # exactly the Session Started value — verified across a real folder.
 _FILENAME_RE = re.compile(r"^(\d{8})_(\d{6})(?:_\d+)?\.txt$", re.IGNORECASE)
@@ -148,9 +160,23 @@ def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) ->
         return Selection(logs=[], dropped=0)
 
     matched: list[SelectedLog] = []
+    stat_skipped = 0
+    session_span_floor = window_start - MAX_SESSION_SPAN
     for entry in entries:
         if not entry.name.lower().endswith(".txt"):
             continue
+
+        # Stat-avoidance guard (see MAX_SESSION_SPAN): a filename that parses
+        # and starts long before the window cannot possibly still be being
+        # written during it, so skip the stat() entirely. A filename that
+        # does NOT parse must still fall through to stat() and the header
+        # read -- an unexpected naming scheme degrades to doing more work,
+        # never to silently skipping logs.
+        name_start = _filename_start(entry.name)
+        if name_start is not None and name_start < session_span_floor:
+            stat_skipped += 1
+            continue
+
         try:
             if not entry.is_file():
                 continue
@@ -165,7 +191,6 @@ def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) ->
         # last-write that excludes the thousands of historical logs.
         if last_write < window_start:
             continue
-        name_start = _filename_start(entry.name)
         if name_start is not None and name_start > window_end:
             continue
 
@@ -188,4 +213,10 @@ def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) ->
 
     matched.sort(key=lambda log: log.span_end, reverse=True)
     dropped = max(0, len(matched) - max_files)
+    if stat_skipped:
+        logger.debug(
+            "skipped %d logs older than the session-span guard (%s)",
+            stat_skipped,
+            MAX_SESSION_SPAN,
+        )
     return Selection(logs=matched[:max_files], dropped=dropped)
