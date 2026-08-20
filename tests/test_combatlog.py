@@ -1,5 +1,8 @@
 import datetime
+import os
 from pathlib import Path
+
+import pytest
 
 from obs_youtube_uploader import combatlog
 
@@ -117,3 +120,119 @@ def test_ignores_a_file_named_gamelogs(tmp_path):
     d.mkdir(parents=True)
     (d / "Gamelogs").write_text("not a directory")
     assert combatlog.find_gamelogs_dir(tmp_path) is None
+
+
+def _log(tmp_path, name, listener, started, mtime_epoch, body_lines=1):
+    """Write a gamelog whose filename encodes its session start, as EVE does."""
+    text = (
+        "------------------------------------------------------------\r\n"
+        "  Gamelog\r\n"
+        f"  Listener: {listener}\r\n"
+        f"  Session Started: {started}\r\n"
+        "------------------------------------------------------------\r\n"
+        + "[ 2026.08.20 20:42:52 ] (combat) hit\r\n" * body_lines
+    )
+    p = tmp_path / name
+    p.write_bytes(text.encode("utf-8"))
+    os.utime(p, (mtime_epoch, mtime_epoch))
+    return p
+
+
+def _utc(y, mo, d, h, mi, s=0):
+    return datetime.datetime(y, mo, d, h, mi, s, tzinfo=UTC)
+
+
+def _epoch(dt):
+    return dt.timestamp()
+
+
+def test_rejects_naive_datetime(tmp_path):
+    """The whole point of the UTC-only interface: a naive datetime is the
+    bug this prevents, so it must not be silently accepted."""
+    with pytest.raises(ValueError):
+        combatlog.select_logs(tmp_path, datetime.datetime(2026, 8, 20, 20, 0),
+                              _utc(2026, 8, 20, 21, 0))
+
+
+def test_rejects_non_utc_datetime(tmp_path):
+    other = datetime.timezone(datetime.timedelta(hours=-4))
+    with pytest.raises(ValueError):
+        combatlog.select_logs(tmp_path, datetime.datetime(2026, 8, 20, 16, 0, tzinfo=other),
+                              _utc(2026, 8, 20, 21, 0))
+
+
+def test_selects_a_log_overlapping_the_window(tmp_path):
+    _log(tmp_path, "20260820_204250_1.txt", "Pilot A",
+         "2026.08.20 20:42:50", _epoch(_utc(2026, 8, 20, 21, 55)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert [s.listener for s in sel.logs] == ["Pilot A"]
+
+
+def test_skips_log_that_ended_before_the_window(tmp_path):
+    """The predicate that does the real work: a log starting long ago still
+    satisfies start <= window_end, so only last-write excludes it."""
+    _log(tmp_path, "20260819_100000_1.txt", "Old Pilot",
+         "2026.08.19 10:00:00", _epoch(_utc(2026, 8, 19, 11, 0)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert sel.logs == []
+
+
+def test_skips_log_that_started_after_the_window(tmp_path):
+    _log(tmp_path, "20260821_100000_1.txt", "Future Pilot",
+         "2026.08.21 10:00:00", _epoch(_utc(2026, 8, 21, 11, 0)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert sel.logs == []
+
+
+def test_skips_listenerless_stub_even_when_it_overlaps(tmp_path):
+    p = tmp_path / "20260820_210000.txt"
+    p.write_bytes(
+        b"------------------------------------------------------------\r\n"
+        b"  Gamelog\r\n"
+        b"  Session Started: 2026.08.20 21:00:00\r\n"
+        b"------------------------------------------------------------\r\n"
+    )
+    os.utime(p, (_epoch(_utc(2026, 8, 20, 21, 10)),) * 2)
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert sel.logs == []
+
+
+def test_padding_pulls_in_a_log_just_outside_the_window(tmp_path):
+    """WINDOW_PADDING is 5 minutes each side."""
+    _log(tmp_path, "20260820_205600_1.txt", "Edge Pilot",
+         "2026.08.20 20:56:00", _epoch(_utc(2026, 8, 20, 20, 58)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert [s.listener for s in sel.logs] == ["Edge Pilot"]
+
+
+def test_unparseable_filename_still_reads_the_header(tmp_path):
+    """Degrade to the reference's behaviour rather than silently skipping."""
+    _log(tmp_path, "weird-name.txt", "Odd Pilot",
+         "2026.08.20 21:05:00", _epoch(_utc(2026, 8, 20, 21, 10)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert [s.listener for s in sel.logs] == ["Odd Pilot"]
+
+
+def test_caps_at_max_files_and_reports_dropped(tmp_path):
+    for i in range(5):
+        _log(tmp_path, f"20260820_2100{i:02d}_{i}.txt", f"Pilot {i}",
+             "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 10 + i)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0),
+                                _utc(2026, 8, 20, 21, 30), max_files=3)
+    assert len(sel.logs) == 3
+    assert sel.dropped == 2
+
+
+def test_cap_keeps_the_newest_by_last_write(tmp_path):
+    for i in range(4):
+        _log(tmp_path, f"20260820_2100{i:02d}_{i}.txt", f"Pilot {i}",
+             "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 10 + i)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0),
+                                _utc(2026, 8, 20, 21, 30), max_files=2)
+    assert sorted(s.listener for s in sel.logs) == ["Pilot 2", "Pilot 3"]
+
+
+def test_missing_directory_yields_nothing(tmp_path):
+    sel = combatlog.select_logs(tmp_path / "nope", _utc(2026, 8, 20, 21, 0),
+                                _utc(2026, 8, 20, 21, 30))
+    assert sel.logs == [] and sel.dropped == 0

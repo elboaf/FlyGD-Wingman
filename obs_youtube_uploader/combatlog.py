@@ -9,6 +9,7 @@ Measured on a real folder: a log whose header reads 20:42:50 has an mtime of
 21:55:16 UTC / 17:55:16 local. Only the UTC reading is coherent.
 """
 import datetime
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,3 +85,107 @@ def find_gamelogs_dir(home: Path | None = None) -> Path | None:
         if candidate.is_dir():
             return candidate
     return None
+
+
+WINDOW_PADDING = datetime.timedelta(minutes=5)
+MAX_FILES = 64
+
+# EVE names gamelogs YYYYMMDD_HHMMSS_<characterID>.txt, and that timestamp is
+# exactly the Session Started value — verified across a real folder.
+_FILENAME_RE = re.compile(r"^(\d{8})_(\d{6})(?:_\d+)?\.txt$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class SelectedLog:
+    path: Path
+    listener: str
+    span_start: datetime.datetime
+    span_end: datetime.datetime
+
+
+@dataclass(frozen=True)
+class Selection:
+    logs: list[SelectedLog]
+    dropped: int
+
+
+def _require_utc(name: str, value: datetime.datetime) -> None:
+    if value.tzinfo is None or value.utcoffset() != datetime.timedelta(0):
+        raise ValueError(
+            f"{name} must be a timezone-aware UTC datetime; got {value!r}. "
+            "Gamelog timestamps are UTC and VideoInfo.mtime is local, so "
+            "passing local time selects the wrong hour with no error."
+        )
+
+
+def _filename_start(name: str) -> datetime.datetime | None:
+    m = _FILENAME_RE.match(name)
+    if not m:
+        return None
+    try:
+        return datetime.datetime.strptime(
+            m.group(1) + m.group(2), "%Y%m%d%H%M%S"
+        ).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) -> Selection:
+    """Gamelogs overlapping [start_utc, end_utc] padded by WINDOW_PADDING.
+
+    Both bounds must be timezone-aware UTC — see the module docstring.
+    """
+    _require_utc("start_utc", start_utc)
+    _require_utc("end_utc", end_utc)
+    if end_utc < start_utc:
+        start_utc, end_utc = end_utc, start_utc
+    window_start = start_utc - WINDOW_PADDING
+    window_end = end_utc + WINDOW_PADDING
+
+    try:
+        entries = list(os.scandir(Path(directory)))
+    except OSError:
+        return Selection(logs=[], dropped=0)
+
+    matched: list[SelectedLog] = []
+    for entry in entries:
+        if not entry.name.lower().endswith(".txt"):
+            continue
+        try:
+            if not entry.is_file():
+                continue
+            last_write = datetime.datetime.fromtimestamp(entry.stat().st_mtime, UTC)
+        except OSError:
+            continue
+
+        # Both predicates are cheap (name + scandir stat, no file opened) and
+        # BOTH are needed. Filtering on session start alone excludes only logs
+        # that began after the window closed -- of which there are none for a
+        # recent recording -- so it removes essentially nothing. It is
+        # last-write that excludes the thousands of historical logs.
+        if last_write < window_start:
+            continue
+        name_start = _filename_start(entry.name)
+        if name_start is not None and name_start > window_end:
+            continue
+
+        # An unparseable name falls through to a header read rather than being
+        # discarded, so an unexpected naming scheme degrades to reading
+        # everything instead of silently skipping logs.
+        header = parse_header(Path(entry.path))
+        if header is None:
+            continue
+        if header.session_start > window_end or last_write < window_start:
+            continue
+        matched.append(
+            SelectedLog(
+                path=Path(entry.path),
+                listener=header.listener,
+                span_start=header.session_start,
+                span_end=last_write,
+            )
+        )
+
+    matched.sort(key=lambda log: log.span_end, reverse=True)
+    dropped = max(0, len(matched) - max_files)
+    return Selection(logs=matched[:max_files], dropped=dropped)
