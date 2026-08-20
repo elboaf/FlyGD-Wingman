@@ -56,9 +56,14 @@ jobs:
         # PyInstaller only reports "Hidden import not found" as an ERROR line
         # and still exits 0, so a missing dependency yields a successful build
         # of a broken application. Fail here instead, where it is obvious.
+        #
+        # This only proves sv_ttk is installed on the *build* runner, before
+        # PyInstaller has run - it says nothing about whether the .tcl data
+        # actually reached the frozen bundle. See the post-build assertion
+        # below for that.
         shell: pwsh
         run: |
-          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, sv_ttk; print('runtime deps importable')"
           if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
 
       - name: Inject OAuth credentials
