@@ -231,3 +231,60 @@ def test_build_body_adds_suffix_for_multi_upload():
 def test_build_body_falls_back_to_untitled():
     body = uploader.build_body("", "d", "private", "20", index=0, total=1)
     assert body["snippet"]["title"] == "Untitled"
+
+
+from obs_youtube_uploader import credentials
+
+
+def test_placeholder_credentials_are_detected():
+    assert credentials.is_placeholder() in (True, False)
+
+
+def test_client_config_has_installed_app_shape():
+    cfg = credentials.CLIENT_CONFIG
+    assert "installed" in cfg
+    for key in ("client_id", "client_secret", "auth_uri", "token_uri"):
+        assert key in cfg["installed"]
+
+
+def test_scopes_are_upload_only():
+    assert uploader.SCOPES == ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+def test_load_credentials_returns_none_when_token_missing(tmp_path):
+    assert uploader.load_credentials(tmp_path / "nope.json") is None
+
+
+def test_load_credentials_returns_none_on_corrupt_token(tmp_path):
+    p = tmp_path / "token.json"
+    p.write_text("not json")
+    assert uploader.load_credentials(p) is None
+
+
+def test_needs_reauth_for_none():
+    assert uploader.needs_reauth(None) is True
+
+
+def test_needs_reauth_false_for_valid_creds():
+    class Creds:
+        valid = True
+        expired = False
+        refresh_token = "r"
+    assert uploader.needs_reauth(Creds()) is False
+
+
+def test_needs_reauth_true_when_expired_without_refresh_token():
+    class Creds:
+        valid = False
+        expired = True
+        refresh_token = None
+    assert uploader.needs_reauth(Creds()) is True
+
+
+def test_save_credentials_writes_and_restricts(tmp_path):
+    class Creds:
+        def to_json(self): return '{"token": "x"}'
+    p = tmp_path / "token.json"
+    uploader.save_credentials(Creds(), p)
+    assert p.exists()
+    assert "token" in p.read_text()

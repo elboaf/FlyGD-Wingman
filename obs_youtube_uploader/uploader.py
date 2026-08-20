@@ -5,9 +5,12 @@ instead of a traceback in a log file nobody reads.
 """
 import enum
 import json
+import os
 import random
 import socket
+import stat as _stat
 import time
+from pathlib import Path
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaFileUpload.
@@ -150,3 +153,73 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
     if not video_id:
         raise UploadFailed(Outcome.PERMANENT, request=request)
     return video_id
+
+
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+def load_credentials(token_path: Path):
+    """Load stored credentials, or None if absent/unreadable."""
+    token_path = Path(token_path)
+    if not token_path.exists():
+        return None
+    from google.oauth2.credentials import Credentials
+    try:
+        return Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    except Exception:
+        return None
+
+
+def save_credentials(creds, token_path: Path) -> None:
+    """Persist credentials with owner-only permissions.
+
+    The token grants upload access to the user's channel, so it must never
+    be readable by other accounts on the machine, even momentarily. Writing
+    with the default mode and chmod-ing afterward would leave a window where
+    a new file sits at the umask's default (typically world-readable) before
+    the restrictive bits are applied. Instead the file is created directly
+    with owner-only bits via os.open, so there is no permissive state to
+    observe. The chmod afterward is kept as a second pass so a *pre-existing*
+    token file (written by an older build, or by another process) still ends
+    up locked down even though O_CREAT | O_TRUNC would not have reset an
+    existing file's mode bits on its own.
+    """
+    token_path = Path(token_path)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(creds.to_json())
+    finally:
+        try:
+            os.chmod(token_path, _stat.S_IRUSR | _stat.S_IWUSR)
+        except OSError:
+            pass  # Best effort; Windows ACLs differ and failure is not fatal.
+
+
+def needs_reauth(creds) -> bool:
+    """True when a full interactive OAuth flow is required.
+
+    While the app is unverified, refresh tokens expire after 7 days, so this
+    returns True roughly weekly for every user. The caller must handle it
+    smoothly rather than treating it as an error.
+    """
+    if creds is None:
+        return True
+    if getattr(creds, "valid", False):
+        return False
+    return not (getattr(creds, "expired", False) and getattr(creds, "refresh_token", None))
+
+
+def run_oauth_flow():
+    """Interactive consent via the loopback redirect. Returns Credentials."""
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from .credentials import CLIENT_CONFIG
+    flow = InstalledAppFlow.from_client_config(CLIENT_CONFIG, SCOPES)
+    return flow.run_local_server(port=0)
+
+
+def refresh_credentials(creds):
+    from google.auth.transport.requests import Request
+    creds.refresh(Request())
+    return creds
