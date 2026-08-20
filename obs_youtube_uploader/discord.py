@@ -6,6 +6,7 @@ scoped, and has no revocation UI short of deleting the webhook server-side.
 Nothing here may ever surface one in full.
 """
 import logging
+import traceback
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -35,6 +36,7 @@ class Webhook:
     url: str
     webhook_id: str
     token: str
+    host: str = "discord.com"
 
 
 def parse_webhook(raw: str | None) -> tuple[Webhook | None, str]:
@@ -54,14 +56,15 @@ def parse_webhook(raw: str | None) -> tuple[Webhook | None, str]:
     if len(parts) < 4 or parts[0] != "api" or parts[1] != "webhooks":
         return None, ("That does not look like a Discord webhook URL "
                       "(expected .../api/webhooks/{id}/{token}).")
-    return Webhook(url=candidate, webhook_id=parts[2], token=parts[3]), ""
+    host = parsed.hostname.lower()
+    return Webhook(url=candidate, webhook_id=parts[2], token=parts[3], host=host), ""
 
 
 def describe(webhook: Webhook | None) -> str:
     """A name for a webhook that omits its token, safe to display anywhere."""
     if webhook is None:
         return "(not configured)"
-    return f"discord.com/api/webhooks/{webhook.webhook_id}…"
+    return f"{webhook.host}/api/webhooks/{webhook.webhook_id}…"
 
 
 def redact(text: str, webhook: Webhook | None) -> str:
@@ -91,6 +94,11 @@ class RedactingFilter(logging.Filter):
     token to disk without passing through any of our code. Call-site
     redaction cannot make that guarantee; this can.
 
+    Covers the rendered message (record.msg/args), plus record.exc_text and
+    record.stack_info -- a Formatter appends both of those independently of
+    getMessage(), so logger.exception(...) or stack_info=True can otherwise
+    write an unredacted token even when the message itself is clean.
+
     Takes a callable rather than a Webhook so it picks up a webhook the user
     configures after logging is already running.
     """
@@ -116,4 +124,27 @@ class RedactingFilter(logging.Filter):
         if cleaned != rendered:
             record.msg = cleaned
             record.args = ()
+        # logger.exception(...)/exc_info=True embeds the traceback text
+        # separately from getMessage() -- a Formatter appends record.exc_text
+        # (deriving it from record.exc_info the first time it's needed) after
+        # the rendered message. Rewriting record.msg alone leaves that text,
+        # which can carry the webhook URL (e.g. "bad response from <url>"),
+        # completely unredacted on disk. Pre-compute and redact it here so
+        # the Formatter finds it already set and never re-derives it.
+        if record.exc_info:
+            try:
+                if not record.exc_text:
+                    record.exc_text = "".join(
+                        traceback.format_exception(*record.exc_info))
+                record.exc_text = redact(record.exc_text, webhook)
+            except Exception:
+                pass
+        # stack_info=True appends record.stack_info the same way; it's
+        # already a formatted string by the time a record carries it (built
+        # eagerly by Logger._log), so it just needs redacting in place.
+        if record.stack_info:
+            try:
+                record.stack_info = redact(record.stack_info, webhook)
+            except Exception:
+                pass
         return True

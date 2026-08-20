@@ -1,3 +1,4 @@
+import io
 import logging
 
 import pytest
@@ -121,3 +122,63 @@ def test_redact_is_a_noop_for_non_string_input():
     hook, _ = discord.parse_webhook(GOOD)
     assert discord.redact(None, hook) is None
     assert discord.redact(42, hook) == 42
+
+
+def test_describe_uses_the_actual_configured_host():
+    """describe() must not hardcode discord.com: a ptb.discord.com or
+    canary.discord.com webhook should be shown with its real host, not a
+    silently wrong one."""
+    hook, err = discord.parse_webhook(
+        "https://ptb.discord.com/api/webhooks/1234567890/abcDEF-token_xyz")
+    assert err == ""
+    described = discord.describe(hook)
+    assert "ptb.discord.com" in described
+    assert "abcDEF-token_xyz" not in described
+
+
+def test_logging_filter_redacts_exception_tracebacks():
+    """The filter must not just rewrite record.msg: logger.exception() embeds
+    the traceback text (str(exc)) via record.exc_info, which a Formatter
+    renders separately from getMessage(). A test that only checks
+    getMessage()/caplog.text is blind to this leak -- it must go through a
+    real Formatter, exactly as a file handler would."""
+    hook, _ = discord.parse_webhook(GOOD)
+    filt = discord.RedactingFilter(lambda: hook)
+    logger = logging.getLogger("test.discord.exc_info_redaction")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.addFilter(filt)
+    logger.addHandler(handler)
+    try:
+        try:
+            raise ValueError(f"bad response from {GOOD}")
+        except ValueError:
+            logger.exception("post failed")
+    finally:
+        logger.removeHandler(handler)
+    out = buf.getvalue()
+    assert "abcDEF-token_xyz" not in out
+
+
+def test_logging_filter_redacts_stack_info():
+    """stack_info=True appends captured stack text the same way exc_info
+    does; it must be redacted too."""
+    hook, _ = discord.parse_webhook(GOOD)
+    filt = discord.RedactingFilter(lambda: hook)
+    logger = logging.getLogger("test.discord.stack_info_redaction")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.addFilter(filt)
+    logger.addHandler(handler)
+    try:
+        logger.info(f"webhook is {GOOD}", stack_info=True)
+    finally:
+        logger.removeHandler(handler)
+    out = buf.getvalue()
+    assert "abcDEF-token_xyz" not in out
