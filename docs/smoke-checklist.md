@@ -65,6 +65,16 @@ Run on Windows against a real install before each release.
       Expected: a warning dialog naming the problem ("Enter a Discord
       webhook URL.") and directing you to add one in Settings. No thread is
       started, no archive is written.
+- [ ] **An invalid webhook URL is refused on Save.** In Settings, paste a
+      URL that is not a Discord webhook (e.g. `https://example.com/hook`,
+      or `https://discord.com.evil.example/api/webhooks/1/x`) and click
+      **Save**. Expected: a warning naming the problem, the dialog stays
+      open, and NOTHING is written to `settings.json` — reopen Settings and
+      confirm the old value is still there. Then clear the field entirely
+      and Save: that must succeed, since an empty webhook simply means the
+      feature is unconfigured. `parse_webhook` itself has unit tests, but
+      the dialog wiring that calls it does not, so this is the only check
+      that the Save path honors the validator's rejection.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
       Settings, then click **Upload combat logs**. Expected: a warning
