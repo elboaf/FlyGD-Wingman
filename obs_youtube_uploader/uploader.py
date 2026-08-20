@@ -5,9 +5,12 @@ instead of a traceback in a log file nobody reads.
 """
 import enum
 import json
+import random
 import socket
+import time
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaFileUpload.
 
 
 class Outcome(enum.Enum):
@@ -74,9 +77,6 @@ def classify(exc: Exception) -> Outcome:
 def message_for(outcome: Outcome) -> str:
     return _MESSAGES[outcome]
 
-
-import random
-import time
 
 BASE_BACKOFF = 1.0
 MAX_BACKOFF = 32.0
