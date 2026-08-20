@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from obs_youtube_uploader import obsconfig
 
@@ -63,3 +64,30 @@ def test_skips_malformed_profile_and_uses_valid_older_one(tmp_path):
 def test_ignores_blank_path_value(tmp_path):
     _profile(tmp_path, "Blank", "[SimpleOutput]\nFilePath=\n")
     assert obsconfig.find_recording_dir(tmp_path) is None
+
+
+def test_handles_utf8_bom_in_ini_file(tmp_path):
+    d = tmp_path / "obs-studio" / "basic" / "profiles" / "WithBOM"
+    d.mkdir(parents=True)
+    ini = d / "basic.ini"
+    # Write with UTF-8 BOM marker followed by normal INI content
+    ini.write_bytes(b"\xef\xbb\xbf[SimpleOutput]\nFilePath=C:/rec\n")
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/rec")
+
+
+def test_survives_stat_race_when_file_vanishes(tmp_path):
+    _profile(tmp_path, "Good", "[SimpleOutput]\nFilePath=C:/good\n")
+    _profile(tmp_path, "Vanish", "[SimpleOutput]\nFilePath=C:/vanish\n")
+
+    # Monkeypatch Path.stat to raise FileNotFoundError for the "Vanish" profile
+    original_stat = Path.stat
+
+    def stat_with_race(self):
+        if "Vanish" in str(self):
+            raise FileNotFoundError("File vanished during stat")
+        return original_stat(self)
+
+    with patch.object(Path, "stat", stat_with_race):
+        # Should skip the vanished profile and find the good one
+        assert obsconfig.find_recording_dir(tmp_path) == Path("C:/good")
+

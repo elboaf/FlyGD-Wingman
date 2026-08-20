@@ -28,7 +28,7 @@ def profiles_root(appdata: Path | None = None) -> Path | None:
 def _read_path(ini: Path) -> Path | None:
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
-        parser.read(ini, encoding="utf-8")
+        parser.read(ini, encoding="utf-8-sig")
     except (configparser.Error, OSError, UnicodeDecodeError):
         return None
     for section, key in _PATH_KEYS:
@@ -57,7 +57,7 @@ def find_recording_dir(appdata: Path | None = None) -> Path | None:
             try:
                 mtime = p.stat().st_mtime
                 inis_with_times.append((mtime, p))
-            except (OSError, FileNotFoundError):
+            except OSError:
                 # File vanished between glob and stat
                 continue
 
