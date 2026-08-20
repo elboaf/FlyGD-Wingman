@@ -16,13 +16,19 @@ a = Analysis(
     ],
     datas=[],
     hiddenimports=[
+        # pystray selects its backend implementation dynamically at
+        # runtime, which modulegraph cannot follow statically.
         "pystray._win32",
+        # Precautionary, not known-required: the package never imports
+        # ImageTk, so PIL._tkinter_finder may be unused here. Kept because
+        # it is harmless and we cannot test the Windows-only alternative.
         "PIL._tkinter_finder",
-        # googleapiclient and google-auth pieces are imported lazily inside
-        # functions (see uploader.py and app.py) so the test suite can run
-        # without them installed. PyInstaller's static analysis cannot see
-        # those imports, so every one of them must be listed explicitly or
-        # the frozen app fails at first upload instead of at startup.
+        # google.* and googleapiclient.* are PEP 420 namespace packages.
+        # modulegraph has a known history of mishandling namespace-package
+        # resolution, so these are listed explicitly as a safety net — not
+        # because the imports below are lazy/function-level (modulegraph
+        # scans bytecode for IMPORT_NAME regardless of function nesting, so
+        # it normally does find those just fine).
         "googleapiclient.discovery",
         "googleapiclient.http",
         "google_auth_oauthlib.flow",
