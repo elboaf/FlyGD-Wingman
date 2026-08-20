@@ -16,7 +16,6 @@ class SettingsWindow:
         self.on_saved = on_saved
         self.win = tk.Toplevel(parent)
         self.win.title("Settings")
-        self.win.geometry("520x360")
         self.win.transient(parent)
         self.win.grab_set()
 
@@ -27,6 +26,22 @@ class SettingsWindow:
         self.rec_dir = tk.StringVar(value=str(state.recording_dir))
         self._build()
         self._refresh_auth_label()
+
+        # Size the window to what its content actually needs rather than a
+        # fixed guess: at higher Windows display-scaling factors (125%,
+        # 150%) the five packed LabelFrames are taller than any hard-coded
+        # height, which used to clip the Recording folder frame and the
+        # Save/Cancel row right off the bottom of the dialog. Compute the
+        # natural size after layout, keep a sensible starting width, and
+        # let height follow the content. Resizable + minsize means a user
+        # at an unusual DPI or font size is never trapped below the
+        # window's usable size.
+        self.win.update_idletasks()
+        width = max(520, self.win.winfo_reqwidth())
+        height = self.win.winfo_reqheight()
+        self.win.geometry(f"{width}x{height}")
+        self.win.minsize(width, height)
+        self.win.resizable(True, True)
 
     def _build(self) -> None:
         pad = {"padx": 8, "pady": 6}

@@ -143,3 +143,61 @@ def test_returns_none_when_adv_out_present_but_key_missing(tmp_path):
     _profile(tmp_path, "Adv", "[AdvOut]\nSomeOtherKey=x\n")
     assert obsconfig.find_recording_dir(tmp_path) is None
 
+
+
+def _global_ini(root: Path, profile_dir: str, extra: str = "") -> Path:
+    d = root / "obs-studio"
+    d.mkdir(parents=True, exist_ok=True)
+    ini = d / "global.ini"
+    ini.write_text(f"[Basic]\nProfileDir={profile_dir}\nProfile=Display Name\n{extra}",
+                    encoding="utf-8")
+    return ini
+
+
+def test_active_profile_from_global_ini_wins_over_newer_profile(tmp_path):
+    """global.ini names the active profile; that must win even when a
+    different profile's basic.ini was touched more recently."""
+    _profile(tmp_path, "Active", "[SimpleOutput]\nFilePath=C:/active\n", mtime=1000)
+    _profile(tmp_path, "OtherNewer", "[SimpleOutput]\nFilePath=C:/other\n", mtime=9000)
+    _global_ini(tmp_path, "Active")
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/active")
+
+
+def test_global_ini_naming_nonexistent_profile_falls_back(tmp_path):
+    _profile(tmp_path, "Real", "[SimpleOutput]\nFilePath=C:/real\n", mtime=1000)
+    _global_ini(tmp_path, "DoesNotExist")
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/real")
+
+
+def test_missing_global_ini_falls_back_to_mtime_scan(tmp_path):
+    _profile(tmp_path, "Old", "[SimpleOutput]\nFilePath=C:/old\n", mtime=1000)
+    _profile(tmp_path, "New", "[SimpleOutput]\nFilePath=C:/new\n", mtime=2000)
+    # No global.ini written at all.
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/new")
+
+
+def test_malformed_global_ini_falls_back_to_mtime_scan(tmp_path):
+    _profile(tmp_path, "Old", "[SimpleOutput]\nFilePath=C:/old\n", mtime=1000)
+    _profile(tmp_path, "New", "[SimpleOutput]\nFilePath=C:/new\n", mtime=2000)
+    d = tmp_path / "obs-studio"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "global.ini").write_text("!!!not an ini###\n", encoding="utf-8")
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/new")
+
+
+def test_active_profile_named_but_has_no_usable_path_falls_back(tmp_path):
+    _profile(tmp_path, "ActiveEmpty", "[SimpleOutput]\nRecFormat=mkv\n", mtime=1000)
+    _profile(tmp_path, "Fallback", "[SimpleOutput]\nFilePath=C:/fallback\n", mtime=2000)
+    _global_ini(tmp_path, "ActiveEmpty")
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/fallback")
+
+
+def test_active_profile_dir_name_returns_none_without_global_ini(tmp_path):
+    assert obsconfig._active_profile_dir_name(tmp_path) is None
+
+
+def test_active_profile_dir_name_returns_none_without_profiledir_key(tmp_path):
+    d = tmp_path / "obs-studio"
+    d.mkdir(parents=True)
+    (d / "global.ini").write_text("[Basic]\nProfile=Display Name\n", encoding="utf-8")
+    assert obsconfig._active_profile_dir_name(tmp_path) is None

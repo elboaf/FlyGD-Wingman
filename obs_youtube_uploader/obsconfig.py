@@ -15,13 +15,20 @@ _PATH_KEYS = [
 ]
 
 
-def profiles_root(appdata: Path | None = None) -> Path | None:
+def _resolve_appdata(appdata: Path | None) -> Path | None:
     if appdata is None:
         raw = os.environ.get("APPDATA")
         if not raw:
             return None
-        appdata = Path(raw)
-    root = Path(appdata) / "obs-studio" / "basic" / "profiles"
+        return Path(raw)
+    return Path(appdata)
+
+
+def profiles_root(appdata: Path | None = None) -> Path | None:
+    resolved = _resolve_appdata(appdata)
+    if resolved is None:
+        return None
+    root = resolved / "obs-studio" / "basic" / "profiles"
     return root if root.is_dir() else None
 
 
@@ -39,18 +46,61 @@ def _read_path(ini: Path) -> Path | None:
     return None
 
 
+def _active_profile_dir_name(appdata: Path | None) -> str | None:
+    """Read the active profile's directory name from OBS's global.ini.
+
+    global.ini's [Basic] section records ``ProfileDir=<directory name>``,
+    naming the profile actually in use. This is authoritative -- unlike a
+    most-recently-modified heuristic, it can't be fooled by OBS touching a
+    profile that isn't the active one, or by a user with several profiles.
+    Returns None (never raises) when global.ini is absent, malformed, or
+    doesn't specify a profile directory, so the caller can fall back.
+    """
+    resolved = _resolve_appdata(appdata)
+    if resolved is None:
+        return None
+    global_ini = resolved / "obs-studio" / "global.ini"
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
+    try:
+        read_files = parser.read(global_ini, encoding="utf-8-sig")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    if not read_files:
+        # global.ini doesn't exist (or couldn't be opened) -- fall back.
+        return None
+    if parser.has_option("Basic", "ProfileDir"):
+        value = parser.get("Basic", "ProfileDir").strip()
+        return value or None
+    return None
+
+
 def find_recording_dir(appdata: Path | None = None) -> Path | None:
-    """Recording directory from the most recently modified OBS profile.
+    """Recording directory for the OBS profile currently in use.
+
+    Prefers the profile named as active in global.ini's
+    ``[Basic] ProfileDir``. Falls back to the most recently modified
+    profile's basic.ini when global.ini is absent/malformed, when it names a
+    profile directory that doesn't exist, or when that profile has no usable
+    path.
 
     Returns None when OBS is absent, has no profiles, or no profile
-    specifies a path — the caller falls back to asking the user.
+    specifies a path -- the caller falls back to asking the user.
     """
     root = profiles_root(appdata)
     if root is None:
         return None
 
-    # Get ini files with mtimes, skipping any that vanish during stat.
-    # This is defensive against files disappearing between glob and stat.
+    active_dir_name = _active_profile_dir_name(appdata)
+    if active_dir_name is not None:
+        active_ini = root / active_dir_name / "basic.ini"
+        if active_ini.is_file():
+            found = _read_path(active_ini)
+            if found is not None:
+                return found
+
+    # Fall back to the most recently modified profile. Get ini files with
+    # mtimes, skipping any that vanish during stat -- defensive against
+    # files disappearing between glob and stat.
     inis_with_times = []
     for p in root.glob("*/basic.ini"):
         if p.is_file():
