@@ -31,6 +31,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 ## File Structure
 
 ```
+run.py                Entry shim (absolute imports, PyInstaller target)
 obs_youtube_uploader/
   __init__.py       Package marker, version string
   paths.py          State/bundle directory resolution
@@ -41,6 +42,7 @@ obs_youtube_uploader/
   uploader.py       OAuth, upload with retry, error classification
   watcher.py        Settled-file detection, seen-set persistence
   app.py            Tk window, tray icon, notifications, wiring
+  settingsui.py     Settings dialog, Google account connection
   __main__.py       Entry point, single-instance mutex
 tests/
   test_paths.py  test_settings.py  test_library.py  test_obsconfig.py
@@ -53,9 +55,10 @@ packaging/
   ci.yml            Tests on push
   release.yml       Build installer on tag
 pyproject.toml
+.gitignore
 ```
 
-Deleted at the end of Phase 2: `obs_trigger.py`, `youtube_uploader.py`.
+Deleted during the work: `obs_trigger.py` and `youtube_uploader.py` (Task 12), `requirements.txt` (Task 17).
 
 ---
 
@@ -260,7 +263,21 @@ def test_defaults_are_the_documented_values():
         "privacy": "private",
         "category": "20",
         "notify_mode": "toast",
+        "recording_dir": None,
     }
+
+
+def test_recording_dir_roundtrips(tmp_path):
+    """Regression guard: save() projects onto DEFAULTS keys, so a key not
+    declared there is silently dropped and the folder is re-picked every
+    launch."""
+    p = tmp_path / "s.json"
+    settings.save({**settings.DEFAULTS, "recording_dir": "C:/rec"}, p)
+    assert settings.load(p)["recording_dir"] == "C:/rec"
+
+
+def test_recording_dir_defaults_to_none(tmp_path):
+    assert settings.load(tmp_path / "nope.json")["recording_dir"] is None
 
 
 def test_load_returns_defaults_when_file_missing(tmp_path):
@@ -333,6 +350,9 @@ DEFAULTS = {
     "privacy": "private",
     "category": "20",
     "notify_mode": "toast",
+    # Not a user-facing setting, but it must live here: save() projects onto
+    # DEFAULTS keys, so anything undeclared is dropped on every write.
+    "recording_dir": None,
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -357,6 +377,8 @@ def load(path: Path | None = None) -> dict:
         data["notify_mode"] = DEFAULTS["notify_mode"]
     if not isinstance(data["category"], str) or not data["category"].isdigit():
         data["category"] = DEFAULTS["category"]
+    if data["recording_dir"] is not None and not isinstance(data["recording_dir"], str):
+        data["recording_dir"] = None
     return data
 
 
@@ -370,7 +392,7 @@ def save(data: dict, path: Path | None = None) -> None:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_settings.py -v`
-Expected: PASS (10 tests, counting the 3 parametrized cases)
+Expected: PASS (12 tests, counting the 3 parametrized cases)
 
 - [ ] **Step 5: Commit**
 
@@ -889,8 +911,9 @@ def test_stitched_yields_an_existing_file(tmp_path):
 
 
 def test_stitched_cleans_up_on_success(tmp_path):
-    srcs = [tmp_path / "a.mkv"]
-    srcs[0].write_bytes(b"x")
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
     with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_ok) as out:
         captured = out
     assert not captured.exists()
@@ -898,8 +921,9 @@ def test_stitched_cleans_up_on_success(tmp_path):
 
 def test_stitched_cleans_up_when_body_raises(tmp_path):
     """This is the leak the old code had: cleanup must not depend on success."""
-    srcs = [tmp_path / "a.mkv"]
-    srcs[0].write_bytes(b"x")
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
     captured = None
     with pytest.raises(RuntimeError):
         with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_ok) as out:
@@ -910,8 +934,9 @@ def test_stitched_cleans_up_when_body_raises(tmp_path):
 
 
 def test_stitched_raises_when_ffmpeg_fails(tmp_path):
-    srcs = [tmp_path / "a.mkv"]
-    srcs[0].write_bytes(b"x")
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
     with pytest.raises(stitch.StitchError):
         with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail):
             pass
@@ -1353,6 +1378,27 @@ def test_progress_callback_receives_fractions():
     assert seen == [0.25, 0.75]
 
 
+def test_retry_callback_reports_each_attempt():
+    """A stalled upload must look like it is retrying, not frozen."""
+    attempts = []
+    req = FakeRequest([
+        ("fail", FakeHttpError(503)),
+        ("fail", FakeHttpError(503)),
+        ("done", {"id": "a"}),
+    ])
+    uploader.upload(req, on_retry=lambda n, d: attempts.append(n), sleep=lambda s: None)
+    assert attempts == [1, 2]
+
+
+def test_failed_upload_exposes_request_for_manual_retry():
+    """The request holds the resumable session; discarding it would make a
+    Retry button restart from zero."""
+    req = FakeRequest([("fail", FakeHttpError(503))] * 4)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, max_attempts=2, sleep=lambda s: None)
+    assert excinfo.value.request is req
+
+
 def test_missing_id_in_response_is_a_permanent_failure():
     req = FakeRequest([("done", {"no_id_here": True})])
     with pytest.raises(uploader.UploadFailed) as excinfo:
@@ -1394,11 +1440,17 @@ MAX_BACKOFF = 32.0
 
 
 class UploadFailed(Exception):
-    """An upload failed. `outcome` says whether retrying could ever help."""
+    """An upload failed. `outcome` says whether retrying could ever help.
 
-    def __init__(self, outcome: Outcome, original: Exception | None = None):
+    `request` carries the resumable request object so a manual Retry can
+    resume the existing session instead of restarting from zero.
+    """
+
+    def __init__(self, outcome: Outcome, original: Exception | None = None,
+                 request=None):
         self.outcome = outcome
         self.original = original
+        self.request = request
         super().__init__(message_for(outcome))
 
 
@@ -1417,12 +1469,15 @@ def build_body(title: str, description: str, privacy: str, category: str,
     }
 
 
-def upload(request, *, on_progress=None, max_attempts: int = 5,
+def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
            sleep=time.sleep, jitter=random.random) -> str:
     """Drive a resumable upload to completion, retrying transient failures.
 
     The *same* request object is reused across retries — that is what makes
     this resume rather than restart. Returns the YouTube video ID.
+
+    on_retry(attempt_number, delay_seconds) fires before each backoff sleep
+    so the UI can show "retrying" rather than appearing frozen.
     """
     attempts = 0
     response = None
@@ -1433,23 +1488,25 @@ def upload(request, *, on_progress=None, max_attempts: int = 5,
             outcome = classify(exc)
             attempts += 1
             if outcome is not Outcome.RETRY or attempts >= max_attempts:
-                raise UploadFailed(outcome, exc) from exc
-            delay = min(BASE_BACKOFF * (2 ** (attempts - 1)), MAX_BACKOFF)
-            sleep(delay + jitter())
+                raise UploadFailed(outcome, exc, request=request) from exc
+            delay = min(BASE_BACKOFF * (2 ** (attempts - 1)), MAX_BACKOFF) + jitter()
+            if on_retry is not None:
+                on_retry(attempts, delay)
+            sleep(delay)
             continue
         if status is not None and on_progress is not None:
             on_progress(status.progress())
 
     video_id = response.get("id") if isinstance(response, dict) else None
     if not video_id:
-        raise UploadFailed(Outcome.PERMANENT)
+        raise UploadFailed(Outcome.PERMANENT, request=request)
     return video_id
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_uploader.py -v`
-Expected: PASS (35 tests)
+Expected: PASS (37 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1466,13 +1523,13 @@ git commit -m "feat: retry resumable uploads without losing progress or video ID
 - Modify: `obs_youtube_uploader/uploader.py` (append)
 - Create: `obs_youtube_uploader/credentials.py`
 - Modify: `tests/test_uploader.py` (append)
-- Modify: `.gitignore`
+- Create: `.gitignore` (does not exist yet)
 
 **Interfaces:**
 - Consumes: `paths.token_file()`
 - Produces: `credentials.CLIENT_CONFIG: dict`, `credentials.is_placeholder() -> bool`, `uploader.SCOPES: list[str]`, `uploader.load_credentials(token_path) -> Credentials | None`, `uploader.save_credentials(creds, token_path) -> None`, `uploader.needs_reauth(creds) -> bool`
 
-`credentials.py` holds a placeholder committed to git; the release workflow overwrites it at build time (Task 13). This keeps the source tree free of real secrets while letting developers run from source with their own file.
+`credentials.py` holds a placeholder committed to git; the release workflow overwrites it at build time (Task 16). This keeps the source tree free of real secrets while letting developers run from source with their own file.
 
 - [ ] **Step 1: Write the failing test (append to `tests/test_uploader.py`)**
 
@@ -1638,7 +1695,9 @@ def refresh_credentials(creds):
     return creds
 ```
 
-- [ ] **Step 5: Add the build artifact to `.gitignore`**
+- [ ] **Step 5: Create `.gitignore`**
+
+The repository has no `.gitignore` today, so this creates it:
 
 ```bash
 printf 'obs_youtube_uploader/credentials_real.py\nbuild/\ndist/\npackaging/bin/\n*.egg-info/\n__pycache__/\n' >> .gitignore
@@ -1699,10 +1758,20 @@ def _settle(w, path, times=3):
 
 
 def test_baseline_does_not_report_existing_files(tmp_path):
+    """Must hold across enough polls to clear stable_polls, or the test
+    passes against a watcher that simply does nothing."""
     _write(tmp_path / "old.mkv", 10)
     w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
     w.baseline()
-    assert w.poll_once() == []
+    for _ in range(5):
+        assert w.poll_once() == []
+
+
+def test_baseline_records_existing_files_on_first_run(tmp_path):
+    seen_path = tmp_path / "seen.json"
+    f = _write(tmp_path / "old.mkv", 10)
+    watcher.Watcher(tmp_path, seen_path).baseline()
+    assert str(f) in watcher.load_seen(seen_path)
 
 
 def test_new_file_is_reported_once_settled(tmp_path):
@@ -1750,7 +1819,8 @@ def test_seen_set_persists_across_restart(tmp_path):
     w1.baseline()
     w2 = watcher.Watcher(tmp_path, seen_path)
     w2.baseline()
-    assert w2.poll_once() == []
+    for _ in range(5):
+        assert w2.poll_once() == []
 
 
 def test_file_added_while_app_closed_is_reported_on_restart(tmp_path):
@@ -1858,13 +1928,26 @@ class Watcher:
         self._pending: dict[str, tuple[int, int]] = {}  # key -> (size, stable_count)
 
     def baseline(self) -> None:
-        """Record current files as already-seen without announcing them.
+        """Establish the starting point without announcing anything.
 
-        Files already in the persisted set stay as they are; files present
-        on disk but absent from it are left for poll_once() to announce, so
-        recordings made while the app was closed are not lost.
+        First ever run (no seen file): record every current file silently,
+        so launching the app does not announce the user's whole back
+        catalogue.
+
+        Any later run (seen file exists): only prune. Files on disk but
+        absent from the persisted set are genuinely new — recorded while
+        the app was closed — and poll_once() announces them.
         """
-        self.prune()
+        first_run = not self.seen_path.exists()
+        if first_run:
+            for path in library.discover(self.directory):
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                self.seen[str(path)] = SeenEntry(size=stat.st_size, mtime=stat.st_mtime)
+        else:
+            self.prune()
         save_seen(self.seen_path, self.seen)
 
     def poll_once(self) -> list[Path]:
@@ -1913,7 +1996,7 @@ class Watcher:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_watcher.py -v`
-Expected: PASS (11 tests)
+Expected: PASS (12 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1933,7 +2016,7 @@ git commit -m "feat: add folder watcher with settled detection and persisted bas
 - Consumes: everything from Tasks 1–9
 - Produces: `UploaderWindow` class with `__init__(self, root, state)`, `show()`, `hide()`, `refresh()`; `AppState` dataclass holding `recording_dir: Path`, `settings: dict`, `ffmpeg_bin: str | None`, `ffprobe_bin: str | None`
 
-No unit tests: this is GUI wiring, verified by the smoke checklist in Task 16. All logic it depends on is already tested.
+No unit tests: this is GUI wiring, verified by the smoke checklist in Task 17. All logic it depends on is already tested.
 
 - [ ] **Step 1: Write the binary resolution helper**
 
@@ -1969,6 +2052,22 @@ class AppState:
     settings: dict = field(default_factory=settings_mod.load)
     ffmpeg_bin: str | None = field(default_factory=lambda: resolve_binary("ffmpeg"))
     ffprobe_bin: str | None = field(default_factory=lambda: resolve_binary("ffprobe"))
+
+
+@dataclass
+class UploadJob:
+    """Every value the upload worker needs, captured on the main thread.
+
+    Tk is not thread-safe: a worker calling .get() on a StringVar is the
+    same violation as configuring a widget from one. Snapshotting into a
+    plain dataclass at dispatch time removes the whole class of bug.
+    """
+    items: list["library.VideoInfo"]
+    title: str
+    description: str
+    stitch: bool
+    privacy: str
+    category: str
 ```
 
 - [ ] **Step 2: Write the window class**
@@ -2051,6 +2150,10 @@ class UploaderWindow:
                           ("Select None", lambda: self._set_all(False)),
                           ("Select All", lambda: self._set_all(True))):
             ttk.Button(bot, text=text, command=cmd).pack(side=tk.RIGHT, padx=2)
+        self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
+        self.retry_btn.pack(side=tk.RIGHT, padx=2)
+        self.retry_btn.state(["disabled"])
+        ttk.Button(bot, text="Settings", command=self._open_settings).pack(side=tk.LEFT, padx=8)
 
         self.progress = ttk.Progressbar(self.root, mode="determinate")
         self.progress.pack(fill=tk.X, padx=5, pady=(0, 3))
@@ -2159,8 +2262,19 @@ Append to `UploaderWindow`:
         if self.upload_thread and self.upload_thread.is_alive():
             messagebox.showwarning("Busy", "An upload is already in progress.")
             return
+        # Read every widget value HERE, on the main thread. Tk is not
+        # thread-safe, and .get() on a StringVar/Text/BooleanVar from a
+        # worker is the same violation as configuring a label from one.
+        job = UploadJob(
+            items=chosen,
+            title=self.title_var.get(),
+            description=self.desc_txt.get("1.0", tk.END).strip(),
+            stitch=self.stitch_var.get(),
+            privacy=self.state.settings["privacy"],
+            category=self.state.settings["category"],
+        )
         self.upload_thread = threading.Thread(
-            target=self._upload_worker, args=(chosen,), daemon=True)
+            target=self._upload_worker, args=(job,), daemon=True)
         self.upload_thread.start()
 ```
 
@@ -2171,7 +2285,7 @@ Append to `UploaderWindow`:
         """Marshal a call onto the Tk main thread. Workers never touch widgets."""
         self.root.after(0, lambda: fn(*args))
 
-    def _upload_worker(self, chosen: list[library.VideoInfo]) -> None:
+    def _upload_worker(self, job: "UploadJob") -> None:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
         try:
@@ -2183,38 +2297,37 @@ Append to `UploaderWindow`:
             uploader.save_credentials(creds, paths.token_file())
             youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
 
-            title = self.title_var.get()
-            description = self.desc_txt.get("1.0", tk.END).strip()
-            privacy = self.state.settings["privacy"]
-            category = self.state.settings["category"]
-
-            if self.stitch_var.get():
-                ordered = stitch.order_for_stitch(chosen)
+            if job.stitch:
+                ordered = stitch.order_for_stitch(job.items)
                 sources = [i.path for i in ordered]
                 with stitch.stitched(sources, self.state.ffmpeg_bin, paths.tmp_dir()) as merged:
-                    vid = self._upload_one(youtube, MediaFileUpload, merged,
-                                           title, description, privacy, category, 0, 1)
-                for info in chosen:
+                    vid = self._upload_one(youtube, MediaFileUpload, merged, job, 0, 1)
+                for info in job.items:
                     self._ui(self._set_link, info.path, vid)
             else:
-                total = len(chosen)
-                for index, info in enumerate(chosen):
-                    vid = self._upload_one(youtube, MediaFileUpload, info.path, title,
-                                           description, privacy, category, index, total)
+                total = len(job.items)
+                for index, info in enumerate(job.items):
+                    vid = self._upload_one(youtube, MediaFileUpload, info.path,
+                                           job, index, total)
                     self._ui(self._set_link, info.path, vid)
 
+            self.last_failure = None
             self._ui(self.status.config, {"text": "Upload complete!", "foreground": "green"})
             self._ui(self.progress.config, {"value": 100})
+            self._ui(self.retry_btn.state, ["disabled"])
         except uploader.UploadFailed as exc:
+            self.last_failure = exc
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
             self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
+            if exc.outcome is uploader.Outcome.RETRY:
+                self._ui(self.retry_btn.state, ["!disabled"])
         except Exception as exc:
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
             self._ui(self.status.config, {"text": f"Error: {exc}", "foreground": "red"})
 
-    def _upload_one(self, youtube, MediaFileUpload, path, title, description,
-                    privacy, category, index, total) -> str:
-        body = uploader.build_body(title, description, privacy, category, index, total)
+    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total) -> str:
+        body = uploader.build_body(job.title, job.description, job.privacy,
+                                   job.category, index, total)
         media = MediaFileUpload(str(path), chunksize=uploader.CHUNK_SIZE, resumable=True)
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
@@ -2224,7 +2337,33 @@ Append to `UploaderWindow`:
             self._ui(self.status.config,
                      {"text": f"Uploading {index + 1}/{total} — {fraction * 100:.1f}%"})
 
-        return uploader.upload(request, on_progress=on_progress)
+        def on_retry(attempt: int, delay: float) -> None:
+            self._ui(self.status.config,
+                     {"text": f"Network problem — retrying in {delay:.0f}s "
+                              f"(attempt {attempt})", "foreground": "orange"})
+
+        return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
+
+    def _manual_retry(self) -> None:
+        """Resume the failed session rather than restarting it."""
+        failure = self.last_failure
+        if failure is None or failure.request is None:
+            return
+        self.retry_btn.state(["disabled"])
+
+        def worker() -> None:
+            try:
+                uploader.upload(failure.request)
+                self.last_failure = None
+                self._ui(self.status.config,
+                         {"text": "Upload complete!", "foreground": "green"})
+            except uploader.UploadFailed as exc:
+                self.last_failure = exc
+                self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
+                self._ui(self.retry_btn.state, ["!disabled"])
+
+        self.upload_thread = threading.Thread(target=worker, daemon=True)
+        self.upload_thread.start()
 ```
 
 - [ ] **Step 6: Add the `on_deleted` hook to `__init__`**
@@ -2233,6 +2372,7 @@ In `UploaderWindow.__init__`, after `self.upload_thread = None`, add:
 
 ```python
         self.on_deleted = None  # set by the tray app to notify the watcher
+        self.last_failure: uploader.UploadFailed | None = None
 ```
 
 - [ ] **Step 7: Verify the module imports cleanly**
@@ -2252,7 +2392,181 @@ git commit -m "feat: add uploader window with path-keyed link column"
 
 ---
 
-### Task 11: Tray icon, notifications, and entry point
+### Task 11: Settings window and Google account connection
+
+**Files:**
+- Create: `obs_youtube_uploader/settingsui.py`
+- Modify: `obs_youtube_uploader/app.py` (add `_open_settings`)
+
+**Interfaces:**
+- Consumes: `settings.load`, `settings.save`, `settings.DEFAULTS`, `uploader.load_credentials`, `uploader.run_oauth_flow`, `uploader.save_credentials`, `paths.token_file`
+- Produces: `SettingsWindow(parent, state, on_saved)` class
+
+Without this task the settings module built in Task 2 is unreachable from the UI, and the README's "Settings → Connect Google Account" instruction points at nothing. OAuth would still happen implicitly on first upload, but the user could never change privacy, category, or notification mode, nor re-authenticate deliberately.
+
+- [ ] **Step 1: Write the settings window**
+
+```python
+# obs_youtube_uploader/settingsui.py
+"""Settings dialog: upload defaults, notification mode, Google account."""
+import threading
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from . import paths, settings as settings_mod, uploader
+
+PRIVACY_CHOICES = ["private", "unlisted", "public"]
+NOTIFY_CHOICES = ["toast", "popup"]
+
+
+class SettingsWindow:
+    def __init__(self, parent: tk.Misc, state, on_saved=None):
+        self.state = state
+        self.on_saved = on_saved
+        self.win = tk.Toplevel(parent)
+        self.win.title("Settings")
+        self.win.geometry("520x360")
+        self.win.transient(parent)
+        self.win.grab_set()
+
+        cfg = state.settings
+        self.privacy = tk.StringVar(value=cfg["privacy"])
+        self.category = tk.StringVar(value=cfg["category"])
+        self.notify = tk.StringVar(value=cfg["notify_mode"])
+        self.rec_dir = tk.StringVar(value=str(state.recording_dir))
+        self._build()
+        self._refresh_auth_label()
+
+    def _build(self) -> None:
+        pad = {"padx": 8, "pady": 6}
+
+        acct = ttk.LabelFrame(self.win, text="Google account", padding=10)
+        acct.pack(fill=tk.X, **pad)
+        self.lbl_auth = ttk.Label(acct, text="Checking…")
+        self.lbl_auth.pack(anchor=tk.W)
+        ttk.Button(acct, text="Connect Google Account",
+                   command=self._connect).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(
+            acct,
+            text=("If this is a pre-release build, only approved testers can "
+                  "sign in."),
+            foreground="gray", wraplength=460, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        up = ttk.LabelFrame(self.win, text="Upload defaults", padding=10)
+        up.pack(fill=tk.X, **pad)
+        ttk.Label(up, text="Privacy:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Combobox(up, textvariable=self.privacy, values=PRIVACY_CHOICES,
+                     state="readonly", width=12).grid(row=0, column=1, sticky=tk.W, padx=6)
+        ttk.Label(up, text="Category ID:").grid(row=1, column=0, sticky=tk.W, pady=(6, 0))
+        ttk.Entry(up, textvariable=self.category, width=8).grid(
+            row=1, column=1, sticky=tk.W, padx=6, pady=(6, 0))
+        ttk.Label(up, text="(20 = Gaming)", foreground="gray").grid(
+            row=1, column=2, sticky=tk.W)
+
+        beh = ttk.LabelFrame(self.win, text="When a recording finishes", padding=10)
+        beh.pack(fill=tk.X, **pad)
+        ttk.Radiobutton(beh, text="Show a tray notification (recommended)",
+                        variable=self.notify, value="toast").pack(anchor=tk.W)
+        ttk.Radiobutton(beh, text="Open the uploader window immediately",
+                        variable=self.notify, value="popup").pack(anchor=tk.W)
+
+        folder = ttk.LabelFrame(self.win, text="Recording folder", padding=10)
+        folder.pack(fill=tk.X, **pad)
+        ttk.Entry(folder, textvariable=self.rec_dir).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(folder, text="Browse…", command=self._browse).pack(
+            side=tk.LEFT, padx=(6, 0))
+
+        row = ttk.Frame(self.win)
+        row.pack(fill=tk.X, **pad)
+        ttk.Button(row, text="Save", command=self._save).pack(side=tk.RIGHT)
+        ttk.Button(row, text="Cancel", command=self.win.destroy).pack(
+            side=tk.RIGHT, padx=6)
+
+    def _browse(self) -> None:
+        chosen = filedialog.askdirectory(initialdir=self.rec_dir.get())
+        if chosen:
+            self.rec_dir.set(chosen)
+
+    def _refresh_auth_label(self) -> None:
+        creds = uploader.load_credentials(paths.token_file())
+        if creds is not None and not uploader.needs_reauth(creds):
+            self.lbl_auth.config(text="Connected", foreground="green")
+        else:
+            self.lbl_auth.config(text="Not connected", foreground="red")
+
+    def _connect(self) -> None:
+        """Run OAuth off the main thread; it blocks on a browser round-trip."""
+        self.lbl_auth.config(text="Waiting for browser…", foreground="orange")
+
+        def worker() -> None:
+            try:
+                creds = uploader.run_oauth_flow()
+                uploader.save_credentials(creds, paths.token_file())
+                self.win.after(0, self._refresh_auth_label)
+            except Exception as exc:
+                self.win.after(0, lambda: messagebox.showerror(
+                    "Connection failed", str(exc)))
+                self.win.after(0, self._refresh_auth_label)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _save(self) -> None:
+        category = self.category.get().strip()
+        if not category.isdigit():
+            messagebox.showwarning("Invalid category",
+                                   "Category ID must be a number, e.g. 20.")
+            return
+        rec_dir = Path(self.rec_dir.get())
+        if not rec_dir.is_dir():
+            messagebox.showwarning("Invalid folder",
+                                   f"{rec_dir} is not a folder.")
+            return
+        cfg = dict(self.state.settings)
+        cfg.update({
+            "privacy": self.privacy.get(),
+            "category": category,
+            "notify_mode": self.notify.get(),
+            "recording_dir": str(rec_dir),
+        })
+        settings_mod.save(cfg)
+        self.state.settings = settings_mod.load()
+        self.state.recording_dir = rec_dir
+        if self.on_saved is not None:
+            self.on_saved()
+        self.win.destroy()
+```
+
+- [ ] **Step 2: Wire it into the main window**
+
+Append this method to `UploaderWindow` in `obs_youtube_uploader/app.py`:
+
+```python
+    def _open_settings(self) -> None:
+        from .settingsui import SettingsWindow
+        SettingsWindow(self.root, self.state, on_saved=self.refresh)
+```
+
+- [ ] **Step 3: Verify both modules parse and tests still pass**
+
+Run: `python -c "import ast; [ast.parse(open(f).read()) for f in ['obs_youtube_uploader/settingsui.py','obs_youtube_uploader/app.py']]; print('syntax ok')"`
+Expected: `syntax ok`
+
+Run: `python -m pytest tests/ -v`
+Expected: PASS (all previous tests still green)
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add obs_youtube_uploader/settingsui.py obs_youtube_uploader/app.py
+git commit -m "feat: add settings window with explicit Google account connection"
+```
+
+---
+
+### Task 12: Tray icon, notifications, and entry point
 
 **Files:**
 - Create: `obs_youtube_uploader/__main__.py`
@@ -2287,6 +2601,11 @@ def acquire_single_instance():
     Run-at-login plus a Start Menu shortcut makes double-launch likely, and
     two watchers means duplicate notifications and concurrent uploads of the
     same file.
+
+    A second instance exits quietly rather than surfacing the first one's
+    window: doing that properly needs cross-process IPC (a named pipe or
+    WM_COPYDATA), which is disproportionate here — the tray icon is already
+    visible and is the intended way to open the window.
     """
     if sys.platform != "win32":
         return object()  # No enforcement off-Windows; development only.
@@ -2422,7 +2741,7 @@ These tasks produce build configuration rather than testable logic, so they spec
 
 ---
 
-### Task 12: Build-time ffmpeg acquisition
+### Task 13: Build-time ffmpeg acquisition
 
 **Files:**
 - Create: `packaging/fetch_ffmpeg.py`
@@ -2518,12 +2837,43 @@ git commit -m "build: fetch and checksum-verify ffmpeg at build time"
 
 ---
 
-### Task 13: PyInstaller build
+### Task 14: PyInstaller build
 
 **Files:**
+- Create: `run.py`
 - Create: `packaging/uploader.spec`
 
-- [ ] **Step 1: Write the PyInstaller spec**
+- [ ] **Step 1: Create the entry shim**
+
+PyInstaller analyzes the entry file as a *script*, executed as `__main__`
+with no package context. `obs_youtube_uploader/__main__.py` uses
+package-relative imports (`from . import app`), which fail immediately in
+that context with `attempted relative import with no known parent package`.
+A shim that imports absolutely fixes it:
+
+```python
+# run.py
+"""Frozen-application entry point.
+
+PyInstaller runs its entry file as a bare script, so relative imports inside
+__main__.py would fail. This shim imports the package absolutely instead.
+"""
+from obs_youtube_uploader.__main__ import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+- [ ] **Step 2: Verify the shim works before freezing anything**
+
+Run: `python -c "import run; print('entry import ok')"`
+Expected: `entry import ok` with no `ImportError`.
+
+Importing rather than running is deliberate: `run.py` launches the tray GUI
+when executed, which would block. This catches the relative-import problem
+in one second rather than after a five-minute Windows-only PyInstaller build.
+
+- [ ] **Step 3: Write the PyInstaller spec**
 
 ```python
 # packaging/uploader.spec
@@ -2536,7 +2886,7 @@ ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
 
 a = Analysis(
-    [str(ROOT / "obs_youtube_uploader" / "__main__.py")],
+    [str(ROOT / "run.py")],
     pathex=[str(ROOT)],
     binaries=[
         (str(BIN / "ffmpeg.exe"), "bin"),
@@ -2576,7 +2926,7 @@ coll = COLLECT(
 )
 ```
 
-- [ ] **Step 2: Build locally to verify the spec**
+- [ ] **Step 4: Build locally to verify the spec**
 
 ```bash
 python -m pip install pyinstaller
@@ -2588,16 +2938,26 @@ Expected: `dist/OBSYouTubeUploader/OBSYouTubeUploader.exe` exists, with `bin/ffm
 Note: this step only succeeds on Windows. On Linux, confirm the spec parses instead:
 `python -c "compile(open('packaging/uploader.spec').read(), 'spec', 'exec'); print('spec ok')"`
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Launch the frozen executable (Windows only)**
+
+Run: `dist\OBSYouTubeUploader\OBSYouTubeUploader.exe`
+Expected: the tray icon appears within a few seconds and no error dialog is
+shown. A frozen build that imports cleanly can still fail at runtime on a
+missing hidden import, and this is the only step that catches that.
+
+If it exits silently, temporarily set `console=True` in the spec and re-run
+to see the traceback.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packaging/uploader.spec
-git commit -m "build: add PyInstaller one-folder spec"
+git add run.py packaging/uploader.spec
+git commit -m "build: add PyInstaller one-folder spec and absolute-import entry shim"
 ```
 
 ---
 
-### Task 14: Inno Setup installer
+### Task 15: Inno Setup installer
 
 **Files:**
 - Create: `packaging/installer.iss`
@@ -2670,7 +3030,7 @@ git commit -m "build: add Inno Setup installer with run-at-login option"
 
 ---
 
-### Task 15: CI and release workflows
+### Task 16: CI and release workflows
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
@@ -2777,15 +3137,24 @@ git commit -m "build: add CI and tagged-release workflows"
 
 ---
 
-### Task 16: README rewrite and smoke checklist
+### Task 17: README rewrite, dependency cleanup, and smoke checklist
 
 **Files:**
 - Modify: `README.md` (full rewrite)
+- Delete: `requirements.txt`
 - Create: `docs/smoke-checklist.md`
 
 The README currently documents the OBS script, the eight-step Google Cloud setup, and claims recordings are "never modified or deleted" — all three are now false.
 
-- [ ] **Step 1: Rewrite `README.md`**
+`requirements.txt` is superseded by `pyproject.toml` and is actively misleading: it lists only the three Google packages (`requirements.txt:1-3`) and omits `pystray` and `Pillow`, so anyone following it gets an app that cannot start.
+
+- [ ] **Step 1: Delete the stale requirements file**
+
+```bash
+git rm requirements.txt
+```
+
+- [ ] **Step 2: Rewrite `README.md`**
 
 ```markdown
 # OBS YouTube Uploader
@@ -2813,7 +3182,8 @@ access_denied`. Open an issue to be added.
 ## Use
 
 The app lives in your system tray and starts with Windows. When a recording
-finishes you get a notification; click it to open the uploader.
+finishes you get a notification; **click the tray icon** to open the
+uploader.
 
 - **Select** one or more recordings with the checkboxes.
 - **Stitch** merges the selection into one video, earliest first. Originals
@@ -2863,7 +3233,7 @@ Personal tool, use at your own risk. Not affiliated with OBS Studio, CCP
 Games, or Google/YouTube.
 ```
 
-- [ ] **Step 2: Write the smoke checklist**
+- [ ] **Step 3: Write the smoke checklist**
 
 ```markdown
 # Smoke checklist
@@ -2888,8 +3258,17 @@ Run on Windows against a real install before each release.
 ## Watcher
 - [ ] Recording in OBS then stopping produces one notification
 - [ ] Notification does not steal focus from a fullscreen game
+- [ ] Clicking the tray icon opens the uploader window
 - [ ] With `notify_mode: popup`, the window raises instead
 - [ ] A recording made while the app was closed is announced on next launch
+- [ ] Existing recordings are NOT re-announced on an ordinary restart
+
+## Settings
+- [ ] Settings button opens the dialog
+- [ ] Connect Google Account opens a browser and reports "Connected"
+- [ ] Changing privacy and saving persists across an app restart
+- [ ] Changing the recording folder takes effect without a restart
+- [ ] A non-numeric category ID is rejected with a warning
 
 ## Upload
 - [ ] Single upload completes and the link column fills in
@@ -2899,7 +3278,9 @@ Run on Windows against a real install before each release.
 - [ ] Each row gets its own correct link
 - [ ] Stitch of two videos produces one upload, both rows show the same link
 - [ ] Temp stitch file is gone from `%LOCALAPPDATA%\...\tmp` afterwards
-- [ ] Killing the network mid-upload shows retrying, then resumes
+- [ ] Killing the network mid-upload shows "retrying in Ns", then resumes
+- [ ] After exhausting retries, the Retry button becomes enabled
+- [ ] Retry resumes rather than restarting from 0%
 - [ ] Temp stitch file is gone even after a failed upload
 
 ## Delete
@@ -2909,14 +3290,19 @@ Run on Windows against a real install before each release.
 - [ ] A deleted file is not re-announced by the watcher
 
 ## Single instance
-- [ ] Launching a second copy surfaces the existing window, no second tray icon
+- [ ] Launching a second copy exits quietly with no second tray icon
+- [ ] The first instance keeps working normally afterwards
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add README.md docs/smoke-checklist.md
-git commit -m "docs: rewrite README for standalone install and add smoke checklist"
+git commit -m "docs: rewrite README for standalone install, drop stale requirements.txt
+
+requirements.txt listed only the Google packages and omitted pystray and
+Pillow, so following it produced an app that could not start. pyproject.toml
+supersedes it."
 ```
 
 ---
@@ -2927,42 +3313,45 @@ git commit -m "docs: rewrite README for standalone install and add smoke checkli
 
 | Spec section | Task |
 |---|---|
-| Credentials: shared, embedded | 8, 15 |
-| Release gating | 15 (release notes), 16 (README) |
-| Delivery: PyInstaller + Inno Setup | 13, 14 |
-| OBS integration removed | 11 |
-| FFmpeg bundled + degradation matrix | 3, 10, 12 |
-| SmartScreen accepted and documented | 15, 16 |
-| Architecture: six units | 1–11 |
-| Threading | 10 (`_ui` marshalling), 11 (hidden root on main thread) |
-| Data flow / polling | 9, 11 |
-| Watcher lifecycle: baseline + mutex | 9, 11 |
-| Notification behavior (toast/popup) | 11 |
+| Credentials: shared, embedded | 8, 16 |
+| Release gating | 16 (release notes), 17 (README) |
+| Delivery: PyInstaller + Inno Setup | 14, 15 |
+| OBS integration removed | 12 |
+| FFmpeg bundled + degradation matrix | 3, 10, 13 |
+| SmartScreen accepted and documented | 16, 17 |
+| Architecture: six units | 1–12 |
+| Threading | 10 (`UploadJob` snapshot + `_ui` marshalling), 12 (hidden root on main thread) |
+| Data flow / polling | 9, 12 |
+| Watcher lifecycle: baseline + mutex | 9, 12 |
+| Notification behavior (toast/popup) | 11, 12 |
 | Configuration and state relocation | 1, 2 |
-| Settings schema + private default | 2 |
-| Recording folder auto-detection | 4, 11 |
+| Settings schema + private default | 2, 11 |
+| Recording folder auto-detection | 4, 11, 12 |
 | Error handling table | 6, 10 |
-| Upload retry as new work | 7 |
+| Upload retry as new work | 7, 10 |
 | Upstream changes: link column | 10 |
-| Upstream changes: Delete Selected | 3, 10, 11 |
+| Upstream changes: Delete Selected | 3, 10, 12 |
 | Upstream defects not reproduced | 7 (no duplicate block), 10 (path-keyed links) |
-| Build and release | 12, 13, 14, 15 |
-| Testing | 1–9 unit tests, 16 smoke checklist |
-| Migration (docs only) | 16 |
-| README corrections | 16 |
+| Build and release | 13, 14, 15, 16 |
+| Testing | 1–9 unit tests, 17 smoke checklist |
+| Migration (docs only) | 17 |
+| README corrections | 17 |
 
 No gaps found.
 
 **Placeholder scan.** Two intentional `REPLACE_AT_BUILD_TIME` markers in
-`credentials.py` (overwritten by Task 15) and one
+`credentials.py` (overwritten by Task 16) and one
 `REPLACE_WITH_ACTUAL_SHA256_BEFORE_FIRST_RELEASE` in `fetch_ffmpeg.py`,
-which Task 12 Step 2 resolves with a concrete procedure. Both are guarded by
+which Task 13 Step 2 resolves with a concrete procedure. Both are guarded by
 code that fails loudly rather than proceeding. No unresolved TODOs.
 
 **Type consistency.** Checked names across task boundaries:
 `VideoInfo` fields (`path`, `mtime`, `size`, `duration`) are consistent
 between Tasks 3, 5, and 10. `Outcome` members are consistent between Tasks 6
-and 7. `upload(request, *, on_progress, max_attempts, sleep, jitter)` in
-Task 7 matches its call in Task 10. `Watcher.forget` in Task 9 matches
-`window.on_deleted = w.forget` in Task 11. `paths.tmp_dir()` is used
-identically in Tasks 5, 10, and 11.
+and 7. `upload(request, *, on_progress, on_retry, max_attempts, sleep,
+jitter)` in Task 7 matches its calls in Task 10. `UploadJob` fields defined
+in Task 10 Step 1 match their reads in the worker. `Watcher.forget` in Task 9
+matches `window.on_deleted = w.forget` in Task 12. `paths.tmp_dir()` is used
+identically in Tasks 5, 10, and 12. `settings.DEFAULTS` keys in Task 2 cover
+every key written in Tasks 11 and 12 — the omission that previously dropped
+`recording_dir` on every save.
