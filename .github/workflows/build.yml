@@ -116,6 +116,27 @@ jobs:
             if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
           }
 
+      - name: Verify sv-ttk theme data is bundled
+        # Mirrors the ffmpeg check above and exists for the same reason:
+        # PyInstaller exits 0 even when a `datas` entry resolves to nothing,
+        # so a wrong collect_data_files() call would produce a green build
+        # of an app that raises the moment __main__.py calls
+        # sv_ttk.set_theme() - and nothing in CI would notice without this.
+        # This assertion only proves the files are present; it cannot prove
+        # they load correctly, which is what actually launching the app
+        # (manually, from the downloaded artifact) is for.
+        shell: pwsh
+        run: |
+          $svTtk = "dist\OBSYouTubeUploader\_internal\sv_ttk"
+          if (-not (Test-Path $svTtk)) {
+            throw "sv_ttk package data not found at $svTtk - the datas= entry in uploader.spec did not collect it, and sv_ttk.set_theme() will fail at runtime"
+          }
+          Get-ChildItem -Recurse $svTtk
+          foreach ($tcl in @("sun-valley.tcl", "theme\light.tcl", "theme\dark.tcl")) {
+            $path = Join-Path $svTtk $tcl
+            if (-not (Test-Path $path)) { throw "$tcl missing from bundled sv_ttk data at $path" }
+          }
+
       - name: Build installer
         run: iscc packaging/installer.iss
 
