@@ -134,15 +134,15 @@ EVE players running FightRecorder.
 `ffmpeg.exe` and `ffprobe.exe` add roughly 80–160 MB. Neither is strictly
 required for the app to start: `ffprobe` produces the duration column, and
 when it is absent or fails the duration degrades to `"?"`
-(`youtube_uploader.py:113-128`); `ffmpeg` is required only for stitching.
+(`youtube_uploader.py:115-131`); `ffmpeg` is required only for stitching.
 Bundling both is preferred over fetch-on-demand: a one-time large download
 beats a runtime network dependency that fails at the moment the user wants
 to upload.
 
 **Degradation behavior, stated explicitly.** Current code disables stitching
-unless *both* binaries are present (`youtube_uploader.py:94-95`,
-`:385-388`), even though stitching invokes only `ffmpeg`
-(`:468-480`). That coupling is incidental, not intended. The new behavior:
+unless *both* binaries are present (`youtube_uploader.py:96-97`,
+`:394-397`), even though stitching invokes only `ffmpeg`
+(`:484-496`). That coupling is incidental, not intended. The new behavior:
 
 | Present | Result |
 |---------|--------|
@@ -171,33 +171,122 @@ screenshot. Revisit if adoption grows.
 
 One process, six units, split so that five of them are testable without
 OBS, without Google, and without a GUI. Today the entire tool is one
-531-line module that can only be exercised by running it.
+630-line module that can only be exercised by running it.
 
 | Unit | Responsibility | Depends on |
 |------|----------------|------------|
 | `obsconfig.py` | Locate and parse OBS `basic.ini` -> recording folder | filesystem |
 | `watcher.py` | Poll folder, decide when a file is settled, emit ready-events | filesystem |
-| `library.py` | Video discovery by extension, metadata probing, sorting | filesystem, ffprobe |
+| `library.py` | Video discovery by extension, metadata probing, sorting, deletion | filesystem, ffprobe |
 | `stitch.py` | Ordering, ffmpeg invocation, output naming, temp-file lifecycle | ffmpeg |
-| `uploader.py` | OAuth, resumable upload with retry, title suffixes, error classification | Google APIs |
-| `app.py` | Tray icon, notifications, Tk window, wiring | all of the above |
+| `uploader.py` | OAuth, resumable upload with retry, title suffixes, returned video IDs, error classification | Google APIs |
+| `app.py` | Tray icon, notifications, Tk window, link column, wiring | all of the above |
 
 Six units rather than four. The original four-way split left substantial
 existing behavior implicitly inside `app.py`, which would have undermined
 the testability the split exists to provide. Each item below is behavior
-that exists today and must be preserved, now with an explicit owner:
+that exists today and must be preserved, now with an explicit owner.
+
+Line references are against `youtube_uploader.py` at `b04c3a7`:
 
 | Existing behavior | Current location | New owner |
 |---|---|---|
-| `VIDEO_EXTS` and folder discovery | `youtube_uploader.py:27`, `:344-367` | `library.py` |
-| ffprobe duration/size metadata | `:100-128` | `library.py` |
-| Stitch ordering (by mtime, earliest first), `filter_complex` concat, output path | `:454-485` | `stitch.py` |
-| Temp-file cleanup for stitched output | `:445-446` | `stitch.py` |
-| `(1/3)` title suffixes for multi-upload | `:487-499` | `uploader.py` |
-| Privacy / category applied to upload body | `:425-433` | `uploader.py` |
+| `VIDEO_EXTS` and folder discovery | `:27`, `:348-357` | `library.py` |
+| ffprobe duration/size metadata | `:102-131` | `library.py` |
+| **Delete selected files from disk** | `:582-604` | `library.py` |
+| Stitch ordering (by mtime, earliest first), `filter_complex` concat, output path | `:470-501` | `stitch.py` |
+| Temp-file cleanup for stitched output | `:457-458` | `stitch.py` |
+| `(1/3)` title suffixes for multi-upload | `:503-516` | `uploader.py` |
+| Privacy / category applied to upload body | `:436-443` | `uploader.py` |
+| **Returning the uploaded video ID** | `:527-530` | `uploader.py` |
+| **YouTube link column and Copy button** | `:311`, `:366-372`, `:539-580` | `app.py` |
 
 `library.py` and `stitch.py` are both testable without a GUI and without
 network access, which is the point of naming them.
+
+### Upstream changes absorbed (commit `b04c3a7`, 2026-08-20)
+
+The maintainer shipped new work after this design was first written. All of
+it is behavior the port must preserve, and one part changes a decision.
+
+**1. YouTube link column.** Each row now carries a read-only entry showing
+the uploaded video's URL, plus a per-row Copy button (`:311`, `:366-372`,
+`:539-580`). `_upload_one` returns the video ID to make this possible
+(`:503`, `:527-530`).
+
+This interacts with the retry design below: **retry must preserve the
+returned video ID.** A resumed upload still yields a response containing
+`id`, but a retry implementation that swallows and re-issues the request
+would lose it, silently breaking the link column. The retry tests assert the
+ID survives a mid-upload failure.
+
+In stitch mode the single resulting URL is applied to every selected row
+(`:553-562`); otherwise IDs are zipped positionally against the selection
+(`:563-572`).
+
+**2. Delete Selected.** A button permanently removes selected files from
+disk after a confirmation dialog (`:582-604`). Note this **contradicts the
+current README**, which states that original recordings are "never modified
+or deleted" — the README is now wrong and is corrected as part of this work.
+
+Two consequences for the new architecture:
+
+- Deletion moves into `library.py` so it is testable against a temp
+  directory rather than only by clicking the button.
+- **The watcher must be told.** Deleting a file the watcher has recorded in
+  `seen.json` leaves a stale entry; if OBS later writes a new recording to
+  the same path, the size/mtime comparison decides correctly, but the
+  cleaner behavior is to drop the entry at delete time. `library.py`
+  emits a deletion event that `watcher.py` consumes.
+
+Deletion remains a permanent `unlink()` rather than a Recycle Bin move,
+matching current behavior. This is worth revisiting — a mis-click destroys
+unrecoverable footage — but changing it is out of scope here and is recorded
+as a follow-up rather than silently altered.
+
+**3. Credential model already moved.** The Settings help text was rewritten
+from the eight-step Google Cloud walkthrough to four steps that assume
+credentials are already present, including "Accept the unverified
+application warning" (`:177-186`). This **confirms the shared-credential
+direction of this design** — the maintainer arrived at the same conclusion
+independently.
+
+It also leaves a gap this design closes: the help text now promises no
+setup, but `_connect` still hard-fails when `client_secrets.json` is absent
+(`:213-217`), and that file is not in the repository. In the current
+distribution a user following the new instructions gets a "Missing File"
+error with no way to resolve it. Embedding the credentials at build time
+(see "Build and release") is what makes the new help text true.
+
+**4. Interpreter diagnostics become dead code.** The import-failure dialog
+now reports `sys.executable` and a matching `pip install` command
+(`:204-215`) — a targeted fix for users who pip-installed into a different
+interpreter than the one OBS invokes. The frozen build removes that failure
+mode entirely, so this code is **intentionally dropped** rather than ported.
+It is listed here so its removal is not mistaken for an oversight.
+
+**5. Defaults emptied.** Title and description now default to empty strings
+rather than "EVE Online Recording" and a FightRecorder boilerplate
+(`:292`, `:298`). This aligns with the generalization noted under "OBS
+integration" and is preserved as-is; the existing `or "Untitled"` fallback
+(`:506`) still guards empty titles.
+
+### Defects observed in the upstream commit
+
+Found while reviewing `b04c3a7`. None block this design; all are recorded so
+the port does not faithfully reproduce them.
+
+- **Unreachable duplicate block** at `:531-534` — `_upload_one` returns at
+  `:530`, then repeats the same four lines. Harmless, clearly a paste error,
+  dropped in the port.
+- **Missing newline** in the Settings help text at `:183` — step 3's string
+  has no trailing `\n`, so it renders as
+  `...warning!!4. Grant permission...`. Fixed in the port.
+- **Positional zip misalignment** at `:563` — `video_ids` only receives
+  entries for uploads returning an ID (`:450-452`), so a successful upload
+  with a missing ID shifts every subsequent row's link by one. Low
+  likelihood, but the port keys links by source file rather than by
+  position, which removes the class of bug rather than the instance.
 
 ### Threading
 
@@ -274,7 +363,7 @@ does not grow without bound.
 Start Menu shortcut make double-launch easy and likely. Two instances mean
 two watchers, duplicate notifications, and — worst — two concurrent uploads
 of the same recording, since today's concurrency guard
-(`youtube_uploader.py:389-394`) only prevents a second upload *within* one
+(`youtube_uploader.py:398-400`) only prevents a second upload *within* one
 process.
 
 A named Windows mutex (`Global\OBSYouTubeUploader`) is acquired at startup.
@@ -308,13 +397,13 @@ writable by a non-admin user.
 | `youtube_token.json` | `SCRIPT_DIR` (`:23`) | `%LOCALAPPDATA%\OBSYouTubeUploader\token.json` |
 | `client_secrets.json` | `SCRIPT_DIR` (`:24`) | Removed — embedded in binary |
 | `uploader_debug.log` | `SCRIPT_DIR` (`:26`) | `%LOCALAPPDATA%\OBSYouTubeUploader\logs\` |
-| `obs_stitched_upload.mkv` | `%TEMP%`, fixed name (`:455-456`) | `%LOCALAPPDATA%\OBSYouTubeUploader\tmp\`, unique per run |
+| `obs_stitched_upload.mkv` | `%TEMP%`, fixed name (`:472-473`) | `%LOCALAPPDATA%\OBSYouTubeUploader\tmp\`, unique per run |
 | `seen.json` (new) | — | `%LOCALAPPDATA%\OBSYouTubeUploader\seen.json` |
 | `ffmpeg.exe`, `ffprobe.exe` | `SCRIPT_DIR` or PATH (`:60-85`) | Install dir, resolved via `sys._MEIPASS` |
 
 The stitch artifact moves out of `%TEMP%` and gains a unique name for two
 reasons. The current fixed filename means two runs collide, and cleanup sits
-*inside* the `try` block after a successful upload (`:445-446`), so **a
+*inside* the `try` block after a successful upload (`:457-458`), so **a
 failed upload leaks the file permanently** — potentially many GB. Cleanup
 moves to a `finally` block, and orphaned files in the tmp directory are
 swept on startup.
@@ -322,12 +411,12 @@ swept on startup.
 ### Settings schema
 
 The existing settings keys are `privacy` and `category` — note `category`,
-not `category_id` (`youtube_uploader.py:196`, `:202`, `:432`). Both are
-carried forward under their existing names.
+not `category_id` (`youtube_uploader.py:193-194`, `:199-201`, `:442-443`).
+Both are carried forward under their existing names.
 
 One pre-existing inconsistency is resolved rather than ported: the privacy
-default is `"unlisted"` when loading settings (`:195`) but `"private"` when
-building the upload body (`:431`), while the README documents `private`.
+default is `"unlisted"` when loading settings (`:193`) but `"private"` when
+building the upload body (`:442`), while the README documents `private`.
 **`private` wins** — it is the documented behavior and the safe default for
 a tool that uploads automatically.
 
@@ -363,11 +452,11 @@ case below produces a specific, plain-language dialog:
 ### Upload retry is new work, not preserved behavior
 
 **Correction to an earlier assumption.** `MediaFileUpload` is constructed
-with `resumable=True` (`youtube_uploader.py:496`), which makes the
+with `resumable=True` (`youtube_uploader.py:514`), which makes the
 *protocol* resumable — but the code does not use that capability. The chunk
 loop calls `next_chunk()` inside a bare `while` with no exception handling
-(`:499-505`), so any transient network error propagates to the outer handler
-(`:448-452`), which shows a dialog and discards the `request` object along
+(`:518-525`), so any transient network error propagates to the outer handler
+(`:464-468`), which shows a dialog and discards the `request` object along
 with all upload progress.
 
 A "Retry" button bolted onto the current structure would therefore restart
@@ -415,9 +504,16 @@ Automated unit tests for the units that have no external dependencies:
   table above, including the retryable/permanent split.
 - **Retry policy** — a fake transport that fails N times then succeeds;
   asserts the session resumes rather than restarting, that permanent 4xx
-  errors are not retried, and that the attempt cap holds.
+  errors are not retried, that the attempt cap holds, and that the returned
+  video ID survives a mid-upload failure.
 - **Video discovery and metadata** (`library.py`) — extension filtering,
   sorting, and the ffprobe-absent degradation to `"?"`.
+- **Deletion** (`library.py`) — against a temp directory: confirms the
+  selected files go, unselected files stay, per-file failures are counted
+  rather than aborting the batch, and the watcher's seen-set entry is
+  dropped.
+- **Link mapping** — video IDs map to the correct source file in both stitch
+  and non-stitch modes, including when an upload returns no ID.
 - **Stitch planning** (`stitch.py`) — ordering by mtime and command
   construction, asserted without invoking ffmpeg.
 
@@ -438,6 +534,20 @@ The previous `client_secrets.json` and token file are ignored; the user
 moves to the shared credentials. Writing legacy-import code for a single
 person would create a code path to test and carry indefinitely for no
 lasting benefit.
+
+### README corrections required
+
+The README has drifted from the code and must be updated alongside this
+work, independently of the packaging changes:
+
+- It states original recordings are "never modified or deleted." The Delete
+  Selected button added in `b04c3a7` makes this false.
+- It documents the whole eight-step Google Cloud setup, which the shared
+  credentials remove.
+- It documents the OBS script installation, which no longer exists.
+- It does not mention the YouTube link column.
+- Its stated `private` privacy default should match the resolved default
+  under "Settings schema".
 
 ## Risks and open items
 
