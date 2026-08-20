@@ -1,0 +1,99 @@
+# .github/workflows/build.yml
+#
+# Manual test build. Produces a real installer as a downloadable artifact
+# without publishing a release, so the Windows build chain — PyInstaller and
+# Inno Setup, neither of which can run on the Linux dev machine — can actually
+# be exercised before tagging anything.
+#
+# Credential injection is OPTIONAL here, unlike release.yml where a missing
+# secret is a hard failure. With secrets set the installer can sign in for
+# real; without them it still builds and installs, and everything except
+# "Connect Google Account" is testable.
+name: Test build
+on:
+  workflow_dispatch:
+    inputs:
+      inject_credentials:
+        description: "Inject OAuth credentials from repository secrets (requires OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET)"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        # Not assumed present on the runner image. Needs 6.3+ because
+        # installer.iss uses ArchitecturesInstallIn64BitMode=x64compatible.
+        run: choco install innosetup --no-progress -y
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          # Pinned: packaging/uploader.spec and packaging/installer.iss both
+          # assume PyInstaller 6.x's one-folder layout (exe at the top of the
+          # dist folder, dependencies under _internal/). Bumping this means
+          # re-checking installer.iss's {app}\{#AppExe} assumption.
+          python -m pip install "pyinstaller>=6,<7"
+
+      - name: Inject OAuth credentials
+        if: ${{ inputs.inject_credentials }}
+        shell: pwsh
+        env:
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+        run: |
+          if (-not $env:OAUTH_CLIENT_ID) { throw "inject_credentials was requested but OAUTH_CLIENT_ID is not set" }
+          if (-not $env:OAUTH_CLIENT_SECRET) { throw "inject_credentials was requested but OAUTH_CLIENT_SECRET is not set" }
+          $file = "obs_youtube_uploader/credentials.py"
+          $content = Get-Content $file -Raw
+          # Longest placeholder first: the secret's placeholder is a substring
+          # of the client ID's, so the reverse order would corrupt the ID.
+          $content = $content.Replace("REPLACE_AT_BUILD_TIME.apps.googleusercontent.com", $env:OAUTH_CLIENT_ID)
+          $content = $content.Replace("REPLACE_AT_BUILD_TIME", $env:OAUTH_CLIENT_SECRET)
+          Set-Content $file $content -NoNewline
+
+      - name: Warn that credentials are placeholders
+        if: ${{ !inputs.inject_credentials }}
+        run: echo "::warning::Built without OAuth credentials. Everything is testable except Connect Google Account, which will fail."
+
+      - name: Fetch ffmpeg
+        run: python packaging/fetch_ffmpeg.py
+
+      - name: Build executable
+        run: python -m PyInstaller packaging/uploader.spec --noconfirm
+
+      - name: Show what PyInstaller produced
+        # The layout is the thing we cannot verify off-Windows: the installer
+        # assumes the exe sits at the top of dist/OBSYouTubeUploader with
+        # dependencies under _internal/. Print it so a mismatch is visible in
+        # the log rather than surfacing as a broken shortcut after install.
+        run: |
+          dir dist\OBSYouTubeUploader
+          dir dist\OBSYouTubeUploader\bin
+
+      - name: Build installer
+        run: iscc packaging/installer.iss
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-YouTube-Uploader-installer
+          path: dist/OBS-YouTube-Uploader-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Upload unpacked build
+        # Useful when the installer works but the app does not: lets you run
+        # the exe directly and see whether the problem is packaging or code.
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-YouTube-Uploader-unpacked
+          path: dist/OBSYouTubeUploader/
+          if-no-files-found: error
