@@ -20,12 +20,19 @@ FFMPEG_URL = (
 FFMPEG_SHA256 = "fa7d4d7e795db0e2503f49f105f46ed5852386f0cfdd819899be3b65ebde24fc"
 OUT_DIR = Path(__file__).parent / "bin"
 WANTED = ("ffmpeg.exe", "ffprobe.exe")
+# Sidecar records which pin the binaries in OUT_DIR were extracted from, so a
+# later bump of FFMPEG_SHA256 doesn't silently keep shipping the old binaries.
+VERSION_FILE = OUT_DIR / ".ffmpeg-version"
 
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    if all((OUT_DIR / name).exists() for name in WANTED):
-        print("ffmpeg binaries already present; skipping download")
+    if (
+        all((OUT_DIR / name).exists() for name in WANTED)
+        and VERSION_FILE.exists()
+        and VERSION_FILE.read_text().strip() == FFMPEG_SHA256
+    ):
+        print(f"ffmpeg binaries already present and match pin {FFMPEG_SHA256}; skipping download")
         return 0
 
     print(f"Downloading {FFMPEG_URL}")
@@ -64,6 +71,7 @@ def main() -> int:
     if extracted != len(WANTED):
         print(f"ERROR: expected {len(WANTED)} binaries, extracted {extracted}")
         return 1
+    VERSION_FILE.write_text(FFMPEG_SHA256)
     return 0
 
 
