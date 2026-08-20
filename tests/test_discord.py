@@ -182,3 +182,87 @@ def test_logging_filter_redacts_stack_info():
         logger.removeHandler(handler)
     out = buf.getvalue()
     assert "abcDEF-token_xyz" not in out
+
+
+class FakeResponse:
+    def __init__(self, status): self.status = status
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return b""
+
+
+def _transport(status=204, exc=None):
+    calls = []
+
+    def send(request, timeout=None):
+        calls.append(request)
+        if exc is not None:
+            raise exc
+        return FakeResponse(status)
+
+    send.calls = calls
+    return send
+
+
+def test_successful_post_reports_ok(tmp_path):
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(204))
+    assert result.ok
+
+
+def test_post_sends_multipart_to_the_webhook_url(tmp_path):
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    t = _transport(200)
+    discord.post_archive(hook, zip_path, "fight", transport=t)
+    req = t.calls[0]
+    assert req.full_url == GOOD
+    assert "multipart/form-data" in req.headers.get("Content-type", "")
+    assert b"payload" in req.data
+
+
+@pytest.mark.parametrize("status,fragment", [
+    (401, "invalid"), (404, "invalid"), (413, "too large"), (429, "rate"),
+])
+def test_error_statuses_map_to_plain_language(tmp_path, status, fragment):
+    import urllib.error
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    err = urllib.error.HTTPError(GOOD, status, "err", {}, None)
+    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(exc=err))
+    assert not result.ok
+    assert fragment in result.message.lower()
+
+
+def test_failure_message_never_contains_the_token(tmp_path):
+    import urllib.error
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    err = urllib.error.HTTPError(GOOD, 500, f"boom at {GOOD}", {}, None)
+    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(exc=err))
+    assert "abcDEF-token_xyz" not in result.message
+
+
+def test_refuses_an_oversized_archive_without_posting(tmp_path):
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"x" * (discord.MAX_ATTACHMENT_BYTES + 1))
+    t = _transport(204)
+    result = discord.post_archive(hook, zip_path, "fight", transport=t)
+    assert not result.ok
+    assert "too large" in result.message.lower()
+    assert t.calls == [], "must not hit the network when it cannot succeed"
+
+
+def test_network_error_is_reported_not_raised(tmp_path):
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    result = discord.post_archive(hook, zip_path, "fight",
+                                  transport=_transport(exc=OSError("no route")))
+    assert not result.ok and result.message

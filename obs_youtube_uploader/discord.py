@@ -6,8 +6,13 @@ scoped, and has no revocation UI short of deleting the webhook server-side.
 Nothing here may ever surface one in full.
 """
 import logging
+import mimetypes
 import traceback
+import urllib.error
+import urllib.request
+import uuid as _uuid
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 # The only hosts Discord serves webhooks from. Deliberately not a suffix
@@ -148,3 +153,107 @@ class RedactingFilter(logging.Filter):
             except Exception:
                 pass
         return True
+
+
+# Discord's webhook attachment limit on a non-boosted server.
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+_TIMEOUT_SECONDS = 60
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects on the webhook POST.
+
+    A redirect target is not covered by the host allowlist in
+    parse_webhook() -- that check only ever runs once, against the URL the
+    user typed in. If Discord's edge (or anything sitting in front of it)
+    ever answered with a 3xx, the default urllib behavior would silently
+    resend the archive, including whatever private log content it holds, to
+    wherever the Location header points. Returning None here tells urllib
+    "don't redirect"; the 3xx is then surfaced like any other non-2xx status
+    by the ordinary HTTPError path below, and nothing is ever sent past the
+    URL the caller supplied.
+    """
+
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirectHandler)
+
+
+def _default_transport(request, timeout=None):
+    return _opener.open(request, timeout=timeout)
+
+
+@dataclass(frozen=True)
+class PostResult:
+    ok: bool
+    message: str
+
+
+def _build_multipart(archive_path: Path, content: str) -> tuple[bytes, str]:
+    boundary = _uuid.uuid4().hex
+    payload = archive_path.read_bytes()
+    ctype = mimetypes.guess_type(archive_path.name)[0] or "application/zip"
+    parts = [
+        f"--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="content"\r\n\r\n',
+        content.encode("utf-8"), b"\r\n",
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="files[0]"; filename="{archive_path.name}"\r\n'.encode(),
+        f"Content-Type: {ctype}\r\n\r\n".encode(),
+        payload, b"\r\n",
+        f"--{boundary}--\r\n".encode(),
+    ]
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def post_archive(webhook: Webhook, archive_path, content: str, *,
+                  transport=_default_transport) -> PostResult:
+    """POST an archive to a Discord webhook.
+
+    Refuses locally when the archive exceeds Discord's limit rather than
+    uploading megabytes to be rejected -- the oversized file itself is left
+    untouched either way; this function only ever reads it, never deletes or
+    moves it. Never raises: every failure comes back as a PostResult with a
+    redacted message, and neither the request URL nor a non-2xx response
+    body (which could itself echo the token back, e.g. in a proxy's error
+    page) is ever read into that message -- only the numeric status is used.
+    """
+    archive_path = Path(archive_path)
+    try:
+        size = archive_path.stat().st_size
+    except OSError as exc:
+        return PostResult(False, f"Could not read the archive: {exc}")
+
+    if size > MAX_ATTACHMENT_BYTES:
+        return PostResult(False, (
+            f"The archive is {size / 1024 / 1024:.1f} MB, which is too large for "
+            f"Discord ({MAX_ATTACHMENT_BYTES // 1024 // 1024} MB limit)."))
+
+    body, content_type = _build_multipart(archive_path, content)
+    request = urllib.request.Request(
+        webhook.url, data=body, headers={"Content-type": content_type}, method="POST")
+
+    try:
+        with transport(request, timeout=_TIMEOUT_SECONDS) as response:
+            status = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        return PostResult(False, redact(_describe_status(exc.code), webhook))
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        return PostResult(False, redact(f"Could not reach Discord: {exc}", webhook))
+
+    if 200 <= status < 300:
+        return PostResult(True, f"Posted {archive_path.name} ({size / 1024:.0f} KB).")
+    return PostResult(False, redact(_describe_status(status), webhook))
+
+
+def _describe_status(status: int) -> str:
+    if status in (401, 403, 404):
+        return "That webhook is invalid or has been deleted. Check it in Settings."
+    if status == 413:
+        return "Discord rejected the archive as too large."
+    if status == 429:
+        return "Discord is rate-limiting uploads. Try again shortly."
+    return f"Discord returned an unexpected status ({status})."
