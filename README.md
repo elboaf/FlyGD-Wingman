@@ -1,0 +1,182 @@
+# OBS YouTube Uploader
+
+A lightweight tool that automatically opens when OBS stops recording, letting you select, optionally stitch, and upload your EVE Online fight recordings directly to YouTube.
+
+Designed to pair with [obs-fightrecorder](https://github.com/JesseSwale/obs-fightrecorder) — when FightRecorder triggers OBS to stop recording after a fight, this uploader pops up with your latest videos ready to go.
+
+---
+
+## Features
+
+- **Auto-launch on recording stop** — triggered by an OBS script
+- **Video browser** — lists all recordings with date, size, and duration
+- **Checkbox selection** — pick one or many videos to upload
+- **Optional stitching** — concatenate multiple fights into a single video (earliest → latest)
+- **YouTube OAuth** — connect your Google account once, uploads are automatic after that
+- **Resumable uploads** — 4MB chunks with progress bar; survives connection hiccups
+- **Self-contained FFmpeg** — bundle `ffmpeg.exe` and `ffprobe.exe` alongside the script; no PATH editing required
+- **Privacy & category defaults** — set once in Settings, applies to every upload
+
+---
+
+## Requirements
+
+- **Python 3.10+** (Windows users: install from [python.org](https://www.python.org/downloads/))
+- **OBS Studio** with Python scripting support enabled
+- **FFmpeg** binaries (`ffmpeg.exe` and `ffprobe.exe` on Windows)
+- A **Google Cloud project** with YouTube Data API v3 enabled
+
+---
+
+## Quick Start
+
+### 1. Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Get FFmpeg
+
+Download a static build for your OS:
+- **Windows**: [gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/) → `ffmpeg-release-essentials.7z`
+- **macOS**: `brew install ffmpeg`
+- **Linux**: `sudo apt install ffmpeg`
+
+**For easy sharing**, place `ffmpeg.exe` and `ffprobe.exe` in the same folder as `youtube_uploader.py`. The script will find them automatically.
+
+### 3. Set Up YouTube API Access
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a **new project**
+3. Enable **YouTube Data API v3** (APIs & Services → Library)
+4. Go to **Credentials → Create Credentials → OAuth client ID**
+   - Application type: **Desktop app**
+   - Give it a name (e.g., "OBS YouTube Uploader")
+   - Click **Create**
+5. Download the JSON file and **rename it to `client_secrets.json`**
+6. Go to **OAuth consent screen → Audience → Test users**
+   - **Add your email address** as a test user
+   - *Without this step, Google will block the auth flow with an error*
+7. Place `client_secrets.json` in the same folder as `youtube_uploader.py`
+
+### 4. Install the OBS Script
+
+1. Copy `obs_trigger.py` and `youtube_uploader.py` into a folder together (e.g., `C:\obs-scripts\`)
+2. In OBS, go to **Tools → Scripts**
+3. Click the **+** button and add `obs_trigger.py`
+4. In the script properties:
+   - **Recording Directory**: your OBS output folder (where FightRecorder saves `Fight *.mkv` files)
+   - **Python Executable**:
+     - **Windows**: use the full path to `pythonw.exe` (e.g., `C:\Users\You\AppData\Local\Programs\Python\Python311\pythonw.exe`). This prevents a console window from flashing behind the GUI.
+     - **Linux/macOS**: `python3`
+
+### 5. First Run
+
+1. Start a recording in OBS, then stop it (or let FightRecorder stop it)
+2. The uploader window should pop up automatically
+3. Click **Settings → Connect Google Account** and complete the browser OAuth flow
+4. Select your videos, optionally check **Stitch**, set a title/description, and click **Upload Selected**
+
+---
+
+## File Structure
+
+For a fully self-contained, shareable package:
+
+```
+obs_youtube_uploader/
+├── obs_trigger.py              # OBS script — add via Tools → Scripts
+├── youtube_uploader.py         # Main GUI app
+├── requirements.txt            # pip dependencies
+├── client_secrets.json         # YOUR Google OAuth credentials (add this)
+├── youtube_token.json          # Created automatically after first auth
+├── uploader_settings.json      # Created automatically
+├── uploader_debug.log          # Created automatically — check here for errors
+├── ffmpeg.exe                  # Bundle for Windows (optional but recommended)
+├── ffprobe.exe                 # Bundle for Windows (optional but recommended)
+└── README.md                   # This file
+```
+
+---
+
+## How It Works
+
+### Trigger Flow
+
+```
+FightRecorder detects fight end
+        ↓
+OBS stops recording
+        ↓
+obs_trigger.py catches RECORDING_STOPPED event
+        ↓
+Launches youtube_uploader.py <recording_dir>
+        ↓
+GUI opens with latest videos listed
+```
+
+### Stitching
+
+When **Stitch selected videos** is checked:
+1. Selected videos are sorted by timestamp (earliest first)
+2. FFmpeg `filter_complex` concat merges them into a single file
+3. The stitched file is uploaded, then auto-deleted
+4. Original recordings are **never** modified or deleted
+
+### Upload Behavior
+
+- **Single video**: uploads with the title you entered
+- **Multiple videos (no stitch)**: uploads each separately, appending `(1/3)`, `(2/3)`, etc. to the title
+- **Multiple videos (stitch)**: uploads as one combined video
+
+---
+
+## Settings
+
+Click **Settings** in the uploader to configure:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Privacy** | `private` | `private`, `unlisted`, or `public` |
+| **Category ID** | `20` | `20` = Gaming. See [YouTube category IDs](https://developers.google.com/youtube/v3/docs/videoCategories/list) for others. |
+
+These are saved to `uploader_settings.json` and persist across sessions.
+
+---
+
+## Troubleshooting
+
+### "Connection failed" when connecting Google Account
+
+- Make sure `client_secrets.json` is in the **same folder** as `youtube_uploader.py`
+- Make sure your email is added as a **Test user** in the Google Cloud OAuth consent screen
+- Check `uploader_debug.log` for the full error traceback
+
+### "FFmpeg Missing" warning
+
+- Place `ffmpeg.exe` and `ffprobe.exe` in the script folder, **or**
+- Add them to your system PATH
+
+### Uploader doesn't open when recording stops
+
+- Check that the **Recording Directory** is set correctly in the OBS script properties
+- Check the OBS script log (View → Docks → Script Log) for errors
+- Try running `python youtube_uploader.py <your_recording_dir>` manually to see if the GUI opens
+
+### Upload fails partway through
+
+- The upload is **resumable** — if your connection drops, it will retry the current chunk
+- Very large files may hit the YouTube API daily quota (6 uploads per day on the default 10,000 units)
+
+---
+
+## Quota Notes
+
+The YouTube Data API v3 has a default quota of **10,000 units per day**. A single video upload costs **1,600 units**, so you can upload roughly **6 videos per day** on the free tier. If you need more, you can [request a quota increase](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits) from Google.
+
+---
+
+## License
+
+This is a personal tool. Use at your own risk. Not affiliated with OBS Studio, CCP Games, or Google/YouTube.
