@@ -132,7 +132,9 @@ jobs:
             throw "sv_ttk package data not found at $svTtk - the datas= entry in uploader.spec did not collect it, and sv_ttk.set_theme() will fail at runtime"
           }
           Get-ChildItem -Recurse $svTtk
-          foreach ($tcl in @("sun-valley.tcl", "theme\light.tcl", "theme\dark.tcl")) {
+          # These filenames are sv-ttk-version-sensitive and were verified against the installed package.
+          # If this check fails, consult the bundled sv_ttk files before assuming the bundle broke.
+          foreach ($tcl in @("sv.tcl", "theme\light.tcl", "theme\dark.tcl")) {
             $path = Join-Path $svTtk $tcl
             if (-not (Test-Path $path)) { throw "$tcl missing from bundled sv_ttk data at $path" }
           }

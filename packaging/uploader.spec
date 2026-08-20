@@ -16,13 +16,13 @@ a = Analysis(
         (str(BIN / "ffmpeg.exe"), "bin"),
         (str(BIN / "ffprobe.exe"), "bin"),
     ],
-    # sv-ttk ships its theme as .tcl files (sun-valley.tcl,
+    # sv-ttk ships its theme as .tcl files (sv.tcl,
     # theme/light.tcl, theme/dark.tcl) plus image assets. modulegraph only
     # follows Python imports, so without this the package's .py file lands
     # in the bundle but sv_ttk.set_theme() fails at runtime looking for
     # data that was never copied. PyInstaller exits 0 either way (see the
     # ffmpeg comment below), which is why build.yml also gets a post-build
-    # assertion in Step 4.
+    # assertion in the "Verify sv-ttk theme data is bundled" step.
     datas=collect_data_files("sv_ttk"),
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
