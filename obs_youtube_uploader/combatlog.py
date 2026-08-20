@@ -68,3 +68,19 @@ def parse_header(path: Path) -> LogHeader | None:
     if listener is None or started is None:
         return None
     return LogHeader(listener=listener, session_start=started)
+
+
+# Plain Documents first, then the OneDrive-redirected location. Redirected
+# Documents folders are common enough that omitting the second candidate
+# presents as "no logs found" for a working install.
+_GAMELOGS_SUFFIX = ("EVE", "logs", "Gamelogs")
+
+
+def find_gamelogs_dir(home: Path | None = None) -> Path | None:
+    """Locate the EVE Gamelogs folder, or None if it cannot be found."""
+    base = Path(home) if home is not None else Path.home()
+    for documents in (base / "Documents", base / "OneDrive" / "Documents"):
+        candidate = documents.joinpath(*_GAMELOGS_SUFFIX)
+        if candidate.is_dir():
+            return candidate
+    return None

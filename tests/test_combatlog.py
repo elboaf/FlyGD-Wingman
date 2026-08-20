@@ -84,3 +84,36 @@ def test_stops_reading_after_header(tmp_path):
     big = HEADER + ("[ 2026.08.20 20:44:00 ] (combat) filler\r\n" * 50000)
     h = combatlog.parse_header(_write(tmp_path, "a.txt", big))
     assert h is not None and h.listener == "Miguel Aurgnet"
+
+
+def test_finds_gamelogs_under_documents(tmp_path):
+    d = tmp_path / "Documents" / "EVE" / "logs" / "Gamelogs"
+    d.mkdir(parents=True)
+    assert combatlog.find_gamelogs_dir(tmp_path) == d
+
+
+def test_finds_gamelogs_under_onedrive_documents(tmp_path):
+    """Redirected Documents folders are common and would otherwise present
+    as 'no logs found'."""
+    d = tmp_path / "OneDrive" / "Documents" / "EVE" / "logs" / "Gamelogs"
+    d.mkdir(parents=True)
+    assert combatlog.find_gamelogs_dir(tmp_path) == d
+
+
+def test_plain_documents_wins_when_both_exist(tmp_path):
+    plain = tmp_path / "Documents" / "EVE" / "logs" / "Gamelogs"
+    onedrive = tmp_path / "OneDrive" / "Documents" / "EVE" / "logs" / "Gamelogs"
+    plain.mkdir(parents=True)
+    onedrive.mkdir(parents=True)
+    assert combatlog.find_gamelogs_dir(tmp_path) == plain
+
+
+def test_returns_none_when_absent(tmp_path):
+    assert combatlog.find_gamelogs_dir(tmp_path) is None
+
+
+def test_ignores_a_file_named_gamelogs(tmp_path):
+    d = tmp_path / "Documents" / "EVE" / "logs"
+    d.mkdir(parents=True)
+    (d / "Gamelogs").write_text("not a directory")
+    assert combatlog.find_gamelogs_dir(tmp_path) is None
