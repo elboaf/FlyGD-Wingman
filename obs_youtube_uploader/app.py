@@ -1,5 +1,6 @@
 """Tk window: video list, link column, upload and delete controls."""
 import shutil
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -11,7 +12,15 @@ from . import library, paths, settings as settings_mod, stitch, uploader
 
 
 def resolve_binary(name: str) -> str | None:
-    """Find a bundled binary, falling back to PATH."""
+    """Find a bundled binary, falling back to PATH.
+
+    In a frozen build, `bundle_dir()` is `sys._MEIPASS` and the bundled
+    binary lives at its `bin/` subfolder — that path is verified correct
+    and left untouched. In a source checkout, `bundle_dir()` is the repo
+    root, but `packaging/fetch_ffmpeg.py` writes into `packaging/bin`, not
+    `<repo>/bin`. Without this extra lookup, running from source never
+    finds the fetched ffmpeg and silently falls back to PATH.
+    """
     exe = f"{name}.exe"
     candidate = paths.bundle_dir() / "bin" / exe
     if candidate.exists():
@@ -19,6 +28,10 @@ def resolve_binary(name: str) -> str | None:
     candidate = paths.bundle_dir() / exe
     if candidate.exists():
         return str(candidate)
+    if not hasattr(sys, "_MEIPASS"):
+        candidate = paths.bundle_dir() / "packaging" / "bin" / exe
+        if candidate.exists():
+            return str(candidate)
     return shutil.which(name)
 
 
@@ -287,7 +300,17 @@ class UploaderWindow:
             if job.stitch:
                 ordered = stitch.order_for_stitch(job.items)
                 sources = [i.path for i in ordered]
+                # A multi-gigabyte libx264 re-encode can run for many
+                # minutes with no other signal to the user; without this
+                # the window looks hung at "Found N video(s)" the whole
+                # time. Switch the bar to indeterminate for the duration.
+                self._ui(self.status.config,
+                         {"text": "Stitching with FFmpeg… this can take a while for large recordings"})
+                self._ui(self.progress.config, {"mode": "indeterminate"})
+                self._ui(self.progress.start, 12)
                 with stitch.stitched(sources, self.state.ffmpeg_bin, paths.tmp_dir()) as merged:
+                    self._ui(self.progress.stop)
+                    self._ui(self.progress.config, {"mode": "determinate", "value": 0})
                     vid = self._upload_one(youtube, MediaFileUpload, merged, job, 0, 1)
                 for info in job.items:
                     self._ui(self._set_link, info.path, vid)
@@ -324,6 +347,11 @@ class UploaderWindow:
                 self._ui(self.retry_btn.state, ["!disabled"])
         except Exception as exc:
             self.retry_state = None
+            # Covers a stitch failure too (StitchError isn't an
+            # UploadFailed): if the bar was left indeterminate above, stop
+            # it rather than leaving it animating after the error dialog.
+            self._ui(self.progress.stop)
+            self._ui(self.progress.config, {"mode": "determinate", "value": 0})
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
             self._ui(self.status.config, {"text": f"Error: {exc}", "foreground": "red"})
 

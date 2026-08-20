@@ -25,5 +25,22 @@ CLIENT_CONFIG = {
 
 
 def is_placeholder() -> bool:
-    """True when running from source without real credentials injected."""
-    return CLIENT_CONFIG["installed"]["client_id"] == _PLACEHOLDER_ID
+    """True when running from source without real credentials injected.
+
+    The release workflow does a literal string replace of the placeholder
+    text across the whole file's text — including the right-hand side of
+    `_PLACEHOLDER_ID` above, since that same text appears there too. So
+    comparing `client_id == _PLACEHOLDER_ID` always sees two equally
+    substituted values in a release build and returns True regardless of
+    whether real credentials were injected.
+
+    Instead, assemble the sentinel at runtime from fragments that never
+    appear contiguously in this file's source text. The workflow's
+    substring replace can only rewrite a literal, unbroken match, so it
+    cannot touch a value built from separate fragments joined at runtime —
+    that sentinel stays fixed, while `client_id` changes underneath it in
+    a real build.
+    """
+    sentinel = "REPLACE" + "_AT_BUILD" + "_TIME"
+    client_id = CLIENT_CONFIG["installed"]["client_id"]
+    return client_id == f"{sentinel}.apps.googleusercontent.com"

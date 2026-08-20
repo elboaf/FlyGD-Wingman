@@ -4,15 +4,26 @@ The temp file's lifetime is owned by a context manager so cleanup happens on
 every exit path. The pre-2.0 code deleted it only after a successful upload,
 so any failure leaked a multi-gigabyte file permanently.
 """
+import logging
 import subprocess
+import sys
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
 from .library import VideoInfo
 
+logger = logging.getLogger(__name__)
+
 _PREFIX = "stitch-"
 _SUFFIX = ".mkv"
+
+# In a console=False PyInstaller build, every subprocess.run() would
+# otherwise flash a black console window — and this one runs for the
+# entire multi-minute encode. CREATE_NO_WINDOW doesn't exist off Windows,
+# and the Linux test suite injects fake runners, so this must not affect
+# non-Windows platforms.
+_NO_WINDOW_KWARGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 class StitchError(RuntimeError):
@@ -50,7 +61,7 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
     out_path = tmp_dir / f"{_PREFIX}{uuid.uuid4().hex}{_SUFFIX}"
     try:
         result = runner(build_command(sources, out_path, ffmpeg_bin),
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, **_NO_WINDOW_KWARGS)
         if result.returncode != 0:
             raise StitchError(result.stderr.strip() or "ffmpeg failed")
         if not out_path.exists():
@@ -60,7 +71,7 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
         try:
             out_path.unlink()
         except OSError:
-            pass
+            logger.warning("Could not remove stitched temp file %s", out_path, exc_info=True)
 
 
 def sweep_orphans(tmp_dir: Path) -> int:

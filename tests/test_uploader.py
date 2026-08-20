@@ -258,8 +258,20 @@ def test_build_body_falls_back_to_untitled():
 from obs_youtube_uploader import credentials
 
 
-def test_placeholder_credentials_are_detected():
-    assert credentials.is_placeholder() in (True, False)
+def test_is_placeholder_true_for_the_source_tree_value():
+    assert credentials.is_placeholder() is True
+
+
+def test_is_placeholder_false_once_the_release_workflow_has_substituted_it(monkeypatch):
+    """Simulates what the release workflow's file-wide string replace does:
+    swap the client_id for a realistic value while leaving is_placeholder's
+    own sentinel construction untouched (it must be, since the replace
+    can't match a value assembled from fragments — see credentials.py)."""
+    monkeypatch.setitem(
+        credentials.CLIENT_CONFIG["installed"], "client_id",
+        "123456789-abcdefg.apps.googleusercontent.com",
+    )
+    assert credentials.is_placeholder() is False
 
 
 def test_client_config_has_installed_app_shape():

@@ -3,6 +3,7 @@ import logging
 import sys
 import threading
 import tkinter as tk
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -14,6 +15,37 @@ logger = logging.getLogger(__name__)
 MUTEX_NAME = "Global\\OBSYouTubeUploader"
 POLL_SECONDS = 3.0
 FAILURE_NOTIFY_THRESHOLD = 5  # ~15s of consecutive poll failures at POLL_SECONDS
+
+
+def configure_logging() -> None:
+    """Attach a rotating file handler so warnings land somewhere durable.
+
+    Without this, every `logger.warning(...)` in this module and in
+    watcher.py falls through to logging's lastResort handler -> stderr ->
+    nowhere at all in a `console=False` PyInstaller build. That silently
+    defeats the watcher's OSError degradation and the poll loop's failure
+    logging, and leaves `__main__.py`'s own "check the log" message
+    pointing at a file that was never created.
+
+    Rotation matters: a persistent poll failure logs a warning every
+    POLL_SECONDS forever, and an unbounded file would eventually fill the
+    disk. A few MB with a couple of backups is plenty for debugging.
+
+    Wrapped in its own try/except: a failure to open the log file (e.g. a
+    read-only or full disk) must not prevent the app from starting.
+    """
+    try:
+        handler = RotatingFileHandler(
+            paths.log_dir() / "uploader_debug.log",
+            maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+    except OSError:
+        pass  # Logging is best-effort; must never block startup.
 
 
 def acquire_single_instance():
@@ -86,6 +118,7 @@ def main() -> int:
         return 0  # Another instance owns the tray; nothing to do.
 
     paths.ensure_dirs()
+    configure_logging()
     stitch.sweep_orphans(paths.tmp_dir())
     cfg = settings_mod.load()
 
@@ -130,20 +163,41 @@ def main() -> int:
         # always reschedules itself: a `poll_once()` error, or an error
         # raised while showing/refreshing the window, must not silently
         # and permanently kill the watcher with no error shown to the user.
-        nonlocal consecutive_failures
+        nonlocal consecutive_failures, refresh_deferred
         try:
             ready = w.poll_once()
+            uploading = window.upload_thread is not None and window.upload_thread.is_alive()
             if ready:
-                # Read the live settings, not a snapshot taken at startup.
-                if state.settings.get("notify_mode", "toast") == "popup":
-                    window.show(preselect=set(ready))
-                else:
-                    window.refresh(preselect=set(ready))
+                if uploading:
+                    # refresh()/show() destroy every row and rebuild the
+                    # list from scratch, which would wipe out the links
+                    # and progress of the upload currently running. Defer
+                    # the rebuild until the upload finishes, but still let
+                    # the user know new recordings showed up.
+                    refresh_deferred = True
                     try:
                         icon.notify(f"{len(ready)} new recording(s) ready to upload",
                                     "OBS → YouTube Uploader")
                     except Exception:
                         pass  # Notifications are best-effort.
+                else:
+                    # Read the live settings, not a snapshot taken at startup.
+                    if state.settings.get("notify_mode", "toast") == "popup":
+                        window.show(preselect=set(ready))
+                    else:
+                        window.refresh(preselect=set(ready))
+                        try:
+                            icon.notify(f"{len(ready)} new recording(s) ready to upload",
+                                        "OBS → YouTube Uploader")
+                        except Exception:
+                            pass  # Notifications are best-effort.
+                    refresh_deferred = False
+            elif refresh_deferred and not uploading:
+                # The upload that blocked the deferred refresh above has
+                # since finished; catch the list up now even though this
+                # particular tick found nothing new.
+                window.refresh()
+                refresh_deferred = False
             consecutive_failures = 0
         except Exception:
             # A single failure looks identical to "nothing new to upload,"
@@ -167,6 +221,7 @@ def main() -> int:
             root.after(int(POLL_SECONDS * 1000), poll)
 
     consecutive_failures = 0
+    refresh_deferred = False
     root.after(int(POLL_SECONDS * 1000), poll)
     root.mainloop()
     icon.stop()

@@ -6,10 +6,17 @@ in the UI layer; this module deals only in data.
 """
 import datetime
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 VIDEO_EXTS = {".mkv", ".mp4", ".flv", ".mov", ".avi", ".ts", ".m4v", ".webm"}
+
+# Avoids a flashed console window per ffprobe call in a console=False
+# PyInstaller build — this runs once per file on every list refresh.
+# CREATE_NO_WINDOW doesn't exist off Windows, and the test suite injects
+# fake runners on Linux, so this must stay a no-op there.
+_NO_WINDOW_KWARGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 def format_size(size_bytes: float) -> str:
@@ -79,7 +86,7 @@ def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -
         result = runner(
             [ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
              "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=15, **_NO_WINDOW_KWARGS,
         )
     except Exception:
         return None
