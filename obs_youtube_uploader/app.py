@@ -365,9 +365,7 @@ class UploaderWindow:
             self._ui(self.status.config, {"text": "Building archive…"})
             archive = combatlog.build_archive(selection, out, start_utc, end_utc)
 
-            who = ", ".join(archive.characters) or "unknown pilots"
-            content = (f"Combat logs {start_utc:%Y-%m-%d %H:%M}–{end_utc:%H:%M} UTC "
-                       f"· {archive.file_count} file(s) · {who}")
+            content = combatlog.summarize_archive(archive, start_utc, end_utc)
             self._ui(self.status.config, {"text": "Posting to Discord…"})
             result = discord.post_archive(hook, archive.path, content)
 
@@ -377,8 +375,16 @@ class UploaderWindow:
                     archive.path.unlink()
                 except OSError:
                     pass
+                # Discord's response message alone (e.g. "Posted x.zip (KB).")
+                # doesn't mention a cap; append the same drop note so the
+                # status label doesn't quietly disagree with the content the
+                # user just sent.
+                status_text = result.message
+                note = combatlog.dropped_note(archive.dropped)
+                if note:
+                    status_text += f" ({note})"
                 self._ui(self.status.config,
-                         {"text": result.message, "foreground": "green"})
+                         {"text": status_text, "foreground": "green"})
             else:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told

@@ -96,13 +96,23 @@ def find_gamelogs_dir(home: Path | None = None) -> Path | None:
 WINDOW_PADDING = datetime.timedelta(minutes=5)
 MAX_FILES = 64
 
-# Stat-avoidance only, NOT a correctness filter. entry.stat() is ~4.6ms on a
-# WSL 9p mount, so stat'ing every file in a folder spanning months costs ~25s.
+# Stat-avoidance only, NOT a correctness filter. entry.stat() measured at
+# ~4.6ms on a WSL 9p mount (/mnt/c), so stat'ing every file in a folder
+# spanning months cost ~25s there, cut to ~4s with this guard. That
+# measurement is WSL-only, though, and this app ships Windows-only: on native
+# Windows, os.DirEntry.stat() is typically served from data FindFirstFile/
+# scandir already returned, so the benefit on the platform this actually
+# ships on is unverified and could be close to zero. The guard's cost is
+# real either way (silently missing a log from a >30-day continuous
+# session), so this should be re-measured on native Windows and removed if
+# it turns out to buy nothing there.
+#
 # A log can only overlap the window if its session was still being written
 # then, so one that started this long before it can be skipped without a
 # stat. Deliberately generous: the bound only needs to exceed the longest
 # plausible continuous EVE client session, and being wrong costs one missing
 # log, so 30 days rather than something tight.
+
 MAX_SESSION_SPAN = datetime.timedelta(days=30)
 
 # EVE names gamelogs YYYYMMDD_HHMMSS_<characterID>.txt, and that timestamp is
@@ -236,6 +246,38 @@ class ArchiveResult:
     raw_bytes: int
     zip_bytes: int
     dropped: int
+
+
+def dropped_note(dropped: int) -> str | None:
+    """A `·`-joinable clause naming the drop count, or None when nothing dropped.
+
+    select_logs sorts newest-first and keeps only the first MAX_FILES, so a
+    drop always means the OLDEST logs in the window were the ones cut, not a
+    random subset -- the wording says so explicitly rather than leaving the
+    direction of loss to be assumed.
+    """
+    if not dropped:
+        return None
+    noun = "log" if dropped == 1 else "logs"
+    return f"{dropped} older {noun} omitted (cap {MAX_FILES})"
+
+
+def summarize_archive(archive: ArchiveResult, start_utc, end_utc) -> str:
+    """One-line, `·`-separated description of an archive for Discord/status text.
+
+    Surfaces `archive.dropped` when non-zero (see dropped_note) so a truncated
+    export is never reported as a complete one.
+    """
+    who = ", ".join(archive.characters) or "unknown pilots"
+    parts = [
+        f"Combat logs {start_utc:%Y-%m-%d %H:%M}–{end_utc:%H:%M} UTC",
+        f"{archive.file_count} file(s)",
+        who,
+    ]
+    note = dropped_note(archive.dropped)
+    if note:
+        parts.append(note)
+    return " · ".join(parts)
 
 
 def build_archive(selection: Selection, out_path, start_utc, end_utc) -> ArchiveResult:

@@ -353,3 +353,51 @@ def test_overwrites_an_existing_archive(tmp_path):
     combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
     with zipfile.ZipFile(out) as z:
         assert combatlog.MANIFEST_NAME in z.namelist()
+
+
+def test_dropped_note_is_none_when_nothing_dropped():
+    assert combatlog.dropped_note(0) is None
+
+
+def test_dropped_note_singular():
+    assert combatlog.dropped_note(1) == f"1 older log omitted (cap {combatlog.MAX_FILES})"
+
+
+def test_dropped_note_plural():
+    assert combatlog.dropped_note(393) == (
+        f"393 older logs omitted (cap {combatlog.MAX_FILES})")
+
+
+def _archive_result(file_count, characters, dropped):
+    return combatlog.ArchiveResult(
+        path=Path("archive.zip"), file_count=file_count, characters=characters,
+        raw_bytes=0, zip_bytes=0, dropped=dropped)
+
+
+def test_summarize_archive_omits_drop_clause_when_nothing_dropped():
+    archive = _archive_result(2, ["Alice", "Zed"], 0)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary == "Combat logs 2026-08-20 21:00–21:30 UTC · 2 file(s) · Alice, Zed"
+    assert "omitted" not in summary
+
+
+def test_summarize_archive_reports_one_dropped_log():
+    archive = _archive_result(64, ["Alice"], 1)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary.endswith(f"1 older log omitted (cap {combatlog.MAX_FILES})")
+
+
+def test_summarize_archive_reports_many_dropped_logs():
+    archive = _archive_result(64, ["Alice"], 393)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary.endswith(f"393 older logs omitted (cap {combatlog.MAX_FILES})")
+
+
+def test_summarize_archive_falls_back_when_no_characters():
+    archive = _archive_result(0, [], 0)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert "unknown pilots" in summary
