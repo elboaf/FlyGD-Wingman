@@ -68,3 +68,166 @@ def test_quota_message_is_plain_english():
 def test_every_outcome_has_a_message():
     for outcome in uploader.Outcome:
         assert uploader.message_for(outcome)
+
+
+class FakeRequest:
+    """Stands in for a googleapiclient resumable insert request.
+
+    `script` is a list of either ('progress', fraction), ('fail', exc), or
+    ('done', response_dict) applied on successive next_chunk() calls.
+    """
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = 0
+
+    def next_chunk(self):
+        self.calls += 1
+        kind, value = self.script.pop(0)
+        if kind == "fail":
+            raise value
+        if kind == "progress":
+            return FakeStatus(value), None
+        return None, value
+
+
+class FakeStatus:
+    def __init__(self, fraction): self._f = fraction
+    def progress(self): return self._f
+
+
+def test_upload_returns_video_id_on_clean_run():
+    req = FakeRequest([("progress", 0.5), ("done", {"id": "abc123"})])
+    assert uploader.upload(req, sleep=lambda s: None) == "abc123"
+
+
+def test_upload_resumes_after_transient_failure():
+    req = FakeRequest([
+        ("progress", 0.3),
+        ("fail", FakeHttpError(503)),
+        ("progress", 0.7),
+        ("done", {"id": "xyz789"}),
+    ])
+    assert uploader.upload(req, sleep=lambda s: None) == "xyz789"
+
+
+def test_video_id_survives_mid_upload_failure():
+    """Regression guard: the link column breaks if retry loses the ID."""
+    req = FakeRequest([
+        ("fail", ConnectionResetError("reset")),
+        ("done", {"id": "survived"}),
+    ])
+    assert uploader.upload(req, sleep=lambda s: None) == "survived"
+
+
+def test_upload_does_not_restart_from_zero():
+    """next_chunk is called once more than the number of failures, never reset."""
+    req = FakeRequest([
+        ("progress", 0.5),
+        ("fail", FakeHttpError(500)),
+        ("done", {"id": "a"}),
+    ])
+    uploader.upload(req, sleep=lambda s: None)
+    assert req.calls == 3
+
+
+def test_upload_stops_after_max_attempts():
+    req = FakeRequest([("fail", FakeHttpError(503))] * 10)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, max_attempts=3, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.RETRY
+    assert req.calls == 3
+
+
+def test_upload_does_not_retry_permanent_errors():
+    req = FakeRequest([("fail", FakeHttpError(400))] * 5)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.PERMANENT
+    assert req.calls == 1
+
+
+def test_upload_does_not_retry_quota_errors():
+    err = FakeHttpError(403, b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+    req = FakeRequest([("fail", err)] * 5)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.QUOTA
+    assert req.calls == 1
+
+
+def test_backoff_grows_between_attempts():
+    slept = []
+    req = FakeRequest([
+        ("fail", FakeHttpError(503)),
+        ("fail", FakeHttpError(503)),
+        ("done", {"id": "a"}),
+    ])
+    uploader.upload(req, sleep=slept.append, jitter=lambda: 0.0)
+    assert len(slept) == 2
+    assert slept[1] > slept[0]
+
+
+def test_progress_callback_receives_fractions():
+    seen = []
+    req = FakeRequest([("progress", 0.25), ("progress", 0.75), ("done", {"id": "a"})])
+    uploader.upload(req, on_progress=seen.append, sleep=lambda s: None)
+    assert seen == [0.25, 0.75]
+
+
+def test_retry_callback_reports_each_attempt():
+    """A stalled upload must look like it is retrying, not frozen."""
+    attempts = []
+    req = FakeRequest([
+        ("fail", FakeHttpError(503)),
+        ("fail", FakeHttpError(503)),
+        ("done", {"id": "a"}),
+    ])
+    uploader.upload(req, on_retry=lambda n, d: attempts.append(n), sleep=lambda s: None)
+    assert attempts == [1, 2]
+
+
+def test_failed_upload_exposes_request_for_manual_retry():
+    """The request holds the resumable session; discarding it would make a
+    Retry button restart from zero."""
+    req = FakeRequest([("fail", FakeHttpError(503))] * 4)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, max_attempts=2, sleep=lambda s: None)
+    assert excinfo.value.request is req
+
+
+def test_missing_id_in_response_is_a_permanent_failure():
+    req = FakeRequest([("done", {"no_id_here": True})])
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.PERMANENT
+
+
+def test_attempt_counter_resets_after_successful_chunk():
+    """A transient failure every few chunks should not exhaust the retry
+    budget as long as progress keeps being made. Punishing steady, recovering
+    progress with a global failure counter would abort multi-gigabyte
+    uploads that are, in practice, healthy."""
+    script = []
+    for _ in range(5):
+        script.append(("fail", FakeHttpError(503)))
+        script.append(("progress", 0.1))
+    script.append(("done", {"id": "resilient"}))
+    req = FakeRequest(script)
+    assert uploader.upload(req, max_attempts=2, sleep=lambda s: None) == "resilient"
+
+
+def test_build_body_omits_suffix_for_single_upload():
+    body = uploader.build_body("Fight", "desc", "private", "20", index=0, total=1)
+    assert body["snippet"]["title"] == "Fight"
+    assert body["status"]["privacyStatus"] == "private"
+    assert body["snippet"]["categoryId"] == "20"
+
+
+def test_build_body_adds_suffix_for_multi_upload():
+    body = uploader.build_body("Fight", "d", "private", "20", index=1, total=3)
+    assert body["snippet"]["title"] == "Fight (2/3)"
+
+
+def test_build_body_falls_back_to_untitled():
+    body = uploader.build_body("", "d", "private", "20", index=0, total=1)
+    assert body["snippet"]["title"] == "Untitled"
