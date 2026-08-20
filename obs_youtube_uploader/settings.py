@@ -1,9 +1,7 @@
 """Settings persistence.
 
 Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
-``category_id``). The privacy default is ``private``, resolving an
-inconsistency in the old code where loading defaulted to ``unlisted`` but
-uploading defaulted to ``private``.
+``category_id``).
 """
 import json
 from pathlib import Path
@@ -11,12 +9,17 @@ from pathlib import Path
 from . import paths
 
 DEFAULTS = {
-    "privacy": "private",
+    # unlisted, not private: a private upload nobody can watch defeats the
+    # purpose of sharing a fight. This reverses an earlier decision that
+    # chose private as the safer default for automatic uploads.
+    "privacy": "unlisted",
     "category": "20",
     "notify_mode": "toast",
-    # Not a user-facing setting, but it must live here: save() projects onto
-    # DEFAULTS keys, so anything undeclared is dropped on every write.
+    # Not a user-facing preference, but it must live here: save() projects
+    # onto DEFAULTS keys, so anything undeclared is dropped on every write.
     "recording_dir": None,
+    "discord_webhook": "",
+    "gamelogs_dir": None,
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -43,6 +46,10 @@ def load(path: Path | None = None) -> dict:
         data["category"] = DEFAULTS["category"]
     if data["recording_dir"] is not None and not isinstance(data["recording_dir"], str):
         data["recording_dir"] = None
+    if not isinstance(data["discord_webhook"], str):
+        data["discord_webhook"] = ""
+    if data["gamelogs_dir"] is not None and not isinstance(data["gamelogs_dir"], str):
+        data["gamelogs_dir"] = None
     return data
 
 
