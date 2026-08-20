@@ -16,6 +16,12 @@ Run on Windows against a real install before each release.
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] With OBS absent, the folder picker appears instead
 - [ ] Existing recordings do NOT produce a notification on first launch
+- [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
+      Rename `bin\ffmpeg.exe` inside the install directory so it fails to
+      resolve, then start the app. Expected: the app still starts and
+      lists recordings normally; the Stitch checkbox is disabled with an
+      explanatory "(ffmpeg not found — stitching unavailable)" label.
+      Restore the binary afterward.
 
 ## Watcher
 - [ ] Recording in OBS then stopping produces one notification
@@ -54,6 +60,15 @@ Run on Windows against a real install before each release.
 - [ ] A non-numeric category ID is rejected with a warning
 
 ## Upload
+- [ ] **First upload triggers Google sign-in automatically, without
+      Settings.** Delete `%LOCALAPPDATA%\OBSYouTubeUploader\token.json`
+      first, so no token is stored. Select a recording and click **Upload
+      Selected** directly — do not open Settings. Expected: the browser
+      opens for Google sign-in, and once you consent, the upload proceeds
+      on its own. This is the automatic reauth path in the upload worker,
+      separate from the Settings → Connect Google Account button, and is
+      likely the most common first-run route (install, see recordings,
+      upload, never touch Settings).
 - [ ] Single upload completes and the link column fills in
 - [ ] Copy button puts a working URL on the clipboard
 - [ ] Open button opens the video in a browser
@@ -69,6 +84,14 @@ Run on Windows against a real install before each release.
 - [ ] Retry of a failed STITCHED upload re-stitches and restarts (expected —
       the temp file is deleted on failure by design)
 - [ ] Temp stitch file is gone even after a failed upload
+- [ ] **Non-retryable upload failure disables Retry.** Trigger a hard API
+      error rather than a network blip — either exhaust the shared daily
+      quota, or revoke the app's access from your Google account's
+      permissions page and then upload. Expected: a plain-language error
+      dialog (not a traceback or stack trace), and the Retry button stays
+      DISABLED, since retrying cannot help. This is a distinct code path
+      from the "kill the network" case above — confirm Retry's state
+      differs between the two.
 
 ## Delete
 - [ ] Confirmation dialog lists the correct filenames
@@ -79,6 +102,10 @@ Run on Windows against a real install before each release.
 ## Single instance
 - [ ] Launching a second copy exits quietly with no second tray icon
 - [ ] The first instance keeps working normally afterwards
+- [ ] **Tray Quit actually exits.** Right-click the tray icon and choose
+      Quit. Expected: the process ends, the tray icon disappears (no
+      orphaned icon lingering until Explorer refreshes it away), and no
+      background process remains running.
 
 ## Release
 - [ ] **Version-consistency check catches a mismatch.** Bump one of
