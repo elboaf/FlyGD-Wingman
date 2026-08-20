@@ -1,0 +1,26 @@
+[project]
+name = "obs-youtube-uploader"
+version = "2.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "pystray",
+    "Pillow",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+# Declared explicitly rather than left to auto-discovery. `packaging/` holds
+# build scripts, not an importable package, but setuptools' flat-layout
+# discovery sees it (and `packaging/bin/` once ffmpeg is fetched) as
+# additional top-level packages, hits the multiple-top-level-packages error,
+# and aborts the install entirely. That failure took down every dependency
+# and produced a frozen build with no pystray in it.
+packages = ["obs_youtube_uploader"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

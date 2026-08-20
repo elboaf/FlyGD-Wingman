@@ -1,0 +1,40 @@
+# .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Check version consistency
+        # Three files declare the version independently: pyproject.toml,
+        # obs_youtube_uploader/__init__.py, and packaging/installer.iss. Nothing
+        # else enforces that they agree, so a bump to one that misses the others
+        # would ship an installer whose filename claims one version while the
+        # app reports another. Fail loud, print all three on mismatch.
+        run: |
+          PYPROJECT_VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          INIT_VERSION=$(grep -m1 '^__version__ = ' obs_youtube_uploader/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
+          ISS_VERSION=$(grep -m1 '#define AppVersion' packaging/installer.iss | sed -E 's/.*AppVersion "(.*)".*/\1/')
+
+          echo "pyproject.toml:                  $PYPROJECT_VERSION"
+          echo "obs_youtube_uploader/__init__.py: $INIT_VERSION"
+          echo "packaging/installer.iss:         $ISS_VERSION"
+
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ] || [ "$PYPROJECT_VERSION" != "$ISS_VERSION" ]; then
+            echo "::error::Version mismatch across pyproject.toml ($PYPROJECT_VERSION), __init__.py ($INIT_VERSION), and installer.iss ($ISS_VERSION)"
+            exit 1
+          fi
+      - name: Test
+        run: python -m pytest tests/ -v

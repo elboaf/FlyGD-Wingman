@@ -1,0 +1,91 @@
+# .github/workflows/release.yml
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Inno Setup
+        # windows-latest is not guaranteed to ship Inno Setup. installer.iss
+        # uses ArchitecturesInstallIn64BitMode=x64compatible, a setting value
+        # introduced in Inno Setup 6.3 -- an older iscc would fail to compile.
+        # Chocolatey's innosetup package is current enough (6.3+) as of this
+        # writing.
+        run: choco install innosetup --no-progress -y
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          # Exit codes checked explicitly: a multi-line run: block on Windows
+          # keeps going after a native command fails, so a dead
+          # `pip install -e .` would otherwise leave a green step, no runtime
+          # dependencies, and a frozen app that crashes on launch.
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+          python -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "editable install failed - the app's dependencies are missing" }
+          # Pinned: the PyInstaller spec and installer.iss both assume 6.x's
+          # one-folder layout (executable at the top of dist/, dependencies
+          # under _internal/). A 7.x release with a changed layout would
+          # produce an installer whose shortcuts point at nothing while the
+          # build still reports success. If you bump this, re-check
+          # packaging/installer.iss's {app}\{#AppExe} assumption at the same
+          # time.
+          python -m pip install "pyinstaller>=6,<7"
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
+
+      - name: Verify the app's dependencies are importable
+        # PyInstaller reports a missing hidden import as an ERROR line but
+        # still exits 0, so a missing dependency yields a successful build of
+        # a broken application. Fail here, where the cause is obvious.
+        shell: pwsh
+        run: |
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
+
+      - name: Inject OAuth credentials
+        shell: pwsh
+        env:
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+        run: |
+          if (-not $env:OAUTH_CLIENT_ID) { throw "OAUTH_CLIENT_ID secret is not set" }
+          if (-not $env:OAUTH_CLIENT_SECRET) { throw "OAUTH_CLIENT_SECRET secret is not set" }
+          $file = "obs_youtube_uploader/credentials.py"
+          $content = Get-Content $file -Raw
+          $content = $content.Replace("REPLACE_AT_BUILD_TIME.apps.googleusercontent.com", $env:OAUTH_CLIENT_ID)
+          $content = $content.Replace("REPLACE_AT_BUILD_TIME", $env:OAUTH_CLIENT_SECRET)
+          Set-Content $file $content -NoNewline
+
+      - name: Fetch ffmpeg
+        run: python packaging/fetch_ffmpeg.py
+
+      - name: Build executable
+        run: python -m PyInstaller packaging/uploader.spec --noconfirm
+
+      - name: Build installer
+        run: iscc packaging/installer.iss
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/OBS-YouTube-Uploader-Setup-*.exe
+          # Enforced, not merely documented: the global constraint blocks
+          # public release until OAuth verification clears. Flip to false
+          # in the same commit that flips the Google console to production.
+          prerelease: true
+          body: |
+            **Pre-release note:** until Google's OAuth verification clears,
+            only approved testers can sign in. Everyone else will see
+            `Error 403: access_denied`. Ask to be added to the tester list.
+
+            Windows will show a "Windows protected your PC" warning because
+            the installer is unsigned. Click **More info** then **Run anyway**.

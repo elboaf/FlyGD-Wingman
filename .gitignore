@@ -1,0 +1,7 @@
+docs/superpowers/
+obs_youtube_uploader/credentials_real.py
+build/
+dist/
+packaging/bin/
+*.egg-info/
+__pycache__/
