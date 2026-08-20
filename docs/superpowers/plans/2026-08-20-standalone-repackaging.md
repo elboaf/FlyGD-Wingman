@@ -1248,7 +1248,7 @@ def message_for(outcome: Outcome) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_uploader.py -v`
-Expected: PASS (22 tests, counting parametrized cases)
+Expected: PASS (19 tests, counting parametrized cases)
 
 - [ ] **Step 5: Commit**
 
@@ -1506,7 +1506,7 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_uploader.py -v`
-Expected: PASS (37 tests)
+Expected: PASS (34 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1729,7 +1729,7 @@ git commit -m "feat: add OAuth with build-time embedded credentials"
 
 **Interfaces:**
 - Consumes: `library.discover`, `paths.seen_file()`
-- Produces: `SeenEntry` dataclass (`size: int`, `mtime: float`); `load_seen(path) -> dict[str, SeenEntry]`, `save_seen(path, seen) -> None`, `Watcher(directory, seen_path, *, stable_polls=3)` with methods `baseline() -> None`, `poll_once() -> list[Path]`, `forget(path) -> None`, `prune() -> int`
+- Produces: `SeenEntry` dataclass (`size: int`, `mtime: float`); `load_seen(path) -> dict[str, SeenEntry]`, `save_seen(path, seen) -> None`, `Watcher(directory, seen_path, *, stable_polls=3)` with methods `baseline() -> None`, `poll_once() -> list[Path]`, `forget(path) -> None`, `prune() -> int`, `rebind(directory) -> None`
 
 Two behaviors the spec calls out: existing files are baselined without notifying, and the seen-set persists so recordings made while the app was closed are still announced.
 
@@ -1859,6 +1859,44 @@ def test_load_seen_survives_corrupt_file(tmp_path):
     assert watcher.load_seen(p) == {}
 
 
+def test_changed_file_is_reported_again(tmp_path):
+    """SeenEntry stores size and mtime; they must actually be compared, or
+    they are write-only fields and 'new or changed' is not implemented."""
+    seen_path = tmp_path / "seen.json"
+    f = _write(tmp_path / "a.mkv", 10)
+    w = watcher.Watcher(tmp_path, seen_path)
+    w.baseline()
+    for _ in range(5):
+        assert w.poll_once() == []
+    _write(f, 999)  # rewritten: different size and mtime
+    assert [p.name for p in _settle(w, f)] == ["a.mkv"]
+
+
+def test_stale_seen_entry_does_not_suppress_a_new_file(tmp_path):
+    seen_path = tmp_path / "seen.json"
+    watcher.save_seen(seen_path, {str(tmp_path / "ghost.mkv"): watcher.SeenEntry(1, 1.0)})
+    _write(tmp_path / "real.mkv", 10)
+    w = watcher.Watcher(tmp_path, seen_path)
+    w.baseline()
+    assert [p.name for p in _settle(w, None)] == ["real.mkv"]
+
+
+def test_rebind_switches_directory_and_baselines_silently(tmp_path):
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    _write(old / "a.mkv", 10)
+    _write(new / "b.mkv", 10)
+    w = watcher.Watcher(old, tmp_path / "seen.json")
+    w.baseline()
+    w.rebind(new)
+    for _ in range(5):
+        assert w.poll_once() == []
+    _write(new / "c.mkv", 10)
+    assert [p.name for p in _settle(w, None)] == ["c.mkv"]
+
+
 def test_missing_directory_yields_no_results(tmp_path):
     w = watcher.Watcher(tmp_path / "nope", tmp_path / "seen.json")
     w.baseline()
@@ -1951,16 +1989,17 @@ class Watcher:
         save_seen(self.seen_path, self.seen)
 
     def poll_once(self) -> list[Path]:
-        """Return files that have just become stable and are not yet seen."""
+        """Return files that have just become stable and are new or changed."""
         ready: list[Path] = []
         for path in library.discover(self.directory):
             key = str(path)
-            if key in self.seen:
-                continue
             try:
                 stat = path.stat()
             except OSError:
                 continue
+            entry = self.seen.get(key)
+            if entry is not None and entry.size == stat.st_size and entry.mtime == stat.st_mtime:
+                continue  # Unchanged since we last recorded it.
             previous = self._pending.get(key)
             if previous is not None and previous[0] == stat.st_size:
                 count = previous[1] + 1
@@ -1975,6 +2014,24 @@ class Watcher:
         if ready:
             save_seen(self.seen_path, self.seen)
         return ready
+
+    def rebind(self, directory) -> None:
+        """Point at a new directory and silently baseline its contents.
+
+        Used when the user changes the recording folder in Settings. Without
+        this the watcher keeps polling the old folder until restart, and
+        without the silent baseline the new folder's whole back catalogue
+        would be announced at once.
+        """
+        self.directory = Path(directory)
+        self._pending.clear()
+        for path in library.discover(self.directory):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            self.seen[str(path)] = SeenEntry(size=stat.st_size, mtime=stat.st_mtime)
+        save_seen(self.seen_path, self.seen)
 
     def forget(self, path) -> None:
         """Drop an entry, e.g. after the user deletes the file."""
@@ -1996,7 +2053,7 @@ class Watcher:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_watcher.py -v`
-Expected: PASS (12 tests)
+Expected: PASS (16 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -2061,6 +2118,10 @@ class UploadJob:
     Tk is not thread-safe: a worker calling .get() on a StringVar is the
     same violation as configuring a widget from one. Snapshotting into a
     plain dataclass at dispatch time removes the whole class of bug.
+
+    `start_index` lets a retry resume partway through without renumbering
+    the "(2/3)" title suffixes: the worker skips earlier indices but still
+    computes totals from the full list.
     """
     items: list["library.VideoInfo"]
     title: str
@@ -2068,6 +2129,15 @@ class UploadJob:
     stitch: bool
     privacy: str
     category: str
+    start_index: int = 0
+
+
+@dataclass
+class RetryState:
+    """What a manual Retry needs to resume rather than restart."""
+    job: UploadJob
+    resume_index: int
+    request: object | None
 ```
 
 - [ ] **Step 2: Write the window class**
@@ -2095,10 +2165,10 @@ class UploaderWindow:
         self._build()
         self.refresh()
 
-    def show(self) -> None:
+    def show(self, preselect: set | None = None) -> None:
         self.root.deiconify()
         self.root.lift()
-        self.refresh()
+        self.refresh(preselect)
 
     def hide(self) -> None:
         self.root.withdraw()
@@ -2166,7 +2236,13 @@ class UploaderWindow:
 Append to `UploaderWindow`:
 
 ```python
-    def refresh(self) -> None:
+    def refresh(self, preselect: set | None = None) -> None:
+        """Rebuild the list. Paths in *preselect* start checked.
+
+        The watcher passes newly-ready recordings here so the common case —
+        finish a fight, open the window, hit Upload — needs no clicking.
+        """
+        preselect = preselect or set()
         for child in self.inner.winfo_children():
             child.destroy()
         self.selected.clear()
@@ -2178,7 +2254,7 @@ Append to `UploaderWindow`:
         for info in self.infos:
             row = ttk.Frame(self.inner)
             row.pack(fill=tk.X, pady=1)
-            var = tk.BooleanVar(value=False)
+            var = tk.BooleanVar(value=info.path in preselect)
             self.selected[info.path] = var
             ttk.Checkbutton(row, variable=var, width=2).pack(side=tk.LEFT, padx=2)
             for text, width in ((info.path.name, 30), (info.date_str, 14),
@@ -2242,9 +2318,14 @@ Append to `UploaderWindow`:
         ):
             return
         deleted, failures = library.delete([i.path for i in chosen])
+        # Forget only what actually went. A file that failed to delete still
+        # exists, and dropping its seen-entry would make the watcher
+        # announce it again as if it were new.
+        failed_paths = {p for p, _ in failures}
         if self.on_deleted is not None:
             for info in chosen:
-                self.on_deleted(info.path)
+                if info.path not in failed_paths:
+                    self.on_deleted(info.path)
         self.refresh()
         msg = f"Deleted {deleted} file(s)."
         if failures:
@@ -2288,6 +2369,7 @@ Append to `UploaderWindow`:
     def _upload_worker(self, job: "UploadJob") -> None:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
+        index = job.start_index
         try:
             creds = uploader.load_credentials(paths.token_file())
             if uploader.needs_reauth(creds):
@@ -2306,22 +2388,33 @@ Append to `UploaderWindow`:
                     self._ui(self._set_link, info.path, vid)
             else:
                 total = len(job.items)
-                for index, info in enumerate(job.items):
+                for index in range(job.start_index, total):
+                    info = job.items[index]
                     vid = self._upload_one(youtube, MediaFileUpload, info.path,
                                            job, index, total)
                     self._ui(self._set_link, info.path, vid)
 
-            self.last_failure = None
+            self.retry_state = None
             self._ui(self.status.config, {"text": "Upload complete!", "foreground": "green"})
             self._ui(self.progress.config, {"value": 100})
             self._ui(self.retry_btn.state, ["disabled"])
         except uploader.UploadFailed as exc:
-            self.last_failure = exc
+            # Stitched failures cannot resume: the context manager has
+            # already deleted the merged file the session points at, which
+            # is the correct trade for never leaking multi-GB temporaries.
+            # Retry re-stitches instead.
+            resumable = exc.request is not None and not job.stitch
+            self.retry_state = RetryState(
+                job=job,
+                resume_index=index,
+                request=exc.request if resumable else None,
+            )
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
             self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
             if exc.outcome is uploader.Outcome.RETRY:
                 self._ui(self.retry_btn.state, ["!disabled"])
         except Exception as exc:
+            self.retry_state = None
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
             self._ui(self.status.config, {"text": f"Error: {exc}", "foreground": "red"})
 
@@ -2345,25 +2438,45 @@ Append to `UploaderWindow`:
         return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
 
     def _manual_retry(self) -> None:
-        """Resume the failed session rather than restarting it."""
-        failure = self.last_failure
-        if failure is None or failure.request is None:
+        state = self.retry_state
+        if state is None:
             return
         self.retry_btn.state(["disabled"])
-
-        def worker() -> None:
-            try:
-                uploader.upload(failure.request)
-                self.last_failure = None
-                self._ui(self.status.config,
-                         {"text": "Upload complete!", "foreground": "green"})
-            except uploader.UploadFailed as exc:
-                self.last_failure = exc
-                self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
-                self._ui(self.retry_btn.state, ["!disabled"])
-
-        self.upload_thread = threading.Thread(target=worker, daemon=True)
+        self.upload_thread = threading.Thread(
+            target=self._retry_worker, args=(state,), daemon=True)
         self.upload_thread.start()
+
+    def _retry_worker(self, state: "RetryState") -> None:
+        """Resume the interrupted upload, then finish the rest of the job."""
+        from dataclasses import replace
+        if state.request is None:
+            # Stitched, or no session to resume: redo the whole job.
+            self._upload_worker(replace(state.job, start_index=0))
+            return
+        try:
+            info = state.job.items[state.resume_index]
+            total = len(state.job.items)
+
+            def on_progress(fraction: float) -> None:
+                pct = ((state.resume_index + fraction) / total) * 100
+                self._ui(self.progress.config, {"value": pct})
+
+            vid = uploader.upload(state.request, on_progress=on_progress)
+            self._ui(self._set_link, info.path, vid)
+        except uploader.UploadFailed as exc:
+            self.retry_state = replace(state, request=exc.request)
+            self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
+            self._ui(self.retry_btn.state, ["!disabled"])
+            return
+        # The resumed file is done; continue with whatever followed it.
+        if state.resume_index + 1 < len(state.job.items):
+            self._upload_worker(replace(state.job, start_index=state.resume_index + 1))
+        else:
+            self.retry_state = None
+            self._ui(self.status.config,
+                     {"text": "Upload complete!", "foreground": "green"})
+            self._ui(self.progress.config, {"value": 100})
+            self._ui(self.retry_btn.state, ["disabled"])
 ```
 
 - [ ] **Step 6: Add the `on_deleted` hook to `__init__`**
@@ -2372,7 +2485,8 @@ In `UploaderWindow.__init__`, after `self.upload_thread = None`, add:
 
 ```python
         self.on_deleted = None  # set by the tray app to notify the watcher
-        self.last_failure: uploader.UploadFailed | None = None
+        self.on_settings_saved = None  # set by the tray app; see _settings_saved
+        self.retry_state: "RetryState | None" = None
 ```
 
 - [ ] **Step 7: Verify the module imports cleanly**
@@ -2546,7 +2660,21 @@ Append this method to `UploaderWindow` in `obs_youtube_uploader/app.py`:
 ```python
     def _open_settings(self) -> None:
         from .settingsui import SettingsWindow
-        SettingsWindow(self.root, self.state, on_saved=self.refresh)
+        SettingsWindow(self.root, self.state, on_saved=self._settings_saved)
+
+    def _settings_saved(self) -> None:
+        """Hook the tray app replaces so a settings change reaches the
+        watcher too. Defaults to a plain refresh when running standalone."""
+        if self.on_settings_saved is not None:
+            self.on_settings_saved()
+        else:
+            self.refresh()
+```
+
+Also add to `UploaderWindow.__init__`, next to `self.on_deleted`:
+
+```python
+        self.on_settings_saved = None  # set by the tray app
 ```
 
 - [ ] **Step 3: Verify both modules parse and tests still pass**
@@ -2681,6 +2809,20 @@ def main() -> int:
     w.baseline()
     window.on_deleted = w.forget
 
+    def on_settings_saved() -> None:
+        """Settings changes must reach the watcher, not just AppState.
+
+        SettingsWindow replaces state.settings with a fresh dict and may
+        change state.recording_dir. Anything holding the original objects
+        goes stale, so the poll loop below reads state.settings each tick
+        rather than closing over cfg.
+        """
+        if Path(state.recording_dir) != w.directory:
+            w.rebind(state.recording_dir)
+        window.refresh()
+
+    window.on_settings_saved = on_settings_saved
+
     icon = build_tray(on_open=lambda: root.after(0, window.show),
                       on_quit=lambda: root.after(0, root.quit))
     threading.Thread(target=icon.run, daemon=True).start()
@@ -2691,10 +2833,11 @@ def main() -> int:
         except Exception:
             ready = []
         if ready:
-            window.refresh()
-            if cfg.get("notify_mode", "toast") == "popup":
-                window.show()
+            # Read the live settings, not a snapshot taken at startup.
+            if state.settings.get("notify_mode", "toast") == "popup":
+                window.show(preselect=set(ready))
             else:
+                window.refresh(preselect=set(ready))
                 try:
                     icon.notify(f"{len(ready)} new recording(s) ready to upload",
                                 "OBS → YouTube Uploader")
@@ -3112,6 +3255,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/OBS-YouTube-Uploader-Setup-*.exe
+          # Enforced, not merely documented: the global constraint blocks
+          # public release until OAuth verification clears. Flip to false
+          # in the same commit that flips the Google console to production.
+          prerelease: true
           body: |
             **Pre-release note:** until Google's OAuth verification clears,
             only approved testers can sign in. Everyone else will see
@@ -3262,12 +3409,16 @@ Run on Windows against a real install before each release.
 - [ ] With `notify_mode: popup`, the window raises instead
 - [ ] A recording made while the app was closed is announced on next launch
 - [ ] Existing recordings are NOT re-announced on an ordinary restart
+- [ ] Newly announced recordings are already checked when the window opens
 
 ## Settings
 - [ ] Settings button opens the dialog
 - [ ] Connect Google Account opens a browser and reports "Connected"
 - [ ] Changing privacy and saving persists across an app restart
-- [ ] Changing the recording folder takes effect without a restart
+- [ ] Changing the recording folder takes effect without a restart —
+      new recordings in the NEW folder are announced, old folder is ignored
+- [ ] Switching notify mode to popup takes effect on the next recording,
+      without a restart
 - [ ] A non-numeric category ID is rejected with a warning
 
 ## Upload
@@ -3281,6 +3432,10 @@ Run on Windows against a real install before each release.
 - [ ] Killing the network mid-upload shows "retrying in Ns", then resumes
 - [ ] After exhausting retries, the Retry button becomes enabled
 - [ ] Retry resumes rather than restarting from 0%
+- [ ] Retry of a 3-file batch that failed on file 2 uploads files 2 and 3,
+      and fills in links for both
+- [ ] Retry of a failed STITCHED upload re-stitches and restarts (expected —
+      the temp file is deleted on failure by design)
 - [ ] Temp stitch file is gone even after a failed upload
 
 ## Delete
