@@ -78,12 +78,16 @@ def acquire_single_instance():
     return handle
 
 
-def resolve_recording_dir(cfg: dict) -> Path | None:
+def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
     """Stored setting, then OBS's own config, then ask the user.
 
     Must be called after a Tk root exists (and has been withdrawn) so
     ``askdirectory`` has a real root to parent itself to instead of
     creating a stray default one.
+
+    ``ask`` is injectable (defaults to ``filedialog.askdirectory``) purely
+    so tests can exercise the stored/detected precedence above without a
+    display; it is not meant to be overridden in production.
     """
     stored = cfg.get("recording_dir")
     if stored and Path(stored).is_dir():
@@ -91,7 +95,7 @@ def resolve_recording_dir(cfg: dict) -> Path | None:
     detected = obsconfig.find_recording_dir()
     if detected and detected.is_dir():
         return detected
-    chosen = filedialog.askdirectory(title="Where does OBS save your recordings?")
+    chosen = ask(title="Where does OBS save your recordings?")
     return Path(chosen) if chosen else None
 
 

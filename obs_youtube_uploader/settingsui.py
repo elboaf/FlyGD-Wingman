@@ -4,7 +4,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import paths, settings as settings_mod, uploader
+from . import obsconfig, paths, settings as settings_mod, uploader
 
 PRIVACY_CHOICES = ["private", "unlisted", "public"]
 NOTIFY_CHOICES = ["toast", "popup"]
@@ -83,6 +83,8 @@ class SettingsWindow:
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(folder, text="Browse…", command=self._browse).pack(
             side=tk.LEFT, padx=(6, 0))
+        ttk.Button(folder, text="Detect", command=self._detect).pack(
+            side=tk.LEFT, padx=(6, 0))
 
         row = ttk.Frame(self.win)
         row.pack(fill=tk.X, **pad)
@@ -94,6 +96,31 @@ class SettingsWindow:
         chosen = filedialog.askdirectory(initialdir=self.rec_dir.get())
         if chosen:
             self.rec_dir.set(chosen)
+
+    def _detect(self) -> None:
+        """Re-run OBS config detection and let the user accept or reject it.
+
+        This is the recovery path for a bad stored ``recording_dir``: the
+        stored value normally wins over detection (correctly -- an explicit
+        choice should outrank a guess), so once a wrong value is saved
+        nothing ever re-runs the guess. This button re-runs it on demand,
+        but only fills the entry -- Save is still required, so the user
+        sees exactly what changed and can decline it.
+        """
+        detected = obsconfig.find_recording_dir()
+        if detected is None or not detected.is_dir():
+            messagebox.showinfo(
+                "Detect recording folder",
+                "Could not read OBS's configuration to detect a recording "
+                "folder. Make sure OBS is installed and has recorded at "
+                "least once, then try again.")
+            return
+        if str(detected) == self.rec_dir.get():
+            messagebox.showinfo(
+                "Detect recording folder",
+                f"Already set to the detected folder:\n{detected}")
+            return
+        self.rec_dir.set(str(detected))
 
     def _refresh_auth_label(self) -> None:
         creds = uploader.load_credentials(paths.token_file())
