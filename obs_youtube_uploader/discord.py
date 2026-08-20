@@ -232,15 +232,22 @@ def post_archive(webhook: Webhook, archive_path, content: str, *,
             f"The archive is {size / 1024 / 1024:.1f} MB, which is too large for "
             f"Discord ({MAX_ATTACHMENT_BYTES // 1024 // 1024} MB limit)."))
 
-    body, content_type = _build_multipart(archive_path, content)
-    request = urllib.request.Request(
-        webhook.url, data=body, headers={"Content-type": content_type}, method="POST")
-
     try:
+        # archive_path.read_bytes() inside _build_multipart can raise OSError
+        # even after the stat() above succeeded (e.g. permissions revoked, or
+        # any other unreadable-but-stat-able state) -- that must land here,
+        # not escape past the try, or the caller's "never raises" contract
+        # breaks and the recovery message below never gets shown.
+        body, content_type = _build_multipart(archive_path, content)
+        request = urllib.request.Request(
+            webhook.url, data=body, headers={"Content-type": content_type},
+            method="POST")
         with transport(request, timeout=_TIMEOUT_SECONDS) as response:
             status = getattr(response, "status", 200)
     except urllib.error.HTTPError as exc:
         return PostResult(False, redact(_describe_status(exc.code), webhook))
+    except OSError as exc:
+        return PostResult(False, f"Could not read the archive: {exc}")
     except Exception as exc:  # noqa: BLE001 - reported, never raised
         return PostResult(False, redact(f"Could not reach Discord: {exc}", webhook))
 
