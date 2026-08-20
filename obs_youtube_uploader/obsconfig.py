@@ -7,12 +7,9 @@ import configparser
 import os
 from pathlib import Path
 
-# Section/key pairs in priority order. Simple output mode is the default in
-# OBS and is what most users have.
-_PATH_KEYS = [
-    ("SimpleOutput", "FilePath"),
-    ("AdvOut", "RecFilePath"),
-]
+# (section, key) holding the recording path for each output mode.
+_SIMPLE_PATH_KEY = ("SimpleOutput", "FilePath")
+_ADVANCED_PATH_KEY = ("AdvOut", "RecFilePath")
 
 
 def _resolve_appdata(appdata: Path | None) -> Path | None:
@@ -33,12 +30,35 @@ def profiles_root(appdata: Path | None = None) -> Path | None:
 
 
 def _read_path(ini: Path) -> Path | None:
+    """Recording path from one profile's basic.ini, honoring output mode.
+
+    A profile's basic.ini almost always has both a [SimpleOutput] FilePath
+    and an [AdvOut] RecFilePath -- the inactive one is typically just OBS's
+    untouched default (e.g. "C:/Videos"), not the folder the user actually
+    records to. Picking a fixed section order silently returns that stale
+    default for every user in the other mode. [Output] Mode states which
+    section OBS is actually using, so read that first and prefer its
+    section; only fall back to the other section if the chosen one turns
+    out to have no usable value.
+    """
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
         parser.read(ini, encoding="utf-8-sig")
     except (configparser.Error, OSError, UnicodeDecodeError):
         return None
-    for section, key in _PATH_KEYS:
+
+    mode = "simple"
+    if parser.has_option("Output", "Mode"):
+        if parser.get("Output", "Mode").strip().lower() == "advanced":
+            mode = "advanced"
+        # Any other value (including "simple" or something unrecognised)
+        # keeps the default -- Simple is also OBS's own default mode.
+
+    primary, secondary = (
+        (_ADVANCED_PATH_KEY, _SIMPLE_PATH_KEY) if mode == "advanced"
+        else (_SIMPLE_PATH_KEY, _ADVANCED_PATH_KEY)
+    )
+    for section, key in (primary, secondary):
         if parser.has_option(section, key):
             value = parser.get(section, key).strip()
             if value:

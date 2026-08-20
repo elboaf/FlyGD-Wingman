@@ -201,3 +201,75 @@ def test_active_profile_dir_name_returns_none_without_profiledir_key(tmp_path):
     d.mkdir(parents=True)
     (d / "global.ini").write_text("[Basic]\nProfile=Display Name\n", encoding="utf-8")
     assert obsconfig._active_profile_dir_name(tmp_path) is None
+
+
+def test_advanced_mode_prefers_adv_out_path(tmp_path):
+    """The user's actual bug: Mode=Advanced with both sections populated
+    must return AdvOut's path, not the stale SimpleOutput default. Fails
+    against the fixed-priority-order logic, which always returned
+    SimpleOutput's C:/Videos here instead of the real D:/Videos."""
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=Advanced\n"
+        "[SimpleOutput]\nFilePath=C:/Videos\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("D:/Videos")
+
+
+def test_simple_mode_prefers_simple_output_path(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=Simple\n"
+        "[SimpleOutput]\nFilePath=C:/Videos\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
+
+
+def test_missing_output_section_defaults_to_simple(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[SimpleOutput]\nFilePath=C:/Videos\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
+
+
+def test_unrecognised_mode_value_defaults_to_simple(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=Streaming\n"
+        "[SimpleOutput]\nFilePath=C:/Videos\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
+
+
+def test_advanced_mode_falls_back_to_simple_when_adv_out_missing(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=Advanced\n"
+        "[SimpleOutput]\nFilePath=C:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
+
+
+def test_simple_mode_falls_back_to_advanced_when_simple_output_empty(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=Simple\n"
+        "[SimpleOutput]\nFilePath=\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("D:/Videos")
+
+
+def test_advanced_mode_is_case_insensitive(tmp_path):
+    _profile(
+        tmp_path, "OnlyProfile",
+        "[Output]\nMode=ADVANCED\n"
+        "[SimpleOutput]\nFilePath=C:/Videos\n"
+        "[AdvOut]\nRecFilePath=D:/Videos\n",
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("D:/Videos")
