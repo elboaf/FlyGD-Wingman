@@ -542,6 +542,23 @@ def test_delete_reports_failures_without_aborting_batch(tmp_path):
     assert len(failures) == 1
     assert failures[0][0] == missing
     assert not c.exists()
+
+
+def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
+    """Race: a file gone by stat() time must be skipped, not crash the scan."""
+    _touch(tmp_path / "old.mkv", mtime=1000)
+    disappeared = _touch(tmp_path / "disappeared.mkv", mtime=1500)
+    _touch(tmp_path / "new.mkv", mtime=2000)
+
+    original_stat = Path.stat
+
+    def stat_with_race(self):
+        if self == disappeared:
+            raise FileNotFoundError(f"{self} deleted between iterdir and stat")
+        return original_stat(self)
+
+    monkeypatch.setattr(Path, "stat", stat_with_race)
+    assert [p.name for p in library.discover(tmp_path)] == ["new.mkv", "old.mkv"]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -599,16 +616,25 @@ class VideoInfo:
 
 
 def discover(directory: Path) -> list[Path]:
-    """Video files in *directory*, newest first. Missing directory -> []."""
+    """Video files in *directory*, newest first. Missing directory -> [].
+
+    Skips files that disappear between iterdir and stat. This is not a
+    hypothetical race: the watcher polls this every few seconds against a
+    directory OBS is actively writing to, while the UI can delete files.
+    Stat exactly once per file, inside the guard.
+    """
+    entries: list[tuple[Path, float]] = []
     try:
-        entries = [
-            p for p in Path(directory).iterdir()
-            if p.is_file() and p.suffix.lower() in VIDEO_EXTS
-        ]
+        for p in Path(directory).iterdir():
+            if p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+                try:
+                    entries.append((p, p.stat().st_mtime))
+                except OSError:
+                    continue  # Vanished mid-scan; skip it, do not abort.
     except OSError:
         return []
-    entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return entries
+    entries.sort(key=lambda pair: pair[1], reverse=True)
+    return [p for p, _ in entries]
 
 
 def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> float | None:
@@ -665,7 +691,7 @@ def delete(items: list[Path]) -> tuple[int, list[tuple[Path, str]]]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_library.py -v`
-Expected: PASS (15 tests)
+Expected: PASS (16 tests)
 
 - [ ] **Step 5: Commit**
 
