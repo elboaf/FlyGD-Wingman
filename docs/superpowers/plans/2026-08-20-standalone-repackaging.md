@@ -781,6 +781,32 @@ def test_skips_malformed_profile_and_uses_valid_older_one(tmp_path):
 def test_ignores_blank_path_value(tmp_path):
     _profile(tmp_path, "Blank", "[SimpleOutput]\nFilePath=\n")
     assert obsconfig.find_recording_dir(tmp_path) is None
+
+
+def test_handles_utf8_bom_in_ini_file(tmp_path):
+    """OBS config files can carry a BOM; utf-8 would silently fail to parse."""
+    d = tmp_path / "obs-studio" / "basic" / "profiles" / "Bom"
+    d.mkdir(parents=True)
+    (d / "basic.ini").write_bytes(
+        b"\xef\xbb\xbf[SimpleOutput]\nFilePath=C:/rec\n"
+    )
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/rec")
+
+
+def test_survives_stat_race_when_file_vanishes(tmp_path, monkeypatch):
+    """A basic.ini gone by stat() time must be skipped, not abort the scan."""
+    _profile(tmp_path, "Good", "[SimpleOutput]\nFilePath=C:/good\n")
+    vanishing = _profile(tmp_path, "Vanishing", "[SimpleOutput]\nFilePath=C:/gone\n")
+
+    original_stat = Path.stat
+
+    def stat_with_race(self):
+        if self == vanishing:
+            raise FileNotFoundError(f"{self} vanished")
+        return original_stat(self)
+
+    monkeypatch.setattr(Path, "stat", stat_with_race)
+    assert obsconfig.find_recording_dir(tmp_path) == Path("C:/good")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -822,7 +848,12 @@ def profiles_root(appdata: Path | None = None) -> Path | None:
 def _read_path(ini: Path) -> Path | None:
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
-        parser.read(ini, encoding="utf-8")
+        # utf-8-sig, not utf-8: OBS config files can carry a UTF-8 BOM, which
+        # makes configparser raise MissingSectionHeaderError. That exception is
+        # caught below, so the profile would silently yield no path and
+        # auto-detection would quietly never work. This codec strips a BOM when
+        # present and is byte-identical to utf-8 when absent.
+        parser.read(ini, encoding="utf-8-sig")
     except (configparser.Error, OSError, UnicodeDecodeError):
         return None
     for section, key in _PATH_KEYS:
@@ -857,7 +888,7 @@ def find_recording_dir(appdata: Path | None = None) -> Path | None:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_obsconfig.py -v`
-Expected: PASS (10 tests)
+Expected: PASS (12 tests)
 
 - [ ] **Step 5: Commit**
 
