@@ -21,7 +21,9 @@ Current install burden:
 | 5 | Add script in OBS; set recording dir and `pythonw.exe` path | Eliminated — OBS integration removed |
 | 6 | Create Google Cloud project, OAuth client, allowlist self, place `client_secrets.json` | Eliminated — shared embedded credentials |
 
-Target: **one step.** Download the installer, run it.
+Target: **one step.** Download the installer, run it. See "Release gating"
+below — this target is only met for the general public once OAuth
+verification has cleared.
 
 ## Goals
 
@@ -78,6 +80,28 @@ crash, not a limit.
 While unverified, **refresh tokens expire every 7 days.** Re-authentication
 is therefore a routine weekly path, not an edge case, and must be seamless.
 
+### Release gating
+
+**Public release is gated on Gate 1 clearing.** This is not a soft
+preference. While the project is in testing mode, Google permits *only*
+manually allowlisted test users to complete the OAuth flow at all — a
+non-allowlisted user does not see a warning they can dismiss, they receive
+`Error 403: access_denied` and cannot authenticate. The "one step" install
+promise is therefore false for the general public until verification lands.
+
+Consequences for sequencing:
+
+- Implementation can proceed in full before verification clears; nothing in
+  the code depends on it.
+- Pre-verification builds may be shared only with allowlisted testers, and
+  release notes must say so explicitly.
+- The general-availability announcement waits for Gate 1.
+
+If verification is ultimately denied, the fallback is the deferred
+BYO-credentials wizard, which is the only other way an arbitrary user can
+authenticate. That path is not built now, but denial is the trigger for
+building it.
+
 ### Delivery: PyInstaller one-folder + Inno Setup installer
 
 Rejected alternatives:
@@ -107,11 +131,29 @@ EVE players running FightRecorder.
 
 ### FFmpeg: bundled
 
-`ffmpeg.exe` and `ffprobe.exe` add roughly 80–160 MB. `ffprobe` is required
-for the main screen (it produces the duration column); `ffmpeg` only for
-stitching. Bundling both is preferred over fetch-on-demand: a one-time large
-download beats a runtime network dependency that fails at the moment the
-user wants to upload.
+`ffmpeg.exe` and `ffprobe.exe` add roughly 80–160 MB. Neither is strictly
+required for the app to start: `ffprobe` produces the duration column, and
+when it is absent or fails the duration degrades to `"?"`
+(`youtube_uploader.py:113-128`); `ffmpeg` is required only for stitching.
+Bundling both is preferred over fetch-on-demand: a one-time large download
+beats a runtime network dependency that fails at the moment the user wants
+to upload.
+
+**Degradation behavior, stated explicitly.** Current code disables stitching
+unless *both* binaries are present (`youtube_uploader.py:94-95`,
+`:385-388`), even though stitching invokes only `ffmpeg`
+(`:468-480`). That coupling is incidental, not intended. The new behavior:
+
+| Present | Result |
+|---------|--------|
+| Both | Full functionality |
+| `ffmpeg` only | Stitching works; duration column shows `?` |
+| `ffprobe` only | Stitching disabled with an explanatory tooltip; durations shown |
+| Neither | App still runs; stitching disabled, durations show `?` |
+
+The app never refuses to start over a missing binary. Since both are
+bundled, this matters only when antivirus quarantines one of them — which is
+exactly when a clear message beats a hard failure.
 
 ### SmartScreen: accepted and documented
 
@@ -127,7 +169,7 @@ screenshot. Revisit if adoption grows.
 
 ## Architecture
 
-One process, four units, split so that three of them are testable without
+One process, six units, split so that five of them are testable without
 OBS, without Google, and without a GUI. Today the entire tool is one
 531-line module that can only be exercised by running it.
 
@@ -135,8 +177,27 @@ OBS, without Google, and without a GUI. Today the entire tool is one
 |------|----------------|------------|
 | `obsconfig.py` | Locate and parse OBS `basic.ini` -> recording folder | filesystem |
 | `watcher.py` | Poll folder, decide when a file is settled, emit ready-events | filesystem |
-| `uploader.py` | OAuth, resumable upload, error classification | Google APIs |
+| `library.py` | Video discovery by extension, metadata probing, sorting | filesystem, ffprobe |
+| `stitch.py` | Ordering, ffmpeg invocation, output naming, temp-file lifecycle | ffmpeg |
+| `uploader.py` | OAuth, resumable upload with retry, title suffixes, error classification | Google APIs |
 | `app.py` | Tray icon, notifications, Tk window, wiring | all of the above |
+
+Six units rather than four. The original four-way split left substantial
+existing behavior implicitly inside `app.py`, which would have undermined
+the testability the split exists to provide. Each item below is behavior
+that exists today and must be preserved, now with an explicit owner:
+
+| Existing behavior | Current location | New owner |
+|---|---|---|
+| `VIDEO_EXTS` and folder discovery | `youtube_uploader.py:27`, `:344-367` | `library.py` |
+| ffprobe duration/size metadata | `:100-128` | `library.py` |
+| Stitch ordering (by mtime, earliest first), `filter_complex` concat, output path | `:454-485` | `stitch.py` |
+| Temp-file cleanup for stitched output | `:445-446` | `stitch.py` |
+| `(1/3)` title suffixes for multi-upload | `:487-499` | `uploader.py` |
+| Privacy / category applied to upload body | `:425-433` | `uploader.py` |
+
+`library.py` and `stitch.py` are both testable without a GUI and without
+network access, which is the point of naming them.
 
 ### Threading
 
@@ -188,6 +249,38 @@ written. Additionally, FightRecorder's optional merge step writes a *second*
 file after the individual clips, so a naive watcher fires twice for one
 fight. Hence stability polling plus a debounce window.
 
+### Watcher lifecycle
+
+Left undefined, a folder watcher has two failure modes that only appear
+after the first happy-path demo. Both are specified here.
+
+**Startup baseline.** On launch the watcher enumerates the recording folder
+and records every existing file as already-seen *without* notifying. Without
+this, every launch — including the automatic one at login — would announce
+the user's entire back catalogue of recordings.
+
+The seen-set persists to `%LOCALAPPDATA%\OBSYouTubeUploader\seen.json` as
+`{path: (size, mtime)}`. Persistence matters because the app is set to run
+at login: an in-memory-only baseline would treat everything recorded while
+the app was closed as pre-existing, silently swallowing genuinely new
+recordings from an OBS session run without the uploader open. On startup,
+files present but absent from the persisted set are treated as new and
+notified once.
+
+Entries whose file no longer exists are pruned on each startup so the set
+does not grow without bound.
+
+**Single-instance enforcement.** The installer's run-at-login option plus a
+Start Menu shortcut make double-launch easy and likely. Two instances mean
+two watchers, duplicate notifications, and — worst — two concurrent uploads
+of the same recording, since today's concurrency guard
+(`youtube_uploader.py:389-394`) only prevents a second upload *within* one
+process.
+
+A named Windows mutex (`Global\OBSYouTubeUploader`) is acquired at startup.
+If it is already held, the second instance surfaces the existing window and
+exits rather than starting a second watcher.
+
 ## Notification behavior
 
 Two modes, user-configurable, defaulting to toast:
@@ -199,7 +292,8 @@ Two modes, user-configurable, defaulting to toast:
   as a setting so the existing workflow is not felt as a regression.
 
 Persisted in `settings.json` as `notify_mode`, alongside the existing
-`privacy` and `category_id` settings, which are carried over unchanged.
+`privacy` and `category` keys. See "Settings schema" for the exact key
+names and the default resolved there.
 
 ## Configuration and state
 
@@ -208,13 +302,38 @@ and `client_secrets.json` live in `SCRIPT_DIR` alongside the script. This
 breaks as soon as the app is installed into `Program Files`, which is not
 writable by a non-admin user.
 
-| File | New location |
-|------|--------------|
-| `uploader_settings.json` | `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` |
-| `youtube_token.json` | `%LOCALAPPDATA%\OBSYouTubeUploader\token.json` |
-| `client_secrets.json` | Removed — embedded in binary |
-| `uploader.log` | `%LOCALAPPDATA%\OBSYouTubeUploader\logs\` |
-| `ffmpeg.exe`, `ffprobe.exe` | Install dir, resolved via `sys._MEIPASS` |
+| File | Current location | New location |
+|------|------------------|--------------|
+| `uploader_settings.json` | `SCRIPT_DIR` (`:25`) | `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` |
+| `youtube_token.json` | `SCRIPT_DIR` (`:23`) | `%LOCALAPPDATA%\OBSYouTubeUploader\token.json` |
+| `client_secrets.json` | `SCRIPT_DIR` (`:24`) | Removed — embedded in binary |
+| `uploader_debug.log` | `SCRIPT_DIR` (`:26`) | `%LOCALAPPDATA%\OBSYouTubeUploader\logs\` |
+| `obs_stitched_upload.mkv` | `%TEMP%`, fixed name (`:455-456`) | `%LOCALAPPDATA%\OBSYouTubeUploader\tmp\`, unique per run |
+| `seen.json` (new) | — | `%LOCALAPPDATA%\OBSYouTubeUploader\seen.json` |
+| `ffmpeg.exe`, `ffprobe.exe` | `SCRIPT_DIR` or PATH (`:60-85`) | Install dir, resolved via `sys._MEIPASS` |
+
+The stitch artifact moves out of `%TEMP%` and gains a unique name for two
+reasons. The current fixed filename means two runs collide, and cleanup sits
+*inside* the `try` block after a successful upload (`:445-446`), so **a
+failed upload leaks the file permanently** — potentially many GB. Cleanup
+moves to a `finally` block, and orphaned files in the tmp directory are
+swept on startup.
+
+### Settings schema
+
+The existing settings keys are `privacy` and `category` — note `category`,
+not `category_id` (`youtube_uploader.py:196`, `:202`, `:432`). Both are
+carried forward under their existing names.
+
+One pre-existing inconsistency is resolved rather than ported: the privacy
+default is `"unlisted"` when loading settings (`:195`) but `"private"` when
+building the upload body (`:431`), while the README documents `private`.
+**`private` wins** — it is the documented behavior and the safe default for
+a tool that uploads automatically.
+
+Since no migration code is written (see "Migration"), the single existing
+user re-selects privacy and category once on first run. Their previous
+`uploader_settings.json` is not read.
 
 The token grants upload access to the user's channel, so it is written with
 restrictive ACLs rather than inheriting directory defaults.
@@ -235,10 +354,40 @@ case below produces a specific, plain-language dialog:
 | Condition | Behavior |
 |-----------|----------|
 | `403 quotaExceeded` | "YouTube's daily upload limit for this app has been reached. Please try again tomorrow." |
+| `403 access_denied` at sign-in | Pre-verification only: "This build is limited to approved testers." Distinguishes the Gate 1 case from a genuine auth failure. |
 | Refresh token expired or revoked | Silently re-run OAuth; dialog only if that also fails. Weekly path while unverified — must be seamless. |
 | Recording folder missing / OBS never configured | First-run wizard prompts for folder instead of failing |
-| ffmpeg missing (e.g. antivirus quarantine) | Stitching checkbox disables itself with an explanatory tooltip |
-| Network failure mid-upload | Resumable chunks already handle this; surface a Retry button rather than discarding progress |
+| ffmpeg or ffprobe missing | Degrade per the FFmpeg table above; never block startup |
+| Network failure mid-upload | Retry with backoff, resuming the existing session — see below |
+
+### Upload retry is new work, not preserved behavior
+
+**Correction to an earlier assumption.** `MediaFileUpload` is constructed
+with `resumable=True` (`youtube_uploader.py:496`), which makes the
+*protocol* resumable — but the code does not use that capability. The chunk
+loop calls `next_chunk()` inside a bare `while` with no exception handling
+(`:499-505`), so any transient network error propagates to the outer handler
+(`:448-452`), which shows a dialog and discards the `request` object along
+with all upload progress.
+
+A "Retry" button bolted onto the current structure would therefore restart
+the upload from zero, which for a multi-GB fight recording is the whole
+problem rather than a fix.
+
+Real retry means retaining the `request` object and looping on transient
+failures:
+
+- Retry on HTTP 500, 502, 503, 504 and on socket/connection errors.
+- Exponential backoff with jitter, capped at a bounded number of attempts.
+- Do **not** retry 4xx other than 408/429 — those are permanent and retrying
+  wastes quota.
+- Surface retry attempts in the status line so a stalled upload is visibly
+  retrying rather than apparently frozen.
+- On final failure, keep the partially-uploaded session ID so a manual
+  Retry resumes rather than restarts.
+
+This lives in `uploader.py` and is the one piece of genuinely new logic in
+the otherwise behavior-preserving port.
 
 ## Build and release
 
@@ -257,10 +406,20 @@ Automated unit tests for the units that have no external dependencies:
 
 - **Settled-file detector** — injected clock and fake filesystem; covers the
   still-being-written case and the FightRecorder double-write case.
+- **Watcher baseline** — startup with an empty, stale, and current
+  `seen.json`; confirms no notification for pre-existing files and exactly
+  one for genuinely new ones.
 - **OBS ini parser** — fixture ini files, including missing file, malformed
   file, and multiple profiles.
 - **Error classifier** — fixture Google API error payloads mapping to the
-  table above.
+  table above, including the retryable/permanent split.
+- **Retry policy** — a fake transport that fails N times then succeeds;
+  asserts the session resumes rather than restarting, that permanent 4xx
+  errors are not retried, and that the attempt cap holds.
+- **Video discovery and metadata** (`library.py`) — extension filtering,
+  sorting, and the ffprobe-absent degradation to `"?"`.
+- **Stitch planning** (`stitch.py`) — ordering by mtime and command
+  construction, asserted without invoking ffmpeg.
 
 The GUI and the live upload path remain manually verified via a smoke-test
 checklist committed to the repo. This is a deliberate limit: automating a
@@ -284,7 +443,9 @@ lasting benefit.
 
 | Risk | Mitigation |
 |------|------------|
-| OAuth verification (Gate 1) is delayed or denied | Tool remains fully functional in testing mode; cost is the unverified warning and weekly re-auth |
+| OAuth verification (Gate 1) is delayed | **Public release is blocked.** In testing mode only allowlisted testers can authenticate at all — non-allowlisted users get `403 access_denied`, not a dismissible warning. Implementation proceeds regardless; only the GA announcement waits. |
+| OAuth verification (Gate 1) is denied | Build the deferred BYO-credentials wizard; it becomes the only route for arbitrary users |
 | Usage exceeds 100 uploads/day (Gate 2) | Accepted. Graceful error message; BYO-credentials wizard is the known escape if it ever binds |
+| Retry logic is new code on the critical path | Covered by unit tests against a fake transport; failure mode is no worse than today's abandon-on-error |
 | Antivirus false positives on the PyInstaller build | One-folder build already reduces this vs one-file; document a VirusTotal link if reports arrive |
 | Installer size (~150 MB) deters downloads | Accepted as the cost of removing the Python and FFmpeg prerequisites |
