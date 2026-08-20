@@ -179,10 +179,12 @@ def save_credentials(creds, token_path: Path) -> None:
     a new file sits at the umask's default (typically world-readable) before
     the restrictive bits are applied. Instead the file is created directly
     with owner-only bits via os.open, so there is no permissive state to
-    observe. The chmod afterward is kept as a second pass so a *pre-existing*
-    token file (written by an older build, or by another process) still ends
-    up locked down even though O_CREAT | O_TRUNC would not have reset an
-    existing file's mode bits on its own.
+    observe. The trailing chmod is still needed, not as a redundant pass but
+    to cover a real gap: the mode argument to os.open is *ignored* by the
+    OS when the target inode already exists (O_CREAT | O_TRUNC truncates
+    content, not permissions), so a *pre-existing* token file left over at a
+    looser mode (an older build, another process) would otherwise stay that
+    way forever.
     """
     token_path = Path(token_path)
     token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,9 +194,16 @@ def save_credentials(creds, token_path: Path) -> None:
             f.write(creds.to_json())
     finally:
         try:
+            # Best effort only: on Windows, os.chmod does not set real ACLs —
+            # it merely toggles the read-only attribute, so removing that bit
+            # (as done here) does nothing, and this call cannot make the file
+            # any more restrictive there. It meaningfully protects the token
+            # on Linux/macOS development and CI; real hardening on the actual
+            # Windows deployment target would need icacls or pywin32, which
+            # is out of scope. Do not assume the exposure is closed there.
             os.chmod(token_path, _stat.S_IRUSR | _stat.S_IWUSR)
         except OSError:
-            pass  # Best effort; Windows ACLs differ and failure is not fatal.
+            pass
 
 
 def needs_reauth(creds) -> bool:

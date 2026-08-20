@@ -1,4 +1,7 @@
+import os
 import socket
+import stat
+import sys
 
 import pytest
 from obs_youtube_uploader import uploader
@@ -281,6 +284,22 @@ def test_needs_reauth_true_when_expired_without_refresh_token():
     assert uploader.needs_reauth(Creds()) is True
 
 
+def test_needs_reauth_false_when_expired_but_refresh_token_present():
+    class Creds:
+        valid = False
+        expired = True
+        refresh_token = "r"
+    assert uploader.needs_reauth(Creds()) is False
+
+
+def test_needs_reauth_true_when_invalid_and_not_expired():
+    class Creds:
+        valid = False
+        expired = False
+        refresh_token = "r"
+    assert uploader.needs_reauth(Creds()) is True
+
+
 def test_save_credentials_writes_and_restricts(tmp_path):
     class Creds:
         def to_json(self): return '{"token": "x"}'
@@ -288,3 +307,13 @@ def test_save_credentials_writes_and_restricts(tmp_path):
     uploader.save_credentials(Creds(), p)
     assert p.exists()
     assert "token" in p.read_text()
+
+
+def test_save_credentials_restricts_permissions(tmp_path):
+    class Creds:
+        def to_json(self): return '{"token": "x"}'
+    p = tmp_path / "token.json"
+    uploader.save_credentials(Creds(), p)
+    if sys.platform != "win32":
+        mode = stat.S_IMODE(os.stat(p).st_mode)
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
