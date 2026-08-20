@@ -44,16 +44,27 @@ class VideoInfo:
 
 
 def discover(directory: Path) -> list[Path]:
-    """Video files in *directory*, newest first. Missing directory -> []."""
+    """Video files in *directory*, newest first. Missing directory -> [].
+
+    Skips files that disappear between iterdir and stat (race condition
+    in active directories), rather than aborting the scan.
+    """
+    entries = []
     try:
-        entries = [
-            p for p in Path(directory).iterdir()
-            if p.is_file() and p.suffix.lower() in VIDEO_EXTS
-        ]
+        for p in Path(directory).iterdir():
+            if p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+                try:
+                    # Stat exactly once, inside guarded region
+                    stat_result = p.stat()
+                    entries.append((p, stat_result.st_mtime))
+                except OSError:
+                    # Skip files that disappear between iterdir and stat
+                    pass
     except OSError:
         return []
-    entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return entries
+    # Sort by mtime, newest first
+    entries.sort(key=lambda x: x[1], reverse=True)
+    return [p for p, _ in entries]
 
 
 def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> float | None:

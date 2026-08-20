@@ -123,3 +123,22 @@ def test_delete_reports_failures_without_aborting_batch(tmp_path):
     assert len(failures) == 1
     assert failures[0][0] == missing
     assert not c.exists()
+
+
+def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
+    """Race condition: file gone by stat() time must be skipped, not crash discover()."""
+    old = _touch(tmp_path / "old.mkv", mtime=1000)
+    disappeared = _touch(tmp_path / "disappeared.mkv", mtime=1500)
+    new = _touch(tmp_path / "new.mkv", mtime=2000)
+
+    original_stat = Path.stat
+
+    def stat_with_race(self):
+        if self == disappeared:
+            raise FileNotFoundError(f"{self} deleted between iterdir and stat")
+        return original_stat(self)
+
+    monkeypatch.setattr(Path, "stat", stat_with_race)
+    found = [p.name for p in library.discover(tmp_path)]
+    # Should return old and new in mtime order, skipping disappeared
+    assert found == ["new.mkv", "old.mkv"]
