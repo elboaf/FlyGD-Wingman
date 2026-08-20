@@ -4,6 +4,8 @@
 # markedly more often.
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
 
@@ -14,7 +16,14 @@ a = Analysis(
         (str(BIN / "ffmpeg.exe"), "bin"),
         (str(BIN / "ffprobe.exe"), "bin"),
     ],
-    datas=[],
+    # sv-ttk ships its theme as .tcl files (sun-valley.tcl,
+    # theme/light.tcl, theme/dark.tcl) plus image assets. modulegraph only
+    # follows Python imports, so without this the package's .py file lands
+    # in the bundle but sv_ttk.set_theme() fails at runtime looking for
+    # data that was never copied. PyInstaller exits 0 either way (see the
+    # ffmpeg comment below), which is why build.yml also gets a post-build
+    # assertion in Step 4.
+    datas=collect_data_files("sv_ttk"),
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
         # runtime, which modulegraph cannot follow statically.
