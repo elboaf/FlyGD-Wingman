@@ -34,14 +34,32 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: pwsh
         run: |
+          # $ErrorActionPreference alone does NOT catch a native command's
+          # non-zero exit, and a multi-line run: block keeps going after one.
+          # That is how a failed `pip install -e .` previously produced a
+          # green step, no pystray in the environment, and a frozen app that
+          # crashed on launch. Check every exit code explicitly.
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
           python -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "editable install failed - the app's dependencies are missing" }
           # Pinned: packaging/uploader.spec and packaging/installer.iss both
           # assume PyInstaller 6.x's one-folder layout (exe at the top of the
           # dist folder, dependencies under _internal/). Bumping this means
           # re-checking installer.iss's {app}\{#AppExe} assumption.
           python -m pip install "pyinstaller>=6,<7"
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
+
+      - name: Verify the app's dependencies are importable
+        # PyInstaller only reports "Hidden import not found" as an ERROR line
+        # and still exits 0, so a missing dependency yields a successful build
+        # of a broken application. Fail here instead, where it is obvious.
+        shell: pwsh
+        run: |
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
 
       - name: Inject OAuth credentials
         if: ${{ inputs.inject_credentials }}

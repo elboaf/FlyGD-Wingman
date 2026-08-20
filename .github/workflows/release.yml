@@ -22,9 +22,16 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Install dependencies
+        shell: pwsh
         run: |
+          # Exit codes checked explicitly: a multi-line run: block on Windows
+          # keeps going after a native command fails, so a dead
+          # `pip install -e .` would otherwise leave a green step, no runtime
+          # dependencies, and a frozen app that crashes on launch.
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
           python -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "editable install failed - the app's dependencies are missing" }
           # Pinned: the PyInstaller spec and installer.iss both assume 6.x's
           # one-folder layout (executable at the top of dist/, dependencies
           # under _internal/). A 7.x release with a changed layout would
@@ -33,6 +40,16 @@ jobs:
           # packaging/installer.iss's {app}\{#AppExe} assumption at the same
           # time.
           python -m pip install "pyinstaller>=6,<7"
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
+
+      - name: Verify the app's dependencies are importable
+        # PyInstaller reports a missing hidden import as an ERROR line but
+        # still exits 0, so a missing dependency yields a successful build of
+        # a broken application. Fail here, where the cause is obvious.
+        shell: pwsh
+        run: |
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
 
       - name: Inject OAuth credentials
         shell: pwsh
