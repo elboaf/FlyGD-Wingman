@@ -1,4 +1,5 @@
 """Entry point: single-instance tray application."""
+import logging
 import sys
 import threading
 import tkinter as tk
@@ -8,8 +9,11 @@ from tkinter import filedialog, messagebox
 from . import app as app_mod
 from . import obsconfig, paths, settings as settings_mod, stitch, watcher
 
+logger = logging.getLogger(__name__)
+
 MUTEX_NAME = "Global\\OBSYouTubeUploader"
 POLL_SECONDS = 3.0
+FAILURE_NOTIFY_THRESHOLD = 5  # ~15s of consecutive poll failures at POLL_SECONDS
 
 
 def acquire_single_instance():
@@ -35,6 +39,10 @@ def acquire_single_instance():
     ERROR_ALREADY_EXISTS = 183
     if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
         return None
+    # Intentionally never closed: the mutex must be held for the app's
+    # entire lifetime to enforce single-instance. The OS reclaims it on
+    # process exit — do not "fix" this by adding a CloseHandle call, that
+    # would release the mutex early and silently disable the protection.
     return handle
 
 
@@ -122,6 +130,7 @@ def main() -> int:
         # always reschedules itself: a `poll_once()` error, or an error
         # raised while showing/refreshing the window, must not silently
         # and permanently kill the watcher with no error shown to the user.
+        nonlocal consecutive_failures
         try:
             ready = w.poll_once()
             if ready:
@@ -135,11 +144,29 @@ def main() -> int:
                                     "OBS → YouTube Uploader")
                     except Exception:
                         pass  # Notifications are best-effort.
+            consecutive_failures = 0
         except Exception:
-            pass
+            # A single failure looks identical to "nothing new to upload,"
+            # which is fine for a blip but not for a persistent problem
+            # (unreachable recording folder, permissions error, a repeatedly
+            # failing seen-file write). Always log it — otherwise even the
+            # log file has no record — and after enough consecutive
+            # failures, surface exactly one notification so the user isn't
+            # staring at a tray icon that looks healthy while doing nothing.
+            # The counter resets on any tick that completes cleanly, so a
+            # long outage produces one message rather than a stream.
+            logger.warning("Poll tick failed", exc_info=True)
+            consecutive_failures += 1
+            if consecutive_failures == FAILURE_NOTIFY_THRESHOLD:
+                try:
+                    icon.notify("The recording watcher is having trouble — check the log",
+                                "OBS → YouTube Uploader")
+                except Exception:
+                    pass  # Notifications are best-effort.
         finally:
             root.after(int(POLL_SECONDS * 1000), poll)
 
+    consecutive_failures = 0
     root.after(int(POLL_SECONDS * 1000), poll)
     root.mainloop()
     icon.stop()
