@@ -1070,6 +1070,15 @@ def build_command(sources: list[Path], out_path: Path, ffmpeg_bin: str) -> list[
     cmd += [
         "-filter_complex", f"{streams}concat=n={len(sources)}:v=1:a=1[outv][outa]",
         "-map", "[outv]", "-map", "[outa]",
+        # Encode settings copied verbatim from youtube_uploader.py:487-491.
+        # Without them ffmpeg falls back to muxer defaults and stitched output
+        # changes quality and audio codec — which the spec's Non-goals forbid.
+        # -movflags is MP4-oriented and the output is .mkv, but it ships today
+        # and works; dropping a flag for looking unnecessary is what caused
+        # this defect in the first place.
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
         str(out_path),
     ]
     return cmd
