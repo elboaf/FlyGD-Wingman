@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from . import app as app_mod
-from . import obsconfig, paths, settings as settings_mod, stitch, watcher
+from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,18 @@ def configure_logging() -> None:
         )
         handler.setFormatter(logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        # Redaction is enforced here, not at call sites. This handler is
+        # attached to the ROOT logger, so every library logger inherits it --
+        # an HTTP transport logging its request URL at DEBUG would otherwise
+        # write a webhook token to disk without passing through our code.
+        # The callable re-reads settings so a webhook configured after
+        # startup is still redacted.
+        def _current_webhook():
+            hook, _ = discord.parse_webhook(
+                settings_mod.load().get("discord_webhook"))
+            return hook
+
+        handler.addFilter(discord.RedactingFilter(_current_webhook))
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)

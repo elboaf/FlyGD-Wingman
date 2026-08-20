@@ -1,7 +1,9 @@
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
-from obs_youtube_uploader.__main__ import resolve_recording_dir
+from obs_youtube_uploader import paths, settings
+from obs_youtube_uploader.__main__ import configure_logging, resolve_recording_dir
 
 
 def _unreachable_ask(**kwargs):
@@ -65,3 +67,38 @@ def test_no_stored_value_and_no_detection_asks_user(tmp_path):
         result = resolve_recording_dir(cfg, ask=lambda **kwargs: str(chosen_dir))
 
     assert result == chosen_dir
+
+
+def test_configure_logging_redacts_webhook_token_from_foreign_logger(tmp_path, monkeypatch):
+    """The redaction filter must be attached to the HANDLER, not a logger, so
+    it also catches records from libraries we never touch directly (e.g. an
+    HTTP transport logging a request URL at DEBUG). A filter on our own
+    logger would never see those records -- this proves the control is
+    actually live, not just unit-tested in isolation."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    paths.ensure_dirs()
+
+    token = "supersecrettoken1234567890abcdef1234567890abcdef1234567890abcd"
+    webhook_url = f"https://discord.com/api/webhooks/123456789012345678/{token}"
+    settings.save({**settings.DEFAULTS, "discord_webhook": webhook_url})
+
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    try:
+        configure_logging()
+        handler = root_logger.handlers[-1]
+
+        foreign_logger = logging.getLogger("some.third.party.transport")
+        foreign_logger.warning("GET %s", webhook_url)
+        handler.flush()
+
+        log_path = paths.log_dir() / "uploader_debug.log"
+        contents = log_path.read_text(encoding="utf-8")
+    finally:
+        for h in list(root_logger.handlers):
+            if h not in original_handlers:
+                root_logger.removeHandler(h)
+                h.close()
+
+    assert token not in contents
+    assert "GET" in contents
