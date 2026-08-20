@@ -29,6 +29,7 @@ VIDEO_EXTS = {".mkv", ".mp4", ".flv", ".mov", ".avi", ".ts", ".m4v", ".webm"}
 # ---------------------------------------------------------------------------
 # Optional Google imports
 # ---------------------------------------------------------------------------
+_GOOGLE_IMPORT_ERROR = None
 try:
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -36,8 +37,9 @@ try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     GOOGLE_AVAILABLE = True
-except ImportError:
+except ImportError as _e:
     GOOGLE_AVAILABLE = False
+    _GOOGLE_IMPORT_ERROR = str(_e)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -101,6 +103,7 @@ class VideoEntry:
     def __init__(self, path: Path):
         self.path = path
         self.selected = tk.BooleanVar(value=False)
+        self.link_widget = None  # tk.Entry for YouTube URL
         self._load_info()
 
     def _load_info(self):
@@ -174,17 +177,10 @@ class SettingsWindow:
         info = ttk.LabelFrame(frm, text="How to connect", padding=10)
         info.pack(fill=tk.BOTH, expand=True, **pad)
         txt = (
-            "1. Go to https://console.cloud.google.com/\n"
-            "2. Create a new project and enable \"YouTube Data API v3\"\n"
-            "3. Go to Credentials → Create Credentials → OAuth client ID\n"
-            "4. Choose \"Desktop app\", give it a name, then click Create\n"
-            "5. Download the JSON file and rename it to:\n"
-            "   client_secrets.json\n"
-            "6. Go to OAuth consent screen → Audience → Test users\n"
-            "   and ADD YOUR EMAIL ADDRESS as a test user\n"
-            "7. Place client_secrets.json in the same folder as this script:\n"
-            f"   {SCRIPT_DIR}\n"
-            "8. Click \"Connect Google Account\" above"
+            "1. Click \"Connect Google Account\" above\n"
+            "2. Sign in with the Google account that owns your YouTube channel\n"
+            "3. Accept the unverified application warning!!"
+            "4. Grant permission when prompted — you\'re done!\n\n"
         )
         ttk.Label(info, text=txt, justify=tk.LEFT).pack(anchor=tk.W)
 
@@ -208,9 +204,15 @@ class SettingsWindow:
     def _connect(self):
         log("Connect button clicked")
         if not GOOGLE_AVAILABLE:
-            messagebox.showerror("Missing Libraries",
-                "Google API libraries not installed.\n\n"
-                "Run: pip install google-api-python-client google-auth-oauthlib")
+            py_exe = sys.executable
+            msg = (
+                f"Google API libraries could not be imported.\n\n"
+                f"Python running this script:\n  {py_exe}\n\n"
+                f"Import error: {_GOOGLE_IMPORT_ERROR or 'unknown'}\n\n"
+                f"Try installing with the SAME interpreter:\n"
+                f"  {py_exe} -m pip install google-api-python-client google-auth-oauthlib"
+            )
+            messagebox.showerror("Missing Libraries", msg)
             return
         if not CLIENT_SECRETS_FILE.exists():
             messagebox.showerror("Missing File",
@@ -264,7 +266,7 @@ class UploaderApp:
         self.stitch_var = tk.BooleanVar(value=False)
 
         self.root.title("OBS → YouTube Uploader")
-        self.root.geometry("950x650")
+        self.root.geometry("1350x650")
         self.root.minsize(750, 450)
 
         self._build_ui()
@@ -287,13 +289,13 @@ class UploaderApp:
         meta.pack(fill=tk.X, padx=5, pady=3)
 
         ttk.Label(meta, text="Title:").grid(row=0, column=0, sticky=tk.W)
-        self.title_var = tk.StringVar(value="EVE Online Recording")
+        self.title_var = tk.StringVar(value="")
         ttk.Entry(meta, textvariable=self.title_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
 
         ttk.Label(meta, text="Description:").grid(row=1, column=0, sticky=tk.NW, pady=(5,0))
         self.desc_txt = tk.Text(meta, height=3, wrap=tk.WORD)
         self.desc_txt.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=(5,0))
-        self.desc_txt.insert("1.0", "Recorded with OBS + FightRecorder\nUploaded via OBS YouTube Uploader")
+        self.desc_txt.insert("1.0", "")
         meta.columnconfigure(1, weight=1)
 
         list_frame = ttk.Frame(self.root)
@@ -301,11 +303,12 @@ class UploaderApp:
 
         hdr = ttk.Frame(list_frame)
         hdr.pack(fill=tk.X)
-        ttk.Label(hdr, text="☑", width=4, anchor=tk.CENTER).pack(side=tk.LEFT)
-        ttk.Label(hdr, text="Filename", width=45, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(hdr, text="Date", width=16, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(hdr, text="Size", width=10, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(hdr, text="Duration", width=10, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(hdr, text="☑", width=3, anchor=tk.CENTER).pack(side=tk.LEFT)
+        ttk.Label(hdr, text="Filename", width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(hdr, text="Date", width=14, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(hdr, text="Size", width=9, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(hdr, text="Duration", width=8, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(hdr, text="YouTube Link", width=48, anchor=tk.W).pack(side=tk.LEFT, padx=2)
         ttk.Separator(list_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
 
         self.canvas = tk.Canvas(list_frame, highlightthickness=0)
@@ -330,6 +333,7 @@ class UploaderApp:
 
         ttk.Button(bot, text="Select All", command=self._select_all).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bot, text="Select None", command=self._select_none).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bot, text="Delete Selected", command=self._delete_selected).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bot, text="Upload Selected", command=self._start_upload).pack(side=tk.RIGHT, padx=2)
 
         self.progress = ttk.Progressbar(self.root, mode="determinate")
@@ -359,10 +363,15 @@ class UploaderApp:
             row = ttk.Frame(self.inner)
             row.pack(fill=tk.X, pady=1)
             ttk.Checkbutton(row, variable=v.selected, width=2).pack(side=tk.LEFT, padx=2)
-            ttk.Label(row, text=f.name, width=45, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-            ttk.Label(row, text=v.date_str, width=16, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-            ttk.Label(row, text=v.size_str, width=10, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-            ttk.Label(row, text=v.duration_str, width=10, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+            ttk.Label(row, text=f.name, width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+            ttk.Label(row, text=v.date_str, width=14, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+            ttk.Label(row, text=v.size_str, width=9, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+            ttk.Label(row, text=v.duration_str, width=8, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+            link_entry = tk.Entry(row, width=48, state="readonly", relief=tk.FLAT, fg="blue", selectbackground="#cce5ff")
+            link_entry.pack(side=tk.LEFT, padx=2)
+            v.link_widget = link_entry
+            copy_btn = ttk.Button(row, text="Copy", width=5, command=lambda e=link_entry: self._copy_link(e))
+            copy_btn.pack(side=tk.LEFT, padx=(2, 8))
 
         self.status.config(text=f"Found {len(self.videos)} video(s)")
 
@@ -394,6 +403,7 @@ class UploaderApp:
         self.upload_thread.start()
 
     def _upload_worker(self, selected: list[VideoEntry]):
+        video_ids = []
         try:
             self.root.after(0, lambda: self.status.config(text="Preparing…"))
 
@@ -437,13 +447,19 @@ class UploaderApp:
 
             total = len(files)
             for idx, fp in enumerate(files):
-                self._upload_one(youtube, fp, idx, total, title, description, privacy, category)
+                vid = self._upload_one(youtube, fp, idx, total, title, description, privacy, category)
+                if vid:
+                    video_ids.append(vid)
 
             self.root.after(0, lambda: self.status.config(text="Upload complete!", foreground="green"))
             self.root.after(0, lambda: self.progress.config(value=100))
 
             if cleanup_stitch and os.path.exists(upload_path):
                 os.remove(upload_path)
+
+            # Populate links in the file list
+            if video_ids:
+                self.root.after(0, lambda ids=video_ids, sel=selected: self._populate_links(ids, sel))
 
         except Exception as e:
             full_tb = traceback.format_exc()
@@ -485,7 +501,7 @@ class UploaderApp:
         return out_file
 
     def _upload_one(self, youtube, file_path: Path, idx: int, total: int,
-                    title: str, description: str, privacy: str, category: str):
+                    title: str, description: str, privacy: str, category: str) -> str | None:
         body = {
             "snippet": {
                 "title": title if total == 1 else f"{title} ({idx+1}/{total})",
@@ -507,6 +523,89 @@ class UploaderApp:
                 self.root.after(0, lambda: self.status.config(
                     text=f"Uploading {idx+1}/{total} — {status.progress()*100:.1f}%"
                 ))
+
+        video_id = response.get("id") if response else None
+        if video_id:
+            log(f"Upload complete: https://www.youtube.com/watch?v={video_id}")
+        return video_id
+
+        video_id = response.get("id") if response else None
+        if video_id:
+            log(f"Upload complete: https://www.youtube.com/watch?v={video_id}")
+        return video_id
+    # -----------------------------------------------------------------------
+    # Populate YouTube links into the file list after upload
+    # -----------------------------------------------------------------------
+    def _copy_link(self, entry: tk.Entry):
+        url = entry.get()
+        if url:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.root.update()
+            self.status.config(text=f"Copied to clipboard: {url[:60]}...", foreground="green")
+
+    def _populate_links(self, video_ids: list[str], selected: list[VideoEntry]):
+        try:
+            log(f"_populate_links called: ids={video_ids}, selected={len(selected)}")
+            if not video_ids:
+                log("No video_ids, returning early")
+                return
+
+            if self.stitch_var.get():
+                log("Stitch mode: applying same link to all selected")
+                url = f"https://www.youtube.com/watch?v={video_ids[0]}"
+                for i, v in enumerate(selected):
+                    log(f"  Row {i}: link_widget={v.link_widget}")
+                    if v.link_widget:
+                        v.link_widget.config(state=tk.NORMAL)
+                        v.link_widget.delete(0, tk.END)
+                        v.link_widget.insert(0, url)
+                        v.link_widget.config(state="readonly")
+                        log(f"  Row {i}: set link to {url}")
+            else:
+                log("Non-stitch mode: zipping video_ids with selected")
+                for i, (v, vid) in enumerate(zip(selected, video_ids)):
+                    log(f"  Row {i}: link_widget={v.link_widget}, vid={vid}")
+                    if v.link_widget and vid:
+                        url = f"https://www.youtube.com/watch?v={vid}"
+                        v.link_widget.config(state=tk.NORMAL)
+                        v.link_widget.delete(0, tk.END)
+                        v.link_widget.insert(0, url)
+                        v.link_widget.config(state="readonly")
+                        log(f"  Row {i}: set link to {url}")
+        except Exception as e:
+            log(f"_populate_links CRASHED: {traceback.format_exc()}")
+
+    # -----------------------------------------------------------------------
+    # Delete selected files from disk
+    # -----------------------------------------------------------------------
+    def _delete_selected(self):
+        selected = [v for v in self.videos if v.selected.get()]
+        if not selected:
+            messagebox.showwarning("No Selection", "Select at least one video to delete.")
+            return
+
+        names = "\n".join(f"  • {v.path.name}" for v in selected)
+        if not messagebox.askyesno("Confirm Delete",
+            f"Permanently delete these files from disk?\n\n{names}\n\nThis cannot be undone."):
+            return
+
+        deleted = 0
+        failed = 0
+        for v in selected:
+            try:
+                v.path.unlink()
+                deleted += 1
+            except Exception as e:
+                log(f"Failed to delete {v.path}: {e}")
+                failed += 1
+
+        self._scan_videos()
+        msg = f"Deleted {deleted} file(s)."
+        if failed:
+            msg += f" {failed} failed (see log)."
+        self.status.config(text=msg)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
