@@ -311,6 +311,10 @@ class UploaderWindow:
             resumable = exc.request is not None and not job.stitch
             self.retry_state = RetryState(
                 job=job,
+                # On the stitch path `index` never advances past
+                # job.start_index, so resume_index is not the failing item —
+                # but it is never read there either, since `resumable` above
+                # forces request=None for stitch failures.
                 resume_index=index,
                 request=exc.request if resumable else None,
             )
@@ -391,6 +395,11 @@ class UploaderWindow:
         SettingsWindow(self.root, self.state, on_saved=self._settings_saved)
 
     def _settings_saved(self) -> None:
+        """Settings were saved. The tray app replaces on_settings_saved with a
+        handler that rebinds the watcher AND refreshes; when running standalone
+        with no such handler, refresh here instead. Not both — refresh() re-probes
+        every recording with ffprobe."""
         if self.on_settings_saved is not None:
             self.on_settings_saved()
-        self.refresh()
+        else:
+            self.refresh()
