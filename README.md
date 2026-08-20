@@ -30,22 +30,19 @@ Designed to pair with [obs-fightrecorder](https://github.com/JesseSwale/obs-figh
 
 ## Quick Start
 
-### 1. Install Python Dependencies
+### 1. Install Python and Dependencies
+
+Install python-3.11 (included in release [here](https://github.com/elboaf/OBS-YouTube-Uploader/releases/tag/OBS-YouTube-Uploader))
 
 ```bash
 pip install -r requirements.txt
+
+# or, if you have multiple python versions already installed:
+
+python3.11 -m pip install -r requirements.txt
 ```
 
-### 2. Get FFmpeg
-
-Download a static build for your OS:
-- **Windows**: [gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/) → `ffmpeg-release-essentials.7z`
-- **macOS**: `brew install ffmpeg`
-- **Linux**: `sudo apt install ffmpeg`
-
-**For easy sharing**, place `ffmpeg.exe` and `ffprobe.exe` in the same folder as `youtube_uploader.py`. The script will find them automatically.
-
-### 3. Set Up YouTube API Access
+### 2. Set Up YouTube API Access
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a **new project**
@@ -77,26 +74,6 @@ Download a static build for your OS:
 2. The uploader window should pop up automatically
 3. Click **Settings → Connect Google Account** and complete the browser OAuth flow
 4. Select your videos, optionally check **Stitch**, set a title/description, and click **Upload Selected**
-
----
-
-## File Structure
-
-For a fully self-contained, shareable package:
-
-```
-obs_youtube_uploader/
-├── obs_trigger.py              # OBS script — add via Tools → Scripts
-├── youtube_uploader.py         # Main GUI app
-├── requirements.txt            # pip dependencies
-├── client_secrets.json         # YOUR Google OAuth credentials (add this)
-├── youtube_token.json          # Created automatically after first auth
-├── uploader_settings.json      # Created automatically
-├── uploader_debug.log          # Created automatically — check here for errors
-├── ffmpeg.exe                  # Bundle for Windows (optional but recommended)
-├── ffprobe.exe                 # Bundle for Windows (optional but recommended)
-└── README.md                   # This file
-```
 
 ---
 
@@ -145,37 +122,6 @@ These are saved to `uploader_settings.json` and persist across sessions.
 
 ---
 
-## Troubleshooting
-
-### "Connection failed" when connecting Google Account
-
-- Make sure `client_secrets.json` is in the **same folder** as `youtube_uploader.py`
-- Make sure your email is added as a **Test user** in the Google Cloud OAuth consent screen
-- Check `uploader_debug.log` for the full error traceback
-
-### "FFmpeg Missing" warning
-
-- Place `ffmpeg.exe` and `ffprobe.exe` in the script folder, **or**
-- Add them to your system PATH
-
-### Uploader doesn't open when recording stops
-
-- Check that the **Recording Directory** is set correctly in the OBS script properties
-- Check the OBS script log (View → Docks → Script Log) for errors
-- Try running `python youtube_uploader.py <your_recording_dir>` manually to see if the GUI opens
-
-### Upload fails partway through
-
-- The upload is **resumable** — if your connection drops, it will retry the current chunk
-- Very large files may hit the YouTube API daily quota (6 uploads per day on the default 10,000 units)
-
----
-
-## Quota Notes
-
-The YouTube Data API v3 has a default quota of **10,000 units per day**. A single video upload costs **1,600 units**, so you can upload roughly **6 videos per day** on the free tier. If you need more, you can [request a quota increase](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits) from Google.
-
----
 
 ## License
 
