@@ -32,6 +32,9 @@ def build_command(sources: list[Path], out_path: Path, ffmpeg_bin: str) -> list[
     cmd += [
         "-filter_complex", f"{streams}concat=n={len(sources)}:v=1:a=1[outv][outa]",
         "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
         str(out_path),
     ]
     return cmd

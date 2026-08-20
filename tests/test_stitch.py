@@ -42,6 +42,34 @@ def test_build_command_concat_filter_matches_input_count(tmp_path):
     assert "n=3" in " ".join(cmd)
 
 
+def test_build_command_includes_codec_flags(tmp_path):
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    cmd = stitch.build_command(srcs, tmp_path / "out.mkv", "ffmpeg")
+    cmd_str = " ".join(cmd)
+    # Check that video codec flags are present
+    assert "-c:v" in cmd
+    assert "libx264" in cmd
+    assert "-preset" in cmd
+    assert "fast" in cmd
+    assert "-crf" in cmd
+    assert "23" in cmd
+    # Check that audio codec flags are present
+    assert "-c:a" in cmd
+    assert "aac" in cmd
+    assert "-b:a" in cmd
+    assert "192k" in cmd
+    # Check that movflags is present
+    assert "-movflags" in cmd
+    assert "+faststart" in cmd
+    # Check that output path is still last
+    assert cmd[-1] == str(tmp_path / "out.mkv")
+    # Check order: codec flags should come after -map and before output
+    map_index = cmd.index("-map")
+    c_v_index = cmd.index("-c:v")
+    assert c_v_index > map_index, "codec flags should come after -map"
+    assert cmd.index("-movflags") < len(cmd) - 1, "-movflags should come before output path"
+
+
 def test_stitched_yields_an_existing_file(tmp_path):
     srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
     for s in srcs:
