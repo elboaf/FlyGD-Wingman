@@ -257,3 +257,99 @@ def test_session_just_inside_the_guard_boundary_is_still_selected(tmp_path):
          "2026.07.21 20:56:00", _epoch(_utc(2026, 8, 20, 21, 10)))
     sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
     assert [s.listener for s in sel.logs] == ["Marathon Pilot"]
+
+
+import json
+import zipfile
+
+
+def _selection(tmp_path, count=2):
+    logs = []
+    for i in range(count):
+        p = _log(tmp_path, f"20260820_2100{i:02d}_{i}.txt", f"Pilot {i}",
+                 "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 10 + i)))
+        logs.append(combatlog.SelectedLog(
+            path=p, listener=f"Pilot {i}",
+            span_start=_utc(2026, 8, 20, 21, 0), span_end=_utc(2026, 8, 20, 21, 10 + i)))
+    return combatlog.Selection(logs=logs, dropped=0)
+
+
+def test_archive_contains_every_selected_log(tmp_path):
+    sel = _selection(tmp_path)
+    out = tmp_path / "out.zip"
+    combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    with zipfile.ZipFile(out) as z:
+        names = set(z.namelist())
+    for log in sel.logs:
+        assert log.path.name in names
+
+
+def test_archive_contains_a_manifest(tmp_path):
+    sel = _selection(tmp_path)
+    out = tmp_path / "out.zip"
+    combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    with zipfile.ZipFile(out) as z:
+        manifest = json.loads(z.read(combatlog.MANIFEST_NAME))
+    assert manifest["characters"] == ["Pilot 0", "Pilot 1"]
+    assert manifest["file_count"] == 2
+    assert manifest["dropped"] == 0
+    assert manifest["window_start"].startswith("2026-08-20T21:00:00")
+
+
+def test_manifest_records_dropped_count(tmp_path):
+    sel = _selection(tmp_path)
+    sel = combatlog.Selection(logs=sel.logs, dropped=7)
+    out = tmp_path / "out.zip"
+    result = combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0),
+                                     _utc(2026, 8, 20, 21, 30))
+    assert result.dropped == 7
+    with zipfile.ZipFile(out) as z:
+        assert json.loads(z.read(combatlog.MANIFEST_NAME))["dropped"] == 7
+
+
+def test_result_reports_characters_sorted_and_deduped(tmp_path):
+    p = _log(tmp_path, "20260820_210000_1.txt", "Zed",
+             "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 10)))
+    q = _log(tmp_path, "20260820_210001_2.txt", "Zed",
+             "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 11)))
+    r = _log(tmp_path, "20260820_210002_3.txt", "Alice",
+             "2026.08.20 21:00:00", _epoch(_utc(2026, 8, 20, 21, 12)))
+    logs = [combatlog.SelectedLog(path=x, listener=n,
+                                  span_start=_utc(2026, 8, 20, 21, 0),
+                                  span_end=_utc(2026, 8, 20, 21, 12))
+            for x, n in ((p, "Zed"), (q, "Zed"), (r, "Alice"))]
+    out = tmp_path / "out.zip"
+    result = combatlog.build_archive(combatlog.Selection(logs=logs, dropped=0), out,
+                                     _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert result.characters == ["Alice", "Zed"]
+
+
+def test_no_staging_file_survives_success(tmp_path):
+    sel = _selection(tmp_path)
+    out = tmp_path / "out.zip"
+    combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_failure_leaves_no_truncated_archive(tmp_path, monkeypatch):
+    """A run that dies partway must not leave a file that reads as complete."""
+    sel = _selection(tmp_path)
+    out = tmp_path / "out.zip"
+
+    def explode(self, filename, *a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(zipfile.ZipFile, "write", explode)
+    with pytest.raises(OSError):
+        combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert not out.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_overwrites_an_existing_archive(tmp_path):
+    sel = _selection(tmp_path)
+    out = tmp_path / "out.zip"
+    out.write_bytes(b"stale")
+    combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    with zipfile.ZipFile(out) as z:
+        assert combatlog.MANIFEST_NAME in z.namelist()

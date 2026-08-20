@@ -9,9 +9,12 @@ Measured on a real folder: a log whose header reads 20:42:50 has an mtime of
 21:55:16 UTC / 17:55:16 local. Only the UTC reading is coherent.
 """
 import datetime
+import json
 import logging
 import os
 import re
+import uuid
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -220,3 +223,69 @@ def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) ->
             MAX_SESSION_SPAN,
         )
     return Selection(logs=matched[:max_files], dropped=dropped)
+
+
+MANIFEST_NAME = "manifest.json"
+
+
+@dataclass(frozen=True)
+class ArchiveResult:
+    path: Path
+    file_count: int
+    characters: list[str]
+    raw_bytes: int
+    zip_bytes: int
+    dropped: int
+
+
+def build_archive(selection: Selection, out_path, start_utc, end_utc) -> ArchiveResult:
+    """Zip the selected logs plus a manifest, atomically.
+
+    Built to a staging name and moved into place on success. A run that dies
+    partway must not leave a truncated archive that reads as a complete
+    export -- the same failure the stitched-file leak had.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    staging = out_path.with_name(f"{out_path.name}.{uuid.uuid4().hex}.tmp")
+
+    characters = sorted({log.listener for log in selection.logs if log.listener})
+    raw_bytes = 0
+    try:
+        with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as archive:
+            for log in selection.logs:
+                archive.write(log.path, arcname=log.path.name)
+                raw_bytes += log.path.stat().st_size
+            manifest = {
+                "window_start": start_utc.isoformat(),
+                "window_end": end_utc.isoformat(),
+                "file_count": len(selection.logs),
+                "characters": characters,
+                "dropped": selection.dropped,
+                "files": [log.path.name for log in selection.logs],
+            }
+            # ensure_ascii=False: character names come from EVE and can
+            # contain non-ASCII characters (accents, non-Latin scripts). The
+            # json.dumps default escapes them to \uXXXX sequences -- that
+            # round-trips correctly through json.loads, but it is silently
+            # unreadable to a human opening the manifest directly, which
+            # defeats the point of a self-describing archive.
+            archive.writestr(
+                MANIFEST_NAME, json.dumps(manifest, indent=2, ensure_ascii=False)
+            )
+        os.replace(staging, out_path)
+    except BaseException:
+        try:
+            staging.unlink()
+        except OSError:
+            pass
+        raise
+
+    return ArchiveResult(
+        path=out_path,
+        file_count=len(selection.logs),
+        characters=characters,
+        raw_bytes=raw_bytes,
+        zip_bytes=out_path.stat().st_size,
+        dropped=selection.dropped,
+    )
