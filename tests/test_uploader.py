@@ -196,6 +196,7 @@ def test_failed_upload_exposes_request_for_manual_retry():
     with pytest.raises(uploader.UploadFailed) as excinfo:
         uploader.upload(req, max_attempts=2, sleep=lambda s: None)
     assert excinfo.value.request is req
+    assert req.calls == 2
 
 
 def test_missing_id_in_response_is_a_permanent_failure():
@@ -203,6 +204,24 @@ def test_missing_id_in_response_is_a_permanent_failure():
     with pytest.raises(uploader.UploadFailed) as excinfo:
         uploader.upload(req, sleep=lambda s: None)
     assert excinfo.value.outcome is uploader.Outcome.PERMANENT
+
+
+def test_upload_raises_auth_outcome_without_retrying():
+    """AUTH is not in RETRYABLE_STATUS, so upload() must fail on the first
+    attempt rather than burning through the retry budget."""
+    req = FakeRequest([("fail", FakeHttpError(401))] * 3)
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.AUTH
+    assert req.calls == 1
+
+
+def test_upload_with_max_attempts_one_fails_on_first_transient_error():
+    req = FakeRequest([("fail", FakeHttpError(503)), ("done", {"id": "x"})])
+    with pytest.raises(uploader.UploadFailed) as excinfo:
+        uploader.upload(req, max_attempts=1, sleep=lambda s: None)
+    assert excinfo.value.outcome is uploader.Outcome.RETRY
+    assert req.calls == 1
 
 
 def test_attempt_counter_resets_after_successful_chunk():

@@ -55,6 +55,7 @@ def test_save_then_load_roundtrips(tmp_path):
     settings.save({"privacy": "public", "category": "22", "notify_mode": "popup"}, p)
     assert settings.load(p)["privacy"] == "public"
     assert settings.load(p)["notify_mode"] == "popup"
+    assert settings.load(p)["category"] == "22"
 
 
 def test_save_creates_parent_directory(tmp_path):
@@ -68,3 +69,24 @@ def test_load_rejects_invalid_privacy(tmp_path, bad):
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"privacy": bad}))
     assert settings.load(p)["privacy"] == "private"
+
+
+@pytest.mark.parametrize("raw", ["[]", "42"])
+def test_load_rejects_valid_json_of_the_wrong_shape(tmp_path, raw):
+    """Valid JSON that isn't an object (a list, a bare number) must fall
+    back to defaults rather than crashing on the `key in raw` checks."""
+    p = tmp_path / "s.json"
+    p.write_text(raw)
+    assert settings.load(p) == settings.DEFAULTS
+
+
+def test_load_rejects_category_supplied_as_an_int(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"category": 22}))
+    assert settings.load(p)["category"] == settings.DEFAULTS["category"]
+
+
+def test_load_rejects_recording_dir_supplied_as_a_non_string(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"recording_dir": 123}))
+    assert settings.load(p)["recording_dir"] is None

@@ -142,3 +142,59 @@ def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
     found = [p.name for p in library.discover(tmp_path)]
     # Should return old and new in mtime order, skipping disappeared
     assert found == ["new.mkv", "old.mkv"]
+
+
+def test_format_size_zero_bytes():
+    assert library.format_size(0) == "0.0 B"
+
+
+def test_format_size_exactly_1024_rolls_over_to_next_unit():
+    assert library.format_size(1024) == "1.0 KB"
+
+
+def test_format_size_very_large_value_falls_through_to_tb():
+    """No PB unit exists past GB, so anything >=1024 TB still prints as TB
+    with a number over 1024 -- cosmetic, but the fallthrough must not raise
+    or truncate silently."""
+    assert library.format_size(1024**5) == "1024.0 TB"
+
+
+def test_probe_duration_returns_none_on_success_with_empty_stdout(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    assert library.probe_duration(f, "ffprobe", runner=fake_run) is None
+
+
+def test_probe_duration_returns_none_on_non_numeric_stdout(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="N/A\n", stderr="")
+
+    assert library.probe_duration(f, "ffprobe", runner=fake_run) is None
+
+
+def test_build_info_propagates_stat_error(tmp_path):
+    """build_info() does not guard path.stat(); a missing file must raise
+    rather than silently returning bogus info."""
+    missing = tmp_path / "gone.mkv"
+    with pytest.raises(OSError):
+        library.build_info(missing, None)
+
+
+def test_delete_empty_list_is_a_noop():
+    assert library.delete([]) == (0, [])
+
+
+def test_discover_orders_deterministically_when_mtimes_tie(tmp_path):
+    """Python's sort is stable, so files sharing an mtime keep a consistent
+    relative order rather than shuffling between calls."""
+    _touch(tmp_path / "a.mkv", mtime=1000)
+    _touch(tmp_path / "b.mkv", mtime=1000)
+    first = [p.name for p in library.discover(tmp_path)]
+    second = [p.name for p in library.discover(tmp_path)]
+    assert set(first) == {"a.mkv", "b.mkv"}
+    assert first == second

@@ -1,3 +1,4 @@
+import configparser
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -90,4 +91,55 @@ def test_survives_stat_race_when_file_vanishes(tmp_path):
     with patch.object(Path, "stat", stat_with_race):
         # Should skip the vanished profile and find the good one
         assert obsconfig.find_recording_dir(tmp_path) == Path("C:/good")
+
+
+def test_profiles_root_returns_path_when_present(tmp_path):
+    root = tmp_path / "obs-studio" / "basic" / "profiles"
+    root.mkdir(parents=True)
+    assert obsconfig.profiles_root(tmp_path) == root
+
+
+def test_profiles_root_returns_none_when_not_a_directory(tmp_path):
+    assert obsconfig.profiles_root(tmp_path / "nope") is None
+
+
+def test_profiles_root_uses_appdata_env_when_set(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    root = tmp_path / "obs-studio" / "basic" / "profiles"
+    root.mkdir(parents=True)
+    assert obsconfig.profiles_root() == root
+
+
+def test_profiles_root_returns_none_when_appdata_unset(monkeypatch):
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert obsconfig.profiles_root() is None
+
+
+def test_read_path_returns_none_on_os_error(monkeypatch, tmp_path):
+    """configparser.read() silently swallows per-file OSErrors internally,
+    so this defensive branch can't be triggered through the real filesystem;
+    exercise it directly by making read() itself raise."""
+    def _raise(self, *a, **kw):
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(configparser.ConfigParser, "read", _raise)
+    assert obsconfig._read_path(tmp_path / "basic.ini") is None
+
+
+def test_read_path_returns_none_on_bad_encoding(tmp_path):
+    ini = tmp_path / "basic.ini"
+    ini.write_bytes(b"\xff\xfe\x00\x01invalid")
+    assert obsconfig._read_path(ini) is None
+
+
+def test_glob_match_that_is_a_directory_is_skipped(tmp_path):
+    """A stray directory named basic.ini must not be opened as a file."""
+    d = tmp_path / "obs-studio" / "basic" / "profiles" / "Weird" / "basic.ini"
+    d.mkdir(parents=True)
+    assert obsconfig.find_recording_dir(tmp_path) is None
+
+
+def test_returns_none_when_adv_out_present_but_key_missing(tmp_path):
+    _profile(tmp_path, "Adv", "[AdvOut]\nSomeOtherKey=x\n")
+    assert obsconfig.find_recording_dir(tmp_path) is None
 

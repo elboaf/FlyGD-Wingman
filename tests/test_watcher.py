@@ -162,3 +162,107 @@ def test_missing_directory_yields_no_results(tmp_path):
     w = watcher.Watcher(tmp_path / "nope", tmp_path / "seen.json")
     w.baseline()
     assert w.poll_once() == []
+
+
+def _break_save(monkeypatch):
+    """Make every write through _save() fail as if the disk rejected it."""
+    def _raise(*a, **kw):
+        raise OSError("disk full")
+    monkeypatch.setattr(watcher, "save_seen", _raise)
+
+
+def test_baseline_survives_save_failure(tmp_path, monkeypatch, caplog):
+    """The R17 resilience fix: an unwritable seen.json must not raise out of
+    baseline(), and the in-memory seen-set must still reflect reality so the
+    session behaves correctly even though nothing reached disk."""
+    f = _write(tmp_path / "old.mkv", 10)
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    _break_save(monkeypatch)
+    with caplog.at_level("WARNING"):
+        w.baseline()  # must not raise
+    assert str(f) in w.seen
+    assert any("seen-set" in r.message for r in caplog.records)
+
+
+def test_poll_once_survives_save_failure_and_still_reports_ready_files(tmp_path, monkeypatch):
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    w.baseline()
+    f = _write(tmp_path / "new.mkv", 10)
+    _break_save(monkeypatch)
+    ready = _settle(w, f)
+    assert [p.name for p in ready] == ["new.mkv"]
+    assert str(f) in w.seen  # in-memory state still advanced despite the failed write
+
+
+def test_rebind_survives_save_failure(tmp_path, monkeypatch):
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    b = _write(new / "b.mkv", 10)
+    w = watcher.Watcher(old, tmp_path / "seen.json")
+    w.baseline()
+    _break_save(monkeypatch)
+    w.rebind(new)  # must not raise
+    assert str(b) in w.seen
+    assert w.directory == new
+
+
+def test_forget_survives_save_failure(tmp_path, monkeypatch):
+    f = _write(tmp_path / "a.mkv", 10)
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    w.baseline()
+    _break_save(monkeypatch)
+    w.forget(f)  # must not raise
+    assert str(f) not in w.seen
+
+
+def test_prune_survives_save_failure(tmp_path, monkeypatch):
+    f = _write(tmp_path / "a.mkv", 10)
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    w.baseline()
+    f.unlink()
+    _break_save(monkeypatch)
+    assert w.prune() == 1  # must not raise, and must still report the correct count
+    assert str(f) not in w.seen
+
+
+def test_load_seen_rejects_non_dict_json(tmp_path):
+    p = tmp_path / "seen.json"
+    p.write_text("[1, 2, 3]")
+    assert watcher.load_seen(p) == {}
+
+
+def test_load_seen_skips_a_malformed_per_key_entry(tmp_path):
+    p = tmp_path / "seen.json"
+    p.write_text(json.dumps({
+        "good.mkv": {"size": 10, "mtime": 1.0},
+        "bad.mkv": {"size": "not-a-number"},  # missing mtime, and unconvertible size
+    }))
+    seen = watcher.load_seen(p)
+    assert seen.keys() == {"good.mkv"}
+    assert seen["good.mkv"] == watcher.SeenEntry(size=10, mtime=1.0)
+
+
+def test_rebind_to_nonexistent_directory_does_not_raise(tmp_path):
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    w.baseline()
+    w.rebind(tmp_path / "nope")  # must not raise
+    assert w.poll_once() == []
+
+
+def test_file_deleted_then_recreated_at_same_path_is_reannounced(tmp_path):
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
+    w.baseline()
+    f = tmp_path / "a.mkv"
+    _write(f, 10)
+    assert [p.name for p in _settle(w, f)] == ["a.mkv"]
+    assert w.poll_once() == []  # confirmed settled
+    f.unlink()
+    assert w.poll_once() == []  # gone from disk, nothing to report
+    _write(f, 10)
+    # Force a distinct mtime: on some filesystems a fast delete+recreate in
+    # the same test can land on an identical mtime, which would make this
+    # assertion flaky for a reason unrelated to what it is testing.
+    os.utime(f, (0, 0))
+    assert [p.name for p in _settle(w, f)] == ["a.mkv"]

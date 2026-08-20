@@ -123,3 +123,53 @@ def test_sweep_orphans_removes_only_stitch_artifacts(tmp_path):
 
 def test_sweep_orphans_handles_missing_directory(tmp_path):
     assert stitch.sweep_orphans(tmp_path / "nope") == 0
+
+
+def test_stitched_propagates_runner_exception(tmp_path):
+    """A raising runner (e.g. ffmpeg binary not found) must still trigger
+    cleanup via the finally, not just a return code check."""
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+
+    def _raise(cmd, **kw):
+        raise RuntimeError("ffmpeg binary not found")
+
+    with pytest.raises(RuntimeError, match="ffmpeg binary not found"):
+        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_raise):
+            pass
+    assert list(tmp_path.glob("stitch-*.mkv")) == []
+
+
+def test_stitched_raises_when_ffmpeg_reports_success_but_no_output(tmp_path):
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+
+    def _no_output(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with pytest.raises(stitch.StitchError, match="no output"):
+        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_no_output):
+            pass
+
+
+def test_stitched_creates_tmp_dir_when_absent(tmp_path):
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+    target = tmp_path / "does" / "not" / "exist"
+    with stitch.stitched(srcs, "ffmpeg", target, runner=_ok) as out:
+        assert out.exists()
+    assert target.is_dir()
+
+
+def test_sweep_orphans_survives_a_per_file_unlink_failure(tmp_path, monkeypatch):
+    (tmp_path / "stitch-abc123.mkv").write_bytes(b"x")
+
+    def _raise_unlink(self):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "unlink", _raise_unlink)
+    assert stitch.sweep_orphans(tmp_path) == 0
+    assert (tmp_path / "stitch-abc123.mkv").exists()
