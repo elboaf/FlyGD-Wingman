@@ -112,7 +112,7 @@ Run on Windows against a real install before each release.
       status bar still fits its progress bar and label.
 - [ ] **LOAD-BEARING: list ROW TEXT is not vertically clipped at 200%.**
       Distinct from the checkbox item below, which only covers the image, and
-      from the window-fits items above. Read the Filename and YouTube Link
+      from the window-fits items above. Read the Filename and Date
       cells: descenders (g, p, y) and the tops of capitals must be fully
       visible, not shaved by the row boundary. sv-ttk computes its row height
       once from the UNSCALED font when `sv.tcl` is sourced and never
