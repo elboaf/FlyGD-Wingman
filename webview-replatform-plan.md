@@ -6675,8 +6675,12 @@ git commit -m "web: upload panel, status strip, and dialog layer"
 **Files:**
 - Create: `obs_youtube_uploader/web/settings.js`
 - Create: `obs_youtube_uploader/web/firstrun.js`
-- Modify: `obs_youtube_uploader/web/index.html` (fill `#route-settings`)
-- Modify: `obs_youtube_uploader/web/style.css` (append the settings section)
+- Modify: `obs_youtube_uploader/web/index.html` (fill `#route-settings`, add `#route-firstrun`)
+- Modify: `obs_youtube_uploader/web/style.css` (append the settings and first-run sections)
+- Modify: `obs_youtube_uploader/web/app.js` (three-way `WM.route`, `onFirstRun` in `WM.HANDLERS`)
+- Modify: `obs_youtube_uploader/web/dev.js` (log `set_recording_dir`)
+- Modify: `obs_youtube_uploader/ui/api.py` (`set_recording_dir`, `_on_recording_dir_ready`)
+- Test: `tests/test_api_settings.py`
 
 **Interfaces:**
 - Consumes: the `wm:settings` event Task 12 re-dispatches (carrying `{settings, webhook_status, detected}`), `onAuthState({state, message})`, and `pywebview.api.auth_labels()`
@@ -7701,7 +7705,8 @@ git commit -m "Add ui/window.py: frameless window construction and lifecycle"
 - Modify: `obs_youtube_uploader/__main__.py`
 - Modify: `obs_youtube_uploader/paths.py`
 - Modify: `tests/test_main.py`
-- Modify: `tests/test_app.py`
+- Modify: `tests/test_upload_media_close.py` (repoint at `ui.api`)
+- Rename: `tests/test_app.py` → `tests/test_copy.py`, dropping its Tk-only block
 - Test: `tests/test_poll_tick.py`, `tests/test_paths.py`
 
 **Interfaces:**
