@@ -1039,3 +1039,74 @@ class Api:
         return {state: {"message": message, "label": label, "enabled": enabled}
                 for state, (message, label, enabled)
                 in copy_mod.AUTH_STATES.items()}
+
+    def _push_first_run_when_ready(self) -> None:
+        """Tell the page to show its first-run route, once it can hear it.
+
+        Deferred onto a short timer rather than pushed immediately: this is
+        called before webview.start(), so app.js has not registered its
+        handlers and _push would log the message and drop it. The page asks
+        for state on load, but there is no state to ask for here -- an
+        unconfigured folder is exactly the case list_rows() returns silently
+        on -- so this is the one thing Python must volunteer.
+        """
+        timer = self._timer(FIRST_RUN_PUSH_S, lambda: self._push("onFirstRun", {}))
+        timer.daemon = True
+        timer.start()
+
+    def _push_auth(self, state: str, message: str | None = None) -> None:
+        if message is None:
+            message = copy_mod.auth_state(state)[0]
+        self._push("onAuthState", {"state": state, "message": message})
+
+    def _auth_busy(self) -> bool:
+        return self._auth_thread is not None and self._auth_thread.is_alive()
+
+    def refresh_auth(self) -> None:
+        """Resolve the stored credentials without blocking the bridge.
+
+        load_credentials lazily imports google.oauth2, which drags in
+        google.auth, requests and cryptography. Off a PyInstaller build's
+        disk that is a visible pause, so it runs on a worker and the page
+        holds the transient state until the answer lands. There is no
+        polling loop: the worker pushes the result itself.
+        """
+        if self._auth_busy():
+            return
+        self._push_auth("connecting", "Checking…")
+        self._auth_thread = threading.Thread(target=self._auth_check_worker,
+                                             daemon=True)
+        self._auth_thread.start()
+
+    def _auth_check_worker(self) -> None:
+        try:
+            creds = uploader.load_credentials(paths.token_file())
+            connected = creds is not None and not uploader.needs_reauth(creds)
+        except Exception:
+            # An unreadable token is indistinguishable from not being
+            # connected, and leaving the control mid-check forever is the
+            # one outcome that helps nobody.
+            connected = False
+        self._push_auth("connected" if connected else "disconnected")
+
+    def connect_google(self) -> None:
+        """Run OAuth off the bridge thread; it blocks on a browser round-trip.
+
+        The guard is here as well as in the page's disabled button: two
+        concurrent flows would fight over the loopback redirect port.
+        """
+        if self._auth_busy():
+            return
+        self._push_auth("connecting")
+        self._auth_thread = threading.Thread(target=self._auth_worker, daemon=True)
+        self._auth_thread.start()
+
+    def _auth_worker(self) -> None:
+        try:
+            creds = uploader.run_oauth_flow()
+            uploader.save_credentials(creds, paths.token_file())
+        except Exception as exc:
+            self._alert("error", "Connection failed", str(exc))
+            self._push_auth("disconnected")
+            return
+        self._push_auth("connected")

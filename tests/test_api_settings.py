@@ -229,3 +229,94 @@ def test_detect_that_agrees_with_the_field_says_so_rather_than_nothing(monkeypat
     assert "Already set" in api._alert.raised[0][2]
 
 
+
+def test_connecting_announces_the_transient_state_before_the_browser_opens(monkeypatch, tmp_path):
+    """The state, not just the outcome: the page disables the control while
+    it is connecting so a second press cannot start a second OAuth flow."""
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    sent = fakes.record_pushes(api)
+    monkeypatch.setattr(uploader, "run_oauth_flow",
+                        lambda: types.SimpleNamespace(valid=True))
+    monkeypatch.setattr(uploader, "save_credentials", lambda c, p: None)
+
+    api.connect_google()
+    api._auth_thread.join(timeout=5)
+
+    states = [p["state"] for p in fakes.payloads(sent, "onAuthState")]
+    assert states == ["connecting", "connected"]
+    assert fakes.payloads(sent, "onAuthState")[0]["message"] == "Waiting for browser…"
+
+
+def test_a_failed_sign_in_reports_it_and_returns_to_disconnected(monkeypatch, tmp_path):
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    sent = fakes.record_pushes(api)
+
+    def boom():
+        raise RuntimeError("the user closed the browser")
+
+    monkeypatch.setattr(uploader, "run_oauth_flow", boom)
+
+    api.connect_google()
+    api._auth_thread.join(timeout=5)
+
+    assert [p["state"] for p in fakes.payloads(sent, "onAuthState")] == [
+        "connecting", "disconnected"]
+    kind, title, body = api._alert.raised[0]
+    assert (kind, title) == ("error", "Connection failed")
+    assert "browser" in body
+
+
+def test_a_second_press_while_connecting_is_ignored(monkeypatch, tmp_path):
+    """The button is disabled in the page, but the guard lives here too:
+    two concurrent OAuth flows would fight over the loopback port."""
+    import threading as _threading
+
+    gate = _threading.Event()
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    monkeypatch.setattr(uploader, "run_oauth_flow",
+                        lambda: (gate.wait(5), types.SimpleNamespace(valid=True))[1])
+    monkeypatch.setattr(uploader, "save_credentials", lambda c, p: None)
+
+    api.connect_google()
+    first = api._auth_thread
+    api.connect_google()
+    assert api._auth_thread is first
+    gate.set()
+    first.join(timeout=5)
+
+
+def test_the_startup_check_resolves_the_state_off_the_bridge_thread(monkeypatch, tmp_path):
+    """load_credentials drags in google.auth, requests and cryptography;
+    off a PyInstaller build's disk that is a visible pause."""
+    api, _window = fakes.build_api(tmp_path)
+    sent = fakes.record_pushes(api)
+    monkeypatch.setattr(uploader, "load_credentials",
+                        lambda p: types.SimpleNamespace(valid=True))
+    monkeypatch.setattr(uploader, "needs_reauth", lambda c: False)
+
+    api.refresh_auth()
+    api._auth_thread.join(timeout=5)
+
+    assert [p["state"] for p in fakes.payloads(sent, "onAuthState")] == [
+        "connecting", "connected"]
+
+
+def test_an_unreadable_token_reads_as_not_connected(monkeypatch, tmp_path):
+    """Never leave the control stuck mid-check: an unreadable token is
+    indistinguishable from not being connected, and that is exactly what
+    the user needs to be told."""
+    api, _window = fakes.build_api(tmp_path)
+    sent = fakes.record_pushes(api)
+
+    def boom(path):
+        raise OSError("token unreadable")
+
+    monkeypatch.setattr(uploader, "load_credentials", boom)
+
+    api.refresh_auth()
+    api._auth_thread.join(timeout=5)
+
+    assert fakes.payloads(sent, "onAuthState")[-1]["state"] == "disconnected"
