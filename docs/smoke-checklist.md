@@ -665,7 +665,26 @@ behavior that only shows up at size.
       separate from the Settings → Connect Google Account button, and is
       likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
-- [ ] Single upload completes and the link column fills in with ↗
+- [ ] **The finished upload's link stays put.** Complete one upload and
+      leave the window open for a minute. Expected: the row keeps its ↗ and
+      its tint, and the **Open video** / **Copy link** pair stays in the
+      upload panel. This is the regression to watch: `poll()` fires a
+      deferred `refresh()` the moment an upload finishes, and `refresh()`
+      used to clear `self.links` — so the link appeared and then vanished a
+      moment later. Trigger an extra rebuild by recording something new,
+      and confirm the link still survives.
+- [ ] **Open video opens the uploaded video**, and **Copy link** puts the
+      same URL on the clipboard with "Link copied to clipboard" in the
+      status line.
+- [ ] **The pair is hidden before anything has uploaded.** On a fresh start
+      with no uploads this session, confirm no Open/Copy buttons are shown
+      rather than two dead ones.
+- [ ] **The pair points at the newest upload.** Upload two recordings
+      separately and confirm Open video opens the second.
+- [ ] **Deleting the recording behind the link removes the pair.** Upload a
+      recording, then Delete Selected on that same row. Expected: the
+      buttons disappear rather than offering to open a row that is gone.
+- [ ] **Single upload completes and the link column fills in with ↗**
 - [ ] **Copy link via the row's right-click context menu puts a working URL
       on the clipboard.** Right-click a row with a completed upload, choose
       "Copy link", paste elsewhere to confirm. Confirm "Copy link" is greyed

@@ -736,7 +736,8 @@ class UploaderWindow:
 
         Row map, since the selection summary grids into it: 0 heading, 1 separator, 2-3
         Title, 4-5 Description, 6 Stitch, 7 ffmpeg warning, 8 selection
-        summary, 9 combat logs, 10 destination, 11 Retry + Upload.
+        summary, 9 combat logs, 10 destination, 11 last upload, 12 Retry +
+        Upload.
         """
         self._panel_width = int(300 * self._dpi_scale)
         self.upload_panel = ttk.Frame(parent, width=self._panel_width)
@@ -852,8 +853,30 @@ class UploaderWindow:
         self.destination_label.grid(row=10, column=0, sticky=tk.W,
                                     pady=(self._pad.normal, 0))
 
+        # The finished upload's link. Hidden until there is one, because an
+        # empty pair of dead buttons is worse than no row at all -- and it
+        # is grid_remove()d rather than destroyed so the geometry is
+        # already solved the moment an upload lands.
+        #
+        # Two explicit buttons rather than a clickable URL: the panel is
+        # 300px, a YouTube URL does not fit in it, and a truncated link is
+        # both unreadable and unselectable inside a ttk.Label.
+        self.last_upload_url: str | None = None
+        self.last_upload_frame = ttk.Frame(self.upload_panel)
+        self.last_upload_frame.grid(row=11, column=0, sticky=tk.EW,
+                                    pady=(self._pad.normal, 0))
+        self.last_upload_frame.columnconfigure(0, weight=1)
+        self.last_upload_frame.columnconfigure(1, weight=1)
+        ttk.Button(self.last_upload_frame, text="Open video",
+                   command=self._open_last_upload).grid(
+            row=0, column=0, sticky=tk.EW, padx=(0, self._pad.tight))
+        ttk.Button(self.last_upload_frame, text="Copy link",
+                   command=self._copy_last_upload).grid(
+            row=0, column=1, sticky=tk.EW)
+        self.last_upload_frame.grid_remove()
+
         actions = ttk.Frame(self.upload_panel)
-        actions.grid(row=11, column=0, sticky=tk.EW, pady=(self._pad.tight, 0))
+        actions.grid(row=12, column=0, sticky=tk.EW, pady=(self._pad.tight, 0))
         # Only Upload Selected stretches: Retry keeps its natural width so
         # the accent button is visibly the larger target, and the pair still
         # fills the panel at every scale.
@@ -1257,7 +1280,6 @@ class UploaderWindow:
         self._refresh_generation += 1
         generation = self._refresh_generation
         self.selected.clear()
-        self.links.clear()
         for iid in self.tree.get_children(""):
             self.tree.delete(iid)
 
@@ -1271,6 +1293,17 @@ class UploaderWindow:
                 # tolerates this race, so the list must too.
                 continue
         self.infos = infos
+        # Links are keyed by path and now OUTLIVE the rebuild. They used to
+        # be cleared at the top of this method, which meant the ↗ appeared
+        # when an upload finished and then vanished a moment later, because
+        # poll() fires a deferred refresh() on exactly that event. Pruning
+        # rather than keeping everything: a path that is no longer in the
+        # list cannot be shown, opened or copied, so retaining it would only
+        # grow the map for the life of the process.
+        live = {info.path for info in self.infos}
+        self.links = {path: url for path, url in self.links.items()
+                      if path in live}
+        self._refresh_last_upload()
         pending = durations.resolve(self.duration_cache, self.infos)
 
         first_preselected_iid = None
@@ -1281,9 +1314,10 @@ class UploaderWindow:
             self.tree.insert(
                 "", tk.END, iid=iid,
                 image=self._checkbox_image(var.get()),
-                # link_cell rather than a literal "": refresh() has just
-                # cleared self.links, so this is always empty today, but a
-                # lookup states the rule instead of encoding today's answer.
+                # link_cell rather than a literal "": links now survive a
+                # rebuild (they are pruned above, not cleared), so a row
+                # whose upload finished keeps its glyph across the refresh
+                # that upload triggers.
                 values=(info.path.name, info.date_str, info.size_str,
                         info.duration_str, link_cell(self.links.get(info.path))),
                 tags=self._row_tags(info.path, position),
@@ -1590,9 +1624,12 @@ class UploaderWindow:
 
         The existence check below guards a `_ui`-queued update arriving for
         a path no longer in the rebuilt tree (e.g. the file was deleted, or
-        refresh() ran mid-upload). It does NOT protect against refresh()
-        clearing self.links on every rebuild — that clearing is preserved
-        deliberately (see refresh()); this guard is a different case.
+        refresh() ran mid-upload).
+
+        Links now survive a rebuild: refresh() prunes self.links to the
+        paths still listed instead of clearing it, so the glyph set here
+        outlives the deferred refresh() that poll() fires the moment the
+        upload finishes.
         """
         iid = str(path)
         if not self.tree.exists(iid):
@@ -1601,6 +1638,47 @@ class UploaderWindow:
         self.links[path] = url
         self.tree.set(iid, "link", link_cell(url))
         self._apply_zebra_tags()
+        self._show_last_upload(url)
+
+    def _show_last_upload(self, url: str | None) -> None:
+        """Reveal (or hide) the Open/Copy pair for the newest upload."""
+        self.last_upload_url = url
+        if url:
+            self.last_upload_frame.grid()
+        else:
+            self.last_upload_frame.grid_remove()
+
+    def _refresh_last_upload(self) -> None:
+        """Re-point the Open/Copy pair after the list is rebuilt.
+
+        Called from refresh() once self.links has been pruned. If the
+        recording behind the last upload is gone, so are the buttons:
+        offering "Open video" for a row the user can no longer see is worse
+        than offering nothing.
+
+        Newest-first ordering comes from self.infos, which library.discover
+        already sorts that way, so this re-derives "most recent" from the
+        list rather than remembering an order that a rebuild invalidates.
+        """
+        for info in self.infos:
+            url = self.links.get(info.path)
+            if url:
+                self._show_last_upload(url)
+                return
+        self._show_last_upload(None)
+
+    def _open_last_upload(self) -> None:
+        if self.last_upload_url:
+            webbrowser.open(self.last_upload_url)
+
+    def _copy_last_upload(self) -> None:
+        if not self.last_upload_url:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.last_upload_url)
+        self._status_kind = "SUCCESS"
+        self.status.config(text="Link copied to clipboard",
+                           foreground=theme.token("SUCCESS"))
 
     def _delete_selected(self) -> None:
         chosen = self._chosen()
