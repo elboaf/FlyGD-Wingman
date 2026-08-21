@@ -160,6 +160,10 @@ class UploaderWindow:
         self.title_var = tk.StringVar(value="")
         ttk.Entry(meta, textvariable=self.title_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
         ttk.Label(meta, text="Description:").grid(row=1, column=0, sticky=tk.NW, pady=(5, 0))
+        # Deliberately unstyled and NOT in _on_theme_changed: this classic
+        # tk.Text follows the theme only because sv-ttk's configure_colors
+        # calls tk_setPalette, which reconfigures existing classic widgets.
+        # That is sv-ttk's doing, not ours - do not assume our code themes it.
         self.desc_txt = tk.Text(meta, height=3, wrap=tk.WORD)
         self.desc_txt.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=(5, 0))
         meta.columnconfigure(1, weight=1)
@@ -207,7 +211,6 @@ class UploaderWindow:
         self.tree.bind("<Double-Button-1>", self._on_row_double_click)
         self.tree.bind("<space>", self._on_tree_space)
         self.tree.bind("<FocusIn>", self._on_tree_focus_in)
-        theme.register(self._on_theme_changed)
 
         self.stitch_var = tk.BooleanVar(value=False)
         bot = ttk.Frame(self.root)
@@ -246,13 +249,19 @@ class UploaderWindow:
                    command=self._start_combat_log_upload).pack(
             side=tk.RIGHT, padx=PAD_TIGHT)
 
-        status_bar = ttk.Frame(self.root, height=48)
+        status_bar = ttk.Frame(self.root, height=int(48 * self._dpi_scale))
         status_bar.pack(fill=tk.X, padx=PAD_NORMAL, pady=(0, PAD_NORMAL))
         status_bar.pack_propagate(False)  # fixed height regardless of child content
         self.progress = ttk.Progressbar(status_bar, mode="determinate")
         self.progress.pack(fill=tk.X, pady=(PAD_TIGHT, 0))
         self.status = ttk.Label(status_bar, text="")
         self.status.pack(fill=tk.X, anchor=tk.W, pady=(PAD_TIGHT, 0))
+
+        # Registered last, deliberately: _on_theme_changed dereferences
+        # self.ffmpeg_warn_label and self.status, both created above. A
+        # consumer registered earlier would be fine only for as long as
+        # _build stays synchronous.
+        theme.register(self._on_theme_changed)
 
     def _build_checkbox_images(self) -> None:
         """Generate checked/unchecked box images at the current DPI scale
@@ -561,7 +570,13 @@ class UploaderWindow:
         # focus ring on a list nobody has tabbed to yet.
         if self.tree.focus_get() is self.tree:
             self._ensure_focus_item()
-        self.status.config(text=f"Found {len(self.infos)} video(s)")
+        # Colour reset with the text: this line overwrites whatever the
+        # last operation left behind, so without it a red error's colour
+        # bleeds into a neutral message - and _status_kind would keep it red
+        # across a theme switch too.
+        self._status_kind = "FG"
+        self.status.config(text=f"Found {len(self.infos)} video(s)",
+                           foreground=theme.token("FG"))
 
     def _set_all(self, value: bool) -> None:
         for var in self.selected.values():
@@ -878,8 +893,13 @@ class UploaderWindow:
         def on_progress(fraction: float) -> None:
             pct = ((index + fraction) / total) * 100
             self._ui(self.progress.config, {"value": pct})
+            # Neutral foreground set explicitly, not just the text: progress
+            # follows on_retry's warning and a previous upload's error, whose
+            # colours would otherwise persist through this whole upload.
+            self._status_kind = "FG"
             self._ui(self.status.config,
-                     {"text": f"Uploading {index + 1}/{total} — {fraction * 100:.1f}%"})
+                     {"text": f"Uploading {index + 1}/{total} — {fraction * 100:.1f}%",
+                      "foreground": theme.token("FG")})
 
         def on_retry(attempt: int, delay: float) -> None:
             self._status_kind = "WARNING"
