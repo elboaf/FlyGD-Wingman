@@ -114,6 +114,35 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] **The window opens fully on screen.** Launch on the primary monitor,
       again with a second monitor attached, then again after disconnecting
       it. Expected: fully visible and its title bar reachable every time.
+- [ ] **LOAD-BEARING: every edge and corner resizes.** Drag all four edges
+      and all four corners in turn; check the pointer becomes the sizing
+      arrow BEFORE the drag, not after. Expected: all eight respond.
+      Frameless windows have no OS resize border — this one is a band of
+      form surface left by insetting the web view, so a change to that
+      inset, to the page's own edges, or to DPI handling can take the whole
+      thing away silently. There is no automated coverage: CI is ubuntu and
+      cannot run a message pump.
+- [ ] **Resizing at 150% or 175% scaling, not just 100%.** Repeat the edge
+      drags on a scaled display. Expected: the band stays the same apparent
+      thickness. The inset and the hit-test are scaled by one factor read at
+      launch; if they ever disagree, half the band goes dead and it presents
+      as "resizing is fiddly on that laptop", not as a bug. This is the
+      failure mode that survived a passing spike once already.
+- [ ] **The window will not shrink below its floor.** Drag any edge inward
+      as far as it goes. Expected: it stops at 840x625 logical, and at that
+      size nothing in either pane is cut off or unreachable. Those numbers
+      were measured off the real page, not derived — if the layout changes,
+      they need re-measuring, and `min_size` in `ui/window.py` needs
+      updating with them.
+- [ ] **Maximize leaves the taskbar alone.** Maximize the window (title-bar
+      drag to the top edge, or Win+Up). Expected: it fills the work area
+      only, and the taskbar stays visible and clickable. A borderless
+      window maximizes over the taskbar unless it is explicitly clamped.
+- [ ] **The inset band is not ugly.** Look at the edge of the window against
+      the page. Expected: the band reads as part of the window, not as a
+      misaligned frame. It matches the page background at the sides and
+      bottom, but it sits above the title bar's gradient at the top, which
+      is the one place it can look wrong.
 - [ ] **Scrollbars are the app's, not Windows'.** Scroll a long list. The
       scrollbar must be the styled thin one, not the classic grey Windows
       scrollbar.
@@ -134,7 +163,10 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       fully visible with nothing clipped.
 - [ ] **Nothing is clipped at the minimum window size** at 150%. The
       Description box shrinks first and the Retry / Upload Selected row is
-      still fully visible.
+      still fully visible. Drag the window down to its floor (840x625
+      logical) to check this — before resizing existed, "minimum" was the
+      only size the window ever had and this was free; now a user can
+      actually get here.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
@@ -178,9 +210,11 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       "Measuring length…" instead — the two glyphs mean opposite things.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
       appears over an empty Link cell, a filename, a header, or empty space.
-- [ ] **The list at the minimum window width.** Every column still present,
-      Filename truncates rather than pushing others off, NO horizontal
-      scrollbar.
+- [ ] **The list at the minimum window width.** Drag the window to its floor
+      (840 logical). Every column still present, Filename truncates rather
+      than pushing others off, NO horizontal scrollbar. That width was
+      measured as the point where this stops being true, so it is the exact
+      edge — not a comfortable margin inside it.
 - [ ] **The Modified column reads as relative time, not a timestamp.** It
       must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
       week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
