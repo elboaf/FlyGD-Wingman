@@ -44,12 +44,18 @@ def make_window(tmp_path):
             ffprobe_bin=None,
         )
         window = app_mod.UploaderWindow(root, state)
+        # Registered BEFORE anything that can raise: if the lines below
+        # throw, teardown must still unregister the theme consumer and
+        # destroy the root. A consumer bound to a dead root survives in
+        # theme._consumers otherwise, and theme.apply swallows the
+        # resulting TclError, so the leak surfaces as noise in a later
+        # test rather than as this one failing.
+        windows.append(window)
         # Invalidate the probe refresh() just started: these tests set
         # duration state by hand, and a straggling probe result landing
         # mid-test would overwrite it.
         window._refresh_generation += 1
         root.update()
-        windows.append(window)
         return window
 
     yield _make

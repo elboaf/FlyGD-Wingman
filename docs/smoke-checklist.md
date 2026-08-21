@@ -47,6 +47,7 @@ Run on Windows against a real install before each release.
 ## Look and feel
 
 ### Layout
+
 - [ ] **The upload panel is intact at 100%, 150% and 200%.** Set
       `Settings > System > Display > Scale`, restart the app at each. The
       panel keeps its proportion to the window, and Title, Description,
@@ -128,6 +129,7 @@ Run on Windows against a real install before each release.
       real recording-folder faults.
 
 ### Title bars
+
 - [ ] **Both title bars are dark at startup** in dark mode. Open the main
       window, then open Settings and put the two side by side: the dialog's
       title bar must match the main window's, not be light. This mismatch,
@@ -205,6 +207,7 @@ Run on Windows against a real install before each release.
       hide behind an otherwise-green scaling section — check size first.
 
 ### Typography
+
 - [ ] **Column headers are bold and the rows are not.** Filename, Date,
       Size, Length and Link read heavier than the row text beneath them.
       Row text is intentionally uniform — `ttk.Treeview` has no per-column
@@ -301,14 +304,13 @@ Run on Windows against a real install before each release.
       window to its floor (860px at 100%). Expected: every column is still
       present and readable, Filename truncates rather than pushing the
       others off, and NO horizontal scrollbar appears. A short Filename
-      column is the
-      accepted outcome here — a column that vanishes, overlaps, or
-      collapses to nothing is not. The preferred widths (620px total) do
-      not fit in the pane at that size; the per-column minimums (410px
-      total) are what hold it together, and they are only reachable because
-      Date, Size and Length stretch — with stretch off, ttk left them at
-      their preferred width and Length and Link ran off the right edge.
-      This is the only place that arithmetic is exercised.
+      column is the accepted outcome here — a column that vanishes,
+      overlaps, or collapses to nothing is not. The preferred widths
+      (620px total) do not fit in the pane at that size. What holds it
+      together is the 860px window floor: the five fixed columns keep
+      their preferred widths (360px) and only Filename compresses, down
+      to its 120px minimum, so 490px of viewport is always enough. This
+      is the only place that arithmetic is exercised.
 - [ ] **The Link column shows ↗, not a URL.** After an upload completes, the
       row's Link cell shows a single arrow glyph in the link colour. Then
       confirm the URL is still reachable three ways on that row:

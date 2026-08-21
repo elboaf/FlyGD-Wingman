@@ -23,11 +23,13 @@ It was built for EVE Online fight footage — so it can also bundle the EVE
 combat logs covering a recording and post them to a Discord webhook you
 configure — but the OBS-to-YouTube workflow works with any OBS recording.
 
-<!-- The screenshot still shows the pre-two-pane layout; it needs to be
-     re-shot on Windows. The alt text describes the current window. -->
+<!-- The screenshot still shows the pre-two-pane layout and needs re-shooting
+     on Windows. Until it is, the alt text below describes the image that is
+     actually displayed, NOT the current window — alt text that described the
+     new layout would mislead a screen-reader user about what is on screen. -->
 <p align="center">
   <img src="docs/assets/wingman-screenshot.png" width="850"
-       alt="The FlyGD Wingman window: a list of OBS recordings with Date, Size and Length columns and a Link column marking an uploaded row, beside an upload panel holding Title, Description, Stitch and Upload Selected.">
+       alt="The FlyGD Wingman window (pre-two-pane layout, pending a re-shot): a list of OBS recordings above Title and Description fields, with Upload Selected, Stitch and Settings controls along the bottom.">
 </p>
 
 ## Verification status

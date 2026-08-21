@@ -38,7 +38,7 @@ def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
     wider gap is what keeps the times legible as their own field.
 
     Changing this display format is safe only because app._sort_by keys the
-    date column off info.mtime (app.py:422), never off the rendered string.
+    date column off info.mtime, never off the rendered string.
     A future sort that reads the cell text would silently start sorting
     "Aug" before "Dec".
 

@@ -502,7 +502,7 @@ class UploaderWindow:
             # watcher's preselection.
             selectmode="none",
         )
-        # Task 3 owns the whole column spec — widths, minwidths, anchors,
+        # configure_tree_columns owns the whole column spec — widths, minwidths, anchors,
         # stretch, heading text and their sort commands. Configuring any of
         # it here would silently revert that task.
         configure_tree_columns(self.tree, self._dpi_scale, self._sort_by)
@@ -554,7 +554,7 @@ class UploaderWindow:
         narrower the window is — accepted, and covered by the column
         minimums; see "Narrow windows" in ui-layout-design.md.
 
-        Row map, since Task 6 grids into it: 0 heading, 1 separator, 2-3
+        Row map, since the selection summary grids into it: 0 heading, 1 separator, 2-3
         Title, 4-5 Description, 6 Stitch, 7 ffmpeg warning, 8 selection
         summary, 9 combat logs, 10 Retry + Upload.
         """
@@ -570,7 +570,7 @@ class UploaderWindow:
         # groups reads as a hole in the layout.
         self.upload_panel.rowconfigure(5, weight=1)
 
-        # Bold comes from Task 4's shared named style, never from a font
+        # Bold comes from the shared named styles, never from a font
         # pinned on this widget: ttk stores style options per theme, so a
         # font configured here would be wiped by the first light/dark
         # switch. apply_typography re-asserts the style after every switch.
@@ -596,7 +596,7 @@ class UploaderWindow:
         # a 1px rule around the panel's dominant element is a hairline at
         # 200%, which is exactly the class of defect this layout fixes.
         self.desc_txt = tk.Text(self.upload_panel, height=3, wrap=tk.WORD,
-                                relief=tk.SOLID, bd=max(1, int(self._dpi_scale)),
+                                relief=tk.SOLID, bd=max(1, int(round(self._dpi_scale))),
                                 highlightthickness=0)
         self.desc_txt.grid(row=5, column=0, sticky=tk.NSEW)
         self._apply_desc_colors()
@@ -629,7 +629,7 @@ class UploaderWindow:
             self.ffmpeg_warn_label.grid(row=7, column=0, sticky=tk.EW,
                                         pady=(self._pad.tight, 0))
 
-        # Row 8. Muted via Task 4's shared named style rather than a
+        # Row 8. Muted via the shared named styles rather than a
         # foreground set here: apply_typography re-asserts MUTED_STYLE on
         # every theme change, so this label needs no entry in
         # _on_theme_changed -- a manual recolour would be redundant with the
@@ -984,7 +984,7 @@ class UploaderWindow:
         that bakes theme colours into pixels rather than reading a ttk
         style live: checkbox images and Treeview tag colours.
 
-        This is UploaderWindow's ONE theme consumer. Task 6 EXTENDS this
+        This is UploaderWindow's ONE theme consumer. Callers EXTEND this
         method for the status line and ffmpeg warning — it must not define
         and register a second one, or a live switch runs two half-updates
         against the same window.
@@ -1000,7 +1000,7 @@ class UploaderWindow:
             var = self.selected.get(Path(iid))
             if var is not None:
                 self.tree.item(iid, image=self._checkbox_image(var.get()))
-        # Added in Task 6: widgets whose colour was set directly rather
+        # Widgets whose colour was set directly rather
         # than through a ttk style. _status_kind survives the switch so a
         # red error stays red rather than snapping back to default.
         #
@@ -1706,9 +1706,9 @@ class UploaderWindow:
             self._ui(self.retry_btn.state, ["disabled"])
 
     def _open_settings(self) -> None:
-        # Imported lazily: settingsui.py does not exist until Task 11. A
-        # top-level import here would break this task before that module
-        # is written.
+        # Imported lazily because settingsui imports this module at the top
+        # level (`from . import app as app_mod`), so a top-level import here
+        # would be circular.
         from .settingsui import SettingsWindow
         SettingsWindow(self.root, self.state, on_saved=self._settings_saved)
 

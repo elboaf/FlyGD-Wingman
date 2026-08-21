@@ -286,10 +286,14 @@ duration as unknown rather than zero.
 
 ## Testing and verification
 
-- The suite runs on Linux and contains no UI tests. Layout is therefore
-  verified by driving real Tk windows on the WSLg display, with `tk scaling`
+- The suite gains display-gated UI tests, which supplement rather than
+  replace the Windows smoke checks: `tests/conftest.py` builds real
+  `UploaderWindow`s and every test using it skips cleanly where there is no
+  display, so a headless CI box does not turn a missing X server into a red
+  suite. They drive real Tk windows on the WSLg display, with `tk scaling`
   set as `__main__.main()` sets it, and `root.update()` called before reading
-  any geometry.
+  any geometry. **Consequence worth knowing: a green CI run does not cover
+  the layout work** — those tests only execute where `DISPLAY` is set.
 - New unit tests: `spacing()` scaling at 1.0/1.25/1.5, the date formatter
   (same year vs other year), the selection summary formatter — including a
   selection containing an unprobed recording, which must render the `+`

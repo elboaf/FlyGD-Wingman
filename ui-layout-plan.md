@@ -1,5 +1,14 @@
 # UI Layout and Information Design Implementation Plan
 
+> **HISTORICAL RECORD — delivered. Do not implement from this file.**
+> `ui-layout-design.md` is the current authority; where the two disagree the
+> design doc wins. Two figures here were superseded by measurement during
+> implementation and are deliberately left as written: the window floor is
+> **860px**, not the 750px this plan assumes throughout (only `filename`'s
+> minimum is reachable, so the columns need 490px of viewport), and
+> `format_selection_summary([])` returns `"Nothing selected"`, which the
+> empty-selection assertion in Task 6 did not expect.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rework the main window into a two-pane layout — recording list beside an upload panel — with margins, DPI-scaled spacing, correctly sized and aligned columns, and a dark title bar on both windows.

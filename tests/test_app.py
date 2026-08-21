@@ -7,6 +7,7 @@ which is exactly why the formatting lives in a function and not inline in a
 label update.
 """
 from pathlib import Path
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -51,7 +52,7 @@ def test_spacing_never_collapses_to_zero():
 
 def test_spacing_is_immutable():
     pad = app_mod.spacing(_widget_at(96))
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         pad.tight = 99
 
 
