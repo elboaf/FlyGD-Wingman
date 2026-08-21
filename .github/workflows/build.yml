@@ -179,10 +179,16 @@ jobs:
           # a missing style.css or any of the four scripts renders an
           # unstyled or inert page rather than failing. Settings is a ROUTE
           # inside index.html, so there is no second document to check.
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js")) {
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js",
+                               "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
           }
+          # The fonts fail QUIETLY where the scripts fail loudly: a missing
+          # woff2 renders the page in Segoe UI instead of Inter, which looks
+          # deliberate rather than broken. The type scale asks for weights
+          # 620 and 650, so the fallback silently flattens them into the
+          # 600/700 buckets and nobody files a bug.
 
       - name: Verify the app icon is bundled
         # Same failure shape as the two checks above: uploader.spec lists the

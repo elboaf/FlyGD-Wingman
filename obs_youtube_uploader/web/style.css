@@ -3,6 +3,38 @@
    Tokens are the successor to theme.py's TOKENS dict. Dark only: light
    mode and the AppsUseLightTheme detection are dropped, not ported. */
 
+/* Bundled, never linked from a CDN: this is a desktop app, and a webfont
+   fetched over the network would silently fall back whenever the machine
+   is offline -- which is precisely the bug this replaces.
+
+   Inter is the VARIABLE build on purpose. The type scale below asks for
+   weights 620 and 650; only a variable face can render those, and with a
+   static fallback they collapse into the 600/700 buckets and flatten the
+   hierarchy the redesign is built on.
+
+   Only the upright faces ship. Nothing in the page uses italic, and the
+   italic variable file is another ~344 KB.
+
+   font-display: block rather than swap -- the window paints once at
+   launch against a local file, so there is no slow-network case to swap
+   out of, and a reflow from fallback metrics to Inter's would be visible
+   as a jump on every start. */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/InterVariable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
