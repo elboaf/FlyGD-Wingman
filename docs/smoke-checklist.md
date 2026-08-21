@@ -39,9 +39,29 @@ Run on Windows against a real install before each release.
       resolve, then start the app. Expected: the app still starts and
       lists recordings normally; the Stitch checkbox is disabled with an
       explanatory "(ffmpeg not found — stitching unavailable)" label.
-      Restore the binary afterward.
+      Restore the binary afterward. **The warning now lives in the upload
+      panel, directly under the Stitch checkbox, not in a full-width bar** —
+      check the whole sentence is readable there and wraps rather than being
+      cut off at the panel edge, at 100% and again at 150%.
 
 ## Look and feel
+
+### Layout
+- [ ] **The upload panel is intact at 100%, 150% and 200%.** Set
+      `Settings > System > Display > Scale`, restart the app at each. The
+      panel keeps its proportion to the window, and Title, Description,
+      Stitch, the selection summary, Upload combat logs, Retry and Upload
+      Selected are all fully visible with no clipped text and no button
+      running past the panel edge.
+- [ ] **Nothing is clipped at the minimum window size.** Drag the window as
+      small as it goes at 150%. Expected: the Description box shrinks first
+      and the Retry/Upload Selected row is still fully visible; list columns
+      are cramped but present (accepted degradation — see
+      ui-layout-design.md, "Narrow windows"). A missing Upload button is a
+      defect; a narrow filename column is not.
+- [ ] **The window has visible margins on all four edges,** and the
+      Description box reads as a bordered field in both light and dark mode
+      rather than blending into the panel background.
 
 ### Theming
 - [ ] **Launches in light mode when Windows is set to Light.**
