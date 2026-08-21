@@ -9,6 +9,7 @@ from obs_youtube_uploader import paths, settings
 from obs_youtube_uploader.app import dpi_scale
 from obs_youtube_uploader.__main__ import (
     configure_logging, get_system_dpi, resolve_recording_dir, set_dpi_awareness,
+    tk_scaling_for,
 )
 
 
@@ -215,4 +216,24 @@ def test_dpi_scale_normalises_tk_scaling_to_a_100_percent_multiplier():
     for dpi, expected in ((96, 1.0), (120, 1.25), (144, 1.5)):
         widget = SimpleNamespace(tk=SimpleNamespace(
             call=lambda *args, _v=dpi / 72.0: _v))
+        assert dpi_scale(widget) == pytest.approx(expected)
+
+
+def test_tk_scaling_uses_the_points_per_pixel_divisor():
+    """72, not 96: `tk scaling` is points-per-pixel, and 96 DPI is 96/72
+    points per pixel. Dividing by 96 here would look plausible -- it is the
+    100%-scaling DPI -- and would silently scale the entire UI by 0.75."""
+    assert tk_scaling_for(96) == 96 / 72.0
+    assert tk_scaling_for(144) == 144 / 72.0
+
+
+def test_tk_scaling_and_dpi_scale_round_trip():
+    """The two halves of the contract must agree. tk_scaling_for() writes the
+    value into Tk; dpi_scale() reads it back and normalises it to a
+    100%-relative multiplier. This fails if EITHER half is changed
+    independently -- which is the actual bug shape, since each looks
+    self-consistent in isolation."""
+    for dpi, expected in ((96, 1.0), (120, 1.25), (144, 1.5)):
+        widget = SimpleNamespace(tk=SimpleNamespace(
+            call=lambda *args, _v=tk_scaling_for(dpi): _v))
         assert dpi_scale(widget) == pytest.approx(expected)

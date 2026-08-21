@@ -124,6 +124,14 @@ def get_system_dpi() -> int:
     return dpi if dpi >= 96 else 96
 
 
+def tk_scaling_for(dpi: int) -> float:
+    """Tk's `scaling` is points-per-pixel, so the divisor is 72, not 96.
+    Extracted from main() so the constant is testable without a real Tk
+    root; app.dpi_scale() is the reader half of this same contract.
+    """
+    return dpi / 72.0
+
+
 def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
     """Stored setting, then OBS's own config, then ask the user.
 
@@ -175,7 +183,7 @@ def main() -> int:
 
     root = tk.Tk()
     root.withdraw()  # Created on the main thread up front, shown on demand.
-    root.tk.call("tk", "scaling", get_system_dpi() / 72.0)  # points-per-pixel, not /96
+    root.tk.call("tk", "scaling", tk_scaling_for(get_system_dpi()))
     theme.apply(root, theme.detect_mode())
 
     rec_dir = resolve_recording_dir(cfg)
