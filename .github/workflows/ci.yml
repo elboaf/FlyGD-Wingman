@@ -36,5 +36,43 @@ jobs:
             echo "::error::Version mismatch across pyproject.toml ($PYPROJECT_VERSION), __init__.py ($INIT_VERSION), and installer.iss ($ISS_VERSION)"
             exit 1
           fi
+      - name: Check the WebView2 detection predicate agrees
+        # The installer decides whether to run the Evergreen bootstrapper and
+        # the app decides whether to refuse to start, and they must be the
+        # same question. They cannot share code -- one is Inno Pascal, the
+        # other is Python -- so this asserts on the pieces that would silently
+        # drift: the EdgeUpdate client GUID, the registry subkey, the value
+        # name, and the 0.0.0.0 sentinel. A drift here means the installer
+        # skips the bootstrapper on a machine the app then refuses to run on,
+        # or vice versa, and nothing else in the pipeline would notice.
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+
+          iss = pathlib.Path("packaging/installer.iss").read_text()
+          py = pathlib.Path("obs_youtube_uploader/ui/preflight.py").read_text()
+
+          tokens = {
+              "EdgeUpdate client GUID": "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+              "registry subkey": r"SOFTWARE\Microsoft\EdgeUpdate\Clients",
+              "value name": "pv",
+              "empty-install sentinel": "0.0.0.0",
+          }
+          missing = []
+          for label, token in tokens.items():
+              if token not in iss:
+                  missing.append(f"{label} ({token!r}) missing from packaging/installer.iss")
+              if token not in py:
+                  missing.append(f"{label} ({token!r}) missing from obs_youtube_uploader/ui/preflight.py")
+
+          if missing:
+              for line in missing:
+                  print(f"::error::{line}")
+              print("The installer's WebView2RuntimePresent() and preflight.py's")
+              print("webview2_version() must be the same predicate.")
+              sys.exit(1)
+          print("WebView2 detection predicate agrees across installer.iss and preflight.py")
+          PY
+
       - name: Test
         run: python -m pytest tests/ -v

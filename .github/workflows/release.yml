@@ -92,6 +92,39 @@ jobs:
       - name: Fetch ffmpeg
         run: python packaging/fetch_ffmpeg.py
 
+      - name: Fetch the WebView2 bootstrapper
+        run: python packaging/fetch_webview2.py
+
+      - name: Verify the WebView2 bootstrapper is signed by Microsoft
+        # This is the integrity gate, standing in for the sha256 pin
+        # fetch_ffmpeg.py uses. A pin is not possible here: Microsoft rotates
+        # the artifact behind a stable fwlink, so a pinned hash would break
+        # the build every few weeks and train whoever maintains it to bump
+        # hashes without checking them. Verifying the PUBLISHER is stronger
+        # anyway, and it is the check that would actually catch a hijacked
+        # redirect - which is the threat that matters when the file is
+        # bundled into an installer and then Exec'd on a user's machine.
+        # Needs Windows, which is why it lives here and not in the script.
+        #
+        # It matters more here than in build.yml: this artifact is bundled
+        # into a RELEASED installer and then Exec'd on every machine that
+        # installs it, so an unverified stub here is a supply-chain problem,
+        # not just a broken test build. If you change one of the two steps
+        # (this one or build.yml's), change the other.
+        shell: pwsh
+        run: |
+          $stub = "packaging\bin\MicrosoftEdgeWebview2Setup.exe"
+          if (-not (Test-Path $stub)) { throw "bootstrapper not found at $stub" }
+          $sig = Get-AuthenticodeSignature $stub
+          Write-Host "Status:  $($sig.Status)"
+          Write-Host "Subject: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") {
+            throw "WebView2 bootstrapper signature is $($sig.Status), not Valid - do NOT ship this"
+          }
+          if ($sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") {
+            throw "WebView2 bootstrapper is signed by $($sig.SignerCertificate.Subject), not Microsoft Corporation"
+          }
+
       - name: Build executable
         run: python -m PyInstaller packaging/uploader.spec --noconfirm
 
