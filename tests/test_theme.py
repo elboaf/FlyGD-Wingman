@@ -27,3 +27,41 @@ def test_detect_mode_light_when_reader_returns_one():
 def test_detect_mode_light_when_reader_returns_none():
     # Safe default: an unreadable registry value must not be treated as dark.
     assert theme.detect_mode(reader=lambda: None) == "light"
+
+
+TOKEN_NAMES = [
+    "SUCCESS",
+    "ERROR",
+    "WARNING",
+    "MUTED",
+    "LINK",
+    "FG",
+    "ROW_ODD",
+    "ROW_EVEN",
+    "ROW_PRESELECT",
+]
+
+
+def test_tokens_has_exactly_light_and_dark_modes():
+    assert set(theme.TOKENS.keys()) == {"light", "dark"}
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+@pytest.mark.parametrize("name", TOKEN_NAMES)
+def test_every_token_name_present_in_both_modes(mode, name):
+    assert name in theme.TOKENS[mode]
+    assert theme.TOKENS[mode][name].startswith("#")
+
+
+def test_token_uses_explicit_mode():
+    assert theme.token("SUCCESS", "dark") == theme.TOKENS["dark"]["SUCCESS"]
+
+
+def test_token_defaults_to_current_mode(monkeypatch):
+    monkeypatch.setattr(theme, "current_mode", lambda: "dark")
+    assert theme.token("SUCCESS") == theme.TOKENS["dark"]["SUCCESS"]
+
+
+def test_token_raises_keyerror_on_unknown_name():
+    with pytest.raises(KeyError):
+        theme.token("NOT_A_REAL_TOKEN", "light")

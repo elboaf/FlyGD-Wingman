@@ -56,3 +56,47 @@ def detect_mode(reader=read_apps_use_light_theme) -> Mode:
 # tests/test_theme.py's autouse _clear_consumers fixture reads/mutates this
 # from Step 1 onward - controller ruling, see task-2-report.md.
 _consumers: list[Callable[[Mode], None]] = []
+
+
+TOKENS: dict[str, dict[str, str]] = {
+    "light": {
+        "SUCCESS": "#1a7f37",
+        "ERROR": "#c0392b",
+        "WARNING": "#b8860b",
+        "MUTED": "#6c6c6c",
+        "LINK": "#0645ad",
+        # Neutral status foreground. Exists because _combat_log_worker sets
+        # foreground="black" literally, which is invisible on a dark
+        # background - a real bug, not just a suboptimal shade.
+        "FG": "#1a1a1a",
+        "ROW_ODD": "#ffffff",
+        "ROW_EVEN": "#f5f5f5",
+        "ROW_PRESELECT": "#fff3b0",
+    },
+    "dark": {
+        "SUCCESS": "#3fb950",
+        "ERROR": "#f85149",
+        "WARNING": "#d29922",
+        "MUTED": "#9198a1",
+        "LINK": "#58a6ff",
+        "FG": "#e6edf3",
+        "ROW_ODD": "#1e1e1e",
+        "ROW_EVEN": "#252526",
+        "ROW_PRESELECT": "#3a3a1e",
+    },
+}
+
+# Module-level "current" mode, mutated only by apply(). Seeded from a real
+# detection at import time so token()/current_mode() are sensible even
+# before __main__.py calls apply() once at startup.
+_current_mode: Mode = detect_mode()
+
+
+def current_mode() -> Mode:
+    return _current_mode
+
+
+def token(name: str, mode: Mode | None = None) -> str:
+    """Raises KeyError for an unknown token name - a typo here should fail
+    loudly in a test, not silently render as a missing colour."""
+    return TOKENS[mode if mode is not None else current_mode()][name]
