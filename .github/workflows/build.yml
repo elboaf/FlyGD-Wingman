@@ -57,14 +57,21 @@ jobs:
         # and still exits 0, so a missing dependency yields a successful build
         # of a broken application. Fail here instead, where it is obvious.
         #
-        # This only proves sv_ttk is installed on the *build* runner, before
-        # PyInstaller has run - it says nothing about whether the .tcl data
-        # actually reached the frozen bundle. See the post-build assertion
-        # below for that.
+        # This only proves the packages are installed on the *build* runner,
+        # before PyInstaller has run - it says nothing about whether the web/
+        # page data actually reached the frozen bundle. See the post-build
+        # assertion below for that.
         shell: pwsh
         run: |
-          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, sv_ttk; print('runtime deps importable')"
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, webview; print('runtime deps importable')"
           if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
+          # Checked separately because it is the hiddenimports= entry, not an
+          # ordinary import: nothing in the source imports this module by
+          # name, so a rename or a broken pythonnet install would otherwise
+          # surface only as a frozen app that opens no window and exits 0
+          # (spike Q7). Named on its own line so the failure says which one.
+          python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
+          if ($LASTEXITCODE -ne 0) { throw "webview.platforms.edgechromium is not importable - the hiddenimports entry in uploader.spec would resolve to nothing and the frozen app would exit 0 with no window" }
 
       - name: Inject OAuth credentials
         if: ${{ inputs.inject_credentials }}
@@ -116,27 +123,38 @@ jobs:
             if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
           }
 
-      - name: Verify sv-ttk theme data is bundled
-        # Mirrors the ffmpeg check above and exists for the same reason:
-        # PyInstaller exits 0 even when a `datas` entry resolves to nothing,
-        # so a wrong collect_data_files() call would produce a green build
-        # of an app that raises the moment __main__.py calls
-        # sv_ttk.set_theme() - and nothing in CI would notice without this.
+      - name: Verify the web page is bundled
+        # Mirrors the ffmpeg check above and exists for the same reason the
+        # sv-ttk assertion it replaces did: PyInstaller exits 0 even when a
+        # `datas` entry resolves to nothing, so a wrong path in uploader.spec
+        # would produce a green build of an app that opens a blank window -
+        # and nothing in CI would notice without this. The trap is confirmed
+        # still live: the spike's build.ps1 asserts on exactly this path for
+        # exactly this reason.
+        #
+        # It is worse here than it was for sv-ttk. A missing .tcl file raised
+        # at set_theme(); a missing web/ produces no exception at all, because
+        # pywebview swallows load failures (spike Q7) and webview.start()
+        # returns normally with exit code 0.
+        #
         # This assertion only proves the files are present; it cannot prove
-        # they load correctly, which is what actually launching the app
-        # (manually, from the downloaded artifact) is for.
+        # the page loads and renders, which is what actually launching the app
+        # (manually, from the downloaded artifact) is for - see
+        # docs/smoke-checklist.md, "Look and feel > Frozen build".
         shell: pwsh
         run: |
-          $svTtk = "dist\OBSYouTubeUploader\_internal\sv_ttk"
-          if (-not (Test-Path $svTtk)) {
-            throw "sv_ttk package data not found at $svTtk - the datas= entry in uploader.spec did not collect it, and sv_ttk.set_theme() will fail at runtime"
+          $web = "dist\OBSYouTubeUploader\_internal\web"
+          if (-not (Test-Path $web)) {
+            throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the app will open a blank window and exit 0"
           }
-          Get-ChildItem -Recurse $svTtk
-          # These filenames are sv-ttk-version-sensitive and were verified against the installed package.
-          # If this check fails, consult the bundled sv_ttk files before assuming the bundle broke.
-          foreach ($tcl in @("sv.tcl", "theme\light.tcl", "theme\dark.tcl")) {
-            $path = Join-Path $svTtk $tcl
-            if (-not (Test-Path $path)) { throw "$tcl missing from bundled sv_ttk data at $path" }
+          Get-ChildItem -Recurse $web
+          # Every file the page loads by name. index.html is the entry point;
+          # a missing style.css or any of the four scripts renders an
+          # unstyled or inert page rather than failing. Settings is a ROUTE
+          # inside index.html, so there is no second document to check.
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js")) {
+            $path = Join-Path $web $asset
+            if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
           }
 
       - name: Verify the app icon is bundled

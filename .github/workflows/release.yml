@@ -60,10 +60,20 @@ jobs:
         # PyInstaller reports a missing hidden import as an ERROR line but
         # still exits 0, so a missing dependency yields a successful build of
         # a broken application. Fail here, where the cause is obvious.
+        #
+        # webview is checked here even though this list historically lagged
+        # build.yml's: the release path must not be weaker than the test-build
+        # path, and this is the dependency whose absence produces the quietest
+        # failure of any of them (spike Q7 - no window, no error, exit 0).
         shell: pwsh
         run: |
-          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, webview; print('runtime deps importable')"
           if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
+          # The hiddenimports= entry, checked separately so the failure names
+          # it. Nothing imports this module by name, so PyInstaller dropping
+          # it is invisible until a user launches the release.
+          python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
+          if ($LASTEXITCODE -ne 0) { throw "webview.platforms.edgechromium is not importable - the hiddenimports entry in uploader.spec would resolve to nothing and the released app would exit 0 with no window" }
 
       - name: Inject OAuth credentials
         shell: pwsh
@@ -84,6 +94,31 @@ jobs:
 
       - name: Build executable
         run: python -m PyInstaller packaging/uploader.spec --noconfirm
+
+      - name: Verify the web page is bundled
+        # release.yml previously had NO post-build bundle assertion of any
+        # kind - build.yml carried them all, and a release built straight from
+        # a tag skipped every one. That was survivable while the worst
+        # outcome was an unthemed window. It is not survivable now: a `datas`
+        # entry that resolves to nothing still leaves PyInstaller exiting 0,
+        # and the resulting app opens no window and exits 0 as well (spike
+        # Q7), so the first report would come from a user who downloaded a
+        # release and saw nothing happen.
+        #
+        # Deliberately mirrors build.yml's step of the same name. If you
+        # change one, change the other - they are the same assertion on the
+        # same path, and the release path must not be the weaker of the two.
+        shell: pwsh
+        run: |
+          $web = "dist\OBSYouTubeUploader\_internal\web"
+          if (-not (Test-Path $web)) {
+            throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the released app will open a blank window and exit 0"
+          }
+          Get-ChildItem -Recurse $web
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js")) {
+            $path = Join-Path $web $asset
+            if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
+          }
 
       - name: Build installer
         run: iscc packaging/installer.iss
