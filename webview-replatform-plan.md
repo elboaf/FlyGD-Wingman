@@ -115,6 +115,38 @@ and its tests cross the port untouched.
 
 **Deleted at Task 16:** `app.py`, `settingsui.py`, `theme.py`, `tooltip.py`'s widget machinery, and seven widget-based test files.
 
+## Accepted Unverified Risk: the absent-runtime install path
+
+**Decided 2026-08-21: no clean VM is available, so this path ships unverified.**
+
+Task 18 still BUILDS the WebView2 bootstrapper chain in full — this is a
+decision not to *verify* it, not a decision to omit it. What can be checked
+without a VM still must be:
+
+- the runtime-**present** install path (Task 18 Step 9) — the bootstrapper must
+  not run on a machine that already has the runtime;
+- the app's own pre-flight refusal, via `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`
+  pointed at an empty directory (Task 1, and the smoke item that asserts a
+  **non-zero** exit);
+- that the installer's predicate and `preflight.py`'s agree (Task 18 Step 4).
+
+What ships untested: whether the bundled bootstrapper actually installs the
+runtime on a machine without it, and whether an offline install fails with the
+one honest error the code intends. Both smoke items stay in
+`docs/smoke-checklist.md` marked `CLEAN VM ONLY` and **unticked** — they are
+deferred, not passed, and must not be ticked on the basis of reasoning.
+
+Residual exposure if the chain is wrong: a first-time user on a machine without
+WebView2 sees the installer complete, then gets the pre-flight dialog naming the
+runtime and its download URL on every launch. That is a bad first impression and
+a support conversation, but it is not silent and not data-destroying — the
+pre-flight check is what converts this from "the app does nothing and exits 0"
+into "the app tells you what to install". That degradation is the reason this
+risk is acceptable to carry.
+
+Revisit before any release that expects non-technical users, or as soon as a VM
+is available.
+
 ## Ordering and the Point of No Return
 
 Tasks 1–13 are additive: the Tk UI keeps working throughout, and every task is independently reviewable. **Task 16 is irreversible** — the Tk and webview UIs cannot run side by side, so the only mitigation is ordering. Do not start Task 16 until Tasks 14 and 15 are complete and the application has been driven against real recordings through the new UI.
@@ -9153,7 +9185,8 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       it has a title, names the runtime by its full name, shows a URL that
       can be selected or typed out, and closes on OK without leaving a
       process behind (check Task Manager).
-- [ ] **CLEAN VM ONLY: the bootstrapper actually installs the runtime.**
+- [ ] **CLEAN VM ONLY — DEFERRED, no VM available: the bootstrapper actually
+      installs the runtime.**
       On a fresh Windows VM with no WebView2 runtime, run the installer.
       Expected: the wizard pauses briefly at the end, the log shows "runtime
       absent, running the bundled Evergreen bootstrapper" followed by
@@ -9162,7 +9195,8 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       — the `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` trick fools the loader, not
       the registry. **Leave this unticked rather than assuming it; it is the
       largest untested risk in the release.**
-- [ ] **CLEAN VM ONLY: an offline install fails honestly.** Same VM,
+- [ ] **CLEAN VM ONLY — DEFERRED, no VM available: an offline install fails
+      honestly.** Same VM,
       network disconnected. Expected: the install still completes, ONE error
       dialog explains the runtime could not be installed and gives the
       download URL, the Finished page repeats the warning, and the app is
