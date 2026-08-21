@@ -195,3 +195,107 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
     assert "determinate" in modes[1:]
     # One stitched video, but every source row gets the link.
     assert sorted(l["id"] for l in fakes.payloads(sent, "onLink")) == ["r1", "r2"]
+
+
+def failing_upload(outcome, request=object()):
+    def _upload(req, **kw):
+        raise uploader.UploadFailed(outcome, request=request)
+    return _upload
+
+
+def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp_path):
+    session = object()
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload",
+                        failing_upload(uploader.Outcome.RETRY, session))
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    join(api)
+
+    assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": True}
+    assert api._retry_state.request is session
+    assert api._retry_state.resume_index == 0
+    assert api._alert.raised[-1][0] == "error"
+
+
+def test_a_permanent_failure_offers_no_retry_and_drops_the_session(monkeypatch, tmp_path):
+    """A non-RETRY outcome cannot be resumed, and holding the request would
+    keep an open handle on the user's own recording -- which blocks
+    renaming or deleting it on Windows."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload",
+                        failing_upload(uploader.Outcome.QUOTA, object()))
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    join(api)
+
+    assert fakes.payloads(sent, "onRetryAvailable") == []
+    assert api._retry_state.request is None
+
+
+def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_path):
+    """The context manager has already deleted the merged file the resumable
+    session points at. Retry re-stitches from scratch instead."""
+    import contextlib
+
+    api, _window, _rows = api_with(tmp_path)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload",
+                        failing_upload(uploader.Outcome.RETRY, object()))
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        yield tmp_path / "merged.mkv"
+
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+
+    api.start_upload("Fight", "d", "unlisted", "20", True, ["r1", "r2"])
+    join(api)
+
+    assert api._retry_state.request is None
+    assert api._retry_state.job.stitch is True
+
+
+def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path):
+    session = object()
+    resumed = []
+    api, _window, _rows = api_with(tmp_path)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload",
+                        failing_upload(uploader.Outcome.RETRY, session))
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    join(api)
+
+    def resume(req, *, on_progress=None, on_retry=None, on_response=None, **kw):
+        resumed.append(req)
+        if on_progress is not None:
+            on_progress(1.0)
+        return "vidA" if req is session else "vidB"
+
+    monkeypatch.setattr(uploader, "upload", resume)
+    sent = fakes.record_pushes(api)
+    api.retry()
+    join(api)
+
+    # The FIRST call reuses the stored session -- that is what makes this
+    # resume rather than restart -- and the second file follows on.
+    assert resumed[0] is session
+    assert [l["video_id"] for l in fakes.payloads(sent, "onLink")] == ["vidA", "vidB"]
+    assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
+    assert api._retry_state is None
+
+
+def test_retry_with_nothing_to_retry_does_nothing(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    api.retry()
+    assert sent == []
+    assert api._upload_thread is None

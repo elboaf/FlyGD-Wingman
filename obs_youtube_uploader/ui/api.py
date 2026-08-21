@@ -606,3 +606,60 @@ class Api:
             "destination": copy_mod.format_destination(
                 channel_title, self._state.settings.get("privacy", "")),
         })
+
+    def retry(self) -> None:
+        state = self._retry_state
+        if state is None:
+            return
+        # Disabled immediately, not by the worker: the click that got here
+        # must not be repeatable while the resume is being set up.
+        self._push("onRetryAvailable", {"available": False})
+        self._upload_thread = threading.Thread(
+            target=self._retry_worker, args=(state,), daemon=True)
+        self._upload_thread.start()
+
+    def _retry_worker(self, state: RetryState) -> None:
+        """Resume the interrupted upload, then finish the rest of the job."""
+        if state.request is None:
+            # Stitched, or no session to resume: redo the whole job. No
+            # second confirm -- the user already approved this exact job,
+            # and Retry is an explicit request to run it again.
+            self._upload_worker(replace(state.job, start_index=0))
+            return
+        try:
+            total = len(state.job.items)
+
+            def on_progress(fraction: float) -> None:
+                self._last_pct = ((state.resume_index + fraction) / total) * 100
+                self._push("onProgress", {
+                    "mode": "determinate", "pct": self._last_pct,
+                    "text": copy_mod.format_progress(state.resume_index, total,
+                                                     fraction),
+                    "kind": "FG"})
+
+            vid = uploader.upload(state.request, on_progress=on_progress)
+            self._link(state.job.ids[state.resume_index], vid)
+        except uploader.UploadFailed as exc:
+            # Same gate as _upload_worker, for the same two reasons: only a
+            # RETRY outcome re-enables Retry, so keeping the request for any
+            # other outcome retains something unreachable -- and that
+            # something owns an open handle on the user's own recording,
+            # which blocks renaming or deleting it on Windows. Dropping the
+            # reference is not enough on its own: closing is left to
+            # MediaFileUpload.__del__, whose timing is exactly what made the
+            # stitched temp file survive in the first place.
+            retryable = exc.outcome is uploader.Outcome.RETRY
+            if not retryable:
+                _close_media(getattr(exc.request, "resumable", None))
+            self._retry_state = replace(
+                state, request=exc.request if retryable else None)
+            self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
+            if retryable:
+                self._push("onRetryAvailable", {"available": True})
+            return
+        # The resumed file is done; continue with whatever followed it.
+        if state.resume_index + 1 < len(state.job.items):
+            self._upload_worker(replace(state.job,
+                                        start_index=state.resume_index + 1))
+        else:
+            self._upload_done()
