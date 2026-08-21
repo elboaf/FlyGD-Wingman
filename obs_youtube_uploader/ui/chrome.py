@@ -183,6 +183,16 @@ def _scale_for(user32, hwnd):
 def _apply_inset(native, pad: int) -> None:
     """Inset the WebView2 so the form owns a band around it.
 
+    *pad* is in PHYSICAL pixels, already scaled by the caller. WinForms
+    resolves Padding against the form's own DeviceDpi, which is reported as
+    96 even on a 200% display -- so an unscaled Padding(6) produces 6
+    physical pixels there, while hit_code scales BORDER by
+    GetDpiForWindow/96 and looks for 12. The inner half of the band would
+    then sit over the WebView2 child, where no hit-test ever arrives, and
+    the grab target would silently be half its intended thickness on
+    exactly the high-DPI screens where it is hardest to hit. Measured on a
+    4K/200% display; both must be scaled by the same factor.
+
     DockStyle.Fill measures against the parent's DisplayRectangle, which
     Padding shrinks -- so this insets pywebview's control without touching
     its Dock assignment (platforms/edgechromium.py:99).
@@ -233,15 +243,6 @@ def enable_resize(window, pad: int = INSET) -> bool:
         return False
 
     try:
-        _apply_inset(native, pad)
-    except Exception:
-        # Without the band the subclass cannot receive anything, so there
-        # is nothing to gain by continuing to attach it.
-        logger.warning("Could not inset the web view; window stays "
-                       "fixed-size.", exc_info=True)
-        return False
-
-    try:
         user32, set_ptr, WNDPROC, MONITORINFO, MINMAXINFO, wintypes = _win32()
     except Exception:
         logger.warning("Win32 setup failed; window stays fixed-size.",
@@ -249,6 +250,20 @@ def enable_resize(window, pad: int = INSET) -> bool:
         return False
 
     handle = wintypes.HWND(hwnd)
+
+    # One scale, used for both the inset and the hit band. They must agree:
+    # see _apply_inset.
+    scale = _scale_for(user32, handle)
+
+    try:
+        _apply_inset(native, max(1, int(pad * scale)))
+    except Exception:
+        # Without the band the subclass cannot receive anything, so there
+        # is nothing to gain by continuing to attach it.
+        logger.warning("Could not inset the web view; window stays "
+                       "fixed-size.", exc_info=True)
+        return False
+
     chained = []
 
     def _clamp(lparam):
@@ -275,6 +290,11 @@ def enable_resize(window, pad: int = INSET) -> bool:
         mmi.ptMaxPosition.y = work.top - full.top
 
     def _hit(lparam):
+        # The captured `scale`, not a fresh GetDpiForWindow: the inset was
+        # applied once at this scale, and the band must keep matching it.
+        # Re-reading per message would also mean a syscall on every mouse
+        # move, and under system-DPI-awareness the answer cannot change.
+        #
         # The coordinates are SIGNED 16-bit halves. A monitor left of the
         # primary gives a negative x, and masking without sign-extending
         # puts the cursor at x=65000 -- every hit-test there would miss.
@@ -284,7 +304,7 @@ def enable_resize(window, pad: int = INSET) -> bool:
         if not user32.GetWindowRect(handle, ctypes.byref(rect)):
             return None
         return hit_code((rect.left, rect.top, rect.right, rect.bottom),
-                        x, y, _scale_for(user32, handle))
+                        x, y, scale)
 
     def proc(hwnd_, msg, wparam, lparam):
         original = chained[0]
@@ -319,11 +339,11 @@ def enable_resize(window, pad: int = INSET) -> bool:
         return False
 
     chained.append(ctypes.cast(previous, WNDPROC))
-    _log_geometry(native, pad)
+    _log_geometry(native, pad, scale)
     return True
 
 
-def _log_geometry(native, pad: int) -> None:
+def _log_geometry(native, pad: int, scale: float) -> None:
     """Record what the inset actually produced. Never fatal.
 
     INFO, not DEBUG, because configure_logging() pins the root logger at
@@ -343,9 +363,9 @@ def _log_geometry(native, pad: int) -> None:
         client = native.ClientRectangle
         display = native.DisplayRectangle
         logger.info(
-            "resize band: asked %spx, got %dpx left / %dpx top "
+            "resize band: asked %spx at scale %s, got %dpx left / %dpx top "
             "(client %dx%d, display %dx%d, padding %s, dpi %s)",
-            pad, display.X, display.Y, client.Width, client.Height,
+            pad, scale, display.X, display.Y, client.Width, client.Height,
             display.Width, display.Height, native.Padding, native.DeviceDpi)
     except Exception:
         logger.debug("Could not read back the inset geometry", exc_info=True)

@@ -83,6 +83,19 @@ def main() -> int:
     # stays light. ui.api would not -- hence the stub above.
     from obs_youtube_uploader.ui import window as window_mod
 
+    # `--floor N` drops min_size so the layout's REAL collision point can be
+    # found. The shipping floor stopped the drag before anything collided,
+    # which proves it is safe but not that it is right -- an over-generous
+    # floor stops people making the window as small as they want, and the
+    # only way to know the true number is to get out of the way and look.
+    # Overridden here rather than in window.py so the production constants
+    # are never shipped at a measurement value.
+    if "--floor" in sys.argv:
+        floor = int(sys.argv[sys.argv.index("--floor") + 1])
+        window_mod.MIN_WIDTH = floor
+        window_mod.MIN_HEIGHT = floor
+        print(f"min_size overridden to {floor} x {floor} FOR MEASUREMENT")
+
     window = window_mod.create(_StubApi())
 
     def on_resized(width, height):
