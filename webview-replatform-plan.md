@@ -8618,7 +8618,7 @@ Replace the whole `Verify sv-ttk theme data is bundled` step with:
           # a missing style.css or any of the four scripts renders an
           # unstyled or inert page rather than failing. Settings is a ROUTE
           # inside index.html, so there is no second document to check.
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js")) {
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
           }
@@ -8680,7 +8680,7 @@ Insert a new step between the existing `Build executable` and `Build installer` 
             throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the released app will open a blank window and exit 0"
           }
           Get-ChildItem -Recurse $web
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js")) {
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
           }
