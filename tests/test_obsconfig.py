@@ -83,10 +83,13 @@ def test_survives_stat_race_when_file_vanishes(tmp_path):
     # Monkeypatch Path.stat to raise FileNotFoundError for the "Vanish" profile
     original_stat = Path.stat
 
-    def stat_with_race(self):
+    # See tests/test_library.py's stat_with_race: on CPython 3.13 pathlib
+    # passes follow_symlinks= into stat(), so the fake must accept and
+    # forward it or it raises TypeError from is_dir()/exists().
+    def stat_with_race(self, *args, **kwargs):
         if "Vanish" in str(self):
             raise FileNotFoundError("File vanished during stat")
-        return original_stat(self)
+        return original_stat(self, *args, **kwargs)
 
     with patch.object(Path, "stat", stat_with_race):
         # Should skip the vanished profile and find the good one

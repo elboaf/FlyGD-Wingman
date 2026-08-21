@@ -260,10 +260,15 @@ def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
 
     original_stat = Path.stat
 
-    def stat_with_race(self):
+    # *args/**kwargs are load-bearing, not defensive: CPython 3.13's pathlib
+    # calls self.stat(follow_symlinks=...) internally from is_dir()/exists(),
+    # so a fake that takes only `self` raises TypeError there -- and pytest
+    # then hits the same TypeError while formatting the traceback, taking
+    # the whole run down with an INTERNALERROR rather than one failure.
+    def stat_with_race(self, *args, **kwargs):
         if self == disappeared:
             raise FileNotFoundError(f"{self} deleted between iterdir and stat")
-        return original_stat(self)
+        return original_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", stat_with_race)
     found = [p.name for p in library.discover(tmp_path)]
