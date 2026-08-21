@@ -124,6 +124,59 @@ def unregister(consumer: Callable[[Mode], None]) -> None:
         pass
 
 
+# DWMWA_USE_IMMERSIVE_DARK_MODE. The attribute was renumbered in Windows 10
+# 20H1: 20 on 20H1 and later, 19 on 1809-1909. Both are tried because the
+# older value is silently REJECTED on new builds and vice versa - there is no
+# version query cheaper or more reliable than asking DWM itself.
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_USE_IMMERSIVE_DARK_MODE_PRE_20H1 = 19
+
+
+def _dwm_set_window_attribute(hwnd: int, attr: int, value: int) -> int:
+    """Returns the raw HRESULT rather than a bool: apply_titlebar keys its
+    fallback off a FAILING result, and DwmSetWindowAttribute reports an
+    unrecognised attribute by returning E_INVALIDARG, not by raising."""
+    import ctypes
+
+    val = ctypes.c_int(value)
+    return int(ctypes.windll.dwmapi.DwmSetWindowAttribute(
+        ctypes.c_void_p(hwnd), ctypes.c_uint(attr),
+        ctypes.byref(val), ctypes.sizeof(val)))
+
+
+def apply_titlebar(window, mode: Mode, setter=None) -> None:
+    """Paint *window*'s OS title bar to match *mode*.
+
+    sv-ttk restyles the client area only, so a dark window kept a light title
+    bar - visibly wrong beside the themed content, and worst on the Settings
+    dialog sitting over the dark main window.
+
+    `setter` is injectable for the same reason detect_mode takes `reader=`:
+    the real call is Windows-only, and the suite runs on Linux. When it is
+    omitted the platform guard fires FIRST, before `window` is touched at all
+    - wm_frame() off Windows returns an X11 id that means nothing to DWM.
+
+    Never raises, for the same reason apply() never does: this is an optional
+    presentation capability, and it is called from window constructors and
+    from theme consumers, neither of which can absorb a failure.
+    """
+    if setter is None:
+        if sys.platform != "win32":
+            return
+        setter = _dwm_set_window_attribute
+
+    try:
+        # wm_frame() returns the id of the window's OS-level frame, and only
+        # once the toplevel has actually been realised - before that there is
+        # no HWND to hand DWM. Callers must map the window first.
+        hwnd = int(window.wm_frame(), 16)
+        enabled = 1 if mode == "dark" else 0
+        if setter(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, enabled) != 0:
+            setter(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_PRE_20H1, enabled)
+    except Exception:
+        log.warning("applying the %r title bar failed", mode, exc_info=True)
+
+
 # Every named font sv-ttk's sv.tcl declares. Absent names are skipped, so
 # this stays correct across sv-ttk versions that add or drop one.
 _SV_FONT_NAMES = (

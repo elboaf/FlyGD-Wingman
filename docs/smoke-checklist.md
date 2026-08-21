@@ -124,6 +124,26 @@ Run on Windows against a real install before each release.
       consecutive-failure counter; that notification must stay reserved for
       real recording-folder faults.
 
+### Title bars
+- [ ] **Both title bars are dark at startup** in dark mode. Open the main
+      window, then open Settings and put the two side by side: the dialog's
+      title bar must match the main window's, not be light. This mismatch,
+      visible in a single screenshot, is the whole reason this exists.
+- [ ] **Both title bars are light in light mode.** Switch
+      `Settings > Personalization > Colors` to Light, restart the app, and
+      confirm neither window has a dark title bar stuck on.
+- [ ] **LOAD-BEARING: both follow a LIVE OS theme switch.** With BOTH windows
+      open, flip `Choose your mode`. Both title bars must change together,
+      with no restart. A window that changes only after reopening means the
+      call is wired to construction but not to the theme consumer; a window
+      that never changes means the consumer is not firing at all.
+- [ ] **Older Windows builds still work.** On Windows 10 1809-1909 the
+      attribute is 19, not 20, and DWM reports the wrong one by returning a
+      failing HRESULT rather than raising — so a build where the title bars
+      stay light but the app is otherwise fine points at the fallback, not at
+      the wiring. If no such machine is available, note it as untested rather
+      than ticking it.
+
 ### Display scaling
 - [ ] **100% scaling.** Both windows render at native size, text sharp, no
       clipping.

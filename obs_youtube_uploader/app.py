@@ -421,6 +421,13 @@ class UploaderWindow:
         self._build_upload_panel(body)
         self._build_status_strip(outer)
 
+        # The initial application is explicit, not left to registration:
+        # __main__.main() calls theme.apply() before this window is
+        # constructed, so a consumer registered here is not invoked until the
+        # NEXT theme switch. Registration alone would leave the title bar
+        # light until the user changed their OS theme.
+        theme.apply_titlebar(self.root, theme.current_mode())
+
         # Registered last, deliberately: _on_theme_changed dereferences
         # self.ffmpeg_warn_label, self.status and self.desc_txt, all created
         # above. A consumer registered earlier would be fine only for as
@@ -970,6 +977,10 @@ class UploaderWindow:
         # tick after the switch. (ttk widgets need nothing here: their
         # colours come from named styles, which apply_typography re-asserts.)
         self.root.after_idle(lambda m=mode: self._apply_desc_colors(m))
+        # Extends this window's single consumer rather than registering
+        # another: two consumers against one window means two half-updates on
+        # a live switch, and this one is not unregistered anywhere.
+        theme.apply_titlebar(self.root, mode)
 
     def refresh(self, preselect: set | None = None) -> None:
         """Rebuild the list. Paths in *preselect* start checked.

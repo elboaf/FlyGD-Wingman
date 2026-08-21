@@ -103,6 +103,15 @@ class SettingsWindow:
         self.win.minsize(width, min_height)
         self.win.resizable(True, True)
 
+        # After geometry/minsize, and after the update_idletasks above: the
+        # toplevel must be realised before wm_frame() has an HWND to give.
+        # Explicit here for the same reason as the main window - theme.apply()
+        # ran back in main() long before this dialog existed, so the consumer
+        # registered above will not fire until the next switch, and the
+        # dialog would otherwise open with a light title bar over a dark
+        # parent (the exact mismatch this change exists to fix).
+        theme.apply_titlebar(self.win, theme.current_mode())
+
     def _build(self) -> None:
         # One lookup for the whole build. Every raw pixel constant below is
         # multiplied by this, the same factor app.dpi_scale() gives the main
@@ -410,6 +419,12 @@ class SettingsWindow:
         ttk::Label/Canvas colour is.
         """
         self.win.after_idle(lambda: self._repaint_tokens(mode))
+        # Folded into the existing consumer, NOT registered separately: this
+        # method is the one callback _on_destroy unregisters, so the title bar
+        # inherits that teardown for free. A second consumer would leak a
+        # destroyed Toplevel on every dialog open - the leak theme.unregister
+        # was written to fix.
+        theme.apply_titlebar(self.win, mode)
 
     def _repaint_tokens(self, mode: str) -> None:
         if not self.win.winfo_exists():
