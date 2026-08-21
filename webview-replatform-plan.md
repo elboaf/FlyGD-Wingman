@@ -738,11 +738,14 @@ def format_title_hint(count: int, stitch: bool) -> str:
     uploader.build_body appends "(n/total)" to every title in a batch and
     substitutes "Untitled" for an empty one. Neither was disclosed anywhere,
     so a user typing one title got ten differently-named public videos and
-    found out afterwards. The label is the cheapest place to say it.
+    found out afterwards. The label is the cheapest place to say it, because
+    it is already beside the field being misunderstood.
     """
-    if stitch or count <= 1:
+    if count <= 1 or (stitch and count <= 1):
         return "Title"
-    return f"Title — each of the {count} uploads is numbered (1/{count})…"
+    if stitch:
+        return "Title (one stitched video)"
+    return f"Title (applies to all {count}, numbered 1-{count})"
 ```
 
 Delete `format_upload_confirm`, `format_progress`, `format_destination`, and
@@ -2270,17 +2273,24 @@ def test_the_panel_text_is_computed_in_python(recordings, tmp_path):
     assert api.panel_text(ids[:1], False)["summary"].startswith("1 selected")
 
 
-def test_the_title_hint_discloses_batch_numbering_only_when_it_applies(
+def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(
         recordings, tmp_path):
-    """Stitching produces ONE video, so the "(1/n)" warning would be a lie."""
+    """Three distinct labels, because three distinct things happen.
+
+    A batch is numbered per file, a stitch collapses to one video, and a
+    single selection needs no disclosure at all. Asserted verbatim against
+    format_title_hint's real strings -- this is copy, and copy is what
+    regresses.
+    """
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock,
                    probe=lambda path, binary: (12.5, True))
     api.list_rows()
-    ids = [row["id"] for row in api._rows.rows()]
+    ids = [row["id"] for row in api._rows.rows()]  # the fixture holds two
 
-    assert api.panel_text(ids, False)["title_hint"] != "Title"
-    assert api.panel_text(ids, True)["title_hint"] == "Title"
+    assert api.panel_text(ids, False)["title_hint"] == (
+        "Title (applies to all 2, numbered 1-2)")
+    assert api.panel_text(ids, True)["title_hint"] == "Title (one stitched video)"
     assert api.panel_text(ids[:1], False)["title_hint"] == "Title"
 
 
@@ -5354,10 +5364,10 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   // than reimplementing format_selection_summary / format_title_hint here.
   api.panel_text = function (ids, stitch) {
     console.log('DEV api.panel_text(', ids, stitch, ')');
-    var hint = (!stitch && ids.length > 1)
-      ? 'Title \u2014 each of the ' + ids.length + ' uploads is numbered (1/'
-        + ids.length + ')\u2026'
-      : 'Title';
+    var hint = ids.length <= 1 ? 'Title'
+      : stitch ? 'Title (one stitched video)'
+      : 'Title (applies to all ' + ids.length + ', numbered 1-'
+        + ids.length + ')';
     return Promise.resolve({
       summary: ids.length
         ? ids.length + ' selected \u00b7 1.4 GB \u00b7 0:12:31'
@@ -6630,7 +6640,7 @@ Expected:
 3. Exactly **one** brand-accent control is visible: `Upload Selected`. `Upload combat logs`, `Retry`, and `Delete selected` are flat secondary buttons, and `Retry` is greyed and unclickable at load with no push having arrived.
 4. The summary line reads `1 selected · …` (row 1 is preselected), and the console shows `DEV api.panel_text( ["r1"] false )` — both strings came from Python, not from JavaScript.
 5. Clicking rows changes the count and logs a fresh `panel_text` call each time. Clicking `Select none` logs a call with `[]` and the line reads `Nothing selected`.
-6. With two or more rows selected and Stitch **off**, the Title label reads `Title — each of the 2 uploads is numbered (1/2)…`. Ticking **Stitch** logs another `panel_text` call and the label collapses back to plain `Title`, because stitching produces one video and the numbering disclosure would be a lie. Unticking restores it.
+6. With two rows selected and Stitch **off**, the Title label reads `Title (applies to all 2, numbered 1-2)`. Ticking **Stitch** logs another `panel_text` call and the label becomes `Title (one stitched video)` — stitching produces one video, so per-file numbering would be a lie. Unticking restores the first form. With a single row selected it reads plain `Title` in both states.
 
 - [ ] **Step 6: Verify the actions and the destination line**
 
