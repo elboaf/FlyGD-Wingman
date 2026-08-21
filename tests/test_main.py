@@ -84,6 +84,10 @@ def test_configure_logging_redacts_webhook_token_from_foreign_logger(tmp_path, m
 
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
+    # configure_logging() calls setLevel(INFO) on the root logger. Restoring
+    # the handlers but not the level would leak that into every test that
+    # runs after this one.
+    original_level = root_logger.level
     try:
         configure_logging()
         handler = root_logger.handlers[-1]
@@ -99,6 +103,7 @@ def test_configure_logging_redacts_webhook_token_from_foreign_logger(tmp_path, m
             if h not in original_handlers:
                 root_logger.removeHandler(h)
                 h.close()
+        root_logger.setLevel(original_level)
 
     assert token not in contents
     assert "GET" in contents

@@ -37,6 +37,30 @@ def test_rejects_foreign_host():
     assert hook is None and "host" in err.lower()
 
 
+@pytest.mark.parametrize("host", [
+    # Defeats a substring check (`"discord.com" in hostname` is True here),
+    # but NOT an endswith check -- this host ends with "evil.example".
+    "discord.com.evil.example",
+    # The mirror image: both of these END with "discord.com", so an
+    # endswith check accepts them. A substring check does too.
+    "evil-discord.com",
+    "notdiscord.com",
+])
+def test_rejects_hosts_that_defeat_a_naive_check(host):
+    """The cases the exact-match allowlist actually exists for.
+
+    test_rejects_foreign_host above uses a host resembling nothing on the
+    allowlist, so it passes against any weakening. These do not: each is
+    accepted by one of the two obvious shortcuts (substring or endswith),
+    so together they pin the exact-match behaviour rather than merely
+    asserting that some bad host is refused.
+    """
+    hook, err = discord.parse_webhook(
+        f"https://{host}/api/webhooks/1234567890/tok")
+    assert hook is None
+    assert "host" in err.lower()
+
+
 def test_rejects_malformed_path():
     hook, err = discord.parse_webhook("https://discord.com/api/not-webhooks/1/2")
     assert hook is None and err

@@ -346,6 +346,7 @@ class UploaderWindow:
         self.root.after(0, lambda: fn(*args))
 
     def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+        archive = None
         try:
             self._ui(self.status.config,
                      {"text": "Collecting combat logs…", "foreground": "black"})
@@ -395,7 +396,17 @@ class UploaderWindow:
                 self._ui(self.status.config,
                          {"text": result.message, "foreground": "red"})
         except Exception as exc:
-            self._ui(messagebox.showerror, "Combat log upload failed", str(exc))
+            # post_archive never raises, but build_archive and
+            # summarize_archive can -- and by then the archive may already be
+            # on disk. Without this the user gets a bare str(exc) and the
+            # "kept so you can upload it by hand" promise, which the failed
+            # -post branch above makes and the smoke checklist tests, quietly
+            # does not hold on this path.
+            detail = str(exc)
+            if archive is not None and archive.path.exists():
+                detail += ("\n\nThe archive was kept so you can upload it "
+                           f"by hand:\n{archive.path}")
+            self._ui(messagebox.showerror, "Combat log upload failed", detail)
             self._ui(self.status.config,
                      {"text": f"Error: {exc}", "foreground": "red"})
 

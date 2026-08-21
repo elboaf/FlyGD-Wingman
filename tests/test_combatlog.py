@@ -168,6 +168,21 @@ def test_selects_a_log_overlapping_the_window(tmp_path):
     assert [s.listener for s in sel.logs] == ["Pilot A"]
 
 
+def test_reversed_bounds_are_swapped(tmp_path):
+    """select_logs swaps the bounds when end precedes start.
+
+    That swap is real behaviour with no coverage: without it a caller who
+    passed the window backwards would get an empty selection and be told
+    "no logs overlap that window", which reads as a data problem rather
+    than a caller bug.
+    """
+    _log(tmp_path, "20260820_204250_1.txt", "Pilot A",
+         "2026.08.20 20:42:50", _epoch(_utc(2026, 8, 20, 21, 55)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 30),
+                                _utc(2026, 8, 20, 21, 0))
+    assert [s.listener for s in sel.logs] == ["Pilot A"]
+
+
 def test_skips_log_that_ended_before_the_window(tmp_path):
     """The predicate that does the real work: a log starting long ago still
     satisfies start <= window_end, so only last-write excludes it."""

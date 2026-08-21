@@ -60,6 +60,7 @@ Run on Windows against a real install before each release.
 - [ ] A non-numeric category ID is rejected with a warning
 
 ## Combat logs
+
 - [ ] **No webhook configured.** Clear the Discord webhook field (or use a
       fresh install), select a recording, and click **Upload combat logs**.
       Expected: a warning dialog naming the problem ("Enter a Discord
