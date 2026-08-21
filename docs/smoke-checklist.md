@@ -98,10 +98,29 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 ### Window chrome
 - [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
       bar is gone; dragging is the page's `pywebview-drag-region`. Grab the
-      bar and move the window across two monitors, then to a screen edge to
-      trigger Windows snap. Expected: the window follows with no lag and
-      snaps normally. This is the single most visible thing that breaks with
-      a frameless window and it has no automated coverage of any kind.
+      bar and move the window across two monitors. Expected: the window
+      follows with no lag. This is the single most visible thing that breaks
+      with a frameless window and it has no automated coverage of any kind.
+- [ ] **Windows snap, as far as it goes.** `Win+Up` must maximize. `Win+Left`
+      and `Win+Right` are KNOWN NOT TO WORK and are not a regression:
+      half-snap needs `WS_THICKFRAME`, which a frameless window does not
+      have, so Windows does not treat this window as snappable however it
+      hit-tests. Only `WM_NCCALCSIZE` or giving up the custom title bar
+      would recover it. Check `Win+Up` still works; do not file the others.
+
+      Dragging the title bar to a screen edge does not snap either, and
+      never has — pywebview moves the window with `SetWindowPos`
+      (`util.py:280`), which never enters the OS drag loop that snap hooks
+      into. An earlier version of this checklist expected it to "snap
+      normally", which was never true. Confirmed against 3.0.0.
+- [ ] **Resizing at 150% or 175% scaling — NOT YET VERIFIED.** Everything
+      above was checked on a single 4K display at 200%, so `scale = 2.0` is
+      the only factor real hardware has ever exercised; 1.5 exists only in
+      the unit tests' arithmetic. Repeat the edge drags on a scaled display
+      when one is available. Expected: the band stays the same apparent
+      thickness. If it does not, the inset and the hit-test have diverged,
+      which presents as "resizing is fiddly on that laptop" rather than as
+      a bug.
 - [ ] **The drag region excludes the controls.** Press and hold on the gear,
       minimize and close in turn and move the pointer a few pixels.
       Expected: none of them drags the window; each still activates on
@@ -114,6 +133,30 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] **The window opens fully on screen.** Launch on the primary monitor,
       again with a second monitor attached, then again after disconnecting
       it. Expected: fully visible and its title bar reachable every time.
+- [ ] **LOAD-BEARING: every edge and corner resizes.** Drag all four edges
+      and all four corners in turn; check the pointer becomes the sizing
+      arrow BEFORE the drag, not after. Expected: all eight respond.
+      Frameless windows have no OS resize border — this one is a band of
+      form surface left by insetting the web view, so a change to that
+      inset, to the page's own edges, or to DPI handling can take the whole
+      thing away silently. There is no automated coverage: CI is ubuntu and
+      cannot run a message pump.
+- [ ] **The window will not shrink below its floor.** Drag any edge inward
+      as far as it goes. Expected: it stops at 840x625 logical, and at that
+      size nothing in either pane is cut off or unreachable. Those numbers
+      were measured off the real page, not derived — if the layout changes,
+      they need re-measuring, and `min_size` in `ui/window.py` needs
+      updating with them.
+- [ ] **Maximize leaves the taskbar alone.** Maximize with `Win+Up` — NOT by
+      dragging the title bar to the top edge, which does not maximize and
+      never has (see the snap item above). Expected: it fills the work area
+      only, and the taskbar stays visible and clickable. A borderless
+      window maximizes over the taskbar unless it is explicitly clamped.
+- [ ] **The inset band is not ugly.** Look at the edge of the window against
+      the page. Expected: the band reads as part of the window, not as a
+      misaligned frame. It matches the page background at the sides and
+      bottom, but it sits above the title bar's gradient at the top, which
+      is the one place it can look wrong.
 - [ ] **Scrollbars are the app's, not Windows'.** Scroll a long list. The
       scrollbar must be the styled thin one, not the classic grey Windows
       scrollbar.
@@ -134,7 +177,10 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       fully visible with nothing clipped.
 - [ ] **Nothing is clipped at the minimum window size** at 150%. The
       Description box shrinks first and the Retry / Upload Selected row is
-      still fully visible.
+      still fully visible. Drag the window down to its floor (840x625
+      logical) to check this — before resizing existed, "minimum" was the
+      only size the window ever had and this was free; now a user can
+      actually get here.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
@@ -178,9 +224,11 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       "Measuring length…" instead — the two glyphs mean opposite things.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
       appears over an empty Link cell, a filename, a header, or empty space.
-- [ ] **The list at the minimum window width.** Every column still present,
-      Filename truncates rather than pushing others off, NO horizontal
-      scrollbar.
+- [ ] **The list at the minimum window width.** Drag the window to its floor
+      (840 logical). Every column still present, Filename truncates rather
+      than pushing others off, NO horizontal scrollbar. That width was
+      measured as the point where this stops being true, so it is the exact
+      edge — not a comfortable margin inside it.
 - [ ] **The Modified column reads as relative time, not a timestamp.** It
       must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
       week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
