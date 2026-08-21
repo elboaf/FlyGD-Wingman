@@ -79,3 +79,41 @@ def test_only_files_that_actually_went_are_forgotten_by_the_watcher(monkeypatch,
     assert watcher.forgotten == [rows["r0"].path]
     assert fakes.payloads(sent, "onStatus")[-1] == {
         "text": "Deleted 1 file(s). 1 failed.", "kind": "FG"}
+
+
+def test_copy_returns_the_link_and_reports_it(tmp_path):
+    """The name is historical: what a row offers to copy or open is the
+    YouTube link it earned, which is why both are inert before an upload."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    api._links["r0"] = "https://www.youtube.com/watch?v=abc"
+
+    assert api.copy_path("r0") == "https://www.youtube.com/watch?v=abc"
+    assert fakes.payloads(sent, "onStatus") == [
+        {"text": "Link copied to clipboard", "kind": "SUCCESS"}]
+
+
+def test_copy_on_a_row_with_no_link_returns_nothing_and_says_nothing(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    assert api.copy_path("r0") == ""
+    assert sent == []
+
+
+def test_open_launches_the_browser_for_a_linked_row(monkeypatch, tmp_path):
+    opened = []
+    api, _window, _rows = api_with(tmp_path)
+    api._links["r0"] = "https://www.youtube.com/watch?v=abc"
+    monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
+    api.open_path("r0")
+    assert opened == ["https://www.youtube.com/watch?v=abc"]
+
+
+def test_open_on_an_unknown_row_does_nothing(monkeypatch, tmp_path):
+    """A stale page after a refresh must fail cleanly rather than act on an
+    id the backend no longer knows."""
+    opened = []
+    api, _window, _rows = api_with(tmp_path)
+    monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
+    api.open_path("gone")
+    assert opened == []

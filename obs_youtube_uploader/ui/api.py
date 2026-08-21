@@ -24,6 +24,7 @@ import logging
 import queue
 import threading
 import uuid
+import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -353,6 +354,26 @@ class Api:
         if failures:
             message += f" {len(failures)} failed."
         self._push("onStatus", {"text": message, "kind": "FG"})
+
+    def copy_path(self, row_id: str) -> str:
+        """Return the row's link for the page to put on the clipboard.
+
+        The write itself is the page's job: with Tk gone there is no
+        toolkit clipboard, and navigator.clipboard is right there. Returning
+        it rather than pushing it keeps this a plain request/response, which
+        is what a button press is.
+        """
+        url = self._links.get(row_id, "")
+        if not url:
+            return ""
+        self._push("onStatus", {"text": "Link copied to clipboard",
+                                "kind": "SUCCESS"})
+        return url
+
+    def open_path(self, row_id: str) -> None:
+        url = self._links.get(row_id)
+        if url:
+            webbrowser.open(url)
 
     # ----- durations --------------------------------------------------------
 
