@@ -37,9 +37,13 @@ Run on Windows against a real install before each release.
       and no illegible text in status messages, hint labels, or the ffmpeg
       warning.
 - [ ] **Launches in dark mode when Windows is set to Dark.** Same with `Dark`.
-      Also check Treeview row striping and the description `tk.Text` box — a
-      classic Tk widget sv-ttk does not theme, so confirm it is at least
-      legible (a known accepted limitation).
+      Also check Treeview row striping and the description `tk.Text` box.
+      sv-ttk's ttk styling does not cover that box — it is a classic Tk
+      widget — but sv-ttk's `configure_colors` calls `tk_setPalette`, which
+      recolours classic widgets as a side effect, and that is the only
+      reason it looks right. Nothing in this app configures it. So check it
+      for legibility rather than assuming it is styled (a known accepted
+      limitation).
 - [ ] **The right-click context menu is legible in dark mode.** With Windows
       set to Dark, right-click a list row and read the menu: "Copy link" and
       "Open in browser" must be readable, not white-on-white or black-on-black,
