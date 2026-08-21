@@ -200,9 +200,14 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  { ssPostInstall runs after the application tree is in place and BEFORE the
-    [Run] entry's post-install "Launch FlyGD Wingman" checkbox can fire, so a
-    user who ticks it gets a working runtime. }
+  { ssPostInstall runs after the application tree is in place and BEFORE
+    the post-install "Launch FlyGD Wingman" checkbox in the Run section can
+    fire, so a user who ticks it gets a working runtime.
+
+    Do not rewrap this comment so that a line BEGINS with a bracket. Inno's
+    parser looks for section tags at the start of a line and does not except
+    braced comments, so a wrapped "[Run]" landing in column 1 is read as a
+    section header and fails the compile with "Invalid section tag". }
   if CurStep = ssPostInstall then
     InstallWebView2Runtime();
 end;
