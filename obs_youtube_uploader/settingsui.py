@@ -29,6 +29,13 @@ class SettingsWindow:
         self._build()
         self._refresh_auth_label()
         self._refresh_webhook_label()
+        # Keep the label in step with the field. Without this it describes
+        # whatever was configured when the dialog opened, so a user who
+        # pastes a new webhook sees the OLD one summarised underneath it --
+        # misleading in the one place they look to confirm they pasted the
+        # right thing. parse_webhook is a regex and a urlparse, so running
+        # it per keystroke costs nothing worth caching.
+        self.webhook.trace_add("write", lambda *_: self._refresh_webhook_label())
 
         # Size the window to what its content actually needs rather than a
         # fixed guess: at higher Windows display-scaling factors (125%,

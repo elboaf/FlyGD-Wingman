@@ -75,6 +75,13 @@ Run on Windows against a real install before each release.
       feature is unconfigured. `parse_webhook` itself has unit tests, but
       the dialog wiring that calls it does not, so this is the only check
       that the Save path honors the validator's rejection.
+- [ ] **The webhook summary label tracks what you type.** In Settings, with
+      a webhook already configured, paste a *different* valid webhook URL
+      over it. Expected: the summary line underneath updates immediately to
+      the new webhook's id — it must not keep describing the previous one.
+      Type something invalid and it reads "not configured"; clear the field
+      and it reads "not configured" too. At no point does the label show the
+      token portion of the URL.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
       Settings, then click **Upload combat logs**. Expected: a warning
