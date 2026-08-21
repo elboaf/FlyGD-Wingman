@@ -8300,21 +8300,29 @@ from obs_youtube_uploader.__main__ import (
 )
 ```
 
-In `tests/test_upload_media_close.py`, repoint the import and the subject. It
-imports `app` and drives `_upload_one` / `_close_media`, both of which moved to
-`ui/api.py` in Task 7, and `app` does not survive Task 16:
+`tests/test_upload_media_close.py` needs a **rewrite, not a repoint.** It drives
+the Tk `UploaderWindow._upload_one` through a `SimpleNamespace` shaped like the
+widget (`_ui`, `progress`, `status`, `_status_kind`). Task 7 did NOT move those
+methods — it wrote a new implementation on `Api` with entirely different
+collaborators (`_push`, `_state.ffmpeg_bin`, `_retry_state`, `_last_pct`,
+`_links`, `_rows.set_link`, `_upload_thread`), and `app.py` still holds its own
+Tk-shaped copy until Task 16 deletes it. An `app_mod.` → `api_mod.` rename
+cannot work.
 
-```python
-from obs_youtube_uploader import uploader
-from obs_youtube_uploader.ui import api as api_mod
-```
+Rewrite it against `Api`'s real shape, keeping all seven behaviours and the
+module docstring (which records that this was observed in the field on two
+consecutive failed uploads). Build the subject with `fakes.build_api(...)`
+rather than hand-rolling a double: `fakes.install_google`'s `MediaFileUpload`
+stub already matches the real call site (`chunksize=uploader.CHUNK_SIZE,
+resumable=True`) and its `.stream().close()` shape is exactly what
+`_close_media` calls.
 
-then replace every `app_mod._close_media` with `api_mod._close_media` and every
-`app_mod.` reference to the upload path with its `api_mod.` equivalent. The
-behaviour under test is unchanged — a stitched upload must close the media
-handle so `stitch.stitched()` can unlink a multi-gigabyte temporary on Windows,
-and the non-stitched path must NOT close, because `UploadFailed` carries the
-resumable request that Retry resumes from. Both assertions carry over verbatim.
+This coverage must not simply be deleted with `app.py`: `tests/test_api_upload.py`
+asserts nothing about media handles, and these are the Windows file-handle rules
+that are the whole reason `_close_media` exists — Windows refuses to unlink a
+file with an open handle (which is how a stitched multi-gigabyte temporary
+survived into the next startup sweep), and a retained non-RETRY request holds a
+handle on the user's own recording and blocks them renaming it.
 
 In `tests/test_app.py`, delete the `spacing()` and `tk_scaling_for` block, which dies with the Tk layout helpers. **Keep the `format_selection_summary` cases** — Task 2 repointed them at `ui.copy` and they are pure. Delete `test_app_still_exposes_the_moved_copy_helpers`, whose subject (`app.py`'s re-exports) disappears in Task 16, and rename the file to `tests/test_copy.py` so its name matches what it now covers:
 
