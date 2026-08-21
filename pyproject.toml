@@ -35,7 +35,11 @@ dev = ["pytest"]
 # additional top-level packages, hits the multiple-top-level-packages error,
 # and aborts the install entirely. That failure took down every dependency
 # and produced a frozen build with no pystray in it.
-packages = ["obs_youtube_uploader"]
+# Subpackages are NOT implied by their parent here: an explicit list means
+# every new one must be added by hand, and a missing entry installs cleanly
+# and fails at import time in the built artifact, not in the checkout where
+# the source tree makes it work anyway.
+packages = ["obs_youtube_uploader", "obs_youtube_uploader.ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
