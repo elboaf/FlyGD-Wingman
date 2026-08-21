@@ -243,8 +243,17 @@ Run on Windows against a real install before each release.
       presents as "the app is frozen".
 - [ ] **Copy link and Open in browser** from the context menu work on a row
       with a link, and are greyed out on a row without one.
-- [ ] **Double-click opens the YouTube link** — and does NOT open a browser
-      when double-clicking the checkbox column.
+- [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox
+      cell. Click the filename, the date, the size, the Length and the ↗
+      Link cell in turn; each should tick and untick the row, and the
+      selection summary above the upload buttons should keep count. Rows
+      accumulate — clicking a second row must not clear the first.
+- [ ] **Double-click opens the YouTube link from any cell,** including the
+      checkbox cell, and LEAVES THE SELECTION AS IT WAS. Tick two rows,
+      then double-click a third that has a link: the browser opens and the
+      third row must still be unticked, with the summary still reading 2.
+      A row left ticked by double-clicking is a defect — the first press of
+      the double-click toggles it and the handler is what undoes that.
 - [ ] **Keyboard: Space toggles the focused row.** Tab to the list, use the
       arrow keys to move, press Space. Confirm it toggles exactly one row and
       that Upload Selected agrees with what is checked. Then trigger a list
@@ -571,8 +580,9 @@ behavior that only shows up at size.
       page** — not the local video file. Confirm it is greyed out on a row
       with no link yet.
 - [ ] **Double-clicking a row with a completed upload opens its YouTube
-      link**, same destination as the context menu. Double-clicking a row
-      with no link does nothing.
+      link**, same destination as the context menu, and leaves the row's
+      tick state unchanged. Double-clicking a row with no link does
+      nothing at all — it must not leave the row ticked either.
 - [ ] Multi-select without stitch uploads each with `(1/n)` titles
 - [ ] Each row gets its own correct link
 - [ ] Stitch of two videos produces one upload, both rows show the same link

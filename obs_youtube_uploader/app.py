@@ -880,11 +880,12 @@ class UploaderWindow:
         self._update_selection_summary()
 
     def _on_tree_click(self, event: tk.Event) -> None:
-        if self.tree.identify_region(event.x, event.y) != "tree":
-            return  # click landed in a data column, not the checkbox column
+        # The WHOLE row is the click target, not just the checkbox cell: a
+        # 34px column is a small thing to ask someone to hit when the intent
+        # "I mean this recording" is unambiguous anywhere on the line.
         iid = self.tree.identify_row(event.y)
         if not iid:
-            return
+            return  # header, or empty space below the last row
         self._toggle_row(iid)
 
     def _on_tree_space(self, event: tk.Event) -> str:
@@ -959,14 +960,24 @@ class UploaderWindow:
             self._open(self._context_path)
 
     def _on_row_double_click(self, event: tk.Event) -> None:
-        # A double-click delivers two <Button-1> before <Double-Button-1>, so
-        # in the checkbox column the row has already toggled twice. Opening a
-        # browser tab on top of that is an action the user never asked for.
-        if self.tree.identify_region(event.x, event.y) == "tree":
-            return
+        # Now that every cell toggles, a double-click anywhere opens the
+        # video — the old "skip the checkbox column" guard described a
+        # special case that no longer exists.
+        #
+        # Tk delivers exactly ONE <Button-1> before <Double-Button-1>: the
+        # second press dispatches to the more specific binding rather than
+        # firing <Button-1> again. (The previous comment here claimed two,
+        # which measurement disproved — a double-click on the checkbox cell
+        # left the row selected, it did not return it to where it started.)
+        # So exactly one toggle has already landed by the time we arrive,
+        # and we undo it: opening a video is not a selection gesture, and a
+        # user reaching for their upload should not find an extra row
+        # ticked afterwards.
         iid = self.tree.identify_row(event.y)
-        if iid:
-            self._open(Path(iid))
+        if not iid:
+            return
+        self._toggle_row(iid)
+        self._open(Path(iid))
 
     def _on_theme_changed(self, mode: str) -> None:
         """Registered with theme.register in _build. Regenerates everything
