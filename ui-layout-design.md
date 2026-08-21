@@ -58,7 +58,7 @@ full-width status strip beneath both.
 
 ```
 ┌──────────────────────────────────┬──────────────┐
-│ ☑ Filename        Date  Size  Len│ Upload       │
+│ ✓ Filename        Date  Size  Len│ Upload       │
 │ ☐ Fight 2026-08…  17:43 388MB 61:58─────────────│
 │ ☑ 2026-08-20 17…  17:43 7.5MB  1:59 Title       │
 │ ☐ Replay 2026-0…  17:43 381MB 59:58 [_________] │

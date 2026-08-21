@@ -286,6 +286,12 @@ Run on Windows against a real install before each release.
       sits — rows do NOT re-order themselves under the cursor as results
       arrive. Click the header again afterwards to re-sort with the real
       values.
+- [ ] **The leftmost header is a bare check, not a checkbox.** It should
+      read ✓, visibly different from the ☐/☑ boxes in the rows beneath it.
+      Clicking it SORTS by checked state (selected rows group together) —
+      it must not select or clear anything. A header that looks like a
+      tickable box is the defect: selecting everything is what the Select
+      All / Select None buttons under the list are for.
 - [ ] **Column headers line up with their data.** Filename and Date read
       left-aligned with left-aligned headers; Size and Length read
       right-aligned with right-aligned headers; the checkbox and Link

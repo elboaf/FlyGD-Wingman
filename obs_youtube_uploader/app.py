@@ -184,7 +184,12 @@ def spacing(widget: tk.Misc) -> Spacing:
 # present and readable, none clipped; that is accepted.
 COLUMN_SPEC = (
     # column key, heading text, sort key, width, minwidth, stretch, anchor
-    ("#0", "☑", "checked", 34, 34, False, tk.CENTER),
+    # A bare check, deliberately NOT the ☑ box glyph: every heading in this
+    # tree is a sort control, and a box in the header position reads as a
+    # select-all checkbox — an affordance this column does not have and does
+    # not want, since Select All / Select None are buttons under the list.
+    # The mark labels what the column holds; clicking it sorts by it.
+    ("#0", "✓", "checked", 34, 34, False, tk.CENTER),
     ("filename", "Filename", "filename", 260, 120, True, tk.W),
     ("date", "Date", "date", 120, 90, False, tk.W),
     ("size", "Size", "size", 84, 64, False, tk.E),

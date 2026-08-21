@@ -110,6 +110,21 @@ def test_checkbox_header_still_sorts_by_checked(root):
     assert sorted_keys == ["checked"]
 
 
+def test_the_checked_header_is_not_a_box_glyph(root):
+    """The header sorts; it does not select all.
+
+    Every heading in this tree is a sort control, so a ☑/☐ box in the
+    header position promises a click-to-toggle the column does not have —
+    Select All / Select None are buttons under the list. A bare check
+    labels the column without making that promise, and the row cells keep
+    the box glyphs, which is what carries the distinction on screen.
+    """
+    tree, _, _ = _tree(root, 96)
+    header = str(tree.heading("#0", "text"))
+    assert header == "✓"
+    assert "☑" not in header and "☐" not in header
+
+
 def test_link_cell_is_a_glyph_not_a_url():
     assert app.link_cell("https://www.youtube.com/watch?v=abc") == app.LINK_GLYPH
     assert app.link_cell("") == ""
