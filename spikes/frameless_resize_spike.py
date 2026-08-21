@@ -52,7 +52,9 @@ than a pure bugfix -- worth knowing whether it is the price of resizing.
 
 RESULTS SO FAR (Windows 11, WebView2 151.0.4129.93, frozen exe)
 ---------------------------------------------------------------
-Question 0 FAILED for the plain subclass. Two independent confirmations:
+VERDICT: the subclass works, but ONLY with --pad. Plain frameless fails.
+
+Without --pad, question 0 FAILED, confirmed two independent ways:
 
   * the spike counted ZERO WM_NCHITTEST messages reaching the form, while
     a human had the cursor on the edges trying to drag them;
@@ -61,24 +63,39 @@ Question 0 FAILED for the plain subclass. Two independent confirmations:
     Window -- ALL at exactly the form's rect, 221,221 1027x645, covering
     every border pixel.
 
-So the WebView2 child owns the whole surface and the parent subclass can
-never hit-test it. Native resize via WM_NCHITTEST on the form is dead as
-designed.
+With `--pad 6` the same build resizes by dragging, confirmed by hand.
+The probe showed the form owning all five border points, the spike
+printed "first WM_NCHITTEST reached the form" (a line the plain run never
+printed once), and the children sit inside the form's rect rather than on
+top of it.
 
-Also observed: maximize and restore work fine through pywebview's API,
-and the HWND was unchanged (0x74109e) across both restores, so those
-transitions do not recreate the handle. The WM_GETMINMAXINFO taskbar
-clamp is still UNTESTED -- the probe never reached it.
+Also confirmed by probe:
 
---pad is UNTESTED, not disproven. Its first run deadlocked on a
-cross-thread Padding assignment (fixed since, see on_shown) and had to
-be killed, losing its buffered output.
+  * MinimumSize survives. Asked for 400x300, got exactly 880x560 -- so
+    chaining to the original WndProc BEFORE overriding WM_GETMINMAXINFO
+    is the correct order.
+  * The taskbar clamp works. On a 1920x1080 monitor with a 1920x1032 work
+    area, maximize produced 1920x1032 at 0,0. Without the clamp it would
+    have been 1920x1080, over the taskbar.
+  * Maximize and restore work through pywebview's API, and the HWND was
+    unchanged across restores, so those do not recreate the handle.
 
-STILL OPEN: whether WM_NCCALCSIZE can carve a genuine non-client border.
-That region lies OUTSIDE the client area, so the WebView2 child cannot
-cover it -- which addresses the exact routing failure above, and is the
-standard custom-chrome recipe. It is a bigger change than either variant
-tried here.
+STILL OPEN
+----------
+ * The inset came out at 3px per side for `--pad 6`: form 1027x645,
+   children 1021x639. Something halves it, most likely DPI scaling in the
+   form's coordinate space -- note the form is also 1027x645 rather than
+   the 1040x680 that was asked for. Whatever is scaling one is probably
+   scaling the other. Worth understanding before picking a real value,
+   because it decides how wide the visible band has to be.
+ * Whether the band is acceptable to look at. It is form surface in the
+   app's own background colour, which is very close to the page's edge
+   colour, so a few pixels may be unnoticeable -- but that is a design
+   call, not a technical one.
+ * Aero Snap and double-click-to-maximize on an edge, both of which
+   normally want WS_THICKFRAME. Untested.
+ * Behaviour at 150%/175% scaling and across monitors of differing scale
+   (checklist items 9 and 10).
 
 RUN IT (Windows, with WebView2 present)
 ---------------------------------------

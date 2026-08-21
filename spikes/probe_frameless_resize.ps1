@@ -80,6 +80,15 @@ public class Probe {
   [DllImport("user32.dll")]
   public static extern bool IsWindowVisible(IntPtr hWnd);
 
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern bool BringWindowToTop(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int pid);
+
   public static string ClassOf(IntPtr h) {
     var sb = new StringBuilder(256);
     GetClassName(h, sb, sb.Capacity);
@@ -161,8 +170,25 @@ foreach ($c in $script:children) {
 
 # ---- QUESTION 0 --------------------------------------------------------
 # Probe 2px inside each edge: that is where the synthetic border lives.
+#
+# The window MUST be foreground first. WindowFromPoint returns the
+# topmost window at a screen coordinate, so with any other app overlapping
+# the spike's rect it happily reports THAT app's HWND -- which looks
+# exactly like "the child owns the border" and is a completely false
+# verdict. Every result below is therefore also checked against the
+# spike's own process id.
 Write-Output ""
 Write-Output "== QUESTION 0: who owns the border pixels? =="
+[void][Probe]::SetForegroundWindow($hwnd)
+[void][Probe]::BringWindowToTop($hwnd)
+Start-Sleep -Milliseconds 700
+
+$spikePid = 0
+[void][Probe]::GetWindowThreadProcessId($hwnd, [ref]$spikePid)
+Write-Output "  (spike pid $spikePid; anything from another pid means the"
+Write-Output "   window is not on top and the reading is worthless)"
+Write-Output ""
+
 $mid_x = [int](($L + $R) / 2)
 $mid_y = [int](($T + $B) / 2)
 # Every arithmetic element is parenthesised deliberately. PowerShell's
@@ -180,21 +206,36 @@ $points = @{
 }
 $ownedByForm = 0
 $ownedByChild = 0
+$foreign = 0
 foreach ($name in "top edge","bottom edge","left edge","right edge","bottom-right","centre") {
   $pt = $points[$name]
   $owner = At $pt[0] $pt[1]
+  $ownerPid = 0
+  [void][Probe]::GetWindowThreadProcessId($owner, [ref]$ownerPid)
   $isForm = ($owner -eq $hwnd)
-  if ($name -ne "centre") { if ($isForm) { $ownedByForm++ } else { $ownedByChild++ } }
-  $tag = if ($isForm) { "FORM" } else { "child" }
-  Write-Output ("  {0,-13} -> 0x{1:x} {2,-28} [{3}]" -f `
-    $name, $owner.ToInt64(), [Probe]::ClassOf($owner), $tag)
+  $isOurs = ($ownerPid -eq $spikePid)
+  if (-not $isOurs) {
+    $tag = "FOREIGN pid $ownerPid"
+    if ($name -ne "centre") { $foreign++ }
+  } elseif ($isForm) {
+    $tag = "FORM"
+    if ($name -ne "centre") { $ownedByForm++ }
+  } else {
+    $tag = "child"
+    if ($name -ne "centre") { $ownedByChild++ }
+  }
+  Write-Output ("  {0,-13} at {1},{2} -> 0x{3:x} {4,-28} [{5}]" -f `
+    $name, $pt[0], $pt[1], $owner.ToInt64(), [Probe]::ClassOf($owner), $tag)
 }
 Write-Output ""
-if ($ownedByChild -gt 0) {
+if ($foreign -gt 0) {
+  Write-Output "  INVALID: $foreign of 5 border points belong to another process."
+  Write-Output "  The spike window is not on top. Re-run with it focused."
+} elseif ($ownedByChild -gt 0) {
   Write-Output "  VERDICT: the child owns $ownedByChild of 5 border points."
-  Write-Output "  The plain subclass cannot hit-test those. Try --pad 6."
+  Write-Output "  The subclass cannot hit-test those."
 } else {
-  Write-Output "  VERDICT: the form owns every border point. Subclass can work."
+  Write-Output "  VERDICT: the form owns all 5 border points. Subclass can work."
 }
 
 # ---- min-size clamp ----------------------------------------------------
