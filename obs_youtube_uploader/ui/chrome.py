@@ -158,6 +158,12 @@ def _win32():
     user32.CallWindowProcW.restype = LRESULT
     user32.CallWindowProcW.argtypes = [WNDPROC, wintypes.HWND, wintypes.UINT,
                                        WPARAM, LPARAM]
+    # Declared for the same reason as CallWindowProcW: it is the fallback
+    # inside the window proc, so a truncated default return type there
+    # would corrupt the one path that exists to avoid a crash.
+    user32.DefWindowProcW.restype = LRESULT
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                      WPARAM, LPARAM]
     user32.GetWindowRect.argtypes = [wintypes.HWND,
                                      ctypes.POINTER(wintypes.RECT)]
     user32.MonitorFromWindow.restype = wintypes.HANDLE
@@ -189,6 +195,25 @@ def _scale_for(user32, hwnd):
         return 1.0
 
 
+def _on_ui_thread(native, fn) -> None:
+    """Run *fn* on the form's UI thread and wait for it to finish.
+
+    Two callers need this for different reasons. Assigning Padding triggers
+    a layout pass over the WebView2 control, and doing that cross-thread
+    deadlocks the process into a window that cannot be closed. Installing
+    the WndProc needs it so that publishing the callback and storing the
+    original are ATOMIC with respect to message dispatch -- see
+    enable_resize. pywebview guards its own equivalents the same way
+    (winforms.py:546, :597).
+    """
+    from System import Action
+
+    if native.InvokeRequired:
+        native.Invoke(Action(fn))
+    else:
+        fn()
+
+
 def _apply_inset(native, pad: int) -> None:
     """Inset the WebView2 so the form owns a band around it.
 
@@ -205,23 +230,10 @@ def _apply_inset(native, pad: int) -> None:
     DockStyle.Fill measures against the parent's DisplayRectangle, which
     Padding shrinks -- so this insets pywebview's control without touching
     its Dock assignment (platforms/edgechromium.py:99).
-
-    It MUST be marshalled onto the UI thread. The shown event does not fire
-    there, and assigning Padding triggers a layout pass over the WebView2
-    control; doing that cross-thread deadlocks the process into a window
-    that cannot be closed from the UI. pywebview guards its own equivalents
-    the same way (winforms.py:546, :597). The spike hit this exact hang.
     """
-    from System import Action
     from System.Windows.Forms import Padding
 
-    def _set():
-        native.Padding = Padding(pad)
-
-    if native.InvokeRequired:
-        native.Invoke(Action(_set))
-    else:
-        _set()
+    _on_ui_thread(native, lambda: setattr(native, "Padding", Padding(pad)))
 
 
 def enable_resize(window, pad: int = INSET) -> bool:
@@ -316,6 +328,14 @@ def enable_resize(window, pad: int = INSET) -> bool:
                         x, y, scale)
 
     def proc(hwnd_, msg, wparam, lparam):
+        if not chained:
+            # Unreachable by construction -- the install below publishes
+            # this callback and stores the original in one UI-thread step,
+            # and messages are dispatched on that same thread. Guarded
+            # anyway because the alternative is an IndexError unwinding
+            # into the native message pump, which kills the process.
+            return user32.DefWindowProcW(hwnd_, msg, wparam, lparam)
+
         original = chained[0]
         try:
             if msg == WM_NCHITTEST:
@@ -341,13 +361,34 @@ def enable_resize(window, pad: int = INSET) -> bool:
     callback = WNDPROC(proc)
     _KEEPALIVE.append(callback)
 
-    previous = set_ptr(handle, GWLP_WNDPROC, callback)
-    if not previous:
+    # Publishing the callback and storing the original MUST be atomic with
+    # respect to message dispatch. SetWindowLongPtr makes `proc` live the
+    # instant it returns, and Windows dispatches this window's messages on
+    # the UI thread -- so with the two steps split across threads, a single
+    # mouse move in between enters `proc` with `chained` still empty. Doing
+    # both inside one UI-thread call closes that window: the thread that
+    # would deliver the message is the thread running this code.
+    installed = {}
+
+    def _install():
+        previous = set_ptr(handle, GWLP_WNDPROC, callback)
+        if previous:
+            chained.append(ctypes.cast(previous, WNDPROC))
+        installed["previous"] = previous
+
+    try:
+        _on_ui_thread(native, _install)
+    except Exception:
+        _KEEPALIVE.remove(callback)
+        logger.warning("Could not install the window proc; window stays "
+                       "fixed-size.", exc_info=True)
+        return False
+
+    if not installed.get("previous"):
         _KEEPALIVE.remove(callback)
         logger.warning("SetWindowLongPtr failed; window stays fixed-size.")
         return False
 
-    chained.append(ctypes.cast(previous, WNDPROC))
     _log_geometry(native, pad, scale)
     return True
 

@@ -147,8 +147,9 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       were measured off the real page, not derived — if the layout changes,
       they need re-measuring, and `min_size` in `ui/window.py` needs
       updating with them.
-- [ ] **Maximize leaves the taskbar alone.** Maximize the window (title-bar
-      drag to the top edge, or Win+Up). Expected: it fills the work area
+- [ ] **Maximize leaves the taskbar alone.** Maximize with `Win+Up` — NOT by
+      dragging the title bar to the top edge, which does not maximize and
+      never has (see the snap item above). Expected: it fills the work area
       only, and the taskbar stays visible and clickable. A borderless
       window maximizes over the taskbar unless it is explicitly clamped.
 - [ ] **The inset band is not ugly.** Look at the edge of the window against
