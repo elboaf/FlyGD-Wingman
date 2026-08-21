@@ -80,3 +80,118 @@ def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tm
     assert "public" in body
     assert '"Fight (1/2)"' in body and '"Fight (2/2)"' in body
     assert "cannot be undone" in body
+
+
+def fake_upload_ok(video_id="vid123", channel=("UC1", "Zoolanders"), fractions=(0.5, 1.0)):
+    """uploader.upload's contract: drive on_progress, then on_response."""
+    def _upload(request, *, on_progress=None, on_retry=None, on_response=None,
+                **kw):
+        for fraction in fractions:
+            if on_progress is not None:
+                on_progress(fraction)
+        if on_response is not None:
+            on_response({"id": video_id,
+                         "snippet": {"channelId": channel[0],
+                                     "channelTitle": channel[1]}})
+        return video_id
+    return _upload
+
+
+def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
+    api, window, rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    join(api)
+
+    links = fakes.payloads(sent, "onLink")
+    # KEY IS `id`: the page's onLink handler looks up the row by that field.
+    assert [l["id"] for l in links] == ["r1", "r2"]
+    assert rows.links == {"r1": "vid123", "r2": "vid123"}
+    # The messages really went through evaluate_js, not just through the spy.
+    assert window.calls
+
+
+def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok(fractions=(0.5,)))
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    join(api)
+
+    bars = [p for p in fakes.payloads(sent, "onProgress") if p["text"]]
+    assert bars[0] == {"mode": "determinate", "pct": 25.0,
+                       "text": "Uploading file 1 of 2… 50.0%", "kind": "FG"}
+
+
+def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path):
+    """Replaces test_app_last_upload, which drove a real window: the channel
+    is the only thing the app ever learns about where uploads land, because
+    it holds the youtube.upload scope alone."""
+    saved = {}
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.settings_mod.save",
+                        lambda cfg, path=None: saved.update(cfg))
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    join(api)
+
+    channel, = fakes.payloads(sent, "onChannel")
+    assert channel["channel_id"] == "UC1"
+    assert channel["channel_title"] == "Zoolanders"
+    # The rendered line rides along, so the page never composes it.
+    assert channel["destination"] == "Uploads go to Zoolanders · unlisted"
+    assert saved["channel_title"] == "Zoolanders"
+    assert api._state.settings["channel_id"] == "UC1"
+
+
+def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    join(api)
+
+    assert {"text": "Upload complete!", "kind": "SUCCESS"} in fakes.payloads(sent, "onStatus")
+    assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
+    assert api._retry_state is None
+
+
+def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_path):
+    """ffmpeg reports no progress this code can read, and a multi-gigabyte
+    join is seconds of no other signal to the user."""
+    import contextlib
+
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        yield tmp_path / "merged.mkv"
+
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+
+    api.start_upload("Fight", "d", "unlisted", "20", True, ["r1", "r2"])
+    join(api)
+
+    modes = [p["mode"] for p in fakes.payloads(sent, "onProgress")]
+    assert modes[0] == "indeterminate"
+    assert "determinate" in modes[1:]
+    # One stitched video, but every source row gets the link.
+    assert sorted(l["id"] for l in fakes.payloads(sent, "onLink")) == ["r1", "r2"]

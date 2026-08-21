@@ -432,3 +432,177 @@ class Api:
         if not self._confirm("Confirm Upload", body):
             return
         self._upload_worker(job)
+
+    def _link(self, row_id: str, video_id: str) -> None:
+        """Record and announce one uploaded row.
+
+        _links is kept here as well as in the snapshot because the
+        RowSnapshot contract is write-only for links, and open_path /
+        copy_path need to read one back.
+        """
+        self._links[row_id] = YOUTUBE_WATCH.format(video_id=video_id)
+        self._rows.set_link(row_id, video_id)
+        self._push("onLink", {"id": row_id, "video_id": video_id})
+
+    def _upload_done(self) -> None:
+        self._retry_state = None
+        self._push("onStatus", {"text": "Upload complete!", "kind": "SUCCESS"})
+        self._push("onProgress", {"mode": "determinate", "pct": 100.0,
+                                  "text": "", "kind": "SUCCESS"})
+        self._push("onRetryAvailable", {"available": False})
+
+    def _upload_worker(self, job: UploadJob) -> None:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        index = job.start_index
+        try:
+            creds = uploader.load_credentials(paths.token_file())
+            if uploader.needs_reauth(creds):
+                creds = uploader.run_oauth_flow()
+            elif not creds.valid:
+                creds = uploader.refresh_credentials(creds)
+            uploader.save_credentials(creds, paths.token_file())
+            youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+            if job.stitch:
+                ordered = stitch.order_for_stitch(job.items)
+                sources = [i.path for i in ordered]
+                # A stream copy runs at disk speed, but a multi-gigabyte
+                # join is still seconds of no other signal to the user, and
+                # ffmpeg reports no progress this code can read. The bar
+                # says "working" rather than inventing a percentage.
+                # The neutral kind is set with the text for the same reason
+                # on_progress does it: start_upload writes no status before
+                # dispatching, so a red error from the previous attempt
+                # would otherwise survive into this message.
+                self._push("onProgress", {"mode": "indeterminate", "pct": 0.0,
+                                          "text": "Stitching with FFmpeg…",
+                                          "kind": "FG"})
+                with stitch.stitched(sources, self._state.ffmpeg_bin,
+                                     paths.tmp_dir()) as merged:
+                    self._push("onProgress", {"mode": "determinate", "pct": 0.0,
+                                              "text": "", "kind": "FG"})
+                    vid = self._upload_one(youtube, MediaFileUpload, merged,
+                                           job, 0, 1, close_media=True)
+                for row_id in job.ids:
+                    self._link(row_id, vid)
+            else:
+                total = len(job.items)
+                for index in range(job.start_index, total):
+                    vid = self._upload_one(youtube, MediaFileUpload,
+                                           job.items[index].path, job, index, total)
+                    self._link(job.ids[index], vid)
+            self._upload_done()
+        except uploader.UploadFailed as exc:
+            # Stitched failures cannot resume: the context manager has
+            # already deleted the merged file the session points at, which
+            # is the correct trade for never leaking multi-GB temporaries.
+            # Retry re-stitches instead.
+            # Gated on RETRY as well, not just on the stitch path: only a
+            # RETRY outcome enables Retry, so for anything else the
+            # retained request is unreachable -- and it keeps the
+            # MediaFileUpload, and with it an open handle on the user's own
+            # recording, alive until the next failure replaces this state.
+            # On Windows that blocks renaming or deleting that file.
+            resumable = (exc.request is not None and not job.stitch
+                         and exc.outcome is uploader.Outcome.RETRY)
+            self._retry_state = RetryState(
+                job=job,
+                # On the stitch path `index` never advances past
+                # job.start_index, so resume_index is not the failing item --
+                # but it is never read there either, since `resumable` above
+                # forces request=None for stitch failures.
+                resume_index=index,
+                request=exc.request if resumable else None,
+            )
+            self._alert("error", "Upload Failed", str(exc))
+            self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
+            if exc.outcome is uploader.Outcome.RETRY:
+                self._push("onRetryAvailable", {"available": True})
+        except Exception as exc:
+            self._retry_state = None
+            # Covers a stitch failure too (StitchError isn't an
+            # UploadFailed): if the bar was left indeterminate above, put it
+            # back rather than leaving it animating behind the error.
+            self._push("onProgress", {"mode": "determinate", "pct": 0.0,
+                                      "text": "", "kind": "FG"})
+            self._alert("error", "Upload Failed", str(exc))
+            self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
+
+    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total,
+                    close_media: bool = False) -> str:
+        body = uploader.build_body(job.title, job.description, job.privacy,
+                                   job.category, index, total)
+        media = MediaFileUpload(str(path), chunksize=uploader.CHUNK_SIZE,
+                                resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=body,
+                                          media_body=media)
+
+        def on_progress(fraction: float) -> None:
+            self._last_pct = ((index + fraction) / total) * 100
+            self._push("onProgress", {
+                "mode": "determinate", "pct": self._last_pct,
+                "text": copy_mod.format_progress(index, total, fraction),
+                "kind": "FG"})
+
+        def on_retry(attempt: int, delay: float) -> None:
+            # Carries the last percentage rather than zero: the upload has
+            # not lost the ground it covered, and a bar snapping backwards
+            # while the text says "retrying" reads as a restart.
+            self._push("onProgress", {
+                "mode": "determinate", "pct": self._last_pct,
+                "text": f"Network problem — retrying in {delay:.0f}s "
+                        f"(attempt {attempt})",
+                "kind": "WARNING"})
+
+        try:
+            return uploader.upload(request, on_progress=on_progress,
+                                   on_retry=on_retry,
+                                   on_response=self._remember_channel)
+        finally:
+            if close_media:
+                # The caller is about to delete `path`, and Windows refuses
+                # to unlink a file that still has an open handle. Off for
+                # the plain path on purpose: UploadFailed hands the
+                # resumable request to Retry, which resumes by reading from
+                # this very stream.
+                _close_media(media)
+
+    def _remember_channel(self, response) -> None:
+        """Learn the destination channel from a successful insert response.
+
+        This is the only channel information the app can get: SCOPES holds
+        youtube.upload alone, and channels.list needs a second scope, which
+        would sign every existing user out.
+
+        The settings write stays on this worker thread deliberately: it is
+        a short plain-file write, and persisting here means the channel
+        survives a crash before the next clean exit.
+
+        Silent when the response carries no channel: the video uploaded
+        fine, and a warning about a missing display field would be noise
+        attached to a success.
+        """
+        channel_id, channel_title = uploader.channel_of(response)
+        if not channel_title:
+            return
+        if (self._state.settings.get("channel_id") == channel_id
+                and self._state.settings.get("channel_title") == channel_title):
+            return
+        self._state.settings["channel_id"] = channel_id
+        self._state.settings["channel_title"] = channel_title
+        try:
+            settings_mod.save(self._state.settings)
+        except OSError:
+            # A settings file that cannot be written must not fail an
+            # upload that succeeded.
+            logger.exception("could not persist the destination channel")
+        self._push("onChannel", {
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+            # Rendered here, not in the page: format_destination states the
+            # "learned from the first upload" case in words, and that
+            # explanation is copy with its own test, not a template.
+            "destination": copy_mod.format_destination(
+                channel_title, self._state.settings.get("privacy", "")),
+        })
