@@ -40,6 +40,19 @@ Run on Windows against a real install before each release.
       Also check Treeview row striping and the description `tk.Text` box — a
       classic Tk widget sv-ttk does not theme, so confirm it is at least
       legible (a known accepted limitation).
+- [ ] **The right-click context menu is legible in dark mode.** With Windows
+      set to Dark, right-click a list row and read the menu: "Copy link" and
+      "Open in browser" must be readable, not white-on-white or black-on-black,
+      and the greyed-out state must still be distinguishable. `tk.Menu` is a
+      classic Tk widget, and on Windows sv-ttk's `config_menus` returns
+      immediately — so the menu's entire appearance rests on `tk_setPalette`,
+      which nothing in this app controls and no test covers.
+- [ ] **The Settings auth status dot is legible in dark mode.** Open Settings
+      with Windows set to Dark and check the dot beside the Google account
+      row in both states (connected and not connected): the dot must be
+      visible against the dialog background, not a light square sitting on a
+      dark panel. It is a `tk.Canvas` — again a classic Tk widget whose
+      background comes from `tk_setPalette`, not from sv-ttk styling.
 - [ ] **LOAD-BEARING: switching the OS theme live, with both windows open.**
       Open the main window and Settings together, then flip
       `Choose your mode`. Within a few seconds both must re-theme fully:
@@ -77,6 +90,9 @@ Run on Windows against a real install before each release.
 - [ ] **125% scaling.** Settings dialog not clipped — Recording folder frame
       and the Save/Cancel row fully visible AND above the taskbar.
 - [ ] **150% scaling.** Neither window opens larger than the screen.
+- [ ] **200% scaling.** Neither window opens larger than the screen, the
+      Settings dialog is still unclipped with Save/Cancel reachable, and the
+      status bar still fits its progress bar and label.
 - [ ] **LOAD-BEARING: on a NARROW window and a SHORT screen, not just
       1080p.** The minsize clamping fixes only bite in those configurations —
       a default 1080p pass exercises neither. On a short screen, confirm the
@@ -91,6 +107,21 @@ Run on Windows against a real install before each release.
 - [ ] **Text is sharp, not bitmap-stretched, at 150%.** The process declares
       DPI awareness but the HRESULT is discarded, so blurriness is the only
       observable sign the call silently failed.
+- [ ] **LOAD-BEARING: text is the right SIZE at 150% and 200%, not merely
+      sharp.** Sharpness and size are separate failures and the item above
+      only catches the first one. Compare the app's text against Notepad (or
+      any native Windows app) side by side at the same scale factor, or
+      against the app on a 100% machine: labels, buttons, list rows and
+      column headings must look the same apparent size as native UI, not
+      noticeably smaller. Crisp-but-undersized text means sv-ttk's ttk fonts
+      are not following `tk scaling` — sv.tcl declares them in absolute
+      pixels, and `theme._rescale_sv_fonts()` is what corrects that. Check it
+      after a light↔dark switch too, since `apply()` reruns the rescale each
+      time (a font that keeps shrinking, or doubles, means the rescale is
+      compounding rather than deriving from sv-ttk's base sizes).
+      *Note the interaction:* undersized text makes every "nothing is
+      clipped" item on this list pass more easily, so a size regression can
+      hide behind an otherwise-green scaling section — check size first.
 
 ### The list
 - [ ] **LOAD-BEARING: clicking a checkbox toggles it.** The click handler

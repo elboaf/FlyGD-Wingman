@@ -139,6 +139,20 @@ jobs:
             if (-not (Test-Path $path)) { throw "$tcl missing from bundled sv_ttk data at $path" }
           }
 
+      - name: Verify the app icon is bundled
+        # Same failure shape as the two checks above: uploader.spec lists the
+        # icon as a `datas` entry, and PyInstaller exits 0 even when such an
+        # entry resolves to nothing. paths.icon_file() would then return None
+        # at runtime and every window would silently fall back to the default
+        # Tk feather - a green build of a visibly wrong app.
+        shell: pwsh
+        run: |
+          $icon = "dist\OBSYouTubeUploader\_internal\app.ico"
+          if (-not (Test-Path $icon)) {
+            throw "app.ico not found at $icon - the (ICON, '.') datas entry in uploader.spec did not resolve, and paths.icon_file() will find nothing at runtime"
+          }
+          Get-Item $icon
+
       - name: Build installer
         run: iscc packaging/installer.iss
 
