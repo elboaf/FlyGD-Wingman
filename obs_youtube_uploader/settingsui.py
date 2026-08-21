@@ -64,8 +64,9 @@ class SettingsWindow:
                    command=self._connect).pack(anchor=tk.W, pady=(6, 0))
         ttk.Label(
             acct,
-            text=("If this is a pre-release build, only approved testers can "
-                  "sign in."),
+            text=("Google hasn't verified this app yet, so the sign-in page "
+                  "shows a warning. Click Advanced, then \"Go to OBS YouTube "
+                  "Uploader (unsafe)\" to continue."),
             foreground="gray", wraplength=460, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(4, 0))
 

@@ -30,8 +30,9 @@ _MESSAGES = {
         "Please try again tomorrow."
     ),
     Outcome.AUTH: (
-        "Google refused the sign-in. If this build is a pre-release, your "
-        "account may not be on the approved tester list yet."
+        "Google refused the sign-in. Try connecting your account again in "
+        "Settings; if the consent screen warns the app is unverified, click "
+        "Advanced and continue."
     ),
     Outcome.PERMANENT: "The upload failed and retrying will not help.",
 }
@@ -209,9 +210,15 @@ def save_credentials(creds, token_path: Path) -> None:
 def needs_reauth(creds) -> bool:
     """True when a full interactive OAuth flow is required.
 
-    While the app is unverified, refresh tokens expire after 7 days, so this
-    returns True roughly weekly for every user. The caller must handle it
-    smoothly rather than treating it as an error.
+    Returns True whenever the stored credentials cannot be refreshed --
+    revoked access, a missing refresh token, a token store that was cleared.
+    The caller must handle it smoothly rather than treating it as an error,
+    since it is a normal state rather than a failure.
+
+    (The 7-day refresh-token expiry that would once have made this fire
+    weekly applies to OAuth apps in *testing* status. This app is published,
+    so that no longer applies -- but nothing here depended on the interval,
+    only on whether the credentials can still be refreshed.)
     """
     if creds is None:
         return True
