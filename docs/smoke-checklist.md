@@ -97,6 +97,17 @@ Run on Windows against a real install before each release.
 - [ ] **200% scaling.** Neither window opens larger than the screen, the
       Settings dialog is still unclipped with Save/Cancel reachable, and the
       status bar still fits its progress bar and label.
+- [ ] **LOAD-BEARING: list ROW TEXT is not vertically clipped at 200%.**
+      Distinct from the checkbox item below, which only covers the image, and
+      from the window-fits items above. Read the Filename and YouTube Link
+      cells: descenders (g, p, y) and the tops of capitals must be fully
+      visible, not shaved by the row boundary. sv-ttk computes its row height
+      once from the UNSCALED font when `sv.tcl` is sourced and never
+      re-evaluates it, so the app re-measures the corrected font in
+      `_apply_row_height()` and takes the larger of that and the checkbox
+      height. If text is cropped, that re-measurement is what to look at.
+      Check it after a light↔dark switch too, since `set_theme` re-asserts
+      sv-ttk's own stale value each time.
 - [ ] **LOAD-BEARING: on a NARROW window and a SHORT screen, not just
       1080p.** The minsize clamping fixes only bite in those configurations —
       a default 1080p pass exercises neither. On a short screen, confirm the
