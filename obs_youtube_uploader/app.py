@@ -72,13 +72,233 @@ def dpi_scale(widget: tk.Misc) -> float:
     return round(float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
 
 
-# Shared spacing scale for _build's layout. Kept as module constants (rather
-# than per-call literals) so every section agrees on what "tight" vs "loose"
-# means, and so Task 7 can import the same values instead of guessing them.
-PAD_TIGHT = 4    # between closely related controls (e.g. buttons in one row)
-PAD_NORMAL = 8   # between distinct groups (e.g. a frame and the window edge)
-PAD_LOOSE = 12   # around a whole section
-FRAME_PADDING = 8  # internal padding for bordered frames
+def format_selection_summary(infos: list[library.VideoInfo]) -> str:
+    """The panel's "3 selected · 1.2 GB · 2:04:35" line.
+
+    Pure, and kept out of the window class, because the label it feeds is in
+    the one layer this repo has no test harness for. Everything decidable
+    about the string is decided here.
+
+    Two asymmetries are deliberate:
+
+    * The "+" marks the duration total as a floor, not a value. A recording
+      whose probe is still outstanding contributes 0, so an unmarked total
+      would read as complete while being short. It reuses the duration
+      column's own vocabulary for the same state ("…" per row) rather than
+      inventing a second one.
+    * Size is never marked partial: info.size comes from stat, so it is
+      final from the moment the row exists, whatever the probe is doing.
+
+    A probed recording with duration None is a finished verdict (ffprobe
+    could not read it), so it also contributes 0 but leaves the total exact.
+    Its own row already shows "?"; repeating that diagnosis in an aggregate
+    would say nothing the user can act on.
+
+    The count carries no noun ("3 selected"), which sidesteps agreement at
+    every value instead of special-casing 1.
+    """
+    if not infos:
+        return "Nothing selected"
+    total_size = sum(info.size for info in infos)
+    total_seconds = int(sum(info.duration or 0.0 for info in infos))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    partial = "+" if any(not info.probed for info in infos) else ""
+    return (f"{len(infos)} selected · {library.format_size(total_size)}"
+            f" · {hours}:{minutes:02d}:{seconds:02d}{partial}")
+
+
+@dataclass(frozen=True)
+class Spacing:
+    """DPI-scaled spacing steps.
+
+    Derived from dpi_scale() rather than kept as fixed pixels, because the
+    unscaled constants this replaces were the reason high-DPI layouts grew
+    while the space between things did not: at 150% every control was half
+    again as tall inside gaps still measured for 96 DPI.
+
+    Frozen so a window cannot mutate the steps for one section and leave the
+    rest of the app disagreeing about what "loose" means.
+    """
+    tight: int    # within one control group (e.g. buttons in one row)
+    normal: int   # between controls in a section
+    loose: int    # between sections
+    margin: int   # window edge; new step, no unscaled equivalent existed
+    frame: int    # internal padding of a bordered frame
+
+
+def spacing(widget: tk.Misc) -> Spacing:
+    """Scale the 100% base steps for *widget*'s display.
+
+    max(1, ...) rather than a plain round: a scale small enough to round a
+    step to 0 would read as a layout bug (controls touching), not as tight
+    spacing. Callers take this once per build and reuse the result, so the
+    Tcl round-trip in dpi_scale() is paid once per window, not per widget.
+    """
+    scale = dpi_scale(widget)
+    return Spacing(
+        tight=max(1, int(round(4 * scale))),
+        normal=max(1, int(round(8 * scale))),
+        loose=max(1, int(round(12 * scale))),
+        margin=max(1, int(round(16 * scale))),
+        frame=max(1, int(round(8 * scale))),
+    )
+
+
+# Treeview column geometry in pixels at 100%; every value is multiplied by
+# dpi_scale() when the columns are configured.
+#
+# `filename` is the ONLY stretching column, so it is the only one that
+# grows on a wider window and the only one that can be squeezed on a
+# narrower one: ttk.Treeview distributes both a width surplus and a width
+# deficit across its STRETCHING columns and leaves the rest at their
+# configured width. A minimum on a non-stretching column is therefore
+# never exercised -- it is a floor those columns already sit on.
+#
+# The consequence is that the list's real floor is the preferred widths of
+# the five fixed columns plus `filename`'s MINIMUM, and the window minimum
+# is set so that always fits. Measured at 100% against a real window (tree
+# viewport = window width - margins - the 300px panel - the pane gap - the
+# scrollbar, less a 10px inset inside the tree; the inset is a constant 10
+# at 96, 144 and 192 dpi -- it does not scale):
+#
+#   fixed columns (#0 34 + date 120 + size 84 + length 76 + link 46) = 360px
+#   plus filename's 120px minimum                                    = 480px
+#   plus the 10px inset                                              = 490px
+#   a 750px window gives a 381px viewport -- nowhere near enough
+#   an 800px window gives a 431px viewport -- still not enough
+#   an 860px window gives a 491px viewport -- 490 fits
+#
+# So the window minimum IS raised, to 860x450 at 100% (see __init__).
+# Making date/size/duration stretch so their minimums became reachable was
+# tried and rejected: stretch is symmetric in ttk, so those columns then
+# also took an equal share of a SURPLUS (a 1920px window handed Size 344px
+# to right-align "1.0 KB" in), and undoing that needed a <Configure>
+# handler switching regimes at a threshold width. 60px more minimum window
+# width buys the same result with no machinery: "a wider window widens the
+# filename column" is true by construction at every width.
+#
+# No horizontal scrollbar is added: on a list whose elastic column is the
+# filename, one trades a rare annoyance for a permanent one. A window
+# dragged to its floor still shows a short filename column -- every column
+# present and readable, none clipped; that is accepted.
+COLUMN_SPEC = (
+    # column key, heading text, sort key, width, minwidth, stretch, anchor
+    # A bare check, deliberately NOT the ☑ box glyph: every heading in this
+    # tree is a sort control, and a box in the header position reads as a
+    # select-all checkbox — an affordance this column does not have and does
+    # not want, since Select All / Select None are buttons under the list.
+    # The mark labels what the column holds; clicking it sorts by it.
+    ("#0", "✓", "checked", 34, 34, False, tk.CENTER),
+    ("filename", "Filename", "filename", 260, 120, True, tk.W),
+    ("date", "Date", "date", 120, 90, False, tk.W),
+    ("size", "Size", "size", 84, 64, False, tk.E),
+    # Header text only. The KEY stays "duration" because _sort_by dispatches
+    # on it, and self.infos exposes info.duration under that name.
+    ("duration", "Length", "duration", 76, 56, False, tk.E),
+    # NOT stretching: a fixed-width glyph cell that must not grow, and it is
+    # already at its minimum, so it never needs to compress either.
+    ("link", "Link", "link", 46, 46, False, tk.CENTER),
+)
+
+# The link column shows a glyph rather than the URL it used to render across
+# ~35% of the list. Nothing is lost: the URL was never selectable inside a
+# Treeview, and every consumer of a link (double-click, the context menu,
+# the has_link row colour) reads self.links, not the cell.
+LINK_GLYPH = "↗"
+
+
+def link_cell(url: str | None) -> str:
+    return LINK_GLYPH if url else ""
+
+
+def configure_tree_columns(tree: "ttk.Treeview", scale: float,
+                           on_sort) -> None:
+    """Apply COLUMN_SPEC to *tree*, scaled by *scale*.
+
+    Module-level rather than a method so the geometry can be verified
+    against a real widget without standing up a whole UploaderWindow.
+    Each heading is anchored like its column: headers were centred over
+    left- and right-aligned data, which read as misalignment rather than
+    as a deliberate choice.
+    """
+    for key, text, sort_key, width, minwidth, stretch, anchor in COLUMN_SPEC:
+        tree.heading(key, text=text, anchor=anchor,
+                     command=lambda k=sort_key: on_sort(k))
+        tree.column(key, width=int(width * scale),
+                    minwidth=int(minwidth * scale),
+                    stretch=stretch, anchor=anchor)
+
+
+def row_height(checkbox_height: int, linespace: int, scale: float) -> int:
+    """Row height in pixels — see _apply_row_height for why each term exists.
+
+    Split out as a pure function because the two font-derived inputs cannot
+    be measured meaningfully on the Linux test host (no Xft), while the
+    arithmetic that combines them is exactly what regresses.
+    """
+    return max(checkbox_height + 4, linespace + 3, int(28 * scale))
+
+
+# Named styles, so emphasis is declared in one place and every consumer
+# spells it the same way. TREE_STYLE is the Treeview's own style: ttk
+# derives a heading's style by appending ".Heading" to it, and a style with
+# no layout of its own falls back to its parent's, so "Wingman.Treeview"
+# inherits sv-ttk's Treeview appearance (and the rowheight
+# _apply_row_height sets on "Treeview") while giving the headings a name of
+# their own to hang a font on.
+TREE_STYLE = "Wingman.Treeview"
+SECTION_HEADING_STYLE = "Section.TLabel"   # panel section headings ("Upload")
+MUTED_STYLE = "Muted.TLabel"               # selection summary, hint labels
+HEADING_FONT = "WingmanHeadingFont"
+
+# Preference order for what the heading font is derived from. The sv-ttk
+# fonts come first because theme._rescale_sv_fonts has already corrected
+# them for `tk scaling`; the Tk defaults are a fallback for a build with no
+# sv-ttk, not the intended source.
+_HEADING_FONT_BASES = ("SunValleyBodyStrongFont", "SunValleyBodyFont",
+                       "TkHeadingFont", "TkDefaultFont")
+
+
+def apply_typography(root: tk.Misc) -> None:
+    """Declare the app's emphasis styles. Idempotent; safe to re-run.
+
+    MUST be re-run on every theme change. ttk stores style options per
+    theme and sv_ttk.set_theme swaps the theme wholesale, so a style
+    configured once is silently gone after the first light/dark switch --
+    the same hazard _apply_row_height's docstring describes, and the
+    reason both are re-asserted from _on_theme_changed rather than set up
+    once in _build.
+
+    The font is re-derived from sv-ttk's own font on every call rather
+    than remembered, because theme.apply rescales those fonts (for `tk
+    scaling`) immediately before the consumers run: copying here is how
+    bold headings inherit the corrected size instead of freezing a
+    96-DPI one. Only -weight is overridden, so family and size stay
+    sv-ttk's.
+
+    Row text is deliberately NOT touched. ttk.Treeview has no per-column
+    fonts, and per-row tags -- the only other channel -- are already
+    fully spent on zebra striping, preselection and has_link (see
+    _row_tags), where the tag listed first wins. There is nothing left to
+    carry emphasis with, so the hierarchy stops at the headings.
+    """
+    names = {str(n) for n in root.tk.splitlist(root.tk.call("font", "names"))}
+    if HEADING_FONT not in names:
+        root.tk.call("font", "create", HEADING_FONT)
+    base = next((n for n in _HEADING_FONT_BASES if n in names), None)
+    if base is not None:
+        root.tk.call("font", "configure", HEADING_FONT,
+                     *root.tk.splitlist(root.tk.call("font", "configure", base)))
+    root.tk.call("font", "configure", HEADING_FONT, "-weight", "bold")
+
+    style = ttk.Style(root)
+    style.configure(f"{TREE_STYLE}.Heading", font=HEADING_FONT)
+    style.configure(SECTION_HEADING_STYLE, font=HEADING_FONT)
+    # The one secondary-text colour, read live from the token table so a
+    # switch recolours it rather than baking in the mode that was active
+    # when the widget was built.
+    style.configure(MUTED_STYLE, foreground=theme.token("MUTED"))
 
 
 @dataclass
@@ -164,9 +384,14 @@ class UploaderWindow:
         # minsize over geometry, so an unclamped minsize larger than the
         # screen would reopen the window oversized *and* make it
         # unshrinkable — exactly what the clamp two lines up exists to
-        # prevent. At 150% the raw floor is 1125x675, which overflows
+        # prevent. At 150% the raw floor is 1200x675, which overflows
         # narrow panels.
-        root.minsize(min(int(750 * scale), width), min(int(450 * scale), height))
+        #
+        # 860, not the historical 750: measured against a real window, a
+        # 750px floor leaves the list viewport 381px wide, which cannot hold
+        # the 490px the columns need (see COLUMN_SPEC) — Length was clipped
+        # and Link fell off the edge entirely. 860 gives 491px.
+        root.minsize(min(int(860 * scale), width), min(int(450 * scale), height))
         root.protocol("WM_DELETE_WINDOW", self.hide)
         self._build()
         self.refresh()
@@ -174,59 +399,123 @@ class UploaderWindow:
     def show(self, preselect: set | None = None) -> None:
         self.root.deiconify()
         self.root.lift()
+        # Re-applied on every show, not only in _build. _build runs while the
+        # root is still withdrawn, and a window manager can hand out a
+        # different frame after mapping (measured on X11; Tk returns 0x0 for
+        # an unmapped window). Win32 HWNDs do not reparent, so this is
+        # probably redundant on the target platform — but the failure mode
+        # if it is not is silent: both DwmSetWindowAttribute calls simply
+        # no-op on a stale handle, nothing raises, and the title bar stays
+        # light until the user changes their OS theme. Cheap insurance.
+        theme.apply_titlebar(self.root, theme.current_mode())
         self.refresh(preselect)
 
     def hide(self) -> None:
         self.root.withdraw()
 
     def _build(self) -> None:
-        meta = ttk.LabelFrame(self.root, text="Video details", padding=FRAME_PADDING)
-        meta.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_TIGHT)
-        ttk.Label(meta, text="Title:").grid(row=0, column=0, sticky=tk.W)
-        self.title_var = tk.StringVar(value="")
-        ttk.Entry(meta, textvariable=self.title_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
-        ttk.Label(meta, text="Description:").grid(row=1, column=0, sticky=tk.NW, pady=(5, 0))
-        # Deliberately unstyled and NOT in _on_theme_changed: this classic
-        # tk.Text follows the theme only because sv-ttk's configure_colors
-        # calls tk_setPalette, which reconfigures existing classic widgets.
-        # That is sv-ttk's doing, not ours - do not assume our code themes it.
-        self.desc_txt = tk.Text(meta, height=3, wrap=tk.WORD)
-        self.desc_txt.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=(5, 0))
-        meta.columnconfigure(1, weight=1)
+        """Assemble the window: a two-pane body over a full-width status strip.
 
-        self.list_frame = ttk.Frame(self.root)
-        self.list_frame.pack(fill=tk.BOTH, expand=True, padx=PAD_NORMAL)
+        Everything hangs off ONE padded frame instead of each section
+        packing itself against the root with its own padx/pady. That single
+        wrapper is what gives the window outer margins at all — the previous
+        layout could only ever put space *between* sections, never around
+        them, which is why no amount of tuning the old PAD_* constants
+        produced a margin.
 
-        # Task 4's shared helper — do not compute scale independently here,
-        # or checkbox images and window geometry can disagree.
+        The four regions are built by three helpers rather than inline. Not
+        opportunistic tidying: the regions no longer appear in the order a
+        reader walks the window (the panel's contents come from what used to
+        be three separate places), so a single 110-line method would no
+        longer describe anything.
+        """
+        self._pad = spacing(self.root)
+        # Shared helper, not an independent computation: checkbox images,
+        # window geometry and panel width must all agree on the scale.
         self._dpi_scale = dpi_scale(self.root)
+        # Before any widget is created: the builders below NAME styles
+        # (TREE_STYLE, SECTION_HEADING_STYLE, MUTED_STYLE) rather than
+        # configuring fonts inline, and a widget naming a style that does
+        # not exist yet renders with the theme default and no error.
+        apply_typography(self.root)
+
+        outer = ttk.Frame(self.root, padding=self._pad.margin)
+        outer.pack(fill=tk.BOTH, expand=True)
+        # The body takes every pixel a resize adds; the status strip keeps
+        # its natural height, so a taller window grows the list, not the
+        # progress bar.
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        body = ttk.Frame(outer)
+        body.grid(row=0, column=0, sticky=tk.NSEW)
+        body.rowconfigure(0, weight=1)
+        # Only the list column stretches. The panel is a fixed width (see
+        # _build_upload_panel), so all the slack a wider window brings goes
+        # to the list — and `filename` being the tree's only stretching
+        # column keeps it going to the one place that benefits from it.
+        body.columnconfigure(0, weight=1)
+
+        self._build_list_pane(body)
+        # A rule between the panes rather than whitespace alone: at the
+        # minimum window width the gap compresses to almost nothing, and
+        # two unseparated button groups read as one.
+        ttk.Separator(body, orient=tk.VERTICAL).grid(
+            row=0, column=1, sticky=tk.NS, padx=(self._pad.loose, 0))
+        self._build_upload_panel(body)
+        self._build_status_strip(outer)
+
+        # The initial application is explicit, not left to registration:
+        # __main__.main() calls theme.apply() before this window is
+        # constructed, so a consumer registered here is not invoked until the
+        # NEXT theme switch. Registration alone would leave the title bar
+        # light until the user changed their OS theme.
+        theme.apply_titlebar(self.root, theme.current_mode())
+
+        # Registered last, deliberately: _on_theme_changed dereferences
+        # self.ffmpeg_warn_label, self.status and self.desc_txt, all created
+        # above. A consumer registered earlier would be fine only for as
+        # long as _build stays synchronous.
+        theme.register(self._on_theme_changed)
+
+    def _build_list_pane(self, parent: tk.Misc) -> None:
+        """The recording list, its scrollbar, and the commands that act on
+        the list itself.
+
+        Select All / Select None / Delete Selected sit UNDER the list rather
+        than in a shared bottom bar. They operate on rows; the old bar mixed
+        them with upload actions and a checkbox, so eight controls of three
+        different kinds read as one undifferentiated strip.
+
+        grid rather than pack (the tree used pack before): the button row
+        below has to span both the tree and its scrollbar, which pack cannot
+        express without a second nesting frame.
+        """
+        self.list_frame = ttk.Frame(parent)
+        self.list_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        self.list_frame.rowconfigure(0, weight=1)
+        self.list_frame.columnconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(
             self.list_frame,
             columns=("filename", "date", "size", "duration", "link"),
             show="tree headings",
+            style=TREE_STYLE,
             # The checkbox is the selection model. A competing
             # highlight-selection would give the user two contradictory
             # notions of "selected", and a stray click would wipe out the
             # watcher's preselection.
             selectmode="none",
         )
-        self.tree.heading("#0", text="☑", command=lambda: self._sort_by("checked"))
-        self.tree.column("#0", width=int(34 * self._dpi_scale), anchor=tk.CENTER, stretch=False)
-        for key, text, chars in (
-            ("filename", "Filename", 30),
-            ("date", "Date", 14),
-            ("size", "Size", 9),
-            ("duration", "Duration", 8),
-            ("link", "YouTube Link", 48),
-        ):
-            self.tree.heading(key, text=text, command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=int(chars * 7 * self._dpi_scale), anchor=tk.W)
+        # configure_tree_columns owns the whole column spec — widths, minwidths, anchors,
+        # stretch, heading text and their sort commands. Configuring any of
+        # it here would silently revert that task.
+        configure_tree_columns(self.tree, self._dpi_scale, self._sort_by)
 
         scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.grid(row=0, column=0, sticky=tk.NSEW)
+        scroll.grid(row=0, column=1, sticky=tk.NS)
 
         self._build_checkbox_images()
         self._apply_row_height()
@@ -238,56 +527,194 @@ class UploaderWindow:
         self.tree.bind("<space>", self._on_tree_space)
         self.tree.bind("<FocusIn>", self._on_tree_focus_in)
 
+        list_actions = ttk.Frame(self.list_frame)
+        list_actions.grid(row=1, column=0, columnspan=2, sticky=tk.EW,
+                          pady=(self._pad.normal, 0))
+        # Delete last and separated: it is the only irreversible action in
+        # the group, and it used to sit second from the left, between two
+        # harmless ones.
+        ttk.Button(list_actions, text="Select All",
+                   command=lambda: self._set_all(True)).pack(
+            side=tk.LEFT, padx=(0, self._pad.tight))
+        ttk.Button(list_actions, text="Select None",
+                   command=lambda: self._set_all(False)).pack(
+            side=tk.LEFT, padx=(0, self._pad.loose))
+        ttk.Button(list_actions, text="Delete Selected",
+                   command=self._delete_selected).pack(side=tk.LEFT)
+
+    def _build_upload_panel(self, parent: tk.Misc) -> None:
+        """The upload panel: the two fields, the stitch option, and the three
+        buttons that consume them.
+
+        Title and Description are the primary input of the common session
+        ("fight ended → open → the new recording is preselected → title it →
+        upload"), and they used to sit at the top of the window while the
+        button that reads them sat at the bottom. They are grouped with that
+        button here instead.
+
+        FIXED width, with grid_propagate off: without it the panel would
+        size to its widest child (the ffmpeg warning, when present) and the
+        window's proportions would depend on whether ffmpeg happens to be
+        installed. Fixed also means the panel costs proportionally more the
+        narrower the window is — accepted, and covered by the column
+        minimums; see "Narrow windows" in ui-layout-design.md.
+
+        Row map, since the selection summary grids into it: 0 heading, 1 separator, 2-3
+        Title, 4-5 Description, 6 Stitch, 7 ffmpeg warning, 8 selection
+        summary, 9 combat logs, 10 Retry + Upload.
+        """
+        self._panel_width = int(300 * self._dpi_scale)
+        self.upload_panel = ttk.Frame(parent, width=self._panel_width)
+        self.upload_panel.grid(row=0, column=2, sticky=tk.NSEW,
+                               padx=(self._pad.loose, 0))
+        self.upload_panel.grid_propagate(False)
+        self.upload_panel.columnconfigure(0, weight=1)
+        # The Description box absorbs the panel's vertical slack. Verified
+        # on a real display: a bordered box that grows with the window reads
+        # as a field, while the same slack left as empty space between
+        # groups reads as a hole in the layout.
+        self.upload_panel.rowconfigure(5, weight=1)
+
+        # Bold comes from the shared named styles, never from a font
+        # pinned on this widget: ttk stores style options per theme, so a
+        # font configured here would be wiped by the first light/dark
+        # switch. apply_typography re-asserts the style after every switch.
+        heading = ttk.Label(self.upload_panel, text="Upload",
+                            style=SECTION_HEADING_STYLE)
+        heading.grid(row=0, column=0, sticky=tk.W)
+        ttk.Separator(self.upload_panel, orient=tk.HORIZONTAL).grid(
+            row=1, column=0, sticky=tk.EW, pady=(self._pad.tight, self._pad.normal))
+
+        ttk.Label(self.upload_panel, text="Title").grid(
+            row=2, column=0, sticky=tk.W, pady=(0, self._pad.tight))
+        self.title_var = tk.StringVar(value="")
+        ttk.Entry(self.upload_panel, textvariable=self.title_var).grid(
+            row=3, column=0, sticky=tk.EW)
+
+        ttk.Label(self.upload_panel, text="Description").grid(
+            row=4, column=0, sticky=tk.W, pady=(self._pad.normal, self._pad.tight))
+        # height=3 is a FLOOR, not the rendered height: row 5 carries the
+        # weight, so the box grows to whatever the panel has spare. Given a
+        # visible border because it is now the panel's largest element —
+        # unbordered, a box that big reads as a gap rather than a field.
+        # The border width is scaled like every other pixel constant here:
+        # a 1px rule around the panel's dominant element is a hairline at
+        # 200%, which is exactly the class of defect this layout fixes.
+        self.desc_txt = tk.Text(self.upload_panel, height=3, wrap=tk.WORD,
+                                relief=tk.SOLID, bd=max(1, int(round(self._dpi_scale))),
+                                highlightthickness=0)
+        self.desc_txt.grid(row=5, column=0, sticky=tk.NSEW)
+        self._apply_desc_colors()
+        # ...and again once the event queue drains. theme.apply runs before
+        # this window is built, and the <<ThemeChanged>> it queues has not
+        # been dispatched yet: sv.tcl's tk_setPalette therefore fires on the
+        # first idle tick AFTER the build and stomps the colours just set,
+        # exactly as it does on a live switch. Same deferral, same reason;
+        # measured, not assumed.
+        self.root.after_idle(self._apply_desc_colors)
+
         self.stitch_var = tk.BooleanVar(value=False)
-        bot = ttk.Frame(self.root)
-        bot.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_NORMAL)
-
-        ttk.Button(bot, text="Settings", command=self._open_settings).pack(
-            side=tk.LEFT, padx=(0, PAD_LOOSE))
-        ttk.Button(bot, text="Delete Selected", command=self._delete_selected).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
-        ttk.Button(bot, text="Select All", command=lambda: self._set_all(True)).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
-        ttk.Button(bot, text="Select None", command=lambda: self._set_all(False)).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
-
-        self.stitch_chk = ttk.Checkbutton(bot, text="Stitch selected videos",
+        self.stitch_chk = ttk.Checkbutton(self.upload_panel,
+                                          text="Stitch selected videos",
                                           variable=self.stitch_var)
-        self.stitch_chk.pack(side=tk.LEFT, padx=(PAD_LOOSE, PAD_TIGHT))
+        self.stitch_chk.grid(row=6, column=0, sticky=tk.W,
+                             pady=(self._pad.normal, 0))
         self.ffmpeg_warn_label = None
         if not self.state.ffmpeg_bin:
             self.stitch_chk.state(["disabled"])
+            # Directly under the checkbox it explains, and WRAPPED: this
+            # label came from a full-width bottom bar and does not fit on
+            # one line in a 300px panel. Without wraplength Tk would size
+            # the label to its full natural width and the fixed panel would
+            # simply clip the tail of the sentence.
             self.ffmpeg_warn_label = ttk.Label(
-                bot, text="(ffmpeg not found — stitching unavailable)",
-                foreground=theme.token("WARNING"))
-            self.ffmpeg_warn_label.pack(side=tk.LEFT, padx=PAD_TIGHT)
+                self.upload_panel, text="(ffmpeg not found — stitching unavailable)",
+                foreground=theme.token("WARNING"), justify=tk.LEFT,
+                wraplength=self._panel_width - self._pad.normal)
+            self.ffmpeg_warn_label.grid(row=7, column=0, sticky=tk.EW,
+                                        pady=(self._pad.tight, 0))
 
-        # Right side, packed in visual order: Upload Selected is the accent
-        # action, Retry sits beside it, and Upload combat logs — added by the
-        # combat-log feature — is a peer upload action, NOT accented, so the
-        # primary action stays unambiguous.
-        ttk.Button(bot, text="Upload Selected", style="Accent.TButton",
-                   command=self._start_upload).pack(side=tk.RIGHT, padx=PAD_TIGHT)
-        self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
-        self.retry_btn.pack(side=tk.RIGHT, padx=PAD_TIGHT)
+        # Row 8. Muted via the shared named styles rather than a
+        # foreground set here: apply_typography re-asserts MUTED_STYLE on
+        # every theme change, so this label needs no entry in
+        # _on_theme_changed -- a manual recolour would be redundant with the
+        # style and would drift from it the moment the token changes.
+        #
+        # A readout, not a control, and placed immediately above the upload
+        # buttons: it exists to answer "am I about to upload what I think I
+        # am?" at the moment the user is reaching for Upload Selected.
+        #
+        # Deliberately NOT folded into self.status: that line is owned by
+        # progress, errors and "Found N video(s)", all of which overwrite
+        # each other. A summary sharing it would be destroyed by the first
+        # progress tick of the upload it describes.
+        self.selection_summary = ttk.Label(self.upload_panel, text="",
+                                           style=MUTED_STYLE, justify=tk.LEFT,
+                                           wraplength=self._panel_width - self._pad.normal)
+        self.selection_summary.grid(row=8, column=0, sticky=tk.W,
+                                    pady=(self._pad.normal, 0))
+
+        # Upload combat logs is a peer upload action, NOT accented, so the
+        # primary action stays unambiguous — the same reasoning the old
+        # bottom bar carried, preserved here. Full width because it is the
+        # only control on its row.
+        ttk.Button(self.upload_panel, text="Upload combat logs",
+                   command=self._start_combat_log_upload).grid(
+            row=9, column=0, sticky=tk.EW, pady=(self._pad.normal, 0))
+
+        actions = ttk.Frame(self.upload_panel)
+        actions.grid(row=10, column=0, sticky=tk.EW, pady=(self._pad.tight, 0))
+        # Only Upload Selected stretches: Retry keeps its natural width so
+        # the accent button is visibly the larger target, and the pair still
+        # fills the panel at every scale.
+        actions.columnconfigure(1, weight=1)
+        self.retry_btn = ttk.Button(actions, text="Retry", command=self._manual_retry)
+        self.retry_btn.grid(row=0, column=0, sticky=tk.W, padx=(0, self._pad.tight))
         self.retry_btn.state(["disabled"])
-        ttk.Button(bot, text="Upload combat logs",
-                   command=self._start_combat_log_upload).pack(
-            side=tk.RIGHT, padx=PAD_TIGHT)
+        ttk.Button(actions, text="Upload Selected", style="Accent.TButton",
+                   command=self._start_upload).grid(row=0, column=1, sticky=tk.EW)
 
-        status_bar = ttk.Frame(self.root, height=int(48 * self._dpi_scale))
-        status_bar.pack(fill=tk.X, padx=PAD_NORMAL, pady=(0, PAD_NORMAL))
-        status_bar.pack_propagate(False)  # fixed height regardless of child content
-        self.progress = ttk.Progressbar(status_bar, mode="determinate")
-        self.progress.pack(fill=tk.X, pady=(PAD_TIGHT, 0))
-        self.status = ttk.Label(status_bar, text="")
-        self.status.pack(fill=tk.X, anchor=tk.W, pady=(PAD_TIGHT, 0))
+    def _build_status_strip(self, parent: tk.Misc) -> None:
+        """The full-width strip under both panes: Settings, progress, status.
 
-        # Registered last, deliberately: _on_theme_changed dereferences
-        # self.ffmpeg_warn_label and self.status, both created above. A
-        # consumer registered earlier would be fine only for as long as
-        # _build stays synchronous.
-        theme.register(self._on_theme_changed)
+        Settings moves here because it configures the app rather than acting
+        on the list or on an upload, and it was the leftmost item of the old
+        action bar — first in reading order, ahead of the two buttons the
+        user actually came for.
+
+        No fixed height any more (the old status_bar pinned 48px with
+        pack_propagate off). The strip is a single row of three widgets, so
+        its natural height is already correct, and a pinned one would clip
+        the progress bar at 200%.
+        """
+        strip = ttk.Frame(parent)
+        strip.grid(row=1, column=0, sticky=tk.EW, pady=(self._pad.loose, 0))
+        # The bar takes the slack; the message keeps its natural width and
+        # stays pinned to the right edge instead of drifting with it.
+        strip.columnconfigure(1, weight=1)
+        ttk.Button(strip, text="Settings", command=self._open_settings).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, self._pad.loose))
+        self.progress = ttk.Progressbar(strip, mode="determinate")
+        self.progress.grid(row=0, column=1, sticky=tk.EW)
+        self.status = ttk.Label(strip, text="")
+        self.status.grid(row=0, column=2, sticky=tk.E, padx=(self._pad.loose, 0))
+
+    def _apply_desc_colors(self, mode: str | None = None) -> None:
+        """Paint the Description box from theme tokens.
+
+        This box used to be left deliberately unstyled, riding on sv-ttk's
+        tk_setPalette side effect. That stops being enough once it has a
+        border and is the panel's dominant element: tk_setPalette gives it
+        the window background, so a bordered box painted the same colour as
+        everything around it reads as a rectangle drawn on nothing.
+
+        ROW_EVEN is reused rather than a new token invented: it is the
+        app's existing "surface slightly off the window background" colour
+        in both modes, and this box wants exactly that.
+        """
+        self.desc_txt.config(background=theme.token("ROW_EVEN", mode),
+                             foreground=theme.token("FG", mode),
+                             insertbackground=theme.token("FG", mode))
 
     def _build_checkbox_images(self) -> None:
         """Generate checked/unchecked box images at the current DPI scale
@@ -345,6 +772,14 @@ class UploaderWindow:
         So the line height is re-measured HERE, after the rescale, and
         folded into the same max().
 
+        A third term, int(28 * scale), is a comfort floor rather than a
+        correctness one: over a hundred rows, a height that merely avoids
+        clipping reads as a dense spreadsheet. It sits inside the SAME
+        max() as the other two, so neither existing guarantee is weakened
+        - the checkbox is still never clipped, and the measured line box
+        is still never cropped. It scales because a 28px row at 200% is
+        the cramped row it exists to prevent.
+
         Re-applied from _on_theme_changed because sv_ttk.set_theme rewrites
         rowheight from its .tcl on every switch; theme.apply runs set_theme
         before its consumers, so re-asserting here wins.
@@ -366,7 +801,8 @@ class UploaderWindow:
                 "font", "metrics", "SunValleyBodyFont", "-linespace"))
         except tk.TclError:
             linespace = 0
-        needed = max(self._checkbox_images[True].height() + 4, linespace + 3)
+        needed = row_height(self._checkbox_images[True].height(), linespace,
+                            self._dpi_scale)
         style = ttk.Style(self.root)
         current = style.lookup("Treeview", "rowheight")
         try:
@@ -446,13 +882,15 @@ class UploaderWindow:
             return
         var.set(not var.get())
         self.tree.item(iid, image=self._checkbox_image(var.get()))
+        self._update_selection_summary()
 
     def _on_tree_click(self, event: tk.Event) -> None:
-        if self.tree.identify_region(event.x, event.y) != "tree":
-            return  # click landed in a data column, not the checkbox column
+        # The WHOLE row is the click target, not just the checkbox cell: a
+        # 34px column is a small thing to ask someone to hit when the intent
+        # "I mean this recording" is unambiguous anywhere on the line.
         iid = self.tree.identify_row(event.y)
         if not iid:
-            return
+            return  # header, or empty space below the last row
         self._toggle_row(iid)
 
     def _on_tree_space(self, event: tk.Event) -> str:
@@ -527,33 +965,47 @@ class UploaderWindow:
             self._open(self._context_path)
 
     def _on_row_double_click(self, event: tk.Event) -> None:
-        # A double-click delivers two <Button-1> before <Double-Button-1>, so
-        # in the checkbox column the row has already toggled twice. Opening a
-        # browser tab on top of that is an action the user never asked for.
-        if self.tree.identify_region(event.x, event.y) == "tree":
-            return
+        # Now that every cell toggles, a double-click anywhere opens the
+        # video — the old "skip the checkbox column" guard described a
+        # special case that no longer exists.
+        #
+        # Tk delivers exactly ONE <Button-1> before <Double-Button-1>: the
+        # second press dispatches to the more specific binding rather than
+        # firing <Button-1> again. (The previous comment here claimed two,
+        # which measurement disproved — a double-click on the checkbox cell
+        # left the row selected, it did not return it to where it started.)
+        # So exactly one toggle has already landed by the time we arrive,
+        # and we undo it: opening a video is not a selection gesture, and a
+        # user reaching for their upload should not find an extra row
+        # ticked afterwards.
         iid = self.tree.identify_row(event.y)
-        if iid:
-            self._open(Path(iid))
+        if not iid:
+            return
+        self._toggle_row(iid)
+        self._open(Path(iid))
 
     def _on_theme_changed(self, mode: str) -> None:
         """Registered with theme.register in _build. Regenerates everything
         that bakes theme colours into pixels rather than reading a ttk
         style live: checkbox images and Treeview tag colours.
 
-        This is UploaderWindow's ONE theme consumer. Task 6 EXTENDS this
+        This is UploaderWindow's ONE theme consumer. Callers EXTEND this
         method for the status line and ffmpeg warning — it must not define
         and register a second one, or a live switch runs two half-updates
         against the same window.
         """
         self._build_checkbox_images()
+        # Beside _apply_row_height for the same reason: set_theme swaps the
+        # ttk theme, taking every style option configured against the old
+        # one with it.
+        apply_typography(self.root)
         self._apply_row_height()
         self._configure_tree_tags()
         for iid in self.tree.get_children(""):
             var = self.selected.get(Path(iid))
             if var is not None:
                 self.tree.item(iid, image=self._checkbox_image(var.get()))
-        # Added in Task 6: widgets whose colour was set directly rather
+        # Widgets whose colour was set directly rather
         # than through a ttk style. _status_kind survives the switch so a
         # red error stays red rather than snapping back to default.
         #
@@ -578,6 +1030,16 @@ class UploaderWindow:
             self.root.after_idle(
                 lambda kind=self._status_kind, m=mode:
                     self.status.config(foreground=theme.token(kind, m)))
+        # Same after_idle reasoning as the two labels above: tk_setPalette
+        # runs on the next tick and resets this classic widget's colours.
+        # Measured, not assumed — without the deferral the box reverts one
+        # tick after the switch. (ttk widgets need nothing here: their
+        # colours come from named styles, which apply_typography re-asserts.)
+        self.root.after_idle(lambda m=mode: self._apply_desc_colors(m))
+        # Extends this window's single consumer rather than registering
+        # another: two consumers against one window means two half-updates on
+        # a live switch, and this one is not unregistered anywhere.
+        theme.apply_titlebar(self.root, mode)
 
     def refresh(self, preselect: set | None = None) -> None:
         """Rebuild the list. Paths in *preselect* start checked.
@@ -623,7 +1085,11 @@ class UploaderWindow:
             self.tree.insert(
                 "", tk.END, iid=iid,
                 image=self._checkbox_image(var.get()),
-                values=(info.path.name, info.date_str, info.size_str, info.duration_str, ""),
+                # link_cell rather than a literal "": refresh() has just
+                # cleared self.links, so this is always empty today, but a
+                # lookup states the rule instead of encoding today's answer.
+                values=(info.path.name, info.date_str, info.size_str,
+                        info.duration_str, link_cell(self.links.get(info.path))),
                 tags=self._row_tags(info.path, position),
             )
             if info.path in preselect and first_preselected_iid is None:
@@ -643,6 +1109,10 @@ class UploaderWindow:
         self._status_kind = "FG"
         self.status.config(text=f"Found {len(self.infos)} video(s)",
                            foreground=theme.token("FG"))
+        # After the rebuild, not before: self.selected was cleared and
+        # repopulated above, and the watcher's preselect means a refresh can
+        # arrive with rows already checked.
+        self._update_selection_summary()
 
         # Drop cache entries for recordings no longer in the folder, using
         # the scan just performed rather than a second pass over the disk,
@@ -765,6 +1235,14 @@ class UploaderWindow:
         iid = str(info.path)
         if self.tree.exists(iid):
             self.tree.set(iid, "duration", info.duration_str)
+        # The summary's duration total is only as complete as the probes
+        # behind it. This method is the ONLY place a duration becomes known
+        # after the list is drawn, so without this call the "+" partial
+        # marker would still be showing on a selection that is now fully
+        # measured. Unconditional rather than guarded on "is this info
+        # selected": the check costs a dict lookup either way, and a guard
+        # that gets the membership test subtly wrong fails silently.
+        self._update_selection_summary()
 
     def _probe_now(self, infos: list[library.VideoInfo]) -> None:
         """Resolve a selection's durations synchronously, in place.
@@ -818,11 +1296,38 @@ class UploaderWindow:
         durations.save(paths.durations_file(), self.duration_cache)
 
     def _set_all(self, value: bool) -> None:
-        for var in self.selected.values():
+        for path, var in self.selected.items():
             var.set(value)
+            # The image too, not just the var: nothing traces these
+            # BooleanVars, so a row's checkbox is only ever repainted where
+            # it is written. Without this, Select All left every box drawn
+            # empty while the summary underneath said "N selected".
+            self.tree.item(str(path), image=self._checkbox_image(value))
+        # Once, after the loop: the label is recomputed from the whole
+        # selection, so doing it per row would be N identical repaints of
+        # intermediate states.
+        self._update_selection_summary()
 
     def _chosen(self) -> list[library.VideoInfo]:
         return [i for i in self.infos if self.selected.get(i.path, tk.BooleanVar()).get()]
+
+    def _update_selection_summary(self) -> None:
+        """Repaint the panel's selection readout.
+
+        TWO triggers feed this, not one. Selection changes are the obvious
+        one -- _toggle_row, _set_all, and refresh() (which rebuilds
+        self.selected from scratch and re-applies the watcher's preselect).
+        The second is probe completion: _apply_duration writes a resolved
+        duration into one Treeview cell by iid and deliberately touches
+        nothing else, so a summary wired only to selection changes would sit
+        stale behind every probe that lands -- showing a partial total, with
+        its "+" marker, long after the probe that completed it.
+
+        Cheap enough to call unconditionally: _chosen() is a list
+        comprehension over infos already in memory, and the formatter reads
+        only info.size and info.duration.
+        """
+        self.selection_summary.config(text=format_selection_summary(self._chosen()))
 
     def _copy(self, path: Path) -> None:
         url = self.links.get(path)
@@ -855,7 +1360,7 @@ class UploaderWindow:
             return
         url = f"https://www.youtube.com/watch?v={video_id}"
         self.links[path] = url
-        self.tree.set(iid, "link", url)
+        self.tree.set(iid, "link", link_cell(url))
         self._apply_zebra_tags()
 
     def _delete_selected(self) -> None:
@@ -1206,9 +1711,9 @@ class UploaderWindow:
             self._ui(self.retry_btn.state, ["disabled"])
 
     def _open_settings(self) -> None:
-        # Imported lazily: settingsui.py does not exist until Task 11. A
-        # top-level import here would break this task before that module
-        # is written.
+        # Imported lazily because settingsui imports this module at the top
+        # level (`from . import app as app_mod`), so a top-level import here
+        # would be circular.
         from .settingsui import SettingsWindow
         SettingsWindow(self.root, self.state, on_saved=self._settings_saved)
 

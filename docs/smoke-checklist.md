@@ -39,9 +39,33 @@ Run on Windows against a real install before each release.
       resolve, then start the app. Expected: the app still starts and
       lists recordings normally; the Stitch checkbox is disabled with an
       explanatory "(ffmpeg not found — stitching unavailable)" label.
-      Restore the binary afterward.
+      Restore the binary afterward. **The warning now lives in the upload
+      panel, directly under the Stitch checkbox, not in a full-width bar** —
+      check the whole sentence is readable there and wraps rather than being
+      cut off at the panel edge, at 100% and again at 150%.
 
 ## Look and feel
+
+### Layout
+
+- [ ] **The upload panel is intact at 100%, 150% and 200%.** Set
+      `Settings > System > Display > Scale`, restart the app at each. The
+      panel keeps its proportion to the window, and Title, Description,
+      Stitch, the selection summary, Upload combat logs, Retry and Upload
+      Selected are all fully visible with no clipped text and no button
+      running past the panel edge.
+- [ ] **Nothing is clipped at the minimum window size.** Drag the window as
+      small as it goes at 150%. Expected: the Description box shrinks first
+      and the Retry/Upload Selected row is still fully visible; every list
+      column is present, with Filename down to its 120px minimum (accepted
+      degradation — see ui-layout-design.md, "Narrow windows"). A missing
+      Upload button is a defect; a narrow filename column is not.
+- [ ] **The window has visible margins on all four edges,** and the
+      Description box reads as a bordered field in both light and dark mode
+      rather than blending into the panel background. Check the border at
+      200% as well: it is scaled with the display (`bd` is derived from the
+      DPI scale, not a fixed 1px), so a hairline that all but disappears
+      around the panel's largest control means that scaling was lost.
 
 ### Theming
 - [ ] **Launches in light mode when Windows is set to Light.**
@@ -52,11 +76,13 @@ Run on Windows against a real install before each release.
 - [ ] **Launches in dark mode when Windows is set to Dark.** Same with `Dark`.
       Also check Treeview row striping and the description `tk.Text` box.
       sv-ttk's ttk styling does not cover that box — it is a classic Tk
-      widget — but sv-ttk's `configure_colors` calls `tk_setPalette`, which
-      recolours classic widgets as a side effect, and that is the only
-      reason it looks right. Nothing in this app configures it. So check it
-      for legibility rather than assuming it is styled (a known accepted
-      limitation).
+      widget — but the app no longer leaves it to `tk_setPalette`:
+      `_apply_desc_colors` paints its background from the `ROW_EVEN` token
+      and its text and caret from `FG`, so it must sit slightly OFF the
+      panel background and read as a bordered field. A box the same colour
+      as the window around it is a DEFECT, not an accepted limitation — it
+      means the token paint was lost (see the live-switch item below for the
+      ordering that can cause that).
 - [ ] **The right-click context menu is legible in dark mode.** With Windows
       set to Dark, right-click a list row and read the menu: "Copy link" and
       "Open in browser" must be readable, not white-on-white or black-on-black,
@@ -73,9 +99,10 @@ Run on Windows against a real install before each release.
 - [ ] **LOAD-BEARING: switching the OS theme live, with both windows open.**
       Open the main window and Settings together, then flip
       `Choose your mode`. Within a few seconds both must re-theme fully:
-      status line, ffmpeg warning, auth status dot and text, hint labels,
-      Treeview striping, the preselect highlight, and the checkbox images.
-      No half-themed widget anywhere.
+      status line, ffmpeg warning, the description box's background and
+      text, auth status dot and text, hint labels, Treeview striping, the
+      preselect highlight, and the checkbox images. No half-themed widget
+      anywhere.
       *Why this is load-bearing:* the app sets these colours from a deferred
       `after_idle` callback because `sv_ttk.set_theme()` fires a QUEUED
       `<<ThemeChanged>>` event that runs `tk_setPalette` on the next tick and
@@ -101,6 +128,33 @@ Run on Windows against a real install before each release.
       consecutive-failure counter; that notification must stay reserved for
       real recording-folder faults.
 
+### Title bars
+
+- [ ] **Both title bars are dark at startup** in dark mode. Open the main
+      window, then open Settings and put the two side by side: the dialog's
+      title bar must match the main window's, not be light. This mismatch,
+      visible in a single screenshot, is the whole reason this exists.
+- [ ] **Both title bars are light in light mode.** Switch
+      `Settings > Personalization > Colors` to Light, restart the app, and
+      confirm neither window has a dark title bar stuck on.
+- [ ] **LOAD-BEARING: both follow a LIVE OS theme switch.** With BOTH windows
+      open, flip `Choose your mode`. Both title bars must change together,
+      with no restart. A window that changes only after reopening means the
+      call is wired to construction but not to the theme consumer; a window
+      that never changes means the consumer is not firing at all.
+- [ ] **The main window's title bar is still themed after a trip through
+      the tray.** In dark mode, close the main window (it hides rather than
+      exits), then reopen it from the tray icon — twice. The title bar must
+      still be dark each time. `show()` re-applies it because the frame
+      handle is only reliable once the window is mapped, and a stale handle
+      fails silently: DWM just no-ops and the bar reverts to light.
+- [ ] **Older Windows builds still work.** On Windows 10 1809-1909 the
+      attribute is 19, not 20, and DWM reports the wrong one by returning a
+      failing HRESULT rather than raising — so a build where the title bars
+      stay light but the app is otherwise fine points at the fallback, not at
+      the wiring. If no such machine is available, note it as untested rather
+      than ticking it.
+
 ### Display scaling
 - [ ] **100% scaling.** Both windows render at native size, text sharp, no
       clipping.
@@ -109,10 +163,11 @@ Run on Windows against a real install before each release.
 - [ ] **150% scaling.** Neither window opens larger than the screen.
 - [ ] **200% scaling.** Neither window opens larger than the screen, the
       Settings dialog is still unclipped with Save/Cancel reachable, and the
-      status bar still fits its progress bar and label.
+      status strip under both panes still fits Settings, its progress bar
+      and its status label on one row.
 - [ ] **LOAD-BEARING: list ROW TEXT is not vertically clipped at 200%.**
       Distinct from the checkbox item below, which only covers the image, and
-      from the window-fits items above. Read the Filename and YouTube Link
+      from the window-fits items above. Read the Filename and Date
       cells: descenders (g, p, y) and the tops of capitals must be fully
       visible, not shaved by the row boundary. sv-ttk computes its row height
       once from the UNSCALED font when `sv.tcl` is sourced and never
@@ -151,6 +206,34 @@ Run on Windows against a real install before each release.
       clipped" item on this list pass more easily, so a size regression can
       hide behind an otherwise-green scaling section — check size first.
 
+### Typography
+
+- [ ] **Column headers are bold and the rows are not.** Filename, Date,
+      Size, Length and Link read heavier than the row text beneath them.
+      Row text is intentionally uniform — `ttk.Treeview` has no per-column
+      fonts and the row tags are already spent on striping, preselection
+      and the link colour — so uneven-looking rows are a bug, not the
+      hierarchy.
+- [ ] **The panel's "Upload" heading is bold**, and heavier than the
+      "Title"/"Description" field labels under it.
+- [ ] **Secondary text is muted, not black-on-black.** The selection
+      summary and any hint labels read visibly lighter than the primary
+      text in BOTH light and dark — the muted colour is a theme token, so
+      an unreadable one means the style was not re-applied for that mode.
+- [ ] **LOAD-BEARING: bold survives a live OS theme switch.** With the main
+      window open, flip `Choose your mode`. After the switch, the column
+      headers and the "Upload" heading must still be bold, still the right
+      size, and the muted text must have taken the new mode's colour. ttk
+      stores style options per theme and `sv_ttk.set_theme` replaces the
+      theme, so everything configured here is wiped on every switch and
+      re-asserted from the window's single theme consumer. A switch that
+      leaves plain headings behind means that re-assert is not running, or
+      is running before `set_theme` rather than after.
+- [ ] **Heading size follows display scaling.** At 150% and 200%, the bold
+      headers grow with the rest of the UI rather than staying at their
+      100% size — they are derived from sv-ttk's own font *after* it has
+      been rescaled, so a frozen-looking header means that ordering broke.
+
 ### The list
 - [ ] **LOAD-BEARING: clicking a checkbox toggles it.** The click handler
       relies on `identify_region()` returning `"tree"` for the checkbox
@@ -163,13 +246,28 @@ Run on Windows against a real install before each release.
       presents as "the app is frozen".
 - [ ] **Copy link and Open in browser** from the context menu work on a row
       with a link, and are greyed out on a row without one.
-- [ ] **Double-click opens the YouTube link** — and does NOT open a browser
-      when double-clicking the checkbox column.
+- [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox
+      cell. Click the filename, the date, the size, the Length and the ↗
+      Link cell in turn; each should tick and untick the row, and the
+      selection summary above the upload buttons should keep count. Rows
+      accumulate — clicking a second row must not clear the first.
+- [ ] **Double-click opens the YouTube link from any cell,** including the
+      checkbox cell, and LEAVES THE SELECTION AS IT WAS. Tick two rows,
+      then double-click a third that has a link: the browser opens and the
+      third row must still be unticked, with the summary still reading 2.
+      A row left ticked by double-clicking is a defect — the first press of
+      the double-click toggles it and the handler is what undoes that.
 - [ ] **Keyboard: Space toggles the focused row.** Tab to the list, use the
       arrow keys to move, press Space. Confirm it toggles exactly one row and
       that Upload Selected agrees with what is checked. Then trigger a list
       rebuild (delete a file, or save Settings) and confirm the keyboard
       still works afterwards without touching the mouse.
+- [ ] **Select All and Select None repaint every checkbox.** Click
+      **Select All** and confirm every row's box is drawn checked — not
+      just that the selection summary says "N selected" — then **Select
+      None** and confirm every box is drawn empty. The summary and the
+      boxes must never disagree; they used to, because nothing traced the
+      per-row variables and only a click repainted a box.
 - [ ] **Treeview tag colours actually render** — zebra striping, the
       preselect highlight, and the blue link foreground, in both light and
       dark. Tag backgrounds under a themed Treeview style are historically
@@ -181,13 +279,56 @@ Run on Windows against a real install before each release.
 - [ ] **Newly announced recordings are pre-checked, scrolled into view, and
       visibly highlighted** — even when they would otherwise be below the
       fold.
-- [ ] **Sorting by Duration while durations are still loading.** Delete
+- [ ] **Sorting by Length while durations are still loading.** Delete
       `durations.json`, launch against a large folder, and click the
-      Duration header while rows still read "…". Expected: pending rows
+      Length header while rows still read "…". Expected: pending rows
       sort together (they have no value yet) and each fills in where it
       sits — rows do NOT re-order themselves under the cursor as results
       arrive. Click the header again afterwards to re-sort with the real
       values.
+- [ ] **The leftmost header is a bare check, not a checkbox.** It should
+      read ✓, visibly different from the ☐/☑ boxes in the rows beneath it.
+      Clicking it SORTS by checked state (selected rows group together) —
+      it must not select or clear anything. A header that looks like a
+      tickable box is the defect: selecting everything is what the Select
+      All / Select None buttons under the list are for.
+- [ ] **Column headers line up with their data.** Filename and Date read
+      left-aligned with left-aligned headers; Size and Length read
+      right-aligned with right-aligned headers; the checkbox and Link
+      headers are centred. Confirm the fourth column's header reads
+      **Length**, and that clicking it still sorts by duration (a short
+      recording and a long one swap places) — the header text changed but
+      the sort key deliberately did not.
+- [ ] **Only the Filename column grows.** Widen the window from its
+      minimum to full screen and watch the columns. Expected: Date, Size,
+      Length, Link and the checkbox column hold exactly the same width the
+      whole way, and Filename alone absorbs every pixel of the extra room.
+      Drag back down and they should return to where they started. A Size
+      or Length column that grows with the window means one of them
+      regained `stretch=True` in COLUMN_SPEC.
+- [ ] **LOAD-BEARING: the list at the minimum window width.** Drag the
+      window to its floor (860px at 100%). Expected: every column is still
+      present and readable, Filename truncates rather than pushing the
+      others off, and NO horizontal scrollbar appears. A short Filename
+      column is the accepted outcome here — a column that vanishes,
+      overlaps, or collapses to nothing is not. The preferred widths
+      (620px total) do not fit in the pane at that size. What holds it
+      together is the 860px window floor: the five fixed columns keep
+      their preferred widths (360px) and only Filename compresses, down
+      to its 120px minimum, so 490px of viewport is always enough. This
+      is the only place that arithmetic is exercised.
+- [ ] **The Link column shows ↗, not a URL.** After an upload completes, the
+      row's Link cell shows a single arrow glyph in the link colour. Then
+      confirm the URL is still reachable three ways on that row:
+      double-click opens the video, right-click → Copy link pastes a working
+      URL, right-click → Open in browser opens the same page. These read the
+      in-memory link map rather than the cell, so a regression here means
+      the wiring changed, not the glyph.
+- [ ] **Rows have breathing room.** Compare against a pre-change build if
+      one is handy: rows should look noticeably less cramped over a long
+      list. At 100%, 125%, 150% and 200% confirm the extra height did not
+      cost anything — descenders and the checkbox are still fully visible,
+      and still are after a light↔dark switch.
 
 ### Icon
 - [ ] **The icon appears in all five locations:** main window title bar,
@@ -288,7 +429,7 @@ behavior that only shows up at size.
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
       `%LOCALAPPDATA%\OBSYouTubeUploader\` first). Expected: the list
-      appears at once with every row present, Duration reading "…", and
+      appears at once with every row present, Length reading "…", and
       the values filling in over the next few seconds. The window must be
       draggable and scrollable the whole time — never a frozen white
       rectangle.
@@ -423,9 +564,10 @@ behavior that only shows up at size.
       of them was hardcoded to black, which was invisible on a dark
       background — this item exists to catch that regressing.
 - [ ] **The Upload combat logs button survived the chrome rework.** Confirm
-      it is present in the action bar, sits beside Retry on the right, and
-      is NOT styled as the accent button — Upload Selected is the primary
-      action.
+      it is present in the **upload panel on the right**, full width on its
+      own row **directly above the Retry / Upload Selected row** (there is
+      no bottom action bar any more), and is NOT styled as the accent
+      button — Upload Selected is the primary action.
 
 ## Upload
 - [ ] **First upload triggers Google sign-in automatically, without
@@ -437,7 +579,7 @@ behavior that only shows up at size.
       separate from the Settings → Connect Google Account button, and is
       likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
-- [ ] Single upload completes and the link column fills in
+- [ ] Single upload completes and the link column fills in with ↗
 - [ ] **Copy link via the row's right-click context menu puts a working URL
       on the clipboard.** Right-click a row with a completed upload, choose
       "Copy link", paste elsewhere to confirm. Confirm "Copy link" is greyed
@@ -446,8 +588,9 @@ behavior that only shows up at size.
       page** — not the local video file. Confirm it is greyed out on a row
       with no link yet.
 - [ ] **Double-clicking a row with a completed upload opens its YouTube
-      link**, same destination as the context menu. Double-clicking a row
-      with no link does nothing.
+      link**, same destination as the context menu, and leaves the row's
+      tick state unchanged. Double-clicking a row with no link does
+      nothing at all — it must not leave the row ticked either.
 - [ ] Multi-select without stitch uploads each with `(1/n)` titles
 - [ ] Each row gets its own correct link
 - [ ] Stitch of two videos produces one upload, both rows show the same link

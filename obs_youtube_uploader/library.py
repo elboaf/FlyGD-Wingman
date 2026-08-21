@@ -27,6 +27,33 @@ def format_size(size_bytes: float) -> str:
     return f"{size_bytes:.1f} TB"
 
 
+def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
+    """Recording timestamp, with the year suppressed for the current year.
+
+    The year is the least informative part of the string for a recording
+    made this year, and `date` is the tightest non-elastic column in the
+    list, so dropping it buys width without costing the user anything they
+    cannot infer. The double space before the time is a poor man's column
+    split: ttk.Treeview offers no alignment control *within* a cell, so the
+    wider gap is what keeps the times legible as their own field.
+
+    Changing this display format is safe only because app._sort_by keys the
+    date column off info.mtime, never off the rendered string.
+    A future sort that reads the cell text would silently start sorting
+    "Aug" before "Dec".
+
+    `now` is injectable so the year branch is testable without waiting for
+    January -- the same convention as discover()'s runner= and
+    theme.detect_mode's reader=.
+    """
+    when = datetime.datetime.fromtimestamp(mtime)
+    if now is None:
+        now = datetime.datetime.now()
+    if when.year == now.year:
+        return when.strftime("%b %d  %H:%M")
+    return when.strftime("%Y %b %d  %H:%M")
+
+
 @dataclass
 class VideoInfo:
     path: Path
@@ -42,7 +69,10 @@ class VideoInfo:
 
     @property
     def date_str(self) -> str:
-        return datetime.datetime.fromtimestamp(self.mtime).strftime("%Y-%m-%d %H:%M")
+        # Delegates rather than formatting inline so the format has exactly
+        # one definition and can be tested without constructing a VideoInfo
+        # (and therefore without touching the filesystem).
+        return format_date(self.mtime)
 
     @property
     def size_str(self) -> str:
