@@ -22,6 +22,13 @@ transparent background, rendered at 180 px wide in the README.
   YouTube, OBS Studio, EVE Online, or Discord artwork — this project is not
   affiliated with any of them.
 
+`obs_youtube_uploader/assets/app.ico` is derived from this file, so replacing
+it here does **not** update the application icon — the taskbar, tray, and both
+windows keep the old art until the `.ico` is regenerated. The crop is the crest
+alone: the wordmark is unreadable below 256 px and its navy text disappears
+against a dark taskbar. See the commit that last rebuilt the `.ico`
+(`git log -- obs_youtube_uploader/assets/app.ico`) for the exact recipe.
+
 ## `wingman-screenshot.png`
 
 The main FlyGD Wingman window, used as the README hero image. Currently
