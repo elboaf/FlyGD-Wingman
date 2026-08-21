@@ -1,10 +1,6 @@
-<!--
-  Logo: drop a square PNG at docs/assets/wingman-logo.png, then uncomment
-  the line below. Kept commented out so the rendered README never shows a
-  broken image. See docs/assets/README.md.
-
-  <p align="center"><img src="docs/assets/wingman-logo.png" alt="FlyGD Wingman" width="128"></p>
--->
+<p align="center">
+  <img src="docs/assets/wingman-logo.png" alt="FlyGD Wingman" width="160">
+</p>
 
 <h1 align="center">FlyGD Wingman</h1>
 
@@ -27,12 +23,10 @@ It was built for EVE Online fight footage — so it can also bundle the EVE
 combat logs covering a recording and post them to a Discord webhook you
 configure — but the OBS-to-YouTube workflow works with any OBS recording.
 
-<!--
-  Screenshot: capture the main window and save it to
-  docs/assets/wingman-screenshot.png, then uncomment the line below.
-
-  <p align="center"><img src="docs/assets/wingman-screenshot.png" alt="The FlyGD Wingman window listing recordings with YouTube links" width="900"></p>
--->
+<p align="center">
+  <img src="docs/assets/wingman-screenshot.png" width="850"
+       alt="The FlyGD Wingman window: a list of OBS recordings with date, size and duration, one row showing a filled-in YouTube link, and Upload Selected / Stitch / Settings controls along the bottom.">
+</p>
 
 ## Verification status
 
