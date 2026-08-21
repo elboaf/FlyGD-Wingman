@@ -92,15 +92,29 @@ class SettingsWindow:
         self.win.resizable(True, True)
 
     def _build(self) -> None:
+        # One lookup for the whole build. Every raw pixel constant below is
+        # multiplied by this, the same factor app.dpi_scale() gives the main
+        # window - character widths (Entry/Combobox `width=`) are NOT pixels
+        # and are deliberately left alone.
+        scale = app_mod.dpi_scale(self.win)
+
         acct = ttk.LabelFrame(self.win, text="Google account",
                               padding=app_mod.FRAME_PADDING)
         acct.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
 
         auth_row = ttk.Frame(acct)
         auth_row.pack(anchor=tk.W, fill=tk.X)
-        self.auth_dot = tk.Canvas(auth_row, width=10, height=10, highlightthickness=0)
+        # Scaled with the DPI factor, oval included, or the dot stays a
+        # 10px speck beside text that is half again or twice as tall. The
+        # inset scales too so it stays centred and round; at 100% this is
+        # exactly the original 10x10 canvas with a (1,1)-(9,9) oval.
+        dot = max(10, round(10 * scale))
+        inset = max(1, round(scale))
+        self.auth_dot = tk.Canvas(auth_row, width=dot, height=dot,
+                                  highlightthickness=0)
         self.auth_dot.pack(side=tk.LEFT, padx=(0, app_mod.PAD_TIGHT))
-        self._auth_dot_id = self.auth_dot.create_oval(1, 1, 9, 9, outline="")
+        self._auth_dot_id = self.auth_dot.create_oval(
+            inset, inset, dot - inset, dot - inset, outline="")
         self.lbl_auth = ttk.Label(auth_row, text="Checking…")
         self.lbl_auth.pack(side=tk.LEFT)
 
@@ -111,14 +125,20 @@ class SettingsWindow:
             text=("Google hasn't verified this app yet, so the sign-in page "
                   "shows a warning. Click Advanced, then \"Go to OBS YouTube "
                   "Uploader (unsafe)\" to continue."),
-            foreground=theme.token("MUTED"), wraplength=460, justify=tk.LEFT,
+            # wraplength is in PIXELS, so an unscaled 460 wraps this hint at
+            # half the apparent width at 200% and turns it into a narrow
+            # column beside full-width controls. round(), not int(): the
+            # scaling round-trip lands a hair under 1.0 at 96 DPI, and
+            # truncating would silently narrow this by a pixel at 100%.
+            foreground=theme.token("MUTED"), wraplength=round(460 * scale),
+            justify=tk.LEFT,
         )
         self.lbl_acct_hint.pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
 
         up = ttk.LabelFrame(self.win, text="Upload defaults",
                             padding=app_mod.FRAME_PADDING)
         up.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
-        up.columnconfigure(0, minsize=int(90 * app_mod.dpi_scale(self.win)))
+        up.columnconfigure(0, minsize=int(90 * scale))
         ttk.Label(up, text="Privacy:", anchor=tk.E).grid(row=0, column=0, sticky=tk.E)
         ttk.Combobox(up, textvariable=self.privacy, values=PRIVACY_CHOICES,
                      state="readonly", width=12).grid(
@@ -143,7 +163,7 @@ class SettingsWindow:
         disc = ttk.LabelFrame(self.win, text="Discord (combat logs)",
                               padding=app_mod.FRAME_PADDING)
         disc.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
-        disc.columnconfigure(0, minsize=int(90 * app_mod.dpi_scale(self.win)))
+        disc.columnconfigure(0, minsize=int(90 * scale))
         ttk.Label(disc, text="Webhook URL:", anchor=tk.E).grid(
             row=0, column=0, sticky=tk.E)
         ttk.Entry(disc, textvariable=self.webhook, width=44).grid(
