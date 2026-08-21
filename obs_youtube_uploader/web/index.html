@@ -28,7 +28,15 @@
              select-all checkbox this column does not offer. -->
         <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
         <span class="c-name"   data-sort="filename">Filename</span>
-        <span class="c-date"   data-sort="date">Date</span>
+        <!-- "Modified", not "Date": the cell holds the file's mtime rendered
+             as relative time ("3h ago"), and "Date" both mislabelled that
+             and invited the reader to match it against the recording
+             timestamp already in the filename. Naming the mtime is what
+             explains why the two legitimately differ for a recording that
+             was copied or remuxed. The data-sort key stays "date" -- it is
+             list.js's internal branch name, not a label. -->
+        <span class="c-date"   data-sort="date"
+              title="Sort by when the file last changed">Modified</span>
         <span class="c-size"   data-sort="size">Size</span>
         <span class="c-len"    data-sort="duration">Length</span>
         <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
