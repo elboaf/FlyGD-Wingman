@@ -50,7 +50,40 @@
     </div>
 
     <!-- Filled by Task 12 (upload panel). -->
-    <div id="panel-slot"></div>
+    <div id="panel-slot">
+      <div class="panel">
+
+        <section class="card">
+          <h2>Upload</h2>
+          <label class="lab" for="f-title" id="lab-title">Title</label>
+          <input class="field" id="f-title" type="text" spellcheck="false"
+                 placeholder="Title for this upload">
+          <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
+          <textarea class="field" id="f-desc" spellcheck="false"
+                    placeholder="Optional description"></textarea>
+          <label class="check" style="margin-top:12px">
+            <input type="checkbox" id="f-stitch"><span class="box"></span>
+            Stitch selected into one video
+          </label>
+          <p class="summary" id="selection-summary"
+             style="margin-top:12px">Nothing selected</p>
+        </section>
+
+        <section class="card">
+          <h2>Publish</h2>
+          <p class="destination" id="destination">Channel confirmed after the first upload</p>
+          <div class="actions">
+            <button class="btn acc" id="btn-upload">Upload Selected</button>
+            <button class="btn" id="btn-combat">Upload combat logs</button>
+            <div class="secondary-row">
+              <button class="btn" id="btn-retry" disabled>Retry</button>
+              <button class="btn" id="btn-delete">Delete selected</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
 
   </div>
 
@@ -63,13 +96,32 @@
   <div class="route" id="route-settings"></div>
 
   <!-- Filled by Task 12 (status strip + progress bar). -->
-  <div id="statusbar-slot"></div>
+  <div id="statusbar-slot">
+    <div class="statusbar">
+      <span id="status" class="FG">Ready</span>
+      <div class="track" id="track"><div class="bar" id="bar"></div></div>
+      <span class="pct" id="pct"></span>
+    </div>
+  </div>
 
   <!-- Filled by Task 12 (modal dialog layer). -->
-  <div id="dialog-slot"></div>
+  <div id="dialog-slot">
+    <div class="overlay" id="overlay" hidden>
+      <div class="dialog" id="dialog" role="dialog" aria-modal="true"
+           aria-labelledby="dlg-title">
+        <h3 id="dlg-title"></h3>
+        <div class="body" id="dlg-body"></div>
+        <div class="buttons">
+          <button class="btn" id="dlg-cancel" hidden>Cancel</button>
+          <button class="btn acc" id="dlg-ok">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
   <script src="list.js"></script>
+  <script src="panel.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>

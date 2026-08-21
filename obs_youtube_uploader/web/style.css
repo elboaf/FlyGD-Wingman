@@ -320,3 +320,138 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 [data-tip]:hover::after { opacity: 1; visibility: visible; }
 /* Any click means the user is acting, not asking. */
 [data-tip]:active::after { opacity: 0; visibility: hidden; transition: none; }
+
+/* ====================== upload panel ================================ */
+#panel-slot { flex: none; display: flex; }
+
+.panel {
+  width: 320px; flex: none; display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto;
+}
+
+.panel .card { flex: none; }
+
+.panel .lab {
+  display: block; color: var(--text-dim); font-size: var(--fs-muted);
+  margin-bottom: 5px;
+}
+
+/* A sensible fixed height. NOT flex:1 — today the Description box consumes
+   all remaining vertical space and reads as an empty void. */
+#f-desc { height: 96px; }
+
+.check {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  color: var(--text);
+}
+.check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.check .box { width: 15px; height: 15px; }
+.check input:checked + .box {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  border-color: #ff7a6f;
+}
+.check input:checked + .box::after { opacity: 1; }
+.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+
+.summary {
+  color: var(--text-dim); font-size: var(--fs-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* The upload destination, learned from the videos.insert response. Always
+   visible so the user can see where uploads actually go. */
+.destination {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  margin-bottom: 10px; line-height: 1.4;
+}
+.actions { display: flex; flex-direction: column; gap: 8px; }
+.actions button.btn { width: 100%; text-align: center; padding: 9px 12px; }
+.actions .secondary-row { display: flex; gap: 8px; }
+.actions .secondary-row button.btn { flex: 1; }
+
+/* ====================== status strip ================================ */
+.statusbar {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 10px 16px; border-top: 1px solid var(--panel-border);
+  background: #101216;
+}
+#status {
+  font-size: var(--fs-mono); color: var(--text-dim);
+  min-width: 210px; flex: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Severity kinds stay FG / SUCCESS / WARNING / ERROR, matching
+   app._status_kind, so the semantics carry over even though the colours
+   moved out of theme.py and into CSS. */
+#status.FG { color: var(--text-dim); }
+#status.SUCCESS { color: var(--ok); }
+#status.WARNING { color: var(--warn); }
+#status.ERROR { color: var(--err); }
+
+.track {
+  flex: 1; height: 4px; border-radius: 2px; background: #1e2128;
+  overflow: hidden; position: relative;
+}
+.bar {
+  height: 100%; width: 0%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--brand-deep), var(--brand));
+  box-shadow: 0 0 10px rgba(255, 90, 77, .6);
+  transition: width .12s linear;
+}
+/* Indeterminate: an ffmpeg stitch reports no readable progress, so the bar
+   must say "working" without claiming a percentage. The transition is
+   dropped here or it fights the animation. */
+.track.indeterminate .bar {
+  width: 34%; transition: none;
+  animation: slide 1.15s cubic-bezier(.45, .05, .55, .95) infinite;
+}
+@keyframes slide {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.pct {
+  flex: none; width: 42px; text-align: right;
+  color: var(--text-faint); font-size: var(--fs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ====================== modal dialog layer ==========================
+   Modals are native Tk message boxes today, called from workers. They
+   become in-page modals; `confirm` is the only request/response pair in an
+   otherwise fire-and-forget protocol. */
+.overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(6, 7, 9, .62);
+  display: grid; place-items: center; padding: 24px;
+}
+.overlay[hidden] { display: none; }
+
+.dialog {
+  width: min(460px, 100%);
+  background: var(--panel); border: 1px solid #2a2e37;
+  border-radius: var(--radius); padding: 18px 20px 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+}
+.dialog h3 {
+  font-size: var(--fs-head); font-weight: 620; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 9px;
+}
+.dialog h3::before {
+  content: ""; width: 3px; height: 15px; border-radius: 2px; flex: none;
+  background: var(--text-faint);
+}
+.dialog.error h3::before   { background: var(--err); box-shadow: 0 0 9px var(--err); }
+.dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
+.dialog.confirm h3::before {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  box-shadow: 0 0 9px rgba(255, 90, 77, .5);
+}
+.dialog .body {
+  /* format_upload_confirm composes a multi-line body with the exact
+     (n/total) titles in it; pre-wrap is what keeps that layout. */
+  white-space: pre-wrap; line-height: 1.55; color: var(--text-dim);
+  max-height: 46vh; overflow-y: auto; user-select: text;
+  font-size: var(--fs-body);
+}
+.dialog .buttons {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+}

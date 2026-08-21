@@ -85,6 +85,74 @@
     return Promise.resolve(null);
   };
 
+  // Manual drivers for the pushes no click can produce in a browser.
+  // Typed into the devtools console during verification.
+  window.DEV = {
+    determinate: function (pct) {
+      window.onProgress({ mode: 'determinate', pct: pct,
+                          text: 'Uploading file 1 of 3\u2026 ' + pct + '%',
+                          kind: 'FG' });
+    },
+    stitching: function () {
+      window.onProgress({ mode: 'indeterminate', pct: 0,
+                          text: 'Stitching with FFmpeg\u2026', kind: 'FG' });
+    },
+    status: function (text, kind) {
+      window.onStatus({ text: text, kind: kind });
+    },
+    retry: function (available) {
+      window.onRetryAvailable({ available: available });
+    },
+    channel: function (title) {
+      window.onChannel({ channel_id: 'UC123', channel_title: title,
+                         destination: 'Uploads go to ' + title
+                                      + ' \u00b7 unlisted' });
+    },
+    info: function () {
+      window.onDialog({ kind: 'info', title: 'Upload complete',
+                        body: 'All 3 recordings were uploaded.' });
+    },
+    warn: function () {
+      window.onDialog({ kind: 'warning', title: 'No Selection',
+                        body: 'Select at least one video to upload.' });
+    },
+    err: function () {
+      window.onDialog({ kind: 'error', title: 'Upload failed',
+                        body: 'HttpError 403: quotaExceeded' });
+    },
+    confirm: function () {
+      window.onDialog({ kind: 'confirm', title: 'Confirm Upload',
+        request_id: 'req-7',
+        body: 'Upload 2 recordings to YouTube?\n\n'
+            + 'Channel:  FlyGD\nPrivacy:  unlisted\n'
+            + 'Title:    "Fight (1/2)" \u2026 "Fight (2/2)"\n'
+            + 'Total:    3.5 GB \u00b7 0:24:11\n\n'
+            + 'Publishing to YouTube cannot be undone from this app.' });
+    },
+    twoDialogs: function () {
+      window.DEV.warn();
+      window.DEV.confirm();
+    },
+    authState: function (state, message) {
+      window.onAuthState({ state: state, message: message });
+    },
+    settings: function (patch, statusLine) {
+      window.onSettings({
+        settings: Object.assign(
+          { privacy: 'unlisted', category: '20', notify_mode: 'toast',
+            recording_dir: 'D:\\Videos',
+            gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
+            discord_webhook: 'https://discord.com/api/webhooks/1/tok',
+            channel_id: 'UC123', channel_title: 'FlyGD' }, patch || {}),
+        webhook_status: statusLine === undefined
+          ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
+        detected: { recording: 'D:\\Videos',
+                    gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
+        destination: 'Uploads go to FlyGD \u00b7 unlisted'
+      });
+    }
+  };
+
   window.pywebview = { api: api };
   window.dispatchEvent(new Event('pywebviewready'));
 }());
