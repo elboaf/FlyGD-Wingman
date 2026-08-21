@@ -77,6 +77,105 @@ def test_duration_str_degrades_to_question_mark(tmp_path):
     assert info.duration_str == "?"
 
 
+def test_stat_info_costs_no_subprocess(tmp_path):
+    """The whole point of the split: drawing a row must not spawn ffprobe."""
+    f = _touch(tmp_path / "a.mkv", size=2048, mtime=1000)
+
+    def explode(*a, **kw):
+        raise AssertionError("stat_info must not run a subprocess")
+
+    original, subprocess.run = subprocess.run, explode
+    try:
+        info = library.stat_info(f)
+    finally:
+        subprocess.run = original
+
+    assert info.size == 2048 and info.mtime == 1000
+    assert info.duration is None and info.probed is False
+
+
+def test_duration_str_shows_pending_while_unprobed(tmp_path):
+    """An unprobed row must not read "?" -- that is the display for a probe
+    that ran and failed, and the two must stay tellable apart on screen."""
+    info = library.stat_info(_touch(tmp_path / "a.mkv"))
+    assert info.duration_str == "…"
+
+
+def test_build_info_results_are_marked_probed(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+    assert library.build_info(f, None).probed is True
+
+
+# --- probe(): definitive verdict vs. probe that never ran ----------------
+# Both return a None duration, but only the first may be cached: the cache
+# key is (size, mtime), which never changes again for a finished recording,
+# so caching an environmental failure pins that file to "?" permanently and
+# blocks its combat-log upload even after the cause is fixed.
+
+def test_probe_reports_a_duration_as_definitive(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="125", stderr="")
+
+    assert library.probe(f, "ffprobe", runner=fake_run) == (125.0, True)
+
+
+def test_probe_reports_a_nonzero_exit_as_definitive(tmp_path):
+    """ffprobe ran and said it cannot read this file. Worth remembering."""
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="bad")
+
+    assert library.probe(f, "ffprobe", runner=fake_run) == (None, True)
+
+
+def test_probe_reports_unparseable_output_as_definitive(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="N/A", stderr="")
+
+    assert library.probe(f, "ffprobe", runner=fake_run) == (None, True)
+
+
+def test_probe_reports_a_missing_binary_as_not_definitive(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+    assert library.probe(f, None) == (None, False)
+
+
+def test_probe_reports_a_timeout_as_not_definitive(tmp_path):
+    """A 15s timeout under disk load says nothing about the file. Caching
+    it would pin a perfectly good recording to "?" forever."""
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 15)
+
+    assert library.probe(f, "ffprobe", runner=fake_run) == (None, False)
+
+
+def test_probe_reports_a_launch_failure_as_not_definitive(tmp_path):
+    """The binary vanished after startup (antivirus quarantine). Must not
+    be recorded as "this recording is unreadable"."""
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        raise OSError("No such file or directory")
+
+    assert library.probe(f, "ffprobe", runner=fake_run) == (None, False)
+
+
+def test_probe_duration_still_returns_just_the_duration(tmp_path):
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="125", stderr="")
+
+    assert library.probe_duration(f, "ffprobe", runner=fake_run) == 125.0
+
+
 def test_duration_str_formats_minutes_and_seconds(tmp_path):
     f = _touch(tmp_path / "a.mkv")
 

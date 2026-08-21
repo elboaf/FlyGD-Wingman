@@ -1,5 +1,7 @@
 """Tk window: video list, link column, upload and delete controls."""
 import datetime
+import logging
+import queue
 import shutil
 import sys
 import threading
@@ -10,14 +12,20 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
 
-from . import (combatlog, discord, library, paths, settings as settings_mod, stitch,
-               theme, uploader)
+from . import (combatlog, discord, durations, library, paths,
+               settings as settings_mod, stitch, theme, uploader)
 
 if TYPE_CHECKING:
     # Only for annotations. PIL stays a lazy runtime import (see
     # _build_checkbox_images and __main__.build_tray) so importing app.py
     # does not drag Pillow in.
     from PIL import ImageTk
+
+logger = logging.getLogger(__name__)
+
+# How often the main thread checks for finished duration probes. Short
+# enough that rows fill in as they resolve, long enough to be free.
+PROBE_DRAIN_MS = 100
 
 
 def resolve_binary(name: str) -> str | None:
@@ -131,6 +139,15 @@ class UploaderWindow:
         self.on_deleted = None  # set by the tray app to notify the watcher
         self.on_settings_saved = None  # set by the tray app; see _settings_saved
         self.retry_state: "RetryState | None" = None
+        # Durations are expensive (one ffprobe process each) and never
+        # change for a given (path, size, mtime), so they are cached across
+        # runs and probed off the main thread. `_refresh_generation` is what
+        # makes the async part safe: every refresh() bumps it, and a probe
+        # result carrying a stale generation is dropped rather than written
+        # into a list that has since been rebuilt.
+        self.duration_cache = durations.load(paths.durations_file())
+        self._refresh_generation = 0
+        self._probe_queue: queue.Queue = queue.Queue()
 
         root.title("OBS → YouTube Uploader")
         icon_path = paths.icon_file()
@@ -567,17 +584,37 @@ class UploaderWindow:
 
         The watcher passes newly-ready recordings here so the common case —
         finish a fight, open the window, hit Upload — needs no clicking.
+
+        Rows are drawn from a plain stat and shown immediately; durations
+        come from the cache when they can, and from a background probe when
+        they cannot. This used to run one ffprobe synchronously per file
+        before the window appeared, which froze the app for seconds on
+        every launch, tray open, settings save, and delete.
         """
         preselect = preselect or set()
+        preselect = preselect or set()
         self._preselected = set(preselect)
+        # Invalidate any probe still running for the previous list: its
+        # results refer to rows that are about to be replaced.
+        self._refresh_generation += 1
+        generation = self._refresh_generation
         self.selected.clear()
         self.links.clear()
         for iid in self.tree.get_children(""):
             self.tree.delete(iid)
-        self.infos = [
-            library.build_info(p, self.state.ffprobe_bin)
-            for p in library.discover(self.state.recording_dir)
-        ]
+
+        paths_found = library.discover(self.state.recording_dir)
+        infos = []
+        for p in paths_found:
+            try:
+                infos.append(library.stat_info(p))
+            except OSError:
+                # Vanished between discover() and stat -- discover() already
+                # tolerates this race, so the list must too.
+                continue
+        self.infos = infos
+        pending = durations.resolve(self.duration_cache, self.infos)
+
         first_preselected_iid = None
         for position, info in enumerate(self.infos):
             var = tk.BooleanVar(value=info.path in preselect)
@@ -606,6 +643,179 @@ class UploaderWindow:
         self._status_kind = "FG"
         self.status.config(text=f"Found {len(self.infos)} video(s)",
                            foreground=theme.token("FG"))
+
+        # Drop cache entries for recordings no longer in the folder, using
+        # the scan just performed rather than a second pass over the disk,
+        # and persist immediately when something was actually dropped --
+        # deleting from a fully cached folder starts no probe, so the only
+        # other writes would never happen and the file would grow forever.
+        #
+        # An empty scan is never treated as "everything was deleted".
+        # discover() returns [] for an unreachable folder exactly as it
+        # does for an empty one (library.discover), and recordings on a
+        # network or external drive make that a routine event -- one blip
+        # while the poll loop calls refresh() would otherwise wipe the
+        # whole cache to disk and re-probe every file when the drive
+        # returns. A genuinely empty folder just keeps its stale entries
+        # until a recording appears, which costs nothing.
+        if paths_found and durations.prune(self.duration_cache, paths_found):
+            durations.save(paths.durations_file(), self.duration_cache)
+        if pending:
+            self._start_probe(pending, generation)
+
+    def _start_probe(self, pending: list[library.VideoInfo], generation: int) -> None:
+        """Probe *pending* durations on a worker, draining results on the main thread.
+
+        The worker touches no Tk object at all: it pushes results onto a
+        queue, and the main thread drains that queue from an ``after``
+        callback it scheduled itself.
+
+        The shorter alternative is for the worker to call ``root.after``
+        directly, as ``_ui`` does for the upload and combat-log workers.
+        That relies on Tkinter marshaling a cross-thread call to the main
+        interpreter, which the Windows build's Tk 8.6 does correctly --
+        but it is not guaranteed everywhere: on a Tcl 9.0 development
+        machine such calls were observed being dropped silently, with no
+        exception raised. A dropped status update is a cosmetic loss; a
+        dropped probe result would leave the Duration column stuck on "…"
+        with no way to recover. Not depending on the behavior at all costs
+        one extra timer and removes the question.
+
+        Deliberately not tied to `upload_thread`: that handle is the app's
+        "an upload is running" guard, which gates the Upload buttons and
+        defers refreshes in __main__.poll. A probe must do neither.
+        """
+        def worker() -> None:
+            try:
+                for info in pending:
+                    if generation != self._refresh_generation:
+                        break  # A newer refresh owns the list now.
+                    if info.probed:
+                        # _probe_now already resolved this one on demand
+                        # (the user clicked something that needed it).
+                        # Re-probing would spawn a second ffprobe on the
+                        # same file for an answer already in hand.
+                        continue
+                    duration, definitive = library.probe(
+                        info.path, self.state.ffprobe_bin)
+                    self._probe_queue.put((generation, info, duration, definitive))
+            except Exception:
+                # probe() swallows its own failures, so reaching here means
+                # something unforeseen. Log it: the rows left unprobed keep
+                # showing "…" and in a console=False build stderr goes
+                # nowhere, so this would otherwise be invisible.
+                logger.warning("Duration probe worker failed", exc_info=True)
+            finally:
+                # Always sent, including on an early exit or an unexpected
+                # error, so the drain loop can stop rescheduling itself.
+                self._probe_queue.put((generation, None, None, False))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(PROBE_DRAIN_MS, lambda: self._drain_probes(generation))
+
+    def _drain_probes(self, generation: int) -> None:
+        """Apply queued probe results. Runs on the main thread only."""
+        if generation != self._refresh_generation:
+            return  # Superseded; the newer refresh has its own drain loop.
+        done = False
+        applied = 0
+        while True:
+            try:
+                gen, info, duration, definitive = self._probe_queue.get_nowait()
+            except queue.Empty:
+                break
+            if gen != self._refresh_generation:
+                continue  # Straggler from a previous refresh.
+            if info is None:
+                done = True
+                continue
+            self._apply_duration(info, duration, definitive)
+            applied += 1
+        # Persisted per drain tick rather than only at the end: a cold scan
+        # of a large folder takes a while, and a user who opens the window
+        # from the tray and quits partway through would otherwise lose
+        # every duration measured so far and start over next launch.
+        if applied:
+            durations.save(paths.durations_file(), self.duration_cache)
+        if done:
+            return
+        self.root.after(PROBE_DRAIN_MS, lambda: self._drain_probes(generation))
+
+    def _apply_duration(self, info: library.VideoInfo, duration: float | None,
+                        definitive: bool) -> None:
+        """Record one probe result and update its row. Main thread only."""
+        if info.probed:
+            # Already resolved -- by _probe_now, racing the worker that had
+            # this same info in its pending list. Keeping the first answer
+            # matters: if the second probe times out it would replace a
+            # good duration with a cached "unreadable" that survives
+            # restarts and blocks the combat-log upload for that file.
+            return
+        info.duration = duration
+        info.probed = True
+        if definitive:
+            durations.remember(self.duration_cache, info.path,
+                               info.size, info.mtime, duration)
+        # The row is addressed by iid (the path), which is what refresh()
+        # inserts it under, so updating one cell needs no widget bookkeeping
+        # and leaves the checkbox image, tags and link column alone.
+        # exists() is defensive: every caller is either synchronous on the
+        # current list or generation-guarded, so a missing row should be
+        # unreachable.
+        iid = str(info.path)
+        if self.tree.exists(iid):
+            self.tree.set(iid, "duration", info.duration_str)
+
+    def _probe_now(self, infos: list[library.VideoInfo]) -> None:
+        """Resolve a selection's durations synchronously, in place.
+
+        The background probe walks the whole folder; a user who selects a
+        couple of recordings and immediately clicks a button that needs
+        durations should not wait for it, nor be told ffprobe is broken
+        because their files happen to be near the end of the queue.
+
+        This does block the main thread -- it is called from a button
+        handler that cannot continue without the answer. Usually that is a
+        file or two, but "Select All" is right there, and each probe can
+        take up to probe()'s 15s timeout, so the loop reports progress and
+        shows a busy cursor rather than presenting a frozen window with no
+        explanation.
+        """
+        unprobed = [i for i in infos if not i.probed]
+        if not unprobed:
+            return
+        total = len(unprobed)
+        previous_cursor = self.root.cget("cursor")
+        # Both halves of the status are saved: the text AND the kind that
+        # drives its colour. Restoring the text alone would leave a red
+        # error's colour on a neutral message, and would leave _status_kind
+        # describing a message no longer on screen -- which a live theme
+        # switch would then re-derive from.
+        previous_status = self.status.cget("text")
+        previous_kind = self._status_kind
+        self.root.config(cursor="watch")
+        try:
+            for index, info in enumerate(unprobed, start=1):
+                self._status_kind = "FG"
+                self.status.config(
+                    text=f"Reading recording lengths… ({index}/{total})",
+                    foreground=theme.token("FG"))
+                # Redraw the status and cursor without processing user
+                # input: update() here would re-enter button handlers from
+                # inside one, allowing a second upload to start mid-loop.
+                self.root.update_idletasks()
+                duration, definitive = library.probe(info.path, self.state.ffprobe_bin)
+                self._apply_duration(info, duration, definitive)
+        finally:
+            self.root.config(cursor=previous_cursor)
+            # Callers set their own status next, except on the paths that
+            # bail out with a warning dialog -- those should not leave the
+            # progress counter frozen on screen as if still working.
+            self._status_kind = previous_kind
+            self.status.config(
+                text=previous_status,
+                foreground=theme.token(previous_kind or "FG"))
+        durations.save(paths.durations_file(), self.duration_cache)
 
     def _set_all(self, value: bool) -> None:
         for var in self.selected.values():
@@ -733,6 +943,14 @@ class UploaderWindow:
         # window to build. probe_duration returns None whenever ffprobe is
         # missing or fails, which is a supported state -- refuse rather than
         # invent a window that would silently pull logs from another fight.
+        #
+        # Resolve any still-pending probe for THIS selection first. Since
+        # probing moved to a background worker, an unprobed recording also
+        # leaves duration None, and refusing on that would blame ffprobe for
+        # a probe that simply had not reached these files yet. Typically one
+        # or two files, so the wait is short and only paid by users who beat
+        # the worker to the button.
+        self._probe_now(chosen)
         missing = [i.path.name for i in chosen if i.duration is None]
         if missing:
             messagebox.showwarning(
