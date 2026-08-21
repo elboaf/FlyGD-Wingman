@@ -51,6 +51,18 @@ FIRST_RUN_PUSH_S = 1.5
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
 
+def _folder_dialog_kind():
+    """pywebview's folder-dialog constant, imported at call time.
+
+    Kept behind a function for two reasons: webview is not installed on the
+    Linux box these tests run on, and 6.x renamed this constant once
+    already (FOLDER_DIALOG -> FileDialog.FOLDER), so exactly one line has
+    to change if it moves again.
+    """
+    import webview
+    return webview.FileDialog.FOLDER
+
+
 def _close_media(media) -> None:
     """Release the file handle a MediaFileUpload holds, best effort.
 
@@ -963,6 +975,58 @@ class Api:
         self._push("onSettings", self._settings_payload())
         self.list_rows()
         return True
+
+    def pick_folder(self, which: str) -> str:
+        """Native folder picker, seeded with what is configured now."""
+        if which == "gamelogs":
+            start = str(self._state.settings.get("gamelogs_dir") or "")
+        else:
+            start = str(self._state.recording_dir)
+        chosen = self._window.create_file_dialog(_folder_dialog_kind(),
+                                                 directory=start)
+        # create_file_dialog returns a sequence of paths, or None on cancel.
+        if not chosen:
+            return ""
+        return str(chosen[0])
+
+    def detect_folder(self, which: str, current: str = "") -> str:
+        """Re-run detection for one folder and hand back the suggestion.
+
+        Returned rather than pushed through onSettings, and Save is still
+        required: the user sees exactly what changed and can decline it,
+        and pushing the whole settings dict would throw away every other
+        unsaved edit in the form.
+
+        `current` is the field's live value, not the stored setting, so a
+        detection that agrees with what the user has already typed is
+        reported as agreement instead of silently rewriting the field.
+        """
+        if which == "gamelogs":
+            found = combatlog.find_gamelogs_dir()
+            if found is None:
+                self._alert("info", "Gamelogs not found",
+                            "Could not find an EVE Gamelogs folder under "
+                            "Documents or OneDrive\\Documents. Use Browse… "
+                            "to point at it.")
+                return ""
+            if str(found) == current:
+                self._alert("info", "Gamelogs",
+                            f"Already set to the detected folder:\n{found}")
+                return ""
+            return str(found)
+
+        detected = obsconfig.find_recording_dir()
+        if detected is None or not detected.is_dir():
+            self._alert("info", "Detect recording folder",
+                        "Could not read OBS's configuration to detect a "
+                        "recording folder. Make sure OBS is installed and has "
+                        "recorded at least once, then try again.")
+            return ""
+        if str(detected) == current:
+            self._alert("info", "Detect recording folder",
+                        f"Already set to the detected folder:\n{detected}")
+            return ""
+        return str(detected)
 
     def auth_labels(self) -> dict:
         """The whole account-state table, for the page to render from.

@@ -161,3 +161,71 @@ def test_the_pushed_settings_describe_the_webhook_without_its_token(monkeypatch,
     assert "tok" not in pushed["webhook_status"].split("/")[-1]
 
 
+
+def test_browse_opens_a_native_folder_dialog_at_the_current_folder(monkeypatch, tmp_path):
+    api, window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
+    window.dialog_result = (str(tmp_path / "picked"),)
+
+    assert api.pick_folder("recording") == str(tmp_path / "picked")
+    assert window.dialogs == [("FOLDER", str(tmp_path))]
+
+
+def test_cancelling_the_folder_dialog_returns_nothing(monkeypatch, tmp_path):
+    api, window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
+    window.dialog_result = None
+    assert api.pick_folder("gamelogs") == ""
+
+
+def test_detect_re_runs_obs_config_for_the_recording_folder(monkeypatch, tmp_path):
+    """The recovery path for a bad stored recording_dir: the stored value
+    normally outranks detection, so nothing else ever re-runs the guess."""
+    found = tmp_path / "obs"
+    found.mkdir()
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.obsconfig, "find_recording_dir", lambda: found)
+
+    assert api.detect_folder("recording", current=str(tmp_path)) == str(found)
+    assert api._alert.raised == []
+
+
+def test_detect_for_gamelogs_is_a_separate_search(monkeypatch, tmp_path):
+    found = tmp_path / "Gamelogs"
+    found.mkdir()
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.combatlog, "find_gamelogs_dir", lambda: found)
+
+    assert api.detect_folder("gamelogs", current="") == str(found)
+
+
+def test_detect_says_when_it_cannot_find_the_recording_folder(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.obsconfig, "find_recording_dir", lambda: None)
+
+    assert api.detect_folder("recording") == ""
+    kind, title, body = api._alert.raised[0]
+    assert (kind, title) == ("info", "Detect recording folder")
+    assert "OBS" in body
+
+
+def test_detect_says_when_it_cannot_find_the_gamelogs_folder(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.combatlog, "find_gamelogs_dir", lambda: None)
+
+    assert api.detect_folder("gamelogs") == ""
+    assert api._alert.titles() == ["Gamelogs not found"]
+
+
+def test_detect_that_agrees_with_the_field_says_so_rather_than_nothing(monkeypatch, tmp_path):
+    """Silently rewriting the field with the value already in it looks like
+    a dead button."""
+    found = tmp_path / "obs"
+    found.mkdir()
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.obsconfig, "find_recording_dir", lambda: found)
+
+    assert api.detect_folder("recording", current=str(found)) == ""
+    assert "Already set" in api._alert.raised[0][2]
+
+
