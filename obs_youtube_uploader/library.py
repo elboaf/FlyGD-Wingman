@@ -59,14 +59,20 @@ def discover(directory: Path) -> list[Path]:
     entries = []
     try:
         for p in Path(directory).iterdir():
-            if p.is_file() and p.suffix.lower() in VIDEO_EXTS:
-                try:
-                    # Stat exactly once, inside guarded region
-                    stat_result = p.stat()
-                    entries.append((p, stat_result.st_mtime))
-                except OSError:
-                    # Skip files that disappear between iterdir and stat
-                    pass
+            try:
+                # is_file() stats too, so it belongs inside the guard. Left
+                # outside, one unreadable entry raises out of the loop and
+                # the outer handler returns [] -- turning a single bad file
+                # into an empty recording list for the whole folder.
+                if not (p.is_file() and p.suffix.lower() in VIDEO_EXTS):
+                    continue
+                # Stat exactly once, inside guarded region
+                stat_result = p.stat()
+                entries.append((p, stat_result.st_mtime))
+            except OSError:
+                # Skip files that disappear or cannot be read between
+                # iterdir and stat; the rest of the scan still counts.
+                continue
     except OSError:
         return []
     # Sort by mtime, newest first
