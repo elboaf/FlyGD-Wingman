@@ -4,6 +4,7 @@ State never lives next to the executable: the installer targets Program
 Files, which is read-only for non-admin users.
 """
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -54,6 +55,30 @@ def bundle_dir() -> Path:
     if meipass:
         return Path(meipass)
     return Path(__file__).resolve().parent.parent
+
+
+def resolve_binary(name: str) -> str | None:
+    """Find a bundled binary, falling back to PATH.
+
+    In a frozen build, `bundle_dir()` is `sys._MEIPASS` and the bundled
+    binary lives at its `bin/` subfolder — that path is verified correct
+    and left untouched. In a source checkout, `bundle_dir()` is the repo
+    root, but `packaging/fetch_ffmpeg.py` writes into `packaging/bin`, not
+    `<repo>/bin`. Without this extra lookup, running from source never
+    finds the fetched ffmpeg and silently falls back to PATH.
+    """
+    exe = f"{name}.exe"
+    candidate = bundle_dir() / "bin" / exe
+    if candidate.exists():
+        return str(candidate)
+    candidate = bundle_dir() / exe
+    if candidate.exists():
+        return str(candidate)
+    if not hasattr(sys, "_MEIPASS"):
+        candidate = bundle_dir() / "packaging" / "bin" / exe
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which(name)
 
 
 def icon_file() -> Path | None:

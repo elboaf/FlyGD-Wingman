@@ -4,10 +4,12 @@ Manual verification for the GUI and live upload paths, which are not
 automated: doing so would need live credentials and would consume the very
 upload quota the design is constrained by.
 
-The UI refresh (theming, the Treeview list, DPI awareness, the real app
-icon) is likewise untested by `pytest` — no file under `tests/` imports
-`app` or `settingsui` — so this checklist is the only real verification
-those changes get.
+The UI itself is likewise untested by `pytest`. `tests/test_api*.py` drive
+the bridge headlessly against a fake window and cover what the API *says*
+and accepts; nothing under `tests/` renders the page, sends it input, opens
+a native dialog, or touches the tray. There is deliberately no Playwright
+and no browser toolchain. **This checklist is the only verification any of
+that gets.**
 
 Run on Windows against a real install before each release.
 
@@ -30,9 +32,56 @@ Run on Windows against a real install before each release.
 - [ ] A "new recording(s) ready to upload" notification is titled
       **FlyGD Wingman**
 
+## WebView2 runtime
+
+The app renders its entire UI in WebView2 and has no fallback. These items
+exist because the failure mode is silent: without the runtime, pywebview
+logs a load failure, `webview.start()` returns normally, and the process
+exits **0** — no window, no error, no crash dialog, and a success code.
+
+- [ ] **The installer skips the bootstrapper when the runtime is already
+      there.** Run with `/VERYSILENT /LOG=%TEMP%\i.log`, then
+      `findstr /C:"WebView2:" %TEMP%\i.log`. Expected: exactly one line,
+      "runtime already present, skipping the bootstrapper", and no
+      `bootstrapper exited with` line. A bootstrapper that runs on every
+      install is a several-minute delay nobody asked for.
+- [ ] **LOAD-BEARING: a missing runtime produces a native dialog and a
+      NON-ZERO exit.** Testable without a VM, exactly as spike Q7 did it:
+      point `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` at an empty directory for
+      one process and launch the installed exe from `cmd`, then read
+      `echo %ERRORLEVEL%`. Expected: a native Windows message box naming
+      the Microsoft Edge WebView2 runtime and its download URL, and a
+      non-zero exit code. **An exit code of 0 is the defect** — that is the
+      pre-refactor behaviour, and it means the pre-flight check is not
+      running before `webview.start()`. Nothing is uninstalled by this test
+      and the variable dies with the shell.
+- [ ] **The pre-flight message box is readable and dismissible.** Confirm
+      it has a title, names the runtime by its full name, shows a URL that
+      can be selected or typed out, and closes on OK without leaving a
+      process behind (check Task Manager).
+- [ ] **CLEAN VM ONLY — DEFERRED, no VM available: the bootstrapper actually
+      installs the runtime.**
+      On a fresh Windows VM with no WebView2 runtime, run the installer.
+      Expected: the wizard pauses briefly at the end, the log shows "runtime
+      absent, running the bundled Evergreen bootstrapper" followed by
+      "runtime installed successfully", and the app launches and renders.
+      There is no way to fake this on a machine that already has the runtime
+      — the `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` trick fools the loader, not
+      the registry. **Leave this unticked rather than assuming it; it is the
+      largest untested risk in the release.**
+- [ ] **CLEAN VM ONLY — DEFERRED, no VM available: an offline install fails
+      honestly.** Same VM,
+      network disconnected. Expected: the install still completes, ONE error
+      dialog explains the runtime could not be installed and gives the
+      download URL, the Finished page repeats the warning, and the app is
+      installed rather than rolled back. Reconnect, install the runtime by
+      hand, and confirm the app then starts with no reinstallation.
+
 ## First run
 - [ ] Recording folder is pre-filled from OBS config without being asked
-- [ ] With OBS absent, the folder picker appears instead
+- [ ] With OBS absent, the in-app first-run folder screen appears instead of
+      a bare OS dialog — see the LOAD-BEARING first-run item under
+      Settings > Folder dialogs for the full check
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to
@@ -46,331 +95,124 @@ Run on Windows against a real install before each release.
 
 ## Look and feel
 
-### Typography
+### Window chrome
+- [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
+      bar is gone; dragging is the page's `pywebview-drag-region`. Grab the
+      bar and move the window across two monitors, then to a screen edge to
+      trigger Windows snap. Expected: the window follows with no lag and
+      snaps normally. This is the single most visible thing that breaks with
+      a frameless window and it has no automated coverage of any kind.
+- [ ] **The drag region excludes the controls.** Press and hold on the gear,
+      minimize and close in turn and move the pointer a few pixels.
+      Expected: none of them drags the window; each still activates on
+      release.
+- [ ] **The title-bar controls do what they say.** The gear opens the
+      Settings route in the same window (not a second OS window), minimize
+      minimizes to the taskbar, and close HIDES to the tray rather than
+      exiting — confirm the process is still running and the tray icon is
+      still there.
+- [ ] **The window opens fully on screen.** Launch on the primary monitor,
+      again with a second monitor attached, then again after disconnecting
+      it. Expected: fully visible and its title bar reachable every time.
+- [ ] **Scrollbars are the app's, not Windows'.** Scroll a long list. The
+      scrollbar must be the styled thin one, not the classic grey Windows
+      scrollbar.
 
-- [ ] **The three type steps are visibly distinct.** Compare, in one glance:
-      the "Upload" panel heading and the Settings group titles (largest),
-      the filenames and field text (body), and the column headers, selection
-      summary, destination line and hint labels (smallest). Everything in
-      the app previously rendered at one size, with only bold separating
-      roles.
-- [ ] **Column headers sit below the data, not above it.** In the list, the
-      header row must read as quieter than the filenames beneath it. If a
-      header competes with its own column's content, the scale is inverted.
-- [ ] **The scale survives a live theme switch.** Flip the Windows app mode
-      with both windows open. Headings must stay larger and muted text
-      smaller; ttk stores fonts per theme, so a missed re-assert collapses
-      everything back to one size.
-- [ ] **The scale survives DPI changes.** Repeat at 100%, 150% and 200%. The
-      steps are derived from sv-ttk's rescaled font, so they must stay
-      proportional rather than freezing at 96 DPI, and no heading may clip
-      its row or its group title.
-
-### Layout
-
-- [ ] **The upload panel is intact at 100%, 150% and 200%.** Set
-      `Settings > System > Display > Scale`, restart the app at each. The
-      panel keeps its proportion to the window, and Title, Description,
-      Stitch, the selection summary, Upload combat logs, Retry and Upload
-      Selected are all fully visible with no clipped text and no button
-      running past the panel edge.
-- [ ] **Nothing is clipped at the minimum window size.** Drag the window as
-      small as it goes at 150%. Expected: the Description box shrinks first
-      and the Retry/Upload Selected row is still fully visible; every list
-      column is present, with Filename down to its 120px minimum (accepted
-      degradation — see ui-layout-design.md, "Narrow windows"). A missing
-      Upload button is a defect; a narrow filename column is not.
-- [ ] **The window has visible margins on all four edges,** and the
-      Description box reads as a bordered field in both light and dark mode
-      rather than blending into the panel background. Check the border at
-      200% as well: it is scaled with the display (`bd` is derived from the
-      DPI scale, not a fixed 1px), so a hairline that all but disappears
-      around the panel's largest control means that scaling was lost.
-
-### Theming
-- [ ] **Launches in light mode when Windows is set to Light.**
-      `Settings > Personalization > Colors > Choose your mode > Light`, then
-      launch. Both windows render with sv-ttk's light theme — no dark chrome,
-      and no illegible text in status messages, hint labels, or the ffmpeg
-      warning.
-- [ ] **Launches in dark mode when Windows is set to Dark.** Same with `Dark`.
-      Also check Treeview row striping and the description `tk.Text` box.
-      sv-ttk's ttk styling does not cover that box — it is a classic Tk
-      widget — but the app no longer leaves it to `tk_setPalette`:
-      `_apply_desc_colors` paints its background from the `ROW_EVEN` token
-      and its text and caret from `FG`, so it must sit slightly OFF the
-      panel background and read as a bordered field. A box the same colour
-      as the window around it is a DEFECT, not an accepted limitation — it
-      means the token paint was lost (see the live-switch item below for the
-      ordering that can cause that).
-- [ ] **The right-click context menu is legible in dark mode.** With Windows
-      set to Dark, right-click a list row and read the menu: "Copy link" and
-      "Open in browser" must be readable, not white-on-white or black-on-black,
-      and the greyed-out state must still be distinguishable. `tk.Menu` is a
-      classic Tk widget, and on Windows sv-ttk's `config_menus` returns
-      immediately — so the menu's entire appearance rests on `tk_setPalette`,
-      which nothing in this app controls and no test covers.
-- [ ] **The Settings auth status dot is legible in dark mode.** Open Settings
-      with Windows set to Dark and check the dot beside the Google account
-      row in both states (connected and not connected): the dot must be
-      visible against the dialog background, not a light square sitting on a
-      dark panel. It is a `tk.Canvas` — again a classic Tk widget whose
-      background comes from `tk_setPalette`, not from sv-ttk styling.
-- [ ] **LOAD-BEARING: switching the OS theme live, with both windows open.**
-      Open the main window and Settings together, then flip
-      `Choose your mode`. Within a few seconds both must re-theme fully:
-      status line, ffmpeg warning, the description box's background and
-      text, auth status dot and text, hint labels, Treeview striping, the
-      preselect highlight, and the checkbox images. No half-themed widget
-      anywhere.
-      *Why this is load-bearing:* the app sets these colours from a deferred
-      `after_idle` callback because `sv_ttk.set_theme()` fires a QUEUED
-      `<<ThemeChanged>>` event that runs `tk_setPalette` on the next tick and
-      resets any directly-set widget foreground. That ordering was observed
-      under WSLg. If native Windows Tk dispatches differently, colours may
-      revert one tick after the switch — watch for a correct flash followed
-      by a reset.
-- [ ] **A red error status survives a live theme switch.** Force an upload
-      failure so the status line is red, then flip the OS theme. It must
-      re-colour to the other theme's red — not reset to the default
-      foreground, and not stay in the old theme's red.
-- [ ] **A rapid double-flip settles correctly.** Flip light→dark→light
-      quickly. Intermediate flicker is acceptable; a stuck or wrong final
-      colour is not.
-- [ ] **Opening Settings repeatedly does not leak theme consumers.** Open and
-      close Settings five times, then flip the OS theme. Confirm
-      `%LOCALAPPDATA%\OBSYouTubeUploader\logs\uploader_debug.log` contains no
-      `TclError` warnings from stale consumers holding destroyed windows.
-- [ ] **A failed theme read does not trigger the watcher's failure
-      notification.** Run several minutes with the theme untouched and
-      confirm zero "watcher is having trouble" notifications. The theme check
-      has its own try/except inside `poll()`, separate from the watcher's
-      consecutive-failure counter; that notification must stay reserved for
-      real recording-folder faults.
-
-### Title bars
-
-- [ ] **Both title bars are dark at startup** in dark mode. Open the main
-      window, then open Settings and put the two side by side: the dialog's
-      title bar must match the main window's, not be light. This mismatch,
-      visible in a single screenshot, is the whole reason this exists.
-- [ ] **Both title bars are light in light mode.** Switch
-      `Settings > Personalization > Colors` to Light, restart the app, and
-      confirm neither window has a dark title bar stuck on.
-- [ ] **LOAD-BEARING: both follow a LIVE OS theme switch.** With BOTH windows
-      open, flip `Choose your mode`. Both title bars must change together,
-      with no restart. A window that changes only after reopening means the
-      call is wired to construction but not to the theme consumer; a window
-      that never changes means the consumer is not firing at all.
-- [ ] **The main window's title bar is still themed after a trip through
-      the tray.** In dark mode, close the main window (it hides rather than
-      exits), then reopen it from the tray icon — twice. The title bar must
-      still be dark each time. `show()` re-applies it because the frame
-      handle is only reliable once the window is mapped, and a stale handle
-      fails silently: DWM just no-ops and the bar reverts to light.
-- [ ] **Older Windows builds still work.** On Windows 10 1809-1909 the
-      attribute is 19, not 20, and DWM reports the wrong one by returning a
-      failing HRESULT rather than raising — so a build where the title bars
-      stay light but the app is otherwise fine points at the fallback, not at
-      the wiring. If no such machine is available, note it as untested rather
-      than ticking it.
-
-### Display scaling
-- [ ] **100% scaling.** Both windows render at native size, text sharp, no
-      clipping.
-- [ ] **125% scaling.** Settings dialog not clipped — Recording folder frame
-      and the Save/Cancel row fully visible AND above the taskbar.
-- [ ] **150% scaling.** Neither window opens larger than the screen.
-- [ ] **200% scaling.** Neither window opens larger than the screen, the
-      Settings dialog is still unclipped with Save/Cancel reachable, and the
-      status strip under both panes still fits Settings, its progress bar
-      and its status label on one row.
-- [ ] **LOAD-BEARING: list ROW TEXT is not vertically clipped at 200%.**
-      Distinct from the checkbox item below, which only covers the image, and
-      from the window-fits items above. Read the Filename and Date
-      cells: descenders (g, p, y) and the tops of capitals must be fully
-      visible, not shaved by the row boundary. sv-ttk computes its row height
-      once from the UNSCALED font when `sv.tcl` is sourced and never
-      re-evaluates it, so the app re-measures the corrected font in
-      `_apply_row_height()` and takes the larger of that and the checkbox
-      height. If text is cropped, that re-measurement is what to look at.
-      Check it after a light↔dark switch too, since `set_theme` re-asserts
-      sv-ttk's own stale value each time.
-- [ ] **LOAD-BEARING: on a NARROW window and a SHORT screen, not just
-      1080p.** The minsize clamping fixes only bite in those configurations —
-      a default 1080p pass exercises neither. On a short screen, confirm the
-      Settings dialog can still be resized smaller and moved, i.e. Save and
-      Cancel are always reachable.
-- [ ] **LOAD-BEARING: the list checkbox is not clipped at 125%, 150%, and
-      200%.** sv-ttk sets Treeview row height from a font that does not
-      follow `tk scaling`, so the app raises the row height itself to fit the
-      scaled checkbox image. This was measured under WSLg only. Also confirm
-      a light↔dark switch does not re-clip it — sv-ttk re-asserts its own row
-      height on every `set_theme`.
-- [ ] **Text is sharp, not bitmap-stretched, at 150%.** The process declares
-      DPI awareness but the HRESULT is discarded, so blurriness is the only
-      observable sign the call silently failed.
-- [ ] **LOAD-BEARING: text is the right SIZE at 150% and 200%, not merely
-      sharp.** Sharpness and size are separate failures and the item above
-      only catches the first one. Compare the app's text against Notepad (or
-      any native Windows app) side by side at the same scale factor, or
-      against the app on a 100% machine: labels, buttons, list rows and
-      column headings must look the same apparent size as native UI, not
-      noticeably smaller. Crisp-but-undersized text means sv-ttk's ttk fonts
-      are not following `tk scaling` — sv.tcl declares them in absolute
-      pixels, and `theme._rescale_sv_fonts()` is what corrects that. Check it
-      after a light↔dark switch too, since `apply()` reruns the rescale each
-      time (a font that keeps shrinking, or doubles, means the rescale is
-      compounding rather than deriving from sv-ttk's base sizes).
-      *Note the interaction:* undersized text makes every "nothing is
-      clipped" item on this list pass more easily, so a size regression can
-      hide behind an otherwise-green scaling section — check size first.
-
-### Typography
-
-- [ ] **Column headers are bold and the rows are not.** Filename, Date,
-      Size, Length and Link read heavier than the row text beneath them.
-      Row text is intentionally uniform — `ttk.Treeview` has no per-column
-      fonts and the row tags are already spent on striping, preselection
-      and the link colour — so uneven-looking rows are a bug, not the
-      hierarchy.
-- [ ] **The panel's "Upload" heading is bold**, and heavier than the
-      "Title"/"Description" field labels under it.
-- [ ] **Secondary text is muted, not black-on-black.** The selection
-      summary and any hint labels read visibly lighter than the primary
-      text in BOTH light and dark — the muted colour is a theme token, so
-      an unreadable one means the style was not re-applied for that mode.
-- [ ] **LOAD-BEARING: bold survives a live OS theme switch.** With the main
-      window open, flip `Choose your mode`. After the switch, the column
-      headers and the "Upload" heading must still be bold, still the right
-      size, and the muted text must have taken the new mode's colour. ttk
-      stores style options per theme and `sv_ttk.set_theme` replaces the
-      theme, so everything configured here is wiped on every switch and
-      re-asserted from the window's single theme consumer. A switch that
-      leaves plain headings behind means that re-assert is not running, or
-      is running before `set_theme` rather than after.
-- [ ] **Heading size follows display scaling.** At 150% and 200%, the bold
-      headers grow with the rest of the UI rather than staying at their
-      100% size — they are derived from sv-ttk's own font *after* it has
-      been rescaled, so a frozen-looking header means that ordering broke.
+### Typography and layout
+- [ ] **The three type steps are visibly distinct** — panel/section headings
+      largest, filenames and field text body, column headers and hints
+      smallest.
+- [ ] **Column headers sit below the data, not above it.** The header row
+      must read as quieter than the filenames beneath it. Deliberate,
+      carried over from 2.2.0: headers label the data, they are not the data.
+- [ ] **Machine text is monospace.** Paths, the webhook field and the
+      webhook summary render in the monospace face; prose does not.
+- [ ] **Display scaling at 100%, 125%, 150% and 200%.** Restart at each.
+      Expected: text sharp AND the right apparent size next to Notepad;
+      neither route opens larger than the screen; Title, Description,
+      Stitch, the summary, Upload combat logs, Retry and Upload Selected all
+      fully visible with nothing clipped.
+- [ ] **Nothing is clipped at the minimum window size** at 150%. The
+      Description box shrinks first and the Retry / Upload Selected row is
+      still fully visible.
 
 ### The list
-- [ ] **LOAD-BEARING: clicking a checkbox toggles it.** The click handler
-      relies on `identify_region()` returning `"tree"` for the checkbox
-      column and something else elsewhere. That was confirmed on X11 only.
-      Also confirm clicking a data column does NOT toggle.
-- [ ] **LOAD-BEARING: the context menu releases its grab.** Right-click a
-      row, then dismiss it by clicking elsewhere; repeat and dismiss with
-      Escape. After each, confirm the window still responds to clicks. This
-      path has NO automated coverage of any kind — a retained pointer grab
-      presents as "the app is frozen".
-- [ ] **Copy link and Open in browser** from the context menu work on a row
-      with a link, and are greyed out on a row without one.
-- [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox
-      cell. Click the filename, the date, the size, the Length and the ↗
-      Link cell in turn; each should tick and untick the row, and the
-      selection summary above the upload buttons should keep count. Rows
-      accumulate — clicking a second row must not clear the first.
-- [ ] **Double-click opens the YouTube link from any cell,** including the
-      checkbox cell, and LEAVES THE SELECTION AS IT WAS. Tick two rows,
-      then double-click a third that has a link: the browser opens and the
-      third row must still be unticked, with the summary still reading 2.
-      A row left ticked by double-clicking is a defect — the first press of
-      the double-click toggles it and the handler is what undoes that.
-- [ ] **Keyboard: Space toggles the focused row.** Tab to the list, use the
-      arrow keys to move, press Space. Confirm it toggles exactly one row and
-      that Upload Selected agrees with what is checked. Then trigger a list
-      rebuild (delete a file, or save Settings) and confirm the keyboard
-      still works afterwards without touching the mouse.
-- [ ] **Select All and Select None repaint every checkbox.** Click
-      **Select All** and confirm every row's box is drawn checked — not
-      just that the selection summary says "N selected" — then **Select
-      None** and confirm every box is drawn empty. The summary and the
-      boxes must never disagree; they used to, because nothing traced the
-      per-row variables and only a click repainted a box.
-- [ ] **Treeview tag colours actually render** — zebra striping, the
-      preselect highlight, and the blue link foreground, in both light and
-      dark. Tag backgrounds under a themed Treeview style are historically
-      theme- and version-dependent.
+- [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
+      Rows accumulate — clicking a second must not clear the first.
+- [ ] **Select all and Select none repaint every checkbox,** not just the
+      summary. The two must never disagree.
+- [ ] **Click-to-sort works on every column and shows direction,** on the
+      active column only. Sorting is pure client state; a sort that
+      round-trips to Python or clears the selection is a defect.
+- [ ] **The leftmost header is a bare check, not a checkbox.** Clicking it
+      SORTS by checked state — it must not select or clear anything.
 - [ ] **Sorting does not affect upload order or stitch order.** Sort by each
-      column, then select rows out of their displayed order and upload —
-      first with Stitch off, then on. The `(1/n)` numbering and stitched clip
-      order must follow the underlying data, not the display.
-- [ ] **Newly announced recordings are pre-checked, scrolled into view, and
-      visibly highlighted** — even when they would otherwise be below the
-      fold.
+      column, select out of displayed order, upload with Stitch off then on.
+      The `(1/n)` numbering and clip order follow the underlying data.
 - [ ] **Sorting by Length while durations are still loading.** Delete
-      `durations.json`, launch against a large folder, and click the
-      Length header while rows still read "…". Expected: pending rows
-      sort together (they have no value yet) and each fills in where it
-      sits — rows do NOT re-order themselves under the cursor as results
-      arrive. Click the header again afterwards to re-sort with the real
-      values.
-- [ ] **The leftmost header is a bare check, not a checkbox.** It should
-      read ✓, visibly different from the ☐/☑ boxes in the rows beneath it.
-      Clicking it SORTS by checked state (selected rows group together) —
-      it must not select or clear anything. A header that looks like a
-      tickable box is the defect: selecting everything is what the Select
-      All / Select None buttons under the list are for.
-- [ ] **Column headers line up with their data.** Filename and Date read
-      left-aligned with left-aligned headers; Size and Length read
-      right-aligned with right-aligned headers; the checkbox and Link
-      headers are centred. Confirm the fourth column's header reads
-      **Length**, and that clicking it still sorts by duration (a short
-      recording and a long one swap places) — the header text changed but
-      the sort key deliberately did not.
-- [ ] **Only the Filename column grows.** Widen the window from its
-      minimum to full screen and watch the columns. Expected: Date, Size,
-      Length, Link and the checkbox column hold exactly the same width the
-      whole way, and Filename alone absorbs every pixel of the extra room.
-      Drag back down and they should return to where they started. A Size
-      or Length column that grows with the window means one of them
-      regained `stretch=True` in COLUMN_SPEC.
-- [ ] **LOAD-BEARING: the list at the minimum window width.** Drag the
-      window to its floor (860px at 100%). Expected: every column is still
-      present and readable, Filename truncates rather than pushing the
-      others off, and NO horizontal scrollbar appears. A short Filename
-      column is the accepted outcome here — a column that vanishes,
-      overlaps, or collapses to nothing is not. The preferred widths
-      (620px total) do not fit in the pane at that size. What holds it
-      together is the 860px window floor: the five fixed columns keep
-      their preferred widths (360px) and only Filename compresses, down
-      to its 120px minimum, so 490px of viewport is always enough. This
-      is the only place that arithmetic is exercised.
-- [ ] **The Link column shows ↗, not a URL.** After an upload completes, the
-      row's Link cell shows a single arrow glyph in the link colour. Then
-      confirm the URL is still reachable three ways on that row:
-      double-click opens the video, right-click → Copy link pastes a working
-      URL, right-click → Open in browser opens the same page. These read the
-      in-memory link map rather than the cell, so a regression here means
-      the wiring changed, not the glyph.
-- [ ] **Rows have breathing room.** Compare against a pre-change build if
-      one is handy: rows should look noticeably less cramped over a long
-      list. At 100%, 125%, 150% and 200% confirm the extra height did not
-      cost anything — descenders and the checkbox are still fully visible,
-      and still are after a light↔dark switch.
-
-### Icon
-- [ ] **The icon appears in all five locations:** main window title bar,
-      Settings title bar, taskbar, system tray, and — after running the built
-      installer — the Start Menu shortcut and Add/Remove Programs entry.
-      Note the icon can only ever be verified on Windows: on Linux,
-      `iconbitmap` always fails because X11 Tk has no `.ico` support, so
-      development runs show no icon by design.
-- [ ] **A missing icon does not break startup.** Rename `app.ico` inside the
-      install directory and relaunch: the app still starts, and the tray
-      falls back to its drawn placeholder.
+      `durations.json`, launch against a large folder, click Length while
+      rows read "…". Pending rows sort together and each fills in where it
+      sits — rows do NOT re-order under the cursor as results arrive.
+- [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
+      move with ↑/↓, press Space. Focus is visibly distinct from "checked",
+      Space toggles exactly the focused row, and Space does NOT scroll. Then
+      trigger a rebuild (delete a file, or save Settings) and confirm the
+      keyboard still works without touching the mouse.
+- [ ] **LOAD-BEARING: the row context menu opens and dismisses cleanly.**
+      Dismiss by clicking away; by Escape; and by right-clicking a different
+      row while the first is open. After each, the window still responds and
+      only one menu is ever visible.
+- [ ] **Copy link and Open in browser work and grey out correctly.** Both
+      work on a row with a completed upload, both greyed without one, and
+      Copy link puts a URL that actually opens on the clipboard.
+- [ ] **LOAD-BEARING: double-click opens the link and LEAVES THE CHECKBOX SELECTION UNCHANGED.**
+      Tick two rows, double-click a third with a link: the browser opens and
+      the third row is still unticked. Repeat on a row that starts ticked —
+      still ticked afterwards. A row left changed here is a defect, not
+      cosmetic.
+- [ ] **Newly announced recordings are pre-checked, scrolled into view, and
+      visibly highlighted** — even when below the fold.
+- [ ] **Selected, focused and uploaded rows are distinguishable** from one
+      another at a glance.
+- [ ] **Hovering an unreadable Length explains it,** and a `…` cell reads
+      "Measuring length…" instead — the two glyphs mean opposite things.
+- [ ] **Hovering the link glyph explains both gestures,** and no tooltip
+      appears over an empty Link cell, a filename, a header, or empty space.
+- [ ] **The list at the minimum window width.** Every column still present,
+      Filename truncates rather than pushing others off, NO horizontal
+      scrollbar.
+- [ ] **The Modified column reads as relative time, not a timestamp.** It
+      must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
+      week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
+      beyond it. It shows the file's MTIME, which is why it must not look
+      like the recording timestamp already in the filename: for a copied or
+      remuxed recording the two legitimately differ by minutes or hours,
+      and printing both as clock times made the app look like it was
+      contradicting itself. The header must read **Modified**, not "Date".
+- [ ] **Sorting by Modified still orders newest-first.** Click Modified.
+      The order must follow the underlying mtime, NOT the rendered text — a
+      text sort would put "2d ago" before "3h ago" and "Aug" before "Dec".
+      Check with a folder holding both a recording from today and one over
+      a week old.
+- [ ] **The filename column does not swallow the window.** Widen the window
+      well past the default. Filename must stop growing once it fits its
+      text, keeping Modified/Size/Length/Link near it, rather than
+      stretching and pushing them to the far edge with a gap in the middle.
 
 ### Frozen build
-- [ ] **LOAD-BEARING: the installed build renders themed, not plain ttk.**
-      This is the only proof sv-ttk's `.tcl` files were both bundled AND are
-      loadable. CI asserts the files exist; only launching proves they load.
-- [ ] **Checkboxes appear in the list in the frozen build.** They are
-      generated through `PIL.ImageTk`, which depends on the
-      `PIL._tkinter_finder` hidden import. If that is wrong the list renders
-      with no checkboxes at all, and no source-checkout test can see it.
-- [ ] **`Accent.TButton` renders visually distinct** on Upload Selected and
-      on Settings' Save.
+- [ ] **LOAD-BEARING: the installed build renders the page at all.** The
+      only proof `web/` was both bundled AND loadable. CI asserts the files
+      exist at `_internal\web\`; only launching proves the window finds
+      them. A blank window means the datas entry resolved to the wrong
+      place — and the app will still exit 0 when you close it.
+- [ ] **The frozen build loads nothing from the network.** Disconnect and
+      launch. The page renders identically — fonts, icons and styles local.
+- [ ] **The tray icon still draws in the frozen build.** Pillow survives
+      solely for the tray. Confirm the icon is the real app icon, and that
+      renaming `app.ico` falls back to the drawn placeholder rather than
+      breaking startup.
+- [ ] **The primary action is visually distinct.** `Upload Selected` is the
+      only brand-accent control on the screen.
 
 ## Watcher
 - [ ] Recording in OBS then stopping produces one notification
@@ -409,6 +251,22 @@ Run on Windows against a real install before each release.
       theme while it still reads "Checking…" and confirm the grey dot
       re-themes with everything else.
 - [ ] Sign in with Google opens a browser and reports "Connected"
+- [ ] **The account line names the channel once one is known.** With at
+      least one completed upload, Settings must read **Connected as
+      &lt;your channel&gt;**, not a bare "Connected" — the whole point is
+      being able to tell WHICH account is signed in, since the app can
+      otherwise upload to the wrong channel without ever saying so.
+      Note it names the YouTube CHANNEL, not the Google account email:
+      the app holds `youtube.upload` alone and cannot call channels.list,
+      so the name is learned from an upload response.
+- [ ] **Before any upload it correctly stays a bare "Connected".** Sign in
+      on a profile that has never completed an upload (delete
+      `channel_title` from settings.json to simulate). Expected: plain
+      "Connected" with no trailing "as" and no empty gap.
+- [ ] **The name appears in the session that learns it, not the next one.**
+      With `channel_title` absent, sign in and complete one upload with
+      Settings closed, then open Settings WITHOUT restarting. Expected:
+      it already reads "Connected as &lt;channel&gt;".
 - [ ] **The account button's label tracks the account state.** Not
       connected: it reads **Sign in with Google** and is clickable. While
       the lookup runs: **Checking…**, greyed. During the browser flow:
@@ -460,6 +318,46 @@ Run on Windows against a real install before each release.
 - [ ] Switching notify mode to popup takes effect on the next recording,
       without a restart
 - [ ] A non-numeric category ID is rejected with a warning
+- [ ] **The webhook is still masked after a route change.** Open Settings
+      with a webhook saved, tick **Show**, navigate back to the list, then
+      return. Expected: masked again. A revealed credential that survives
+      navigation is a leak — the mockup's cleartext webhook is exactly the
+      regression this port must not reintroduce.
+- [ ] **The account control tracks state through the route.** Start a
+      sign-in, navigate away mid-flow, return. Expected: still reads
+      **Waiting for browser…** and still disabled — `onAuthState` is the
+      source of truth, not the DOM that was torn down.
+
+### Folder dialogs
+
+Native OS dialogs opened from the page through the bridge. Nothing
+automated reaches them; the bridge tests can only assert the call was made.
+
+- [ ] **Browse picks the recording folder.** A native picker appears, modal
+      to the app window, and the chosen path lands in the field. The window
+      is still draggable and responsive afterwards.
+- [ ] **Browse picks the Gamelogs folder,** same expectations.
+- [ ] **Cancelling a Browse changes nothing** — the field keeps its previous
+      value, not blank and not the dialog's starting directory.
+- [ ] **Detect fills in the recording folder from OBS's own config,** and a
+      second press with the field already at that path says it is already
+      set rather than silently re-filling it.
+- [ ] **Detect fills in the Gamelogs folder,** with the same already-set
+      behaviour. With no EVE install, Detect says so rather than leaving the
+      field blank with no explanation.
+- [ ] **Saving a changed recording folder rebinds the live watcher.** Change
+      it and Save without restarting. New recordings in the NEW folder are
+      announced and the old folder is ignored. Persisting without rebinding
+      is the specific failure to watch for — it looks correct until the next
+      recording.
+- [ ] **LOAD-BEARING: the first-run folder screen.** Delete
+      `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` and launch with OBS
+      absent. Expected: the window opens and shows an in-app "choose your
+      recording folder" screen, from which Browse opens the native picker
+      and choosing proceeds to the normal list. This is a deliberate
+      behaviour change: there is no longer a bare OS dialog before any
+      window exists. Confirm the screen cannot be skipped past into an
+      unusable empty list.
 
 ## Video list and durations
 These cover the duration cache and the background probe. Do them against a
@@ -643,9 +541,11 @@ behavior that only shows up at size.
       `youtube.upload` scope, so it cannot look the channel up.
 - [ ] **The destination line fills in after the first successful upload.**
       Complete one upload. Expected: the muted line above Upload Selected
-      changes from "Channel confirmed after the first upload · unlisted" to
-      "Uploads go to &lt;your channel&gt; · unlisted", and still says so after
-      restarting the app (it is persisted to settings.json).
+      changes from "Channel confirmed after the first upload" to
+      "Uploads go to &lt;your channel&gt;", and still says so after
+      restarting the app (it is persisted to settings.json). The privacy
+      setting is deliberately NOT in this line; if it reappears there,
+      format_destination has been reverted.
 - [ ] **A batch's progress text names which file it is measuring.** Upload
       three recordings. Expected: "Uploading file 2 of 3… 41.2%", with the
       bar tracking the whole batch. The previous wording ("Uploading 2/3 —
@@ -732,6 +632,59 @@ behavior that only shows up at size.
       Quit. Expected: the process ends, the tray icon disappears (no
       orphaned icon lingering until Explorer refreshes it away), and no
       background process remains running.
+
+## Dialogs and confirmations
+
+Modal dialogs were native `messagebox` calls and are now in-page modals fed
+by `onDialog`, with `confirm` answered by `dialog_response(id, ok)` — the one
+request/response pair in an otherwise fire-and-forget protocol. A dropped
+response leaves a worker waiting forever, which presents as a hung upload.
+
+- [ ] **LOAD-BEARING: Upload Selected confirms before publishing anything.**
+      Select two recordings and press it. Expected: a modal naming the
+      destination channel, the privacy setting, the exact title(s) including
+      `(1/2)` … `(2/2)` numbering, and the total size and duration. Choose
+      No: nothing uploads and the app is not left busy. Then repeat and
+      choose Yes. This is the app's only irreversible action.
+- [ ] **The confirm is honest before the first upload.** With no upload ever
+      completed, the Channel line reads "not known yet (learned from this
+      upload)" rather than being blank.
+- [ ] **The delete confirmation lists the correct filenames,** warns it
+      cannot be undone, Cancel deletes nothing, Confirm removes and
+      refreshes.
+- [ ] **The no-selection and busy warnings are distinct messages.** Press
+      Upload Selected, Upload combat logs and Delete selected each with
+      nothing selected, and read all three. Then start an upload and press
+      the other two mid-flight. These are several specific messages, not one
+      generic guard.
+- [ ] **Escape and the scrim answer a confirm as "no", never as nothing.**
+      Both cancel cleanly and the app is immediately usable — no upload, no
+      stuck busy state, and Upload Selected works on the next press.
+- [ ] **A dialog raised from a worker thread reaches the page.** Kill the
+      network mid-upload and let the retries exhaust. The error modal
+      appears with plain-language text, not a traceback, and the window is
+      responsive behind it.
+
+## Progress
+
+- [ ] **LOAD-BEARING: the progress bar is indeterminate during a stitch.**
+      Select two, tick Stitch, upload. While ffmpeg runs the bar animates
+      continuously with NO percentage — stitching reports no progress and a
+      bar sitting at 0% reads as a hang — and switches to a real percentage
+      the moment the upload begins. Stitch twice in one session and confirm
+      it switches back correctly.
+- [ ] **Progress renders during a real upload.** Upload three recordings.
+      "Uploading file 2 of 3… 41.2%" with the bar tracking the whole batch,
+      updating smoothly rather than jumping only at file boundaries.
+- [ ] **The window stays responsive throughout.** Mid-upload, drag the
+      window, scroll the list, sort a column and open the context menu. A UI
+      that stalls means work is running on the wrong thread.
+- [ ] **The retry countdown is visible.** Kill the network mid-upload:
+      "retrying in Ns" counting down, then a resume — not a frozen bar. When
+      the retries are exhausted, Retry becomes enabled.
+- [ ] **Status severity colours are distinguishable.** Force a red error, a
+      green success and an ordinary status in one session. All three legible
+      against the near-black ground and clearly different.
 
 ## Release
 - [ ] **`uv.lock` carries the new version.** It records this project's own

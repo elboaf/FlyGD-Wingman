@@ -13,8 +13,15 @@ dependencies = [
     "google-auth-oauthlib",
     "google-auth-httplib2",
     "pystray",
+    # Kept, despite looking like Tk-era baggage: build_tray() opens the
+    # bundled .ico with it and draws the generated fallback icon.
     "Pillow",
-    "sv-ttk",
+    # Pinned exactly, not ranged. 6.x has live API churn -- FOLDER_DIALOG
+    # was deprecated for FileDialog.FOLDER mid-series -- and pywebview is a
+    # small project whose frameless-Windows support is its thinnest area.
+    # 6.2.1 is the version the spike ran on. Treat an upgrade as a change
+    # requiring a full smoke pass, not a routine bump.
+    "pywebview==6.2.1",
 ]
 
 [project.urls]
@@ -35,7 +42,11 @@ dev = ["pytest"]
 # additional top-level packages, hits the multiple-top-level-packages error,
 # and aborts the install entirely. That failure took down every dependency
 # and produced a frozen build with no pystray in it.
-packages = ["obs_youtube_uploader"]
+# Subpackages are NOT implied by their parent here: an explicit list means
+# every new one must be added by hand, and a missing entry installs cleanly
+# and fails at import time in the built artifact, not in the checkout where
+# the source tree makes it work anyway.
+packages = ["obs_youtube_uploader", "obs_youtube_uploader.ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

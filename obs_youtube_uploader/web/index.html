@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlyGD Wingman</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="titlebar">
+    <div class="pywebview-drag-region">
+      <span class="mark">&#9654;</span>
+      <span class="name">WINGMAN</span>
+      <span class="sub" id="route-label">Uploader</span>
+    </div>
+    <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
+    <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
+    <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
+  </div>
+
+  <!-- Filled by Task 11 (list) and Task 12 (upload panel). -->
+  <div class="route active" id="route-main">
+
+    <div class="list-pane">
+      <div class="grid-row list-head" id="list-head">
+        <!-- A bare check, deliberately NOT a box glyph: every heading here
+             is a sort control, and a box in the header position reads as a
+             select-all checkbox this column does not offer. -->
+        <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
+        <span class="c-name"   data-sort="filename">Filename</span>
+        <!-- "Modified", not "Date": the cell holds the file's mtime rendered
+             as relative time ("3h ago"), and "Date" both mislabelled that
+             and invited the reader to match it against the recording
+             timestamp already in the filename. Naming the mtime is what
+             explains why the two legitimately differ for a recording that
+             was copied or remuxed. The data-sort key stays "date" -- it is
+             list.js's internal branch name, not a label. -->
+        <span class="c-date"   data-sort="date"
+              title="Sort by when the file last changed">Modified</span>
+        <span class="c-size"   data-sort="size">Size</span>
+        <span class="c-len"    data-sort="duration">Length</span>
+        <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
+      </div>
+
+      <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
+           aria-label="Recordings">
+        <div id="list-body"></div>
+        <div class="empty" id="list-empty" hidden>
+          No recordings found in the watched folder.
+        </div>
+      </div>
+
+      <div class="list-foot">
+        <button class="btn" id="btn-select-all">Select all</button>
+        <button class="btn" id="btn-select-none">Select none</button>
+        <span class="count" id="list-count">0 recordings</span>
+      </div>
+    </div>
+
+    <!-- Filled by Task 12 (upload panel). -->
+    <div id="panel-slot">
+      <div class="panel">
+
+        <section class="card">
+          <h2>Upload</h2>
+          <label class="lab" for="f-title" id="lab-title">Title</label>
+          <input class="field" id="f-title" type="text" spellcheck="false"
+                 placeholder="Title for this upload">
+          <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
+          <textarea class="field" id="f-desc" spellcheck="false"
+                    placeholder="Optional description"></textarea>
+          <label class="check" style="margin-top:12px">
+            <input type="checkbox" id="f-stitch"><span class="box"></span>
+            Stitch selected into one video
+          </label>
+          <p class="summary" id="selection-summary"
+             style="margin-top:12px">Nothing selected</p>
+        </section>
+
+        <section class="card">
+          <h2>Publish</h2>
+          <p class="destination" id="destination">Channel confirmed after the first upload</p>
+          <div class="actions">
+            <button class="btn acc" id="btn-upload">Upload Selected</button>
+            <button class="btn" id="btn-combat">Upload combat logs</button>
+            <div class="secondary-row">
+              <button class="btn" id="btn-retry" disabled>Retry</button>
+              <button class="btn" id="btn-delete">Delete selected</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div class="ctxmenu" id="ctxmenu" hidden>
+    <button id="ctx-copy">Copy link</button>
+    <button id="ctx-open">Open in browser</button>
+  </div>
+
+  <div class="route" id="route-settings">
+    <div class="settings">
+
+      <section class="card">
+        <h2>Google account</h2>
+        <div class="row">
+          <span class="lab">Status</span>
+          <span class="pill idle" id="auth-pill"><span class="led"></span><span id="auth-text">Checking&hellip;</span></span>
+          <span style="flex:1"></span>
+          <button class="btn" id="btn-auth">Sign in with Google</button>
+        </div>
+        <p class="hint">
+          Google hasn't verified this app yet, so the sign-in page shows a warning.
+          Click Advanced, then <b style="color:#c8cdd6">Go to FlyGD Wingman (unsafe)</b> to continue.
+        </p>
+        <p class="hint">
+          Videos are uploaded to YouTube and are subject to the YouTube Terms of Service:
+          <span class="linkish" id="tos-link">https://www.youtube.com/t/terms</span>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Upload defaults</h2>
+        <div class="row">
+          <span class="lab">Privacy</span>
+          <select class="field" id="f-privacy">
+            <option value="private">private</option>
+            <option value="unlisted">unlisted</option>
+            <option value="public">public</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="lab">Category ID</span>
+          <input class="field" id="f-category" type="text" inputmode="numeric"
+                 spellcheck="false">
+          <span class="inline-hint">(20 = Gaming)</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>When a recording finishes</h2>
+        <label class="radio">
+          <input type="radio" name="notify" value="toast"><span class="ring"></span>
+          Show a tray notification
+          <span class="inline-hint">&mdash; recommended</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="notify" value="popup"><span class="ring"></span>
+          Open the uploader window immediately
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Folders</h2>
+        <div class="row">
+          <span class="lab">Recordings</span>
+          <input class="field mono" id="f-recdir" type="text" spellcheck="false">
+          <button class="btn" data-browse="recording">Browse&hellip;</button>
+          <button class="btn" data-detect="recording">Detect</button>
+        </div>
+        <div class="row">
+          <span class="lab">EVE gamelogs</span>
+          <input class="field mono" id="f-gamelogs" type="text" spellcheck="false">
+          <button class="btn" data-browse="gamelogs">Browse&hellip;</button>
+          <button class="btn" data-detect="gamelogs">Detect</button>
+        </div>
+        <p class="sub-hint" id="detect-note">
+          Detect reads the recording folder from OBS's own config, and the gamelogs
+          folder from your EVE Online documents folder.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Discord (combat logs)</h2>
+        <div class="row">
+          <span class="lab">Webhook URL</span>
+          <!-- Masked by default. A webhook URL is a credential: anyone
+               holding it can post to the channel, and this screen is open
+               on a second monitor while streaming and screenshotted when
+               users help each other configure it. -->
+          <input class="field" id="f-webhook" type="password" spellcheck="false"
+                 autocomplete="off">
+          <button class="btn toggle" id="btn-webhook-show"
+                  aria-pressed="false">Show</button>
+        </div>
+        <p class="sub-hint" id="webhook-status">not configured</p>
+      </section>
+
+      <div class="settings-foot">
+        <button class="btn" id="btn-settings-cancel">Cancel</button>
+        <button class="btn acc" id="btn-settings-save">Save</button>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="route" id="route-firstrun">
+    <div class="firstrun">
+      <h1>Choose your recording folder</h1>
+      <p class="firstrun-body">
+        Wingman watches one folder for new OBS recordings. Point it at the
+        folder OBS saves to &mdash; you can change this later in Settings.
+      </p>
+      <div class="row">
+        <input class="field mono" id="f-firstrun-dir" type="text"
+               spellcheck="false" placeholder="No folder chosen yet">
+        <button class="btn" id="btn-firstrun-browse">Browse&hellip;</button>
+        <button class="btn" id="btn-firstrun-detect">Detect</button>
+      </div>
+      <p class="firstrun-note" id="firstrun-note">
+        Detect reads the folder from OBS&rsquo;s own configuration.
+      </p>
+      <div class="firstrun-actions">
+        <button class="btn acc" id="btn-firstrun-continue" disabled>Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filled by Task 12 (status strip + progress bar). -->
+  <div id="statusbar-slot">
+    <div class="statusbar">
+      <span id="status" class="FG">Ready</span>
+      <div class="track" id="track"><div class="bar" id="bar"></div></div>
+      <span class="pct" id="pct"></span>
+    </div>
+  </div>
+
+  <!-- Filled by Task 12 (modal dialog layer). -->
+  <div id="dialog-slot">
+    <div class="overlay" id="overlay" hidden>
+      <div class="dialog" id="dialog" role="dialog" aria-modal="true"
+           aria-labelledby="dlg-title">
+        <h3 id="dlg-title"></h3>
+        <div class="body" id="dlg-body"></div>
+        <div class="buttons">
+          <button class="btn" id="dlg-cancel" hidden>Cancel</button>
+          <button class="btn acc" id="dlg-ok">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="list.js"></script>
+  <script src="panel.js"></script>
+  <script src="settings.js"></script>
+  <script src="firstrun.js"></script>
+  <script src="dev.js"></script>
+</body>
+</html>

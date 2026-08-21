@@ -2,19 +2,25 @@
 import logging
 import sys
 import threading
-import tkinter as tk
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from tkinter import filedialog, messagebox
 
-from . import app as app_mod
-from . import discord, obsconfig, paths, settings as settings_mod, stitch, theme, watcher
+from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
+from .ui import api as api_mod, preflight, window as window_mod
+from .ui.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
 MUTEX_NAME = "Global\\OBSYouTubeUploader"
 POLL_SECONDS = 3.0
 FAILURE_NOTIFY_THRESHOLD = 5  # ~15s of consecutive poll failures at POLL_SECONDS
+
+# Exit code for "the WebView2 runtime is not usable". Non-zero on purpose:
+# pywebview's own behaviour in that situation is to log, return from
+# start(), and exit 0, which is a silent no-op for the user and a false
+# success for anything watching the process.
+EXIT_NO_WEBVIEW2 = 2
 
 
 def configure_logging() -> None:
@@ -108,40 +114,17 @@ def set_dpi_awareness() -> None:
         pass  # shcore.dll predates Windows 8.1; nothing to do on older hosts.
 
 
-def get_system_dpi() -> int:
-    """96 (100%) is the correct fallback off-Windows or on very old hosts."""
-    if sys.platform != "win32":
-        return 96
-    import ctypes
-    try:
-        dpi = ctypes.windll.user32.GetDpiForSystem()
-    except (AttributeError, OSError):
-        return 96
-    # Floor, not just an exception guard: GetDpiForSystem returns 0 on
-    # failure rather than raising, so the except above structurally cannot
-    # catch it — and `tk scaling 0.0` would silently collapse every
-    # point-sized font in the app.
-    return dpi if dpi >= 96 else 96
+def resolve_recording_dir(cfg: dict) -> Path | None:
+    """Stored setting, then OBS's own config. No third option.
 
+    The `ask` fallback is gone, and this is the one deliberate behaviour
+    change in the replatform. pywebview's create_file_dialog is a method on
+    a window, so no dialog can exist before webview.start() -- there is
+    nothing to parent it to and nothing to run its modal loop. Returning
+    None now means "the page must render its first-run route", which calls
+    pick_folder once a window does exist.
 
-def tk_scaling_for(dpi: int) -> float:
-    """Tk's `scaling` is points-per-pixel, so the divisor is 72, not 96.
-    Extracted from main() so the constant is testable without a real Tk
-    root; app.dpi_scale() is the reader half of this same contract.
-    """
-    return dpi / 72.0
-
-
-def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
-    """Stored setting, then OBS's own config, then ask the user.
-
-    Must be called after a Tk root exists (and has been withdrawn) so
-    ``askdirectory`` has a real root to parent itself to instead of
-    creating a stray default one.
-
-    ``ask`` is injectable (defaults to ``filedialog.askdirectory``) purely
-    so tests can exercise the stored/detected precedence above without a
-    display; it is not meant to be overridden in production.
+    Existing installations have recording_dir persisted and never reach it.
     """
     stored = cfg.get("recording_dir")
     if stored and Path(stored).is_dir():
@@ -149,8 +132,7 @@ def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None
     detected = obsconfig.find_recording_dir()
     if detected and detected.is_dir():
         return detected
-    chosen = ask(title="Where does OBS save your recordings?")
-    return Path(chosen) if chosen else None
+    return None
 
 
 def build_tray(on_open, on_quit):
@@ -181,6 +163,83 @@ def build_tray(on_open, on_quit):
     return pystray.Icon("obs_youtube_uploader", image, "FlyGD Wingman", menu)
 
 
+def notify(icon, message: str) -> None:
+    """Best-effort tray notification.
+
+    Swallowed on purpose: there may be no toast service, notifications may
+    be disabled by policy, or the shell may simply refuse. None of that is
+    a reason to break a watcher tick.
+    """
+    try:
+        icon.notify(message, "FlyGD Wingman")
+    except Exception:
+        pass
+
+
+@dataclass
+class PollState:
+    """The two flags the tick carries between runs.
+
+    A mutable object rather than nonlocals, so poll_tick can be a
+    module-level function with a test harness. Under Tk this state lived in
+    closure cells that nothing outside main() could reach.
+    """
+    consecutive_failures: int = 0
+    refresh_deferred: bool = False
+
+
+def poll_tick(w, api, icon, window, state: PollState) -> None:
+    """One watcher tick. Runs on the Scheduler's thread, never the UI thread.
+
+    Reaches the page only through the Api, which pushes; it never touches
+    the DOM and never calls into pywebview except for window.show(), which
+    spike Q6 proved is safe from a non-main thread.
+
+    Must not raise. Scheduler reschedules regardless, but the failure
+    counter and the one-shot "having trouble" notification live here and
+    would be lost along with the exception.
+    """
+    try:
+        ready = w.poll_once()
+        uploading = api._busy()
+        if ready:
+            if uploading:
+                # A full rebuild would wipe the links and progress of the
+                # upload currently running. Defer it until that finishes --
+                # but still tell the user recordings arrived.
+                state.refresh_deferred = True
+                notify(icon, f"{len(ready)} new recording(s) ready to upload")
+            else:
+                # A set of Path: RowSnapshot.rebuild matches preselect
+                # against info.path, so strings would never match.
+                api.list_rows(preselect=set(ready))
+                # Live settings, not a snapshot taken at startup: Settings is
+                # a route in this same window now and can change mid-run.
+                if api._state.settings.get("notify_mode", "toast") == "popup":
+                    window.show()
+                else:
+                    notify(icon, f"{len(ready)} new recording(s) ready to upload")
+                state.refresh_deferred = False
+        elif state.refresh_deferred and not uploading:
+            # The upload that blocked the deferred rebuild has since
+            # finished; catch the list up even though this tick found
+            # nothing new.
+            api.list_rows()
+            state.refresh_deferred = False
+        state.consecutive_failures = 0
+    except Exception:
+        # A single failure looks identical to "nothing new to upload," which
+        # is fine for a blip but not for a persistent problem (unreachable
+        # folder, permissions, a repeatedly failing seen-file write). Always
+        # log it, and after enough consecutive failures surface exactly one
+        # notification. The counter resets on any clean tick, so a long
+        # outage produces one message rather than a stream.
+        logger.warning("Poll tick failed", exc_info=True)
+        state.consecutive_failures += 1
+        if state.consecutive_failures == FAILURE_NOTIFY_THRESHOLD:
+            notify(icon, "The recording watcher is having trouble — check the log")
+
+
 def main() -> int:
     set_dpi_awareness()
     handle = acquire_single_instance()
@@ -192,120 +251,103 @@ def main() -> int:
     stitch.sweep_orphans(paths.tmp_dir())
     cfg = settings_mod.load()
 
-    root = tk.Tk()
-    root.withdraw()  # Created on the main thread up front, shown on demand.
-    root.tk.call("tk", "scaling", tk_scaling_for(get_system_dpi()))
-    theme.apply(root, theme.detect_mode())
+    # BEFORE anything touches pywebview. When the runtime is absent,
+    # pywebview logs the failure, webview.start() returns normally, and the
+    # process exits 0 -- no window, no error, no crash dialog, and a
+    # success exit code, with no console in a windowed build to show the
+    # diagnostic. This check is the only thing standing between that and a
+    # user who thinks the app is broken for no reason.
+    if not preflight.require_webview2():
+        return EXIT_NO_WEBVIEW2
 
     rec_dir = resolve_recording_dir(cfg)
-    if rec_dir is None:
-        messagebox.showerror("No recording folder",
-                              "A recording folder is required. Exiting.")
-        return 1
-    cfg["recording_dir"] = str(rec_dir)
-    settings_mod.save(cfg)
+    state = api_mod.AppState(
+        # None until first run completes. NOT Path.home(): a fallback there
+        # would send list_rows() scanning the user's entire home directory
+        # for .mkv files on first launch, which is slow, alarming, and
+        # produces a list that looks like a bug rather than an empty state.
+        recording_dir=rec_dir,
+        settings=cfg,
+        ffmpeg_bin=paths.resolve_binary("ffmpeg"),
+        ffprobe_bin=paths.resolve_binary("ffprobe"),
+    )
+    api = api_mod.Api(state)
 
-    state = app_mod.AppState(recording_dir=rec_dir, settings=cfg)
-    window = app_mod.UploaderWindow(root, state)
+    w = None
+    scheduler = None
+    window = None
+    poll_state = PollState()
 
-    w = watcher.Watcher(rec_dir, paths.seen_file())
-    w.baseline()  # Prunes stale `seen` entries left by out-of-band deletes.
-    window.on_deleted = w.forget  # Clears in-app deletions from `seen`.
+    def on_open() -> None:
+        # Called on the pystray thread. show() and destroy() are safe from
+        # there (spike Q6, confirmed twice); no marshalling needed, and
+        # there is no event loop left to marshal onto anyway.
+        #
+        # The None guard is not paranoia: the tray thread is started before
+        # create() returns, so a very fast click can land in the gap.
+        if window is not None:
+            window.show()
 
-    def on_settings_saved() -> None:
-        """Settings changes must reach the watcher, not just AppState.
+    def on_quit() -> None:
+        if window is not None:
+            window.destroy()  # unblocks window_mod.run() below
 
-        SettingsWindow replaces state.settings with a fresh dict and may
-        change state.recording_dir. Anything holding the original objects
-        goes stale, so the poll loop below reads state.settings each tick
-        rather than closing over cfg.
+    icon = build_tray(on_open=on_open, on_quit=on_quit)
+    threading.Thread(target=icon.run, daemon=True, name="pystray").start()
+
+    window = window_mod.create(api)
+
+    def start_watching(directory) -> None:
+        """Create the watcher and start the poll loop. Idempotent.
+
+        Called once the recording directory is known: at startup when it is
+        already stored or detected, or later from the page's first-run
+        route once the user picks one.
         """
-        if Path(state.recording_dir) != w.directory:
-            w.rebind(state.recording_dir)
-        window.refresh()
+        nonlocal w, scheduler
+        if scheduler is not None:
+            return
+        w = watcher.Watcher(Path(directory), paths.seen_file())
+        w.baseline()  # Prunes stale `seen` entries left by out-of-band deletes.
+        # The Api holds the watcher directly: save_settings rebinds it when
+        # the recording folder changes, and delete_selected forgets what it
+        # actually removed. No callback indirection.
+        api._watcher = w
+        scheduler = Scheduler(POLL_SECONDS,
+                              lambda: poll_tick(w, api, icon, window, poll_state))
+        scheduler.start()
 
-    window.on_settings_saved = on_settings_saved
+    api._on_recording_dir_ready = start_watching
 
-    icon = build_tray(on_open=lambda: root.after(0, window.show),
-                       on_quit=lambda: root.after(0, root.quit))
-    threading.Thread(target=icon.run, daemon=True).start()
+    if rec_dir is not None:
+        cfg["recording_dir"] = str(rec_dir)
+        settings_mod.save(cfg)
+        # Started before run() rather than from a page-loaded event: the
+        # first tick is POLL_SECONDS away and the page asks for its own
+        # state on load, so an early push has nothing to race with.
+        start_watching(rec_dir)
+    else:
+        # First run, or a stored folder that has since disappeared. The page
+        # cannot infer this state -- an unconfigured folder and an empty one
+        # look identical from there -- so it is pushed explicitly. Deferred
+        # until the page is up, because a push before app.js has registered
+        # its handlers is logged and dropped (see Api._push).
+        api._push_first_run_when_ready()
 
-    def poll() -> None:
-        # Everything here is guarded by a single try/finally so the loop
-        # always reschedules itself: a `poll_once()` error, or an error
-        # raised while showing/refreshing the window, must not silently
-        # and permanently kill the watcher with no error shown to the user.
-        nonlocal consecutive_failures, refresh_deferred
-        try:
-            # Independent of the watcher block below: a failed registry
-            # read is a theming problem, not a watcher problem, and must
-            # never be counted toward FAILURE_NOTIFY_THRESHOLD.
-            detected_mode = theme.detect_mode()
-            if detected_mode != theme.current_mode():
-                theme.apply(root, detected_mode)
-        except Exception:
-            logger.warning("Theme check failed", exc_info=True)
-        try:
-            ready = w.poll_once()
-            uploading = window.upload_thread is not None and window.upload_thread.is_alive()
-            if ready:
-                if uploading:
-                    # refresh()/show() destroy every row and rebuild the
-                    # list from scratch, which would wipe out the links
-                    # and progress of the upload currently running. Defer
-                    # the rebuild until the upload finishes, but still let
-                    # the user know new recordings showed up.
-                    refresh_deferred = True
-                    try:
-                        icon.notify(f"{len(ready)} new recording(s) ready to upload",
-                                    "FlyGD Wingman")
-                    except Exception:
-                        pass  # Notifications are best-effort.
-                else:
-                    # Read the live settings, not a snapshot taken at startup.
-                    if state.settings.get("notify_mode", "toast") == "popup":
-                        window.show(preselect=set(ready))
-                    else:
-                        window.refresh(preselect=set(ready))
-                        try:
-                            icon.notify(f"{len(ready)} new recording(s) ready to upload",
-                                        "FlyGD Wingman")
-                        except Exception:
-                            pass  # Notifications are best-effort.
-                    refresh_deferred = False
-            elif refresh_deferred and not uploading:
-                # The upload that blocked the deferred refresh above has
-                # since finished; catch the list up now even though this
-                # particular tick found nothing new.
-                window.refresh()
-                refresh_deferred = False
-            consecutive_failures = 0
-        except Exception:
-            # A single failure looks identical to "nothing new to upload,"
-            # which is fine for a blip but not for a persistent problem
-            # (unreachable recording folder, permissions error, a repeatedly
-            # failing seen-file write). Always log it — otherwise even the
-            # log file has no record — and after enough consecutive
-            # failures, surface exactly one notification so the user isn't
-            # staring at a tray icon that looks healthy while doing nothing.
-            # The counter resets on any tick that completes cleanly, so a
-            # long outage produces one message rather than a stream.
-            logger.warning("Poll tick failed", exc_info=True)
-            consecutive_failures += 1
-            if consecutive_failures == FAILURE_NOTIFY_THRESHOLD:
-                try:
-                    icon.notify("The recording watcher is having trouble — check the log",
-                                "FlyGD Wingman")
-                except Exception:
-                    pass  # Notifications are best-effort.
-        finally:
-            root.after(int(POLL_SECONDS * 1000), poll)
+    # Resolve the account state off the bridge thread so the Settings route
+    # is correct the first time it is opened rather than after a click.
+    #
+    # Handed to run() rather than called here. refresh_auth's first act is
+    # a push, and a push before webview.start() blocks the MAIN thread on
+    # pywebview's twenty-second readiness timeout -- an invisible window on
+    # every launch, and the push lost to _push's bare except when the
+    # timeout finally raises. pywebview runs this on its own thread once
+    # the GUI loop owns the main one.
+    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
 
-    consecutive_failures = 0
-    refresh_deferred = False
-    root.after(int(POLL_SECONDS * 1000), poll)
-    root.mainloop()
     icon.stop()
+    if scheduler is not None:
+        scheduler.stop()
     return 0
 
 

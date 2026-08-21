@@ -1,0 +1,595 @@
+/* FlyGD Wingman — page styles.
+   Direction B, transcribed from the approved spike at wingman-spike/web.
+   Tokens are the successor to theme.py's TOKENS dict. Dark only: light
+   mode and the AppsUseLightTheme detection are dropped, not ported. */
+
+/* Bundled, never linked from a CDN: this is a desktop app, and a webfont
+   fetched over the network would silently fall back whenever the machine
+   is offline -- which is precisely the bug this replaces.
+
+   Inter is the VARIABLE build on purpose. The type scale below asks for
+   weights 620 and 650; only a variable face can render those, and with a
+   static fallback they collapse into the 600/700 buckets and flatten the
+   hierarchy the redesign is built on.
+
+   Only the upright faces ship. Nothing in the page uses italic, and the
+   italic variable file is another ~344 KB.
+
+   font-display: block rather than swap -- the window paints once at
+   launch against a local file, so there is no slow-network case to swap
+   out of, and a reflow from fallback metrics to Inter's would be visible
+   as a jump on every start. */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/InterVariable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* ---- colour ---- */
+  --bg: #0c0d10;
+  --panel: #14161b;
+  --panel-border: #1e2128;
+  --field: #0a0b0e;
+  --field-border: #23262e;
+  --text: #e8eaed;
+  --text-dim: #9aa2b1;
+  --text-faint: #6f7681;
+  --brand: #ff5a4d;
+  --brand-deep: #c81e12;
+  --ok: #4ade80;
+  --warn: #d29922;
+  --err: #f85149;
+
+  /* ---- type scale ----
+     Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
+     headings 1.2x body, body, muted 0.875x body. COLUMN HEADERS USE
+     --fs-muted DELIBERATELY — they sit BELOW body size because they label
+     the data and are not the data. Making them larger undoes a considered
+     decision. */
+  --fs-head: 15.5px;
+  --fs-body: 13px;
+  --fs-muted: 11.5px;
+  --fs-mono: 12px;
+  --fs-label: 10.5px;   /* uppercase tracked section labels (direction B) */
+
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  --row-h: 30px;
+  --titlebar-h: 44px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  /* A desktop chrome should not text-select or rubber-band like a web page. */
+  user-select: none;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+h1 { font-size: var(--fs-head); font-weight: 620; }
+
+/* ---- custom title bar (replaces the OS one; window is frameless) ------ */
+.titlebar {
+  display: flex; align-items: center; gap: 10px;
+  height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
+  background: linear-gradient(180deg, #16181d, #101216);
+  border-bottom: 1px solid #000;
+  box-shadow: inset 0 1px 0 #24272e;
+}
+/* pywebview's documented drag handle for frameless windows. Only this
+   element drags: the buttons must stay clickable. */
+.pywebview-drag-region {
+  flex: 1; height: 100%; display: flex; align-items: center; gap: 10px;
+}
+.mark {
+  width: 20px; height: 20px; border-radius: 5px; flex: none;
+  background: linear-gradient(150deg, var(--brand), var(--brand-deep));
+  display: grid; place-items: center; font-size: 9px; color: #fff;
+  box-shadow: 0 0 12px rgba(230, 50, 45, .45);
+}
+.name { font-weight: 650; letter-spacing: .3px; }
+.sub {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.winbtn {
+  width: 44px; height: 32px; border: 0; background: transparent;
+  color: var(--text-faint); font-size: 13px; cursor: pointer;
+  border-radius: 5px; font-family: inherit; flex: none;
+}
+.winbtn:hover { background: #22252c; color: var(--text); }
+.winbtn.close:hover { background: #d9291c; color: #fff; }
+.winbtn.gear { font-size: 15px; }
+.winbtn.gear.active { background: #22252c; color: var(--brand); }
+
+/* ---- routes ----------------------------------------------------------
+   Settings is a ROUTE in this window, not a second OS window. */
+.route { flex: 1; min-height: 0; display: none; }
+.route.active { display: flex; }
+
+/* ---- shared primitives ---------------------------------------------- */
+.card {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card > h2 {
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: #8b93a1; margin-bottom: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 9px;
+}
+/* The short brand rule preceding every section label. */
+.card > h2::before {
+  content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+}
+
+.row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.row:last-child { margin-bottom: 0; }
+
+input.field, textarea.field, select.field, span.field {
+  flex: 1; min-width: 0; background: var(--field);
+  border: 1px solid var(--field-border); border-radius: var(--radius-sm);
+  padding: 7px 10px; font-size: var(--fs-body); color: var(--text);
+  font-family: inherit; outline: none; user-select: text;
+}
+input.field.mono, span.field.mono, textarea.field.mono {
+  font-family: var(--mono); font-size: var(--fs-mono);
+}
+span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+input.field:focus, textarea.field:focus, select.field:focus {
+  border-color: #39404d;
+  box-shadow: 0 0 0 2px rgba(255, 90, 77, .14);
+}
+textarea.field { resize: none; line-height: 1.5; }
+
+button.btn {
+  background: #1c1f26; border: 1px solid #2a2e37; border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: var(--fs-mono); color: #c8cdd6; flex: none;
+  cursor: pointer; font-family: inherit;
+}
+button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
+button.btn:disabled { opacity: .45; cursor: default; }
+/* The ONE brand-accent control on any screen. */
+button.btn.acc {
+  background: linear-gradient(180deg, var(--brand), #d9291c);
+  border-color: #ff7a6f; color: #fff; font-weight: 600;
+  box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
+}
+button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
+button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+.hint {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  line-height: 1.5; margin-top: 8px; user-select: text;
+}
+.linkish { color: #7aa2f7; cursor: pointer; user-select: text; }
+.linkish:hover { text-decoration: underline; }
+
+/* ---- scrollbar ------------------------------------------------------
+   Tk cannot restyle this at all; the classic Windows scrollbar is one of
+   the most visible tells in newest-version.png and disappears here. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #262a33; border-radius: 5px; border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #333845; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ====================== recording list ============================== */
+/* Two panes, preserving today's split: list left, upload panel right. */
+#route-main { padding: 12px; gap: 12px; align-items: stretch; }
+
+.list-pane {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); overflow: hidden;
+}
+
+.list-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+
+/* One grid template shared by the header and every row, so the two can
+   never disagree. Column order matches the header spans in index.html and
+   the cells rowNode() builds in list.js: check, filename (capped), date,
+   size, length, link. (This used to cite app.py's COLUMN_SPEC, which went
+   with the Tk UI.) */
+.grid-row {
+  display: grid;
+  /* The filename is capped rather than elastic, and the row left-packs.
+     It used to be minmax(120px, 1fr), which handed it EVERY spare pixel:
+     in a 1300px list that is ~940px of column for ~390px of name, so the
+     four metadata columns were shoved against the right edge with a hole
+     in the middle that reads as misalignment rather than as spacing.
+
+     52ch tracks the text, not the window, so a long name still gets room
+     while a short one stops the group drifting apart. The 120px floor is
+     the same one the narrow-window smoke item checks.
+
+     No 1fr anywhere is deliberate: with nothing elastic the grid packs to
+     content width and the slack collects at the right edge, keeping the
+     name and its metadata legible as one group. The header uses this same
+     rule, so the two can never disagree. */
+  grid-template-columns: 34px minmax(120px, 52ch) 92px 84px 76px 46px;
+  align-items: center;
+  min-height: var(--row-h);
+  padding: 0 10px;
+}
+
+.list-head {
+  position: sticky; top: 0; z-index: 2;
+  background: #101216;
+  border-bottom: 1px solid var(--panel-border);
+  /* --fs-muted, not --fs-body: headers label the data, they are not the
+     data. This is the deliberate ordering carried over from 2.2.0. */
+  font-size: var(--fs-muted);
+  color: var(--text-dim);
+  height: 30px;
+}
+.list-head > span {
+  cursor: pointer; user-select: none; padding: 0 4px;
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.list-head > span:hover { color: var(--text); }
+.list-head > span.sorted { color: var(--brand); }
+/* Direction indicator on the active column only. */
+.list-head > span.sorted::after { content: "\25B2"; font-size: 8px; }
+.list-head > span.sorted.desc::after { content: "\25BC"; }
+/* Each header is anchored like its column — headers centred over
+   right-aligned data read as misalignment, not as a choice. */
+.list-head > span.c-check { justify-content: center; padding: 0; }
+.list-head > span.c-size,
+.list-head > span.c-len  { justify-content: flex-end; }
+.list-head > span.c-link { justify-content: center; padding: 0; }
+
+/* 1px separators, NOT zebra striping: with a card surface and adequate row
+   height, zebra is compensation for a flat list. */
+.list-row {
+  border-bottom: 1px solid #191c22;
+  border-left: 2px solid transparent;
+  cursor: default;
+}
+.list-row:last-child { border-bottom: 0; }
+.list-row:hover { background: #171a20; }
+/* Selected rows take a left brand rule and a slightly lifted surface. */
+.list-row.sel { background: #191d24; border-left-color: var(--brand); }
+/* Row focus is a real concept, not styling: it is what Space acts on. */
+.list-row.focused { box-shadow: inset 0 0 0 1px #2f3540; }
+.list-scroll:focus { outline: none; }
+.list-scroll:focus .list-row.focused { box-shadow: inset 0 0 0 1px #4a5260; }
+
+.c-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 4px;
+}
+.c-date { color: var(--text-dim); font-size: var(--fs-muted); padding: 0 4px; }
+.c-size, .c-len {
+  text-align: right; color: var(--text-dim);
+  font-size: var(--fs-muted); font-variant-numeric: tabular-nums; padding: 0 4px;
+}
+.c-link { text-align: center; }
+
+/* The checkbox: a real drawn control. app.py generated these with Pillow
+   because ttk cannot draw one matching the theme; CSS just draws it. */
+.c-check { display: flex; justify-content: center; }
+.box {
+  width: 14px; height: 14px; border-radius: 3px;
+  border: 1.5px solid #3a3f49; background: var(--field);
+  display: grid; place-items: center; flex: none;
+}
+.list-row.sel .box {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  border-color: #ff7a6f;
+}
+.box::after {
+  content: "\2713"; font-size: 10px; line-height: 1; color: #fff;
+  opacity: 0; font-weight: 700;
+}
+.list-row.sel .box::after { opacity: 1; }
+
+/* The uploaded-row glyph is a real hover-highlighted control, not a text
+   arrow. */
+.glyph-link {
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px; border-radius: 5px;
+  color: var(--text-faint); cursor: pointer;
+}
+.glyph-link:hover { background: #22252c; color: var(--brand); }
+.dur-unknown, .dur-pending { color: var(--text-faint); cursor: help; }
+
+.list-foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-top: 1px solid var(--panel-border);
+  background: #101216;
+}
+.list-foot .count {
+  margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
+}
+.empty {
+  padding: 28px 16px; text-align: center;
+  color: var(--text-faint); font-size: var(--fs-muted);
+}
+
+/* ---- context menu (replaces the Tk tk_popup menu) ------------------- */
+.ctxmenu {
+  position: fixed; z-index: 40; min-width: 168px; padding: 4px;
+  background: var(--panel); border: 1px solid #2a2e37;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+.ctxmenu[hidden] { display: none; }
+.ctxmenu button {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: 0; border-radius: 4px; padding: 6px 10px;
+  color: var(--text); font-family: inherit; font-size: var(--fs-mono);
+  cursor: pointer;
+}
+.ctxmenu button:hover:not(:disabled) { background: #22252c; }
+.ctxmenu button:disabled { color: var(--text-faint); cursor: default; }
+
+/* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
+   DELAY_MS 450 is preserved as a transition-delay: long enough not to fire
+   while the pointer crosses the list on its way somewhere else, short
+   enough that resting on a glyph feels answered. */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px);
+  z-index: 50; pointer-events: none;
+  background: var(--panel); border: 1px solid #2a2e37; border-radius: 6px;
+  padding: 6px 8px; color: var(--text);
+  font-size: var(--fs-muted); line-height: 1.45;
+  /* attr() preserves the literal newlines in CELL_HELP's copy. */
+  white-space: pre-line; text-align: left; width: max-content; max-width: 280px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .5);
+  opacity: 0; visibility: hidden;
+  transition: opacity .1s linear .45s, visibility 0s linear .45s;
+}
+[data-tip]:hover::after { opacity: 1; visibility: visible; }
+/* Any click means the user is acting, not asking. */
+[data-tip]:active::after { opacity: 0; visibility: hidden; transition: none; }
+
+/* ====================== upload panel ================================ */
+#panel-slot { flex: none; display: flex; }
+
+.panel {
+  width: 320px; flex: none; display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto;
+}
+
+.panel .card { flex: none; }
+
+.panel .lab {
+  display: block; color: var(--text-dim); font-size: var(--fs-muted);
+  margin-bottom: 5px;
+}
+
+/* A sensible fixed height. NOT flex:1 — today the Description box consumes
+   all remaining vertical space and reads as an empty void. */
+#f-desc { height: 96px; }
+
+.check {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  color: var(--text);
+}
+.check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.check .box { width: 15px; height: 15px; }
+.check input:checked + .box {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  border-color: #ff7a6f;
+}
+.check input:checked + .box::after { opacity: 1; }
+.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+
+.summary {
+  color: var(--text-dim); font-size: var(--fs-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* The upload destination, learned from the videos.insert response. Always
+   visible so the user can see where uploads actually go. */
+.destination {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  margin-bottom: 10px; line-height: 1.4;
+}
+.actions { display: flex; flex-direction: column; gap: 8px; }
+.actions button.btn { width: 100%; text-align: center; padding: 9px 12px; }
+.actions .secondary-row { display: flex; gap: 8px; }
+.actions .secondary-row button.btn { flex: 1; }
+
+/* ====================== status strip ================================ */
+.statusbar {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 10px 16px; border-top: 1px solid var(--panel-border);
+  background: #101216;
+}
+#status {
+  font-size: var(--fs-mono); color: var(--text-dim);
+  min-width: 210px; flex: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Severity kinds stay FG / SUCCESS / WARNING / ERROR, matching
+   app._status_kind, so the semantics carry over even though the colours
+   moved out of theme.py and into CSS. */
+#status.FG { color: var(--text-dim); }
+#status.SUCCESS { color: var(--ok); }
+#status.WARNING { color: var(--warn); }
+#status.ERROR { color: var(--err); }
+
+.track {
+  flex: 1; height: 4px; border-radius: 2px; background: #1e2128;
+  overflow: hidden; position: relative;
+}
+.bar {
+  height: 100%; width: 0%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--brand-deep), var(--brand));
+  box-shadow: 0 0 10px rgba(255, 90, 77, .6);
+  transition: width .12s linear;
+}
+/* Indeterminate: an ffmpeg stitch reports no readable progress, so the bar
+   must say "working" without claiming a percentage. The transition is
+   dropped here or it fights the animation. */
+.track.indeterminate .bar {
+  width: 34%; transition: none;
+  animation: slide 1.15s cubic-bezier(.45, .05, .55, .95) infinite;
+}
+@keyframes slide {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.pct {
+  flex: none; width: 42px; text-align: right;
+  color: var(--text-faint); font-size: var(--fs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ====================== modal dialog layer ==========================
+   Modals are native Tk message boxes today, called from workers. They
+   become in-page modals; `confirm` is the only request/response pair in an
+   otherwise fire-and-forget protocol. */
+.overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(6, 7, 9, .62);
+  display: grid; place-items: center; padding: 24px;
+}
+.overlay[hidden] { display: none; }
+
+.dialog {
+  width: min(460px, 100%);
+  background: var(--panel); border: 1px solid #2a2e37;
+  border-radius: var(--radius); padding: 18px 20px 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+}
+.dialog h3 {
+  font-size: var(--fs-head); font-weight: 620; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 9px;
+}
+.dialog h3::before {
+  content: ""; width: 3px; height: 15px; border-radius: 2px; flex: none;
+  background: var(--text-faint);
+}
+.dialog.error h3::before   { background: var(--err); box-shadow: 0 0 9px var(--err); }
+.dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
+.dialog.confirm h3::before {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  box-shadow: 0 0 9px rgba(255, 90, 77, .5);
+}
+.dialog .body {
+  /* format_upload_confirm composes a multi-line body with the exact
+     (n/total) titles in it; pre-wrap is what keeps that layout. */
+  white-space: pre-wrap; line-height: 1.55; color: var(--text-dim);
+  max-height: 46vh; overflow-y: auto; user-select: text;
+  font-size: var(--fs-body);
+}
+.dialog .buttons {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+}
+
+/* ====================== settings route ==============================
+   A route in this window, not a second OS window. */
+#route-settings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+.settings {
+  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 620px; margin: 0 auto;
+}
+
+/* One label column for the WHOLE screen, not per-card: label columns that
+   do not align across groups are the first thing wrong in settings.png. */
+.settings .row > .lab {
+  width: 118px; flex: none; color: var(--text-dim);
+  font-size: var(--fs-body); text-align: right;
+}
+/* Fields and their buttons share a baseline by sitting in the same
+   align-items:center flex row at the same padding — the second thing
+   wrong in settings.png. */
+.settings .row > .field { flex: 1; min-width: 0; }
+.settings .row > select.field { flex: 0 0 150px; }
+.settings .row > input#f-category { flex: 0 0 90px; }
+
+.settings .sub-hint {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  margin: 6px 0 0 128px;
+}
+.settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
+
+/* "Connected" as a status PILL, not an oversized button. */
+.pill {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  font-size: var(--fs-muted); color: var(--text-faint);
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  background: #101216; border: 1px solid var(--field-border);
+}
+.led {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: currentColor; box-shadow: 0 0 9px currentColor;
+}
+.pill.ok   { color: var(--ok); }
+.pill.warn { color: var(--warn); }
+.pill.err  { color: var(--err); }
+.pill.idle { color: var(--text-faint); }
+.pill.warn .led { animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.radio {
+  display: flex; align-items: center; gap: 9px;
+  margin-bottom: 8px; cursor: pointer;
+}
+.radio:last-child { margin-bottom: 0; }
+.radio input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ring {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1.5px solid #3a3f49; flex: none;
+}
+.radio input:checked + .ring {
+  border: 4.5px solid var(--brand); background: var(--field);
+  box-shadow: 0 0 10px rgba(255, 90, 77, .5);
+}
+.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+
+/* A masked webhook must not be rendered in a proportional font: the mask
+   is what is on screen, and monospace keeps its length honest. */
+#f-webhook { font-family: var(--mono); font-size: var(--fs-mono); letter-spacing: .04em; }
+#f-webhook[type="text"] { letter-spacing: 0; }
+.settings .toggle { flex: none; min-width: 62px; }
+
+.settings-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 4px 0 8px;
+}
+
+/* ====================== first-run route ============================== */
+#route-firstrun { align-items: center; justify-content: center; padding: 24px; }
+
+.firstrun {
+  width: min(560px, 100%);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 26px 28px;
+}
+.firstrun h1 { margin-bottom: 10px; }
+.firstrun-body {
+  color: var(--text-dim); line-height: 1.55; margin-bottom: 18px;
+}
+.firstrun-note {
+  color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
+}
+.firstrun-actions { display: flex; justify-content: flex-end; margin-top: 20px; }

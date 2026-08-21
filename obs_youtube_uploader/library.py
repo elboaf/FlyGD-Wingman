@@ -28,30 +28,60 @@ def format_size(size_bytes: float) -> str:
 
 
 def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
-    """Recording timestamp, with the year suppressed for the current year.
+    """How long ago the file was last written, not when.
 
-    The year is the least informative part of the string for a recording
-    made this year, and `date` is the tightest non-elastic column in the
-    list, so dropping it buys width without costing the user anything they
-    cannot infer. The double space before the time is a poor man's column
-    split: ttk.Treeview offers no alignment control *within* a cell, so the
-    wider gap is what keeps the times legible as their own field.
+    Relative, deliberately. This column sits beside a filename that already
+    carries OBS's own recording timestamp ("Fight 2026-08-21 06-49-29.mkv"),
+    and an absolute time here read as that same fact printed twice -- except
+    that it is NOT the same fact. This is the file's mtime, so a recording
+    that was copied or remuxed shows a time minutes or hours off the one in
+    its name. Two nearly-equal timestamps that disagree look like a bug in
+    the app rather than like two different facts, which is exactly how it
+    was reported.
 
-    Changing this display format is safe only because app._sort_by keys the
-    date column off info.mtime, never off the rendered string.
-    A future sort that reads the cell text would silently start sorting
-    "Aug" before "Dec".
+    A relative string cannot be mistaken for the name's timestamp, and it
+    answers the question the column is actually for: is this recent?
 
-    `now` is injectable so the year branch is testable without waiting for
-    January -- the same convention as discover()'s runner= and
-    theme.detect_mode's reader=.
+    Precision degrades with age on purpose -- minutes matter for something
+    recorded during this session and are noise for something from March, so
+    anything a week or more old falls back to a calendar date (with the year
+    only when it is not the current one, which is what this function did
+    before and is still the tightest useful form).
+
+    Safe to change ONLY because no sort reads the rendered string:
+    list.js's date branch orders by delivery index, since Python delivers
+    rows newest-first. A sort keyed on this text would put "Aug" before
+    "Dec", and "2 days ago" before "3h ago".
+
+    `now` is injectable so every branch is testable without waiting for the
+    clock -- the same convention as discover()'s runner=. It matters more
+    now than it did for the year branch alone: every threshold here is
+    relative to it.
     """
     when = datetime.datetime.fromtimestamp(mtime)
     if now is None:
         now = datetime.datetime.now()
+
+    seconds = (now - when).total_seconds()
+    # Future mtimes are real: a clock correction, a bad archive, a file
+    # copied off a machine with a skewed clock. Fall through to the
+    # calendar form rather than rendering "-3h ago".
+    if seconds < 0:
+        pass
+    elif seconds < 90:
+        return "just now"
+    elif seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    elif seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    elif seconds < 172800:
+        return "yesterday"
+    elif seconds < 604800:
+        return f"{int(seconds // 86400)}d ago"
+
     if when.year == now.year:
-        return when.strftime("%b %d  %H:%M")
-    return when.strftime("%Y %b %d  %H:%M")
+        return when.strftime("%b %d")
+    return when.strftime("%Y %b %d")
 
 
 @dataclass

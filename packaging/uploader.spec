@@ -4,11 +4,10 @@
 # markedly more often.
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
-
 ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
 ICON = ROOT / "obs_youtube_uploader" / "assets" / "app.ico"
+WEB = ROOT / "obs_youtube_uploader" / "web"
 
 a = Analysis(
     [str(ROOT / "run.py")],
@@ -17,14 +16,19 @@ a = Analysis(
         (str(BIN / "ffmpeg.exe"), "bin"),
         (str(BIN / "ffprobe.exe"), "bin"),
     ],
-    # sv-ttk ships its theme as .tcl files (sv.tcl,
-    # theme/light.tcl, theme/dark.tcl) plus image assets. modulegraph only
-    # follows Python imports, so without this the package's .py file lands
-    # in the bundle but sv_ttk.set_theme() fails at runtime looking for
-    # data that was never copied. PyInstaller exits 0 either way (see the
-    # ffmpeg comment below), which is why build.yml also gets a post-build
-    # assertion in the "Verify sv-ttk theme data is bundled" step.
-    datas=collect_data_files("sv_ttk") + [
+    datas=[
+        # The page is data, not code: modulegraph only follows Python
+        # imports, so nothing under web/ reaches the bundle unless it is
+        # listed here. PyInstaller exits 0 either way (see the ffmpeg
+        # comment in build.yml), and the failure is total rather than
+        # partial -- window.py loads index.html by path, so a web/ that did
+        # not get collected means a blank window with no error. Both
+        # build.yml and release.yml therefore carry a post-build assertion.
+        # Destination is "web" (not "."), so the runtime lookup is
+        # bundle_dir() / "web" / "index.html" and resolves to
+        # _internal/web/index.html under PyInstaller 6.x's one-folder
+        # layout -- the exact path the spike confirmed.
+        (str(WEB), "web"),
         # Collected at the bundle root so paths.icon_file()'s frozen-case
         # lookup (bundle_dir() / "app.ico") finds it directly.
         (str(ICON), "."),
@@ -33,14 +37,18 @@ a = Analysis(
         # pystray selects its backend implementation dynamically at
         # runtime, which modulegraph cannot follow statically.
         "pystray._win32",
-        # Required, not precautionary: app.py imports PIL.ImageTk to build
-        # the Treeview checkbox images, and ImageTk loads PIL._tkinter_finder
-        # dynamically, which modulegraph cannot follow. Without this the
-        # video list renders with no checkboxes.
-        "PIL._tkinter_finder",
+        # Required, not precautionary: pywebview picks its rendering
+        # backend at runtime from a string, so modulegraph never sees this
+        # import. Without it the frozen app reaches webview.start(), finds
+        # no backend, and -- per spike Q7 -- returns normally and exits 0
+        # with no window and no error. The build-time import check in
+        # build.yml is what catches a missing/renamed module here, because
+        # PyInstaller reports "Hidden import not found" as an ERROR line
+        # and still exits 0.
+        "webview.platforms.edgechromium",
         # google.* and googleapiclient.* are PEP 420 namespace packages.
         # modulegraph has a known history of mishandling namespace-package
-        # resolution, so these are listed explicitly as a safety net — not
+        # resolution, so these are listed explicitly as a safety net -- not
         # because the imports below are lazy/function-level (modulegraph
         # scans bytecode for IMPORT_NAME regardless of function nesting, so
         # it normally does find those just fine).
@@ -56,7 +64,13 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytest"],
+    # tkinter is excluded, not merely unused: the replatform removed every
+    # import of it, and leaving it in drags the whole Tcl/Tk tree into the
+    # bundle for nothing. The spike's spec excluded it the same way. A
+    # residual `import tkinter` left somewhere fails LOUDLY at startup with
+    # ImportError, unlike the silent datas/hiddenimports failures above, so
+    # this needs no post-build assertion of its own.
+    excludes=["pytest", "tkinter"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

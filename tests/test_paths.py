@@ -42,3 +42,39 @@ def test_ensure_dirs_is_idempotent(monkeypatch, tmp_path):
 def test_bundle_dir_prefers_meipass(monkeypatch, tmp_path):
     monkeypatch.setattr(paths.sys, "_MEIPASS", str(tmp_path), raising=False)
     assert paths.bundle_dir() == tmp_path
+
+
+def test_resolve_binary_prefers_the_bundled_copy(tmp_path, monkeypatch):
+    """The frozen layout: bundle_dir()/bin/<name>.exe."""
+    from obs_youtube_uploader import paths as paths_mod
+
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "ffmpeg.exe").write_bytes(b"")
+    monkeypatch.setattr(paths_mod, "bundle_dir", lambda: tmp_path)
+
+    assert paths_mod.resolve_binary("ffmpeg") == str(binaries / "ffmpeg.exe")
+
+
+def test_resolve_binary_finds_the_source_checkout_copy(tmp_path, monkeypatch):
+    """packaging/fetch_ffmpeg.py writes to packaging/bin, not <repo>/bin.
+    Without this lookup, running from source silently falls back to PATH
+    and ignores the ffmpeg the build script just fetched."""
+    from obs_youtube_uploader import paths as paths_mod
+
+    packaging_bin = tmp_path / "packaging" / "bin"
+    packaging_bin.mkdir(parents=True)
+    (packaging_bin / "ffprobe.exe").write_bytes(b"")
+    monkeypatch.setattr(paths_mod, "bundle_dir", lambda: tmp_path)
+    monkeypatch.delattr(paths_mod.sys, "_MEIPASS", raising=False)
+
+    assert paths_mod.resolve_binary("ffprobe") == str(packaging_bin / "ffprobe.exe")
+
+
+def test_resolve_binary_falls_back_to_path(tmp_path, monkeypatch):
+    from obs_youtube_uploader import paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "bundle_dir", lambda: tmp_path)
+    monkeypatch.setattr(paths_mod.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    assert paths_mod.resolve_binary("ffmpeg") == "/usr/bin/ffmpeg"
