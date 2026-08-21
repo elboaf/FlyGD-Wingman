@@ -45,13 +45,16 @@ MONITOR_DEFAULTTONEAREST = 2
 
 # Grab thickness in LOGICAL pixels, scaled per window DPI at hit-test time.
 #
-# PENDING MEASUREMENT (plan step 1): these must not exceed the inset that
-# window.py actually achieves, or part of the grab band lands on the
-# WebView2 child and silently stops responding. The spike asked for a 6px
-# inset and got 3, cause unresolved -- so treat both numbers below as
-# provisional until that reads out.
+# PENDING MEASUREMENT (plan step 1): BORDER must not exceed the inset that
+# INSET actually achieves, or part of the grab band lands on the WebView2
+# child and silently stops responding. The spike asked for a 6px inset and
+# got 3, cause unresolved -- so all three numbers here are provisional.
 BORDER = 6
 CORNER = 14
+
+# Padding applied to the form, in whatever units WinForms resolves Padding
+# in -- which is the open question. Asking for 6 produced a 3px band.
+INSET = 6
 
 
 def hit_code(rect, x, y, scale=1.0):
@@ -177,12 +180,43 @@ def _scale_for(user32, hwnd):
         return 1.0
 
 
-def enable_resize(window) -> bool:
+def _apply_inset(native, pad: int) -> None:
+    """Inset the WebView2 so the form owns a band around it.
+
+    DockStyle.Fill measures against the parent's DisplayRectangle, which
+    Padding shrinks -- so this insets pywebview's control without touching
+    its Dock assignment (platforms/edgechromium.py:99).
+
+    It MUST be marshalled onto the UI thread. The shown event does not fire
+    there, and assigning Padding triggers a layout pass over the WebView2
+    control; doing that cross-thread deadlocks the process into a window
+    that cannot be closed from the UI. pywebview guards its own equivalents
+    the same way (winforms.py:546, :597). The spike hit this exact hang.
+    """
+    from System import Action
+    from System.Windows.Forms import Padding
+
+    def _set():
+        native.Padding = Padding(pad)
+
+    if native.InvokeRequired:
+        native.Invoke(Action(_set))
+    else:
+        _set()
+
+
+def enable_resize(window, pad: int = INSET) -> bool:
     """Give *window* a native resize border. True if it took.
 
-    Never raises. A window that cannot be subclassed is the behaviour
-    users have today -- a fixed-size window -- whereas an exception here
-    would take the launch with it.
+    The inset and the subclass are done together on purpose. WM_NCHITTEST
+    goes to the window under the cursor, so without the inset the WebView2
+    child answers every one of them and the subclass is inert -- measured
+    as zero hit-tests reaching the form. Two callers, one of which forgot
+    the inset, would produce a feature that silently does nothing.
+
+    Never raises. A window that cannot be subclassed is the behaviour users
+    have today -- a fixed-size window -- whereas an exception here would
+    take the launch with it.
     """
     if sys.platform != "win32":
         return False
@@ -196,6 +230,15 @@ def enable_resize(window) -> bool:
         hwnd = native.Handle.ToInt64()
     except Exception:
         logger.warning("Could not read the window handle.", exc_info=True)
+        return False
+
+    try:
+        _apply_inset(native, pad)
+    except Exception:
+        # Without the band the subclass cannot receive anything, so there
+        # is nothing to gain by continuing to attach it.
+        logger.warning("Could not inset the web view; window stays "
+                       "fixed-size.", exc_info=True)
         return False
 
     try:
@@ -276,4 +319,29 @@ def enable_resize(window) -> bool:
         return False
 
     chained.append(ctypes.cast(previous, WNDPROC))
+    _log_geometry(native, pad)
     return True
+
+
+def _log_geometry(native, pad: int) -> None:
+    """Record what the inset actually produced. Debug level, never fatal.
+
+    This is the plan's step-1 diagnostic, kept rather than deleted: asking
+    for a 6px inset produced a 3px band on the spike and the cause is still
+    unresolved. Until it is, the only way to know what a given machine did
+    is to read it back, and a DPI-dependent answer would otherwise surface
+    as "resizing feels wrong on that laptop" with nothing to go on.
+    """
+    try:
+        client = native.ClientRectangle
+        display = native.DisplayRectangle
+        logger.debug(
+            "resize inset: asked=%s client=%dx%d display=%dx%d at (%d,%d) "
+            "padding=%s dpi=%s",
+            pad, client.Width, client.Height, display.Width, display.Height,
+            display.X, display.Y, native.Padding, native.DeviceDpi)
+        for control in native.Controls:
+            logger.debug("  child %s bounds=%s", control.GetType().Name,
+                         control.Bounds)
+    except Exception:
+        logger.debug("Could not read back the inset geometry", exc_info=True)

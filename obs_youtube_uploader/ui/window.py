@@ -16,12 +16,24 @@ import logging
 import sys
 from pathlib import Path
 
+# Safe to import at module scope, unlike webview: chrome.py builds its
+# Win32 types lazily so it imports cleanly off Windows (see its docstring).
+from obs_youtube_uploader.ui import chrome
+
 TITLE = "FlyGD Wingman"
 
 # Two panes plus a status strip. Wide enough that filename, date, size and
 # length do not fight for the list's columns at 100% scaling.
 WIDTH = 1040
 HEIGHT = 680
+
+# The floor the layout can still render at. PROVISIONAL, pending the plan's
+# step-1 measurement: the width depends on `52ch` in the list grid
+# (style.css:233) resolved against the bundled Inter face, which cannot be
+# computed on paper, and the height is a judgement about how few list rows
+# are still useful rather than an arithmetic result.
+MIN_WIDTH = 880
+MIN_HEIGHT = 560
 
 # --bg from the token table. This paints the NATIVE surface, before the
 # first frame of HTML exists; a mismatch here is a white flash on launch.
@@ -129,8 +141,17 @@ def create(api) -> "webview.Window":
         # the whole drag surface, by design.
         easy_drag=False,
         background_color=BACKGROUND,
+        # Without this the floor is pywebview's default 200x100
+        # (winforms.py:210), and now that the window can be resized a user
+        # can drag it down to a size the layout cannot render at all.
+        min_size=(MIN_WIDTH, MIN_HEIGHT),
     )
     api._window = window
+
+    # Deferred to `shown` because window.native does not exist until the
+    # form is created (winforms.py:195), and the resize border is attached
+    # to that form's handle.
+    window.events.shown += lambda: chrome.enable_resize(window)
     return window
 
 

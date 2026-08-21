@@ -15,6 +15,22 @@ from obs_youtube_uploader.ui import window as window_mod
 from obs_youtube_uploader.ui.api import Api
 
 
+class _FakeEvent:
+    """pywebview's Event, reduced to the one operator create() uses.
+
+    Real Events run their subscribers on the pywebview thread; this only
+    records them, so the tests can assert that the border is wired up
+    without any of it reaching Win32.
+    """
+
+    def __init__(self, sink):
+        self._sink = sink
+
+    def __iadd__(self, handler):
+        self._sink.append(handler)
+        return self
+
+
 @pytest.fixture
 def fake_webview(monkeypatch):
     """Stand in for the `webview` module and record what it was asked for."""
@@ -24,7 +40,15 @@ def fake_webview(monkeypatch):
         calls["title"] = title
         calls["url"] = url
         calls["kwargs"] = kwargs
-        calls["window"] = SimpleNamespace(label="the-window")
+        # `events` is not decoration: create() subscribes to `shown` to
+        # attach the resize border, so a window without it raises in every
+        # test here. `shown` records its subscribers rather than firing
+        # them, because firing would reach the real Win32 code.
+        calls["shown_handlers"] = []
+        calls["window"] = SimpleNamespace(
+            label="the-window",
+            events=SimpleNamespace(
+                shown=_FakeEvent(calls["shown_handlers"])))
         return calls["window"]
 
     def start(**kwargs):
@@ -56,6 +80,30 @@ def test_the_window_is_frameless_with_drag_left_to_the_page(fake_webview):
     kwargs = fake_webview["kwargs"]
     assert kwargs["frameless"] is True
     assert kwargs["easy_drag"] is False
+
+
+def test_the_window_has_a_resize_border_attached_once_it_is_shown(fake_webview):
+    """The border is attached on `shown`, not at create time.
+
+    window.native does not exist until the form is created
+    (winforms.py:195), and enable_resize needs its handle. Subscribing is
+    all this can check on Linux -- what the handler then does is Win32 and
+    only testable by hand.
+    """
+    window_mod.create(_bare_api())
+    assert len(fake_webview["shown_handlers"]) == 1
+
+
+def test_the_window_declares_the_size_its_layout_can_survive(fake_webview):
+    """Asserts the exact tuple, not merely that the kwarg was passed.
+
+    A presence-only check passes on a wrong number, and pywebview's default
+    floor is 200x100 (winforms.py:210) -- small enough that the two-pane
+    layout cannot render at all. Now that the window resizes, that floor is
+    reachable by dragging.
+    """
+    window_mod.create(_bare_api())
+    assert fake_webview["kwargs"]["min_size"] == (880, 560)
 
 
 def test_the_window_is_given_an_explicit_position(fake_webview):
