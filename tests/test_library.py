@@ -191,10 +191,38 @@ def test_size_str_is_human_readable(tmp_path):
     assert library.build_info(f, None).size_str == "2.0 KB"
 
 
-def test_date_str_matches_mtime(tmp_path):
-    f = _touch(tmp_path / "a.mkv", mtime=0)
-    expected = datetime.datetime.fromtimestamp(0).strftime("%Y-%m-%d %H:%M")
-    assert library.build_info(f, None).date_str == expected
+def test_format_date_omits_the_year_in_the_current_year():
+    mtime = datetime.datetime(2026, 8, 20, 17, 43).timestamp()
+    now = datetime.datetime(2026, 12, 1, 9, 0)
+    assert library.format_date(mtime, now=now) == "Aug 20  17:43"
+
+
+def test_format_date_prefixes_the_year_for_an_older_recording():
+    mtime = datetime.datetime(2025, 11, 2, 22, 11).timestamp()
+    now = datetime.datetime(2026, 12, 1, 9, 0)
+    assert library.format_date(mtime, now=now) == "2025 Nov 02  22:11"
+
+
+def test_format_date_compares_calendar_years_not_elapsed_time():
+    """December 31 and the next January 1 are 24 hours apart and must still
+    take opposite branches -- the rule is the calendar year, not "recent"."""
+    mtime = datetime.datetime(2025, 12, 31, 23, 59).timestamp()
+    now = datetime.datetime(2026, 1, 1, 0, 1)
+    assert library.format_date(mtime, now=now) == "2025 Dec 31  23:59"
+
+
+def test_format_date_defaults_now_to_the_clock():
+    """The default path is exercised for real; only the injected `now`
+    branches above pin literal strings, so this cannot become a time bomb."""
+    mtime = datetime.datetime.now().timestamp()
+    assert library.format_date(mtime) == library.format_date(
+        mtime, now=datetime.datetime.now())
+
+
+def test_date_str_delegates_to_format_date(tmp_path):
+    f = _touch(tmp_path / "a.mkv", mtime=1000)
+    info = library.build_info(f, None)
+    assert info.date_str == library.format_date(1000)
 
 
 def test_delete_removes_files_and_counts_them(tmp_path):

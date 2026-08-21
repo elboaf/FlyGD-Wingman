@@ -72,6 +72,42 @@ def dpi_scale(widget: tk.Misc) -> float:
     return round(float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
 
 
+def format_selection_summary(infos: list[library.VideoInfo]) -> str:
+    """The panel's "3 selected · 1.2 GB · 2:04:35" line.
+
+    Pure, and kept out of the window class, because the label it feeds is in
+    the one layer this repo has no test harness for. Everything decidable
+    about the string is decided here.
+
+    Two asymmetries are deliberate:
+
+    * The "+" marks the duration total as a floor, not a value. A recording
+      whose probe is still outstanding contributes 0, so an unmarked total
+      would read as complete while being short. It reuses the duration
+      column's own vocabulary for the same state ("…" per row) rather than
+      inventing a second one.
+    * Size is never marked partial: info.size comes from stat, so it is
+      final from the moment the row exists, whatever the probe is doing.
+
+    A probed recording with duration None is a finished verdict (ffprobe
+    could not read it), so it also contributes 0 but leaves the total exact.
+    Its own row already shows "?"; repeating that diagnosis in an aggregate
+    would say nothing the user can act on.
+
+    The count carries no noun ("3 selected"), which sidesteps agreement at
+    every value instead of special-casing 1.
+    """
+    if not infos:
+        return "Nothing selected"
+    total_size = sum(info.size for info in infos)
+    total_seconds = int(sum(info.duration or 0.0 for info in infos))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    partial = "+" if any(not info.probed for info in infos) else ""
+    return (f"{len(infos)} selected · {library.format_size(total_size)}"
+            f" · {hours}:{minutes:02d}:{seconds:02d}{partial}")
+
+
 @dataclass(frozen=True)
 class Spacing:
     """DPI-scaled spacing steps.
