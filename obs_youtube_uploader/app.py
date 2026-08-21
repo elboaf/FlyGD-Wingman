@@ -23,6 +23,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _close_media(media) -> None:
+    """Release the file handle a MediaFileUpload holds, best effort.
+
+    MediaFileUpload closes its descriptor only in `__del__`, so anything
+    that needs the file released *now* -- to unlink a stitched temporary,
+    or to stop blocking a rename of the user's own recording on Windows --
+    has to close it explicitly. Tolerates None and objects without a
+    stream so callers can hand it whatever they have.
+    """
+    stream = getattr(media, "stream", None)
+    if stream is None:
+        return
+    try:
+        stream().close()
+    except Exception:
+        # Never worth failing an upload over, but never worth hiding
+        # either: a handle that stays open turns into a file the user
+        # cannot delete, with no other clue as to why.
+        logger.warning("Could not close upload stream", exc_info=True)
+
 # How often the main thread checks for finished duration probes. Short
 # enough that rows fill in as they resolve, long enough to be free.
 PROBE_DRAIN_MS = 100
@@ -1819,7 +1840,8 @@ class UploaderWindow:
                 with stitch.stitched(sources, self.state.ffmpeg_bin, paths.tmp_dir()) as merged:
                     self._ui(self.progress.stop)
                     self._ui(self.progress.config, {"mode": "determinate", "value": 0})
-                    vid = self._upload_one(youtube, MediaFileUpload, merged, job, 0, 1)
+                    vid = self._upload_one(youtube, MediaFileUpload, merged,
+                                           job, 0, 1, close_media=True)
                 for info in job.items:
                     self._ui(self._set_link, info.path, vid)
             else:
@@ -1841,7 +1863,14 @@ class UploaderWindow:
             # already deleted the merged file the session points at, which
             # is the correct trade for never leaking multi-GB temporaries.
             # Retry re-stitches instead.
-            resumable = exc.request is not None and not job.stitch
+            # Gated on RETRY as well, not just on the stitch path: only a
+            # RETRY outcome enables the button below, so for anything else
+            # the retained request is unreachable -- and it keeps the
+            # MediaFileUpload, and with it an open handle on the user's own
+            # recording, alive until the next failure replaces this state.
+            # On Windows that blocks renaming or deleting that file.
+            resumable = (exc.request is not None and not job.stitch
+                         and exc.outcome is uploader.Outcome.RETRY)
             self.retry_state = RetryState(
                 job=job,
                 # On the stitch path `index` never advances past
@@ -1868,7 +1897,8 @@ class UploaderWindow:
             self._ui(self.status.config,
                      {"text": f"Error: {exc}", "foreground": theme.token("ERROR")})
 
-    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total) -> str:
+    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total,
+                    close_media: bool = False) -> str:
         body = uploader.build_body(job.title, job.description, job.privacy,
                                    job.category, index, total)
         media = MediaFileUpload(str(path), chunksize=uploader.CHUNK_SIZE, resumable=True)
@@ -1891,9 +1921,18 @@ class UploaderWindow:
                      {"text": f"Network problem — retrying in {delay:.0f}s "
                               f"(attempt {attempt})", "foreground": theme.token("WARNING")})
 
-        return uploader.upload(request, on_progress=on_progress,
-                               on_retry=on_retry,
-                               on_response=self._remember_channel)
+        try:
+            return uploader.upload(request, on_progress=on_progress,
+                                   on_retry=on_retry,
+                                   on_response=self._remember_channel)
+        finally:
+            if close_media:
+                # The caller is about to delete `path`, and Windows refuses
+                # to unlink a file that still has an open handle. Off for
+                # the plain path on purpose: UploadFailed hands the
+                # resumable request to manual Retry, which resumes by
+                # reading from this very stream.
+                _close_media(media)
 
     def _remember_channel(self, response) -> None:
         """Learn the destination channel from a successful insert response.
@@ -1956,10 +1995,23 @@ class UploaderWindow:
             vid = uploader.upload(state.request, on_progress=on_progress)
             self._ui(self._set_link, info.path, vid)
         except uploader.UploadFailed as exc:
-            self.retry_state = replace(state, request=exc.request)
+            # Same gate as _upload_worker, for the same two reasons: only a
+            # RETRY outcome re-enables the button below, so keeping the
+            # request for any other outcome retains something unreachable —
+            # and that something owns an open handle on the user's own
+            # recording, which blocks renaming or deleting it on Windows.
+            # Dropping the reference is not enough on its own: closing is
+            # left to MediaFileUpload.__del__, whose timing is exactly what
+            # made the stitched temp file survive in the first place.
+            retryable = exc.outcome is uploader.Outcome.RETRY
+            if not retryable:
+                _close_media(getattr(exc.request, "resumable", None))
+            self.retry_state = replace(state,
+                                       request=exc.request if retryable else None)
             self._status_kind = "ERROR"
             self._ui(self.status.config, {"text": str(exc), "foreground": theme.token("ERROR")})
-            self._ui(self.retry_btn.state, ["!disabled"])
+            if retryable:
+                self._ui(self.retry_btn.state, ["!disabled"])
             return
         # The resumed file is done; continue with whatever followed it.
         if state.resume_index + 1 < len(state.job.items):

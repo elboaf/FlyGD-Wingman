@@ -5,12 +5,15 @@ instead of a traceback in a log file nobody reads.
 """
 import enum
 import json
+import logging
 import os
 import random
 import socket
 import stat as _stat
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaFileUpload.
@@ -19,6 +22,7 @@ CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaF
 class Outcome(enum.Enum):
     RETRY = "retry"
     QUOTA = "quota"
+    UPLOAD_LIMIT = "upload_limit"
     AUTH = "auth"
     PERMANENT = "permanent"
 
@@ -28,6 +32,11 @@ _MESSAGES = {
     Outcome.QUOTA: (
         "YouTube's daily upload limit for this app has been reached. "
         "Please try again tomorrow."
+    ),
+    Outcome.UPLOAD_LIMIT: (
+        "Your YouTube channel has reached its daily upload limit. Wait a "
+        "day and try again. Verifying your channel at youtube.com/verify "
+        "raises the limit."
     ),
     Outcome.AUTH: (
         "Google refused the sign-in. Try connecting your account again in "
@@ -59,7 +68,21 @@ def _reasons(exc: Exception) -> set[str]:
         payload = json.loads(content)
     except ValueError:
         return set()
-    errors = payload.get("error", {}).get("errors", [])
+    # Every hop is type-checked rather than trusted. A body can be valid
+    # JSON in an entirely different shape -- an OAuth error is
+    # {"error": "invalid_grant", ...}, where `error` is a string, so a bare
+    # .get() chain raises AttributeError. That matters more than it looks:
+    # this runs on the failure path immediately before the raise, so an
+    # exception here would replace the real UploadFailed with a type error
+    # and destroy the diagnosis instead of recording it.
+    if not isinstance(payload, dict):
+        return set()
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return set()
+    errors = error.get("errors")
+    if not isinstance(errors, list):
+        return set()
     return {e.get("reason", "") for e in errors if isinstance(e, dict)}
 
 
@@ -71,7 +94,19 @@ def classify(exc: Exception) -> Outcome:
         return Outcome.PERMANENT
     if status in RETRYABLE_STATUS:
         return Outcome.RETRY
-    if status == 403 and "quotaExceeded" in _reasons(exc):
+    reasons = _reasons(exc)
+    # Checked before the 401/403 branch and without naming a status.
+    # uploadLimitExceeded is documented as a 400, unlike the rest of the
+    # quota family, so a status-keyed rule here would have to duplicate the
+    # reason check anyway -- and if YouTube ever also returns it as a 403,
+    # this still lands. Before this branch existed the 400 matched nothing
+    # and fell to PERMANENT, which told users that a limit resetting within
+    # a day could never be retried. This is the channel's own video
+    # allowance; the app-wide API project quota below is a different limit
+    # with a different audience.
+    if "uploadLimitExceeded" in reasons:
+        return Outcome.UPLOAD_LIMIT
+    if status == 403 and "quotaExceeded" in reasons:
         return Outcome.QUOTA
     if status in (401, 403):
         return Outcome.AUTH
@@ -168,6 +203,23 @@ def upload(request, *, on_progress=None, on_retry=None, on_response=None,
             outcome = classify(exc)
             attempts += 1
             if outcome is not Outcome.RETRY or attempts >= max_attempts:
+                # The only record of what actually went wrong. Every
+                # message above is a plain-language summary that discards
+                # the status code and the API's own reason string, and the
+                # UI shows nothing else -- so without this line an
+                # unrecognised failure is undiagnosable after the fact.
+                # Status and reason are pulled out rather than left to the
+                # exception's own str(): HttpError formats a reason and
+                # error_details of its own, but nothing guarantees any of
+                # that for the other exception types that reach here, and
+                # the reason string is the single most useful field when
+                # deciding whether a failure was the user's fault, ours, or
+                # YouTube's.
+                logger.warning(
+                    "Upload failed (%s) after %d attempt(s): status=%s reasons=%s",
+                    outcome.value, attempts, _status_of(exc),
+                    ",".join(sorted(r for r in _reasons(exc) if r)) or "-",
+                    exc_info=exc)
                 raise UploadFailed(outcome, exc, request=request) from exc
             delay = min(BASE_BACKOFF * (2 ** (attempts - 1)), MAX_BACKOFF) + jitter()
             if on_retry is not None:
@@ -180,6 +232,10 @@ def upload(request, *, on_progress=None, on_retry=None, on_response=None,
 
     video_id = response.get("id") if isinstance(response, dict) else None
     if not video_id:
+        # A 2xx with no video id: nothing raised, so the branch above never
+        # ran and this would otherwise be silent too.
+        logger.warning("Upload completed but the response carried no video id: %r",
+                       response)
         raise UploadFailed(Outcome.PERMANENT, request=request)
     # After the id check, so a response too malformed to carry one is still
     # a failure rather than a success with an unknown channel.
