@@ -113,21 +113,27 @@ end;
 
 function WebView2RuntimePresent(): Boolean;
 begin
-  { Three locations, matching preflight.py's three:
-
-      HKLM32 -> HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{GUID}
-                on 64-bit Windows. EdgeUpdate is a 32-bit process, so this is
-                where a per-machine install actually lands, and it is the key
-                observed present on the dev machine (pv=151.0.4129.93).
-                On 32-bit Windows there is no redirection and this same view
-                IS HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{GUID}.
-      HKLM64 -> the native hive on 64-bit Windows. Guarded by IsWin64
-                because the 64-bit root constants error on 32-bit Windows.
-      HKCU   -> a per-user runtime install, which is what an UNELEVATED
-                bootstrapper produces -- and PrivilegesRequired=lowest means
-                that is our normal case, not an edge case.
-
-    Any one of them counts. }
+  // Line comments, not a braced { } block: this text has to name the
+  // registry paths, which end in the GUID -- and a braced comment is ended
+  // by the FIRST closing brace, so the one in ...\Clients\<GUID> would
+  // close it early and leave the prose to be parsed as code.
+  //
+  // Three locations, matching preflight.py's three:
+  //
+  //   HKLM32 -> HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\<GUID>
+  //             on 64-bit Windows. EdgeUpdate is a 32-bit process, so this
+  //             is where a per-machine install actually lands, and it is
+  //             the key observed present on the dev machine
+  //             (pv=151.0.4129.93). On 32-bit Windows there is no
+  //             redirection and this same view IS
+  //             HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\<GUID>.
+  //   HKLM64 -> the native hive on 64-bit Windows. Guarded by IsWin64
+  //             because the 64-bit root constants error on 32-bit Windows.
+  //   HKCU   -> a per-user runtime install, which is what an UNELEVATED
+  //             bootstrapper produces -- and PrivilegesRequired=lowest
+  //             means that is our normal case, not an edge case.
+  //
+  // Any one of them counts.
   Result := VersionIsReal(ReadRuntimeVersion(HKLM32));
   if not Result then
     Result := VersionIsReal(ReadRuntimeVersion(HKCU));
