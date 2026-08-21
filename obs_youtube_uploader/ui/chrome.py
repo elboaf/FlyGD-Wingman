@@ -324,24 +324,28 @@ def enable_resize(window, pad: int = INSET) -> bool:
 
 
 def _log_geometry(native, pad: int) -> None:
-    """Record what the inset actually produced. Debug level, never fatal.
+    """Record what the inset actually produced. Never fatal.
 
-    This is the plan's step-1 diagnostic, kept rather than deleted: asking
-    for a 6px inset produced a 3px band on the spike and the cause is still
-    unresolved. Until it is, the only way to know what a given machine did
-    is to read it back, and a DPI-dependent answer would otherwise surface
-    as "resizing feels wrong on that laptop" with nothing to go on.
+    INFO, not DEBUG, because configure_logging() pins the root logger at
+    INFO (__main__.py:64) -- a DEBUG line here would be written nowhere and
+    the diagnostic would silently not exist. It is one line per launch.
+
+    Kept rather than run once and deleted: asking for a 6px inset produced
+    a 3px band on the spike and the cause is still unresolved. If the
+    answer turns out to be DPI-dependent, this is the difference between
+    diagnosing it and receiving "resizing feels wrong on that laptop".
+
+    DisplayRectangle is the authoritative number -- it is what DockStyle.Fill
+    measures the WebView2 against -- so the inset is the gap between it and
+    ClientRectangle, and the child's own bounds add nothing.
     """
     try:
         client = native.ClientRectangle
         display = native.DisplayRectangle
-        logger.debug(
-            "resize inset: asked=%s client=%dx%d display=%dx%d at (%d,%d) "
-            "padding=%s dpi=%s",
-            pad, client.Width, client.Height, display.Width, display.Height,
-            display.X, display.Y, native.Padding, native.DeviceDpi)
-        for control in native.Controls:
-            logger.debug("  child %s bounds=%s", control.GetType().Name,
-                         control.Bounds)
+        logger.info(
+            "resize band: asked %spx, got %dpx left / %dpx top "
+            "(client %dx%d, display %dx%d, padding %s, dpi %s)",
+            pad, display.X, display.Y, client.Width, client.Height,
+            display.Width, display.Height, native.Padding, native.DeviceDpi)
     except Exception:
         logger.debug("Could not read back the inset geometry", exc_info=True)
