@@ -87,6 +87,7 @@ Validated by a throwaway Tk mockup driven at 96 and 144 DPI on a real display
 |---|---|---|
 | Title, Description | "Video details" frame, top | Upload panel, right |
 | Stitch checkbox | bottom action bar | Upload panel |
+| "(ffmpeg not found — stitching unavailable)" label | beside Stitch, bottom bar | Upload panel, directly under Stitch |
 | Upload Selected, Retry, Upload combat logs | bottom action bar | Upload panel, under the fields they consume |
 | Select All / None / Delete Selected | bottom action bar | under the list |
 | Settings | bottom action bar | status strip, far left |
@@ -95,14 +96,34 @@ Validated by a throwaway Tk mockup driven at 96 and 144 DPI on a real display
 The `ttk.LabelFrame` titled "Video details" is dissolved; the panel's own
 "Upload" heading plus a separator replaces it.
 
+The conditional ffmpeg warning moves **with** the checkbox it explains. It is
+created only when `state.ffmpeg_bin` is falsy (`app.py:254-263`) and is an
+explicit smoke-test expectation (`docs/smoke-checklist.md:37-41`), so it is
+called out here rather than left to be inferred from "the Stitch checkbox
+moves". Wrapping is enabled on it — the panel is narrower than the bottom bar
+it came from, and the string is long enough to need two lines there.
+
 ### Selection summary
 
 The status label keeps its existing roles (progress, errors, "Found N
 video(s)"). A **new muted label in the panel** shows
-`3 selected · 1.2 GB · 2:04:35`, recomputed whenever selection changes. Values
-come from `info.size` and `info.duration`, both already held. Recordings still
-being probed contribute nothing to the duration total, matching the existing
-`…` placeholder convention rather than reporting a wrong sum.
+`3 selected · 1.2 GB · 2:04:35`, built from `info.size` and `info.duration`,
+both already held.
+
+**It is recomputed on two triggers, not one.** Selection changes are the
+obvious one. The second is probe completion: `_apply_duration` writes a
+resolved duration straight into the Treeview cell by iid and deliberately
+touches nothing else (`app.py:744-767`), so a summary wired only to selection
+would sit stale behind every probe that lands. `_apply_duration` gains a call
+to the same recompute.
+
+**A partial total is labelled as partial.** A recording whose probe is still
+outstanding contributes nothing to the duration sum, so the sum would otherwise
+read as complete while being short. When any selected recording has
+`probed == False`, the duration is rendered `2:04:35+` — mirroring the `…`
+placeholder convention the duration column already uses rather than inventing a
+second vocabulary for the same state. Size is never partial: `info.size` comes
+from `stat`, not from a probe.
 
 ## Architecture and boundaries
 
@@ -144,6 +165,11 @@ Both windows call `spacing()` once during construction and use the result.
 
 ### Dark title bar
 
+Explicitly requested scope, not an extension of PR #5: that PR descoped the
+call as an accepted limitation, and the light Settings title bar beside the
+dark main window is visible in the screenshot the observations doc was built
+from. Nothing else about the theming changes.
+
 In `theme.py`, alongside the existing `detect_mode(reader=...)` convention:
 
 ```python
@@ -152,22 +178,53 @@ def apply_titlebar(window, mode, setter=None) -> None:
     No-op off Windows. `setter` is injectable so this is testable on Linux."""
 ```
 
-Registered as a theme consumer per window, so a live OS theme switch updates
-both title bars. Applied to the main window and to the Settings `Toplevel`.
+**Lifecycle — three requirements, none of which registration alone satisfies:**
+
+1. **The initial application must be explicit.** `__main__.main()` calls
+   `theme.apply(root, ...)` at `__main__.py:198`, *before* `UploaderWindow` is
+   constructed at line 209. A consumer registered in a window's constructor is
+   therefore never invoked until the *next* theme switch, leaving the title bar
+   light until the user changes their OS theme. Each window calls
+   `apply_titlebar` directly during construction, then registers for
+   subsequent switches.
+2. **Extend the existing consumer; do not add a second one.** Both windows
+   already register exactly one callback (`_on_theme_changed`), and
+   `SettingsWindow` already unregisters it on `<Destroy>`
+   (`settingsui.py:418-423`). Calling `apply_titlebar` from inside those
+   existing callbacks inherits that teardown for free. Registering a separate
+   consumer would silently reintroduce the leak `theme.unregister` was written
+   to fix — see its docstring.
+3. **The Settings window must be mapped first.** `wm_frame()` returns a usable
+   HWND only after the toplevel exists on screen, so the call happens after the
+   window is realised rather than mid-construction.
 
 ## Column specification
 
-| Column | Width @100% | Stretch | Anchor | Notes |
-|---|---|---|---|---|
-| `#0` checkbox | 34 | no | center | unchanged |
-| `filename` | 260 | **yes** | W | the only stretching column; `minwidth` 260 |
-| `date` | 120 | no | W | reformatted, see below |
-| `size` | 84 | no | **E** | numeric |
-| `duration` | 76 | no | **E** | header renamed `Length` |
-| `link` | 46 | no | center | `↗` when a link exists, else empty |
+| Column | Width @100% | Min | Stretch | Anchor | Notes |
+|---|---|---|---|---|---|
+| `#0` checkbox | 34 | 34 | no | center | unchanged |
+| `filename` | 260 | 120 | **yes** | W | the only stretching column |
+| `date` | 120 | 90 | no | W | reformatted, see below |
+| `size` | 84 | 64 | no | **E** | numeric |
+| `duration` | 76 | 56 | no | **E** | header renamed `Length` |
+| `link` | 46 | 46 | no | center | `↗` when a link exists, else empty |
 
 Every `heading()` gets an `anchor` matching its column, fixing centered headers
 over left-aligned data (finding #3).
+
+**Narrow windows — accepted degradation.** The preferred widths sum to 620px.
+At the existing 750px minimum window width the list pane gets roughly 380–420px
+once the margin, the 300px panel, the pane gap and the scrollbar are taken out,
+so the preferred widths do not fit. The `Min` column above is what makes this
+safe: the minimums sum to 420px, which does fit, and `ttk.Treeview` compresses
+toward them.
+
+No horizontal scrollbar is added, and the window minimum is **not** raised.
+Both were considered and rejected: a horizontal scrollbar on a list whose only
+elastic column is the filename trades a rare annoyance for a permanent one, and
+raising the minimum cannot help on a screen where `__main__` already clamps the
+geometry to the display size (`app.py:159-169`). A window dragged to its
+minimum shows cramped columns; that is accepted, not a defect to design around.
 
 **Date format:** `Aug 20  17:43`, prefixed with the year (`2025 Nov 02  22:11`)
 only when the recording is not from the current year. Safe because sorting uses
@@ -216,19 +273,32 @@ duration as unknown rather than zero.
   set as `__main__.main()` sets it, and `root.update()` called before reading
   any geometry.
 - New unit tests: `spacing()` scaling at 1.0/1.25/1.5, the date formatter
-  (same year vs other year), the selection summary formatter (including an
-  unprobed recording), and `apply_titlebar` via an injected setter (asserting
-  the no-op off Windows and the 20→19 fallback).
+  (same year vs other year), the selection summary formatter — including a
+  selection containing an unprobed recording, which must render the `+`
+  partial marker — and `apply_titlebar` via an injected setter (asserting the
+  no-op off Windows and the 20→19 fallback).
+- One regression test for the staleness path: a summary computed over a
+  selection with an outstanding probe, then `_apply_duration` delivering that
+  probe, must leave the summary updated and the `+` marker gone. This is the
+  bug the two-trigger rule exists to prevent, so it is tested rather than
+  assumed.
 - `docs/smoke-checklist.md` gains entries for what cannot be verified off
-  Windows: both title bars dark and matching, the panel at 100%/150%/200%,
-  and no clipping at the minimum window size.
+  Windows: both title bars dark and matching, both at startup and after a live
+  OS theme switch; the panel at 100%/150%/200%; the ffmpeg-missing warning
+  still visible and readable in its new position (extending the existing item
+  at `docs/smoke-checklist.md:37-41` rather than duplicating it); and column
+  behaviour at the minimum window size.
 
 ## Assumptions that may change
 
-- A 300px panel at 100% is comfortable. At the 750px minimum window width the
-  list gets ~420px, which is tight but keeps the filename column readable. If
-  the smoke test shows it is too tight, the minimum width rises rather than
-  the panel shrinking.
+- A 300px panel at 100% is comfortable at the default 1350px width. It is
+  fixed, so it costs proportionally more the narrower the window gets; see
+  "Narrow windows — accepted degradation" for what that means at the floor. An
+  earlier draft of this design claimed the list would still get ~420px of
+  *comfortable* room at the minimum width, which was arithmetic that had not
+  been done: the preferred column widths sum to 620px and do not fit. The
+  minimums are what make the narrow case work, and the result there is cramped
+  by design.
 - `wm_frame()` returns the HWND `DwmSetWindowAttribute` expects. Unverifiable
   on Linux; the smoke checklist covers it, and a failure is cosmetic and
   caught rather than fatal.
