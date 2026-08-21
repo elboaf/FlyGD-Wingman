@@ -27,15 +27,47 @@ WM_GETMINMAXINFO. Clamping max size in the same subclass is strictly
 better than setting Form.MaximumSize, which would also cap the window
 on a larger second monitor.
 
+THE QUESTION THAT DECIDES THE APPROACH
+--------------------------------------
+WM_NCHITTEST goes to the window UNDER THE CURSOR. pywebview docks the
+WebView2 control with DockStyle.Fill and calls BringToFront
+(platforms/edgechromium.py:95-100), and `frameless` means the client
+area IS the whole window -- so the WebView2 child HWND covers every
+pixel where the synthetic border lives, right out to the edges.
+
+If Windows therefore routes those hit-tests to the Chromium child
+window, the parent subclass never sees them and this whole approach is
+dead on arrival. That is question 0 below, and it is the one to answer
+first; everything else is moot if it fails.
+
+Note this is exactly the failure a bare WinForms test would MISS: a form
+with no child control hit-tests perfectly and reports a false green. The
+test has to run against a real WebView2 window.
+
+`--pad N` exists for that case. DockStyle.Fill honours the parent's
+Padding, so insetting the form by N pixels leaves a band of Form surface
+around the page that the parent DOES own. It costs a visible N-pixel
+frame in the app's background colour, which is a design change rather
+than a pure bugfix -- worth knowing whether it is the price of resizing.
+
 RUN IT (Windows, with WebView2 present)
 ---------------------------------------
     uv run python spikes/frameless_resize_spike.py
 
     --no-hittest    skip WM_NCHITTEST     -> reproduces today's stuck window
     --no-maxinfo    skip WM_GETMINMAXINFO -> shows the taskbar-covering maximize
+    --pad N         inset the WebView2 by N px so the form owns a border band
 
 WHAT TO WRITE DOWN
 ------------------
+ 0. FIRST: does the parent window receive WM_NCHITTEST at all? Move the
+    mouse slowly onto each edge and watch the console. The spike prints
+    "[spike] first WM_NCHITTEST reached the form" once, and prints the
+    running total on quit. If that line never appears while the pointer
+    is over the window, the WebView2 child is swallowing the message and
+    the plain subclass cannot work -- re-run with `--pad 6` and see
+    whether the band changes the answer. Everything below assumes this
+    passed.
  1. Do all eight edges/corners resize, and does the cursor change to the
     sizing arrows before the drag?
  2. Does MinimumSize still hold? Drag smaller than 880x560; WinForms
@@ -141,6 +173,12 @@ class MINMAXINFO(ctypes.Structure):
 # the next message, and the crash points nowhere near here. Every
 # attached proc is appended and never removed.
 _KEEPALIVE: list = []
+
+# Whether the parent form ever saw a WM_NCHITTEST, and how many. This is
+# the spike's primary result: if the WebView2 child swallows the message
+# the count stays at zero no matter how carefully anyone drags an edge,
+# and a zero here is a far more trustworthy answer than "it felt stuck".
+_HITS = {"count": 0, "announced": False}
 
 
 def _match_app_dpi_awareness() -> None:
@@ -302,6 +340,13 @@ def attach(hwnd: int, *, hittest: bool = True, maxinfo: bool = True) -> None:
         old = old_holder[0]
         try:
             if hittest and msg == WM_NCHITTEST:
+                _HITS["count"] += 1
+                if not _HITS["announced"]:
+                    _HITS["announced"] = True
+                    # Printed once, not per message: WM_NCHITTEST arrives
+                    # on every mouse move and would bury everything else.
+                    print("[spike] first WM_NCHITTEST reached the form")
+
                 code = _hit(user32, hwnd, lparam)
                 if code is not None:
                     return code
@@ -391,6 +436,12 @@ class Api:
         self._window.toggle_fullscreen()
 
     def quit(self) -> None:
+        # The count is the headline result, so report it before the
+        # window goes away rather than leaving it to be scrolled for.
+        print(f"[spike] WM_NCHITTEST reached the form {_HITS['count']} time(s)")
+        if not _HITS["count"]:
+            print("[spike] ZERO -- the WebView2 child swallowed every "
+                  "hit-test. Re-run with --pad 6.")
         self._window.destroy()
 
 
@@ -402,6 +453,13 @@ def main(argv: list[str]) -> int:
 
     hittest = "--no-hittest" not in argv
     maxinfo = "--no-maxinfo" not in argv
+    pad = 0
+    if "--pad" in argv:
+        try:
+            pad = int(argv[argv.index("--pad") + 1])
+        except (IndexError, ValueError):
+            print("--pad needs an integer, e.g. --pad 6", file=sys.stderr)
+            return 2
 
     api = Api()
     window = webview.create_window(
@@ -421,6 +479,16 @@ def main(argv: list[str]) -> int:
         # window.native is the WinForms Form (winforms.py:195). Handle is
         # an IntPtr; ToInt64 keeps it whole on 64-bit, which ToInt32 does
         # not guarantee.
+        if pad:
+            # DockStyle.Fill measures against the parent's DisplayRectangle,
+            # which Padding shrinks -- so this insets the WebView2 without
+            # touching pywebview's Dock assignment. Applied AFTER the
+            # control exists, or Fill would just re-expand over it.
+            from System.Windows.Forms import Padding
+
+            window.native.Padding = Padding(pad)
+            print(f"[spike] form padded by {pad}px; the band is form surface")
+
         attach(window.native.Handle.ToInt64(), hittest=hittest, maxinfo=maxinfo)
 
     def on_restored() -> None:
