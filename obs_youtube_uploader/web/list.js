@@ -213,7 +213,11 @@
     sortDesc = (key === sortKey) ? !sortDesc : false;
     sortKey = key;
     render();
-    ensureFocusItem();
+    // No focus re-seed here. app.py's _sort_by re-orders and re-applies
+    // zebra tags and nothing else -- and the header sits OUTSIDE
+    // #list-scroll, so clicking it does not focus the list. Seeding here
+    // would draw a ring on a list the user has still never tabbed to,
+    // which is the same divergence the onRows guard exists to prevent.
   });
 
   var body = WM.el('list-body');
