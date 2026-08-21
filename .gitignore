@@ -5,3 +5,20 @@ dist/
 packaging/bin/
 *.egg-info/
 __pycache__/
+
+# Local credentials and generated state. These normally live under
+# %LOCALAPPDATA%, but a developer running from a checkout, or a stray copy
+# pulled off a test machine, must never be committable.
+# Root-anchored: a stray copy pulled off a test machine lands here. Left
+# unanchored these would also swallow legitimate files like
+# .vscode/settings.json.
+/token.json
+/settings.json
+/seen.json
+credentials_real.py
+# Never anchored - a Google client secret file is a secret wherever it lands.
+client_secret*.json
+
+# Local tooling
+.venv/
+.pytest_cache/
