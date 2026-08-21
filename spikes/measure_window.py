@@ -41,13 +41,35 @@ import sys
 
 
 class _StubApi:
-    """Just enough to be a js_api. `_window` is underscored for the same
-    reason the real Api underscores it: pywebview builds its JS proxy by
-    walking PUBLIC attributes, and a public webview.Window sends that walk
-    into WinForms until RecursionError kills the process."""
+    """Just enough to be a js_api.
+
+    `_window` is underscored for the same reason the real Api underscores
+    it: pywebview builds its JS proxy by walking PUBLIC attributes, and a
+    public webview.Window sends that walk into WinForms until
+    RecursionError kills the process.
+
+    Only the two title-bar actions are implemented. Everything else the
+    page calls -- list_rows, panel_text, auth_labels and the rest -- is
+    absent on purpose, so the list stays empty and none of the app's
+    machinery runs. That is the point of the harness; an empty list is
+    also the state the column widths matter in.
+
+    Without these two the window cannot be closed from its own UI at all,
+    because the OS title bar is gone and the page's buttons are the only
+    controls there are.
+    """
 
     def __init__(self) -> None:
         self._window = None
+
+    def minimize(self) -> None:
+        self._window.minimize()
+
+    def close(self) -> None:
+        # DESTROY, unlike the real Api, which hides to the tray. There is
+        # no tray here, so hiding would strand a running process with no
+        # way to reach it.
+        self._window.destroy()
 
 
 def main() -> int:
