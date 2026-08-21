@@ -330,3 +330,23 @@ def test_the_default_opener_refuses_redirects():
     names = [type(h).__name__ for h in discord._opener.handlers]
     assert "HTTPRedirectHandler" not in names
     assert "_NoRedirectHandler" in names
+
+
+def test_post_sends_an_explicit_user_agent(tmp_path):
+    """Discord's edge blocks urllib's default UA with a Cloudflare 403.
+
+    Verified against the live endpoint: a POST carrying "Python-urllib/3.x"
+    comes back 403 "error code: 1010", which _describe_status reports as
+    "That webhook is invalid or has been deleted" -- a valid webhook looks
+    deleted. Any real product UA gets through to Discord itself.
+    """
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    t = _transport(204)
+    discord.post_archive(hook, zip_path, "fight", transport=t)
+    # Request.headers capitalises header names; urllib only falls back to its
+    # default UA when no User-agent key is present.
+    ua = t.calls[0].headers.get("User-agent", "")
+    assert ua, "no User-Agent set; urllib will send Python-urllib/x.y"
+    assert "python-urllib" not in ua.lower()

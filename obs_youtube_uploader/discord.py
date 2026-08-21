@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import __version__ as _version
+
 # The only hosts Discord serves webhooks from. Deliberately not a suffix
 # match: "discord.com.evil.example" must not pass.
 _ALLOWED_HOSTS = frozenset({"discord.com", "discordapp.com", "ptb.discord.com",
@@ -158,6 +160,15 @@ class RedactingFilter(logging.Filter):
 # Discord's webhook attachment limit on a non-boosted server.
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
+# Discord's edge refuses urllib's default "Python-urllib/3.x" user agent with
+# a Cloudflare 403 ("error code: 1010") before the request ever reaches the
+# webhook. Here that status is indistinguishable from a genuinely deleted
+# webhook, so without this header _describe_status reports a perfectly valid
+# webhook as "invalid or has been deleted". Discord's API docs ask for a
+# descriptive user agent; sending one gets the real webhook response back.
+_USER_AGENT = (f"FlyGD-Wingman/{_version} "
+               "(+https://github.com/elboaf/FlyGD-Wingman)")
+
 _TIMEOUT_SECONDS = 60
 
 
@@ -240,7 +251,8 @@ def post_archive(webhook: Webhook, archive_path, content: str, *,
         # breaks and the recovery message below never gets shown.
         body, content_type = _build_multipart(archive_path, content)
         request = urllib.request.Request(
-            webhook.url, data=body, headers={"Content-type": content_type},
+            webhook.url, data=body,
+            headers={"Content-type": content_type, "User-agent": _USER_AGENT},
             method="POST")
         with transport(request, timeout=_TIMEOUT_SECONDS) as response:
             status = getattr(response, "status", 200)
