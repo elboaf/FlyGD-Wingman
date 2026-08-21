@@ -151,6 +151,33 @@ Run on Windows against a real install before each release.
       clipped" item on this list pass more easily, so a size regression can
       hide behind an otherwise-green scaling section — check size first.
 
+### Typography
+- [ ] **Column headers are bold and the rows are not.** Filename, Date,
+      Size, Length and Link read heavier than the row text beneath them.
+      Row text is intentionally uniform — `ttk.Treeview` has no per-column
+      fonts and the row tags are already spent on striping, preselection
+      and the link colour — so uneven-looking rows are a bug, not the
+      hierarchy.
+- [ ] **The panel's "Upload" heading is bold**, and heavier than the
+      "Title"/"Description" field labels under it.
+- [ ] **Secondary text is muted, not black-on-black.** The selection
+      summary and any hint labels read visibly lighter than the primary
+      text in BOTH light and dark — the muted colour is a theme token, so
+      an unreadable one means the style was not re-applied for that mode.
+- [ ] **LOAD-BEARING: bold survives a live OS theme switch.** With the main
+      window open, flip `Choose your mode`. After the switch, the column
+      headers and the "Upload" heading must still be bold, still the right
+      size, and the muted text must have taken the new mode's colour. ttk
+      stores style options per theme and `sv_ttk.set_theme` replaces the
+      theme, so everything configured here is wiped on every switch and
+      re-asserted from the window's single theme consumer. A switch that
+      leaves plain headings behind means that re-assert is not running, or
+      is running before `set_theme` rather than after.
+- [ ] **Heading size follows display scaling.** At 150% and 200%, the bold
+      headers grow with the rest of the UI rather than staying at their
+      100% size — they are derived from sv-ttk's own font *after* it has
+      been rescaled, so a frozen-looking header means that ordering broke.
+
 ### The list
 - [ ] **LOAD-BEARING: clicking a checkbox toggles it.** The click handler
       relies on `identify_region()` returning `"tree"` for the checkbox

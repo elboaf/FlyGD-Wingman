@@ -211,6 +211,67 @@ def row_height(checkbox_height: int, linespace: int, scale: float) -> int:
     return max(checkbox_height + 4, linespace + 3, int(28 * scale))
 
 
+# Named styles, so emphasis is declared in one place and every consumer
+# spells it the same way. TREE_STYLE is the Treeview's own style: ttk
+# derives a heading's style by appending ".Heading" to it, and a style with
+# no layout of its own falls back to its parent's, so "Wingman.Treeview"
+# inherits sv-ttk's Treeview appearance (and the rowheight
+# _apply_row_height sets on "Treeview") while giving the headings a name of
+# their own to hang a font on.
+TREE_STYLE = "Wingman.Treeview"
+SECTION_HEADING_STYLE = "Section.TLabel"   # panel section headings ("Upload")
+MUTED_STYLE = "Muted.TLabel"               # selection summary, hint labels
+HEADING_FONT = "WingmanHeadingFont"
+
+# Preference order for what the heading font is derived from. The sv-ttk
+# fonts come first because theme._rescale_sv_fonts has already corrected
+# them for `tk scaling`; the Tk defaults are a fallback for a build with no
+# sv-ttk, not the intended source.
+_HEADING_FONT_BASES = ("SunValleyBodyStrongFont", "SunValleyBodyFont",
+                       "TkHeadingFont", "TkDefaultFont")
+
+
+def apply_typography(root: tk.Misc) -> None:
+    """Declare the app's emphasis styles. Idempotent; safe to re-run.
+
+    MUST be re-run on every theme change. ttk stores style options per
+    theme and sv_ttk.set_theme swaps the theme wholesale, so a style
+    configured once is silently gone after the first light/dark switch --
+    the same hazard _apply_row_height's docstring describes, and the
+    reason both are re-asserted from _on_theme_changed rather than set up
+    once in _build.
+
+    The font is re-derived from sv-ttk's own font on every call rather
+    than remembered, because theme.apply rescales those fonts (for `tk
+    scaling`) immediately before the consumers run: copying here is how
+    bold headings inherit the corrected size instead of freezing a
+    96-DPI one. Only -weight is overridden, so family and size stay
+    sv-ttk's.
+
+    Row text is deliberately NOT touched. ttk.Treeview has no per-column
+    fonts, and per-row tags -- the only other channel -- are already
+    fully spent on zebra striping, preselection and has_link (see
+    _row_tags), where the tag listed first wins. There is nothing left to
+    carry emphasis with, so the hierarchy stops at the headings.
+    """
+    names = {str(n) for n in root.tk.splitlist(root.tk.call("font", "names"))}
+    if HEADING_FONT not in names:
+        root.tk.call("font", "create", HEADING_FONT)
+    base = next((n for n in _HEADING_FONT_BASES if n in names), None)
+    if base is not None:
+        root.tk.call("font", "configure", HEADING_FONT,
+                     *root.tk.splitlist(root.tk.call("font", "configure", base)))
+    root.tk.call("font", "configure", HEADING_FONT, "-weight", "bold")
+
+    style = ttk.Style(root)
+    style.configure(f"{TREE_STYLE}.Heading", font=HEADING_FONT)
+    style.configure(SECTION_HEADING_STYLE, font=HEADING_FONT)
+    # The one secondary-text colour, read live from the token table so a
+    # switch recolours it rather than baking in the mode that was active
+    # when the widget was built.
+    style.configure(MUTED_STYLE, foreground=theme.token("MUTED"))
+
+
 @dataclass
 class AppState:
     recording_dir: Path
@@ -334,10 +395,14 @@ class UploaderWindow:
         # or checkbox images and window geometry can disagree.
         self._dpi_scale = dpi_scale(self.root)
 
+        # Before the Treeview, so the style it names already exists.
+        apply_typography(self.root)
+
         self.tree = ttk.Treeview(
             self.list_frame,
             columns=("filename", "date", "size", "duration", "link"),
             show="tree headings",
+            style=TREE_STYLE,
             # The checkbox is the selection model. A competing
             # highlight-selection would give the user two contradictory
             # notions of "selected", and a stray click would wipe out the
@@ -679,6 +744,10 @@ class UploaderWindow:
         against the same window.
         """
         self._build_checkbox_images()
+        # Beside _apply_row_height for the same reason: set_theme swaps the
+        # ttk theme, taking every style option configured against the old
+        # one with it.
+        apply_typography(self.root)
         self._apply_row_height()
         self._configure_tree_tags()
         for iid in self.tree.get_children(""):
