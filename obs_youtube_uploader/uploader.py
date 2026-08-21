@@ -5,12 +5,15 @@ instead of a traceback in a log file nobody reads.
 """
 import enum
 import json
+import logging
 import os
 import random
 import socket
 import stat as _stat
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaFileUpload.
@@ -19,6 +22,7 @@ CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaF
 class Outcome(enum.Enum):
     RETRY = "retry"
     QUOTA = "quota"
+    UPLOAD_LIMIT = "upload_limit"
     AUTH = "auth"
     PERMANENT = "permanent"
 
@@ -28,6 +32,11 @@ _MESSAGES = {
     Outcome.QUOTA: (
         "YouTube's daily upload limit for this app has been reached. "
         "Please try again tomorrow."
+    ),
+    Outcome.UPLOAD_LIMIT: (
+        "Your YouTube channel has reached its daily upload limit. Wait a "
+        "day and try again. Verifying your channel at youtube.com/verify "
+        "raises the limit."
     ),
     Outcome.AUTH: (
         "Google refused the sign-in. Try connecting your account again in "
@@ -71,7 +80,16 @@ def classify(exc: Exception) -> Outcome:
         return Outcome.PERMANENT
     if status in RETRYABLE_STATUS:
         return Outcome.RETRY
-    if status == 403 and "quotaExceeded" in _reasons(exc):
+    reasons = _reasons(exc)
+    # Matched on the reason alone, deliberately not on a status: the quota
+    # family is documented under 403, but YouTube returns this particular
+    # one as a 400. Pinning it to a status is what previously dropped it
+    # into PERMANENT, telling users that a limit which resets daily could
+    # never be retried. This is the channel's own video allowance, which is
+    # not the app-wide API quota below.
+    if "uploadLimitExceeded" in reasons:
+        return Outcome.UPLOAD_LIMIT
+    if status == 403 and "quotaExceeded" in reasons:
         return Outcome.QUOTA
     if status in (401, 403):
         return Outcome.AUTH
@@ -140,6 +158,21 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
             outcome = classify(exc)
             attempts += 1
             if outcome is not Outcome.RETRY or attempts >= max_attempts:
+                # The only record of what actually went wrong. Every
+                # message above is a plain-language summary that discards
+                # the status code and the API's own reason string, and the
+                # UI shows nothing else -- so without this line an
+                # unrecognised failure is undiagnosable after the fact.
+                # Status and reason are pulled out rather than left to the
+                # exception's own str(): googleapiclient's HttpError happens
+                # to include the response body, but nothing guarantees that
+                # for every exception type reaching here, and the reason
+                # string is the single most useful field for diagnosis.
+                logger.warning(
+                    "Upload failed (%s) after %d attempt(s): status=%s reasons=%s",
+                    outcome.value, attempts, _status_of(exc),
+                    ",".join(sorted(r for r in _reasons(exc) if r)) or "-",
+                    exc_info=exc)
                 raise UploadFailed(outcome, exc, request=request) from exc
             delay = min(BASE_BACKOFF * (2 ** (attempts - 1)), MAX_BACKOFF) + jitter()
             if on_retry is not None:
@@ -152,6 +185,10 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
 
     video_id = response.get("id") if isinstance(response, dict) else None
     if not video_id:
+        # A 2xx with no video id: nothing raised, so the branch above never
+        # ran and this would otherwise be silent too.
+        logger.warning("Upload completed but the response carried no video id: %r",
+                       response)
         raise UploadFailed(Outcome.PERMANENT, request=request)
     return video_id
 

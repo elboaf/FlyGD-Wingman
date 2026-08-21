@@ -264,6 +264,15 @@ that happens, Wingman recognises the API's `quotaExceeded` response and says
 so in plain language rather than showing an error code — wait until the
 following day.
 
+A second, separate limit applies to **your own channel**: YouTube caps how
+many videos one channel may upload per day, and rejects the video with
+`uploadLimitExceeded` once you pass it. This one affects only you, not other
+users of the app, and it is reported separately. The cap is tightest on
+channels that are new or not phone-verified — verifying at
+[youtube.com/verify](https://www.youtube.com/verify) raises it (and lifts the
+15-minute limit on video length). Either way the allowance resets, so the
+upload will go through on a later attempt.
+
 ## Upgrading from 1.x
 
 1. In OBS, open **Tools → Scripts** and remove the old script (`obs_trigger.py`

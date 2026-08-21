@@ -1593,7 +1593,8 @@ class UploaderWindow:
                 with stitch.stitched(sources, self.state.ffmpeg_bin, paths.tmp_dir()) as merged:
                     self._ui(self.progress.stop)
                     self._ui(self.progress.config, {"mode": "determinate", "value": 0})
-                    vid = self._upload_one(youtube, MediaFileUpload, merged, job, 0, 1)
+                    vid = self._upload_one(youtube, MediaFileUpload, merged,
+                                           job, 0, 1, close_media=True)
                 for info in job.items:
                     self._ui(self._set_link, info.path, vid)
             else:
@@ -1642,7 +1643,8 @@ class UploaderWindow:
             self._ui(self.status.config,
                      {"text": f"Error: {exc}", "foreground": theme.token("ERROR")})
 
-    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total) -> str:
+    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total,
+                    close_media: bool = False) -> str:
         body = uploader.build_body(job.title, job.description, job.privacy,
                                    job.category, index, total)
         media = MediaFileUpload(str(path), chunksize=uploader.CHUNK_SIZE, resumable=True)
@@ -1665,7 +1667,24 @@ class UploaderWindow:
                      {"text": f"Network problem — retrying in {delay:.0f}s "
                               f"(attempt {attempt})", "foreground": theme.token("WARNING")})
 
-        return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
+        try:
+            return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
+        finally:
+            if close_media:
+                # The caller is about to delete `path`, and Windows refuses
+                # to unlink a file that still has an open handle.
+                # MediaFileUpload closes its descriptor only in __del__,
+                # which is not guaranteed to have run by then -- and in
+                # practice had not: failed stitched uploads left
+                # multi-gigabyte temporaries in tmp/ until the next startup
+                # sweep. Off for the plain path on purpose: UploadFailed
+                # hands the resumable request to manual Retry, which resumes
+                # by reading from this very stream.
+                try:
+                    media.stream().close()
+                except Exception:
+                    logger.warning("Could not close upload stream for %s",
+                                   path, exc_info=True)
 
     def _manual_retry(self) -> None:
         state = self.retry_state
