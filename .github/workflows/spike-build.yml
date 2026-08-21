@@ -47,11 +47,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           # --console, NOT --windowed. The real app freezes with
-          # console=False, but this spike reports its findings on stdout:
-          # the subclassed HWND, the HWND again after restore (which is
-          # how a handle recreated by toggle_fullscreen becomes visible),
-          # and any traceback from inside the WndProc. Freezing it
-          # windowed would throw away half the observations.
+          # console=False, but these report their findings on stdout: the
+          # subclassed HWND, the measured band, the live size while
+          # dragging, and any traceback from inside the WndProc. Freezing
+          # them windowed would throw away the entire point.
           #
           # --hidden-import mirrors uploader.spec: pywebview picks its
           # backend from a runtime string, so modulegraph never sees it,
@@ -63,22 +62,38 @@ jobs:
             --name frameless-resize-spike `
             --hidden-import webview.platforms.edgechromium `
             spikes/frameless_resize_spike.py
-          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (spike)" }
 
-      - name: Verify the executable exists
+          # The measurement harness drives the REAL ui/window.py against
+          # the REAL page, so web/ has to come with it -- window._web_dir()
+          # looks under sys._MEIPASS/web when frozen, which is what the
+          # "web" destination below produces. Same reasoning, and the same
+          # silent-failure mode, as uploader.spec's datas entry.
+          pyinstaller `
+            --onefile `
+            --console `
+            --name frameless-measure `
+            --hidden-import webview.platforms.edgechromium `
+            --add-data "obs_youtube_uploader/web;web" `
+            spikes/measure_window.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (measure)" }
+
+      - name: Verify both executables exist
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           # PyInstaller reports "Hidden import not found" as an ERROR line
           # and still exits 0, exactly as build.yml documents, so a
           # non-zero exit code is not sufficient evidence of success.
-          $exe = "dist/frameless-resize-spike.exe"
-          if (-not (Test-Path $exe)) { throw "$exe was not produced" }
-          "{0} -> {1:N1} MB" -f $exe, ((Get-Item $exe).Length / 1MB)
+          foreach ($name in "frameless-resize-spike", "frameless-measure") {
+            $exe = "dist/$name.exe"
+            if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+            "{0} -> {1:N1} MB" -f $exe, ((Get-Item $exe).Length / 1MB)
+          }
 
-      - name: Upload the spike executable
+      - name: Upload the executables
         uses: actions/upload-artifact@v4
         with:
           name: frameless-resize-spike-exe
-          path: dist/frameless-resize-spike.exe
+          path: dist/*.exe
           if-no-files-found: error
