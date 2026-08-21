@@ -19,7 +19,45 @@
   </div>
 
   <!-- Filled by Task 11 (list) and Task 12 (upload panel). -->
-  <div class="route active" id="route-main"></div>
+  <div class="route active" id="route-main">
+
+    <div class="list-pane">
+      <div class="grid-row list-head" id="list-head">
+        <!-- A bare check, deliberately NOT a box glyph: every heading here
+             is a sort control, and a box in the header position reads as a
+             select-all checkbox this column does not offer. -->
+        <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
+        <span class="c-name"   data-sort="filename">Filename</span>
+        <span class="c-date"   data-sort="date">Date</span>
+        <span class="c-size"   data-sort="size">Size</span>
+        <span class="c-len"    data-sort="duration">Length</span>
+        <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
+      </div>
+
+      <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
+           aria-label="Recordings">
+        <div id="list-body"></div>
+        <div class="empty" id="list-empty" hidden>
+          No recordings found in the watched folder.
+        </div>
+      </div>
+
+      <div class="list-foot">
+        <button class="btn" id="btn-select-all">Select all</button>
+        <button class="btn" id="btn-select-none">Select none</button>
+        <span class="count" id="list-count">0 recordings</span>
+      </div>
+    </div>
+
+    <!-- Filled by Task 12 (upload panel). -->
+    <div id="panel-slot"></div>
+
+  </div>
+
+  <div class="ctxmenu" id="ctxmenu" hidden>
+    <button id="ctx-copy">Copy link</button>
+    <button id="ctx-open">Open in browser</button>
+  </div>
 
   <!-- Filled by Task 13. -->
   <div class="route" id="route-settings"></div>
@@ -31,6 +69,7 @@
   <div id="dialog-slot"></div>
 
   <script src="app.js"></script>
+  <script src="list.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>
