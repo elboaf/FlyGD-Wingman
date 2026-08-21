@@ -18,6 +18,13 @@ buttons off a shared baseline, a duplicated webhook URL, a status rendered as an
 oversized button. None of this is Tkinter's fault; the same dialog built the same
 way would look equally bad in any toolkit.
 
+**2.2.0 has since fixed part of this**, and the fix is evidence for the split
+rather than against it. It built a real three-step type scale, masked the webhook,
+and made the account control track state — all inside Tkinter, all effective,
+because none of it was ever framework-bound. What 2.2.0 could not touch is the
+second group below. That is the line this document is drawn along: everything
+fixable in Tk is being fixed in Tk; the replatform is for what is not.
+
 **A genuine framework ceiling** — no corner radius, no shadows, no glow, no
 custom-drawn scrollbar, no custom window chrome, weak hi-DPI handling, and no
 motion. `app.py` currently generates checkbox images with Pillow because ttk
@@ -68,9 +75,16 @@ Tokens (as CSS custom properties, the successor to `theme.py`'s `TOKENS` dict):
 | `--brand` / `--brand-deep` | `#ff5a4d` / `#c81e12` | Accent, gradients, glow |
 | `--ok` / `--warn` / `--err` | `#4ade80` / `#d29922` / `#f85149` | Status, carried from `theme.py` |
 
-Type: one 13px body size, 12px for monospace machine text, 10.5px uppercase
-tracked `.14em` for section labels. Three sizes total, replacing today's four
-uncoordinated ones.
+Type: 2.2.0 built a three-step scale from sv-ttk's rescaled font — headings 1.2×,
+body, muted text and column headers 0.875× — and that **structure is adopted, not
+replaced**; only its implementation moves from Tk font objects to CSS. Concretely:
+13px body, 15.5px headings, 11.5px muted text and column headers, 12px monospace
+for machine text, and 10.5px uppercase tracked `.14em` for the section labels
+direction B adds.
+
+The deliberate ordering carries over intact: **column headers sit below body size,
+not above.** They label the data; they are not the data. A port that "fixes" that
+by making headers larger would be undoing a considered decision.
 
 **Light mode is dropped.** `theme.py` currently detects `AppsUseLightTheme` and
 re-themes live. Direction B is a dark design; a light variant would be a second
@@ -118,17 +132,21 @@ These are load-bearing and easy to rediscover painfully:
 
 ### Module layout
 
+Figures below are against **2.2.0** (`d8f79ff`), which this document was rebased
+onto after it was first written. See **What 2.2.0 changed** for why that matters.
+
 Unchanged, Tk-free, and untouched by this work — `uploader`, `watcher`, `stitch`,
 `combatlog`, `discord`, `library`, `durations`, `obsconfig`, `settings`, `paths`,
-`credentials` (1,877 lines). Their tests are unaffected.
+`credentials` (1,978 lines). Their tests are unaffected.
 
 Replaced:
 
 | Today | Becomes |
 |---|---|
-| `app.py` (1,728 lines) | `ui/api.py` — the `js_api` bridge class; `ui/window.py` — window construction and lifecycle |
-| `settingsui.py` (493) | Folded into the same bridge; Settings becomes a route in the page, not a second Tk toplevel |
+| `app.py` (2,120 lines) | `ui/api.py` — the `js_api` bridge class; `ui/window.py` — window construction and lifecycle |
+| `settingsui.py` (566) | Folded into the same bridge; Settings becomes a route in the page, not a second Tk toplevel |
 | `theme.py` (277) | Deleted. CSS custom properties replace the token table; light-mode detection is dropped |
+| `tooltip.py` (120) | Machinery deleted — a borderless Tk `Toplevel` is a CSS tooltip. **`_CELL_HELP`'s copy is kept verbatim**; it is a text decision with its own passing test, not widget code |
 | `__main__.py` (313) | Tray and startup ordering survive, but the Tk event loop does not — `root.after()` currently drives the watcher poll, tray dispatch, and first-run folder selection. See **Process lifecycle and scheduling** |
 | — | `web/` — `index.html`, `settings.html`, `style.css`, `app.js`. No build step, no bundler, no Node in the release pipeline |
 
@@ -136,6 +154,39 @@ The Pillow-generated checkbox images, `dpi_scale`, `spacing`, `row_height`,
 `apply_typography`, `configure_tree_columns`, `_configure_tree_tags`,
 `_apply_zebra_tags`, `_row_tags`, and `_apply_desc_colors` are all deleted rather
 than ported. CSS covers every one of them.
+
+### What 2.2.0 changed
+
+This design was drafted against 2.1.0 and rebased onto 2.2.0, which landed a
+design-critique pass over both windows (`65b2b4d`). It moves the target in five
+ways, all folded into the sections below:
+
+1. **Upload confirmation.** Publishing now confirms first, naming the channel,
+   privacy, the exact titles including `build_body`'s `(n/total)` numbering, and
+   the totals (`_start_upload`, `format_upload_confirm`). This is a second required
+   `confirm` dialog alongside delete, and it is the more important of the two —
+   uploading is the app's only irreversible action.
+2. **Upload destination.** `uploader.upload()` gained an `on_response` callback and
+   `channel_of()` reads `snippet.channelTitle` from it; the channel is persisted as
+   `channel_id`/`channel_title` and displayed above Upload Selected. That is a new
+   worker callback crossing the bridge and a new piece of always-visible state.
+3. **The webhook is masked.** It is a credential, and it is now rendered with a
+   bullet mask plus a Show toggle, with `webhook_status()` describing what is stored
+   and reporting parse errors. **The approved settings mockup shows it in
+   cleartext monospace — that is a regression this port must not reintroduce.**
+4. **The account button tracks state** and is disabled during transient states so a
+   second press cannot start a second OAuth flow. `onAuthState` must carry enough
+   for that, not just connected/disconnected.
+5. **A type scale now exists**, derived from sv-ttk's rescaled font: headings 1.2×,
+   body, muted text and column headers 0.875×. Column headers sit *below* body
+   deliberately — they label the data, they are not the data.
+
+It also established a convention worth adopting rather than merely preserving:
+**every user-visible string is a pure module-level function**, following
+`format_selection_summary`, because copy is what regresses and widgets are the
+layer with no test harness. That convention is what makes this port cheap — those
+functions and their tests cross unchanged, and the port should extend it rather
+than inline strings into HTML.
 
 ### Process lifecycle and scheduling
 
@@ -145,10 +196,10 @@ not carried by `webview.start()`.
 
 | Responsibility | Today | Becomes |
 |---|---|---|
-| Watcher poll every `POLL_SECONDS` | `root.after(int(POLL_SECONDS*1000), poll)`, self-rescheduling in a `finally` (`__main__.py:302`, `:307`) | A dedicated daemon `threading.Timer` loop owned by a `Scheduler` object, preserving the always-reschedule-on-error guarantee. The poll body runs off the UI thread and reaches the page only through `_push()` |
+| Watcher poll every `POLL_SECONDS` | `root.after(int(POLL_SECONDS*1000), poll)`, self-rescheduling in a `finally` (`__main__.py`, the `poll()` loop) | A dedicated daemon `threading.Timer` loop owned by a `Scheduler` object, preserving the always-reschedule-on-error guarantee. The poll body runs off the UI thread and reaches the page only through `_push()` |
 | Deferred refresh during upload | `refresh_deferred` flag read on the next `after()` tick | Same flag, read on the next scheduler tick. Behaviour unchanged |
-| Tray open / quit | `root.after(0, window.show)` / `root.after(0, root.quit)` (`__main__.py:229`) | Direct `window.show()` / `window.destroy()` from the pystray thread. Spike Q6 proved cross-thread `destroy()` works; `show()` is the one path still unverified (see Risks) |
-| First-run recording-folder prompt | `resolve_recording_dir()` via `filedialog.askdirectory`, requiring a withdrawn Tk root to exist *before* any window (`__main__.py:135`, `:195`) | **Needs a real answer, not a port.** pywebview's `create_file_dialog` is a method on a window, so no dialog exists before `webview.start()`. Resolution: create the window first, and run first-run resolution as the page's own first screen — a dedicated "choose your recording folder" route that calls `pick_folder`. This changes first-run UX from a bare OS dialog to an in-app screen, which is an improvement, but it is a behaviour change and is called out as such |
+| Tray open / quit | `root.after(0, window.show)` / `root.after(0, root.quit)` (`__main__.py`, `build_tray(on_open=..., on_quit=...)`) | Direct `window.show()` / `window.destroy()` from the pystray thread. Spike Q6 proved cross-thread `destroy()` works; `show()` is the one path still unverified (see Risks) |
+| First-run recording-folder prompt | `resolve_recording_dir()` via `filedialog.askdirectory`, requiring a withdrawn Tk root to exist *before* any window (`__main__.py`, `resolve_recording_dir`) | **Needs a real answer, not a port.** pywebview's `create_file_dialog` is a method on a window, so no dialog exists before `webview.start()`. Resolution: create the window first, and run first-run resolution as the page's own first screen — a dedicated "choose your recording folder" route that calls `pick_folder`. This changes first-run UX from a bare OS dialog to an in-app screen, which is an improvement, but it is a behaviour change and is called out as such |
 | Shutdown | `root.mainloop()` returns, then `icon.stop()` | `webview.start()` returns, then `icon.stop()`. Same shape, verified by spike Q5/Q6 |
 
 Startup ordering therefore becomes: load settings → build tray → start tray
@@ -163,14 +214,14 @@ touch the UI directly.** What does *not* carry over is the mechanism.
 `_ui()` marshals **widget method calls**, not semantic events — `self._ui(self.progress.config,
 {"mode": "indeterminate"})`, `self._ui(self.progress.start, 12)`,
 `self._ui(self.retry_btn.state, ["disabled"])`, `self._ui(messagebox.showerror, ...)`
-(`app.py:1609`–`:1661`). Those call sites know the widget API, so **the workers do
+(`_upload_worker`). Those call sites know the widget API, so **the workers do
 change**: each becomes a semantic `_push()` of one of the messages below. The
 surface is bounded — roughly five call sites across `_upload_worker`,
 `_combat_log_worker`, and `_retry_worker` — but it is real work and was previously
 understated in this document.
 
 `settingsui.py`'s OAuth polling marshals through `win.after()` rather than `_ui()`
-(`settingsui.py:396`) and is rewritten the same way: a worker plus `onStatus` and
+(`settingsui.py`'s `_poll_auth`) and is rewritten the same way: a worker plus `onStatus` and
 `onAuthState` pushes, with no polling loop at all.
 
 Python → page (fire-and-forget):
@@ -184,16 +235,25 @@ Python → page (fire-and-forget):
 | `onRetryAvailable` | bool | `retry_btn.state(["disabled"])` / `(["!disabled"])` |
 | `onLink` | row id + video id | `_set_link` |
 | `onSettings` | current settings dict, plus detected-folder suggestions | settings load/save round-trip |
-| `onAuthState` | connected bool + message | `_refresh_auth_label` |
+| `onChannel` | channel title + id | the upload-destination line above Upload Selected, learned via `uploader.upload(on_response=...)` and persisted as `channel_id`/`channel_title` |
+| `onAuthState` | state (`disconnected`\|`connecting`\|`connected`\|`revoking`) + message | `_refresh_auth_label`, and the button-disabled-during-transient-states behaviour |
 | `onDialog` | kind (`info`\|`error`\|`warning`\|`confirm`), title, body, optional request id | `messagebox.showinfo` / `showerror` / `showwarning` / `askyesno` |
 
 `onDialog` is the one genuinely new concept. Modal dialogs are currently native Tk
 message boxes called from workers; they become in-page modals. `confirm` carries a
 request id and the page answers with `dialog_response(id, ok)` — the only
-request/response pair in an otherwise fire-and-forget protocol. **The delete
-confirmation (`app.py:1393`) and the no-selection warning (`app.py:1390`) are
-required behaviour and must survive**; they were missing from an earlier draft of
-this protocol.
+request/response pair in an otherwise fire-and-forget protocol.
+
+**Three confirmations are required behaviour and must survive:**
+
+| Confirmation | Source | Why it matters |
+|---|---|---|
+| **Upload** — names channel, privacy, exact `(n/total)` titles, totals | `_start_upload` → `format_upload_confirm` | Uploading is the app's only irreversible action. Added deliberately in 2.2.0; losing it would undo that work |
+| **Delete** — lists the files, warns it cannot be undone | `_delete_selected`'s `askyesno` | Destroys local files |
+| **No-selection / busy warnings** | `showwarning` in `_delete_selected`, `_start_upload`, `_start_combat_log_upload` | Several distinct messages, not one generic guard |
+
+`format_upload_confirm` is already a pure module-level function and crosses the
+bridge unchanged — it produces the body string, and `onDialog` merely carries it.
 
 Page → Python (invoked via `pywebview.api.*`):
 
@@ -204,10 +264,10 @@ category, stitch, ids)`, `upload_combat_logs(ids)`, `retry()`, `open_path(id)`,
 
 `detect_folder(which)` is separate from `pick_folder` and exists for both folders:
 Settings has distinct Detect actions for the recording directory (via OBS's own
-config) and the EVE gamelogs directory (`settingsui.py:228`, `:240`, `:263`, `:293`).
+config) and the EVE gamelogs directory (`settingsui.py`'s Detect handlers).
 
 `save_settings` **must rebind the live watcher** when the recording directory
-changes, mirroring `on_settings_saved` today (`__main__.py:215`). Persisting the
+changes, mirroring `on_settings_saved` today (`__main__.py`'s `on_settings_saved`). Persisting the
 setting alone leaves the watcher pointed at the old folder.
 
 #### Row identity
@@ -218,7 +278,7 @@ design hygiene rather than a security boundary — the page is local, bundled in
 installer, loads no remote content, and is exactly as trusted as the Python — but
 it preserves a property the Tk version gets for free: today `_delete_selected`
 operates on `self._chosen()`, which can only contain objects from the current
-discovered list (`app.py:1387`, `:1398`). Ids keep deletion, opening, and upload
+discovered list (`_delete_selected` via `_chosen()`). Ids keep deletion, opening, and upload
 targeting bounded to rows the backend actually knows about, and make a stale page
 after a refresh fail cleanly instead of acting on a path that has since changed
 meaning.
@@ -238,10 +298,10 @@ These are deliberate behaviours in the current UI, not accidents, and each must 
 reimplemented rather than quietly dropped:
 
 - **Keyboard selection.** Arrow keys move focus; Space toggles the focused row's
-  checkbox; focus is established on first entry into the list (`app.py:917`, `:934`).
-- **Context menu** on a row, offering copy-path and open (`app.py:956`).
+  checkbox; focus is established on first entry into the list (`_on_tree_space`, `_ensure_focus_item`).
+- **Context menu** on a row, offering copy-path and open (`_build_context_menu`).
 - **Double-click opens the recording without changing the checkbox selection**
-  (`app.py:988`) — clicking a row's checkbox and double-clicking its name are
+  (`_on_row_double_click`) — clicking a row's checkbox and double-clicking its name are
   distinct gestures and must stay distinct.
 - **Row focus** is a real concept, not just styling; it is what Space acts on.
 
@@ -282,9 +342,24 @@ As mocked and approved: grouped cards, single aligned label column, fields and
 their buttons sharing a baseline, "Connected" as a status pill rather than a
 button, the webhook URL shown once, and the two folder pickers grouped together.
 
+**Two corrections to the approved mockup**, both from behaviour 2.2.0 added after
+it was drawn:
+
+- **The webhook must be masked**, with a Show toggle, and `webhook_status()`'s line
+  underneath describing what is stored — including reporting a parse error rather
+  than calling an invalid URL "not configured". The mockup renders the full webhook
+  in cleartext monospace, which was correct against 2.1.0 and is a credential leak
+  against 2.2.0. Mask by default; the Show toggle reveals.
+- **The account control tracks state.** It is not a permanently-labelled "Connect
+  Google Account" button; it reflects disconnected/connecting/connected/revoking
+  and is disabled during the transient states so a second press cannot start a
+  second OAuth flow. The status pill and the button are two views of one state, fed
+  by `onAuthState`.
+
 Rendered in the same window as a route rather than a separate OS window. This
 removes a whole second toplevel's worth of lifecycle code, and the OAuth polling
-in `settingsui.py` becomes an ordinary worker + `onStatus` push.
+in `settingsui.py` becomes an ordinary worker + `onAuthState` push with no polling
+loop at all.
 
 ## Compatibility
 
@@ -295,7 +370,10 @@ the release workflow's credential-injection step. This is a UI replatform; an
 existing installation must upgrade in place with its settings and sign-in intact.
 
 No settings migration is required — no setting changes meaning. The dropped light
-theme was never persisted; it was detected from the registry at runtime.
+theme was never persisted; it was detected from the registry at runtime. The
+`channel_id`/`channel_title` keys 2.2.0 added are read and displayed unchanged,
+including `settings.py`'s coercion of a non-string from a hand-edited file to `""`
+— that guard exists because both values reach a label, and they still do.
 
 One behaviour change is deliberate and called out rather than buried: **first-run
 recording-folder selection moves from a pre-window OS dialog to an in-app screen**
@@ -307,20 +385,20 @@ already have the setting persisted and never see it.
 - `uploader.spec`: drop the sv-ttk `collect_data_files` and the `PIL._tkinter_finder`
   hidden import; add `webview.platforms.edgechromium` and the `web/` directory as
   `datas`. Keep one-folder, keep the ffmpeg binaries, keep `pystray._win32`.
-- `pyproject.toml`: remove `sv-ttk` (`pyproject.toml:11`); add `pywebview`
+- `pyproject.toml`: remove `sv-ttk` (`pyproject.toml`'s dependency list); add `pywebview`
   **pinned** to a known-good 6.x — the spike ran on 6.2.1, and 6.x has live API
   churn (`FOLDER_DIALOG` is already deprecated). Pillow stays; the tray icon needs it.
 - `build.yml`: the runtime-dependency import check imports `sv_ttk` explicitly
-  (`build.yml:66`) — swap it for `webview`. Replace the "Verify sv-ttk theme data
-  is bundled" step (`build.yml:119`) with the equivalent assertion for `web/`. The
+  (`build.yml`'s runtime-dependency import check) — swap it for `webview`. Replace the "Verify sv-ttk theme data
+  is bundled" step (the "Verify sv-ttk theme data is bundled" step) with the equivalent assertion for `web/`. The
   reasoning in that step's comment still applies verbatim: PyInstaller exits 0 when
   a `datas` entry resolves to nothing, and the spike confirmed that trap is live.
 - `release.yml`: **has no sv-ttk assertion to replace** — its import check simply
-  omits `sv_ttk` today (`release.yml:65`). Add `webview` to that check, and add a
+  omits `sv_ttk` today (its runtime-dependency import check). Add `webview` to that check, and add a
   `web/` bundle assertion mirroring `build.yml`'s, so the release path is not
   weaker than the build path.
 - `installer.iss`: **add the WebView2 Evergreen bootstrapper.** The installer
-  currently packages only the application tree (`installer.iss:41`), so this needs
+  currently packages only the application tree (`installer.iss`'s `[Files]` section), so this needs
   a full definition, not a mention: how the bootstrapper is acquired (bundled at
   build time versus downloaded at install time), how its integrity is verified, how
   an existing runtime is detected, how it is invoked silently, and what happens
@@ -334,28 +412,47 @@ total against a current bundle dominated by ffmpeg.
 
 Agreed approach: **bridge-level tests plus an extended manual smoke checklist.**
 
-- `tests/test_api.py` (new): exercise the `Api` class headlessly with a fake
-  window object, asserting the messages it emits and the calls it accepts. Runs on
+The suite is 476 tests as of 2.2.0. Its structure is unusually favourable here,
+because 2.2.0 made copy a layer of pure module-level functions: **the tests that
+cover what the UI *says* are widget-free and cross the port untouched, and only the
+tests that cover how Tk *renders* it are lost.**
+
+Survive unchanged (pure, no widgets):
+
+- `test_app.py`'s `format_selection_summary` cases
+- `test_app_upload_copy.py` — the upload-confirmation body, including `(n/total)` titles
+- `test_settingsui_copy.py` — `webhook_status()` and account-state strings
+- `test_tooltip.py` — the `_CELL_HELP` text decisions
+- `test_uploader.py`, `test_settings.py`, and every non-UI module's tests
+
+Deleted with the widgets they assert on:
+
+- `test_app_layout`, `test_theme`, `test_treeview_columns`, `test_row_click`
+- `test_typography` — asserts Tk font objects; the *scale* survives, its
+  implementation does not
+- `test_app_last_upload` — drives a real window
+- `test_app_selection_summary` — drives a real `UploaderWindow` through the
+  `make_window` fixture and asserts on `selection_summary.cget("text")`
+
+New:
+
+- `tests/test_api.py`: exercise the `Api` class headlessly with a fake window
+  object, asserting the messages it emits and the calls it accepts. Runs on
   `ubuntu-latest` with no webview installed. CI configuration is otherwise unchanged.
-- Deleted with the widgets they assert on: `test_app_layout`, `test_theme`,
-  `test_typography`, `test_treeview_columns`, `test_row_click`, and
-  `test_app_selection_summary` (it drives a real `UploaderWindow` through the
-  `make_window` fixture and asserts on `selection_summary.cget("text")`).
-- **`test_app.py`'s `format_selection_summary` cases survive untouched.** That
-  function is pure and already has direct coverage there, independent of any
-  widget; it moves to the bridge module as-is. The behaviour
-  `test_app_selection_summary` protects — that a landing ffprobe result refreshes
-  a summary showing a partial "+" total — is a real regression guard and must be
-  re-expressed as a bridge test asserting the `onDuration` handler recomputes and
-  re-pushes the summary.
-- `docs/smoke-checklist.md`: extend to cover what automated tests no longer reach —
-  tray hide/show/quit, the custom title bar drag, native folder dialogs, sort and
-  selection behaviour, progress rendering during a real upload, and first-run on a
-  machine without the WebView2 runtime. Add explicitly, because they are deliberate
-  behaviours with no automated coverage under this approach: **arrow-key focus and
-  Space-to-toggle, the row context menu, double-click-to-open leaving the checkbox
-  selection unchanged, the delete confirmation dialog, and the indeterminate
-  progress bar during a stitch.**
+- Two behaviours lose their only guard and must be re-expressed as bridge tests:
+  that a landing ffprobe result refreshes a summary showing a partial "+" total
+  (from `test_app_selection_summary`), and that the last-upload channel is surfaced
+  after a successful upload (from `test_app_last_upload`).
+
+- `docs/smoke-checklist.md` (already 116 lines longer as of 2.2.0): extend to cover
+  what automated tests no longer reach — tray hide/show/quit, the custom title bar
+  drag, native folder dialogs, sort and selection behaviour, progress rendering
+  during a real upload, and first-run on a machine without the WebView2 runtime.
+  Add explicitly, because they are deliberate behaviours with no automated coverage
+  under this approach: **arrow-key focus and Space-to-toggle, the row context menu,
+  double-click-to-open leaving the checkbox selection unchanged, the upload and
+  delete confirmation dialogs, the masked webhook and its Show toggle, and the
+  indeterminate progress bar during a stitch.**
 
 No Playwright. Real UI regression coverage was considered and rejected: the cost
 of a browser toolchain falls entirely on a solo maintainer, and the riskiest logic
