@@ -29,6 +29,32 @@ YOUTUBE_TOS_URL = "https://www.youtube.com/t/terms"
 # so a masked value does not read as a validation error.
 WEBHOOK_MASK = "•"
 
+# What the auth button says, keyed by the token name _set_auth_status was
+# given. The label used to be the constant "Connect Google Account", which
+# sat under the word "Connected" and told the user nothing about what
+# pressing it would do -- while being the control they reach for when they
+# suspect the wrong account is signed in.
+_AUTH_BUTTON = {
+    "SUCCESS": ("Switch account", True),
+    "ERROR": ("Sign in with Google", True),
+    # Both transient states disable the button: a second press during the
+    # lookup races it, and during the browser flow it starts a second OAuth
+    # flow on top of the first.
+    "MUTED": ("Checking…", False),
+    "WARNING": ("Waiting for browser…", False),
+}
+_AUTH_BUTTON_DEFAULT = ("Sign in with Google", True)
+
+
+def auth_button_state(kind: str | None) -> tuple[str, bool]:
+    """(label, enabled) for the Google account button.
+
+    Unknown states, including the None before the first status lands, fall
+    back to an enabled "Sign in with Google": an optimistic label on a
+    working button beats a dead one during that window.
+    """
+    return _AUTH_BUTTON.get(kind, _AUTH_BUTTON_DEFAULT)
+
 
 class SettingsWindow:
     def __init__(self, parent: tk.Misc, state, on_saved=None):
