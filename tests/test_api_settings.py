@@ -52,3 +52,112 @@ def test_the_page_can_read_the_whole_label_table_in_one_call(tmp_path):
     assert set(table) == {"disconnected", "connecting", "connected", "revoking"}
 
 
+
+HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
+
+
+def settings_api(tmp_path, monkeypatch, watcher=None, **kw):
+    saved = {}
+    api, window = fakes.build_api(tmp_path, watcher=watcher, **kw)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+    monkeypatch.setattr(api_mod.settings_mod, "save",
+                        lambda cfg, path=None: saved.update(cfg))
+    monkeypatch.setattr(api_mod.settings_mod, "load", lambda path=None: dict(saved))
+    return api, window, saved
+
+
+def values(tmp_path, **kw):
+    payload = {"privacy": "public", "category": "20", "notify_mode": "toast",
+               "recording_dir": str(tmp_path), "discord_webhook": "",
+               "gamelogs_dir": None}
+    payload.update(kw)
+    return payload
+
+
+def test_saving_persists_and_reloads_the_canonical_settings(monkeypatch, tmp_path):
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    sent = fakes.record_pushes(api)
+
+    assert api.save_settings(values(tmp_path)) is True
+
+    assert saved["privacy"] == "public"
+    assert api._state.settings["privacy"] == "public"
+    pushed, = fakes.payloads(sent, "onSettings")
+    assert pushed["settings"]["privacy"] == "public"
+
+
+def test_saving_a_new_recording_folder_rebinds_the_live_watcher(monkeypatch, tmp_path):
+    """Persisting the setting alone leaves the watcher polling the old
+    folder, so new recordings in the new one are never noticed."""
+    new_dir = tmp_path / "elsewhere"
+    new_dir.mkdir()
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    api.save_settings(values(tmp_path, recording_dir=str(new_dir)))
+
+    assert watcher.rebound == [new_dir]
+    assert api._state.recording_dir == new_dir
+
+
+def test_saving_the_same_folder_does_not_rebind(monkeypatch, tmp_path):
+    """rebind() re-baselines `seen`; doing it on every Save would be work
+    with a chance of announcing existing files as new."""
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+    api.save_settings(values(tmp_path))
+    assert watcher.rebound == []
+
+
+def test_a_non_numeric_category_is_refused_before_anything_is_written(monkeypatch, tmp_path):
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    assert api.save_settings(values(tmp_path, category="gaming")) is False
+    assert saved == {}
+    assert api._alert.titles() == ["Invalid category"]
+
+
+def test_an_invalid_webhook_is_refused_with_the_parse_error(monkeypatch, tmp_path):
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    assert api.save_settings(
+        values(tmp_path, discord_webhook="http://discord.com/api/webhooks/1/2")) is False
+    assert saved == {}
+    kind, title, body = api._alert.raised[0]
+    assert title == "Invalid webhook"
+    assert "https" in body.lower()
+
+
+def test_a_recording_folder_that_is_not_a_folder_is_refused(monkeypatch, tmp_path):
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    assert api.save_settings(
+        values(tmp_path, recording_dir=str(tmp_path / "nope"))) is False
+    assert saved == {}
+    assert api._alert.titles() == ["Invalid folder"]
+
+
+def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypatch, tmp_path):
+    """State and disk must never diverge: bail out before touching memory
+    and tell the user, so their edits can be retried."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    def boom(cfg, path=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+
+    assert api.save_settings(values(tmp_path)) is False
+    assert api._state.settings["privacy"] == "unlisted"
+    assert api._alert.titles() == ["Could not save settings"]
+
+
+def test_the_pushed_settings_describe_the_webhook_without_its_token(monkeypatch, tmp_path):
+    """The field is masked in the page, so this line is the only
+    confirmation of WHICH webhook is stored. Top-level key, not nested."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    sent = fakes.record_pushes(api)
+    api.save_settings(values(tmp_path, discord_webhook=HOOK))
+    pushed, = fakes.payloads(sent, "onSettings")
+    assert "1538615213203656754" in pushed["webhook_status"]
+    assert "tok" not in pushed["webhook_status"].split("/")[-1]
+
+

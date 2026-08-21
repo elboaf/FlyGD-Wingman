@@ -29,7 +29,8 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import combatlog, discord, durations, library, paths, settings as settings_mod, stitch, uploader
+from .. import (combatlog, discord, durations, library, obsconfig, paths,
+                settings as settings_mod, stitch, uploader)
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -887,6 +888,81 @@ class Api:
             self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
 
     # ----- settings and account ------------------------------------------
+
+    def _settings_payload(self) -> dict:
+        cfg = self._state.settings
+        detected_rec = obsconfig.find_recording_dir()
+        detected_logs = combatlog.find_gamelogs_dir()
+        return {
+            "settings": dict(cfg),
+            # Top level, not inside `settings`: it is derived, not stored,
+            # and nesting it invites the page to write it back on Save.
+            "webhook_status": copy_mod.webhook_status(
+                cfg.get("discord_webhook", "") or ""),
+            "detected": {
+                "recording": str(detected_rec) if detected_rec else "",
+                "gamelogs": str(detected_logs) if detected_logs else "",
+            },
+            # Depends only on values Python owns (channel title and
+            # privacy), so it is rendered here rather than templated in the
+            # page -- format_destination is tested copy.
+            "destination": copy_mod.format_destination(
+                cfg.get("channel_title", ""), cfg.get("privacy", "")),
+        }
+
+    def save_settings(self, values: dict) -> bool:
+        """Validate, persist, and make the change reach the running app.
+
+        Returns False when the page should keep the form open with the
+        user's edits intact.
+        """
+        category = str(values.get("category", "")).strip()
+        if not category.isdigit():
+            self._alert("warning", "Invalid category",
+                        "Category ID must be a number, e.g. 20.")
+            return False
+        webhook_raw = str(values.get("discord_webhook", "") or "").strip()
+        if webhook_raw:
+            _, webhook_error = discord.parse_webhook(webhook_raw)
+            if webhook_error:
+                self._alert("warning", "Invalid webhook", webhook_error)
+                return False
+        rec_dir = Path(str(values.get("recording_dir", "")))
+        if not rec_dir.is_dir():
+            self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
+            return False
+
+        cfg = dict(self._state.settings)
+        gamelogs = str(values.get("gamelogs_dir") or "").strip()
+        cfg.update({
+            "privacy": values.get("privacy"),
+            "category": category,
+            "notify_mode": values.get("notify_mode"),
+            "recording_dir": str(rec_dir),
+            "discord_webhook": webhook_raw,
+            "gamelogs_dir": gamelogs or None,
+        })
+        try:
+            settings_mod.save(cfg)
+        except OSError as exc:
+            # Bail out before touching in-memory state so state and disk
+            # never diverge, and say so rather than failing silently -- the
+            # page keeps the form open with the edits intact.
+            self._alert("error", "Could not save settings",
+                        f"Settings were not saved: {exc}")
+            return False
+
+        self._state.settings = settings_mod.load()
+        self._state.recording_dir = rec_dir
+        # The watcher is the reason this method is not just a file write.
+        # It holds its own directory, so persisting the setting alone would
+        # leave it polling the old folder forever. Guarded on a real change
+        # because rebind() re-baselines `seen`.
+        if self._watcher is not None and rec_dir != Path(self._watcher.directory):
+            self._watcher.rebind(rec_dir)
+        self._push("onSettings", self._settings_payload())
+        self.list_rows()
+        return True
 
     def auth_labels(self) -> dict:
         """The whole account-state table, for the page to render from.
