@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from . import app as app_mod
-from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
+from . import discord, obsconfig, paths, settings as settings_mod, stitch, theme, watcher
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,7 @@ def main() -> int:
 
     root = tk.Tk()
     root.withdraw()  # Created on the main thread up front, shown on demand.
+    theme.apply(root, theme.detect_mode())
 
     rec_dir = resolve_recording_dir(cfg)
     if rec_dir is None:
@@ -180,6 +181,15 @@ def main() -> int:
         # raised while showing/refreshing the window, must not silently
         # and permanently kill the watcher with no error shown to the user.
         nonlocal consecutive_failures, refresh_deferred
+        try:
+            # Independent of the watcher block below: a failed registry
+            # read is a theming problem, not a watcher problem, and must
+            # never be counted toward FAILURE_NOTIFY_THRESHOLD.
+            detected_mode = theme.detect_mode()
+            if detected_mode != theme.current_mode():
+                theme.apply(root, detected_mode)
+        except Exception:
+            logger.warning("Theme check failed", exc_info=True)
         try:
             ready = w.poll_once()
             uploading = window.upload_thread is not None and window.upload_thread.is_alive()
