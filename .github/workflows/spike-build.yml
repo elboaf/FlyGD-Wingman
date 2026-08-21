@@ -1,0 +1,84 @@
+# .github/workflows/spike-build.yml
+#
+# Freezes ONLY spikes/frameless_resize_spike.py into a single loose .exe,
+# so the frameless-resize question can be answered on a Windows machine
+# with no Python, no uv, and no installer.
+#
+# Deliberately separate from build.yml and touching nothing it uses: no
+# packaging/uploader.spec, no installer.iss, no credential injection, no
+# ffmpeg or WebView2 bootstrapper fetch. This workflow exists to answer
+# one throwaway question and is expected to be deleted with the spike.
+#
+# WebView2 is NOT bundled here, unlike the real installer which ships the
+# Evergreen bootstrapper. The runtime is present on essentially every
+# up-to-date Windows 10/11 box, and if it is missing the spike will show
+# the same silent no-window exit that preflight.py exists to prevent --
+# which is a WebView2 problem, not a resize result. Check for a window
+# before concluding anything about hit-testing.
+name: Spike build (frameless resize)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches build.yml, so pythonnet and pywebview resolve to the
+          # same wheels the real build gets.
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+          # pywebview only -- the spike imports nothing from the app, so
+          # none of the Google/OBS dependency tree is needed.
+          python -m pip install "pywebview==6.2.1" pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw "dependency install failed" }
+
+      - name: Build the spike executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # --console, NOT --windowed. The real app freezes with
+          # console=False, but this spike reports its findings on stdout:
+          # the subclassed HWND, the HWND again after restore (which is
+          # how a handle recreated by toggle_fullscreen becomes visible),
+          # and any traceback from inside the WndProc. Freezing it
+          # windowed would throw away half the observations.
+          #
+          # --hidden-import mirrors uploader.spec: pywebview picks its
+          # backend from a runtime string, so modulegraph never sees it,
+          # and without this the exe starts, finds no backend, and exits 0
+          # with no window at all.
+          pyinstaller `
+            --onefile `
+            --console `
+            --name frameless-resize-spike `
+            --hidden-import webview.platforms.edgechromium `
+            spikes/frameless_resize_spike.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+
+      - name: Verify the executable exists
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # PyInstaller reports "Hidden import not found" as an ERROR line
+          # and still exits 0, exactly as build.yml documents, so a
+          # non-zero exit code is not sufficient evidence of success.
+          $exe = "dist/frameless-resize-spike.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+          "{0} -> {1:N1} MB" -f $exe, ((Get-Item $exe).Length / 1MB)
+
+      - name: Upload the spike executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: frameless-resize-spike-exe
+          path: dist/frameless-resize-spike.exe
+          if-no-files-found: error

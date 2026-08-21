@@ -58,6 +58,15 @@ WHAT TO WRITE DOWN
  8. Anything crash? A GC'd WNDPROC callback or an exception crossing the
     native boundary kills the process outright, so "it survived five
     minutes of poking" is itself a result worth recording.
+ 9. Repeat 1 and 2 on a display at 150% or 175% scaling. The spike sets
+    PROCESS_SYSTEM_DPI_AWARE to match the app, so the border should stay
+    grabbable at the same apparent thickness. If it turns razor-thin or
+    unhittable, the scale factor is being applied wrongly and every
+    number in _hit() needs revisiting.
+10. Drag the window to a second monitor at a DIFFERENT scale and resize
+    there. System-DPI-aware means the app is already knowingly wrong in
+    that situation; the question is only whether resize degrades
+    gracefully or becomes unusable.
 
 This is throwaway. Nothing here is imported by the app; the flags below
 are duplicated from ui/window.py on purpose so the spike keeps working
@@ -134,6 +143,33 @@ class MINMAXINFO(ctypes.Structure):
 _KEEPALIVE: list = []
 
 
+def _match_app_dpi_awareness() -> None:
+    """Replicate __main__.set_dpi_awareness() -- PROCESS_SYSTEM_DPI_AWARE.
+
+    This is not boilerplate, it decides whether the spike measures
+    anything real. A DPI-unaware process gets virtualized coordinates:
+    GetWindowRect reports scaled-down values and GetDpiForWindow reports
+    96 on a 150% display, so the border math below would be exercised in
+    a coordinate space the shipped app never runs in, and a passing spike
+    would prove nothing.
+
+    It must be awareness level 1 specifically, matching __main__.py:112.
+    Per-Monitor V2 would put the window in a different coordinate regime
+    AND introduce WM_DPICHANGED, which the app deliberately does not
+    handle -- so testing under it would answer a question nobody asked.
+
+    Nothing in packaging/uploader.spec declares DPI awareness in a
+    manifest, so this runtime call is the only source of it in the real
+    app too. That is what makes a source run and a frozen run equivalent
+    here.
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        # shcore.dll predates Windows 8.1. Same swallow as the app.
+        pass
+
+
 def _user32():
     """Load user32 with explicit signatures.
 
@@ -160,11 +196,17 @@ def _user32():
 
 
 def _scale_for(user32, hwnd: int) -> float:
-    """Per-monitor DPI scale, or 1.0 on anything that cannot report it.
+    """Window DPI scale, matching the app's system-DPI-aware model.
 
-    GetDpiForWindow is Windows 10 1607+. __main__.set_dpi_awareness()
-    already makes the process per-monitor aware, so this is the number
-    that matches what the user sees.
+    Under PROCESS_SYSTEM_DPI_AWARE, GetDpiForWindow reports the SYSTEM
+    DPI rather than the DPI of whichever monitor the window is on -- so
+    this returns exactly the scale the shipped app sees, including its
+    known wrongness after the window is dragged to a differently-scaled
+    monitor. That mismatch is the app's deliberate tradeoff
+    (__main__.set_dpi_awareness), so the spike must inherit it rather
+    than quietly improve on it.
+
+    GetDpiForWindow is Windows 10 1607+; older hosts fall back to 1.0.
     """
     get_dpi = getattr(user32, "GetDpiForWindow", None)
     if get_dpi is None:
@@ -353,6 +395,11 @@ class Api:
 
 
 def main(argv: list[str]) -> int:
+    # FIRST, before any window exists. Awareness is a process-wide setting
+    # that Windows latches once a window has been created, so calling it
+    # later would silently do nothing.
+    _match_app_dpi_awareness()
+
     hittest = "--no-hittest" not in argv
     maxinfo = "--no-maxinfo" not in argv
 
