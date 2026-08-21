@@ -867,7 +867,10 @@ then replace every `tooltip.tooltip_for_cell` with `copy_mod.tooltip_for_cell`. 
 - [ ] **Step 13: Run the whole suite**
 
 Run: `python -m pytest -q`
-Expected: PASS — 476 passed, the same count as before the refactor. A changed count means something was moved rather than re-exported.
+Expected: PASS, with the SAME test count as before this task's edits. Record that
+count first (`python3 -m pytest tests -q | tail -1`) and compare — a pure move must
+not change it. Do not compare against a number written in this plan: the suite grows
+as tasks land, and a hardcoded figure here goes stale within one task.
 
 - [ ] **Step 14: Verify the Tk entry point still imports**
 
