@@ -109,10 +109,19 @@ class SettingsWindow:
         # window - character widths (Entry/Combobox `width=`) are NOT pixels
         # and are deliberately left alone.
         scale = app_mod.dpi_scale(self.win)
+        pad = app_mod.spacing(self.win)
 
-        acct = ttk.LabelFrame(self.win, text="Google account",
-                              padding=app_mod.FRAME_PADDING)
-        acct.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        # The margin lives on one container rather than on each frame's padx.
+        # Per-frame padding gives horizontal breathing room only, which is why
+        # the dialog had no gap above the first frame or below Save/Cancel;
+        # and it is measured after this runs (winfo_reqwidth, __init__) so the
+        # margin has to be inside the geometry request, not outside it.
+        body = ttk.Frame(self.win, padding=pad.margin)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        acct = ttk.LabelFrame(body, text="Google account",
+                              padding=pad.frame)
+        acct.pack(fill=tk.X, pady=pad.tight)
 
         auth_row = ttk.Frame(acct)
         auth_row.pack(anchor=tk.W, fill=tk.X)
@@ -124,14 +133,14 @@ class SettingsWindow:
         inset = max(1, round(scale))
         self.auth_dot = tk.Canvas(auth_row, width=dot, height=dot,
                                   highlightthickness=0)
-        self.auth_dot.pack(side=tk.LEFT, padx=(0, app_mod.PAD_TIGHT))
+        self.auth_dot.pack(side=tk.LEFT, padx=(0, pad.tight))
         self._auth_dot_id = self.auth_dot.create_oval(
             inset, inset, dot - inset, dot - inset, outline="")
         self.lbl_auth = ttk.Label(auth_row, text="Checking…")
         self.lbl_auth.pack(side=tk.LEFT)
 
         ttk.Button(acct, text="Connect Google Account",
-                   command=self._connect).pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+                   command=self._connect).pack(anchor=tk.W, pady=(pad.tight, 0))
         self.lbl_acct_hint = ttk.Label(
             acct,
             text=("Google hasn't verified this app yet, so the sign-in page "
@@ -145,7 +154,7 @@ class SettingsWindow:
             foreground=theme.token("MUTED"), wraplength=round(460 * scale),
             justify=tk.LEFT,
         )
-        self.lbl_acct_hint.pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+        self.lbl_acct_hint.pack(anchor=tk.W, pady=(pad.tight, 0))
 
         self.lbl_tos_hint = ttk.Label(
             acct,
@@ -154,7 +163,7 @@ class SettingsWindow:
             foreground=theme.token("MUTED"), wraplength=round(460 * scale),
             justify=tk.LEFT,
         )
-        self.lbl_tos_hint.pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+        self.lbl_tos_hint.pack(anchor=tk.W, pady=(pad.tight, 0))
         self.lbl_tos = ttk.Label(
             acct,
             text=YOUTUBE_TOS_URL, foreground=theme.token("LINK"),
@@ -165,69 +174,69 @@ class SettingsWindow:
         # resolved, and a dead link must not take the Settings dialog down.
         self.lbl_tos.bind("<Button-1>", lambda _e: self._open_tos())
 
-        up = ttk.LabelFrame(self.win, text="Upload defaults",
-                            padding=app_mod.FRAME_PADDING)
-        up.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        up = ttk.LabelFrame(body, text="Upload defaults",
+                            padding=pad.frame)
+        up.pack(fill=tk.X, pady=pad.tight)
         up.columnconfigure(0, minsize=int(90 * scale))
         ttk.Label(up, text="Privacy:", anchor=tk.E).grid(row=0, column=0, sticky=tk.E)
         ttk.Combobox(up, textvariable=self.privacy, values=PRIVACY_CHOICES,
                      state="readonly", width=12).grid(
-            row=0, column=1, sticky=tk.W, padx=app_mod.PAD_TIGHT)
+            row=0, column=1, sticky=tk.W, padx=pad.tight)
         ttk.Label(up, text="Category ID:", anchor=tk.E).grid(
-            row=1, column=0, sticky=tk.E, pady=(app_mod.PAD_TIGHT, 0))
+            row=1, column=0, sticky=tk.E, pady=(pad.tight, 0))
         ttk.Entry(up, textvariable=self.category, width=8).grid(
-            row=1, column=1, sticky=tk.W, padx=app_mod.PAD_TIGHT,
-            pady=(app_mod.PAD_TIGHT, 0))
+            row=1, column=1, sticky=tk.W, padx=pad.tight,
+            pady=(pad.tight, 0))
         self.lbl_category_hint = ttk.Label(up, text="(20 = Gaming)",
                                            foreground=theme.token("MUTED"))
         self.lbl_category_hint.grid(row=1, column=2, sticky=tk.W)
 
-        beh = ttk.LabelFrame(self.win, text="When a recording finishes",
-                             padding=app_mod.FRAME_PADDING)
-        beh.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        beh = ttk.LabelFrame(body, text="When a recording finishes",
+                             padding=pad.frame)
+        beh.pack(fill=tk.X, pady=pad.tight)
         ttk.Radiobutton(beh, text="Show a tray notification (recommended)",
                         variable=self.notify, value="toast").pack(anchor=tk.W)
         ttk.Radiobutton(beh, text="Open the uploader window immediately",
                         variable=self.notify, value="popup").pack(anchor=tk.W)
 
-        disc = ttk.LabelFrame(self.win, text="Discord (combat logs)",
-                              padding=app_mod.FRAME_PADDING)
-        disc.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        disc = ttk.LabelFrame(body, text="Discord (combat logs)",
+                              padding=pad.frame)
+        disc.pack(fill=tk.X, pady=pad.tight)
         disc.columnconfigure(0, minsize=int(90 * scale))
         ttk.Label(disc, text="Webhook URL:", anchor=tk.E).grid(
             row=0, column=0, sticky=tk.E)
         ttk.Entry(disc, textvariable=self.webhook, width=44).grid(
-            row=0, column=1, sticky=tk.EW, padx=app_mod.PAD_TIGHT)
+            row=0, column=1, sticky=tk.EW, padx=pad.tight)
         self.lbl_webhook = ttk.Label(disc, text="", foreground=theme.token("MUTED"))
-        self.lbl_webhook.grid(row=1, column=1, sticky=tk.W, padx=app_mod.PAD_TIGHT)
+        self.lbl_webhook.grid(row=1, column=1, sticky=tk.W, padx=pad.tight)
         ttk.Label(disc, text="Gamelogs:", anchor=tk.E).grid(
-            row=2, column=0, sticky=tk.E, pady=(app_mod.PAD_TIGHT, 0))
+            row=2, column=0, sticky=tk.E, pady=(pad.tight, 0))
         ttk.Entry(disc, textvariable=self.gamelogs).grid(
-            row=2, column=1, sticky=tk.EW, padx=app_mod.PAD_TIGHT,
-            pady=(app_mod.PAD_TIGHT, 0))
+            row=2, column=1, sticky=tk.EW, padx=pad.tight,
+            pady=(pad.tight, 0))
         btns = ttk.Frame(disc)
-        btns.grid(row=2, column=2, sticky=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+        btns.grid(row=2, column=2, sticky=tk.W, pady=(pad.tight, 0))
         ttk.Button(btns, text="Browse…", command=self._browse_gamelogs).pack(side=tk.LEFT)
         ttk.Button(btns, text="Detect", command=self._detect_gamelogs).pack(
-            side=tk.LEFT, padx=(app_mod.PAD_TIGHT, 0))
+            side=tk.LEFT, padx=(pad.tight, 0))
         disc.columnconfigure(1, weight=1)
 
-        folder = ttk.LabelFrame(self.win, text="Recording folder",
-                                padding=app_mod.FRAME_PADDING)
-        folder.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        folder = ttk.LabelFrame(body, text="Recording folder",
+                                padding=pad.frame)
+        folder.pack(fill=tk.X, pady=pad.tight)
         ttk.Entry(folder, textvariable=self.rec_dir).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(folder, text="Browse…", command=self._browse).pack(
-            side=tk.LEFT, padx=(app_mod.PAD_TIGHT, 0))
+            side=tk.LEFT, padx=(pad.tight, 0))
         ttk.Button(folder, text="Detect", command=self._detect).pack(
-            side=tk.LEFT, padx=(app_mod.PAD_TIGHT, 0))
+            side=tk.LEFT, padx=(pad.tight, 0))
 
-        row = ttk.Frame(self.win)
-        row.pack(fill=tk.X, padx=app_mod.PAD_NORMAL, pady=app_mod.PAD_TIGHT)
+        row = ttk.Frame(body)
+        row.pack(fill=tk.X, pady=pad.tight)
         ttk.Button(row, text="Save", command=self._save,
                    style="Accent.TButton").pack(side=tk.RIGHT)
         ttk.Button(row, text="Cancel", command=self.win.destroy).pack(
-            side=tk.RIGHT, padx=app_mod.PAD_TIGHT)
+            side=tk.RIGHT, padx=pad.tight)
 
     def _open_tos(self) -> None:
         try:

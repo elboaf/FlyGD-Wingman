@@ -72,13 +72,41 @@ def dpi_scale(widget: tk.Misc) -> float:
     return round(float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
 
 
-# Shared spacing scale for _build's layout. Kept as module constants (rather
-# than per-call literals) so every section agrees on what "tight" vs "loose"
-# means, and so Task 7 can import the same values instead of guessing them.
-PAD_TIGHT = 4    # between closely related controls (e.g. buttons in one row)
-PAD_NORMAL = 8   # between distinct groups (e.g. a frame and the window edge)
-PAD_LOOSE = 12   # around a whole section
-FRAME_PADDING = 8  # internal padding for bordered frames
+@dataclass(frozen=True)
+class Spacing:
+    """DPI-scaled spacing steps.
+
+    Derived from dpi_scale() rather than kept as fixed pixels, because the
+    unscaled constants this replaces were the reason high-DPI layouts grew
+    while the space between things did not: at 150% every control was half
+    again as tall inside gaps still measured for 96 DPI.
+
+    Frozen so a window cannot mutate the steps for one section and leave the
+    rest of the app disagreeing about what "loose" means.
+    """
+    tight: int    # within one control group (e.g. buttons in one row)
+    normal: int   # between controls in a section
+    loose: int    # between sections
+    margin: int   # window edge; new step, no unscaled equivalent existed
+    frame: int    # internal padding of a bordered frame
+
+
+def spacing(widget: tk.Misc) -> Spacing:
+    """Scale the 100% base steps for *widget*'s display.
+
+    max(1, ...) rather than a plain round: a scale small enough to round a
+    step to 0 would read as a layout bug (controls touching), not as tight
+    spacing. Callers take this once per build and reuse the result, so the
+    Tcl round-trip in dpi_scale() is paid once per window, not per widget.
+    """
+    scale = dpi_scale(widget)
+    return Spacing(
+        tight=max(1, int(round(4 * scale))),
+        normal=max(1, int(round(8 * scale))),
+        loose=max(1, int(round(12 * scale))),
+        margin=max(1, int(round(16 * scale))),
+        frame=max(1, int(round(8 * scale))),
+    )
 
 
 @dataclass
@@ -180,8 +208,11 @@ class UploaderWindow:
         self.root.withdraw()
 
     def _build(self) -> None:
-        meta = ttk.LabelFrame(self.root, text="Video details", padding=FRAME_PADDING)
-        meta.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_TIGHT)
+        # One lookup for the whole build, mirroring settingsui._build: the
+        # Tcl scaling round-trip is per-window state, not per-widget.
+        pad = spacing(self.root)
+        meta = ttk.LabelFrame(self.root, text="Video details", padding=pad.frame)
+        meta.pack(fill=tk.X, padx=pad.normal, pady=pad.tight)
         ttk.Label(meta, text="Title:").grid(row=0, column=0, sticky=tk.W)
         self.title_var = tk.StringVar(value="")
         ttk.Entry(meta, textvariable=self.title_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
@@ -195,7 +226,7 @@ class UploaderWindow:
         meta.columnconfigure(1, weight=1)
 
         self.list_frame = ttk.Frame(self.root)
-        self.list_frame.pack(fill=tk.BOTH, expand=True, padx=PAD_NORMAL)
+        self.list_frame.pack(fill=tk.BOTH, expand=True, padx=pad.normal)
 
         # Task 4's shared helper — do not compute scale independently here,
         # or checkbox images and window geometry can disagree.
@@ -240,48 +271,48 @@ class UploaderWindow:
 
         self.stitch_var = tk.BooleanVar(value=False)
         bot = ttk.Frame(self.root)
-        bot.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_NORMAL)
+        bot.pack(fill=tk.X, padx=pad.normal, pady=pad.normal)
 
         ttk.Button(bot, text="Settings", command=self._open_settings).pack(
-            side=tk.LEFT, padx=(0, PAD_LOOSE))
+            side=tk.LEFT, padx=(0, pad.loose))
         ttk.Button(bot, text="Delete Selected", command=self._delete_selected).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
+            side=tk.LEFT, padx=pad.tight)
         ttk.Button(bot, text="Select All", command=lambda: self._set_all(True)).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
+            side=tk.LEFT, padx=pad.tight)
         ttk.Button(bot, text="Select None", command=lambda: self._set_all(False)).pack(
-            side=tk.LEFT, padx=PAD_TIGHT)
+            side=tk.LEFT, padx=pad.tight)
 
         self.stitch_chk = ttk.Checkbutton(bot, text="Stitch selected videos",
                                           variable=self.stitch_var)
-        self.stitch_chk.pack(side=tk.LEFT, padx=(PAD_LOOSE, PAD_TIGHT))
+        self.stitch_chk.pack(side=tk.LEFT, padx=(pad.loose, pad.tight))
         self.ffmpeg_warn_label = None
         if not self.state.ffmpeg_bin:
             self.stitch_chk.state(["disabled"])
             self.ffmpeg_warn_label = ttk.Label(
                 bot, text="(ffmpeg not found — stitching unavailable)",
                 foreground=theme.token("WARNING"))
-            self.ffmpeg_warn_label.pack(side=tk.LEFT, padx=PAD_TIGHT)
+            self.ffmpeg_warn_label.pack(side=tk.LEFT, padx=pad.tight)
 
         # Right side, packed in visual order: Upload Selected is the accent
         # action, Retry sits beside it, and Upload combat logs — added by the
         # combat-log feature — is a peer upload action, NOT accented, so the
         # primary action stays unambiguous.
         ttk.Button(bot, text="Upload Selected", style="Accent.TButton",
-                   command=self._start_upload).pack(side=tk.RIGHT, padx=PAD_TIGHT)
+                   command=self._start_upload).pack(side=tk.RIGHT, padx=pad.tight)
         self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
-        self.retry_btn.pack(side=tk.RIGHT, padx=PAD_TIGHT)
+        self.retry_btn.pack(side=tk.RIGHT, padx=pad.tight)
         self.retry_btn.state(["disabled"])
         ttk.Button(bot, text="Upload combat logs",
                    command=self._start_combat_log_upload).pack(
-            side=tk.RIGHT, padx=PAD_TIGHT)
+            side=tk.RIGHT, padx=pad.tight)
 
         status_bar = ttk.Frame(self.root, height=int(48 * self._dpi_scale))
-        status_bar.pack(fill=tk.X, padx=PAD_NORMAL, pady=(0, PAD_NORMAL))
+        status_bar.pack(fill=tk.X, padx=pad.normal, pady=(0, pad.normal))
         status_bar.pack_propagate(False)  # fixed height regardless of child content
         self.progress = ttk.Progressbar(status_bar, mode="determinate")
-        self.progress.pack(fill=tk.X, pady=(PAD_TIGHT, 0))
+        self.progress.pack(fill=tk.X, pady=(pad.tight, 0))
         self.status = ttk.Label(status_bar, text="")
-        self.status.pack(fill=tk.X, anchor=tk.W, pady=(PAD_TIGHT, 0))
+        self.status.pack(fill=tk.X, anchor=tk.W, pady=(pad.tight, 0))
 
         # Registered last, deliberately: _on_theme_changed dereferences
         # self.ffmpeg_warn_label and self.status, both created above. A
