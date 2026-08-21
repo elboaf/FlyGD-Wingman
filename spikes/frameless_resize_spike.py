@@ -50,6 +50,36 @@ around the page that the parent DOES own. It costs a visible N-pixel
 frame in the app's background colour, which is a design change rather
 than a pure bugfix -- worth knowing whether it is the price of resizing.
 
+RESULTS SO FAR (Windows 11, WebView2 151.0.4129.93, frozen exe)
+---------------------------------------------------------------
+Question 0 FAILED for the plain subclass. Two independent confirmations:
+
+  * the spike counted ZERO WM_NCHITTEST messages reaching the form, while
+    a human had the cursor on the edges trying to drag them;
+  * the probe found four Chromium children -- Chrome_WidgetWin_0,
+    Chrome_WidgetWin_1, Chrome_RenderWidgetHostHWND and Intermediate D3D
+    Window -- ALL at exactly the form's rect, 221,221 1027x645, covering
+    every border pixel.
+
+So the WebView2 child owns the whole surface and the parent subclass can
+never hit-test it. Native resize via WM_NCHITTEST on the form is dead as
+designed.
+
+Also observed: maximize and restore work fine through pywebview's API,
+and the HWND was unchanged (0x74109e) across both restores, so those
+transitions do not recreate the handle. The WM_GETMINMAXINFO taskbar
+clamp is still UNTESTED -- the probe never reached it.
+
+--pad is UNTESTED, not disproven. Its first run deadlocked on a
+cross-thread Padding assignment (fixed since, see on_shown) and had to
+be killed, losing its buffered output.
+
+STILL OPEN: whether WM_NCCALCSIZE can carve a genuine non-client border.
+That region lies OUTSIDE the client area, so the WebView2 child cannot
+cover it -- which addresses the exact routing failure above, and is the
+standard custom-chrome recipe. It is a bigger change than either variant
+tried here.
+
 RUN IT (Windows, with WebView2 present)
 ---------------------------------------
     uv run python spikes/frameless_resize_spike.py
@@ -446,6 +476,14 @@ class Api:
 
 
 def main(argv: list[str]) -> int:
+    # Line-buffer stdout. Frozen and redirected, Python block-buffers it,
+    # so a spike that hangs and has to be killed loses every diagnostic it
+    # printed -- which already cost one entire --pad run's results.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
+
     # FIRST, before any window exists. Awareness is a process-wide setting
     # that Windows latches once a window has been created, so calling it
     # later would silently do nothing.
@@ -482,11 +520,26 @@ def main(argv: list[str]) -> int:
         if pad:
             # DockStyle.Fill measures against the parent's DisplayRectangle,
             # which Padding shrinks -- so this insets the WebView2 without
-            # touching pywebview's Dock assignment. Applied AFTER the
-            # control exists, or Fill would just re-expand over it.
+            # touching pywebview's Dock assignment.
+            #
+            # It MUST be marshalled onto the UI thread. This handler does
+            # not run there, and assigning Padding triggers a layout pass
+            # over the WebView2 control; doing that cross-thread deadlocks
+            # the window process outright -- an unresponsive window that
+            # has to be killed, with its buffered stdout lost. pywebview
+            # guards its own equivalents the same way (winforms.py:546).
+            from System import Action
             from System.Windows.Forms import Padding
 
-            window.native.Padding = Padding(pad)
+            native = window.native
+
+            def _apply():
+                native.Padding = Padding(pad)
+
+            if native.InvokeRequired:
+                native.Invoke(Action(_apply))
+            else:
+                _apply()
             print(f"[spike] form padded by {pad}px; the band is form surface")
 
         attach(window.native.Handle.ToInt64(), hittest=hittest, maxinfo=maxinfo)
