@@ -18,10 +18,19 @@
 
   var api = {};
   ['delete_selected', 'start_upload', 'upload_combat_logs', 'retry',
-   'open_path', 'copy_path', 'detect_folder', 'save_settings',
+   'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'set_recording_dir'
   ].forEach(function (name) { api[name] = log(name); });
+
+  // NOT one of the generic stubs above. settings.js guards on `!ok`, so the
+  // generic stub's null would make Save a silent no-op here while working
+  // fine in the product -- a dev harness that lies about the one flow it is
+  // most used to exercise.
+  api.save_settings = function (values) {
+    console.log('DEV api.save_settings(', values, ')');
+    return Promise.resolve(true);
+  };
 
   api.pick_folder = function (which) {
     console.log('DEV api.pick_folder(', which, ')');
