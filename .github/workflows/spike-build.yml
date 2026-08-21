@@ -69,11 +69,22 @@ jobs:
           # looks under sys._MEIPASS/web when frozen, which is what the
           # "web" destination below produces. Same reasoning, and the same
           # silent-failure mode, as uploader.spec's datas entry.
+          #
+          # --paths . is what makes obs_youtube_uploader importable DURING
+          # ANALYSIS. The script lives in spikes/, so PyInstaller puts only
+          # that directory on the path; without this it cannot resolve the
+          # package, reports it as a missing module, and still exits 0 --
+          # producing an exe that dies at launch with ModuleNotFoundError.
+          # The explicit hidden-imports cover the same ground belt-and-braces,
+          # since the harness imports them inside a function.
           pyinstaller `
             --onefile `
             --console `
             --name frameless-measure `
             --hidden-import webview.platforms.edgechromium `
+            --paths . `
+            --hidden-import obs_youtube_uploader.ui.window `
+            --hidden-import obs_youtube_uploader.ui.chrome `
             --add-data "obs_youtube_uploader/web;web" `
             spikes/measure_window.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (measure)" }
