@@ -6034,7 +6034,17 @@ Then add the script tag, immediately before `<script src="dev.js"></script>`:
     rows = incoming;
     if (focusId && !known[focusId]) focusId = null;
     render();
-    ensureFocusItem();
+    // Re-seed the focus item ONLY if the user is already on the list.
+    // Rebuilding cleared it, and without this arrow keys go dead
+    // mid-session with no focus event coming to fix them -- but seeding
+    // unconditionally would put a focus ring on a list nobody has tabbed
+    // to yet. This is the guard app.py's refresh() used verbatim
+    // (`if self.tree.focus_get() is self.tree`).
+    var scroll = WM.el('list-scroll');
+    if (document.activeElement === scroll
+        || scroll.contains(document.activeElement)) {
+      ensureFocusItem();
+    }
   });
 
   WM.handle('onDuration', function (payload) {
