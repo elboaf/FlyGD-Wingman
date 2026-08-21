@@ -155,6 +155,7 @@ class Api:
         self._links: dict[str, str] = {}
         self._last_pct: float = 0.0
         self._watcher = None
+        self._auth_thread: threading.Thread | None = None
 
     # ----- page -> Python -------------------------------------------------
 
@@ -884,3 +885,17 @@ class Api:
                            f"by hand:\n{archive.path}")
             self._alert("error", "Combat log upload failed", detail)
             self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
+
+    # ----- settings and account ------------------------------------------
+
+    def auth_labels(self) -> dict:
+        """The whole account-state table, for the page to render from.
+
+        Returned rather than pushed because it never changes: the page asks
+        once at load and then only needs the `state` each onAuthState
+        carries. Keeping the strings here keeps them under test, and stops
+        the page growing a second copy that drifts.
+        """
+        return {state: {"message": message, "label": label, "enabled": enabled}
+                for state, (message, label, enabled)
+                in copy_mod.AUTH_STATES.items()}

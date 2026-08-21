@@ -191,3 +191,28 @@ def tooltip_for_cell(column: str, text: str) -> str | None:
     cannot disagree with what the user is actually looking at.
     """
     return CELL_HELP.get(column, {}).get(text)
+
+
+# --- account control ---------------------------------------------------
+
+# (status message, button label, button enabled) per bridge auth state.
+# The two transient states disable the button: a second press during the
+# credential lookup races it, and during the browser flow it starts a
+# second OAuth flow on top of the first.
+AUTH_STATES = {
+    "disconnected": ("Not connected", "Sign in with Google", True),
+    "connecting": ("Waiting for browser…", "Connecting…", False),
+    "connected": ("Connected", "Switch account", True),
+    "revoking": ("Signing out…", "Signing out…", False),
+}
+_AUTH_DEFAULT = AUTH_STATES["disconnected"]
+
+
+def auth_state(state: str) -> tuple[str, str, bool]:
+    """(message, button label, button enabled) for one account state.
+
+    Unknown states, including anything a future revision adds before this
+    table learns about it, fall back to an enabled "Sign in with Google":
+    an optimistic label on a working button beats a dead one.
+    """
+    return AUTH_STATES.get(state, _AUTH_DEFAULT)
