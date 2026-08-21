@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PREFIX = "stitch-"
 _SUFFIX = ".mkv"
+_LIST_SUFFIX = ".txt"
 
 # In a console=False PyInstaller build, every subprocess.run() would
 # otherwise flash a black console window — and this one runs for the
@@ -35,20 +36,51 @@ def order_for_stitch(infos: list[VideoInfo]) -> list[VideoInfo]:
     return sorted(infos, key=lambda i: i.mtime)
 
 
-def build_command(sources: list[Path], out_path: Path, ffmpeg_bin: str) -> list[str]:
-    cmd = [ffmpeg_bin, "-y"]
+def write_concat_list(sources: list[Path], list_path: Path) -> None:
+    """Write the concat demuxer's input list.
+
+    Each line is ``file '<path>'``. Inside single quotes the demuxer's
+    tokenizer treats every character literally -- backslashes included, so
+    Windows paths pass through unchanged -- with one exception: a quote
+    ends the quoted run. An apostrophe is therefore emitted as ``'\''``
+    (close, escaped literal, reopen), which is what makes a recording under
+    a folder like ``Gunny's clips`` parseable at all.
+
+    Paths are absolute and ``-safe 0`` is passed, because relative entries
+    would otherwise be resolved against the list file's directory (the temp
+    dir), not the recording folder.
+    """
+    lines = []
     for src in sources:
-        cmd += ["-i", str(src)]
-    streams = "".join(f"[{n}:v][{n}:a]" for n in range(len(sources)))
-    cmd += [
-        "-filter_complex", f"{streams}concat=n={len(sources)}:v=1:a=1[outv][outa]",
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
+        escaped = str(Path(src).resolve()).replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    Path(list_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_command(list_path: Path, out_path: Path, ffmpeg_bin: str) -> list[str]:
+    """Concatenate by stream copy -- no re-encode.
+
+    The pre-2.0 script decoded and re-encoded through ``-filter_complex
+    concat`` with libx264, which costs minutes of CPU and a generation of
+    quality loss to join files that are already compatible. Every recording
+    in the folder comes from one OBS output configuration, so the streams
+    share codec, resolution, framerate and pixel format, and the concat
+    demuxer can splice them at the container level in roughly the time it
+    takes to copy the bytes.
+
+    ffmpeg fails loudly on mismatched inputs, which `stitched` surfaces as
+    a StitchError, so the narrower assumption is not a silent one.
+
+    ``-movflags +faststart`` is gone with the re-encode: it is an MP4-only
+    option, and the output is Matroska.
+    """
+    return [
+        ffmpeg_bin, "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(list_path),
+        "-c", "copy",
         str(out_path),
     ]
-    return cmd
 
 
 @contextmanager
@@ -58,9 +90,14 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
         raise ValueError("stitching requires at least two sources")
     tmp_dir = Path(tmp_dir)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    out_path = tmp_dir / f"{_PREFIX}{uuid.uuid4().hex}{_SUFFIX}"
+    # One stem for both artifacts, so a crash leaves a list file that
+    # sweep_orphans recognizes by the same prefix as the output.
+    stem = f"{_PREFIX}{uuid.uuid4().hex}"
+    out_path = tmp_dir / f"{stem}{_SUFFIX}"
+    list_path = tmp_dir / f"{stem}{_LIST_SUFFIX}"
     try:
-        result = runner(build_command(sources, out_path, ffmpeg_bin),
+        write_concat_list(sources, list_path)
+        result = runner(build_command(list_path, out_path, ffmpeg_bin),
                         capture_output=True, text=True, **_NO_WINDOW_KWARGS)
         if result.returncode != 0:
             raise StitchError(result.stderr.strip() or "ffmpeg failed")
@@ -68,10 +105,13 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
             raise StitchError("ffmpeg reported success but produced no output")
         yield out_path
     finally:
-        try:
-            out_path.unlink()
-        except OSError:
-            logger.warning("Could not remove stitched temp file %s", out_path, exc_info=True)
+        for path in (out_path, list_path):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.warning("Could not remove stitched temp file %s", path, exc_info=True)
 
 
 def sweep_orphans(tmp_dir: Path) -> int:
@@ -80,10 +120,11 @@ def sweep_orphans(tmp_dir: Path) -> int:
     if not tmp_dir.is_dir():
         return 0
     removed = 0
-    for path in tmp_dir.glob(f"{_PREFIX}*{_SUFFIX}"):
-        try:
-            path.unlink()
-            removed += 1
-        except OSError:
-            pass
+    for suffix in (_SUFFIX, _LIST_SUFFIX):
+        for path in tmp_dir.glob(f"{_PREFIX}*{suffix}"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
     return removed

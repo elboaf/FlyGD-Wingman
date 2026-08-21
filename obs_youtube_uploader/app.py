@@ -1071,18 +1071,17 @@ class UploaderWindow:
             if job.stitch:
                 ordered = stitch.order_for_stitch(job.items)
                 sources = [i.path for i in ordered]
-                # A multi-gigabyte libx264 re-encode can run for many
-                # minutes with no other signal to the user; without this
-                # the window looks hung at "Found N video(s)" the whole
-                # time. Switch the bar to indeterminate for the duration.
+                # A stream copy runs at disk speed, but a multi-gigabyte
+                # join is still seconds of no other signal to the user, and
+                # ffmpeg reports no progress this code can read. Switch the
+                # bar to indeterminate for the duration.
                 # Neutral colour set with the text, for the same reason
                 # on_progress does it: _start_upload writes no status before
                 # launching this worker, so a red error from the previous
                 # attempt would otherwise survive into this message.
                 self._status_kind = "FG"
                 self._ui(self.status.config,
-                         {"text": "Stitching with FFmpeg… this can take a while "
-                                  "for large recordings",
+                         {"text": "Stitching with FFmpeg…",
                           "foreground": theme.token("FG")})
                 self._ui(self.progress.config, {"mode": "indeterminate"})
                 self._ui(self.progress.start, 12)
