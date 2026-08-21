@@ -3625,6 +3625,10 @@ git commit -m "Port manual Retry and its resumability rules onto the bridge"
 **Files:**
 - Create: `tests/test_api_files.py`
 - Modify: `obs_youtube_uploader/ui/api.py`
+- Modify: `tests/fakes.py` (add `FakeRows.set_duration`, mirroring the real
+  `RowSnapshot.set_duration`: no-op on an unknown id, otherwise mutate
+  `info.duration` and `info.probed`. `_probe_now` calls it, and Task 7's
+  `FakeRows` predates that call.)
 
 **Interfaces:**
 - Consumes: Task 7's `_busy()`, `_links`, `_push`, `_alert`, `_confirm`, `_upload_thread`; `RowSnapshot.resolve/resolve_many`; `Api.list_rows()`; `library.delete`, `library.probe`; `combatlog.select_logs/build_archive/summarize_archive/dropped_note/find_gamelogs_dir`; `discord.parse_webhook/post_archive`; `tests/fakes.py`
