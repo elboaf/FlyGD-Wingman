@@ -124,6 +124,12 @@ class UploaderWindow:
         self.retry_state: "RetryState | None" = None
 
         root.title("OBS → YouTube Uploader")
+        icon_path = paths.icon_file()
+        if icon_path is not None:
+            try:
+                root.iconbitmap(str(icon_path))
+            except tk.TclError:
+                pass  # Cosmetic only; a bad/missing .ico must not block startup.
         scale = dpi_scale(root)
         width = min(int(1350 * scale), root.winfo_screenwidth())
         height = min(int(650 * scale), root.winfo_screenheight())

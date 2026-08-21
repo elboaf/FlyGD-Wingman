@@ -51,6 +51,26 @@ def bundle_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def icon_file() -> Path | None:
+    """Locate the bundled app icon, or None if it isn't present.
+
+    Mirrors app.resolve_binary()'s two-case handling of bundle_dir():
+    frozen builds collect the icon at the bundle root via uploader.spec's
+    `datas` entry, so `bundle_dir() / "app.ico"` is correct there. A source
+    checkout has no such collection step, so bundle_dir() (the repo root)
+    is wrong; the real file lives under the package's own assets/ folder.
+    Returning None rather than raising lets callers treat a missing icon as
+    optional, the same policy resolve_binary() and configure_logging() use.
+    """
+    frozen_candidate = bundle_dir() / "app.ico"
+    if frozen_candidate.exists():
+        return frozen_candidate
+    source_candidate = Path(__file__).resolve().parent / "assets" / "app.ico"
+    if source_candidate.exists():
+        return source_candidate
+    return None
+
+
 def ensure_dirs() -> None:
     for d in (state_dir(), log_dir(), tmp_dir()):
         d.mkdir(parents=True, exist_ok=True)

@@ -17,6 +17,12 @@ class SettingsWindow:
         self.on_saved = on_saved
         self.win = tk.Toplevel(parent)
         self.win.title("Settings")
+        icon_path = paths.icon_file()
+        if icon_path is not None:
+            try:
+                self.win.iconbitmap(str(icon_path))
+            except tk.TclError:
+                pass  # Same optional-cosmetic policy as the main window.
         self.win.transient(parent)
         self.win.grab_set()
 
@@ -45,7 +51,7 @@ class SettingsWindow:
 
         # Size the window to what its content actually needs rather than a
         # fixed guess: at higher Windows display-scaling factors (125%,
-        # 150%) the six packed LabelFrames are taller than any hard-coded
+        # 150%) the six packed frames are taller than any hard-coded
         # height, which used to clip the Recording folder frame and the
         # Save/Cancel row right off the bottom of the dialog (fixed in
         # b23f9cc, when there were five — the Discord frame has since been

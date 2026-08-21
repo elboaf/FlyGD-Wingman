@@ -8,6 +8,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
+ICON = ROOT / "obs_youtube_uploader" / "assets" / "app.ico"
 
 a = Analysis(
     [str(ROOT / "run.py")],
@@ -23,7 +24,11 @@ a = Analysis(
     # data that was never copied. PyInstaller exits 0 either way (see the
     # ffmpeg comment below), which is why build.yml also gets a post-build
     # assertion in the "Verify sv-ttk theme data is bundled" step.
-    datas=collect_data_files("sv_ttk"),
+    datas=collect_data_files("sv_ttk") + [
+        # Collected at the bundle root so paths.icon_file()'s frozen-case
+        # lookup (bundle_dir() / "app.ico") finds it directly.
+        (str(ICON), "."),
+    ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
         # runtime, which modulegraph cannot follow statically.
@@ -64,6 +69,7 @@ exe = EXE(
     name="OBSYouTubeUploader",
     console=False,          # No console window behind the GUI.
     disable_windowed_traceback=False,
+    icon=str(ICON),
 )
 
 coll = COLLECT(

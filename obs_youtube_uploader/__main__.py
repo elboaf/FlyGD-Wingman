@@ -154,14 +154,25 @@ def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None
 
 
 def build_tray(on_open, on_quit):
-    """Tray icon with a generated image so no asset file is required."""
+    """Tray icon backed by the bundled .ico, generated art as a fallback."""
     import pystray
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGB", (64, 64), "#1f1f1f")
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((10, 10, 54, 54), fill="#ff0000")
-    draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
+    icon_path = paths.icon_file()
+    image = None
+    if icon_path is not None:
+        try:
+            image = Image.open(icon_path)
+        except OSError:
+            image = None
+
+    if image is None:
+        # Fallback only: keeps the tray icon present per the codebase's
+        # degrade-don't-block policy for optional presentation capabilities.
+        image = Image.new("RGB", (64, 64), "#1f1f1f")
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((10, 10, 54, 54), fill="#ff0000")
+        draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
 
     menu = pystray.Menu(
         pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
