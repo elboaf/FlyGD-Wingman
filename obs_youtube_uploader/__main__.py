@@ -336,9 +336,14 @@ def main() -> int:
 
     # Resolve the account state off the bridge thread so the Settings route
     # is correct the first time it is opened rather than after a click.
-    api.refresh_auth()
-
-    window_mod.run()  # Blocks until the window is destroyed.
+    #
+    # Handed to run() rather than called here. refresh_auth's first act is
+    # a push, and a push before webview.start() blocks the MAIN thread on
+    # pywebview's twenty-second readiness timeout -- an invisible window on
+    # every launch, and the push lost to _push's bare except when the
+    # timeout finally raises. pywebview runs this on its own thread once
+    # the GUI loop owns the main one.
+    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
 
     icon.stop()
     if scheduler is not None:

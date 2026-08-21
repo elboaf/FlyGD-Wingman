@@ -122,7 +122,23 @@ def test_run_pins_the_backend(fake_webview):
     """Autodetection silently falling back to another backend would make a
     passing run meaningless -- the whole design targets WebView2."""
     window_mod.run()
-    assert fake_webview["start_kwargs"] == {"gui": "edgechromium"}
+    assert fake_webview["start_kwargs"] == {"func": None, "gui": "edgechromium"}
+
+
+def test_run_hands_startup_work_to_pywebview_rather_than_doing_it_first(fake_webview):
+    """Anything that pushes at startup must go through this parameter.
+
+    pywebview wraps every evaluate_js in `event.wait(20)` on
+    `_pywebviewready`, which cannot be set before start() has run. Work
+    done on the main thread ahead of run() therefore blocks the launch for
+    the full twenty seconds and then loses its message to Api._push's bare
+    except. start() runs `func` on its own thread instead.
+    """
+    def work():
+        pass
+
+    window_mod.run(work)
+    assert fake_webview["start_kwargs"]["func"] is work
 
 
 def test_run_silences_pywebviews_property_walk():

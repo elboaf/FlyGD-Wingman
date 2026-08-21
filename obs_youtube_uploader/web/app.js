@@ -120,5 +120,12 @@
   ready.then(function () {
     // The page asks for state; Python does not push it unprompted at boot.
     WM.send('list_rows');
+    // Settings are asked for the same way, and routed through the same
+    // handler a Save-time push uses, so there is one renderer. Without
+    // this the Settings form opened blank on a configured install and a
+    // Save from it wrote the blanks back.
+    WM.send('get_settings').then(function (payload) {
+      if (payload) window.onSettings(payload);
+    });
   });
 }());

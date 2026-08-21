@@ -134,8 +134,20 @@ def create(api) -> "webview.Window":
     return window
 
 
-def run() -> None:
+def run(func=None) -> None:
     """Hand the main thread to pywebview. Returns when the window is destroyed.
+
+    *func* is startup work that needs the page to exist. pywebview runs it
+    on its own thread immediately before it creates the window, so a
+    `_push` from there waits on the real `_pywebviewready` event instead of
+    a guessed delay -- and it waits on a thread nobody is looking at.
+
+    That parameter is not a convenience. Every `Window.evaluate_js` in
+    pywebview 6.2.1 is wrapped in `event.wait(20)` on `_pywebviewready`,
+    an event that cannot be set before start() has run. A push issued on
+    the main thread ahead of this call therefore blocks the whole launch
+    for twenty seconds, then raises, then has its exception swallowed by
+    Api._push -- an invisible window AND a lost message.
 
     Nothing this returns can be trusted as a success signal: when the
     WebView2 runtime is missing, pywebview logs the failure, start()
@@ -145,4 +157,4 @@ def run() -> None:
     _silence_pywebview_logging()
     import webview
 
-    webview.start(gui=GUI_BACKEND)
+    webview.start(func=func, gui=GUI_BACKEND)

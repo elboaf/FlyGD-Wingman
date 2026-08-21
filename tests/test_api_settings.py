@@ -370,3 +370,41 @@ def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_p
     assert api._state.recording_dir != folder
     assert started == [], "the watcher was started despite a failed save"
     assert api._alert.titles() == ["Could not save settings"]
+
+
+def test_the_page_can_ask_for_the_stored_settings_at_load(tmp_path):
+    """The bridge's answer to "what is configured?".
+
+    Nothing pushed onSettings at startup, so the page rendered its Settings
+    form entirely from `||` fallbacks -- blank recording folder, blank
+    gamelogs, blank webhook -- and a Save from that form wrote the blanks
+    back over a configured install.
+
+    The page asks; Python does not volunteer. That rules out piggybacking
+    on list_rows(), which fires on every watcher tick and would wipe a
+    half-typed Settings form (see detect_folder's docstring), and it is
+    what app.js already does for list_rows and auth_labels.
+    """
+    api, _window = fakes.build_api(
+        tmp_path, settings={"privacy": "private", "category": "27",
+                            "channel_title": "Zoolanders",
+                            "gamelogs_dir": "/logs"})
+    payload = api.get_settings()
+
+    assert payload["settings"]["privacy"] == "private"
+    assert payload["settings"]["category"] == "27"
+    assert payload["settings"]["gamelogs_dir"] == "/logs"
+    # The derived halves must ride along, or the form still renders a
+    # blank webhook status and a stale destination line.
+    assert "webhook_status" in payload
+    assert "detected" in payload
+    assert "Zoolanders" in payload["destination"]
+
+
+def test_asking_for_settings_pushes_nothing(tmp_path):
+    """A read, not a broadcast. If this ever pushed onSettings it could be
+    hung off a periodic call and would then clobber the open form."""
+    api, _window = fakes.build_api(tmp_path)
+    sent = fakes.record_pushes(api)
+    api.get_settings()
+    assert sent == []

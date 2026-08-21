@@ -171,6 +171,13 @@ def webhook_status(raw: str) -> str:
 # cannot disagree with what the user is actually looking at -- which also
 # means a change to duration_str's glyphs silently orphans these entries.
 # tests/test_tooltip.py guards exactly that coupling.
+#
+# The page carries a second copy of this table (web/list.js): tooltips are
+# needed synchronously while a row is built, so unlike auth_labels() and
+# panel_text() there is no round trip to put the strings behind. That makes
+# THIS table unreachable from the running product, so a change here would
+# otherwise pass its own tests and reach no user. test_tooltip.py's
+# cross-check against list.js is what stops that being silent.
 CELL_HELP: dict[str, dict[str, str]] = {
     "duration": {
         "?": "Length could not be read. ffprobe could not open this file, so\n"

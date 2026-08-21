@@ -474,7 +474,17 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
-    def start_upload(self, title, description, privacy, category, stitch, ids) -> None:
+    def start_upload(self, title, description, stitch, ids) -> None:
+        # privacy and category are NOT parameters. They are settings, and
+        # the settings are Python's -- as they were in the Tk build, which
+        # read self.state.settings at dispatch time. A page that holds its
+        # own copy is a page that can publish with a stale one: the first
+        # build of this bridge defaulted to `unlisted` until Settings was
+        # saved in that session, so a user set to `private` got an
+        # unlisted video on the app's one irreversible action.
+        cfg = self._state.settings
+        privacy = cfg.get("privacy", "unlisted")
+        category = str(cfg.get("category", "20"))
         # Resolved one id at a time rather than through resolve_many so ids
         # and infos stay index-aligned when the page sends an id the
         # snapshot no longer knows (a stale page after a refresh).
@@ -923,6 +933,23 @@ class Api:
                 cfg.get("channel_title", ""), cfg.get("privacy", "")),
         }
 
+    def get_settings(self) -> dict:
+        """The settings payload, on request. The page asks; Python does not
+        volunteer it at boot.
+
+        This exists because nothing else could carry it safely. `list_rows`
+        fires on every watcher tick, and pushing the whole settings dict
+        from there would throw away every unsaved edit in an open Settings
+        form -- the same reason `detect_folder` returns rather than pushes.
+        A timer-deferred push at startup would be a guess at when the page
+        is listening. So it is a read, matching what app.js already does
+        for `list_rows` and settings.js for `auth_labels`.
+
+        Returns the same shape `save_settings` pushes, so the page has one
+        renderer for both.
+        """
+        return self._settings_payload()
+
     def save_settings(self, values: dict) -> bool:
         """Validate, persist, and make the change reach the running app.
 
@@ -982,7 +1009,11 @@ class Api:
         if which == "gamelogs":
             start = str(self._state.settings.get("gamelogs_dir") or "")
         else:
-            start = str(self._state.recording_dir)
+            # recording_dir is None on the first-run route by design, and
+            # str(None) would hand create_file_dialog the literal "None".
+            # pywebview happens to discard a path that does not exist, but
+            # that is its implementation detail, not our intent.
+            start = str(self._state.recording_dir or "")
         chosen = self._window.create_file_dialog(_folder_dialog_kind(),
                                                  directory=start)
         # create_file_dialog returns a sequence of paths, or None on cancel.

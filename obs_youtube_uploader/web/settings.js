@@ -64,9 +64,9 @@
         + 'them yourself.';
   }
 
-  // Task 12 owns the onSettings handler (it needs privacy/category for
-  // start_upload) and re-dispatches the payload, so both modules consume
-  // one push without either owning it exclusively.
+  // panel.js owns the onSettings handler (it renders the destination line)
+  // and re-dispatches the payload, so both modules consume one push
+  // without either owning it exclusively.
   document.addEventListener('wm:settings', function (ev) {
     render(ev.detail || {});
   });
@@ -177,8 +177,13 @@
     // persisting the setting alone leaves the watcher on the old folder.
     // That is Python's job, not the page's. It returns false when it
     // refused, and the form stays open so the edits are not lost.
+    //
+    // `!ok` rather than `=== false`: WM.send resolves to null on any bridge
+    // failure, and treating that as success would navigate away with the
+    // form reset and nothing saved — the exact outcome this guard exists
+    // to prevent.
     WM.send('save_settings', collect()).then(function (ok) {
-      if (ok === false) return;
+      if (!ok) return;
       remask();
       WM.route('main');
     });

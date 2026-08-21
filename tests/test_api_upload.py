@@ -29,7 +29,7 @@ def join(api):
 
 def test_uploading_nothing_says_so_rather_than_starting_an_empty_job(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    api.start_upload("t", "d", "unlisted", "20", False, [])
+    api.start_upload("t", "d", False, [])
     assert api._alert.raised == [
         ("warning", "No Selection", "Select at least one video to upload.")]
     assert api._upload_thread is None
@@ -39,7 +39,7 @@ def test_stitching_one_recording_is_refused_with_its_own_message(tmp_path):
     """Distinct from the no-selection warning: the user picked something,
     it just cannot be joined to itself."""
     api, _window, _rows = api_with(tmp_path)
-    api.start_upload("t", "d", "unlisted", "20", True, ["r1"])
+    api.start_upload("t", "d", True, ["r1"])
     assert api._alert.raised == [
         ("warning", "Stitch", "Select at least two videos to stitch.")]
 
@@ -50,7 +50,7 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._upload_thread.start()
     try:
-        api.start_upload("t", "d", "unlisted", "20", False, ["r1"])
+        api.start_upload("t", "d", False, ["r1"])
         assert api._alert.raised == [
             ("warning", "Busy", "An upload is already in progress.")]
     finally:
@@ -61,14 +61,15 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
 def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tmp_path):
     """The app's only irreversible action. 2.2.0 added this confirm
     deliberately; the port must not quietly drop it."""
-    api, _window, _rows = api_with(tmp_path, settings={"channel_title": "Zoolanders"})
+    api, _window, _rows = api_with(tmp_path, settings={"channel_title": "Zoolanders",
+                                                       "privacy": "public"})
     api._confirm = fakes.Answers(answer=False)
     called = []
     monkeypatch.setattr(uploader, "upload", lambda *a, **k: called.append(a))
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
 
-    api.start_upload("Fight", "d", "public", "20", False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert called == []
@@ -104,7 +105,7 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     links = fakes.payloads(sent, "onLink")
@@ -122,7 +123,7 @@ def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(monkeypatch, 
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok(fractions=(0.5,)))
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     bars = [p for p in fakes.payloads(sent, "onProgress") if p["text"]]
@@ -143,7 +144,7 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     monkeypatch.setattr("obs_youtube_uploader.ui.api.settings_mod.save",
                         lambda cfg, path=None: saved.update(cfg))
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     channel, = fakes.payloads(sent, "onChannel")
@@ -162,7 +163,7 @@ def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert {"text": "Upload complete!", "kind": "SUCCESS"} in fakes.payloads(sent, "onStatus")
@@ -187,7 +188,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
 
     monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", "unlisted", "20", True, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     modes = [p["mode"] for p in fakes.payloads(sent, "onProgress")]
@@ -212,7 +213,7 @@ def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp
     monkeypatch.setattr(uploader, "upload",
                         failing_upload(uploader.Outcome.RETRY, session))
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": True}
@@ -232,7 +233,7 @@ def test_a_permanent_failure_offers_no_retry_and_drops_the_session(monkeypatch, 
     monkeypatch.setattr(uploader, "upload",
                         failing_upload(uploader.Outcome.QUOTA, object()))
 
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable") == []
@@ -256,7 +257,7 @@ def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_p
 
     monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", "unlisted", "20", True, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     assert api._retry_state.request is None
@@ -271,7 +272,7 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload",
                         failing_upload(uploader.Outcome.RETRY, session))
-    api.start_upload("Fight", "d", "unlisted", "20", False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     def resume(req, *, on_progress=None, on_retry=None, on_response=None, **kw):
@@ -299,3 +300,37 @@ def test_retry_with_nothing_to_retry_does_nothing(tmp_path):
     api.retry()
     assert sent == []
     assert api._upload_thread is None
+
+
+def test_the_stored_privacy_and_category_decide_the_upload(monkeypatch, tmp_path):
+    """The page cannot choose the privacy of a video, because it does not
+    hold one to choose.
+
+    The bridge's first version took privacy and category as arguments and
+    the page held its own defaults, so every upload before Settings was
+    saved in that session went out `unlisted`/`20` -- a user set to
+    `private` silently published a link anyone could open. The Tk build
+    read self.state.settings at dispatch time; so does this.
+    """
+    api, _window, _rows = api_with(
+        tmp_path, settings={"privacy": "private", "category": "27"})
+    jobs = []
+    monkeypatch.setattr(api, "_confirm_then_upload", lambda job: jobs.append(job))
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+    assert (jobs[0].privacy, jobs[0].category) == ("private", "27")
+
+
+def test_the_confirm_dialog_names_the_privacy_that_will_be_used(tmp_path):
+    """The one place the user sees the value before it becomes permanent.
+    It read as the app stating a fact while it was in truth overriding the
+    setting, so it must be the same value the job carries."""
+    api, _window, _rows = api_with(tmp_path, settings={"privacy": "private"})
+    api._confirm = fakes.Answers(answer=False)
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    (_title, body), = api._confirm.asked
+    assert "private" in body
+    assert "unlisted" not in body

@@ -11,10 +11,9 @@
   'use strict';
   var WM = window.WM;
 
-  // Upload defaults live in Settings and ride along on start_upload.
-  // Defaults mirror settings.DEFAULTS so a send before onSettings lands is
-  // still a valid call rather than undefined.
-  var prefs = { privacy: 'unlisted', category: '20' };
+  // Privacy and category are NOT held here and are NOT sent. They are
+  // settings, and start_upload reads them from Python's own state — the
+  // page cannot hold a stale copy of a value it never holds.
 
   // ---- selection-dependent copy ---------------------------------------
   // Asked of Python rather than recomputed here. Both strings are pure,
@@ -51,8 +50,6 @@
     WM.send('start_upload',
             WM.el('f-title').value,
             WM.el('f-desc').value,
-            prefs.privacy,
-            prefs.category,
             WM.el('f-stitch').checked,
             WM.list.selectedIds());
   });
@@ -113,9 +110,6 @@
   });
 
   WM.handle('onSettings', function (p) {
-    var s = p.settings || {};
-    if (s.privacy) prefs.privacy = s.privacy;
-    if (s.category) prefs.category = s.category;
     if (p.destination) WM.el('destination').textContent = p.destination;
     // Settings owns the rest of this payload; it re-dispatches so both
     // modules can consume one push without either owning the handler.

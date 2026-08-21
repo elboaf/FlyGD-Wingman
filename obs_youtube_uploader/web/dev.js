@@ -53,6 +53,35 @@
     });
   };
 
+  // The settings payload Python returns from get_settings(). Kept here so
+  // the stub and the manual DEV.settings() driver share one shape.
+  function settingsPayload(patch, statusLine) {
+    return {
+      settings: Object.assign(
+        { privacy: 'unlisted', category: '20', notify_mode: 'toast',
+          recording_dir: 'D:\\Videos',
+          gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
+          discord_webhook: 'https://discord.com/api/webhooks/1/tok',
+          channel_id: 'UC123', channel_title: 'FlyGD' }, patch || {}),
+      webhook_status: statusLine === undefined
+        ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
+      detected: { recording: 'D:\\Videos',
+                  gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
+      destination: 'Uploads go to FlyGD \u00b7 unlisted'
+    };
+  }
+
+  // A RETURN, not a push, because that is what the bridge does. The first
+  // version of this file pushed onSettings from the list_rows stub, which
+  // modelled a push the real bridge never emitted — so the page looked
+  // correct under ?dev=1 and was wrong under Python. A double that is more
+  // complete than the thing it doubles hides exactly the bug it should
+  // have caught.
+  api.get_settings = function () {
+    console.log('DEV api.get_settings()');
+    return Promise.resolve(settingsPayload());
+  };
+
   api.list_rows = function () {
     console.log('DEV api.list_rows()');
     setTimeout(function () {
@@ -67,17 +96,6 @@
           size: '640.5 MB', duration: '4:07',
           link: 'https://youtu.be/abc123XYZ', preselected: false }
       ] });
-      window.onSettings({
-        settings: { privacy: 'unlisted', category: '20', notify_mode: 'toast',
-                    recording_dir: 'D:\\Videos',
-                    gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
-                    discord_webhook: 'https://discord.com/api/webhooks/1/tok',
-                    channel_id: 'UC123', channel_title: 'FlyGD' },
-        webhook_status: 'webhook 1538615213203656754 in #combat-logs',
-        detected: { recording: 'D:\\Videos',
-                    gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
-        destination: 'Uploads go to FlyGD \u00b7 unlisted'
-      });
       window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
                          destination: 'Uploads go to FlyGD \u00b7 unlisted' });
       window.onAuthState({ state: 'connected', message: 'Connected' });
@@ -138,19 +156,7 @@
       window.onAuthState({ state: state, message: message });
     },
     settings: function (patch, statusLine) {
-      window.onSettings({
-        settings: Object.assign(
-          { privacy: 'unlisted', category: '20', notify_mode: 'toast',
-            recording_dir: 'D:\\Videos',
-            gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
-            discord_webhook: 'https://discord.com/api/webhooks/1/tok',
-            channel_id: 'UC123', channel_title: 'FlyGD' }, patch || {}),
-        webhook_status: statusLine === undefined
-          ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
-        detected: { recording: 'D:\\Videos',
-                    gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
-        destination: 'Uploads go to FlyGD \u00b7 unlisted'
-      });
+      window.onSettings(settingsPayload(patch, statusLine));
     }
   };
 
