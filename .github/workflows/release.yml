@@ -11,12 +11,16 @@ on:
 # fork without anyone having to change a setting they will not think to look
 # for. contents: write is the minimum needed to create a release and upload
 # assets; nothing here needs any other scope.
-permissions:
-  contents: write
+#
+# Empty at workflow level and granted per job, so any job added later starts
+# from the read-only default rather than silently inheriting write.
+permissions: {}
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,14 +92,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/OBS-YouTube-Uploader-Setup-*.exe
-          # Enforced, not merely documented: the global constraint blocks
-          # public release until OAuth verification clears. Flip to false
-          # in the same commit that flips the Google console to production.
-          prerelease: true
+          # The OAuth app is PUBLISHED (production), not merely in testing,
+          # so anyone can sign in -- the earlier prerelease guard assumed
+          # testing mode, where non-testers hit a hard 403. That is not the
+          # state we are in. What remains is verification, which only costs
+          # users a click-through warning.
+          prerelease: false
           body: |
-            **Pre-release note:** until Google's OAuth verification clears,
-            only approved testers can sign in. Everyone else will see
-            `Error 403: access_denied`. Ask to be added to the tester list.
+            **Google hasn't verified the app yet.** You can sign in, but the
+            consent screen shows a "Google hasn't verified this app"
+            warning — click **Advanced** then **Go to OBS YouTube Uploader
+            (unsafe)** to continue.
 
             Windows will show a "Windows protected your PC" warning because
             the installer is unsigned. Click **More info** then **Run anyway**.

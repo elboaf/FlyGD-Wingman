@@ -30,6 +30,13 @@ class SettingsWindow:
         self._build()
         self._refresh_auth_label()
         self._refresh_webhook_label()
+        # Keep the label in step with the field. Without this it describes
+        # whatever was configured when the dialog opened, so a user who
+        # pastes a new webhook sees the OLD one summarised underneath it --
+        # misleading in the one place they look to confirm they pasted the
+        # right thing. parse_webhook is a regex and a urlparse, so running
+        # it per keystroke costs nothing worth caching.
+        self.webhook.trace_add("write", lambda *_: self._refresh_webhook_label())
 
         # Size the window to what its content actually needs rather than a
         # fixed guess: at higher Windows display-scaling factors (125%,
@@ -84,8 +91,9 @@ class SettingsWindow:
                    command=self._connect).pack(anchor=tk.W, pady=(6, 0))
         ttk.Label(
             acct,
-            text=("If this is a pre-release build, only approved testers can "
-                  "sign in."),
+            text=("Google hasn't verified this app yet, so the sign-in page "
+                  "shows a warning. Click Advanced, then \"Go to OBS YouTube "
+                  "Uploader (unsafe)\" to continue."),
             foreground="gray", wraplength=460, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(4, 0))
 

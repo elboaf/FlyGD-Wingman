@@ -60,11 +60,29 @@ Run on Windows against a real install before each release.
 - [ ] A non-numeric category ID is rejected with a warning
 
 ## Combat logs
+
 - [ ] **No webhook configured.** Clear the Discord webhook field (or use a
       fresh install), select a recording, and click **Upload combat logs**.
       Expected: a warning dialog naming the problem ("Enter a Discord
       webhook URL.") and directing you to add one in Settings. No thread is
       started, no archive is written.
+- [ ] **An invalid webhook URL is refused on Save.** In Settings, paste a
+      URL that is not a Discord webhook (e.g. `https://example.com/hook`,
+      or `https://discord.com.evil.example/api/webhooks/1/x`) and click
+      **Save**. Expected: a warning naming the problem, the dialog stays
+      open, and NOTHING is written to `settings.json` — reopen Settings and
+      confirm the old value is still there. Then clear the field entirely
+      and Save: that must succeed, since an empty webhook simply means the
+      feature is unconfigured. `parse_webhook` itself has unit tests, but
+      the dialog wiring that calls it does not, so this is the only check
+      that the Save path honors the validator's rejection.
+- [ ] **The webhook summary label tracks what you type.** In Settings, with
+      a webhook already configured, paste a *different* valid webhook URL
+      over it. Expected: the summary line underneath updates immediately to
+      the new webhook's id — it must not keep describing the previous one.
+      Type something invalid and it reads "not configured"; clear the field
+      and it reads "not configured" too. At no point does the label show the
+      token portion of the URL.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
       Settings, then click **Upload combat logs**. Expected: a warning

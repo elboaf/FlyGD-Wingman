@@ -661,6 +661,7 @@ class UploaderWindow:
         self.root.after(0, lambda: fn(*args))
 
     def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+        archive = None
         try:
             self._ui(self.status.config,
                      {"text": "Collecting combat logs…", "foreground": "black"})
@@ -680,9 +681,7 @@ class UploaderWindow:
             self._ui(self.status.config, {"text": "Building archive…"})
             archive = combatlog.build_archive(selection, out, start_utc, end_utc)
 
-            who = ", ".join(archive.characters) or "unknown pilots"
-            content = (f"Combat logs {start_utc:%Y-%m-%d %H:%M}–{end_utc:%H:%M} UTC "
-                       f"· {archive.file_count} file(s) · {who}")
+            content = combatlog.summarize_archive(archive, start_utc, end_utc)
             self._ui(self.status.config, {"text": "Posting to Discord…"})
             result = discord.post_archive(hook, archive.path, content)
 
@@ -692,8 +691,16 @@ class UploaderWindow:
                     archive.path.unlink()
                 except OSError:
                     pass
+                # Discord's response message alone (e.g. "Posted x.zip (KB).")
+                # doesn't mention a cap; append the same drop note so the
+                # status label doesn't quietly disagree with the content the
+                # user just sent.
+                status_text = result.message
+                note = combatlog.dropped_note(archive.dropped)
+                if note:
+                    status_text += f" ({note})"
                 self._ui(self.status.config,
-                         {"text": result.message, "foreground": "green"})
+                         {"text": status_text, "foreground": "green"})
             else:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told
@@ -704,7 +711,17 @@ class UploaderWindow:
                 self._ui(self.status.config,
                          {"text": result.message, "foreground": "red"})
         except Exception as exc:
-            self._ui(messagebox.showerror, "Combat log upload failed", str(exc))
+            # post_archive never raises, but build_archive and
+            # summarize_archive can -- and by then the archive may already be
+            # on disk. Without this the user gets a bare str(exc) and the
+            # "kept so you can upload it by hand" promise, which the failed
+            # -post branch above makes and the smoke checklist tests, quietly
+            # does not hold on this path.
+            detail = str(exc)
+            if archive is not None and archive.path.exists():
+                detail += ("\n\nThe archive was kept so you can upload it "
+                           f"by hand:\n{archive.path}")
+            self._ui(messagebox.showerror, "Combat log upload failed", detail)
             self._ui(self.status.config,
                      {"text": f"Error: {exc}", "foreground": "red"})
 

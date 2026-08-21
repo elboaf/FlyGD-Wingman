@@ -20,10 +20,11 @@ the app are unsigned. Click **More info** → **Run anyway**. This is
 expected and happens once per machine, both for the installer and the
 first launch of the app.
 
-**Currently in pre-release:** Google has not finished verifying the app, so
-only approved testers can sign in. Anyone else who tries **Connect Google
-Account** sees `Error 403: access_denied` — not a warning, a hard stop.
-Open an issue to be added as a tester.
+**Google hasn't verified the app yet.** It's published, so anyone can sign
+in — but the consent screen shows a "Google hasn't verified this app"
+warning. Click **Advanced** → **Go to OBS YouTube Uploader (unsafe)** to
+continue. Verification is in progress; the warning goes away once it
+clears.
 
 ## Use
 

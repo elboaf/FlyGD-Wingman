@@ -37,6 +37,30 @@ def test_rejects_foreign_host():
     assert hook is None and "host" in err.lower()
 
 
+@pytest.mark.parametrize("host", [
+    # Defeats a substring check (`"discord.com" in hostname` is True here),
+    # but NOT an endswith check -- this host ends with "evil.example".
+    "discord.com.evil.example",
+    # The mirror image: both of these END with "discord.com", so an
+    # endswith check accepts them. A substring check does too.
+    "evil-discord.com",
+    "notdiscord.com",
+])
+def test_rejects_hosts_that_defeat_a_naive_check(host):
+    """The cases the exact-match allowlist actually exists for.
+
+    test_rejects_foreign_host above uses a host resembling nothing on the
+    allowlist, so it passes against any weakening. These do not: each is
+    accepted by one of the two obvious shortcuts (substring or endswith),
+    so together they pin the exact-match behaviour rather than merely
+    asserting that some bad host is refused.
+    """
+    hook, err = discord.parse_webhook(
+        f"https://{host}/api/webhooks/1234567890/tok")
+    assert hook is None
+    assert "host" in err.lower()
+
+
 def test_rejects_malformed_path():
     hook, err = discord.parse_webhook("https://discord.com/api/not-webhooks/1/2")
     assert hook is None and err
@@ -266,3 +290,43 @@ def test_network_error_is_reported_not_raised(tmp_path):
     result = discord.post_archive(hook, zip_path, "fight",
                                   transport=_transport(exc=OSError("no route")))
     assert not result.ok and result.message
+
+
+def test_unreadable_archive_is_reported_not_raised(tmp_path):
+    """_build_multipart's read_bytes() sits outside the stat() guard above it.
+
+    stat() can succeed on a file the process then cannot read (permissions
+    revoked between the two calls, or any other unreadable-but-stat-able
+    state); that must still come back as PostResult(ok=False), not a raised
+    PermissionError, or post_archive's documented "never raises" contract is
+    broken and app.py's recovery message (where the archive was kept) never
+    gets shown.
+    """
+    import os
+
+    hook, _ = discord.parse_webhook(GOOD)
+    zip_path = tmp_path / "a.zip"
+    zip_path.write_bytes(b"payload")
+    os.chmod(zip_path, 0)
+    try:
+        result = discord.post_archive(hook, zip_path, "fight", transport=_transport(204))
+    finally:
+        # Restore so the fixture's tmp_path cleanup can remove the file.
+        os.chmod(zip_path, 0o644)
+    # Root (and some CI/container setups) ignores file permission bits, so
+    # this would not raise PermissionError there -- assert the contract
+    # rather than the specific errno.
+    assert isinstance(result, discord.PostResult)
+    assert result.ok is False
+
+
+def test_the_default_opener_refuses_redirects():
+    """Guards _default_transport's actual wiring, not just _NoRedirectHandler
+    in isolation -- every other post_archive test injects a fake transport,
+    so nothing else would catch a refactor that rebuilt _opener without the
+    no-redirect handler (which would then silently follow a Location header
+    to a host the allowlist in parse_webhook() never validated).
+    """
+    names = [type(h).__name__ for h in discord._opener.handlers]
+    assert "HTTPRedirectHandler" not in names
+    assert "_NoRedirectHandler" in names

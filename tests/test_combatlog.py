@@ -168,6 +168,21 @@ def test_selects_a_log_overlapping_the_window(tmp_path):
     assert [s.listener for s in sel.logs] == ["Pilot A"]
 
 
+def test_reversed_bounds_are_swapped(tmp_path):
+    """select_logs swaps the bounds when end precedes start.
+
+    That swap is real behaviour with no coverage: without it a caller who
+    passed the window backwards would get an empty selection and be told
+    "no logs overlap that window", which reads as a data problem rather
+    than a caller bug.
+    """
+    _log(tmp_path, "20260820_204250_1.txt", "Pilot A",
+         "2026.08.20 20:42:50", _epoch(_utc(2026, 8, 20, 21, 55)))
+    sel = combatlog.select_logs(tmp_path, _utc(2026, 8, 20, 21, 30),
+                                _utc(2026, 8, 20, 21, 0))
+    assert [s.listener for s in sel.logs] == ["Pilot A"]
+
+
 def test_skips_log_that_ended_before_the_window(tmp_path):
     """The predicate that does the real work: a log starting long ago still
     satisfies start <= window_end, so only last-write excludes it."""
@@ -353,3 +368,51 @@ def test_overwrites_an_existing_archive(tmp_path):
     combatlog.build_archive(sel, out, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
     with zipfile.ZipFile(out) as z:
         assert combatlog.MANIFEST_NAME in z.namelist()
+
+
+def test_dropped_note_is_none_when_nothing_dropped():
+    assert combatlog.dropped_note(0) is None
+
+
+def test_dropped_note_singular():
+    assert combatlog.dropped_note(1) == f"1 older log omitted (cap {combatlog.MAX_FILES})"
+
+
+def test_dropped_note_plural():
+    assert combatlog.dropped_note(393) == (
+        f"393 older logs omitted (cap {combatlog.MAX_FILES})")
+
+
+def _archive_result(file_count, characters, dropped):
+    return combatlog.ArchiveResult(
+        path=Path("archive.zip"), file_count=file_count, characters=characters,
+        raw_bytes=0, zip_bytes=0, dropped=dropped)
+
+
+def test_summarize_archive_omits_drop_clause_when_nothing_dropped():
+    archive = _archive_result(2, ["Alice", "Zed"], 0)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary == "Combat logs 2026-08-20 21:00–21:30 UTC · 2 file(s) · Alice, Zed"
+    assert "omitted" not in summary
+
+
+def test_summarize_archive_reports_one_dropped_log():
+    archive = _archive_result(64, ["Alice"], 1)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary.endswith(f"1 older log omitted (cap {combatlog.MAX_FILES})")
+
+
+def test_summarize_archive_reports_many_dropped_logs():
+    archive = _archive_result(64, ["Alice"], 393)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert summary.endswith(f"393 older logs omitted (cap {combatlog.MAX_FILES})")
+
+
+def test_summarize_archive_falls_back_when_no_characters():
+    archive = _archive_result(0, [], 0)
+    summary = combatlog.summarize_archive(
+        archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
+    assert "unknown pilots" in summary
