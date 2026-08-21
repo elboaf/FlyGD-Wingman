@@ -4,6 +4,11 @@ Manual verification for the GUI and live upload paths, which are not
 automated: doing so would need live credentials and would consume the very
 upload quota the design is constrained by.
 
+The UI refresh (theming, the Treeview list, DPI awareness, the real app
+icon) is likewise untested by `pytest` — no file under `tests/` imports
+`app` or `settingsui` — so this checklist is the only real verification
+those changes get.
+
 Run on Windows against a real install before each release.
 
 ## Install
@@ -23,6 +28,123 @@ Run on Windows against a real install before each release.
       explanatory "(ffmpeg not found — stitching unavailable)" label.
       Restore the binary afterward.
 
+## Look and feel
+
+### Theming
+- [ ] **Launches in light mode when Windows is set to Light.**
+      `Settings > Personalization > Colors > Choose your mode > Light`, then
+      launch. Both windows render with sv-ttk's light theme — no dark chrome,
+      and no illegible text in status messages, hint labels, or the ffmpeg
+      warning.
+- [ ] **Launches in dark mode when Windows is set to Dark.** Same with `Dark`.
+      Also check Treeview row striping and the description `tk.Text` box — a
+      classic Tk widget sv-ttk does not theme, so confirm it is at least
+      legible (a known accepted limitation).
+- [ ] **LOAD-BEARING: switching the OS theme live, with both windows open.**
+      Open the main window and Settings together, then flip
+      `Choose your mode`. Within a few seconds both must re-theme fully:
+      status line, ffmpeg warning, auth status dot and text, hint labels,
+      Treeview striping, the preselect highlight, and the checkbox images.
+      No half-themed widget anywhere.
+      *Why this is load-bearing:* the app sets these colours from a deferred
+      `after_idle` callback because `sv_ttk.set_theme()` fires a QUEUED
+      `<<ThemeChanged>>` event that runs `tk_setPalette` on the next tick and
+      resets any directly-set widget foreground. That ordering was observed
+      under WSLg. If native Windows Tk dispatches differently, colours may
+      revert one tick after the switch — watch for a correct flash followed
+      by a reset.
+- [ ] **A red error status survives a live theme switch.** Force an upload
+      failure so the status line is red, then flip the OS theme. It must
+      re-colour to the other theme's red — not reset to the default
+      foreground, and not stay in the old theme's red.
+- [ ] **A rapid double-flip settles correctly.** Flip light→dark→light
+      quickly. Intermediate flicker is acceptable; a stuck or wrong final
+      colour is not.
+- [ ] **Opening Settings repeatedly does not leak theme consumers.** Open and
+      close Settings five times, then flip the OS theme. Confirm
+      `%LOCALAPPDATA%\OBSYouTubeUploader\logs\uploader_debug.log` contains no
+      `TclError` warnings from stale consumers holding destroyed windows.
+- [ ] **A failed theme read does not trigger the watcher's failure
+      notification.** Run several minutes with the theme untouched and
+      confirm zero "watcher is having trouble" notifications. The theme check
+      has its own try/except inside `poll()`, separate from the watcher's
+      consecutive-failure counter; that notification must stay reserved for
+      real recording-folder faults.
+
+### Display scaling
+- [ ] **100% scaling.** Both windows render at native size, text sharp, no
+      clipping.
+- [ ] **125% scaling.** Settings dialog not clipped — Recording folder frame
+      and the Save/Cancel row fully visible AND above the taskbar.
+- [ ] **150% scaling.** Neither window opens larger than the screen.
+- [ ] **LOAD-BEARING: on a NARROW window and a SHORT screen, not just
+      1080p.** The minsize clamping fixes only bite in those configurations —
+      a default 1080p pass exercises neither. On a short screen, confirm the
+      Settings dialog can still be resized smaller and moved, i.e. Save and
+      Cancel are always reachable.
+- [ ] **LOAD-BEARING: the list checkbox is not clipped at 125%, 150%, and
+      200%.** sv-ttk sets Treeview row height from a font that does not
+      follow `tk scaling`, so the app raises the row height itself to fit the
+      scaled checkbox image. This was measured under WSLg only. Also confirm
+      a light↔dark switch does not re-clip it — sv-ttk re-asserts its own row
+      height on every `set_theme`.
+- [ ] **Text is sharp, not bitmap-stretched, at 150%.** The process declares
+      DPI awareness but the HRESULT is discarded, so blurriness is the only
+      observable sign the call silently failed.
+
+### The list
+- [ ] **LOAD-BEARING: clicking a checkbox toggles it.** The click handler
+      relies on `identify_region()` returning `"tree"` for the checkbox
+      column and something else elsewhere. That was confirmed on X11 only.
+      Also confirm clicking a data column does NOT toggle.
+- [ ] **LOAD-BEARING: the context menu releases its grab.** Right-click a
+      row, then dismiss it by clicking elsewhere; repeat and dismiss with
+      Escape. After each, confirm the window still responds to clicks. This
+      path has NO automated coverage of any kind — a retained pointer grab
+      presents as "the app is frozen".
+- [ ] **Copy link and Open in browser** from the context menu work on a row
+      with a link, and are greyed out on a row without one.
+- [ ] **Double-click opens the YouTube link** — and does NOT open a browser
+      when double-clicking the checkbox column.
+- [ ] **Keyboard: Space toggles the focused row.** Tab to the list, use the
+      arrow keys to move, press Space. Confirm it toggles exactly one row and
+      that Upload Selected agrees with what is checked. Then trigger a list
+      rebuild (delete a file, or save Settings) and confirm the keyboard
+      still works afterwards without touching the mouse.
+- [ ] **Treeview tag colours actually render** — zebra striping, the
+      preselect highlight, and the blue link foreground, in both light and
+      dark. Tag backgrounds under a themed Treeview style are historically
+      theme- and version-dependent.
+- [ ] **Sorting does not affect upload order or stitch order.** Sort by each
+      column, then select rows out of their displayed order and upload —
+      first with Stitch off, then on. The `(1/n)` numbering and stitched clip
+      order must follow the underlying data, not the display.
+- [ ] **Newly announced recordings are pre-checked, scrolled into view, and
+      visibly highlighted** — even when they would otherwise be below the
+      fold.
+
+### Icon
+- [ ] **The icon appears in all five locations:** main window title bar,
+      Settings title bar, taskbar, system tray, and — after running the built
+      installer — the Start Menu shortcut and Add/Remove Programs entry.
+      Note the icon can only ever be verified on Windows: on Linux,
+      `iconbitmap` always fails because X11 Tk has no `.ico` support, so
+      development runs show no icon by design.
+- [ ] **A missing icon does not break startup.** Rename `app.ico` inside the
+      install directory and relaunch: the app still starts, and the tray
+      falls back to its drawn placeholder.
+
+### Frozen build
+- [ ] **LOAD-BEARING: the installed build renders themed, not plain ttk.**
+      This is the only proof sv-ttk's `.tcl` files were both bundled AND are
+      loadable. CI asserts the files exist; only launching proves they load.
+- [ ] **Checkboxes appear in the list in the frozen build.** They are
+      generated through `PIL.ImageTk`, which depends on the
+      `PIL._tkinter_finder` hidden import. If that is wrong the list renders
+      with no checkboxes at all, and no source-checkout test can see it.
+- [ ] **`Accent.TButton` renders visually distinct** on Upload Selected and
+      on Settings' Save.
+
 ## Watcher
 - [ ] Recording in OBS then stopping produces one notification
 - [ ] Notification does not steal focus from a fullscreen game
@@ -30,7 +152,13 @@ Run on Windows against a real install before each release.
 - [ ] With `notify_mode: popup`, the window raises instead
 - [ ] A recording made while the app was closed is announced on next launch
 - [ ] Existing recordings are NOT re-announced on an ordinary restart
-- [ ] Newly announced recordings are already checked when the window opens
+- [ ] **Newly announced recordings are already checked when the window
+      opens, scrolled into view, and visibly highlighted.** With the window
+      closed, create a new recording so the watcher detects it, then open
+      the window from the tray. Its row is pre-checked, the list is scrolled
+      so the row is visible without manual scrolling (even if it would
+      otherwise be below the fold), and it carries a distinct highlight
+      (`ROW_PRESELECT`) visually different from the ordinary row stripes.
 - [ ] **Persistent watcher failure surfaces exactly one notification.** Make
       the recording folder unreachable while the app is running (rename it,
       or unmount the drive it's on). After roughly 15 seconds, expect ONE
@@ -122,19 +250,33 @@ Run on Windows against a real install before each release.
       that path still exists after the dialog — a failed post must never
       delete the archive.
 - [ ] **Settings dialog at 100% and 150% Windows display scaling.** Open
-      Settings at each scale factor and confirm all five sections (Google
-      account, Upload defaults, When a recording finishes, Discord (combat
-      logs), Recording folder) are fully visible with nothing clipped, and
-      that Save/Cancel are reachable without resizing. A previous release
-      shipped with a section clipped off the bottom of the dialog at high
-      DPI, and the new Discord webhook/Gamelogs fields are exactly the kind
-      of addition that could reintroduce it.
+      Settings at each scale factor and confirm all six packed frames
+      (Google account, Upload defaults, When a recording finishes, Discord
+      (combat logs), Recording folder, and the Save/Cancel row) are fully
+      visible with nothing clipped, and that Save/Cancel are reachable
+      without resizing. A previous release shipped with a section clipped
+      off the bottom of the dialog at high DPI, and the Discord
+      webhook/Gamelogs fields are exactly the kind of addition that could
+      reintroduce it. See the "Look and feel > Display scaling" items above
+      for the general scaling checks (125%, narrow/short screens, checkbox
+      clipping); this item only covers the Discord (combat logs) section
+      specifically, not a duplicate of those.
 - [ ] **Combat-log and YouTube uploads share one busy guard.** Start a
       combat-log upload for a large-enough window that it takes a moment,
       then immediately click **Upload Selected** (YouTube). Expected: the
       "An upload is already in progress" warning. Then do the reverse —
       start a YouTube upload, immediately click **Upload combat logs** —
       and confirm the same warning appears there too.
+- [ ] **Combat-log status messages are legible in dark mode.** With Windows
+      set to Dark, run a combat-log upload and watch the status line through
+      "Collecting combat logs…", "Building archive…", and "Posting to
+      Discord…". All three must be readable. Before this refresh the first
+      of them was hardcoded to black, which was invisible on a dark
+      background — this item exists to catch that regressing.
+- [ ] **The Upload combat logs button survived the chrome rework.** Confirm
+      it is present in the action bar, sits beside Retry on the right, and
+      is NOT styled as the accent button — Upload Selected is the primary
+      action.
 
 ## Upload
 - [ ] **First upload triggers Google sign-in automatically, without
@@ -147,8 +289,16 @@ Run on Windows against a real install before each release.
       likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
 - [ ] Single upload completes and the link column fills in
-- [ ] Copy button puts a working URL on the clipboard
-- [ ] Open button opens the video in a browser
+- [ ] **Copy link via the row's right-click context menu puts a working URL
+      on the clipboard.** Right-click a row with a completed upload, choose
+      "Copy link", paste elsewhere to confirm. Confirm "Copy link" is greyed
+      out on a row with no link yet.
+- [ ] **Open in browser via the context menu opens the video's YouTube
+      page** — not the local video file. Confirm it is greyed out on a row
+      with no link yet.
+- [ ] **Double-clicking a row with a completed upload opens its YouTube
+      link**, same destination as the context menu. Double-clicking a row
+      with no link does nothing.
 - [ ] Multi-select without stitch uploads each with `(1/n)` titles
 - [ ] Each row gets its own correct link
 - [ ] Stitch of two videos produces one upload, both rows show the same link
@@ -190,3 +340,8 @@ Run on Windows against a real install before each release.
       `packaging/installer.iss`'s `AppVersion` (but not the other two),
       push, and confirm CI's "Check version consistency" step fails and
       names all three versions, including the mismatched one.
+- [ ] **The app icon appears on the Start Menu shortcut and in Add/Remove
+      Programs.** Run the built installer, then check the Start Menu entry's
+      icon and `Settings > Apps > Installed apps`. Both should show the real
+      icon rather than a generic exe icon, since `installer.iss`'s
+      `UninstallDisplayIcon` reads the icon embedded by `uploader.spec`.
