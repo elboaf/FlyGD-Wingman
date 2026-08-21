@@ -126,3 +126,89 @@ def test_api_exposes_no_public_non_method_attributes(tmp_path):
     assert public, "guard is worthless if the class has no public surface at all"
     non_methods = [name for name in public if not callable(getattr(api, name))]
     assert non_methods == []
+
+
+def test_alert_pushes_a_dialog_with_no_request_id(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window)
+
+    api._alert("warning", "Nothing selected", "Select at least one recording.")
+
+    assert pushes(window) == [("onDialog", {
+        "kind": "warning",
+        "title": "Nothing selected",
+        "body": "Select at least one recording.",
+        "request_id": None,
+    })]
+
+
+def test_confirm_blocks_the_worker_until_the_page_answers(tmp_path):
+    """The one request/response pair in an otherwise fire-and-forget protocol.
+
+    Driven from two threads on purpose: the worker parks in _confirm exactly
+    as it used to park in messagebox.askyesno, and the answer arrives on the
+    thread servicing pywebview.api.* -- a different thread, which is what
+    makes the Event necessary rather than decorative.
+    """
+    answered = threading.Event()
+
+    class SignallingWindow(FakeWindow):
+        def evaluate_js(self, script):
+            super().evaluate_js(script)
+            answered.set()
+
+    window = SignallingWindow()
+    api = make_api(tmp_path, window)
+    result = {}
+
+    worker = threading.Thread(
+        target=lambda: result.update(ok=api._confirm("Delete 2 files?",
+                                                     "This cannot be undone.")))
+    worker.start()
+
+    assert answered.wait(5), "confirm never reached the page"
+    handler, payload = pushes(window)[0]
+    assert handler == "onDialog"
+    assert payload["kind"] == "confirm"
+    assert payload["request_id"]
+    assert worker.is_alive(), "confirm returned without waiting for an answer"
+
+    api.dialog_response(payload["request_id"], True)
+    worker.join(5)
+    assert not worker.is_alive()
+    assert result == {"ok": True}
+
+
+def test_confirm_returns_false_when_the_page_declines(tmp_path):
+    api = make_api(tmp_path, id_factory=lambda: "req-1")
+    result = {}
+
+    worker = threading.Thread(
+        target=lambda: result.update(ok=api._confirm("Upload 3 videos?", "body")))
+    worker.start()
+    # id_factory is fixed, so the id is known without racing the push.
+    for _ in range(500):
+        api.dialog_response("req-1", False)
+        worker.join(0.01)
+        if not worker.is_alive():
+            break
+    assert result == {"ok": False}
+
+
+def test_dialog_response_for_an_unknown_request_is_ignored(tmp_path):
+    # A reloaded page can answer a dialog whose worker is long gone.
+    make_api(tmp_path).dialog_response("nobody-is-waiting", True)
+
+
+def test_confirm_forgets_the_request_once_answered(tmp_path):
+    api = make_api(tmp_path, id_factory=lambda: "req-2")
+    worker = threading.Thread(target=lambda: api._confirm("t", "b"))
+    worker.start()
+    for _ in range(500):
+        api.dialog_response("req-2", True)
+        worker.join(0.01)
+        if not worker.is_alive():
+            break
+    # Left in the map, every dialog the app ever shows leaks an Event for the
+    # life of the process.
+    assert api._dialogs == {}
