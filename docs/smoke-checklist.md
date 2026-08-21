@@ -451,7 +451,9 @@ behavior that only shows up at size.
 - [ ] Multi-select without stitch uploads each with `(1/n)` titles
 - [ ] Each row gets its own correct link
 - [ ] Stitch of two videos produces one upload, both rows show the same link
-- [ ] Temp stitch file is gone from `%LOCALAPPDATA%\...\tmp` afterwards
+- [ ] Stitch finishes in seconds (stream copy, no re-encode) and the
+      uploaded video plays through the join with audio in sync
+- [ ] No `stitch-*` leftovers (video or concat list) in `%LOCALAPPDATA%\...\tmp`
 - [ ] Killing the network mid-upload shows "retrying in Ns", then resumes
 - [ ] After exhausting retries, the Retry button becomes enabled
 - [ ] Retry resumes rather than restarting from 0%
@@ -459,7 +461,7 @@ behavior that only shows up at size.
       and fills in links for both
 - [ ] Retry of a failed STITCHED upload re-stitches and restarts (expected —
       the temp file is deleted on failure by design)
-- [ ] Temp stitch file is gone even after a failed upload
+- [ ] No `stitch-*` leftovers (video or concat list) even after a failed upload
 - [ ] **Non-retryable upload failure disables Retry.** Trigger a hard API
       error rather than a network blip — either exhaust the shared daily
       quota, or revoke the app's access from your Google account's

@@ -27,34 +27,55 @@ def test_order_for_stitch_is_earliest_first():
     assert [i.path.name for i in stitch.order_for_stitch([a, b, c])] == ["b.mkv", "c.mkv", "a.mkv"]
 
 
-def test_build_command_includes_every_source(tmp_path):
+def test_write_concat_list_quotes_every_source(tmp_path):
     srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
-    cmd = stitch.build_command(srcs, tmp_path / "out.mkv", "ffmpeg")
-    assert cmd[0] == "ffmpeg"
-    for s in srcs:
-        assert str(s) in cmd
-    assert cmd[-1] == str(tmp_path / "out.mkv")
+    list_path = tmp_path / "list.txt"
+    stitch.write_concat_list(srcs, list_path)
+    assert list_path.read_text(encoding="utf-8").splitlines() == [
+        f"file '{srcs[0]}'",
+        f"file '{srcs[1]}'",
+    ]
 
 
-def test_build_command_concat_filter_matches_input_count(tmp_path):
-    srcs = [tmp_path / f"{n}.mkv" for n in "abc"]
-    cmd = stitch.build_command(srcs, tmp_path / "out.mkv", "ffmpeg")
-    assert "n=3" in " ".join(cmd)
+def test_write_concat_list_escapes_apostrophes(tmp_path):
+    """The concat demuxer treats a bare ' as the end of the quoted path, so
+    a recording folder like "Gunny's clips" would otherwise be unparseable."""
+    src = tmp_path / "Gunny's clip.mkv"
+    list_path = tmp_path / "list.txt"
+    stitch.write_concat_list([src], list_path)
+    line = list_path.read_text(encoding="utf-8").strip()
+    assert line == "file '" + str(src).replace("'", "'\\''") + "'"
+    assert line.count("'") == 5
 
 
-def test_build_command_matches_shipped_encode_settings(tmp_path):
+def test_write_concat_list_keeps_backslashes_literal(tmp_path):
+    """Inside single quotes the demuxer applies no backslash escaping, so a
+    backslash must be written through unchanged -- which is what lets a
+    Windows path be listed verbatim."""
+    src = tmp_path / "back\\slash.mkv"
+    stitch.write_concat_list([src], tmp_path / "l.txt")
+    assert (tmp_path / "l.txt").read_text(encoding="utf-8").strip() == f"file '{src}'"
+    assert "\\" in str(src)
+
+
+def test_build_command_is_a_stream_copy(tmp_path):
     """Argument order is semantic to ffmpeg; membership checks would pass
-    even with -c:v and -c:a values swapped."""
-    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
-    cmd = stitch.build_command(srcs, tmp_path / "out.mkv", "ffmpeg")
-    expected_tail = [
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
+    even with the flags scrambled."""
+    cmd = stitch.build_command(tmp_path / "list.txt", tmp_path / "out.mkv", "ffmpeg")
+    assert cmd == [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(tmp_path / "list.txt"),
+        "-c", "copy",
         str(tmp_path / "out.mkv"),
     ]
-    assert cmd[-len(expected_tail):] == expected_tail
+
+
+def test_build_command_re_encodes_nothing(tmp_path):
+    """A re-encode is minutes of CPU per stitch; -c copy is the whole point."""
+    cmd = stitch.build_command(tmp_path / "list.txt", tmp_path / "out.mkv", "ffmpeg")
+    for flag in ("-filter_complex", "-c:v", "libx264", "-c:a", "aac", "-movflags"):
+        assert flag not in cmd
 
 
 def test_stitched_yields_an_existing_file(tmp_path):
@@ -116,9 +137,48 @@ def test_output_names_are_unique_across_runs(tmp_path):
 
 def test_sweep_orphans_removes_only_stitch_artifacts(tmp_path):
     (tmp_path / "stitch-abc123.mkv").write_bytes(b"x")
+    (tmp_path / "stitch-abc123.txt").write_bytes(b"x")
     (tmp_path / "unrelated.txt").write_bytes(b"x")
-    assert stitch.sweep_orphans(tmp_path) == 1
+    assert stitch.sweep_orphans(tmp_path) == 2
     assert (tmp_path / "unrelated.txt").exists()
+
+
+def test_stitched_cleans_up_the_concat_list(tmp_path):
+    """The list file is as much a temp artifact as the output; leaking it
+    would litter the temp dir on every single stitch."""
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+    with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_ok):
+        pass
+    assert list(tmp_path.glob("stitch-*.txt")) == []
+
+
+def test_stitched_cleans_up_the_concat_list_when_ffmpeg_fails(tmp_path):
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+    with pytest.raises(stitch.StitchError):
+        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail):
+            pass
+    assert list(tmp_path.glob("stitch-*.txt")) == []
+
+
+def test_stitched_feeds_ffmpeg_a_list_naming_every_source(tmp_path):
+    """End to end: whatever path stitched() passes as -i must exist at the
+    moment the runner is called and name all the sources, in order."""
+    srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
+    for s in srcs:
+        s.write_bytes(b"x")
+    seen = {}
+
+    def _capture(cmd, **kw):
+        seen["list"] = Path(cmd[cmd.index("-i") + 1]).read_text(encoding="utf-8")
+        return _ok(cmd, **kw)
+
+    with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_capture):
+        pass
+    assert seen["list"].splitlines() == [f"file '{srcs[0]}'", f"file '{srcs[1]}'"]
 
 
 def test_sweep_orphans_handles_missing_directory(tmp_path):
