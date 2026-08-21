@@ -97,13 +97,13 @@ def test_the_window_has_a_resize_border_attached_once_it_is_shown(fake_webview):
 def test_the_window_declares_the_size_its_layout_can_survive(fake_webview):
     """Asserts the exact tuple, not merely that the kwarg was passed.
 
-    A presence-only check passes on a wrong number, and pywebview's default
-    floor is 200x100 (winforms.py:210) -- small enough that the two-pane
-    layout cannot render at all. Now that the window resizes, that floor is
-    reachable by dragging.
+    A presence-only check passes on a wrong number, and both provisional
+    estimates WERE wrong -- the height by 65px, in the direction that lets
+    a user drag part of the layout out of view. These numbers were measured
+    against the real page; changing them should require saying why.
     """
     window_mod.create(_bare_api())
-    assert fake_webview["kwargs"]["min_size"] == (880, 560)
+    assert fake_webview["kwargs"]["min_size"] == (840, 625)
 
 
 def test_the_window_is_given_an_explicit_position(fake_webview):

@@ -27,13 +27,22 @@ TITLE = "FlyGD Wingman"
 WIDTH = 1040
 HEIGHT = 680
 
-# The floor the layout can still render at. PROVISIONAL, pending the plan's
-# step-1 measurement: the width depends on `52ch` in the list grid
-# (style.css:233) resolved against the bundled Inter face, which cannot be
-# computed on paper, and the height is a judgement about how few list rows
-# are still useful rather than an arithmetic result.
-MIN_WIDTH = 880
-MIN_HEIGHT = 560
+# The floor the layout can still render at, MEASURED rather than derived --
+# neither number could be computed on paper. The width depends on `52ch` in
+# the list grid (style.css:233) resolved against the bundled Inter face, and
+# the height is a judgement about how much of the two-pane layout has to
+# stay visible, not an arithmetic result.
+#
+# Read off the real page at 840x625 logical, approached from both
+# directions. Both provisional estimates were wrong in OPPOSITE directions:
+# 880 was 41px too generous, and 560 was 65px too SMALL -- that one would
+# have let a user drag the window into a state where part of the layout is
+# not viewable, which nothing in the test suite could have caught.
+#
+# Width rounded up by 1 to an even number; the height is used as measured,
+# since it is the constraint that actually bites.
+MIN_WIDTH = 840
+MIN_HEIGHT = 625
 
 # --bg from the token table. This paints the NATIVE surface, before the
 # first frame of HTML exists; a mismatch here is a white flash on launch.

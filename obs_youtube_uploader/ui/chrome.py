@@ -44,16 +44,16 @@ GWLP_WNDPROC = -4
 MONITOR_DEFAULTTONEAREST = 2
 
 # Grab thickness in LOGICAL pixels, scaled per window DPI at hit-test time.
-#
-# PENDING MEASUREMENT (plan step 1): BORDER must not exceed the inset that
-# INSET actually achieves, or part of the grab band lands on the WebView2
-# child and silently stops responding. The spike asked for a 6px inset and
-# got 3, cause unresolved -- so all three numbers here are provisional.
+# BORDER must never exceed INSET -- beyond the inset the WebView2 child owns
+# the pixels and no hit-test arrives, so the extra reach would be dead.
+# tests/test_chrome.py enforces that.
 BORDER = 6
 CORNER = 14
 
-# Padding applied to the form, in whatever units WinForms resolves Padding
-# in -- which is the open question. Asking for 6 produced a 3px band.
+# How far the WebView2 is inset, in the same logical units as BORDER, and
+# scaled by the same factor at attach time. Measured at 6: on a 4K/200%
+# display this produces a 12-physical-pixel band, which is what hit_code
+# then looks for.
 INSET = 6
 
 
@@ -350,10 +350,11 @@ def _log_geometry(native, pad: int, scale: float) -> None:
     INFO (__main__.py:64) -- a DEBUG line here would be written nowhere and
     the diagnostic would silently not exist. It is one line per launch.
 
-    Kept rather than run once and deleted: asking for a 6px inset produced
-    a 3px band on the spike and the cause is still unresolved. If the
-    answer turns out to be DPI-dependent, this is the difference between
-    diagnosing it and receiving "resizing feels wrong on that laptop".
+    Kept rather than run once and deleted: the band depends on a DPI factor
+    that WinForms and Win32 report differently (see _apply_inset), so the
+    only way to know what a given machine did is to read it back. Without
+    it, a wrong band arrives as "resizing feels wrong on that laptop" with
+    nothing to go on.
 
     DisplayRectangle is the authoritative number -- it is what DockStyle.Fill
     measures the WebView2 against -- so the inset is the gap between it and

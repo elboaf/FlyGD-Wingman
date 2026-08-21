@@ -68,20 +68,29 @@ crash.
   meaningful: title-bar drag and Windows snap (`docs/smoke-checklist.md:99`),
   and two "at the minimum window size/width" checks (`:135`, `:181`).
 
-### Unresolved before implementation
+### Resolved by measurement
 
-Two numbers must be **measured**, not assumed, before any shipping value is
-picked. Both come out of step 1.
+Both step-1 numbers are in, taken against the real page with the real
+`ui/chrome.py`.
 
-1. `--pad 6` produced only a **3px inset per side** (form 1027×645, children
-   1021×639). The cause is not established, and it decides the band width.
-   Diagnostic: log `ClientRectangle`, `DisplayRectangle`, `Padding`,
-   `DeviceDpi`, and the WebView2 control's `Bounds` immediately after
-   assignment.
-2. The **minimum usable width**, which depends on `52ch` resolved against the
-   bundled Inter face and therefore cannot be computed on paper (decision 5).
-   Diagnostic: shrink the real window until the list columns collide, and read
-   the width off it.
+1. **The 3px inset was never real.** `Padding(6)` always produced exactly
+   6px. The PowerShell probe that reported 3 ran DPI-unaware, so Windows
+   virtualized every coordinate it read and halved it — a 2054px client
+   became 1027, a 6px band became 3, and the "1920×1080 monitor" was a 4K
+   panel at 200%. The instrument was wrong, not the code.
+
+   It did surface a real bug: `Padding` resolves against the form's
+   `DeviceDpi`, reported as 96 even at 200%, while `hit_code` scaled
+   `BORDER` by `GetDpiForWindow/96` = 2.0. The code believed in a 12px band
+   where 6px existed, putting the inner half over the WebView2 child.
+   Dragging still worked, so only measurement could have caught it. Both
+   now scale by one factor captured at attach time.
+
+2. **The floor is 840 × 625 logical**, read off the real page and
+   approached from both directions. Both estimates were wrong in opposite
+   directions: 880 was 41px too generous, and 560 was **65px too small** —
+   the latter would have let a user drag part of the layout out of view,
+   which no test could have caught.
 
 ## Decisions for review
 

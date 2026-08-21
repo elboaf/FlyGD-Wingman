@@ -101,6 +101,21 @@ def test_the_band_never_scales_away_entirely():
     assert chrome.hit_code(RECT, 100, 400, scale=0.01) == chrome.HTLEFT
 
 
+def test_the_grab_band_never_exceeds_the_inset():
+    """BORDER must not out-reach INSET, or part of the band is dead.
+
+    The band is only form surface as far as the inset goes; beyond it the
+    WebView2 child owns the pixels and no hit-test ever arrives. A BORDER
+    larger than INSET therefore claims a zone that silently does nothing --
+    and it fails exactly the way a too-thin band does, so it would be
+    diagnosed as "resizing is fiddly" rather than as a bug.
+
+    Both are scaled by the same factor at runtime, so comparing the
+    unscaled constants is the whole check.
+    """
+    assert chrome.BORDER <= chrome.INSET
+
+
 class _Explosive:
     """A window that fails the test if anything is read off it."""
 
