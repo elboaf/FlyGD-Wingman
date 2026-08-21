@@ -52,9 +52,9 @@ def detect_mode(reader=read_apps_use_light_theme) -> Mode:
     return "light"
 
 
-# Declared here (ahead of register()/apply() in Step 6) because
-# tests/test_theme.py's autouse _clear_consumers fixture reads/mutates this
-# from Step 1 onward - controller ruling, see task-2-report.md.
+# Declared here (ahead of register()/apply()) because tests/test_theme.py's
+# autouse _clear_consumers fixture reads and mutates this list, so it has to
+# exist at import time regardless of where the functions using it sit.
 _consumers: list[Callable[[Mode], None]] = []
 
 
@@ -124,6 +124,58 @@ def unregister(consumer: Callable[[Mode], None]) -> None:
         pass
 
 
+# Every named font sv-ttk's sv.tcl declares. Absent names are skipped, so
+# this stays correct across sv-ttk versions that add or drop one.
+_SV_FONT_NAMES = (
+    "SunValleyCaptionFont",
+    "SunValleyBodyFont",
+    "SunValleyBodyStrongFont",
+    "SunValleyBodyLargeFont",
+    "SunValleySubtitleFont",
+    "SunValleyTitleFont",
+    "SunValleyTitleLargeFont",
+    "SunValleyDisplayFont",
+)
+
+# sv-ttk's declared (unscaled) size per font name, captured the first time
+# that font is seen and never re-read. _rescale_sv_fonts always derives the
+# new size from this base rather than from the font's current size, so
+# calling apply() repeatedly - which happens on every live theme switch -
+# cannot compound the scaling.
+_sv_font_base_sizes: dict[str, int] = {}
+
+
+def _rescale_sv_fonts(root) -> None:
+    """Make sv-ttk's ttk fonts follow `tk scaling` like everything else.
+
+    sv.tcl declares its fonts with a NEGATIVE -size (e.g. -14), which in Tk
+    means "absolute pixels" - a size `tk scaling` never touches. So once the
+    process is DPI-aware, every scaled dimension in the app grows while ttk
+    text stays pinned at its 96-DPI pixel height: at 200% the text renders
+    at roughly half its intended apparent size. (app._apply_row_height()
+    works around the same root cause for Treeview row height alone.)
+
+    The scale factor is computed here rather than imported because app.py
+    imports theme.py, so theme.py must not import app. It is deliberately
+    the same expression as app.dpi_scale() - the two are halves of one
+    contract and have to change together.
+
+    Sizes stay negative: converting to points would make Tk scale them a
+    second time on top of the factor already applied here.
+    """
+    scale = float(root.tk.call("tk", "scaling")) / (96.0 / 72.0)
+    existing = {str(name) for name in root.tk.call("font", "names")}
+    for name in _SV_FONT_NAMES:
+        if name not in existing:
+            continue
+        base = _sv_font_base_sizes.get(name)
+        if base is None:
+            base = abs(int(root.tk.call("font", "configure", name, "-size")))
+            _sv_font_base_sizes[name] = base
+        root.tk.call("font", "configure", name, "-size",
+                     -max(1, round(base * scale)))
+
+
 def apply(root, mode: Mode) -> None:
     """The single owner of re-theming. Must never raise: a failure here is
     an optional presentation capability, not a startup requirement (unlike
@@ -138,6 +190,17 @@ def apply(root, mode: Mode) -> None:
             sv_ttk.set_theme(mode, root=root)
         except Exception:
             log.warning("sv_ttk.set_theme(%r) failed", mode, exc_info=True)
+        else:
+            # Inline here rather than a registered consumer: set_theme
+            # re-asserts sv-ttk's styles, and the consumers below (notably
+            # app's _apply_row_height, which measures font metrics) must
+            # observe the already-corrected fonts. Wrapped for the same
+            # reason set_theme is - apply() must never raise.
+            try:
+                _rescale_sv_fonts(root)
+            except Exception:
+                log.warning("rescaling sv-ttk fonts to the DPI scale failed",
+                            exc_info=True)
 
     for consumer in _consumers:
         try:
