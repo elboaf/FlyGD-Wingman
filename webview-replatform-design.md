@@ -105,10 +105,52 @@ parts on Windows 11 with WebView2 Runtime 151.0.4129.93.
 | Q3b | Worker thread streams progress; window stays responsive | Pass — draggable mid-upload |
 | Q4 | PyInstaller freeze and run | Pass, first attempt. 26 MB one-folder bundle. One `hiddenimports` entry (`webview.platforms.edgechromium`); no custom hooks |
 | Q5 | `pystray` thread + `webview.start()` on main thread | Pass — the arrangement `__main__.py` already uses |
-| Q6 | Tray hide/show/quit | **Partial.** Hide passes; `window.destroy()` called directly from the pystray thread passes. Reopening via `show()` from the tray thread was never exercised — see Open items |
+| Q6 | Tray hide/show/quit | **Pass.** Hide, cross-thread `show()`, and cross-thread `destroy()` all work. Confirmed twice: programmatically from a driver thread with `IsWindowVisible()` sampled from outside the process (hidden at T+5s, visible again within 1s of `show()`), and from a real tray interaction dispatching on the `pystray` thread |
+| Q7 | Behaviour when the WebView2 runtime is absent | **Fail — silently.** See below. The single most important finding in the spike |
 
 Q4 was predicted most likely to fail and did not fight at all. That result is what
 moved the recommendation from Qt to the webview.
+
+### Q7: the runtime-absent failure mode
+
+Simulated non-destructively by pointing `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` at an
+empty directory for one process, which reproduces the loader's
+runtime-not-found path without uninstalling anything:
+
+```
+[pywebview] WebView2 initialization failed with exception:
+ Couldn't find a compatible Webview2 Runtime installation to host WebViews.
+ ---> System.IO.FileNotFoundException ... (HRESULT: 0x80070002)
+...
+--- exit code: 0 ---
+```
+
+**pywebview logs this and continues.** `webview.start()` returns normally, teardown
+throws a second error (`Failed to delete user data folder: 'NoneType' object has no
+attribute 'BrowserProcessId'`), and the **process exits 0**. A user without the
+runtime gets no window, no error, no crash dialog, and a success exit code. In a
+windowed build there is no console, so the diagnostic above is not seen either.
+
+This changes the design in a way the installer alone cannot cover — a runtime can
+be removed or broken after install:
+
+**The application must pre-flight the runtime itself, before `webview.start()`,
+and fail loudly.** Detection is the same registry query the installer needs,
+validated on this machine:
+
+| Key | Purpose |
+|---|---|
+| `HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` | Per-machine on 64-bit Windows — the one present here, `pv=151.0.4129.93` |
+| `HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{…}` | Per-machine on 32-bit Windows |
+| `HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{…}` | Per-user install |
+
+Present means any of the three has a `pv` value that is not empty and not
+`0.0.0.0`. This mirrors `theme.py`'s existing `winreg` usage, so it introduces no
+new dependency and degrades safely off-Windows.
+
+On absence, show a **native** message box — `ctypes.windll.user32.MessageBoxW`,
+since by definition no webview is available to render an in-app dialog — naming
+the Microsoft Evergreen runtime and its download URL, then exit non-zero.
 
 ### Constraints the spike discovered
 
@@ -402,8 +444,14 @@ already have the setting persisted and never see it.
   a full definition, not a mention: how the bootstrapper is acquired (bundled at
   build time versus downloaded at install time), how its integrity is verified, how
   an existing runtime is detected, how it is invoked silently, and what happens
-  when it fails or the machine is offline. This is the single genuinely new piece
-  of installer work and the largest residual risk in the whole plan.
+  when it fails or the machine is offline. Detection uses the three registry keys
+  validated under **Q7**, and the installer's check and the application's
+  pre-flight check must agree — they are the same predicate in two places.
+
+  The bootstrapper is **not sufficient on its own.** Q7 showed a missing runtime
+  produces a silent exit 0, and a runtime can be removed or broken after a
+  successful install, so the application-side pre-flight is required regardless of
+  what the installer does.
 
 Expected bundle size is roughly flat: the spike's webview stack measured 26 MB
 total against a current bundle dominated by ffmpeg.
@@ -460,14 +508,20 @@ is already covered by tests that survive the port untouched.
 
 ## Risks and open items
 
-1. **WebView2 Runtime on a clean machine — untested.** The spike ran on a host
-   that already had it. The installer bootstrapper addresses this, but it cannot
-   be validated on the development machine. Highest-priority verification during
-   implementation; a clean VM is the only honest test.
-2. **`show()` from the pystray thread — untested.** Hide and cross-thread
-   `destroy()` both pass, so this is the same category as operations already
-   proven, but the tray is the app's primary entry point. Verify first, before
-   anything is built on the assumption.
+1. **The WebView2 bootstrapper chain is still unverified end to end.** Q7 closed
+   the *application's* behaviour when the runtime is absent — it fails silently
+   today, and the pre-flight check fixes that — but the installer half is
+   untested: acquiring the Evergreen bootstrapper, invoking it silently, and
+   recovering when it fails or the machine is offline. A clean VM is the only
+   honest test, and this is now the largest remaining risk in the plan.
+   The pre-flight check and its native message box **must be testable without a
+   VM**, by pointing `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` at an empty directory,
+   as Q7 did.
+2. **pywebview swallows initialization failures.** Q7 showed WebView2 init failing
+   while `webview.start()` returns normally and the process exits 0. Assume other
+   failure classes behave the same way: nothing pywebview reports should be
+   trusted to surface as a non-zero exit or an exception. Anything the app must
+   not fail silently at needs its own check.
 3. **pywebview is a small project.** Frameless-window support on Windows is where
    its coverage is thinnest, and the `js_api` recursion crash is evidence of rough
    edges. Pin the version; treat upgrades as changes requiring a smoke pass.
