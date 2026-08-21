@@ -3,7 +3,7 @@
 # rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
 # entry point, and the release workflow's credential-injection step.
 name = "obs-youtube-uploader"
-version = "2.1.0"
+version = "2.2.0"
 description = "FlyGD Wingman - Windows companion for OBS recordings: review, stitch, and upload to YouTube."
 readme = "README.md"
 requires-python = ">=3.11"
