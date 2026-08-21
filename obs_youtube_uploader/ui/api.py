@@ -148,6 +148,7 @@ class Api:
         self._drain: Scheduler | None = None
 
         self._upload_thread: threading.Thread | None = None
+        self._delete_thread: threading.Thread | None = None
         self._retry_state: RetryState | None = None
         self._links: dict[str, str] = {}
         self._last_pct: float = 0.0
@@ -311,6 +312,47 @@ class Api:
             "summary": copy_mod.format_selection_summary(infos),
             "title_hint": copy_mod.format_title_hint(len(infos), bool(stitch)),
         }
+
+    # ----- delete, open, copy ------------------------------------------------
+
+    def delete_selected(self, ids) -> None:
+        pairs = [(rid, info) for rid in ids
+                 if (info := self._rows.resolve(rid)) is not None]
+        if not pairs:
+            self._alert("warning", "No Selection",
+                        "Select at least one video to delete.")
+            return
+        # Same reason as _confirm_then_upload: _confirm blocks until the
+        # page answers, and the page's answer arrives on the bridge thread
+        # this method is running on.
+        self._delete_thread = threading.Thread(
+            target=self._delete_worker, args=(pairs,), daemon=True)
+        self._delete_thread.start()
+
+    def _delete_worker(self, pairs) -> None:
+        infos = [info for _, info in pairs]
+        names = "\n".join(f"  • {i.path.name}" for i in infos)
+        if not self._confirm(
+                "Confirm Delete",
+                f"Permanently delete these files from disk?\n\n{names}"
+                "\n\nThis cannot be undone."):
+            return
+        deleted, failures = library.delete([i.path for i in infos])
+        # Forget only what actually went. A file that failed to delete still
+        # exists, and dropping its seen-entry would make the watcher
+        # announce it again as if it were new.
+        failed_paths = {p for p, _ in failures}
+        if self._watcher is not None:
+            for info in infos:
+                if info.path not in failed_paths:
+                    self._watcher.forget(info.path)
+        for row_id, _ in pairs:
+            self._links.pop(row_id, None)
+        self.list_rows()
+        message = f"Deleted {deleted} file(s)."
+        if failures:
+            message += f" {len(failures)} failed."
+        self._push("onStatus", {"text": message, "kind": "FG"})
 
     # ----- durations --------------------------------------------------------
 
