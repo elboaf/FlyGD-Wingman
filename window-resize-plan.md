@@ -70,12 +70,18 @@ crash.
 
 ### Unresolved before implementation
 
-`--pad 6` produced only a **3px inset per side** (form 1027×645, children
-1021×639). The cause is not established, and it decides the band width. First
-implementation step is a diagnostic: log `ClientRectangle`,
-`DisplayRectangle`, `Padding`, `DeviceDpi`, and the WebView2 control's
-`Bounds` immediately after assignment. Do not pick a shipping value before
-that reads out.
+Two numbers must be **measured**, not assumed, before any shipping value is
+picked. Both come out of step 1.
+
+1. `--pad 6` produced only a **3px inset per side** (form 1027×645, children
+   1021×639). The cause is not established, and it decides the band width.
+   Diagnostic: log `ClientRectangle`, `DisplayRectangle`, `Padding`,
+   `DeviceDpi`, and the WebView2 control's `Bounds` immediately after
+   assignment.
+2. The **minimum usable width**, which depends on `52ch` resolved against the
+   bundled Inter face and therefore cannot be computed on paper (decision 5).
+   Diagnostic: shrink the real window until the list columns collide, and read
+   the width off it.
 
 ## Decisions for review
 
@@ -112,6 +118,20 @@ The guard mirrors `__main__.set_dpi_awareness()` and
 `acquire_single_instance()`: a `sys.platform != "win32"` early return, and the
 Win32 calls wrapped so a failure degrades rather than raises.
 
+**An early return in `enable_resize()` is not sufficient on its own.** The
+module-level Win32 declarations must be guarded too — `ctypes.WINFUNCTYPE` and
+most of `ctypes.wintypes` do not exist off Windows, so a `WNDPROC` type built
+at import time raises before any function guard can run. The spike hit exactly
+this and had to move its check above the type construction
+(`spikes/frameless_resize_spike.py:163`).
+
+This is load-bearing for decision 3, not a detail: the entire testability
+argument depends on ubuntu CI importing `chrome.py` to exercise `hit_code`. An
+unguarded declaration at module scope would make that import fail and silently
+cost the feature its only automated coverage. Either build the Win32 types
+lazily inside the attach path, or guard them at module scope and have
+`hit_code` depend on none of them.
+
 ### 3. Hit-zone math as a pure function (interfaces / testability)
 
 **Proposed:** `chrome.hit_code(rect, x, y, scale) -> int | None`, taking a
@@ -145,10 +165,27 @@ window is today's behaviour; a failed launch is a regression.
 
 ### 5. `min_size`, and the size constants
 
-**Proposed:** pass `min_size` derived from the layout floor — the list grid
-`34 + minmax(120,52ch) + 92 + 84 + 76 + 46` (`style.css:233`) plus the fixed
-`320px` upload pane (`:376`) plus gaps and padding — rather than the 880×560
-the spike used, which was an estimate.
+**Proposed:** measure the floor, then pin it as a named constant and assert
+that exact value in tests. Do not ship the spike's 880×560 — that was an
+estimate, and neither dimension can be derived on paper:
+
+- **Width** depends on `52ch` in the list grid (`style.css:233`), which is a
+  font-relative unit resolved against the bundled Inter variable face. There
+  is no honest pixel value for it without measuring; the remaining track
+  widths (`34 + 92 + 84 + 76 + 46`), the fixed `320px` upload pane (`:376`),
+  and the route gaps and padding (`:202`) are additive on top of it.
+- **Height** has no stated derivation at all today. It is the `44px` title bar
+  (`--titlebar-h`, `style.css:74`) plus the list header, plus enough rows to
+  be usable, plus the status strip — a judgement call about how few rows is
+  too few, not an arithmetic result.
+
+So the width comes out of the step-1 measurement, and the height is a decision
+someone has to make and record. Both then become constants with a comment
+explaining where they came from, and `tests/test_window.py` asserts the
+literal tuple rather than merely that the kwarg was passed. A test that only
+checks presence would pass on a wrong number, which is the failure mode that
+matters here — the window is currently unresizable, so nobody would notice a
+bad floor until a user dragged into it.
 
 Related but **proposed as out of scope**: the 13×35 px shortfall from
 `winforms.py:209`. Correcting it changes the default window size for every
@@ -173,11 +210,21 @@ not pretend otherwise:
 - `hit_code` table tests: all eight zones, the corner reach, the None case in
   the middle, and scaling at 1.0 / 1.5 / 2.0.
 - `chrome.enable_resize` returns `False` and touches nothing when
-  `sys.platform != "win32"`.
-- `tests/test_window.py` extended for the new `min_size` kwarg, alongside the
-  existing `frameless` / `easy_drag` assertions.
+  `sys.platform != "win32"`, and `chrome` imports cleanly on Linux at all
+  (decision 2 — this is what keeps the `hit_code` tests runnable).
+- `tests/test_window.py` extended for the new `min_size` kwarg, asserting the
+  exact tuple, alongside the existing `frameless` / `easy_drag` assertions.
 
-Everything native stays manual, via the spike's own checklist.
+Everything native stays manual — but **against a real build of the app, not
+the spike**. The spike passing proves the spike works; it says nothing about
+the extracted production code, which will differ in at least module structure,
+the padding value, `min_size`, and where the subclass is attached from. So the
+full checklist in `spikes/frameless_resize_spike.py:118` gets re-run on the
+app: all eight zones and their cursors, the minimum size, title-bar drag still
+working below the band, taskbar-safe maximize, recovery after fullscreen, and
+surviving sustained use without the callback being collected. The items the
+spike never answered — Aero Snap, edge double-click, 150%/175%, mixed-scale
+monitors — are additional to that, not a substitute for it.
 
 ## Alternatives and tradeoffs
 
@@ -192,19 +239,25 @@ Everything native stays manual, via the spike's own checklist.
 
 ## Ordered implementation steps
 
-1. **Diagnose the 6→3 inset** (see above). Everything downstream depends on
-   the number.
+1. **Take both measurements** (see "Unresolved before implementation"): the
+   inset discrepancy and the minimum usable width. Everything downstream
+   depends on the numbers.
 2. Add `ui/chrome.py`: constants, `hit_code` as a pure function, the
    `MINMAXINFO`/`MONITORINFO` structures, the pinned-callback subclass, the
-   work-area clamp, and `enable_resize()` with its platform guard.
-3. Wire it into `ui/window.py`: pass `min_size`, register a `shown` handler
-   that applies the `Padding` via `Invoke` and then calls `enable_resize`.
-4. Tests: the `hit_code` table, the off-Windows no-op, the new `min_size`
-   assertion.
-5. Docs: add the resize, min-size, and maximize-vs-taskbar checks to
+   work-area clamp, and `enable_resize()` with its platform guard — with the
+   Win32 declarations arranged so the module still imports on Linux
+   (decision 2). Lands with its own tests; no behaviour change yet.
+3. **Wire it in and update the test fixture in the same commit.** Pass
+   `min_size`, register a `shown` handler that applies the `Padding` via
+   `Invoke` and then calls `enable_resize`. The fixture must move with it:
+   `tests/test_window.py:27` returns `SimpleNamespace(label="the-window")`,
+   which has no `events`, so `window.events.shown += ...` raises in every
+   existing `create()` test (`:55` and the rest). Splitting these two across
+   commits breaks the tree in the middle.
+4. Docs: add the resize, min-size, and maximize-vs-taskbar checks to
    `docs/smoke-checklist.md`, near the existing title-bar drag item.
-6. Verify on Windows with a real build; run the spike's checklist items that
-   remain open (Aero Snap, edge double-click, 150%/175%, second monitor).
+5. Verify on Windows against a real build, running the full checklist per the
+   testing section — not only the items the spike left open.
 
 ## Adaptation points
 
