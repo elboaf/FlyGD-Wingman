@@ -56,9 +56,14 @@ jobs:
         # PyInstaller only reports "Hidden import not found" as an ERROR line
         # and still exits 0, so a missing dependency yields a successful build
         # of a broken application. Fail here instead, where it is obvious.
+        #
+        # This only proves sv_ttk is installed on the *build* runner, before
+        # PyInstaller has run - it says nothing about whether the .tcl data
+        # actually reached the frozen bundle. See the post-build assertion
+        # below for that.
         shell: pwsh
         run: |
-          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib; print('runtime deps importable')"
+          python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, sv_ttk; print('runtime deps importable')"
           if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
 
       - name: Inject OAuth credentials
@@ -110,6 +115,43 @@ jobs:
           foreach ($exe in @("ffmpeg.exe", "ffprobe.exe")) {
             if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
           }
+
+      - name: Verify sv-ttk theme data is bundled
+        # Mirrors the ffmpeg check above and exists for the same reason:
+        # PyInstaller exits 0 even when a `datas` entry resolves to nothing,
+        # so a wrong collect_data_files() call would produce a green build
+        # of an app that raises the moment __main__.py calls
+        # sv_ttk.set_theme() - and nothing in CI would notice without this.
+        # This assertion only proves the files are present; it cannot prove
+        # they load correctly, which is what actually launching the app
+        # (manually, from the downloaded artifact) is for.
+        shell: pwsh
+        run: |
+          $svTtk = "dist\OBSYouTubeUploader\_internal\sv_ttk"
+          if (-not (Test-Path $svTtk)) {
+            throw "sv_ttk package data not found at $svTtk - the datas= entry in uploader.spec did not collect it, and sv_ttk.set_theme() will fail at runtime"
+          }
+          Get-ChildItem -Recurse $svTtk
+          # These filenames are sv-ttk-version-sensitive and were verified against the installed package.
+          # If this check fails, consult the bundled sv_ttk files before assuming the bundle broke.
+          foreach ($tcl in @("sv.tcl", "theme\light.tcl", "theme\dark.tcl")) {
+            $path = Join-Path $svTtk $tcl
+            if (-not (Test-Path $path)) { throw "$tcl missing from bundled sv_ttk data at $path" }
+          }
+
+      - name: Verify the app icon is bundled
+        # Same failure shape as the two checks above: uploader.spec lists the
+        # icon as a `datas` entry, and PyInstaller exits 0 even when such an
+        # entry resolves to nothing. paths.icon_file() would then return None
+        # at runtime and every window would silently fall back to the default
+        # Tk feather - a green build of a visibly wrong app.
+        shell: pwsh
+        run: |
+          $icon = "dist\OBSYouTubeUploader\_internal\app.ico"
+          if (-not (Test-Path $icon)) {
+            throw "app.ico not found at $icon - the (ICON, '.') datas entry in uploader.spec did not resolve, and paths.icon_file() will find nothing at runtime"
+          }
+          Get-Item $icon
 
       - name: Build installer
         run: iscc packaging/installer.iss

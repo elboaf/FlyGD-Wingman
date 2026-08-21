@@ -4,8 +4,11 @@
 # markedly more often.
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
+ICON = ROOT / "obs_youtube_uploader" / "assets" / "app.ico"
 
 a = Analysis(
     [str(ROOT / "run.py")],
@@ -14,14 +17,26 @@ a = Analysis(
         (str(BIN / "ffmpeg.exe"), "bin"),
         (str(BIN / "ffprobe.exe"), "bin"),
     ],
-    datas=[],
+    # sv-ttk ships its theme as .tcl files (sv.tcl,
+    # theme/light.tcl, theme/dark.tcl) plus image assets. modulegraph only
+    # follows Python imports, so without this the package's .py file lands
+    # in the bundle but sv_ttk.set_theme() fails at runtime looking for
+    # data that was never copied. PyInstaller exits 0 either way (see the
+    # ffmpeg comment below), which is why build.yml also gets a post-build
+    # assertion in the "Verify sv-ttk theme data is bundled" step.
+    datas=collect_data_files("sv_ttk") + [
+        # Collected at the bundle root so paths.icon_file()'s frozen-case
+        # lookup (bundle_dir() / "app.ico") finds it directly.
+        (str(ICON), "."),
+    ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
         # runtime, which modulegraph cannot follow statically.
         "pystray._win32",
-        # Precautionary, not known-required: the package never imports
-        # ImageTk, so PIL._tkinter_finder may be unused here. Kept because
-        # it is harmless and we cannot test the Windows-only alternative.
+        # Required, not precautionary: app.py imports PIL.ImageTk to build
+        # the Treeview checkbox images, and ImageTk loads PIL._tkinter_finder
+        # dynamically, which modulegraph cannot follow. Without this the
+        # video list renders with no checkboxes.
         "PIL._tkinter_finder",
         # google.* and googleapiclient.* are PEP 420 namespace packages.
         # modulegraph has a known history of mishandling namespace-package
@@ -54,6 +69,7 @@ exe = EXE(
     name="OBSYouTubeUploader",
     console=False,          # No console window behind the GUI.
     disable_windowed_traceback=False,
+    icon=str(ICON),
 )
 
 coll = COLLECT(

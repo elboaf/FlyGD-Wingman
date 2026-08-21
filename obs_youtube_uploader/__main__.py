@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from . import app as app_mod
-from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
+from . import discord, obsconfig, paths, settings as settings_mod, stitch, theme, watcher
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,48 @@ def acquire_single_instance():
     return handle
 
 
+def set_dpi_awareness() -> None:
+    """PROCESS_SYSTEM_DPI_AWARE, not Per-Monitor V2.
+
+    System-DPI-aware is correct for a single-window tray utility and avoids
+    handling WM_DPICHANGED when the window is dragged between monitors of
+    different scale. Guarded exactly as acquire_single_instance() guards its
+    Win32 call: off-Windows the process simply stays DPI-unaware, which only
+    matters for local development.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except (AttributeError, OSError):
+        pass  # shcore.dll predates Windows 8.1; nothing to do on older hosts.
+
+
+def get_system_dpi() -> int:
+    """96 (100%) is the correct fallback off-Windows or on very old hosts."""
+    if sys.platform != "win32":
+        return 96
+    import ctypes
+    try:
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+    except (AttributeError, OSError):
+        return 96
+    # Floor, not just an exception guard: GetDpiForSystem returns 0 on
+    # failure rather than raising, so the except above structurally cannot
+    # catch it — and `tk scaling 0.0` would silently collapse every
+    # point-sized font in the app.
+    return dpi if dpi >= 96 else 96
+
+
+def tk_scaling_for(dpi: int) -> float:
+    """Tk's `scaling` is points-per-pixel, so the divisor is 72, not 96.
+    Extracted from main() so the constant is testable without a real Tk
+    root; app.dpi_scale() is the reader half of this same contract.
+    """
+    return dpi / 72.0
+
+
 def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
     """Stored setting, then OBS's own config, then ask the user.
 
@@ -112,14 +154,25 @@ def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None
 
 
 def build_tray(on_open, on_quit):
-    """Tray icon with a generated image so no asset file is required."""
+    """Tray icon backed by the bundled .ico, generated art as a fallback."""
     import pystray
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGB", (64, 64), "#1f1f1f")
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((10, 10, 54, 54), fill="#ff0000")
-    draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
+    icon_path = paths.icon_file()
+    image = None
+    if icon_path is not None:
+        try:
+            image = Image.open(icon_path)
+        except OSError:
+            image = None
+
+    if image is None:
+        # Fallback only: keeps the tray icon present per the codebase's
+        # degrade-don't-block policy for optional presentation capabilities.
+        image = Image.new("RGB", (64, 64), "#1f1f1f")
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((10, 10, 54, 54), fill="#ff0000")
+        draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
 
     menu = pystray.Menu(
         pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
@@ -129,6 +182,7 @@ def build_tray(on_open, on_quit):
 
 
 def main() -> int:
+    set_dpi_awareness()
     handle = acquire_single_instance()
     if handle is None:
         return 0  # Another instance owns the tray; nothing to do.
@@ -140,6 +194,8 @@ def main() -> int:
 
     root = tk.Tk()
     root.withdraw()  # Created on the main thread up front, shown on demand.
+    root.tk.call("tk", "scaling", tk_scaling_for(get_system_dpi()))
+    theme.apply(root, theme.detect_mode())
 
     rec_dir = resolve_recording_dir(cfg)
     if rec_dir is None:
@@ -180,6 +236,15 @@ def main() -> int:
         # raised while showing/refreshing the window, must not silently
         # and permanently kill the watcher with no error shown to the user.
         nonlocal consecutive_failures, refresh_deferred
+        try:
+            # Independent of the watcher block below: a failed registry
+            # read is a theming problem, not a watcher problem, and must
+            # never be counted toward FAILURE_NOTIFY_THRESHOLD.
+            detected_mode = theme.detect_mode()
+            if detected_mode != theme.current_mode():
+                theme.apply(root, detected_mode)
+        except Exception:
+            logger.warning("Theme check failed", exc_info=True)
         try:
             ready = w.poll_once()
             uploading = window.upload_thread is not None and window.upload_thread.is_alive()
