@@ -14,6 +14,7 @@ import pytest
 
 from obs_youtube_uploader import app as app_mod, library
 from obs_youtube_uploader.__main__ import tk_scaling_for
+from obs_youtube_uploader.ui import copy as copy_mod
 
 
 def _widget_at(dpi: int):
@@ -69,13 +70,13 @@ def _info(name="a.mkv", size=10, duration=60.0, probed=True):
 
 
 def test_summary_of_an_empty_selection():
-    assert app_mod.format_selection_summary([]) == "Nothing selected"
+    assert copy_mod.format_selection_summary([]) == "Nothing selected"
 
 
 def test_summary_of_one_recording_is_not_pluralised():
     """"1 selected", not "1 selecteds": the noun is elided entirely, so the
     count needs no agreement at any value."""
-    summary = app_mod.format_selection_summary([_info(size=1024, duration=5.0)])
+    summary = copy_mod.format_selection_summary([_info(size=1024, duration=5.0)])
     assert summary == "1 selected · 1.0 KB · 0:00:05"
 
 
@@ -83,20 +84,20 @@ def test_summary_totals_size_and_duration_across_recordings():
     infos = [_info(size=1024, duration=3600.0),
              _info(size=1024, duration=2700.0),
              _info(size=2048, duration=1535.0)]
-    assert app_mod.format_selection_summary(infos) == "3 selected · 4.0 KB · 2:10:35"
+    assert copy_mod.format_selection_summary(infos) == "3 selected · 4.0 KB · 2:10:35"
 
 
 def test_summary_marks_the_duration_partial_when_a_probe_is_outstanding():
     infos = [_info(size=1024, duration=3600.0),
              _info(size=1024, duration=None, probed=False)]
-    assert app_mod.format_selection_summary(infos) == "2 selected · 2.0 KB · 1:00:00+"
+    assert copy_mod.format_selection_summary(infos) == "2 selected · 2.0 KB · 1:00:00+"
 
 
 def test_summary_size_is_never_marked_partial():
     """Size comes from stat, not from a probe, so an outstanding probe says
     nothing about it -- the "+" belongs to the duration alone."""
     infos = [_info(size=1024, duration=None, probed=False)]
-    assert app_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00:00+"
+    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00:00+"
 
 
 def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
@@ -105,9 +106,17 @@ def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
     the row's own "?" already reports the failure."""
     infos = [_info(size=1024, duration=3600.0),
              _info(size=1024, duration=None, probed=True)]
-    assert app_mod.format_selection_summary(infos) == "2 selected · 2.0 KB · 1:00:00"
+    assert copy_mod.format_selection_summary(infos) == "2 selected · 2.0 KB · 1:00:00"
 
 
 def test_summary_uses_a_middle_dot_separator():
-    summary = app_mod.format_selection_summary([_info()])
+    summary = copy_mod.format_selection_summary([_info()])
     assert " · " in summary and "|" not in summary
+
+
+def test_app_still_exposes_the_moved_copy_helpers():
+    """The Tk UI is not deleted in this commit, and it calls these by bare
+    name. Re-exporting the same objects (identity, not a reimplementation)
+    is what lets the port land one module at a time instead of all at once."""
+    assert app_mod.format_selection_summary is copy_mod.format_selection_summary
+    assert app_mod.format_upload_confirm is copy_mod.format_upload_confirm

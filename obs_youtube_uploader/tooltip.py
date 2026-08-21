@@ -11,34 +11,12 @@ app.format_selection_summary already use.
 import tkinter as tk
 from tkinter import ttk
 
+from .ui.copy import tooltip_for_cell  # noqa: F401
+
 # Long enough not to fire while the pointer crosses the list on its way
 # somewhere else; short enough that deliberately resting on a glyph feels
 # answered rather than ignored.
 DELAY_MS = 450
-
-# Keyed by the column identifier in app.COLUMN_SPEC, then by the exact cell
-# text library.VideoInfo renders. Both glyphs were unexplained: the list
-# showed "?" and "↗" with nothing anywhere saying what either meant.
-_CELL_HELP = {
-    "duration": {
-        "?": "Length could not be read. ffprobe could not open this file, so\n"
-             "combat-log upload is unavailable for it.",
-        "…": "Measuring length…",
-    },
-    "link": {
-        "↗": "Uploaded to YouTube.\n"
-             "Double-click to open it, or right-click to copy the link.",
-    },
-}
-
-
-def tooltip_for_cell(column: str, text: str) -> str | None:
-    """Help for one Treeview cell, or None if it needs none.
-
-    Keyed on the rendered text rather than on the underlying value so it
-    cannot disagree with what the user is actually looking at.
-    """
-    return _CELL_HELP.get(column, {}).get(text)
 
 
 class Tooltip:

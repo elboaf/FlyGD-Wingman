@@ -15,6 +15,13 @@ from typing import TYPE_CHECKING
 from . import (combatlog, discord, durations, library, paths,
                settings as settings_mod, stitch, theme, tooltip, uploader)
 
+# Re-exported, not reimplemented. The copy moved to ui/copy.py ahead of the
+# webview port; these names stay resolvable because the Tk window still
+# calls them by bare name and will until it is deleted.
+from .ui.copy import (format_destination, format_progress,
+                       format_selection_summary, format_title_hint,
+                       format_upload_confirm)  # noqa: F401
+
 if TYPE_CHECKING:
     # Only for annotations. PIL stays a lazy runtime import (see
     # _build_checkbox_images and __main__.build_tray) so importing app.py
@@ -91,135 +98,6 @@ def dpi_scale(widget: tk.Misc) -> float:
     approximating it. Rounding here fixes every call site at once.
     """
     return round(float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
-
-
-def format_selection_summary(infos: list[library.VideoInfo]) -> str:
-    """The panel's "3 selected · 1.2 GB · 2:04:35" line.
-
-    Pure, and kept out of the window class, because the label it feeds is in
-    the one layer this repo has no test harness for. Everything decidable
-    about the string is decided here.
-
-    Two asymmetries are deliberate:
-
-    * The "+" marks the duration total as a floor, not a value. A recording
-      whose probe is still outstanding contributes 0, so an unmarked total
-      would read as complete while being short. It reuses the duration
-      column's own vocabulary for the same state ("…" per row) rather than
-      inventing a second one.
-    * Size is never marked partial: info.size comes from stat, so it is
-      final from the moment the row exists, whatever the probe is doing.
-
-    A probed recording with duration None is a finished verdict (ffprobe
-    could not read it), so it also contributes 0 but leaves the total exact.
-    Its own row already shows "?"; repeating that diagnosis in an aggregate
-    would say nothing the user can act on.
-
-    The count carries no noun ("3 selected"), which sidesteps agreement at
-    every value instead of special-casing 1.
-    """
-    if not infos:
-        return "Nothing selected"
-    total_size = sum(info.size for info in infos)
-    total_seconds = int(sum(info.duration or 0.0 for info in infos))
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    partial = "+" if any(not info.probed for info in infos) else ""
-    return (f"{len(infos)} selected · {library.format_size(total_size)}"
-            f" · {hours}:{minutes:02d}:{seconds:02d}{partial}")
-
-
-def _hms(total_seconds: int) -> str:
-    hours, remainder = divmod(int(total_seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{seconds:02d}"
-
-
-def format_progress(index: int, total: int, fraction: float) -> str:
-    """The status line during an upload.
-
-    The progress BAR is driven by ((index + fraction) / total), so it tracks
-    the whole batch. This text tracks the file. Saying so is the whole point
-    of the function: the previous wording was "Uploading 3/10 — 94.8%" beside
-    a bar sitting at 34%, and the two read as a contradiction rather than as
-    two different measurements.
-
-    A single-file upload gets no "file 1 of 1", which would be noise.
-    """
-    pct = f"{fraction * 100:.1f}%"
-    if total <= 1:
-        return f"Uploading… {pct}"
-    return f"Uploading file {index + 1} of {total}… {pct}"
-
-
-def format_destination(channel_title: str, privacy: str) -> str:
-    """The line above Upload Selected naming where the video will land.
-
-    Empty channel_title is the normal state before the first successful
-    upload, not an error: SCOPES holds youtube.upload alone, which cannot
-    call channels.list, so the destination is learned from an insert
-    response (uploader.channel_of) rather than looked up. Saying that
-    plainly beats an empty gap where a channel name should be.
-    """
-    if not channel_title:
-        return f"Channel confirmed after the first upload · {privacy}"
-    return f"Uploads go to {channel_title} · {privacy}"
-
-
-def format_title_hint(count: int, stitch: bool) -> str:
-    """The Title field's label, which depends on what is selected.
-
-    uploader.build_body appends "(n/total)" to every title in a batch and
-    substitutes "Untitled" for an empty one. Neither was disclosed anywhere,
-    so a user typing one title got ten differently-named public videos and
-    found out afterwards. The label is the cheapest place to say it, because
-    it is already beside the field being misunderstood.
-    """
-    if count <= 1 or (stitch and count <= 1):
-        return "Title"
-    if stitch:
-        return "Title (one stitched video)"
-    return f"Title (applies to all {count}, numbered 1-{count})"
-
-
-def format_upload_confirm(infos: list[library.VideoInfo], title: str,
-                          privacy: str, channel_title: str,
-                          stitch: bool) -> str:
-    """The body of the confirm shown before anything is published.
-
-    This is the app's only irreversible action and it was the only one with
-    no confirmation: deleting local files, which are recoverable from the
-    recycle bin, already confirmed with a full file list.
-
-    The title preview is built through uploader.build_body rather than
-    reformatted here, so the numbering shown is the numbering that will be
-    sent. A second implementation of that rule would drift from it.
-    """
-    total_size = sum(i.size for i in infos)
-    total_seconds = int(sum(i.duration or 0.0 for i in infos))
-    count = len(infos)
-    where = channel_title or "not known yet (learned from this upload)"
-
-    if stitch:
-        shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
-        what = f"{count} recordings stitched into one video"
-        titles = f'"{shown}"'
-    else:
-        first = uploader.build_body(title, "", privacy, "", 0, count)["snippet"]["title"]
-        what = f"{count} recording{'s' if count != 1 else ''}"
-        titles = f'"{first}"'
-        if count > 1:
-            last = uploader.build_body(title, "", privacy, "", count - 1,
-                                       count)["snippet"]["title"]
-            titles += f' … "{last}"'
-
-    return (f"Upload {what} to YouTube?\n\n"
-            f"Channel:  {where}\n"
-            f"Privacy:  {privacy}\n"
-            f"Title:    {titles}\n"
-            f"Total:    {library.format_size(total_size)} · "
-            f"{_hms(total_seconds)}\n\n"
-            "Publishing to YouTube cannot be undone from this app.")
 
 
 @dataclass(frozen=True)

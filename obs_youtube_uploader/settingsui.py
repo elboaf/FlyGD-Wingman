@@ -8,6 +8,10 @@ from tkinter import filedialog, messagebox, ttk
 from . import app as app_mod
 from . import combatlog, discord, obsconfig, paths, settings as settings_mod, theme, uploader
 
+# Re-exported for the dialog's own call sites, which still call it by bare
+# name. See ui/copy.py.
+from .ui.copy import webhook_status  # noqa: F401
+
 PRIVACY_CHOICES = ["private", "unlisted", "public"]
 NOTIFY_CHOICES = ["toast", "popup"]
 
@@ -24,49 +28,6 @@ YOUTUBE_TOS_URL = "https://www.youtube.com/t/terms"
 # The character the webhook field is masked with. A bullet rather than "*"
 # so a masked value does not read as a validation error.
 WEBHOOK_MASK = "•"
-
-# What the auth button says, keyed by the token name _set_auth_status was
-# given. The label used to be the constant "Connect Google Account", which
-# sat under the word "Connected" and told the user nothing about what
-# pressing it would do -- while being the control they reach for when they
-# suspect the wrong account is signed in.
-_AUTH_BUTTON = {
-    "SUCCESS": ("Switch account", True),
-    "ERROR": ("Sign in with Google", True),
-    # Both transient states disable the button: a second press during the
-    # lookup races it, and during the browser flow it starts a second OAuth
-    # flow on top of the first.
-    "MUTED": ("Checking…", False),
-    "WARNING": ("Waiting for browser…", False),
-}
-_AUTH_BUTTON_DEFAULT = ("Sign in with Google", True)
-
-
-def auth_button_state(kind: str | None) -> tuple[str, bool]:
-    """(label, enabled) for the Google account button.
-
-    Unknown states, including the None before the first status lands, fall
-    back to an enabled "Sign in with Google": an optimistic label on a
-    working button beats a dead one during that window.
-    """
-    return _AUTH_BUTTON.get(kind, _AUTH_BUTTON_DEFAULT)
-
-
-def webhook_status(raw: str) -> str:
-    """The line under the webhook field, describing what is stored.
-
-    The field itself is masked, so this is the only confirmation of WHICH
-    webhook is configured; discord.describe omits the token by construction.
-
-    An unparseable value reports the parse error rather than "not
-    configured", which is what it used to say for anything invalid -- a URL
-    the user has visibly typed being described as absent reads as the app
-    ignoring them and hides the actual mistake.
-    """
-    if not raw or not raw.strip():
-        return "not configured"
-    hook, error = discord.parse_webhook(raw)
-    return discord.describe(hook) if hook else error
 
 
 class SettingsWindow:
