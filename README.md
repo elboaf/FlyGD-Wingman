@@ -105,5 +105,5 @@ time and never checked into the repository.
 
 ## License
 
-Personal tool, use at your own risk. Not affiliated with OBS Studio, CCP
-Games, or Google/YouTube.
+Released under the [MIT License](LICENSE). Personal tool, use at your own
+risk. Not affiliated with OBS Studio, CCP Games, or Google/YouTube.
