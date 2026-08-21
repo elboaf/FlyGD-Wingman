@@ -8,9 +8,16 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox, ttk
+from typing import TYPE_CHECKING
 
 from . import (combatlog, discord, library, paths, settings as settings_mod, stitch,
                theme, uploader)
+
+if TYPE_CHECKING:
+    # Only for annotations. PIL stays a lazy runtime import (see
+    # _build_checkbox_images and __main__.build_tray) so importing app.py
+    # does not drag Pillow in.
+    from PIL import ImageTk
 
 
 def resolve_binary(name: str) -> str | None:
@@ -100,7 +107,7 @@ class UploaderWindow:
         self.links: dict[Path, str] = {}
         self._preselected: set[Path] = set()
         self._sort_reverse: dict[str, bool] = {}
-        self._checkbox_images: dict[bool, tk.PhotoImage] = {}
+        self._checkbox_images: dict[bool, "ImageTk.PhotoImage"] = {}
         self._status_kind: str | None = None
         self.upload_thread: threading.Thread | None = None
         self.on_deleted = None  # set by the tray app to notify the watcher
@@ -183,6 +190,8 @@ class UploaderWindow:
         self.tree.bind("<Button-1>", self._on_tree_click)
         self.tree.bind("<Button-3>", self._show_context_menu)
         self.tree.bind("<Double-Button-1>", self._on_row_double_click)
+        self.tree.bind("<space>", self._on_tree_space)
+        self.tree.bind("<FocusIn>", self._on_tree_focus_in)
         theme.register(self._on_theme_changed)
 
         self.stitch_var = tk.BooleanVar(value=False)
@@ -224,7 +233,7 @@ class UploaderWindow:
         check = theme.token("SUCCESS")
         inset = max(1, size // 8)
 
-        def make(checked: bool) -> tk.PhotoImage:
+        def make(checked: bool) -> "ImageTk.PhotoImage":
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
             draw.rounded_rectangle(
@@ -245,7 +254,7 @@ class UploaderWindow:
         # unreferenced PhotoImages even while still assigned to a widget.
         self._checkbox_images = {False: make(False), True: make(True)}
 
-    def _checkbox_image(self, checked: bool) -> tk.PhotoImage:
+    def _checkbox_image(self, checked: bool) -> "ImageTk.PhotoImage":
         return self._checkbox_images[checked]
 
     def _apply_row_height(self) -> None:
@@ -338,17 +347,64 @@ class UploaderWindow:
         self._sort_reverse[column] = not reverse
         self._apply_zebra_tags()
 
+    def _toggle_row(self, iid: str) -> None:
+        """The single toggle path, shared by the mouse and keyboard bindings.
+
+        Kept as one function so the displayed image can never drift out of
+        step with the BooleanVar that _chosen() actually reads.
+        """
+        var = self.selected.get(Path(iid))
+        if var is None:
+            return
+        var.set(not var.get())
+        self.tree.item(iid, image=self._checkbox_image(var.get()))
+
     def _on_tree_click(self, event: tk.Event) -> None:
         if self.tree.identify_region(event.x, event.y) != "tree":
             return  # click landed in a data column, not the checkbox column
         iid = self.tree.identify_row(event.y)
         if not iid:
             return
-        var = self.selected.get(Path(iid))
-        if var is None:
-            return
-        var.set(not var.get())
-        self.tree.item(iid, image=self._checkbox_image(var.get()))
+        self._toggle_row(iid)
+
+    def _on_tree_space(self, event: tk.Event) -> str:
+        """Keyboard equivalent of clicking the checkbox.
+
+        The list this replaced used focusable per-row ttk.Checkbuttons, so
+        Tab+Space checked a row; selectmode="none" plus mouse-only bindings
+        would have dropped that capability entirely.
+
+        Returns "break" so Tk's own class-level <space> binding
+        (ttk::treeview::ToggleFocus, which expands/collapses children) does
+        not also fire. It is inert on our flat rows today, but only by
+        accident of them having no children.
+        """
+        iid = self.tree.focus()
+        if iid:
+            self._toggle_row(iid)
+        return "break"
+
+    def _ensure_focus_item(self) -> None:
+        """Give the tree a focus item if it has none.
+
+        Tk's arrow-key handler (ttk::treeview::Keynav) returns immediately
+        when the focus item is "", and refresh() leaves it "" because every
+        row is deleted and reinserted. Without this, tabbing to the list and
+        pressing Down does nothing, and _on_tree_space is unreachable
+        without first reaching for the mouse — which would leave the
+        keyboard path only nominally restored.
+
+        selectmode="none" is not what makes this necessary: Tk's own
+        select.choose.none does `$w focus $item`, so focus tracking is
+        deliberately alive in this mode. It is the empty starting value.
+        """
+        if not self.tree.focus():
+            children = self.tree.get_children("")
+            if children:
+                self.tree.focus(children[0])
+
+    def _on_tree_focus_in(self, event: tk.Event) -> None:
+        self._ensure_focus_item()
 
     def _build_context_menu(self) -> None:
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -365,7 +421,14 @@ class UploaderWindow:
         state = tk.NORMAL if self.links.get(path) else tk.DISABLED
         self.context_menu.entryconfig("Copy link", state=state)
         self.context_menu.entryconfig("Open in browser", state=state)
-        self.context_menu.tk_popup(event.x_root, event.y_root)
+        # try/finally per the documented Tk idiom: a menu dismissed by
+        # clicking away can otherwise keep the pointer grab, leaving the
+        # window ignoring clicks until another menu is posted — which users
+        # report as the app hanging.
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
 
     def _context_copy(self) -> None:
         if self._context_path is not None:
@@ -376,6 +439,11 @@ class UploaderWindow:
             self._open(self._context_path)
 
     def _on_row_double_click(self, event: tk.Event) -> None:
+        # A double-click delivers two <Button-1> before <Double-Button-1>, so
+        # in the checkbox column the row has already toggled twice. Opening a
+        # browser tab on top of that is an action the user never asked for.
+        if self.tree.identify_region(event.x, event.y) == "tree":
+            return
         iid = self.tree.identify_row(event.y)
         if iid:
             self._open(Path(iid))
@@ -384,6 +452,11 @@ class UploaderWindow:
         """Registered with theme.register in _build. Regenerates everything
         that bakes theme colours into pixels rather than reading a ttk
         style live: checkbox images and Treeview tag colours.
+
+        This is UploaderWindow's ONE theme consumer. Task 6 EXTENDS this
+        method for the status line and ffmpeg warning — it must not define
+        and register a second one, or a live switch runs two half-updates
+        against the same window.
         """
         self._build_checkbox_images()
         self._apply_row_height()
@@ -424,6 +497,12 @@ class UploaderWindow:
                 first_preselected_iid = iid
         if first_preselected_iid is not None:
             self.tree.see(first_preselected_iid)
+        # Rebuilding cleared the focus item. Only re-seed it if the user is
+        # already on the list, or arrow keys go dead mid-session with no
+        # FocusIn coming to fix it; seeding unconditionally would put a
+        # focus ring on a list nobody has tabbed to yet.
+        if self.tree.focus_get() is self.tree:
+            self._ensure_focus_item()
         self.status.config(text=f"Found {len(self.infos)} video(s)")
 
     def _set_all(self, value: bool) -> None:
