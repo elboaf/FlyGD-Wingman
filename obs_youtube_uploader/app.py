@@ -1,4 +1,5 @@
 """Tk window: video list, link column, upload and delete controls."""
+import datetime
 import shutil
 import sys
 import threading
@@ -8,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from . import library, paths, settings as settings_mod, stitch, uploader
+from . import combatlog, discord, library, paths, settings as settings_mod, stitch, uploader
 
 
 def resolve_binary(name: str) -> str | None:
@@ -152,6 +153,8 @@ class UploaderWindow:
                           ("Select None", lambda: self._set_all(False)),
                           ("Select All", lambda: self._set_all(True))):
             ttk.Button(bot, text=text, command=cmd).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bot, text="Upload combat logs",
+                   command=self._start_combat_log_upload).pack(side=tk.RIGHT, padx=2)
         self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
         self.retry_btn.pack(side=tk.RIGHT, padx=2)
         self.retry_btn.state(["disabled"])
@@ -280,9 +283,132 @@ class UploaderWindow:
             target=self._upload_worker, args=(job,), daemon=True)
         self.upload_thread.start()
 
+    def _start_combat_log_upload(self) -> None:
+        chosen = self._chosen()
+        if not chosen:
+            messagebox.showwarning("No Selection",
+                                   "Select at least one recording to upload logs for.")
+            return
+        # Reuses the SAME guard as the YouTube upload: one upload of either
+        # kind at a time. This inherits the Busy warning and __main__'s
+        # refresh deferral, both of which key off upload_thread.
+        if self.upload_thread and self.upload_thread.is_alive():
+            messagebox.showwarning("Busy", "An upload is already in progress.")
+            return
+
+        cfg = self.state.settings
+        hook, error = discord.parse_webhook(cfg.get("discord_webhook"))
+        if hook is None:
+            messagebox.showwarning(
+                "Discord not configured",
+                f"{error}\n\nAdd a webhook URL in Settings first.")
+            return
+
+        gamelogs = cfg.get("gamelogs_dir")
+        gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        if gamelogs_dir is None or not gamelogs_dir.is_dir():
+            messagebox.showwarning(
+                "Gamelogs not found",
+                "Could not find your EVE Gamelogs folder. Set it in Settings.")
+            return
+
+        # A recording with no duration has no start time, so there is no
+        # window to build. probe_duration returns None whenever ffprobe is
+        # missing or fails, which is a supported state -- refuse rather than
+        # invent a window that would silently pull logs from another fight.
+        missing = [i.path.name for i in chosen if i.duration is None]
+        if missing:
+            messagebox.showwarning(
+                "Cannot determine the time window",
+                "These recordings have no readable duration, so the combat-log "
+                "window cannot be worked out:\n\n  "
+                + "\n  ".join(missing)
+                + "\n\nThis usually means ffprobe is unavailable.")
+            return
+
+        # Union across the selection: earliest start to latest end, one
+        # archive, matching how stitching treats a multi-selection.
+        start_utc = min(
+            datetime.datetime.fromtimestamp(i.mtime - i.duration, datetime.timezone.utc)
+            for i in chosen)
+        end_utc = max(
+            datetime.datetime.fromtimestamp(i.mtime, datetime.timezone.utc)
+            for i in chosen)
+
+        self.upload_thread = threading.Thread(
+            target=self._combat_log_worker,
+            args=(hook, gamelogs_dir, start_utc, end_utc),
+            daemon=True)
+        self.upload_thread.start()
+
     def _ui(self, fn, *args) -> None:
         """Marshal a call onto the Tk main thread. Workers never touch widgets."""
         self.root.after(0, lambda: fn(*args))
+
+    def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+        archive = None
+        try:
+            self._ui(self.status.config,
+                     {"text": "Collecting combat logs…", "foreground": "black"})
+            selection = combatlog.select_logs(gamelogs_dir, start_utc, end_utc)
+            if not selection.logs:
+                self._ui(messagebox.showinfo, "No logs found", (
+                    "No EVE logs overlap that window.\n\n"
+                    f"Window (UTC): {start_utc:%Y-%m-%d %H:%M} to {end_utc:%H:%M}\n"
+                    f"Folder: {gamelogs_dir}\n\n"
+                    "EVE writes log timestamps in UTC, so this window is in "
+                    "UTC too."))
+                self._ui(self.status.config, {"text": "No combat logs found."})
+                return
+
+            stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
+            out = paths.tmp_dir() / f"combatlogs-{stamp}.zip"
+            self._ui(self.status.config, {"text": "Building archive…"})
+            archive = combatlog.build_archive(selection, out, start_utc, end_utc)
+
+            content = combatlog.summarize_archive(archive, start_utc, end_utc)
+            self._ui(self.status.config, {"text": "Posting to Discord…"})
+            result = discord.post_archive(hook, archive.path, content)
+
+            if result.ok:
+                # Only remove the archive once Discord has it.
+                try:
+                    archive.path.unlink()
+                except OSError:
+                    pass
+                # Discord's response message alone (e.g. "Posted x.zip (KB).")
+                # doesn't mention a cap; append the same drop note so the
+                # status label doesn't quietly disagree with the content the
+                # user just sent.
+                status_text = result.message
+                note = combatlog.dropped_note(archive.dropped)
+                if note:
+                    status_text += f" ({note})"
+                self._ui(self.status.config,
+                         {"text": status_text, "foreground": "green"})
+            else:
+                # Keep the archive: the window is fixed by the recording and
+                # there is no UI for selecting fewer logs, so a user told
+                # "too large" has no move available unless the file survives.
+                self._ui(messagebox.showerror, "Combat log upload failed", (
+                    f"{result.message}\n\nThe archive was kept so you can "
+                    f"upload it by hand:\n{archive.path}"))
+                self._ui(self.status.config,
+                         {"text": result.message, "foreground": "red"})
+        except Exception as exc:
+            # post_archive never raises, but build_archive and
+            # summarize_archive can -- and by then the archive may already be
+            # on disk. Without this the user gets a bare str(exc) and the
+            # "kept so you can upload it by hand" promise, which the failed
+            # -post branch above makes and the smoke checklist tests, quietly
+            # does not hold on this path.
+            detail = str(exc)
+            if archive is not None and archive.path.exists():
+                detail += ("\n\nThe archive was kept so you can upload it "
+                           f"by hand:\n{archive.path}")
+            self._ui(messagebox.showerror, "Combat log upload failed", detail)
+            self._ui(self.status.config,
+                     {"text": f"Error: {exc}", "foreground": "red"})
 
     def _upload_worker(self, job: "UploadJob") -> None:
         from googleapiclient.discovery import build

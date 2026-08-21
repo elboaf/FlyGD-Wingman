@@ -113,23 +113,37 @@ def find_recording_dir(appdata: Path | None = None) -> Path | None:
     active_dir_name = _active_profile_dir_name(appdata)
     if active_dir_name is not None:
         active_ini = root / active_dir_name / "basic.ini"
-        if active_ini.is_file():
+        try:
+            active_is_file = active_ini.is_file()
+        except OSError:
+            # Unreadable active profile must fall through to the scan below,
+            # not abort detection and send the user to the folder picker.
+            active_is_file = False
+        if active_is_file:
             found = _read_path(active_ini)
             if found is not None:
                 return found
 
-    # Fall back to the most recently modified profile. Get ini files with
-    # mtimes, skipping any that vanish during stat -- defensive against
-    # files disappearing between glob and stat.
+    # Fall back to the most recently modified profile. Walk the profile
+    # directories ourselves rather than using glob("*/basic.ini"): glob
+    # stats internally, and an entry that raises there escapes the loop and
+    # takes the whole detection with it. Doing it by hand keeps one bad
+    # profile from hiding every other one.
     inis_with_times = []
-    for p in root.glob("*/basic.ini"):
-        if p.is_file():
-            try:
-                mtime = p.stat().st_mtime
-                inis_with_times.append((mtime, p))
-            except OSError:
-                # File vanished between glob and stat
+    try:
+        profile_dirs = list(root.iterdir())
+    except OSError:
+        profile_dirs = []
+    for prof in profile_dirs:
+        ini = prof / "basic.ini"
+        try:
+            if not ini.is_file():
                 continue
+            mtime = ini.stat().st_mtime
+        except OSError:
+            # Vanished or unreadable between listing and stat -- skip it.
+            continue
+        inis_with_times.append((mtime, ini))
 
     # Sort by mtime (newest first)
     inis_with_times.sort(key=lambda x: x[0], reverse=True)

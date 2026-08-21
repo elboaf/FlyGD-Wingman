@@ -4,7 +4,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import paths, settings as settings_mod, uploader
+from . import combatlog, discord, obsconfig, paths, settings as settings_mod, uploader
 
 PRIVACY_CHOICES = ["private", "unlisted", "public"]
 NOTIFY_CHOICES = ["toast", "popup"]
@@ -24,8 +24,18 @@ class SettingsWindow:
         self.category = tk.StringVar(value=cfg["category"])
         self.notify = tk.StringVar(value=cfg["notify_mode"])
         self.rec_dir = tk.StringVar(value=str(state.recording_dir))
+        self.webhook = tk.StringVar(value=cfg.get("discord_webhook", "") or "")
+        self.gamelogs = tk.StringVar(value=cfg.get("gamelogs_dir") or "")
         self._build()
         self._refresh_auth_label()
+        self._refresh_webhook_label()
+        # Keep the label in step with the field. Without this it describes
+        # whatever was configured when the dialog opened, so a user who
+        # pastes a new webhook sees the OLD one summarised underneath it --
+        # misleading in the one place they look to confirm they pasted the
+        # right thing. parse_webhook is a regex and a urlparse, so running
+        # it per keystroke costs nothing worth caching.
+        self.webhook.trace_add("write", lambda *_: self._refresh_webhook_label())
 
         # Size the window to what its content actually needs rather than a
         # fixed guess: at higher Windows display-scaling factors (125%,
@@ -77,11 +87,30 @@ class SettingsWindow:
         ttk.Radiobutton(beh, text="Open the uploader window immediately",
                         variable=self.notify, value="popup").pack(anchor=tk.W)
 
+        disc = ttk.LabelFrame(self.win, text="Discord (combat logs)", padding=10)
+        disc.pack(fill=tk.X, **pad)
+        ttk.Label(disc, text="Webhook URL:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(disc, textvariable=self.webhook, width=44).grid(
+            row=0, column=1, sticky=tk.EW, padx=6)
+        self.lbl_webhook = ttk.Label(disc, text="", foreground="gray")
+        self.lbl_webhook.grid(row=1, column=1, sticky=tk.W, padx=6)
+        ttk.Label(disc, text="Gamelogs:").grid(row=2, column=0, sticky=tk.W, pady=(6, 0))
+        ttk.Entry(disc, textvariable=self.gamelogs).grid(
+            row=2, column=1, sticky=tk.EW, padx=6, pady=(6, 0))
+        btns = ttk.Frame(disc)
+        btns.grid(row=2, column=2, sticky=tk.W, pady=(6, 0))
+        ttk.Button(btns, text="Browse…", command=self._browse_gamelogs).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Detect", command=self._detect_gamelogs).pack(
+            side=tk.LEFT, padx=(4, 0))
+        disc.columnconfigure(1, weight=1)
+
         folder = ttk.LabelFrame(self.win, text="Recording folder", padding=10)
         folder.pack(fill=tk.X, **pad)
         ttk.Entry(folder, textvariable=self.rec_dir).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(folder, text="Browse…", command=self._browse).pack(
+            side=tk.LEFT, padx=(6, 0))
+        ttk.Button(folder, text="Detect", command=self._detect).pack(
             side=tk.LEFT, padx=(6, 0))
 
         row = ttk.Frame(self.win)
@@ -94,6 +123,54 @@ class SettingsWindow:
         chosen = filedialog.askdirectory(initialdir=self.rec_dir.get())
         if chosen:
             self.rec_dir.set(chosen)
+
+    def _detect(self) -> None:
+        """Re-run OBS config detection and let the user accept or reject it.
+
+        This is the recovery path for a bad stored ``recording_dir``: the
+        stored value normally wins over detection (correctly -- an explicit
+        choice should outrank a guess), so once a wrong value is saved
+        nothing ever re-runs the guess. This button re-runs it on demand,
+        but only fills the entry -- Save is still required, so the user
+        sees exactly what changed and can decline it.
+        """
+        detected = obsconfig.find_recording_dir()
+        if detected is None or not detected.is_dir():
+            messagebox.showinfo(
+                "Detect recording folder",
+                "Could not read OBS's configuration to detect a recording "
+                "folder. Make sure OBS is installed and has recorded at "
+                "least once, then try again.")
+            return
+        if str(detected) == self.rec_dir.get():
+            messagebox.showinfo(
+                "Detect recording folder",
+                f"Already set to the detected folder:\n{detected}")
+            return
+        self.rec_dir.set(str(detected))
+
+    def _browse_gamelogs(self) -> None:
+        chosen = filedialog.askdirectory(initialdir=self.gamelogs.get() or None)
+        if chosen:
+            self.gamelogs.set(chosen)
+
+    def _detect_gamelogs(self) -> None:
+        found = combatlog.find_gamelogs_dir()
+        if found is None:
+            messagebox.showinfo(
+                "Gamelogs not found",
+                "Could not find an EVE Gamelogs folder under Documents or "
+                "OneDrive\\Documents. Use Browse… to point at it.")
+            return
+        if str(found) == self.gamelogs.get():
+            messagebox.showinfo("Gamelogs", f"Already set to the detected folder:\n{found}")
+            return
+        self.gamelogs.set(str(found))
+
+    def _refresh_webhook_label(self) -> None:
+        hook, _ = discord.parse_webhook(self.webhook.get())
+        self.lbl_webhook.config(
+            text=discord.describe(hook) if hook else "not configured")
 
     def _refresh_auth_label(self) -> None:
         creds = uploader.load_credentials(paths.token_file())
@@ -129,6 +206,12 @@ class SettingsWindow:
             messagebox.showwarning("Invalid category",
                                    "Category ID must be a number, e.g. 20.")
             return
+        webhook_raw = self.webhook.get().strip()
+        if webhook_raw:
+            _, webhook_error = discord.parse_webhook(webhook_raw)
+            if webhook_error:
+                messagebox.showwarning("Invalid webhook", webhook_error)
+                return
         rec_dir = Path(self.rec_dir.get())
         if not rec_dir.is_dir():
             messagebox.showwarning("Invalid folder",
@@ -140,6 +223,8 @@ class SettingsWindow:
             "category": category,
             "notify_mode": self.notify.get(),
             "recording_dir": str(rec_dir),
+            "discord_webhook": webhook_raw,
+            "gamelogs_dir": self.gamelogs.get().strip() or None,
         })
         try:
             settings_mod.save(cfg)

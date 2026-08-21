@@ -59,6 +59,83 @@ Run on Windows against a real install before each release.
       without a restart
 - [ ] A non-numeric category ID is rejected with a warning
 
+## Combat logs
+
+- [ ] **No webhook configured.** Clear the Discord webhook field (or use a
+      fresh install), select a recording, and click **Upload combat logs**.
+      Expected: a warning dialog naming the problem ("Enter a Discord
+      webhook URL.") and directing you to add one in Settings. No thread is
+      started, no archive is written.
+- [ ] **An invalid webhook URL is refused on Save.** In Settings, paste a
+      URL that is not a Discord webhook (e.g. `https://example.com/hook`,
+      or `https://discord.com.evil.example/api/webhooks/1/x`) and click
+      **Save**. Expected: a warning naming the problem, the dialog stays
+      open, and NOTHING is written to `settings.json` — reopen Settings and
+      confirm the old value is still there. Then clear the field entirely
+      and Save: that must succeed, since an empty webhook simply means the
+      feature is unconfigured. `parse_webhook` itself has unit tests, but
+      the dialog wiring that calls it does not, so this is the only check
+      that the Save path honors the validator's rejection.
+- [ ] **The webhook summary label tracks what you type.** In Settings, with
+      a webhook already configured, paste a *different* valid webhook URL
+      over it. Expected: the summary line underneath updates immediately to
+      the new webhook's id — it must not keep describing the previous one.
+      Type something invalid and it reads "not configured"; clear the field
+      and it reads "not configured" too. At no point does the label show the
+      token portion of the URL.
+- [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
+      from an account with no EVE install) with no `gamelogs_dir` set in
+      Settings, then click **Upload combat logs**. Expected: a warning
+      dialog saying the Gamelogs folder could not be found, telling you to
+      set it in Settings. Then open Settings → **Detect** next to Gamelogs
+      with the real folder present: it fills in the entry. Click **Detect**
+      again with the field already set to that path: a dialog says it's
+      already set to the detected folder, rather than silently re-filling it.
+- [ ] **A normal successful upload.** Select one or more recordings from a
+      real fight, click **Upload combat logs**. Expected: status label
+      steps through "Collecting combat logs…" → "Building archive…" →
+      "Posting to Discord…" → a green "Posted \<name\>.zip (N KB)." message.
+      In Discord, the message names the character(s) and file count, and
+      the attached zip contains a `manifest.json` plus the `.txt` logs. The
+      temp archive under `%LOCALAPPDATA%\...\tmp` is gone afterward.
+- [ ] **Selection spanning one fight in multiple clips posts ONE archive.**
+      Select three clips that together cover one continuous fight. Expected:
+      a single upload covering the earliest start to the latest end across
+      all three — not three separate posts.
+- [ ] **No readable duration (ffprobe missing/failed).** Rename
+      `bin\ffprobe.exe` in the install directory, then select a recording and
+      click **Upload combat logs**. Expected: a warning dialog titled
+      "Cannot determine the time window" that lists the specific recording
+      filename(s) affected and mentions ffprobe. No thread is started.
+      Restore the binary afterward.
+- [ ] **A window matching no logs.** Pick a recording (or a time range) far
+      from any real EVE session, or point Gamelogs at an empty folder, and
+      upload. Expected: an info dialog "No EVE logs overlap that window,"
+      showing the window in UTC and the folder path, and stating plainly
+      that EVE timestamps are UTC. The status label reads "No combat logs
+      found." No archive is left behind.
+- [ ] **A failed post (e.g. a deleted webhook).** Configure a webhook, then
+      delete it in Discord's channel settings without updating the app, and
+      upload. Expected: an error dialog "Combat log upload failed" whose
+      message explains the webhook is invalid/deleted, AND explicitly shows
+      the archive's path so it can be uploaded by hand. Confirm the file at
+      that path still exists after the dialog — a failed post must never
+      delete the archive.
+- [ ] **Settings dialog at 100% and 150% Windows display scaling.** Open
+      Settings at each scale factor and confirm all five sections (Google
+      account, Upload defaults, When a recording finishes, Discord (combat
+      logs), Recording folder) are fully visible with nothing clipped, and
+      that Save/Cancel are reachable without resizing. A previous release
+      shipped with a section clipped off the bottom of the dialog at high
+      DPI, and the new Discord webhook/Gamelogs fields are exactly the kind
+      of addition that could reintroduce it.
+- [ ] **Combat-log and YouTube uploads share one busy guard.** Start a
+      combat-log upload for a large-enough window that it takes a moment,
+      then immediately click **Upload Selected** (YouTube). Expected: the
+      "An upload is already in progress" warning. Then do the reverse —
+      start a YouTube upload, immediately click **Upload combat logs** —
+      and confirm the same warning appears there too.
+
 ## Upload
 - [ ] **First upload triggers Google sign-in automatically, without
       Settings.** Delete `%LOCALAPPDATA%\OBSYouTubeUploader\token.json`

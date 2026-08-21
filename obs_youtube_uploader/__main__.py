@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from . import app as app_mod
-from . import obsconfig, paths, settings as settings_mod, stitch, watcher
+from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,18 @@ def configure_logging() -> None:
         )
         handler.setFormatter(logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        # Redaction is enforced here, not at call sites. This handler is
+        # attached to the ROOT logger, so every library logger inherits it --
+        # an HTTP transport logging its request URL at DEBUG would otherwise
+        # write a webhook token to disk without passing through our code.
+        # The callable re-reads settings so a webhook configured after
+        # startup is still redacted.
+        def _current_webhook():
+            hook, _ = discord.parse_webhook(
+                settings_mod.load().get("discord_webhook"))
+            return hook
+
+        handler.addFilter(discord.RedactingFilter(_current_webhook))
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)
@@ -78,12 +90,16 @@ def acquire_single_instance():
     return handle
 
 
-def resolve_recording_dir(cfg: dict) -> Path | None:
+def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
     """Stored setting, then OBS's own config, then ask the user.
 
     Must be called after a Tk root exists (and has been withdrawn) so
     ``askdirectory`` has a real root to parent itself to instead of
     creating a stray default one.
+
+    ``ask`` is injectable (defaults to ``filedialog.askdirectory``) purely
+    so tests can exercise the stored/detected precedence above without a
+    display; it is not meant to be overridden in production.
     """
     stored = cfg.get("recording_dir")
     if stored and Path(stored).is_dir():
@@ -91,7 +107,7 @@ def resolve_recording_dir(cfg: dict) -> Path | None:
     detected = obsconfig.find_recording_dir()
     if detected and detected.is_dir():
         return detected
-    chosen = filedialog.askdirectory(title="Where does OBS save your recordings?")
+    chosen = ask(title="Where does OBS save your recordings?")
     return Path(chosen) if chosen else None
 
 

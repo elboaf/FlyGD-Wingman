@@ -4,9 +4,23 @@ on:
   push:
     tags: ["v*"]
 
+# GITHUB_TOKEN defaults to read-only on repositories configured after early
+# 2023, so the publish step gets "403 Resource not accessible by integration"
+# when it tries to create the release. Declared here rather than left to the
+# repository's Actions setting, so the workflow works on a fresh clone or a
+# fork without anyone having to change a setting they will not think to look
+# for. contents: write is the minimum needed to create a release and upload
+# assets; nothing here needs any other scope.
+#
+# Empty at workflow level and granted per job, so any job added later starts
+# from the read-only default rather than silently inheriting write.
+permissions: {}
+
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

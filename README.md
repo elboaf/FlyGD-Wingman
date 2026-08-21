@@ -38,16 +38,39 @@ uploader.
   link.
 - **Delete Selected** permanently deletes the selected files from disk
   after a confirmation dialog. This cannot be undone.
+- **Upload combat logs** zips the EVE logs covering the selected recordings'
+  time span and posts them to a Discord webhook. Select one or more
+  recordings first — with more than one, the window is the union across
+  the whole selection (earliest start to latest end), and everything goes
+  into a single archive. Configure the webhook and your Gamelogs folder in
+  Settings. EVE writes log timestamps in UTC, and this window is worked out
+  in UTC too, so it can look "off" by your local UTC offset if you check it
+  against your system clock — that's expected. Discord caps attachments at
+  10 MB; a real 16-log archive from one fight compresses to around 38 KB,
+  so this is unlikely to come up. If it does, the archive is kept on disk
+  and the path shown so you can upload it by hand. The archive is likewise
+  kept, with its path shown, if the post to Discord fails for any other
+  reason (bad webhook, no network); it's only deleted after a successful
+  post.
 
 ## Settings
 
 | Setting | Default | Notes |
 |---|---|---|
-| Privacy | `private` | `private`, `unlisted`, or `public` |
+| Privacy | `unlisted` | `private`, `unlisted`, or `public` |
 | Category | `20` (Gaming) | [Category IDs](https://developers.google.com/youtube/v3/docs/videoCategories/list) |
 | Notification | `toast` | `toast` for a tray notification, `popup` to raise the window |
+| Discord webhook | *(none)* | Channel → Integrations → Webhooks → Copy URL. Treat it like a password. |
+| Gamelogs folder | auto-detected | Usually `Documents\EVE\logs\Gamelogs` |
 
 Stored in `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json`.
+
+A Discord webhook URL is a bearer credential: anyone who has it can post to
+that channel, it never expires, and the only way to revoke it is to delete
+the webhook in Discord. It's stored in plaintext in `settings.json`, and the
+app redacts it from its own log file — but that doesn't help if you paste it
+somewhere else. Don't post it in a public channel or leave it visible in a
+screenshot.
 
 ## Limits
 

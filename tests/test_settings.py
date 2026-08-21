@@ -5,11 +5,42 @@ from obs_youtube_uploader import settings
 
 def test_defaults_are_the_documented_values():
     assert settings.DEFAULTS == {
-        "privacy": "private",
+        "privacy": "unlisted",
         "category": "20",
         "notify_mode": "toast",
         "recording_dir": None,
+        "discord_webhook": "",
+        "gamelogs_dir": None,
     }
+
+
+def test_discord_webhook_roundtrips(tmp_path):
+    p = tmp_path / "s.json"
+    url = "https://discord.com/api/webhooks/123/tok"
+    settings.save({**settings.DEFAULTS, "discord_webhook": url}, p)
+    assert settings.load(p)["discord_webhook"] == url
+
+
+def test_gamelogs_dir_roundtrips(tmp_path):
+    p = tmp_path / "s.json"
+    settings.save({**settings.DEFAULTS, "gamelogs_dir": "C:/logs"}, p)
+    assert settings.load(p)["gamelogs_dir"] == "C:/logs"
+
+
+def test_non_string_discord_webhook_is_coerced(tmp_path):
+    """settings.json is a plain file a user can edit; save-time UI validation
+    does not protect the load path."""
+    import json
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"discord_webhook": 12345}))
+    assert settings.load(p)["discord_webhook"] == ""
+
+
+def test_non_string_gamelogs_dir_is_coerced(tmp_path):
+    import json
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"gamelogs_dir": ["a", "b"]}))
+    assert settings.load(p)["gamelogs_dir"] is None
 
 
 def test_recording_dir_roundtrips(tmp_path):
@@ -68,7 +99,7 @@ def test_save_creates_parent_directory(tmp_path):
 def test_load_rejects_invalid_privacy(tmp_path, bad):
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"privacy": bad}))
-    assert settings.load(p)["privacy"] == "private"
+    assert settings.load(p)["privacy"] == "unlisted"
 
 
 @pytest.mark.parametrize("raw", ["[]", "42"])
