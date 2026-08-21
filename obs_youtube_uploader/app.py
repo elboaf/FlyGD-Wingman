@@ -260,6 +260,14 @@ class UploaderWindow:
         Re-applied from _on_theme_changed because sv_ttk.set_theme rewrites
         rowheight from its .tcl on every switch; theme.apply runs set_theme
         before its consumers, so re-asserting here wins.
+
+        Note this configures the shared "Treeview" style, so it is
+        process-global rather than scoped to this widget — a deliberate
+        trade, reviewed and kept: this is the app's only Treeview, and a
+        second one inheriting a row tall enough for a scaled checkbox is
+        benign. A named per-widget style would be more precise but buys
+        nothing today. The max() below means a theme's own larger
+        rowheight is never shrunk.
         """
         needed = self._checkbox_images[True].height() + 4
         style = ttk.Style(self.root)
