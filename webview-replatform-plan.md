@@ -48,14 +48,57 @@ Every task that touches the bridge uses these exact names.
 | `onChannel` | `{channel_id, channel_title, destination}` |
 | `onAuthState` | `{state: "disconnected"\|"connecting"\|"connected"\|"revoking", message}` |
 | `onDialog` | `{kind: "info"\|"error"\|"warning"\|"confirm", title, body, request_id}` |
+| `onFirstRun` | `{}` — no recording folder is configured; show the first-run route |
 
-**Page → Python** (via `pywebview.api.<method>`):
+**Page → Python** (via `pywebview.api.<method>`). Everything public on `Api` is
+reachable from the page, so this list is exhaustive by construction:
 
-`list_rows()`, `delete_selected(ids)`, `start_upload(title, description, privacy, category, stitch, ids)`, `upload_combat_logs(ids)`, `retry()`, `open_path(id)`, `copy_path(id)`, `pick_folder(which)`, `detect_folder(which)`, `save_settings(obj)`, `connect_google()`, `dialog_response(request_id, ok)`, `minimize()`, `close()`
+| Method | Returns | Task |
+|---|---|---|
+| `list_rows()` | — | 6 |
+| `panel_text(ids, stitch)` | `{summary, title_hint}` | 6 |
+| `start_upload(title, description, privacy, category, stitch, ids)` | — | 7 |
+| `retry()` | — | 7 |
+| `upload_combat_logs(ids)` | — | 8 |
+| `delete_selected(ids)` | — | 8 |
+| `open_path(id)` | — | 8 |
+| `copy_path(id)` | the URL, for the page to write to the clipboard | 8 |
+| `save_settings(obj)` | `bool` — `False` means the form stays open | 9 |
+| `pick_folder(which)` | the chosen path, or `""` on cancel | 9 |
+| `detect_folder(which, current)` | the detected path, or `""` | 9 |
+| `connect_google()` | — | 9 |
+| `auth_labels()` | the four account states' `{message, label, enabled}` | 9 |
+| `refresh_auth()` | — | 9 |
+| `set_recording_dir(path)` | `bool` — `False` keeps the first-run route up | 13 |
+| `dialog_response(request_id, ok)` | — | 4 |
+| `minimize()` | — | 4 |
+| `close()` | — **hides**, never destroys | 4 |
+
+`which` is `"recording"` or `"gamelogs"` throughout — the same two values
+`detect_folder`'s `detected` payload keys use.
+
+`refresh_auth()` is called by `__main__` at startup, not by the page. It is
+public because everything on `Api` that is not underscore-prefixed is, and the
+methods-only rule leaves no third category; exposing it is harmless, since
+calling it twice is idempotent by its own `_auth_busy()` guard.
+
+`close()` **hides the window**. Destroying would return from `webview.start()`,
+stop the tray, and end the process — so closing the window would silently stop
+the recording watcher. Only the tray's Quit destroys, and it calls
+`window.destroy()` directly rather than through the bridge. The Tk build bound
+`WM_DELETE_WINDOW` to `hide()` for exactly this reason.
 
 `onDialog`'s `confirm` variant is the only request/response pair in an otherwise fire-and-forget protocol: `Api._confirm()` pushes it with a `request_id` and blocks the calling worker thread on a `threading.Event` until the page answers via `dialog_response`.
 
 **Client-side only, never crossing the bridge:** selection state, sort column and direction, row focus, column widths, checkbox rendering, striping, theme application. The one exception is the initial `preselected` flag arriving on `onRows`, because the watcher preselects newly-finished recordings so the common case needs no clicking.
+
+**Rendered in Python, never composed in the page:** the selection summary and
+Title hint (via `panel_text`), the destination line (pushed on `onChannel` and
+`onSettings`), the webhook status line, the account-state labels (via
+`auth_labels`), every dialog body, and the list's cell tooltips. All are pure
+functions in `ui/copy.py` with their own tests. The page renders strings; it
+does not decide them. This is 2.2.0's convention, and it is what lets the copy
+and its tests cross the port untouched.
 
 ## File Structure
 
@@ -687,7 +730,9 @@ In `tests/test_settingsui_copy.py`, add to the imports:
 from obs_youtube_uploader.ui import copy as copy_mod
 ```
 
-then replace every `settingsui.webhook_status` with `copy_mod.webhook_status` (5 occurrences). Leave the `auth_button_state` cases on `settingsui` — that helper is not in this task's contract and moves with the account control.
+then replace every `settingsui.webhook_status` with `copy_mod.webhook_status` (5 occurrences).
+
+**Delete the `auth_button_state` cases from this file**, and delete `auth_button_state`, `_AUTH_BUTTON`, and `_AUTH_BUTTON_DEFAULT` from `settingsui.py`. That helper is keyed on Tk status kinds (`SUCCESS`, `ERROR`, `MUTED`, `WARNING`), a vocabulary that does not survive the port. Task 9's `copy.auth_state` is its successor, keyed on the four bridge states, and its tests cover the same four decisions: connected offers to switch, disconnected asks for sign-in, both transient states disable the button, and an unknown state stays usable. Moving the old function would leave two tables keyed on vocabularies that cannot both be right.
 
 - [ ] **Step 9: Run test to verify it fails**
 
@@ -760,14 +805,11 @@ CELL_HELP: dict[str, dict[str, str]] = {
 }
 ```
 
-In `obs_youtube_uploader/tooltip.py`, delete the `_CELL_HELP` literal and rewrite its lookup:
+Move `tooltip_for_cell` into `ui/copy.py` as well, directly below `CELL_HELP` — the table and its only reader belong together, and `tooltip.py` is deleted in Task 16:
 
 ```python
-from .ui.copy import CELL_HELP
-
-
 def tooltip_for_cell(column: str, text: str) -> str | None:
-    """Help for one Treeview cell, or None if it needs none.
+    """Help for one list cell, or None if it needs none.
 
     Keyed on the rendered text rather than on the underlying value so it
     cannot disagree with what the user is actually looking at.
@@ -775,7 +817,20 @@ def tooltip_for_cell(column: str, text: str) -> str | None:
     return CELL_HELP.get(column, {}).get(text)
 ```
 
-`tests/test_tooltip.py` is not touched: it drives `tooltip_for_cell`, which is unchanged, so it passing is the check that the table moved intact.
+In `obs_youtube_uploader/tooltip.py`, delete both the `_CELL_HELP` literal and its own `tooltip_for_cell`, leaving the widget machinery importing the moved one:
+
+```python
+from .ui.copy import tooltip_for_cell  # noqa: F401
+```
+
+In `tests/test_tooltip.py`, repoint the import — the file imports `tooltip` directly, and that module does not survive Task 16:
+
+```python
+from obs_youtube_uploader import library
+from obs_youtube_uploader.ui import copy as copy_mod
+```
+
+then replace every `tooltip.tooltip_for_cell` with `copy_mod.tooltip_for_cell`. The assertions are untouched, which is the proof the table moved intact.
 
 - [ ] **Step 13: Run the whole suite**
 
@@ -1397,6 +1452,7 @@ class FakeWindow:
     def __init__(self, fail=False):
         self.evaluated: list[str] = []
         self.minimized = 0
+        self.hidden = 0
         self.destroyed = 0
         self._fail = fail
 
@@ -1407,6 +1463,9 @@ class FakeWindow:
 
     def minimize(self):
         self.minimized += 1
+
+    def hide(self):
+        self.hidden += 1
 
     def destroy(self):
         self.destroyed += 1
@@ -1464,14 +1523,19 @@ def test_push_survives_a_dead_window(tmp_path):
                                                     {"text": "x", "kind": "FG"})
 
 
-def test_minimize_and_close_delegate_to_the_window(tmp_path):
+def test_close_hides_rather_than_destroying(tmp_path):
+    """REGRESSION GUARD. This is a tray app: the Tk window bound
+    WM_DELETE_WINDOW to hide(), and destroying here would return from
+    webview.start(), stop the tray, and end the process -- so closing the
+    window would silently stop the recording watcher."""
     window = FakeWindow()
     api = make_api(tmp_path, window)
 
     api.minimize()
     api.close()
 
-    assert (window.minimized, window.destroyed) == (1, 1)
+    assert (window.minimized, window.hidden) == (1, 1)
+    assert window.destroyed == 0, "close() must not destroy; only tray Quit does"
 
 
 def test_api_exposes_no_public_non_method_attributes(tmp_path):
@@ -1539,11 +1603,15 @@ logger = logging.getLogger(__name__)
 class AppState:
     """Everything the bridge needs that is not the page.
 
+    recording_dir is None until first run completes. Every consumer must
+    handle that rather than substituting a default: a fallback to the home
+    directory would have list_rows() scan it for recordings.
+
     `settings` is REPLACED wholesale by save_settings rather than mutated,
     so anything holding the original dict goes stale -- which is why the
     poll loop and the bridge both read it through this object each time.
     """
-    recording_dir: Path
+    recording_dir: Path | None
     settings: dict
     ffmpeg_bin: str | None = None
     ffprobe_bin: str | None = None
@@ -1586,7 +1654,18 @@ class Api:
         self._window.minimize()
 
     def close(self) -> None:
-        self._window.destroy()
+        """HIDE, never destroy. This is a tray application.
+
+        The Tk window bound WM_DELETE_WINDOW to hide() for the same reason:
+        the watcher must keep running after the user closes the window, and
+        destroying it here would return from webview.start(), stop the tray
+        icon, and end the process -- so closing the window would silently
+        turn the watcher off.
+
+        Only the tray's Quit destroys, and it calls window.destroy()
+        directly rather than coming through this method.
+        """
+        self._window.hide()
 
     # ----- Python -> page -------------------------------------------------
 
@@ -2260,6 +2339,12 @@ from .scheduler import Scheduler
 # is batched into a handful of drains rather than a hundred saves.
 PROBE_DRAIN_S = 0.1
 
+# Long enough for WebView2 to load the page and run app.js, short enough
+# that a first-run user does not stare at an empty window wondering. The
+# push is idempotent from the page's side, so an early one costs nothing
+# beyond a logged drop.
+FIRST_RUN_PUSH_S = 1.5
+
 
 # Replace Api.__init__ ENTIRELY with this. The first four assignments are
 # unchanged from Task 4; everything below _dialogs is new.
@@ -2305,7 +2390,14 @@ PROBE_DRAIN_S = 0.1
 
         *preselect* is a set of Path, not of strings -- it comes straight
         from the watcher's poll result.
+
+        Returns without pushing when no recording folder is configured yet.
+        That is first run, and the page is showing its own route for it; a
+        push of an empty list here would replace that screen with an empty
+        uploader and no explanation.
         """
+        if self._state.recording_dir is None:
+            return
         self._generation += 1
         generation = self._generation
         self._stop_drain()
@@ -3905,23 +3997,31 @@ import datetime
         the progress line below is genuinely live rather than a repaint
         forced between two frozen frames.
 
-        The durations cache is left to the row layer that owns it; the
-        in-memory `probed` flag set here is what stops the background
-        walker probing these files a second time this session.
+        A definitive result is REMEMBERED and the cache saved, exactly as
+        _apply_duration did. Setting the in-memory flag alone would stop the
+        background walker re-probing this row for the rest of the session
+        and then lose the measurement at exit, so the file is re-probed on
+        every launch -- precisely the cost the cache exists to avoid.
         """
         unprobed = [(rid, info) for rid, info in pairs if not info.probed]
         if not unprobed:
             return
         total = len(unprobed)
+        measured = 0
         for index, (row_id, info) in enumerate(unprobed, start=1):
             self._push("onStatus", {
                 "text": f"Reading recording lengths… ({index}/{total})",
                 "kind": "FG"})
             duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
-            info.duration = duration
-            info.probed = definitive
+            if definitive:
+                durations.remember(self._cache, info.path, info.size,
+                                   info.mtime, duration)
+                measured += 1
+            self._rows.set_duration(row_id, duration, definitive)
             self._push("onDuration", {"id": row_id, "duration": duration,
                                       "definitive": definitive})
+        if measured:
+            durations.save(self._durations_file, self._cache)
 
     def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
         archive = None
@@ -4008,11 +4108,15 @@ def ready_api(tmp_path, monkeypatch, logs):
     for info in rows.values():
         info.duration = 60.0
         info.probed = True
+    # Field names are the real ones: SelectedLog is (path, listener,
+    # span_start, span_end) -- there is no start=/end=.
+    stamp = datetime.datetime(2026, 8, 21, 19, 0, tzinfo=datetime.timezone.utc)
     monkeypatch.setattr(api_mod.combatlog, "select_logs",
                         lambda d, s, e: combatlog.Selection(
                             logs=[combatlog.SelectedLog(
-                                path=logs / "x.txt", start=None, end=None,
-                                listener="Pilot")],
+                                path=logs / "x.txt", listener="Pilot",
+                                span_start=stamp,
+                                span_end=stamp + datetime.timedelta(minutes=5))],
                             dropped=2))
     return api, rows
 
@@ -4735,6 +4839,20 @@ Expected: FAIL with `AttributeError: 'Api' object has no attribute 'connect_goog
 
     # Added to Api.__init__:
     #     self._auth_thread: threading.Thread | None = None
+
+    def _push_first_run_when_ready(self) -> None:
+        """Tell the page to show its first-run route, once it can hear it.
+
+        Deferred onto a short timer rather than pushed immediately: this is
+        called before webview.start(), so app.js has not registered its
+        handlers and _push would log the message and drop it. The page asks
+        for state on load, but there is no state to ask for here -- an
+        unconfigured folder is exactly the case list_rows() returns silently
+        on -- so this is the one thing Python must volunteer.
+        """
+        timer = self._timer(FIRST_RUN_PUSH_S, lambda: self._push("onFirstRun", {}))
+        timer.daemon = True
+        timer.start()
 
     def _push_auth(self, state: str, message: str | None = None) -> None:
         if message is None:
@@ -6520,16 +6638,17 @@ git commit -m "web: upload panel, status strip, and dialog layer"
 
 ---
 
-### Task 13: Settings route
+### Task 13: Settings route and first-run route
 
 **Files:**
 - Create: `obs_youtube_uploader/web/settings.js`
+- Create: `obs_youtube_uploader/web/firstrun.js`
 - Modify: `obs_youtube_uploader/web/index.html` (fill `#route-settings`)
 - Modify: `obs_youtube_uploader/web/style.css` (append the settings section)
 
 **Interfaces:**
 - Consumes: the `wm:settings` event Task 12 re-dispatches (carrying `{settings, webhook_status, detected}`), `onAuthState({state, message})`, and `pywebview.api.auth_labels()`
-- Produces: `pywebview.api.save_settings(obj)`, `pick_folder(which)`, `detect_folder(which, current)`, `connect_google()`
+- Produces: `pywebview.api.save_settings(obj)`, `pick_folder(which)`, `detect_folder(which, current)`, `connect_google()`, `set_recording_dir(path)`; the `#route-firstrun` container and `WM.route('firstrun')`
 
 > **Reconciliation notes.** `which` is `"recording"` or `"gamelogs"` — the values
 > Task 9's `pick_folder`/`detect_folder` branch on — and the `detected` payload
@@ -6975,6 +7094,227 @@ In the console, with Settings open:
 git add obs_youtube_uploader/web/settings.js obs_youtube_uploader/web/index.html \
         obs_youtube_uploader/web/style.css
 git commit -m "web: settings route"
+```
+
+- [ ] **Step 10: Add the first-run route to `web/index.html` and `web/style.css`**
+
+This is the deliberate behaviour change the spec records as Risk 6: `create_file_dialog` is a method on a window, so no folder dialog can exist before `webview.start()`. The pre-window OS dialog becomes an in-app screen.
+
+Add a third route container immediately after `#route-settings`:
+
+```html
+  <div class="route" id="route-firstrun">
+    <div class="firstrun">
+      <h1>Choose your recording folder</h1>
+      <p class="firstrun-body">
+        Wingman watches one folder for new OBS recordings. Point it at the
+        folder OBS saves to &mdash; you can change this later in Settings.
+      </p>
+      <div class="row">
+        <input class="field mono" id="f-firstrun-dir" type="text"
+               spellcheck="false" placeholder="No folder chosen yet">
+        <button class="btn" id="btn-firstrun-browse">Browse&hellip;</button>
+        <button class="btn" id="btn-firstrun-detect">Detect</button>
+      </div>
+      <p class="firstrun-note" id="firstrun-note">
+        Detect reads the folder from OBS&rsquo;s own configuration.
+      </p>
+      <div class="firstrun-actions">
+        <button class="btn acc" id="btn-firstrun-continue" disabled>Continue</button>
+      </div>
+    </div>
+  </div>
+```
+
+Append to `style.css`:
+
+```css
+/* ====================== first-run route ============================== */
+#route-firstrun { align-items: center; justify-content: center; padding: 24px; }
+
+.firstrun {
+  width: min(560px, 100%);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 26px 28px;
+}
+.firstrun h1 { margin-bottom: 10px; }
+.firstrun-body {
+  color: var(--text-dim); line-height: 1.55; margin-bottom: 18px;
+}
+.firstrun-note {
+  color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
+}
+.firstrun-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+```
+
+Then add `<script src="firstrun.js"></script>` after `settings.js`, and extend `WM.route` in `app.js` so all three routes are mutually exclusive:
+
+```js
+  WM.route = function (name) {
+    var routes = { main: 'route-main', settings: 'route-settings',
+                   firstrun: 'route-firstrun' };
+    var labels = { main: 'Uploader', settings: 'Settings',
+                   firstrun: 'Setup' };
+    Object.keys(routes).forEach(function (key) {
+      WM.el(routes[key]).classList.toggle('active', key === name);
+    });
+    WM.el('route-label').textContent = labels[name] || 'Uploader';
+    WM.el('btn-settings').classList.toggle('active', name === 'settings');
+    // First run is not dismissable: the app cannot watch a folder it does
+    // not have, so the gear is hidden rather than merely inert.
+    WM.el('btn-settings').hidden = (name === 'firstrun');
+    WM.current_route = name;
+    document.dispatchEvent(new CustomEvent('wm:route', { detail: name }));
+  };
+```
+
+- [ ] **Step 11: Create `web/firstrun.js`**
+
+```js
+/* The first-run recording-folder screen.
+ *
+ * A deliberate behaviour change, not a port: pywebview's
+ * create_file_dialog is a method on a window, so the pre-window OS dialog
+ * the Tk build showed cannot exist here. Python signals this state by
+ * pushing onFirstRun; the page cannot infer it, because an empty list and
+ * an unconfigured folder look identical from here.
+ */
+(function () {
+  'use strict';
+  var WM = window.WM;
+
+  var chosen = '';
+
+  function setChosen(path) {
+    chosen = path || '';
+    WM.el('f-firstrun-dir').value = chosen;
+    WM.el('btn-firstrun-continue').disabled = !chosen;
+  }
+
+  WM.el('btn-firstrun-browse').addEventListener('click', function () {
+    WM.send('pick_folder', 'recording').then(setChosen);
+  });
+
+  WM.el('btn-firstrun-detect').addEventListener('click', function () {
+    WM.send('detect_folder', 'recording', chosen).then(function (path) {
+      if (path) setChosen(path);
+    });
+  });
+
+  // Typing is allowed as well as picking: a user who knows the path should
+  // not have to walk a tree to it.
+  WM.el('f-firstrun-dir').addEventListener('input', function (ev) {
+    chosen = ev.target.value.trim();
+    WM.el('btn-firstrun-continue').disabled = !chosen;
+  });
+
+  WM.el('btn-firstrun-continue').addEventListener('click', function () {
+    // Python validates, persists, starts the watcher, and pushes onRows.
+    // It returns false if the folder is not usable, in which case we stay
+    // put rather than dropping the user into an empty list.
+    WM.send('set_recording_dir', chosen).then(function (ok) {
+      if (ok !== false) WM.route('main');
+    });
+  });
+
+  WM.handle('onFirstRun', function () {
+    setChosen('');
+    WM.route('firstrun');
+  });
+}());
+```
+
+Register `onFirstRun` in `app.js`'s `WM.HANDLERS` array, alongside the other handlers.
+
+- [ ] **Step 12: Add `set_recording_dir` to the bridge**
+
+In `obs_youtube_uploader/ui/api.py`:
+
+```python
+    def set_recording_dir(self, path: str) -> bool:
+        """Accept the first-run folder choice: persist it and start watching.
+
+        Returns False when the folder is unusable, so the page keeps the
+        first-run screen up rather than dropping the user into an empty
+        list with no explanation of why.
+
+        _on_recording_dir_ready is assigned by __main__ and is what actually
+        creates the Watcher and starts the poll loop; the bridge does not
+        own either.
+        """
+        folder = Path(str(path or "").strip())
+        if not folder.is_dir():
+            self._alert("warning", "Invalid folder",
+                        f"{folder} is not a folder.")
+            return False
+        self._state.settings["recording_dir"] = str(folder)
+        self._state.recording_dir = folder
+        try:
+            settings_mod.save(self._state.settings)
+        except OSError as exc:
+            self._alert("error", "Could not save settings",
+                        f"Settings were not saved: {exc}")
+            return False
+        if self._on_recording_dir_ready is not None:
+            self._on_recording_dir_ready(folder)
+        self.list_rows()
+        return True
+```
+
+Add `self._on_recording_dir_ready = None` to `Api.__init__`.
+
+Append to `tests/test_api_settings.py`:
+
+```python
+def test_first_run_persists_the_folder_and_starts_the_watcher(monkeypatch, tmp_path):
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+
+    assert api.set_recording_dir(str(folder)) is True
+
+    assert saved["recording_dir"] == str(folder)
+    assert api._state.recording_dir == folder
+    assert started == [folder], "the watcher was never started"
+
+
+def test_first_run_refuses_a_folder_that_is_not_one(monkeypatch, tmp_path):
+    """Returning False is what keeps the first-run screen up. Dropping the
+    user into an empty list with no explanation is the failure mode."""
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+
+    assert api.set_recording_dir(str(tmp_path / "nope")) is False
+    assert saved == {}
+    assert started == []
+    assert api._alert.titles() == ["Invalid folder"]
+```
+
+- [ ] **Step 13: Verify the first-run route**
+
+Run the harness, then in the console: `window.onFirstRun({})`.
+
+Expected:
+1. The list and panel disappear, replaced by a centred card headed **Choose your recording folder**, and the title-bar sub-label reads `SETUP`.
+2. **The gear is hidden** — first run is not dismissable, because the app cannot watch a folder it does not have.
+3. `Continue` starts disabled. Clicking `Browse…` logs `pick_folder( ["recording"] )` and fills the field; `Continue` becomes enabled.
+4. Typing a path by hand also enables `Continue`; clearing the field disables it again.
+5. Clicking `Continue` logs `DEV api.set_recording_dir( ["D:\\Videos\\recording"] )` and the route returns to the list.
+6. `Detect` logs `detect_folder( ["recording", "<field value>"] )`.
+
+Add `set_recording_dir` to `dev.js`'s logged-method list so step 5 resolves.
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add obs_youtube_uploader/web/firstrun.js obs_youtube_uploader/web/index.html \
+        obs_youtube_uploader/web/style.css obs_youtube_uploader/web/app.js \
+        obs_youtube_uploader/web/dev.js obs_youtube_uploader/ui/api.py \
+        tests/test_api_settings.py
+git commit -m "web: first-run recording-folder route"
 ```
 
 ---
@@ -7747,7 +8087,11 @@ def main() -> int:
 
     rec_dir = resolve_recording_dir(cfg)
     state = api_mod.AppState(
-        recording_dir=rec_dir or Path(cfg.get("recording_dir") or Path.home()),
+        # None until first run completes. NOT Path.home(): a fallback there
+        # would send list_rows() scanning the user's entire home directory
+        # for .mkv files on first launch, which is slow, alarming, and
+        # produces a list that looks like a bug rather than an empty state.
+        recording_dir=rec_dir,
         settings=cfg,
         ffmpeg_bin=resolve_binary("ffmpeg"),
         ffprobe_bin=resolve_binary("ffprobe"),
@@ -7807,6 +8151,13 @@ def main() -> int:
         # first tick is POLL_SECONDS away and the page asks for its own
         # state on load, so an early push has nothing to race with.
         start_watching(rec_dir)
+    else:
+        # First run, or a stored folder that has since disappeared. The page
+        # cannot infer this state -- an unconfigured folder and an empty one
+        # look identical from there -- so it is pushed explicitly. Deferred
+        # until the page is up, because a push before app.js has registered
+        # its handlers is logged and dropped (see Api._push).
+        api._push_first_run_when_ready()
 
     # Resolve the account state off the bridge thread so the Settings route
     # is correct the first time it is opened rather than after a click.
@@ -7844,6 +8195,22 @@ from obs_youtube_uploader.__main__ import (
     configure_logging, resolve_recording_dir, set_dpi_awareness,
 )
 ```
+
+In `tests/test_upload_media_close.py`, repoint the import and the subject. It
+imports `app` and drives `_upload_one` / `_close_media`, both of which moved to
+`ui/api.py` in Task 7, and `app` does not survive Task 16:
+
+```python
+from obs_youtube_uploader import uploader
+from obs_youtube_uploader.ui import api as api_mod
+```
+
+then replace every `app_mod._close_media` with `api_mod._close_media` and every
+`app_mod.` reference to the upload path with its `api_mod.` equivalent. The
+behaviour under test is unchanged — a stitched upload must close the media
+handle so `stitch.stitched()` can unlink a multi-gigabyte temporary on Windows,
+and the non-stitched path must NOT close, because `UploadFailed` carries the
+resumable request that Retry resumes from. Both assertions carry over verbatim.
 
 In `tests/test_app.py`, delete the `spacing()` and `tk_scaling_for` block, which dies with the Tk layout helpers. **Keep the `format_selection_summary` cases** — Task 2 repointed them at `ui.copy` and they are pure. Delete `test_app_still_exposes_the_moved_copy_helpers`, whose subject (`app.py`'s re-exports) disappears in Task 16, and rename the file to `tests/test_copy.py` so its name matches what it now covers:
 
@@ -8011,7 +8378,16 @@ grep -rn -E "sv_ttk|sv-ttk|import tkinter|from tkinter|_tkinter_finder|\b(app|se
 
 Expected: no hits naming the four deleted modules, no `tkinter`, no `sv_ttk`. Word-boundary matches on generic words like `theme` may hit CSS-token comments or the `ui/copy.py` docstrings — read each hit rather than trusting the count.
 
-If the grep finds a test still importing `obs_youtube_uploader.tooltip` or `.settingsui`, that is a Task 2 regression, not something to patch around: re-point the import at `obs_youtube_uploader.ui.copy` and note it.
+Five test files import the doomed modules and are repointed rather than deleted,
+because what they cover survives the port: `test_app_upload_copy.py` and
+`test_settingsui_copy.py` and `test_tooltip.py` in Task 2, `test_copy.py`
+(renamed from `test_app.py`) and `test_upload_media_close.py` in Task 15.
+Confirm all five import only from `obs_youtube_uploader.ui` before deleting
+anything — a stale `from obs_youtube_uploader import app` line collects fine
+today and fails the moment `app.py` is gone.
+
+If the grep finds one that was missed, that is a Task 2 or Task 15 regression,
+not something to patch around: re-point the import and note it.
 
 Scope: `.github/workflows/build.yml`, `release.yml`, `packaging/uploader.spec`, and `packaging/installer.iss` all still reference `sv_ttk` / `PIL._tkinter_finder`. They are deliberately **out of scope here** and are handled by Task 17 — this grep is restricted to `obs_youtube_uploader/` and `tests/` for that reason. The build will not be green until Task 17 lands.
 
