@@ -216,7 +216,7 @@ over left-aligned data (finding #3).
 At the existing 750px minimum window width the list pane gets roughly 380–420px
 once the margin, the 300px panel, the pane gap and the scrollbar are taken out,
 so the preferred widths do not fit. The `Min` column above is what makes this
-safe: the minimums sum to 420px, which does fit, and `ttk.Treeview` compresses
+safe: the minimums sum to 410px, which does fit, and `ttk.Treeview` compresses
 toward them.
 
 No horizontal scrollbar is added, and the window minimum is **not** raised.
