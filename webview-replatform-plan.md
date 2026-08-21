@@ -767,7 +767,11 @@ from obs_youtube_uploader.ui import copy as copy_mod
 
 then replace every `settingsui.webhook_status` with `copy_mod.webhook_status` (5 occurrences).
 
-**Delete the `auth_button_state` cases from this file**, and delete `auth_button_state`, `_AUTH_BUTTON`, and `_AUTH_BUTTON_DEFAULT` from `settingsui.py`. That helper is keyed on Tk status kinds (`SUCCESS`, `ERROR`, `MUTED`, `WARNING`), a vocabulary that does not survive the port. Task 9's `copy.auth_state` is its successor, keyed on the four bridge states, and its tests cover the same four decisions: connected offers to switch, disconnected asks for sign-in, both transient states disable the button, and an unknown state stays usable. Moving the old function would leave two tables keyed on vocabularies that cannot both be right.
+**Leave the `auth_button_state` cases exactly where they are**, and leave `auth_button_state`, `_AUTH_BUTTON`, and `_AUTH_BUTTON_DEFAULT` in `settingsui.py`.
+
+That helper is keyed on Tk status kinds (`SUCCESS`, `ERROR`, `MUTED`, `WARNING`), a vocabulary the port does not have, and Task 9's `copy.auth_state` is its successor — keyed on the four bridge states, with tests covering the same four decisions. So it does **not** move to `ui/copy.py`: two tables keyed on vocabularies that cannot both be right is worse than one that is about to be deleted.
+
+But it does not get deleted here either. `SettingsWindow._set_auth_status` still calls it on every Settings open, and this task's contract is *no behaviour change* — removing it now turns opening Settings into a `NameError`, and no test exercises `SettingsWindow`, so the suite stays green while the dialog is broken. It dies in Task 16 along with the whole module.
 
 - [ ] **Step 9: Run test to verify it fails**
 
@@ -8427,6 +8431,10 @@ grep -rn -E "sv_ttk|sv-ttk|import tkinter|from tkinter|_tkinter_finder|\b(app|se
 ```
 
 Expected: no hits naming the four deleted modules, no `tkinter`, no `sv_ttk`. Word-boundary matches on generic words like `theme` may hit CSS-token comments or the `ui/copy.py` docstrings — read each hit rather than trusting the count.
+
+`tests/test_settingsui_copy.py` keeps its `webhook_status` cases (they now
+target `ui.copy`) but its five `auth_button_state` cases go with the module:
+delete just those five functions from that file, leaving the rest.
 
 Five test files import the doomed modules and are repointed rather than deleted,
 because what they cover survives the port: `test_app_upload_copy.py` and
