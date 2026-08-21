@@ -45,6 +45,13 @@ class FakeRows:
     def set_link(self, row_id, video_id):
         self.links[row_id] = video_id
 
+    def set_duration(self, row_id, duration, definitive):
+        info = self.infos.get(row_id)
+        if info is None:
+            return
+        info.duration = duration
+        info.probed = True
+
     def rows(self):
         return [{"id": rid} for rid in self.infos]
 

@@ -117,3 +117,85 @@ def test_open_on_an_unknown_row_does_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
     api.open_path("gone")
     assert opened == []
+
+
+HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
+
+
+def test_combat_logs_with_nothing_selected_says_which_selection_is_missing(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    api.upload_combat_logs([])
+    assert api._alert.raised == [
+        ("warning", "No Selection",
+         "Select at least one recording to upload logs for.")]
+
+
+def test_combat_logs_share_the_upload_busy_guard(tmp_path):
+    """One upload of either kind at a time; this inherits the same warning
+    and the same refresh deferral."""
+    import threading as _threading
+    api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": HOOK})
+    gate = _threading.Event()
+    api._upload_thread = _threading.Thread(target=gate.wait, daemon=True)
+    api._upload_thread.start()
+    try:
+        api.upload_combat_logs(["r0"])
+        assert api._alert.titles() == ["Busy"]
+    finally:
+        gate.set()
+        api._upload_thread.join(timeout=5)
+
+
+def test_combat_logs_without_a_webhook_name_the_parse_error(tmp_path):
+    api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": ""})
+    api.upload_combat_logs(["r0"])
+    kind, title, body = api._alert.raised[0]
+    assert (kind, title) == ("warning", "Discord not configured")
+    assert "Add a webhook URL in Settings first." in body
+
+
+def test_combat_logs_without_a_gamelogs_folder_say_so(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": HOOK})
+    monkeypatch.setattr(api_mod.combatlog, "find_gamelogs_dir", lambda: None)
+    api.upload_combat_logs(["r0"])
+    assert api._alert.titles() == ["Gamelogs not found"]
+
+
+def test_a_recording_with_no_readable_duration_blocks_the_window(monkeypatch, tmp_path):
+    """No duration means no start time, so there is no window to build --
+    refuse rather than invent one that pulls logs from another fight."""
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    api, _window, rows = api_with(tmp_path,
+                                  settings={"discord_webhook": HOOK,
+                                            "gamelogs_dir": str(logs)})
+    rows["r0"].duration = None
+    rows["r0"].probed = True
+    api.upload_combat_logs(["r0"])
+    kind, title, body = api._alert.raised[0]
+    assert title == "Cannot determine the time window"
+    assert "a.mkv" in body
+
+
+def test_an_unprobed_recording_is_probed_rather_than_blamed(monkeypatch, tmp_path):
+    """The background probe walks the whole folder; a user who beats it to
+    this button must not be told ffprobe is broken."""
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    api, _window, rows = api_with(tmp_path,
+                                  settings={"discord_webhook": HOOK,
+                                            "gamelogs_dir": str(logs)})
+    rows["r0"].duration = None
+    rows["r0"].probed = False
+    sent = fakes.record_pushes(api)
+    monkeypatch.setattr(api_mod.library, "probe", lambda path, binary: (30.0, True))
+    monkeypatch.setattr(api_mod.combatlog, "select_logs",
+                        lambda d, s, e: combatlog.Selection(logs=[], dropped=0))
+
+    api.upload_combat_logs(["r0"])
+    api._upload_thread.join(timeout=5)
+
+    # KEY IS `id`, matching every other duration message.
+    assert fakes.payloads(sent, "onDuration") == [
+        {"id": "r0", "duration": 30.0, "definitive": True}]
+    assert api._alert.titles() == ["No logs found"]

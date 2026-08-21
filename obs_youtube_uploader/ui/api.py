@@ -19,6 +19,7 @@ is no UI thread to marshal onto.
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
 """
+import datetime
 import json
 import logging
 import queue
@@ -28,7 +29,7 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import durations, library, paths, settings as settings_mod, stitch, uploader
+from .. import combatlog, discord, durations, library, paths, settings as settings_mod, stitch, uploader
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -726,3 +727,160 @@ class Api:
                                         start_index=state.resume_index + 1))
         else:
             self._upload_done()
+
+    # ----- combat logs --------------------------------------------------------
+
+    def upload_combat_logs(self, ids) -> None:
+        pairs = [(rid, info) for rid in ids
+                 if (info := self._rows.resolve(rid)) is not None]
+        if not pairs:
+            self._alert("warning", "No Selection",
+                        "Select at least one recording to upload logs for.")
+            return
+        # Reuses the SAME guard as the YouTube upload: one upload of either
+        # kind at a time. This inherits the Busy warning and the scheduler's
+        # refresh deferral, both of which key off _upload_thread.
+        if self._busy():
+            self._alert("warning", "Busy", "An upload is already in progress.")
+            return
+
+        cfg = self._state.settings
+        hook, error = discord.parse_webhook(cfg.get("discord_webhook"))
+        if hook is None:
+            self._alert("warning", "Discord not configured",
+                        f"{error}\n\nAdd a webhook URL in Settings first.")
+            return
+
+        gamelogs = cfg.get("gamelogs_dir")
+        gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        if gamelogs_dir is None or not gamelogs_dir.is_dir():
+            self._alert("warning", "Gamelogs not found",
+                        "Could not find your EVE Gamelogs folder. "
+                        "Set it in Settings.")
+            return
+
+        # Resolve any still-pending probe for THIS selection first: an
+        # unprobed recording also leaves duration None, and refusing on that
+        # would blame ffprobe for a probe that simply had not reached these
+        # files yet.
+        self._probe_now(pairs)
+        missing = [i.path.name for _, i in pairs if i.duration is None]
+        if missing:
+            self._alert(
+                "warning", "Cannot determine the time window",
+                "These recordings have no readable duration, so the combat-log "
+                "window cannot be worked out:\n\n  "
+                + "\n  ".join(missing)
+                + "\n\nThis usually means ffprobe is unavailable.")
+            return
+
+        # Union across the selection: earliest start to latest end, one
+        # archive, matching how stitching treats a multi-selection.
+        infos = [i for _, i in pairs]
+        start_utc = min(
+            datetime.datetime.fromtimestamp(i.mtime - i.duration,
+                                            datetime.timezone.utc)
+            for i in infos)
+        end_utc = max(
+            datetime.datetime.fromtimestamp(i.mtime, datetime.timezone.utc)
+            for i in infos)
+
+        self._upload_thread = threading.Thread(
+            target=self._combat_log_worker,
+            args=(hook, gamelogs_dir, start_utc, end_utc), daemon=True)
+        self._upload_thread.start()
+
+    def _probe_now(self, pairs) -> None:
+        """Resolve a selection's durations synchronously, in place.
+
+        Called from a bridge method that cannot continue without the answer.
+        Blocking here is fine and blocking in the Tk version was not: this
+        runs on pywebview's bridge thread, so the window keeps painting and
+        the progress line below is genuinely live rather than a repaint
+        forced between two frozen frames.
+
+        A definitive result is REMEMBERED and the cache saved, exactly as
+        _apply_duration did. Setting the in-memory flag alone would stop the
+        background walker re-probing this row for the rest of the session
+        and then lose the measurement at exit, so the file is re-probed on
+        every launch -- precisely the cost the cache exists to avoid.
+        """
+        unprobed = [(rid, info) for rid, info in pairs if not info.probed]
+        if not unprobed:
+            return
+        total = len(unprobed)
+        measured = 0
+        for index, (row_id, info) in enumerate(unprobed, start=1):
+            self._push("onStatus", {
+                "text": f"Reading recording lengths… ({index}/{total})",
+                "kind": "FG"})
+            duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
+            if definitive:
+                durations.remember(self._cache, info.path, info.size,
+                                   info.mtime, duration)
+                measured += 1
+            self._rows.set_duration(row_id, duration, definitive)
+            self._push("onDuration", {"id": row_id, "duration": duration,
+                                      "definitive": definitive})
+        if measured:
+            durations.save(self._durations_file, self._cache)
+
+    def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+        archive = None
+        try:
+            self._push("onStatus", {"text": "Collecting combat logs…", "kind": "FG"})
+            selection = combatlog.select_logs(gamelogs_dir, start_utc, end_utc)
+            if not selection.logs:
+                self._alert("info", "No logs found", (
+                    "No EVE logs overlap that window.\n\n"
+                    f"Window (UTC): {start_utc:%Y-%m-%d %H:%M} to {end_utc:%H:%M}\n"
+                    f"Folder: {gamelogs_dir}\n\n"
+                    "EVE writes log timestamps in UTC, so this window is in "
+                    "UTC too."))
+                self._push("onStatus", {"text": "No combat logs found.",
+                                        "kind": "FG"})
+                return
+
+            stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
+            out = paths.tmp_dir() / f"combatlogs-{stamp}.zip"
+            self._push("onStatus", {"text": "Building archive…", "kind": "FG"})
+            archive = combatlog.build_archive(selection, out, start_utc, end_utc)
+
+            content = combatlog.summarize_archive(archive, start_utc, end_utc)
+            self._push("onStatus", {"text": "Posting to Discord…", "kind": "FG"})
+            result = discord.post_archive(hook, archive.path, content)
+
+            if result.ok:
+                # Only remove the archive once Discord has it.
+                try:
+                    archive.path.unlink()
+                except OSError:
+                    pass
+                # Discord's own message does not mention the cap; append the
+                # same drop note so the status line does not quietly
+                # disagree with the content the user just sent.
+                status_text = result.message
+                note = combatlog.dropped_note(archive.dropped)
+                if note:
+                    status_text += f" ({note})"
+                self._push("onStatus", {"text": status_text, "kind": "SUCCESS"})
+            else:
+                # Keep the archive: the window is fixed by the recording and
+                # there is no UI for selecting fewer logs, so a user told
+                # "too large" has no move available unless the file survives.
+                self._alert("error", "Combat log upload failed", (
+                    f"{result.message}\n\nThe archive was kept so you can "
+                    f"upload it by hand:\n{archive.path}"))
+                self._push("onStatus", {"text": result.message, "kind": "ERROR"})
+        except Exception as exc:
+            # post_archive never raises, but build_archive and
+            # summarize_archive can -- and by then the archive may already be
+            # on disk. Without this the user gets a bare str(exc) and the
+            # "kept so you can upload it by hand" promise, which the failed
+            # -post branch above makes, quietly does not hold on this path.
+            detail = str(exc)
+            if archive is not None and archive.path.exists():
+                detail += ("\n\nThe archive was kept so you can upload it "
+                           f"by hand:\n{archive.path}")
+            self._alert("error", "Combat log upload failed", detail)
+            self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
