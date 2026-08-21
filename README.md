@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/wingman-logo.png" alt="FlyGD Wingman" width="160">
+  <img src="docs/assets/wingman-logo.png" alt="FlyGD Wingman" width="180">
 </p>
 
 <h1 align="center">FlyGD Wingman</h1>
