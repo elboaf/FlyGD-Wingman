@@ -395,3 +395,78 @@ def test_the_drain_loop_stops_once_the_worker_is_done(recordings, tmp_path):
     # The worker's sentinel arrived in that same tick; leaving the loop
     # armed would burn a timer every 100ms for the life of the process.
     assert clock.timers[-1].cancelled
+
+
+def test_a_straggler_from_a_superseded_refresh_is_dropped(recordings, tmp_path):
+    """The generation counter, which is what makes the async part safe.
+
+    A probe started against the previous list can land after the list has
+    been rebuilt -- the watcher fires a refresh on exactly the events that
+    also start probes. Its result refers to rows that no longer exist, and
+    writing it would put a duration from one recording onto another.
+    """
+    window = FakeWindow()
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True), window=window)
+    api.list_rows()
+    clock.fire()
+    window.evaluated.clear()
+
+    api.list_rows()  # bumps the generation; the drain above has stopped
+    stale_id = api._rows.rows()[0]["id"]
+    stale_info = api._rows.resolve(stale_id)
+    api._probe_queue.put((0, stale_id, stale_info, 999.0, True))
+    api._drain_probes(api._generation)
+
+    assert [p for name, p in pushes(window) if name == "onDuration"] == []
+    assert 999.0 not in {e.duration for e in
+                         durations.load(tmp_path / "durations.json").values()}
+
+
+def test_a_drain_for_a_superseded_generation_stops_itself(recordings, tmp_path):
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+    stale_generation = api._generation
+    api._generation += 1  # as a concurrent list_rows would
+
+    api._drain_probes(stale_generation)
+
+    assert clock.timers[-1].cancelled
+
+
+def test_the_cache_is_written_on_every_tick_that_applied_something(
+        recordings, tmp_path, monkeypatch):
+    """Persist per drain, not once at the end.
+
+    A cold scan of a large folder runs for a while. Saving only when the
+    worker finishes means a user who quits partway through loses every
+    duration measured so far -- and pays for the whole scan again on the
+    next launch, which is the exact cost this cache exists to avoid.
+    """
+    from obs_youtube_uploader.ui import api as api_mod
+
+    saves = []
+    real_save = api_mod.durations.save
+    monkeypatch.setattr(api_mod.durations, "save",
+                        lambda path, cache: (saves.append(len(cache)),
+                                             real_save(path, cache)))
+
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    # Hand-drive the queue so results land across two ticks rather than one.
+    api._generation += 1
+    generation = api._generation
+    api._rows.rebuild(recordings)
+    rows = api._rows.rows()
+
+    for row in rows:
+        api._probe_queue.put((generation, row["id"], api._rows.resolve(row["id"]),
+                              12.5, True))
+        api._drain_probes(generation)
+    api._drain_probes(generation)  # a tick with nothing waiting
+
+    assert saves == [1, 2], "one save per tick that applied results, none for an empty tick"
