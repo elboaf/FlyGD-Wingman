@@ -528,3 +528,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 4px 0 8px;
 }
+
+/* ====================== first-run route ============================== */
+#route-firstrun { align-items: center; justify-content: center; padding: 24px; }
+
+.firstrun {
+  width: min(560px, 100%);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 26px 28px;
+}
+.firstrun h1 { margin-bottom: 10px; }
+.firstrun-body {
+  color: var(--text-dim); line-height: 1.55; margin-bottom: 18px;
+}
+.firstrun-note {
+  color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
+}
+.firstrun-actions { display: flex; justify-content: flex-end; margin-top: 20px; }

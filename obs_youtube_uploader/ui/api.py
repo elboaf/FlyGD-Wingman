@@ -169,6 +169,7 @@ class Api:
         self._last_pct: float = 0.0
         self._watcher = None
         self._auth_thread: threading.Thread | None = None
+        self._on_recording_dir_ready = None
 
     # ----- page -> Python -------------------------------------------------
 
@@ -1027,6 +1028,35 @@ class Api:
                         f"Already set to the detected folder:\n{detected}")
             return ""
         return str(detected)
+
+    def set_recording_dir(self, path: str) -> bool:
+        """Accept the first-run folder choice: persist it and start watching.
+
+        Returns False when the folder is unusable, so the page keeps the
+        first-run screen up rather than dropping the user into an empty
+        list with no explanation of why.
+
+        _on_recording_dir_ready is assigned by __main__ and is what actually
+        creates the Watcher and starts the poll loop; the bridge does not
+        own either.
+        """
+        folder = Path(str(path or "").strip())
+        if not folder.is_dir():
+            self._alert("warning", "Invalid folder",
+                        f"{folder} is not a folder.")
+            return False
+        self._state.settings["recording_dir"] = str(folder)
+        self._state.recording_dir = folder
+        try:
+            settings_mod.save(self._state.settings)
+        except OSError as exc:
+            self._alert("error", "Could not save settings",
+                        f"Settings were not saved: {exc}")
+            return False
+        if self._on_recording_dir_ready is not None:
+            self._on_recording_dir_ready(folder)
+        self.list_rows()
+        return True
 
     def auth_labels(self) -> dict:
         """The whole account-state table, for the page to render from.

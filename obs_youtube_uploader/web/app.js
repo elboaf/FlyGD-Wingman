@@ -48,7 +48,7 @@
   // one visible owner.
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
-                 'onAuthState', 'onDialog'];
+                 'onAuthState', 'onDialog', 'onFirstRun'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -87,16 +87,20 @@
   // Settings is a route in this window, not a second OS window. Switching
   // is pure client state; Python is not told which route is showing.
   WM.route = function (name) {
-    var main = WM.el('route-main');
-    var settings = WM.el('route-settings');
-    var on_settings = (name === 'settings');
-    main.classList.toggle('active', !on_settings);
-    settings.classList.toggle('active', on_settings);
-    WM.el('route-label').textContent = on_settings ? 'Settings' : 'Uploader';
-    WM.el('btn-settings').classList.toggle('active', on_settings);
-    WM.current_route = on_settings ? 'settings' : 'main';
-    document.dispatchEvent(new CustomEvent('wm:route',
-                                           { detail: WM.current_route }));
+    var routes = { main: 'route-main', settings: 'route-settings',
+                   firstrun: 'route-firstrun' };
+    var labels = { main: 'Uploader', settings: 'Settings',
+                   firstrun: 'Setup' };
+    Object.keys(routes).forEach(function (key) {
+      WM.el(routes[key]).classList.toggle('active', key === name);
+    });
+    WM.el('route-label').textContent = labels[name] || 'Uploader';
+    WM.el('btn-settings').classList.toggle('active', name === 'settings');
+    // First run is not dismissable: the app cannot watch a folder it does
+    // not have, so the gear is hidden rather than merely inert.
+    WM.el('btn-settings').hidden = (name === 'firstrun');
+    WM.current_route = name;
+    document.dispatchEvent(new CustomEvent('wm:route', { detail: name }));
   };
 
   // ---- title bar ----------------------------------------------------

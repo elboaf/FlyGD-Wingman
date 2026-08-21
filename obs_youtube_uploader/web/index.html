@@ -188,6 +188,28 @@
     </div>
   </div>
 
+  <div class="route" id="route-firstrun">
+    <div class="firstrun">
+      <h1>Choose your recording folder</h1>
+      <p class="firstrun-body">
+        Wingman watches one folder for new OBS recordings. Point it at the
+        folder OBS saves to &mdash; you can change this later in Settings.
+      </p>
+      <div class="row">
+        <input class="field mono" id="f-firstrun-dir" type="text"
+               spellcheck="false" placeholder="No folder chosen yet">
+        <button class="btn" id="btn-firstrun-browse">Browse&hellip;</button>
+        <button class="btn" id="btn-firstrun-detect">Detect</button>
+      </div>
+      <p class="firstrun-note" id="firstrun-note">
+        Detect reads the folder from OBS&rsquo;s own configuration.
+      </p>
+      <div class="firstrun-actions">
+        <button class="btn acc" id="btn-firstrun-continue" disabled>Continue</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
@@ -216,6 +238,7 @@
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>
+  <script src="firstrun.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>

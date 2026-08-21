@@ -320,3 +320,30 @@ def test_an_unreadable_token_reads_as_not_connected(monkeypatch, tmp_path):
     api._auth_thread.join(timeout=5)
 
     assert fakes.payloads(sent, "onAuthState")[-1]["state"] == "disconnected"
+
+
+def test_first_run_persists_the_folder_and_starts_the_watcher(monkeypatch, tmp_path):
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+
+    assert api.set_recording_dir(str(folder)) is True
+
+    assert saved["recording_dir"] == str(folder)
+    assert api._state.recording_dir == folder
+    assert started == [folder], "the watcher was never started"
+
+
+def test_first_run_refuses_a_folder_that_is_not_one(monkeypatch, tmp_path):
+    """Returning False is what keeps the first-run screen up. Dropping the
+    user into an empty list with no explanation is the failure mode."""
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+
+    assert api.set_recording_dir(str(tmp_path / "nope")) is False
+    assert saved == {}
+    assert started == []
+    assert api._alert.titles() == ["Invalid folder"]
