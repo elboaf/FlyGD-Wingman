@@ -363,6 +363,45 @@ def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
     assert [name for name, _ in pushes(window2)] == ["onRows"]
     assert clock2.timers == []
 
+    # The rows must CARRY the cached durations, not merely skip the probe.
+    # rebuild() freezes `duration` into each Row while it is still unknown,
+    # and rows() serialises those frozen Rows rather than the VideoInfos
+    # that durations.resolve() mutates -- so without an explicit re-apply
+    # the page is handed the measuring glyph and, because a cache hit is
+    # never in `pending`, no onDuration ever arrives to correct it. The
+    # Length column then reads "measuring" forever for every recording that
+    # has ever been probed.
+    _, payload = pushes(window2)[0]
+    assert [row["duration"] for row in payload["rows"]] == ["0:12", "0:12"]
+
+
+def test_a_cached_duration_reaches_the_page_on_the_very_first_push(
+        recordings, tmp_path):
+    """The regression above, isolated to one row and one assertion.
+
+    The selection summary is computed in Python straight off the infos, so
+    it showed the right total while the list showed the glyph -- which is
+    what made this look like a rendering bug rather than a missing re-apply.
+    """
+    cache_file = tmp_path / "durations.json"
+    for name in ("a.mkv", "b.mkv"):
+        path = recordings / name
+        stat = path.stat()
+        cache = durations.load(cache_file)
+        durations.remember(cache, path, stat.st_size, stat.st_mtime, 90.0)
+        durations.save(cache_file, cache)
+
+    window = FakeWindow()
+
+    def explode(path, binary):
+        raise AssertionError("probed a file the cache already knew")
+
+    rows_api(recordings, tmp_path, FakeClock(), probe=explode,
+             window=window).list_rows()
+
+    _, payload = pushes(window)[0]
+    assert [row["duration"] for row in payload["rows"]] == ["1:30", "1:30"]
+
 
 def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
     """library.probe's second return value, honoured end to end.

@@ -290,16 +290,33 @@ class Api:
         ids = [row["id"] for row in rebuilt]
         infos = self._rows.resolve_many(ids)
         pending = durations.resolve(self._cache, infos)
-        # After the resolve, not after the rebuild: resolve() fills cache
-        # hits into the very VideoInfo objects the snapshot renders from, so
-        # rows() now reports them and the page never flashes "…" on a
-        # duration that was already known.
-        self._push("onRows", {"rows": self._rows.rows()})
 
         # Identity, not equality: VideoInfo is a plain dataclass, so two
         # recordings with the same size and mtime compare equal and an `in`
         # test over the pending list would probe the wrong row.
         outstanding = {id(info) for info in pending}
+
+        # Re-apply cache hits into the snapshot BEFORE pushing. This is
+        # rows.py's documented contract -- "rebuild() therefore produces
+        # rows with durations unknown and the caller re-applies cache hits
+        # through set_duration" -- and skipping it failed silently in a way
+        # nothing else caught: rebuild() freezes `duration` into each Row
+        # while it is still unknown, and rows() serialises those frozen
+        # Rows, NOT the VideoInfos that resolve() mutates. A cache hit is
+        # also absent from `pending`, so it never earns an onDuration push
+        # either. The Length column therefore sat on the measuring glyph
+        # forever for every already-probed recording -- after the first run,
+        # all of them -- while the selection summary, computed in Python
+        # straight off the infos, showed the real total. The Tk build did
+        # not have this: it called resolve() before inserting any row.
+        #
+        # definitive=True: a cached entry is a probe result that already
+        # survived that judgement when it was stored.
+        for row_id, info in zip(ids, infos):
+            if id(info) not in outstanding:
+                self._rows.set_duration(row_id, info.duration, True)
+
+        self._push("onRows", {"rows": self._rows.rows()})
         work = [(row_id, info) for row_id, info in zip(ids, infos)
                 if id(info) in outstanding]
         if work:
