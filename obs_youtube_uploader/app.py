@@ -23,6 +23,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _close_media(media) -> None:
+    """Release the file handle a MediaFileUpload holds, best effort.
+
+    MediaFileUpload closes its descriptor only in `__del__`, so anything
+    that needs the file released *now* -- to unlink a stitched temporary,
+    or to stop blocking a rename of the user's own recording on Windows --
+    has to close it explicitly. Tolerates None and objects without a
+    stream so callers can hand it whatever they have.
+    """
+    stream = getattr(media, "stream", None)
+    if stream is None:
+        return
+    try:
+        stream().close()
+    except Exception:
+        # Never worth failing an upload over, but never worth hiding
+        # either: a handle that stays open turns into a file the user
+        # cannot delete, with no other clue as to why.
+        logger.warning("Could not close upload stream", exc_info=True)
+
 # How often the main thread checks for finished duration probes. Short
 # enough that rows fill in as they resolve, long enough to be free.
 PROBE_DRAIN_MS = 100
@@ -1679,19 +1700,11 @@ class UploaderWindow:
         finally:
             if close_media:
                 # The caller is about to delete `path`, and Windows refuses
-                # to unlink a file that still has an open handle.
-                # MediaFileUpload closes its descriptor only in __del__,
-                # which is not guaranteed to have run by then -- and in
-                # practice had not: failed stitched uploads left
-                # multi-gigabyte temporaries in tmp/ until the next startup
-                # sweep. Off for the plain path on purpose: UploadFailed
-                # hands the resumable request to manual Retry, which resumes
-                # by reading from this very stream.
-                try:
-                    media.stream().close()
-                except Exception:
-                    logger.warning("Could not close upload stream for %s",
-                                   path, exc_info=True)
+                # to unlink a file that still has an open handle. Off for
+                # the plain path on purpose: UploadFailed hands the
+                # resumable request to manual Retry, which resumes by
+                # reading from this very stream.
+                _close_media(media)
 
     def _manual_retry(self) -> None:
         state = self.retry_state
@@ -1720,15 +1733,22 @@ class UploaderWindow:
             vid = uploader.upload(state.request, on_progress=on_progress)
             self._ui(self._set_link, info.path, vid)
         except uploader.UploadFailed as exc:
-            self.retry_state = replace(state, request=exc.request)
+            # Same gate as _upload_worker, for the same two reasons: only a
+            # RETRY outcome re-enables the button below, so keeping the
+            # request for any other outcome retains something unreachable —
+            # and that something owns an open handle on the user's own
+            # recording, which blocks renaming or deleting it on Windows.
+            # Dropping the reference is not enough on its own: closing is
+            # left to MediaFileUpload.__del__, whose timing is exactly what
+            # made the stitched temp file survive in the first place.
+            retryable = exc.outcome is uploader.Outcome.RETRY
+            if not retryable:
+                _close_media(getattr(exc.request, "resumable", None))
+            self.retry_state = replace(state,
+                                       request=exc.request if retryable else None)
             self._status_kind = "ERROR"
             self._ui(self.status.config, {"text": str(exc), "foreground": theme.token("ERROR")})
-            # Mirrors _upload_worker: a resumed attempt that fails for a
-            # reason retrying cannot fix must not leave the button live.
-            # Re-enabling unconditionally let a channel-limit or auth
-            # failure hand back a button that only reproduces its own
-            # dialog.
-            if exc.outcome is uploader.Outcome.RETRY:
+            if retryable:
                 self._ui(self.retry_btn.state, ["!disabled"])
             return
         # The resumed file is done; continue with whatever followed it.

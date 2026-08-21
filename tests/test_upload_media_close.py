@@ -50,7 +50,9 @@ def _fake_window():
 
 
 def _fake_youtube():
-    insert = lambda **kwargs: object()
+    def insert(**_kwargs):
+        return object()
+
     return types.SimpleNamespace(videos=lambda: types.SimpleNamespace(insert=insert))
 
 
@@ -181,3 +183,42 @@ def test_retry_button_after_a_failed_retry_matches_the_outcome(
     app_mod.UploaderWindow._retry_worker(window, state)
 
     assert (["!disabled"] in window.button_states) is enabled
+
+
+def _resumable_request():
+    """A request double shaped like googleapiclient's HttpRequest, whose
+    `.resumable` is the MediaUpload that owns the open file handle."""
+    media = FakeMediaFileUpload("/tmp/a.mkv")
+    return types.SimpleNamespace(resumable=media), media
+
+
+def _run_retry(monkeypatch, tmp_path, outcome):
+    request, media = _resumable_request()
+
+    def boom(req, **kw):
+        raise uploader.UploadFailed(outcome, request=req)
+
+    monkeypatch.setattr(uploader, "upload", boom)
+    window = _retry_window()
+    info = types.SimpleNamespace(path=tmp_path / "a.mkv")
+    job = app_mod.UploadJob(items=[info], title="t", description="d",
+                            stitch=False, privacy="unlisted", category="20")
+    state = app_mod.RetryState(job=job, resume_index=0, request=request)
+    app_mod.UploaderWindow._retry_worker(window, state)
+    return window, media
+
+
+def test_terminal_retry_failure_releases_the_recording(monkeypatch, tmp_path):
+    """A manual retry that fails for good must not keep the user's own
+    recording open. The request is unreachable once Retry is disabled, so
+    holding it only blocks renaming or deleting that file on Windows."""
+    window, media = _run_retry(monkeypatch, tmp_path, uploader.Outcome.UPLOAD_LIMIT)
+    assert media.stream().closed
+    assert window.retry_state.request is None
+
+
+def test_retryable_retry_failure_keeps_the_stream_for_the_next_resume(
+        monkeypatch, tmp_path):
+    window, media = _run_retry(monkeypatch, tmp_path, uploader.Outcome.RETRY)
+    assert not media.stream().closed
+    assert window.retry_state.request is not None
