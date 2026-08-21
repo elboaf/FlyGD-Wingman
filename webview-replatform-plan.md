@@ -7320,14 +7320,21 @@ In `obs_youtube_uploader/ui/api.py`:
             self._alert("warning", "Invalid folder",
                         f"{folder} is not a folder.")
             return False
-        self._state.settings["recording_dir"] = str(folder)
-        self._state.recording_dir = folder
+        # Save from a COPY and adopt only on success, exactly as
+        # save_settings does. Mutating first and returning False on OSError
+        # would leave the app believing it has a recording folder it never
+        # persisted -- state and disk diverged, and the divergence survives
+        # until the next launch reads the file back.
+        cfg = dict(self._state.settings)
+        cfg["recording_dir"] = str(folder)
         try:
-            settings_mod.save(self._state.settings)
+            settings_mod.save(cfg)
         except OSError as exc:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
+        self._state.settings = settings_mod.load()
+        self._state.recording_dir = folder
         if self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
         self.list_rows()
@@ -7351,6 +7358,29 @@ def test_first_run_persists_the_folder_and_starts_the_watcher(monkeypatch, tmp_p
     assert saved["recording_dir"] == str(folder)
     assert api._state.recording_dir == folder
     assert started == [folder], "the watcher was never started"
+
+
+def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_path):
+    """State and disk must never diverge, the same guarantee save_settings
+    gives. Mutating before the write means a failed first-run save leaves
+    the app believing it has a recording folder it never persisted."""
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+    before = dict(api._state.settings)
+
+    def boom(cfg, path=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+
+    assert api.set_recording_dir(str(folder)) is False
+    assert api._state.settings == before, "in-memory settings were mutated"
+    assert api._state.recording_dir != folder
+    assert started == [], "the watcher was started despite a failed save"
+    assert api._alert.titles() == ["Could not save settings"]
 
 
 def test_first_run_refuses_a_folder_that_is_not_one(monkeypatch, tmp_path):
