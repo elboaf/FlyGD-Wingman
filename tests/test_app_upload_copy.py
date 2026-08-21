@@ -6,7 +6,7 @@ and dialogs they feed sit in the one layer this repo has no test harness for.
 """
 import pytest
 
-from obs_youtube_uploader import app, library
+from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
 
 

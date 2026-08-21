@@ -13,8 +13,15 @@ dependencies = [
     "google-auth-oauthlib",
     "google-auth-httplib2",
     "pystray",
+    # Kept, despite looking like Tk-era baggage: build_tray() opens the
+    # bundled .ico with it and draws the generated fallback icon.
     "Pillow",
-    "sv-ttk",
+    # Pinned exactly, not ranged. 6.x has live API churn -- FOLDER_DIALOG
+    # was deprecated for FileDialog.FOLDER mid-series -- and pywebview is a
+    # small project whose frameless-Windows support is its thinnest area.
+    # 6.2.1 is the version the spike ran on. Treat an upgrade as a change
+    # requiring a full smoke pass, not a routine bump.
+    "pywebview==6.2.1",
 ]
 
 [project.urls]
