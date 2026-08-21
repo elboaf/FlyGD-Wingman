@@ -36,6 +36,17 @@ def resolve_binary(name: str) -> str | None:
     return shutil.which(name)
 
 
+def dpi_scale(widget: tk.Misc) -> float:
+    """Scale factor relative to 100% (96 DPI), for pixel constants chosen
+    before this process was DPI-aware.
+
+    `tk scaling` is points-per-pixel (set once in __main__.py as dpi/72);
+    dividing by the 96-DPI baseline's own scaling value (96/72) converts
+    that back to a plain "1.0 at 100%, 1.5 at 150%" multiplier.
+    """
+    return float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0)
+
+
 @dataclass
 class AppState:
     recording_dir: Path
@@ -92,8 +103,11 @@ class UploaderWindow:
         self.retry_state: "RetryState | None" = None
 
         root.title("OBS → YouTube Uploader")
-        root.geometry("1350x650")
-        root.minsize(750, 450)
+        scale = dpi_scale(root)
+        width = min(int(1350 * scale), root.winfo_screenwidth())
+        height = min(int(650 * scale), root.winfo_screenheight())
+        root.geometry(f"{width}x{height}")
+        root.minsize(int(750 * scale), int(450 * scale))
         root.protocol("WM_DELETE_WINDOW", self.hide)
         self._build()
         self.refresh()

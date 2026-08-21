@@ -4,6 +4,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from . import app as app_mod
 from . import combatlog, discord, obsconfig, paths, settings as settings_mod, uploader
 
 PRIVACY_CHOICES = ["private", "unlisted", "public"]
@@ -32,16 +33,26 @@ class SettingsWindow:
 
         # Size the window to what its content actually needs rather than a
         # fixed guess: at higher Windows display-scaling factors (125%,
-        # 150%) the five packed LabelFrames are taller than any hard-coded
+        # 150%) the six packed LabelFrames are taller than any hard-coded
         # height, which used to clip the Recording folder frame and the
-        # Save/Cancel row right off the bottom of the dialog. Compute the
-        # natural size after layout, keep a sensible starting width, and
-        # let height follow the content. Resizable + minsize means a user
-        # at an unusual DPI or font size is never trapped below the
-        # window's usable size.
+        # Save/Cancel row right off the bottom of the dialog (fixed in
+        # b23f9cc, when there were five — the Discord frame has since been
+        # added, so there is more content to clip, not less). Now that the
+        # process declares DPI awareness (PROCESS_SYSTEM_DPI_AWARE,
+        # __main__.py) instead of being bitmap-stretched by the OS,
+        # winfo_reqwidth/winfo_reqheight already reflect real scaled pixels
+        # — but the *floor* below was chosen in the pre-DPI-aware world and
+        # must scale with it too, or it under-sizes the dialog at 125%/150%
+        # relative to today's fix. Compute the natural size after layout,
+        # keep a scaled starting width, and let height follow the content,
+        # clamped to the screen so the dialog cannot open larger than the
+        # work area at 150%. Resizable + minsize means a user at an unusual
+        # DPI or font size is never trapped below the window's usable size.
         self.win.update_idletasks()
-        width = max(520, self.win.winfo_reqwidth())
-        height = self.win.winfo_reqheight()
+        scale = app_mod.dpi_scale(self.win)
+        width = max(int(520 * scale), self.win.winfo_reqwidth())
+        width = min(width, self.win.winfo_screenwidth())
+        height = min(self.win.winfo_reqheight(), self.win.winfo_screenheight())
         self.win.geometry(f"{width}x{height}")
         self.win.minsize(width, height)
         self.win.resizable(True, True)

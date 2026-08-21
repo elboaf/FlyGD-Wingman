@@ -90,6 +90,35 @@ def acquire_single_instance():
     return handle
 
 
+def set_dpi_awareness() -> None:
+    """PROCESS_SYSTEM_DPI_AWARE, not Per-Monitor V2.
+
+    System-DPI-aware is correct for a single-window tray utility and avoids
+    handling WM_DPICHANGED when the window is dragged between monitors of
+    different scale. Guarded exactly as acquire_single_instance() guards its
+    Win32 call: off-Windows the process simply stays DPI-unaware, which only
+    matters for local development.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except (AttributeError, OSError):
+        pass  # shcore.dll predates Windows 8.1; nothing to do on older hosts.
+
+
+def get_system_dpi() -> int:
+    """96 (100%) is the correct fallback off-Windows or on very old hosts."""
+    if sys.platform != "win32":
+        return 96
+    import ctypes
+    try:
+        return ctypes.windll.user32.GetDpiForSystem()
+    except (AttributeError, OSError):
+        return 96
+
+
 def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:
     """Stored setting, then OBS's own config, then ask the user.
 
@@ -129,6 +158,7 @@ def build_tray(on_open, on_quit):
 
 
 def main() -> int:
+    set_dpi_awareness()
     handle = acquire_single_instance()
     if handle is None:
         return 0  # Another instance owns the tray; nothing to do.
@@ -140,6 +170,7 @@ def main() -> int:
 
     root = tk.Tk()
     root.withdraw()  # Created on the main thread up front, shown on demand.
+    root.tk.call("tk", "scaling", get_system_dpi() / 72.0)  # points-per-pixel, not /96
     theme.apply(root, theme.detect_mode())
 
     rec_dir = resolve_recording_dir(cfg)
