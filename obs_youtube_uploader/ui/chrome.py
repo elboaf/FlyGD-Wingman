@@ -26,6 +26,15 @@ Windows, and this module has to import cleanly on the Linux box that runs
 the tests -- `hit_code` below is the only part of this feature CI can
 cover, and it would get none if the import raised. `hit_code` therefore
 depends on no ctypes type at all.
+
+KNOWN LIMITATION: half-snap does not work. Verified on a real build --
+Win+Up maximizes, Win+Left and Win+Right do nothing. Maximize needs
+WS_MAXIMIZEBOX, which WinForms still sets; snapping needs WS_THICKFRAME,
+which FormBorderStyle.None removes, so Windows does not consider the
+window snappable however it hit-tests. Nothing here can recover it: it
+would take WM_NCCALCSIZE to carve a real non-client frame, or giving up
+`frameless` and taking the OS title bar back. Do not spend time trying to
+fix it from this file.
 """
 import ctypes
 import logging

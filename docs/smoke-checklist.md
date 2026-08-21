@@ -98,10 +98,15 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 ### Window chrome
 - [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
       bar is gone; dragging is the page's `pywebview-drag-region`. Grab the
-      bar and move the window across two monitors, then to a screen edge to
-      trigger Windows snap. Expected: the window follows with no lag and
-      snaps normally. This is the single most visible thing that breaks with
-      a frameless window and it has no automated coverage of any kind.
+      bar and move the window across two monitors. Expected: the window
+      follows with no lag. This is the single most visible thing that breaks
+      with a frameless window and it has no automated coverage of any kind.
+- [ ] **Windows snap, as far as it goes.** `Win+Up` must maximize. `Win+Left`
+      and `Win+Right` are KNOWN NOT TO WORK and are not a regression:
+      half-snap needs `WS_THICKFRAME`, which a frameless window does not
+      have, so Windows does not treat this window as snappable however it
+      hit-tests. Only `WM_NCCALCSIZE` or giving up the custom title bar
+      would recover it. Check `Win+Up` still works; do not file the others.
 - [ ] **The drag region excludes the controls.** Press and hold on the gear,
       minimize and close in turn and move the pointer a few pixels.
       Expected: none of them drags the window; each still activates on

@@ -92,6 +92,19 @@ Both step-1 numbers are in, taken against the real page with the real
    the latter would have let a user drag part of the layout out of view,
    which no test could have caught.
 
+3. **Aero Snap is partially lost, and this is permanent for this
+   approach.** Verified on the real frozen build: `Win+Up` maximizes
+   correctly, `Win+Left` / `Win+Right` do nothing. Maximize needs
+   `WS_MAXIMIZEBOX`, which WinForms still sets; half-snap needs
+   `WS_THICKFRAME`, which `FormBorderStyle.None` removes — so Windows does
+   not treat the window as snappable even though it now resizes. No
+   arrangement of `WM_NCHITTEST` changes that; only `WM_NCCALCSIZE` (or
+   restoring the OS frame) would.
+
+   Everything else on the real build passed: minimize and close, resizing
+   to the floor with real rows present, and maximize leaving the taskbar
+   visible.
+
 ## Decisions for review
 
 ### 1. Where the band goes, and what it costs (UX — highest risk)
