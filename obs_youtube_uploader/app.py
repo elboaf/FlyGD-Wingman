@@ -145,6 +145,72 @@ def spacing(widget: tk.Misc) -> Spacing:
     )
 
 
+# Treeview column geometry in pixels at 100%; every value is multiplied by
+# dpi_scale() when the columns are configured.
+#
+# The MINIMUMS are the load-bearing half. The preferred widths sum to 620px,
+# but at the 750px minimum window width the list pane gets roughly 380-420px
+# once the window margin, the 300px upload panel, the pane gap and the
+# scrollbar are taken out, so the preferred widths do not fit. The minimums
+# sum to 410px, which does, and ttk.Treeview compresses toward them.
+#
+# No horizontal scrollbar is added and the window minimum is not raised.
+# Both were considered and rejected: on a list whose only elastic column is
+# the filename, a horizontal scrollbar trades a rare annoyance for a
+# permanent one, and raising the minimum cannot help on a screen where
+# __main__ already clamps the geometry to the display size. A window dragged
+# to its floor shows cramped columns; that is accepted, not a defect.
+COLUMN_SPEC = (
+    # column key, heading text, sort key, width, minwidth, stretch, anchor
+    ("#0", "☑", "checked", 34, 34, False, tk.CENTER),
+    ("filename", "Filename", "filename", 260, 120, True, tk.W),
+    ("date", "Date", "date", 120, 90, False, tk.W),
+    ("size", "Size", "size", 84, 64, False, tk.E),
+    # Header text only. The KEY stays "duration" because _sort_by dispatches
+    # on it, and self.infos exposes info.duration under that name.
+    ("duration", "Length", "duration", 76, 56, False, tk.E),
+    ("link", "Link", "link", 46, 46, False, tk.CENTER),
+)
+
+# The link column shows a glyph rather than the URL it used to render across
+# ~35% of the list. Nothing is lost: the URL was never selectable inside a
+# Treeview, and every consumer of a link (double-click, the context menu,
+# the has_link row colour) reads self.links, not the cell.
+LINK_GLYPH = "↗"
+
+
+def link_cell(url: str | None) -> str:
+    return LINK_GLYPH if url else ""
+
+
+def configure_tree_columns(tree: "ttk.Treeview", scale: float,
+                           on_sort) -> None:
+    """Apply COLUMN_SPEC to *tree*, scaled by *scale*.
+
+    Module-level rather than a method so the geometry can be verified
+    against a real widget without standing up a whole UploaderWindow.
+    Each heading is anchored like its column: headers were centred over
+    left- and right-aligned data, which read as misalignment rather than
+    as a deliberate choice.
+    """
+    for key, text, sort_key, width, minwidth, stretch, anchor in COLUMN_SPEC:
+        tree.heading(key, text=text, anchor=anchor,
+                     command=lambda k=sort_key: on_sort(k))
+        tree.column(key, width=int(width * scale),
+                    minwidth=int(minwidth * scale),
+                    stretch=stretch, anchor=anchor)
+
+
+def row_height(checkbox_height: int, linespace: int, scale: float) -> int:
+    """Row height in pixels — see _apply_row_height for why each term exists.
+
+    Split out as a pure function because the two font-derived inputs cannot
+    be measured meaningfully on the Linux test host (no Xft), while the
+    arithmetic that combines them is exactly what regresses.
+    """
+    return max(checkbox_height + 4, linespace + 3, int(28 * scale))
+
+
 @dataclass
 class AppState:
     recording_dir: Path
@@ -278,17 +344,7 @@ class UploaderWindow:
             # watcher's preselection.
             selectmode="none",
         )
-        self.tree.heading("#0", text="☑", command=lambda: self._sort_by("checked"))
-        self.tree.column("#0", width=int(34 * self._dpi_scale), anchor=tk.CENTER, stretch=False)
-        for key, text, chars in (
-            ("filename", "Filename", 30),
-            ("date", "Date", 14),
-            ("size", "Size", 9),
-            ("duration", "Duration", 8),
-            ("link", "YouTube Link", 48),
-        ):
-            self.tree.heading(key, text=text, command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=int(chars * 7 * self._dpi_scale), anchor=tk.W)
+        configure_tree_columns(self.tree, self._dpi_scale, self._sort_by)
 
         scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -412,6 +468,14 @@ class UploaderWindow:
         So the line height is re-measured HERE, after the rescale, and
         folded into the same max().
 
+        A third term, int(28 * scale), is a comfort floor rather than a
+        correctness one: over a hundred rows, a height that merely avoids
+        clipping reads as a dense spreadsheet. It sits inside the SAME
+        max() as the other two, so neither existing guarantee is weakened
+        - the checkbox is still never clipped, and the measured line box
+        is still never cropped. It scales because a 28px row at 200% is
+        the cramped row it exists to prevent.
+
         Re-applied from _on_theme_changed because sv_ttk.set_theme rewrites
         rowheight from its .tcl on every switch; theme.apply runs set_theme
         before its consumers, so re-asserting here wins.
@@ -433,7 +497,8 @@ class UploaderWindow:
                 "font", "metrics", "SunValleyBodyFont", "-linespace"))
         except tk.TclError:
             linespace = 0
-        needed = max(self._checkbox_images[True].height() + 4, linespace + 3)
+        needed = row_height(self._checkbox_images[True].height(), linespace,
+                            self._dpi_scale)
         style = ttk.Style(self.root)
         current = style.lookup("Treeview", "rowheight")
         try:
@@ -690,7 +755,11 @@ class UploaderWindow:
             self.tree.insert(
                 "", tk.END, iid=iid,
                 image=self._checkbox_image(var.get()),
-                values=(info.path.name, info.date_str, info.size_str, info.duration_str, ""),
+                # link_cell rather than a literal "": refresh() has just
+                # cleared self.links, so this is always empty today, but a
+                # lookup states the rule instead of encoding today's answer.
+                values=(info.path.name, info.date_str, info.size_str,
+                        info.duration_str, link_cell(self.links.get(info.path))),
                 tags=self._row_tags(info.path, position),
             )
             if info.path in preselect and first_preselected_iid is None:
@@ -922,7 +991,7 @@ class UploaderWindow:
             return
         url = f"https://www.youtube.com/watch?v={video_id}"
         self.links[path] = url
-        self.tree.set(iid, "link", url)
+        self.tree.set(iid, "link", link_cell(url))
         self._apply_zebra_tags()
 
     def _delete_selected(self) -> None:

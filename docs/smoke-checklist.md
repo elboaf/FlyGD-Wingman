@@ -188,6 +188,37 @@ Run on Windows against a real install before each release.
       sits — rows do NOT re-order themselves under the cursor as results
       arrive. Click the header again afterwards to re-sort with the real
       values.
+- [ ] **Column headers line up with their data.** Filename and Date read
+      left-aligned with left-aligned headers; Size and Length read
+      right-aligned with right-aligned headers; the checkbox and Link
+      headers are centred. Confirm the fourth column's header reads
+      **Length**, and that clicking it still sorts by duration (a short
+      recording and a long one swap places) — the header text changed but
+      the sort key deliberately did not.
+- [ ] **Only the Filename column grows.** Widen the window from its minimum
+      to full screen: Filename takes all the new space; Date, Size, Length
+      and Link stay put.
+- [ ] **LOAD-BEARING: the list at the minimum window width.** Drag the
+      window to its floor (750px at 100%). Expected: every column is still
+      present and readable, Filename truncates rather than pushing the
+      others off, and NO horizontal scrollbar appears. Cramped is the
+      accepted outcome here — a column that vanishes, overlaps, or
+      collapses to nothing is not. The preferred widths (620px total) do
+      not fit in the pane at that size; the per-column minimums (410px
+      total) are what hold it together, so this is the only place that
+      arithmetic is exercised.
+- [ ] **The Link column shows ↗, not a URL.** After an upload completes, the
+      row's Link cell shows a single arrow glyph in the link colour. Then
+      confirm the URL is still reachable three ways on that row:
+      double-click opens the video, right-click → Copy link pastes a working
+      URL, right-click → Open in browser opens the same page. These read the
+      in-memory link map rather than the cell, so a regression here means
+      the wiring changed, not the glyph.
+- [ ] **Rows have breathing room.** Compare against a pre-change build if
+      one is handy: rows should look noticeably less cramped over a long
+      list. At 100%, 125%, 150% and 200% confirm the extra height did not
+      cost anything — descenders and the checkbox are still fully visible,
+      and still are after a light↔dark switch.
 
 ### Icon
 - [ ] **The icon appears in all five locations:** main window title bar,
@@ -437,7 +468,7 @@ behavior that only shows up at size.
       separate from the Settings → Connect Google Account button, and is
       likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
-- [ ] Single upload completes and the link column fills in
+- [ ] Single upload completes and the link column fills in with ↗
 - [ ] **Copy link via the row's right-click context menu puts a working URL
       on the clipboard.** Right-click a row with a completed upload, choose
       "Copy link", paste elsewhere to confirm. Confirm "Copy link" is greyed
