@@ -90,6 +90,48 @@ jobs:
           $content = $content.Replace("REPLACE_AT_BUILD_TIME", $env:OAUTH_CLIENT_SECRET)
           Set-Content $file $content -NoNewline
 
+      - name: Verify the injected credentials are well-formed
+        if: ${{ inputs.inject_credentials }}
+        # The importability check above runs BEFORE injection, so nothing
+        # validated credentials.py after it was rewritten. A secret carrying
+        # a trailing space still produces a syntactically valid file that
+        # builds green and is then rejected by Google at sign-in as "the
+        # provided client secret is invalid" -- with no CI signal at all.
+        #
+        # Prints only shapes and lengths, never the values.
+        shell: pwsh
+        run: |
+          python - <<'PY'
+          import sys
+          from obs_youtube_uploader import credentials as c
+
+          cfg = c.CLIENT_CONFIG["installed"]
+          cid, sec = cfg["client_id"], cfg["client_secret"]
+          bad = []
+
+          if c.is_placeholder():
+              bad.append("is_placeholder() is still True -- the replace did not take")
+          if cid != cid.strip():
+              bad.append("client_id has leading or trailing whitespace")
+          if sec != sec.strip():
+              bad.append("client_secret has leading or trailing whitespace")
+          if not cid.endswith(".apps.googleusercontent.com"):
+              bad.append("client_id does not end with .apps.googleusercontent.com")
+          if "\n" in cid or "\n" in sec:
+              bad.append("a value contains a newline")
+          if not sec:
+              bad.append("client_secret is empty")
+
+          print(f"client_id: {len(cid)} chars, ends {cid[-30:]!r}")
+          print(f"client_secret: {len(sec)} chars, starts {sec[:7]!r}")
+
+          if bad:
+              for b in bad:
+                  print(f"::error::{b}")
+              sys.exit(1)
+          print("injected credentials are well-formed")
+          PY
+
       - name: Warn that credentials are placeholders
         if: ${{ !inputs.inject_credentials }}
         run: echo "::warning::Built without OAuth credentials. Everything is testable except Connect Google Account, which will fail."
