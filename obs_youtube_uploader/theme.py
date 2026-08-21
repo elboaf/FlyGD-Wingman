@@ -138,10 +138,10 @@ _SV_FONT_NAMES = (
 )
 
 # sv-ttk's declared (unscaled) size per font name, captured the first time
-# that font is seen and never re-read. _rescale_sv_fonts always derives the
-# new size from this base rather than from the font's current size, so
-# calling apply() repeatedly - which happens on every live theme switch -
-# cannot compound the scaling.
+# that font is seen and never re-read, and stored SIGNED. _rescale_sv_fonts
+# always derives the new size from this base rather than from the font's
+# current size, so calling apply() repeatedly - which happens on every live
+# theme switch - cannot compound the scaling.
 _sv_font_base_sizes: dict[str, int] = {}
 
 
@@ -157,23 +157,35 @@ def _rescale_sv_fonts(root) -> None:
 
     The scale factor is computed here rather than imported because app.py
     imports theme.py, so theme.py must not import app. It is deliberately
-    the same expression as app.dpi_scale() - the two are halves of one
-    contract and have to change together.
+    the same expression as app.dpi_scale(), ROUNDING INCLUDED - the two are
+    halves of one contract and have to change together. See that function
+    for why the round() is needed: Tcl's 5-significant-figure formatting
+    makes the round-trip lossy, so 96 DPI comes back as 0.99982.
 
-    Sizes stay negative: converting to points would make Tk scale them a
-    second time on top of the factor already applied here.
+    The DECLARED SIGN is preserved rather than forced negative. Every font
+    in sv-ttk 2.6.1 is declared in pixels, but _SV_FONT_NAMES is otherwise
+    written to tolerate version drift, and a future release declaring a
+    font in points would have it silently reinterpreted as pixels - roughly
+    a 25% shrink at 96 DPI. Scaling a positive (points) size is still
+    correct: `tk scaling` would apply on top, but so would the DPI factor
+    we compute from it, and the sign is what says which unit was meant.
     """
-    scale = float(root.tk.call("tk", "scaling")) / (96.0 / 72.0)
-    existing = {str(name) for name in root.tk.call("font", "names")}
+    scale = round(float(root.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
+    # splitlist, not iteration: `font names` returns a Tcl list, and if Tk
+    # ever handed it back as a plain string this would iterate CHARACTERS,
+    # match nothing, and silently no-op with no exception to log.
+    existing = {str(name) for name in root.tk.splitlist(
+        root.tk.call("font", "names"))}
     for name in _SV_FONT_NAMES:
         if name not in existing:
             continue
         base = _sv_font_base_sizes.get(name)
         if base is None:
-            base = abs(int(root.tk.call("font", "configure", name, "-size")))
+            base = int(root.tk.call("font", "configure", name, "-size"))
             _sv_font_base_sizes[name] = base
+        scaled = max(1, round(abs(base) * scale))
         root.tk.call("font", "configure", name, "-size",
-                     -max(1, round(base * scale)))
+                     -scaled if base < 0 else scaled)
 
 
 def apply(root, mode: Mode) -> None:
