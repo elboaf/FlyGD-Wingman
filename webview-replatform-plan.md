@@ -4397,7 +4397,9 @@ def auth_state(state: str) -> tuple[str, str, bool]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_api_settings.py tests/test_copy.py -v`
+Run: `pytest tests/test_api_settings.py -v`
+
+(Not `tests/test_copy.py` — that file does not exist until Task 15 renames `tests/test_app.py`. The `copy.py` additions are exercised by this file's first five tests.)
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -4522,7 +4524,7 @@ def test_the_pushed_settings_describe_the_webhook_without_its_token(monkeypatch,
 
 - [ ] **Step 7: Run test to verify it fails**
 
-Run: `pytest tests/test_api_settings.py -v -k save`
+Run: `pytest tests/test_api_settings.py -v -k saving`
 Expected: FAIL with `AttributeError: 'Api' object has no attribute 'save_settings'`
 
 - [ ] **Step 8: Write minimal implementation**
