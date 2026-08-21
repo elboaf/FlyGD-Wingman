@@ -32,13 +32,24 @@ against a dark taskbar. See the commit that last rebuilt the `.ico`
 ## `wingman-screenshot.png`
 
 The main FlyGD Wingman window, used as the README hero image. Currently
-850×678.
+2038×1286, displayed at 850.
 
-- Show several recordings listed and at least one row with a filled-in
-  **YouTube Link**, so the core workflow is visible at a glance.
-- Set the `width` attribute in README.md to the image's real pixel width;
-  a larger value upscales and looks soft.
-- **Check before committing**: the YouTube link column exposes a real video ID,
-  and an unlisted video is watchable by anyone holding its URL. Never capture
-  the Settings dialog with a Discord webhook URL visible — a webhook URL is a
+- Show several recordings listed. Ideally include at least one row with a
+  filled-in **Link**, so the upload half of the workflow is visible at a
+  glance — the current shot does not, and is worth replacing when a
+  convenient one comes along.
+- **Stored at native resolution and downscaled by the browser.** This is a
+  change from the previous file, which was stored at exactly its 850 px
+  display width. A ~2.4× asset stays sharp on a HiDPI display where a 1:1
+  one looks soft, and costs about 120 KB. The rule that matters is the one
+  below; matching the two exactly is no longer expected.
+- **Never set `width` in README.md ABOVE the image's real pixel width.**
+  Upscaling looks soft. Below it is fine and is what the HiDPI asset relies
+  on.
+- **Check before committing**: the Link column exposes a real video ID, and
+  an unlisted video is watchable by anyone holding its URL. Never capture
+  the Settings route with a Discord webhook URL visible — a webhook URL is a
   bearer credential.
+- Keep the alt text in README.md describing the image that is ACTUALLY
+  committed. If the two drift, a screen-reader user is told about a window
+  nobody can see.
