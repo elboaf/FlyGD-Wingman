@@ -151,7 +151,30 @@ def build_body(title: str, description: str, privacy: str, category: str,
     }
 
 
-def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
+def channel_of(response) -> tuple[str, str]:
+    """(channel_id, channel_title) from a videos.insert response.
+
+    Returns ("", "") for anything unusable. This runs at the very end of a
+    successful multi-gigabyte upload, so a shape it does not recognise must
+    degrade to "channel unknown" rather than raise: the video is already
+    published by then and an exception here would report it as a failure.
+
+    Both values are type-checked because they are rendered into labels and
+    persisted to settings.json, where a non-string would survive as its repr.
+    """
+    if not isinstance(response, dict):
+        return "", ""
+    snippet = response.get("snippet")
+    if not isinstance(snippet, dict):
+        return "", ""
+    cid = snippet.get("channelId")
+    title = snippet.get("channelTitle")
+    return (cid if isinstance(cid, str) else "",
+            title if isinstance(title, str) else "")
+
+
+def upload(request, *, on_progress=None, on_retry=None, on_response=None,
+           max_attempts: int = 5,
            sleep=time.sleep, jitter=random.random) -> str:
     """Drive a resumable upload to completion, retrying transient failures.
 
@@ -160,6 +183,11 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
 
     on_retry(attempt_number, delay_seconds) fires before each backoff sleep
     so the UI can show "retrying" rather than appearing frozen.
+
+    on_response(response) fires once, on success only, with the whole
+    decoded insert response. It exists so callers can read the destination
+    channel out of it; the return value stays the video id so existing
+    callers are unaffected.
 
     A successful chunk resets the failure count: an upload with one
     transient error every few chunks is still making steady progress, and a
@@ -209,6 +237,10 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
         logger.warning("Upload completed but the response carried no video id: %r",
                        response)
         raise UploadFailed(Outcome.PERMANENT, request=request)
+    # After the id check, so a response too malformed to carry one is still
+    # a failure rather than a success with an unknown channel.
+    if on_response is not None:
+        on_response(response)
     return video_id
 
 

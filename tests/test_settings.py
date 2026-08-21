@@ -11,7 +11,37 @@ def test_defaults_are_the_documented_values():
         "recording_dir": None,
         "discord_webhook": "",
         "gamelogs_dir": None,
+        "channel_id": "",
+        "channel_title": "",
     }
+
+
+def test_channel_identity_defaults_to_empty(tmp_path):
+    """Empty, not None: it reaches a label, and "None" is not a channel."""
+    data = settings.load(tmp_path / "missing.json")
+    assert data["channel_id"] == ""
+    assert data["channel_title"] == ""
+
+
+def test_channel_identity_roundtrips(tmp_path):
+    p = tmp_path / "s.json"
+    settings.save({**settings.DEFAULTS, "channel_id": "UC123",
+                   "channel_title": "Zoolanders"}, p)
+    loaded = settings.load(p)
+    assert loaded["channel_id"] == "UC123"
+    assert loaded["channel_title"] == "Zoolanders"
+
+
+@pytest.mark.parametrize("bad", [{"nope": 1}, 7, None, ["a"]])
+def test_non_string_channel_identity_is_discarded(tmp_path, bad):
+    """This value is read back from a YouTube API response and then rendered
+    into a label; a dict or an int arriving from a hand-edited file must not
+    reach the UI."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"channel_title": bad, "channel_id": bad}))
+    loaded = settings.load(p)
+    assert loaded["channel_title"] == ""
+    assert loaded["channel_id"] == ""
 
 
 def test_discord_webhook_roundtrips(tmp_path):

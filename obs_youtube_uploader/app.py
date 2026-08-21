@@ -13,7 +13,7 @@ from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
 
 from . import (combatlog, discord, durations, library, paths,
-               settings as settings_mod, stitch, theme, uploader)
+               settings as settings_mod, stitch, theme, tooltip, uploader)
 
 if TYPE_CHECKING:
     # Only for annotations. PIL stays a lazy runtime import (see
@@ -127,6 +127,99 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
     partial = "+" if any(not info.probed for info in infos) else ""
     return (f"{len(infos)} selected · {library.format_size(total_size)}"
             f" · {hours}:{minutes:02d}:{seconds:02d}{partial}")
+
+
+def _hms(total_seconds: int) -> str:
+    hours, remainder = divmod(int(total_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
+def format_progress(index: int, total: int, fraction: float) -> str:
+    """The status line during an upload.
+
+    The progress BAR is driven by ((index + fraction) / total), so it tracks
+    the whole batch. This text tracks the file. Saying so is the whole point
+    of the function: the previous wording was "Uploading 3/10 — 94.8%" beside
+    a bar sitting at 34%, and the two read as a contradiction rather than as
+    two different measurements.
+
+    A single-file upload gets no "file 1 of 1", which would be noise.
+    """
+    pct = f"{fraction * 100:.1f}%"
+    if total <= 1:
+        return f"Uploading… {pct}"
+    return f"Uploading file {index + 1} of {total}… {pct}"
+
+
+def format_destination(channel_title: str, privacy: str) -> str:
+    """The line above Upload Selected naming where the video will land.
+
+    Empty channel_title is the normal state before the first successful
+    upload, not an error: SCOPES holds youtube.upload alone, which cannot
+    call channels.list, so the destination is learned from an insert
+    response (uploader.channel_of) rather than looked up. Saying that
+    plainly beats an empty gap where a channel name should be.
+    """
+    if not channel_title:
+        return f"Channel confirmed after the first upload · {privacy}"
+    return f"Uploads go to {channel_title} · {privacy}"
+
+
+def format_title_hint(count: int, stitch: bool) -> str:
+    """The Title field's label, which depends on what is selected.
+
+    uploader.build_body appends "(n/total)" to every title in a batch and
+    substitutes "Untitled" for an empty one. Neither was disclosed anywhere,
+    so a user typing one title got ten differently-named public videos and
+    found out afterwards. The label is the cheapest place to say it, because
+    it is already beside the field being misunderstood.
+    """
+    if count <= 1 or (stitch and count <= 1):
+        return "Title"
+    if stitch:
+        return "Title (one stitched video)"
+    return f"Title (applies to all {count}, numbered 1-{count})"
+
+
+def format_upload_confirm(infos: list[library.VideoInfo], title: str,
+                          privacy: str, channel_title: str,
+                          stitch: bool) -> str:
+    """The body of the confirm shown before anything is published.
+
+    This is the app's only irreversible action and it was the only one with
+    no confirmation: deleting local files, which are recoverable from the
+    recycle bin, already confirmed with a full file list.
+
+    The title preview is built through uploader.build_body rather than
+    reformatted here, so the numbering shown is the numbering that will be
+    sent. A second implementation of that rule would drift from it.
+    """
+    total_size = sum(i.size for i in infos)
+    total_seconds = int(sum(i.duration or 0.0 for i in infos))
+    count = len(infos)
+    where = channel_title or "not known yet (learned from this upload)"
+
+    if stitch:
+        shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
+        what = f"{count} recordings stitched into one video"
+        titles = f'"{shown}"'
+    else:
+        first = uploader.build_body(title, "", privacy, "", 0, count)["snippet"]["title"]
+        what = f"{count} recording{'s' if count != 1 else ''}"
+        titles = f'"{first}"'
+        if count > 1:
+            last = uploader.build_body(title, "", privacy, "", count - 1,
+                                       count)["snippet"]["title"]
+            titles += f' … "{last}"'
+
+    return (f"Upload {what} to YouTube?\n\n"
+            f"Channel:  {where}\n"
+            f"Privacy:  {privacy}\n"
+            f"Title:    {titles}\n"
+            f"Total:    {library.format_size(total_size)} · "
+            f"{_hms(total_seconds)}\n\n"
+            "Publishing to YouTube cannot be undone from this app.")
 
 
 @dataclass(frozen=True)
@@ -272,6 +365,43 @@ TREE_STYLE = "Wingman.Treeview"
 SECTION_HEADING_STYLE = "Section.TLabel"   # panel section headings ("Upload")
 MUTED_STYLE = "Muted.TLabel"               # selection summary, hint labels
 HEADING_FONT = "WingmanHeadingFont"
+COLUMN_HEADING_FONT = "WingmanColumnFont"  # Treeview column headers
+SMALL_FONT = "WingmanSmallFont"            # muted secondary text
+
+# The type scale, as multipliers of sv-ttk's body size.
+#
+# Everything in this app used to render at one size, with hierarchy carried
+# only by bold: column headers, filenames, dates, hints and the status line
+# were all identical, so nothing guided the eye down a 132-row list.
+#
+# Product-register ratios, deliberately tighter than the 1.25 a marketing
+# page would use: dense, data-heavy UI wants steps that separate roles
+# without making any one of them shout.
+SECTION_RATIO = 1.2    # "Upload", settings group titles -- one step above body
+SMALL_RATIO = 0.875    # muted text and column headers -- one step below
+
+# Column headers sit BELOW body rather than above it on purpose. They label
+# the data; they are not the data. At the same size and weight as the
+# filenames underneath, they competed with the content the window exists to
+# show.
+
+
+def scaled_font_size(base: int, ratio: float) -> int:
+    """Scale a Tk -size, preserving the unit its sign encodes.
+
+    Tk reads a positive -size as points and a negative one as pixels, so the
+    magnitude is scaled and the sign restored: dropping it would silently
+    reinterpret the unit and produce a font an order of magnitude wrong.
+
+    A 0 base is returned unchanged -- `font configure` reports 0 for a font
+    that has not resolved yet, and inventing a size from that is worse than
+    inheriting one. The result is clamped away from 0 for the same reason a
+    shrinking step must not erase the text it applies to.
+    """
+    if not base:
+        return 0
+    scaled = int(round(abs(base) * ratio))
+    return max(1, scaled) * (1 if base > 0 else -1)
 
 # Preference order for what the heading font is derived from. The sv-ttk
 # fonts come first because theme._rescale_sv_fonts has already corrected
@@ -291,35 +421,56 @@ def apply_typography(root: tk.Misc) -> None:
     reason both are re-asserted from _on_theme_changed rather than set up
     once in _build.
 
-    The font is re-derived from sv-ttk's own font on every call rather
+    The fonts are re-derived from sv-ttk's own font on every call rather
     than remembered, because theme.apply rescales those fonts (for `tk
     scaling`) immediately before the consumers run: copying here is how
-    bold headings inherit the corrected size instead of freezing a
-    96-DPI one. Only -weight is overridden, so family and size stay
-    sv-ttk's.
+    the scale inherits the corrected size instead of freezing a 96-DPI
+    one. Family is always sv-ttk's; -size is then multiplied by this
+    step's ratio and -weight set per step.
 
     Row text is deliberately NOT touched. ttk.Treeview has no per-column
     fonts, and per-row tags -- the only other channel -- are already
     fully spent on zebra striping, preselection and has_link (see
     _row_tags), where the tag listed first wins. There is nothing left to
-    carry emphasis with, so the hierarchy stops at the headings.
+    carry emphasis with, so within the list the scale acts on the column
+    headers only, demoting them below the data they label.
     """
     names = {str(n) for n in root.tk.splitlist(root.tk.call("font", "names"))}
-    if HEADING_FONT not in names:
-        root.tk.call("font", "create", HEADING_FONT)
     base = next((n for n in _HEADING_FONT_BASES if n in names), None)
-    if base is not None:
-        root.tk.call("font", "configure", HEADING_FONT,
-                     *root.tk.splitlist(root.tk.call("font", "configure", base)))
+
+    def derive(font_name: str, ratio: float) -> None:
+        """Create/refresh one scale step as a copy of the sv-ttk base."""
+        if font_name not in names:
+            root.tk.call("font", "create", font_name)
+        if base is not None:
+            root.tk.call("font", "configure", font_name,
+                         *root.tk.splitlist(
+                             root.tk.call("font", "configure", base)))
+            size = int(root.tk.call("font", "configure", font_name, "-size"))
+            root.tk.call("font", "configure", font_name, "-size",
+                         scaled_font_size(size, ratio))
+
+    derive(HEADING_FONT, SECTION_RATIO)
+    derive(COLUMN_HEADING_FONT, SMALL_RATIO)
+    derive(SMALL_FONT, SMALL_RATIO)
     root.tk.call("font", "configure", HEADING_FONT, "-weight", "bold")
+    root.tk.call("font", "configure", COLUMN_HEADING_FONT, "-weight", "bold")
+    # SMALL_FONT keeps the base weight: it carries secondary text, which is
+    # demoted by size and colour, not emphasised.
+    root.tk.call("font", "configure", SMALL_FONT, "-weight", "normal")
 
     style = ttk.Style(root)
-    style.configure(f"{TREE_STYLE}.Heading", font=HEADING_FONT)
+    style.configure(f"{TREE_STYLE}.Heading", font=COLUMN_HEADING_FONT)
     style.configure(SECTION_HEADING_STYLE, font=HEADING_FONT)
+    # Settings' LabelFrame titles are the same role as the panel's "Upload"
+    # heading, so they take the same step. One style covers every group in
+    # the dialog.
+    style.configure("TLabelframe.Label", font=HEADING_FONT)
     # The one secondary-text colour, read live from the token table so a
     # switch recolours it rather than baking in the mode that was active
     # when the widget was built.
-    style.configure(MUTED_STYLE, foreground=theme.token("MUTED"))
+    style.configure(MUTED_STYLE, foreground=theme.token("MUTED"),
+                    font=SMALL_FONT)
 
 
 @dataclass
@@ -547,6 +698,9 @@ class UploaderWindow:
         self.tree.bind("<Double-Button-1>", self._on_row_double_click)
         self.tree.bind("<space>", self._on_tree_space)
         self.tree.bind("<FocusIn>", self._on_tree_focus_in)
+        # One instance serves every cell: the callback resolves the text per
+        # pointer position, so no per-row wiring survives a refresh().
+        tooltip.Tooltip(self.tree, self._tree_tooltip)
 
         list_actions = ttk.Frame(self.list_frame)
         list_actions.grid(row=1, column=0, columnspan=2, sticky=tk.EW,
@@ -582,7 +736,8 @@ class UploaderWindow:
 
         Row map, since the selection summary grids into it: 0 heading, 1 separator, 2-3
         Title, 4-5 Description, 6 Stitch, 7 ffmpeg warning, 8 selection
-        summary, 9 combat logs, 10 Retry + Upload.
+        summary, 9 combat logs, 10 destination, 11 last upload, 12 Retry +
+        Upload.
         """
         self._panel_width = int(300 * self._dpi_scale)
         self.upload_panel = ttk.Frame(parent, width=self._panel_width)
@@ -606,8 +761,9 @@ class UploaderWindow:
         ttk.Separator(self.upload_panel, orient=tk.HORIZONTAL).grid(
             row=1, column=0, sticky=tk.EW, pady=(self._pad.tight, self._pad.normal))
 
-        ttk.Label(self.upload_panel, text="Title").grid(
-            row=2, column=0, sticky=tk.W, pady=(0, self._pad.tight))
+        self.title_label = ttk.Label(self.upload_panel, text="Title")
+        self.title_label.grid(row=2, column=0, sticky=tk.W,
+                              pady=(0, self._pad.tight))
         self.title_var = tk.StringVar(value="")
         ttk.Entry(self.upload_panel, textvariable=self.title_var).grid(
             row=3, column=0, sticky=tk.EW)
@@ -635,9 +791,12 @@ class UploaderWindow:
         self.root.after_idle(self._apply_desc_colors)
 
         self.stitch_var = tk.BooleanVar(value=False)
+        # Repaints the Title label: stitching collapses a batch into one
+        # video, so it changes what the Title field will actually produce.
         self.stitch_chk = ttk.Checkbutton(self.upload_panel,
                                           text="Stitch selected videos",
-                                          variable=self.stitch_var)
+                                          variable=self.stitch_var,
+                                          command=self._update_selection_summary)
         self.stitch_chk.grid(row=6, column=0, sticky=tk.W,
                              pady=(self._pad.normal, 0))
         self.ffmpeg_warn_label = None
@@ -683,8 +842,41 @@ class UploaderWindow:
                    command=self._start_combat_log_upload).grid(
             row=9, column=0, sticky=tk.EW, pady=(self._pad.normal, 0))
 
+        # Directly above the button it describes, for the same reason the
+        # selection summary sits where it does: this answers "where is this
+        # going?" at the moment the user is reaching for Upload Selected.
+        # MUTED because it is a readout, not a control, and wrapped because
+        # a channel name is user-supplied and can be any length.
+        self.destination_label = ttk.Label(
+            self.upload_panel, text="", style=MUTED_STYLE, justify=tk.LEFT,
+            wraplength=self._panel_width - self._pad.normal)
+        self.destination_label.grid(row=10, column=0, sticky=tk.W,
+                                    pady=(self._pad.normal, 0))
+
+        # The finished upload's link. Hidden until there is one, because an
+        # empty pair of dead buttons is worse than no row at all -- and it
+        # is grid_remove()d rather than destroyed so the geometry is
+        # already solved the moment an upload lands.
+        #
+        # Two explicit buttons rather than a clickable URL: the panel is
+        # 300px, a YouTube URL does not fit in it, and a truncated link is
+        # both unreadable and unselectable inside a ttk.Label.
+        self.last_upload_url: str | None = None
+        self.last_upload_frame = ttk.Frame(self.upload_panel)
+        self.last_upload_frame.grid(row=11, column=0, sticky=tk.EW,
+                                    pady=(self._pad.normal, 0))
+        self.last_upload_frame.columnconfigure(0, weight=1)
+        self.last_upload_frame.columnconfigure(1, weight=1)
+        ttk.Button(self.last_upload_frame, text="Open video",
+                   command=self._open_last_upload).grid(
+            row=0, column=0, sticky=tk.EW, padx=(0, self._pad.tight))
+        ttk.Button(self.last_upload_frame, text="Copy link",
+                   command=self._copy_last_upload).grid(
+            row=0, column=1, sticky=tk.EW)
+        self.last_upload_frame.grid_remove()
+
         actions = ttk.Frame(self.upload_panel)
-        actions.grid(row=10, column=0, sticky=tk.EW, pady=(self._pad.tight, 0))
+        actions.grid(row=12, column=0, sticky=tk.EW, pady=(self._pad.tight, 0))
         # Only Upload Selected stretches: Retry keeps its natural width so
         # the accent button is visibly the larger target, and the pair still
         # fills the panel at every scale.
@@ -692,6 +884,12 @@ class UploaderWindow:
         self.retry_btn = ttk.Button(actions, text="Retry", command=self._manual_retry)
         self.retry_btn.grid(row=0, column=0, sticky=tk.W, padx=(0, self._pad.tight))
         self.retry_btn.state(["disabled"])
+        # Disabled is its normal state, so it reads as broken rather than as
+        # dormant. The tooltip is the only place that says what would enable
+        # it; ttk still delivers <Motion> to a disabled button.
+        tooltip.Tooltip(self.retry_btn,
+                        "Enabled after an upload fails.\n"
+                        "Resumes the interrupted upload instead of restarting it.")
         ttk.Button(actions, text="Upload Selected", style="Accent.TButton",
                    command=self._start_upload).grid(row=0, column=1, sticky=tk.EW)
 
@@ -1082,7 +1280,6 @@ class UploaderWindow:
         self._refresh_generation += 1
         generation = self._refresh_generation
         self.selected.clear()
-        self.links.clear()
         for iid in self.tree.get_children(""):
             self.tree.delete(iid)
 
@@ -1096,6 +1293,17 @@ class UploaderWindow:
                 # tolerates this race, so the list must too.
                 continue
         self.infos = infos
+        # Links are keyed by path and now OUTLIVE the rebuild. They used to
+        # be cleared at the top of this method, which meant the ↗ appeared
+        # when an upload finished and then vanished a moment later, because
+        # poll() fires a deferred refresh() on exactly that event. Pruning
+        # rather than keeping everything: a path that is no longer in the
+        # list cannot be shown, opened or copied, so retaining it would only
+        # grow the map for the life of the process.
+        live = {info.path for info in self.infos}
+        self.links = {path: url for path, url in self.links.items()
+                      if path in live}
+        self._refresh_last_upload()
         pending = durations.resolve(self.duration_cache, self.infos)
 
         first_preselected_iid = None
@@ -1106,9 +1314,10 @@ class UploaderWindow:
             self.tree.insert(
                 "", tk.END, iid=iid,
                 image=self._checkbox_image(var.get()),
-                # link_cell rather than a literal "": refresh() has just
-                # cleared self.links, so this is always empty today, but a
-                # lookup states the rule instead of encoding today's answer.
+                # link_cell rather than a literal "": links now survive a
+                # rebuild (they are pruned above, not cleared), so a row
+                # whose upload finished keeps its glyph across the refresh
+                # that upload triggers.
                 values=(info.path.name, info.date_str, info.size_str,
                         info.duration_str, link_cell(self.links.get(info.path))),
                 tags=self._row_tags(info.path, position),
@@ -1332,6 +1541,34 @@ class UploaderWindow:
     def _chosen(self) -> list[library.VideoInfo]:
         return [i for i in self.infos if self.selected.get(i.path, tk.BooleanVar()).get()]
 
+    def _tree_tooltip(self, event) -> str | None:
+        """Help text for whatever cell the pointer is over, or None.
+
+        Reads the cell's RENDERED text and hands it to tooltip_for_cell, so
+        the help can never describe a glyph the row is not showing.
+
+        Headings and the space below the last row identify as regions other
+        than "cell" and get nothing: a tooltip following the pointer across
+        empty space would be noise.
+        """
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        row = self.tree.identify_row(event.y)
+        column = self.tree.identify_column(event.x)
+        if not row or not column:
+            return None
+        try:
+            # identify_column returns "#N"; #0 is the tree column (the
+            # checkbox), which has no help, and displaycolumns maps the rest.
+            index = int(column[1:]) - 1
+        except ValueError:
+            return None
+        columns = self.tree.cget("columns")
+        if index < 0 or index >= len(columns):
+            return None
+        key = str(columns[index])
+        return tooltip.tooltip_for_cell(key, self.tree.set(row, key))
+
     def _update_selection_summary(self) -> None:
         """Repaint the panel's selection readout.
 
@@ -1347,8 +1584,23 @@ class UploaderWindow:
         Cheap enough to call unconditionally: _chosen() is a list
         comprehension over infos already in memory, and the formatter reads
         only info.size and info.duration.
+
+        The destination line and the Title label ride the same triggers.
+        Both depend on the selection (the Title label on its size, to warn
+        about batch numbering), so anything that changes what is selected
+        has to repaint all three or they drift apart.
         """
-        self.selection_summary.config(text=format_selection_summary(self._chosen()))
+        chosen = self._chosen()
+        self.selection_summary.config(text=format_selection_summary(chosen))
+        self._update_destination()
+        self.title_label.config(
+            text=format_title_hint(len(chosen), self.stitch_var.get()))
+
+    def _update_destination(self) -> None:
+        """Repaint the "uploads go to X" line from stored settings."""
+        self.destination_label.config(text=format_destination(
+            self.state.settings.get("channel_title", ""),
+            self.state.settings.get("privacy", "unlisted")))
 
     def _copy(self, path: Path) -> None:
         url = self.links.get(path)
@@ -1372,9 +1624,12 @@ class UploaderWindow:
 
         The existence check below guards a `_ui`-queued update arriving for
         a path no longer in the rebuilt tree (e.g. the file was deleted, or
-        refresh() ran mid-upload). It does NOT protect against refresh()
-        clearing self.links on every rebuild — that clearing is preserved
-        deliberately (see refresh()); this guard is a different case.
+        refresh() ran mid-upload).
+
+        Links now survive a rebuild: refresh() prunes self.links to the
+        paths still listed instead of clearing it, so the glyph set here
+        outlives the deferred refresh() that poll() fires the moment the
+        upload finishes.
         """
         iid = str(path)
         if not self.tree.exists(iid):
@@ -1383,6 +1638,47 @@ class UploaderWindow:
         self.links[path] = url
         self.tree.set(iid, "link", link_cell(url))
         self._apply_zebra_tags()
+        self._show_last_upload(url)
+
+    def _show_last_upload(self, url: str | None) -> None:
+        """Reveal (or hide) the Open/Copy pair for the newest upload."""
+        self.last_upload_url = url
+        if url:
+            self.last_upload_frame.grid()
+        else:
+            self.last_upload_frame.grid_remove()
+
+    def _refresh_last_upload(self) -> None:
+        """Re-point the Open/Copy pair after the list is rebuilt.
+
+        Called from refresh() once self.links has been pruned. If the
+        recording behind the last upload is gone, so are the buttons:
+        offering "Open video" for a row the user can no longer see is worse
+        than offering nothing.
+
+        Newest-first ordering comes from self.infos, which library.discover
+        already sorts that way, so this re-derives "most recent" from the
+        list rather than remembering an order that a rebuild invalidates.
+        """
+        for info in self.infos:
+            url = self.links.get(info.path)
+            if url:
+                self._show_last_upload(url)
+                return
+        self._show_last_upload(None)
+
+    def _open_last_upload(self) -> None:
+        if self.last_upload_url:
+            webbrowser.open(self.last_upload_url)
+
+    def _copy_last_upload(self) -> None:
+        if not self.last_upload_url:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.last_upload_url)
+        self._status_kind = "SUCCESS"
+        self.status.config(text="Link copied to clipboard",
+                           foreground=theme.token("SUCCESS"))
 
     def _delete_selected(self) -> None:
         chosen = self._chosen()
@@ -1432,6 +1728,14 @@ class UploaderWindow:
             privacy=self.state.settings["privacy"],
             category=self.state.settings["category"],
         )
+        # The last gate before anything becomes public. Deleting local files
+        # already confirmed with a full list; publishing to YouTube, which
+        # this app cannot undo, did not. Built from the job rather than from
+        # the widgets so what is shown is what will be sent.
+        if not messagebox.askyesno("Confirm Upload", format_upload_confirm(
+                chosen, job.title, job.privacy,
+                self.state.settings.get("channel_title", ""), job.stitch)):
+            return
         self.upload_thread = threading.Thread(
             target=self._upload_worker, args=(job,), daemon=True)
         self.upload_thread.start()
@@ -1686,7 +1990,7 @@ class UploaderWindow:
             # colours would otherwise persist through this whole upload.
             self._status_kind = "FG"
             self._ui(self.status.config,
-                     {"text": f"Uploading {index + 1}/{total} — {fraction * 100:.1f}%",
+                     {"text": format_progress(index, total, fraction),
                       "foreground": theme.token("FG")})
 
         def on_retry(attempt: int, delay: float) -> None:
@@ -1696,7 +2000,9 @@ class UploaderWindow:
                               f"(attempt {attempt})", "foreground": theme.token("WARNING")})
 
         try:
-            return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
+            return uploader.upload(request, on_progress=on_progress,
+                                   on_retry=on_retry,
+                                   on_response=self._remember_channel)
         finally:
             if close_media:
                 # The caller is about to delete `path`, and Windows refuses
@@ -1705,6 +2011,40 @@ class UploaderWindow:
                 # resumable request to manual Retry, which resumes by
                 # reading from this very stream.
                 _close_media(media)
+
+    def _remember_channel(self, response) -> None:
+        """Learn the destination channel from a successful insert response.
+
+        This is the only channel information the app can get: SCOPES holds
+        youtube.upload alone, and channels.list needs a second scope, which
+        would sign every existing user out and add a scope to an OAuth app
+        still in verification review.
+
+        Runs on the upload worker thread, so the label repaint is marshalled
+        through _ui like every other cross-thread config. The settings write
+        is left on this thread deliberately: it is a short plain-file write,
+        and persisting here means the channel survives a crash before the
+        next clean exit.
+
+        Silent when the response carries no channel (channel_of returns
+        ("", "")): the video uploaded fine, and a warning about a missing
+        display field would be noise attached to a success.
+        """
+        channel_id, channel_title = uploader.channel_of(response)
+        if not channel_title:
+            return
+        if (self.state.settings.get("channel_id") == channel_id
+                and self.state.settings.get("channel_title") == channel_title):
+            return
+        self.state.settings["channel_id"] = channel_id
+        self.state.settings["channel_title"] = channel_title
+        try:
+            settings_mod.save(self.state.settings)
+        except OSError:
+            # Established policy for optional facilities: a settings file
+            # that cannot be written must not fail an upload that succeeded.
+            logger.exception("could not persist the destination channel")
+        self._ui(self._update_destination)
 
     def _manual_retry(self) -> None:
         state = self.retry_state

@@ -20,6 +20,13 @@ DEFAULTS = {
     "recording_dir": None,
     "discord_webhook": "",
     "gamelogs_dir": None,
+    # The YouTube channel the last successful upload actually landed on,
+    # learned from the videos.insert response rather than looked up: the
+    # app holds only the youtube.upload scope, and channels.list needs a
+    # second one. Displayed so the user can see where uploads go, and
+    # compared so a changed destination can be called out.
+    "channel_id": "",
+    "channel_title": "",
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -50,6 +57,12 @@ def load(path: Path | None = None) -> dict:
         data["discord_webhook"] = ""
     if data["gamelogs_dir"] is not None and not isinstance(data["gamelogs_dir"], str):
         data["gamelogs_dir"] = None
+    # Both reach a Label, so a non-string from a hand-edited file would be
+    # rendered as its repr rather than failing loudly. Coerced to "" for the
+    # same reason discord_webhook is.
+    for key in ("channel_id", "channel_title"):
+        if not isinstance(data[key], str):
+            data[key] = ""
     return data
 
 

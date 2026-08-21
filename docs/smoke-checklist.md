@@ -46,6 +46,26 @@ Run on Windows against a real install before each release.
 
 ## Look and feel
 
+### Typography
+
+- [ ] **The three type steps are visibly distinct.** Compare, in one glance:
+      the "Upload" panel heading and the Settings group titles (largest),
+      the filenames and field text (body), and the column headers, selection
+      summary, destination line and hint labels (smallest). Everything in
+      the app previously rendered at one size, with only bold separating
+      roles.
+- [ ] **Column headers sit below the data, not above it.** In the list, the
+      header row must read as quieter than the filenames beneath it. If a
+      header competes with its own column's content, the scale is inverted.
+- [ ] **The scale survives a live theme switch.** Flip the Windows app mode
+      with both windows open. Headings must stay larger and muted text
+      smaller; ttk stores fonts per theme, so a missed re-assert collapses
+      everything back to one size.
+- [ ] **The scale survives DPI changes.** Repeat at 100%, 150% and 200%. The
+      steps are derived from sv-ttk's rescaled font, so they must stay
+      proportional rather than freezing at 96 DPI, and no heading may clip
+      its row or its group title.
+
 ### Layout
 
 - [ ] **The upload panel is intact at 100%, 150% and 200%.** Set
@@ -388,7 +408,27 @@ Run on Windows against a real install before each release.
       appearing, and must never stay stuck on "Checking…". Flip the OS
       theme while it still reads "Checking…" and confirm the grey dot
       re-themes with everything else.
-- [ ] Connect Google Account opens a browser and reports "Connected"
+- [ ] Sign in with Google opens a browser and reports "Connected"
+- [ ] **The account button's label tracks the account state.** Not
+      connected: it reads **Sign in with Google** and is clickable. While
+      the lookup runs: **Checking…**, greyed. During the browser flow:
+      **Waiting for browser…**, greyed, so a second press cannot start a
+      second OAuth flow over the first. Once connected: **Switch account**.
+      The old build showed the constant "Connect Google Account", including
+      underneath the word "Connected", which said nothing about what
+      pressing it would do.
+- [ ] **The Discord webhook is masked by default.** Open Settings with a
+      webhook already saved. Expected: the field shows bullets, not the
+      URL. Tick **Show** and confirm the real value appears; close and
+      reopen the dialog and confirm it is masked again. The webhook is a
+      credential — anyone holding it can post to the channel.
+- [ ] **Pasting into the masked webhook field still works.** Copy a webhook
+      URL, paste into the masked field, confirm the line beneath resolves to
+      `discord.com/api/webhooks/{id}…` (the id, never the token).
+- [ ] **An invalid webhook says what is wrong.** Type `http://discord.com/api/webhooks/1/2`
+      (http, not https). Expected: the line beneath reads "Webhook URL must
+      use https.", not "not configured". Clear the field entirely and
+      confirm it returns to "not configured".
 - [ ] **Click Connect Google Account while the account state is still
       resolving.** On a cold app start, open Settings and click Connect
       immediately, while the label still reads "Checking…". Expected: the
@@ -425,6 +465,26 @@ Run on Windows against a real install before each release.
 These cover the duration cache and the background probe. Do them against a
 folder with a realistic number of recordings (30+); the whole point is
 behavior that only shows up at size.
+
+- [ ] **Hovering an unreadable Length explains it.** Find a row showing `?`
+      in the Length column and rest the pointer on that cell. Expected: a
+      tooltip appears after a short delay saying ffprobe could not open the
+      file and combat-log upload is unavailable for it. Hover a row showing
+      `…` and confirm it reads "Measuring length…" instead — the two glyphs
+      mean opposite things and both were previously unexplained.
+- [ ] **Hovering the ↗ link glyph explains both gestures.** Rest the pointer
+      on a filled Link cell. Expected: a tooltip naming double-click to open
+      and right-click to copy. Confirm no tooltip appears over an empty Link
+      cell, over a filename, over the column headers, or over the empty
+      space below the last row.
+- [ ] **Tooltips follow the theme.** With a tooltip showing, confirm it uses
+      the app's colours in both Light and Dark rather than a Tk-default
+      yellow, and that it disappears on click and when the pointer leaves
+      the list.
+- [ ] **Hovering the greyed Retry button explains why it is greyed.**
+      Expected: a tooltip saying it is enabled after a failure and resumes
+      rather than restarts. Disabled is its normal state, so without this it
+      reads as broken.
 
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
@@ -570,6 +630,32 @@ behavior that only shows up at size.
       button — Upload Selected is the primary action.
 
 ## Upload
+- [ ] **Upload Selected confirms before publishing anything.** Select two
+      recordings and press it. Expected: a dialog naming the destination
+      channel, the privacy setting, the exact title(s) that will be sent
+      (including the `(1/2)` … `(2/2)` numbering), and the total size and
+      duration. Choose No and confirm nothing uploads. This is the app's
+      only irreversible action, and deleting local files — which are
+      recoverable — already confirmed.
+- [ ] **The confirm is honest before the first upload.** With no upload ever
+      completed, confirm the Channel line reads "not known yet (learned from
+      this upload)" rather than being blank. The app holds only the
+      `youtube.upload` scope, so it cannot look the channel up.
+- [ ] **The destination line fills in after the first successful upload.**
+      Complete one upload. Expected: the muted line above Upload Selected
+      changes from "Channel confirmed after the first upload · unlisted" to
+      "Uploads go to &lt;your channel&gt; · unlisted", and still says so after
+      restarting the app (it is persisted to settings.json).
+- [ ] **A batch's progress text names which file it is measuring.** Upload
+      three recordings. Expected: "Uploading file 2 of 3… 41.2%", with the
+      bar tracking the whole batch. The previous wording ("Uploading 2/3 —
+      41.2%") sat beside a bar at a different value and read as a
+      contradiction. A single-file upload reads "Uploading… 41.2%" with no
+      file count.
+- [ ] **The Title label warns about batch numbering.** Select one recording:
+      the label reads "Title". Select ten: "Title (applies to all 10,
+      numbered 1-10)". Tick **Stitch selected videos**: "Title (one stitched
+      video)". Untick and confirm it reverts.
 - [ ] **First upload triggers Google sign-in automatically, without
       Settings.** Delete `%LOCALAPPDATA%\OBSYouTubeUploader\token.json`
       first, so no token is stored. Select a recording and click **Upload
@@ -579,7 +665,26 @@ behavior that only shows up at size.
       separate from the Settings → Connect Google Account button, and is
       likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
-- [ ] Single upload completes and the link column fills in with ↗
+- [ ] **The finished upload's link stays put.** Complete one upload and
+      leave the window open for a minute. Expected: the row keeps its ↗ and
+      its tint, and the **Open video** / **Copy link** pair stays in the
+      upload panel. This is the regression to watch: `poll()` fires a
+      deferred `refresh()` the moment an upload finishes, and `refresh()`
+      used to clear `self.links` — so the link appeared and then vanished a
+      moment later. Trigger an extra rebuild by recording something new,
+      and confirm the link still survives.
+- [ ] **Open video opens the uploaded video**, and **Copy link** puts the
+      same URL on the clipboard with "Link copied to clipboard" in the
+      status line.
+- [ ] **The pair is hidden before anything has uploaded.** On a fresh start
+      with no uploads this session, confirm no Open/Copy buttons are shown
+      rather than two dead ones.
+- [ ] **The pair points at the newest upload.** Upload two recordings
+      separately and confirm Open video opens the second.
+- [ ] **Deleting the recording behind the link removes the pair.** Upload a
+      recording, then Delete Selected on that same row. Expected: the
+      buttons disappear rather than offering to open a row that is gone.
+- [ ] **Single upload completes and the link column fills in with ↗**
 - [ ] **Copy link via the row's right-click context menu puts a working URL
       on the clipboard.** Right-click a row with a completed upload, choose
       "Copy link", paste elsewhere to confirm. Confirm "Copy link" is greyed

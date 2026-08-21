@@ -46,6 +46,10 @@ def _fake_window():
         progress=widget,
         status=widget,
         _status_kind="FG",
+        # _upload_one hands this to uploader.upload as on_response, so the
+        # double has to carry it even though these tests are about the media
+        # stream rather than about the destination channel.
+        _remember_channel=lambda response: None,
     )
 
 
