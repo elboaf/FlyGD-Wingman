@@ -712,6 +712,13 @@ class Api:
             "destination": copy_mod.format_destination(
                 channel_title, self._state.settings.get("privacy", "")),
         })
+        # The Settings account line names the channel, and this is the
+        # moment the channel becomes known. Without this it would read a
+        # bare "Connected" for the rest of the session that learned it, and
+        # only come good on the next launch. Safe to assert "connected"
+        # here: we are on the success path of an upload that just
+        # authenticated.
+        self._push_auth("connected")
 
     def retry(self) -> None:
         state = self._retry_state
@@ -1140,8 +1147,13 @@ class Api:
         timer.start()
 
     def _push_auth(self, state: str, message: str | None = None) -> None:
+        # Read live from settings rather than snapshotted: the channel is
+        # learned from the first upload response, so a title captured at
+        # construction would be empty for the whole of the session that
+        # actually learned it.
         if message is None:
-            message = copy_mod.auth_state(state)[0]
+            message = copy_mod.account_line(
+                state, self._state.settings.get("channel_title", "") or "")
         self._push("onAuthState", {"state": state, "message": message})
 
     def _auth_busy(self) -> bool:

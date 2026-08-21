@@ -250,6 +250,22 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       theme while it still reads "Checking…" and confirm the grey dot
       re-themes with everything else.
 - [ ] Sign in with Google opens a browser and reports "Connected"
+- [ ] **The account line names the channel once one is known.** With at
+      least one completed upload, Settings must read **Connected as
+      &lt;your channel&gt;**, not a bare "Connected" — the whole point is
+      being able to tell WHICH account is signed in, since the app can
+      otherwise upload to the wrong channel without ever saying so.
+      Note it names the YouTube CHANNEL, not the Google account email:
+      the app holds `youtube.upload` alone and cannot call channels.list,
+      so the name is learned from an upload response.
+- [ ] **Before any upload it correctly stays a bare "Connected".** Sign in
+      on a profile that has never completed an upload (delete
+      `channel_title` from settings.json to simulate). Expected: plain
+      "Connected" with no trailing "as" and no empty gap.
+- [ ] **The name appears in the session that learns it, not the next one.**
+      With `channel_title` absent, sign in and complete one upload with
+      Settings closed, then open Settings WITHOUT restarting. Expected:
+      it already reads "Connected as &lt;channel&gt;".
 - [ ] **The account button's label tracks the account state.** Not
       connected: it reads **Sign in with Google** and is clickable. While
       the lookup runs: **Checking…**, greyed. During the browser flow:

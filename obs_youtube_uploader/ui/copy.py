@@ -230,3 +230,26 @@ def auth_state(state: str) -> tuple[str, str, bool]:
     an optimistic label on a working button beats a dead one.
     """
     return AUTH_STATES.get(state, _AUTH_DEFAULT)
+
+
+def account_line(state: str, channel_title: str = "") -> str:
+    """The Settings account message, naming the channel when one is known.
+
+    "Connected" alone left the user unable to tell WHICH account they were
+    signed in as, which matters here precisely because the app can upload
+    to the wrong channel without ever saying so.
+
+    What this names is the YouTube CHANNEL, not the Google account email.
+    The app holds the youtube.upload scope alone, which cannot call
+    channels.list, so the title is learned from an insert response
+    (uploader.channel_of) -- meaning it is empty until the first successful
+    upload and the line correctly stays a bare "Connected" until then.
+    Showing the email instead would need an added scope and re-consent.
+
+    Only the connected state is decorated: "Not connected as Tommy" is
+    nonsense, and "Signing out… as Tommy" is noise.
+    """
+    message = auth_state(state)[0]
+    if state == "connected" and channel_title:
+        return f"{message} as {channel_title}"
+    return message

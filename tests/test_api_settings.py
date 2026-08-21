@@ -52,6 +52,32 @@ def test_the_page_can_read_the_whole_label_table_in_one_call(tmp_path):
     assert set(table) == {"disconnected", "connecting", "connected", "revoking"}
 
 
+# --- account_line ----------------------------------------------------------
+
+def test_the_account_line_names_the_channel_once_it_is_known():
+    """"Connected" alone did not say WHICH account, which matters here
+    because the app can upload to the wrong channel without saying so."""
+    assert copy_mod.account_line("connected", "Tommy") == "Connected as Tommy"
+
+
+def test_the_account_line_stays_bare_before_the_first_upload():
+    """The channel is learned from an insert response, not looked up: the
+    app holds youtube.upload alone, which cannot call channels.list. So an
+    empty title is the normal pre-upload state, not a failure."""
+    assert copy_mod.account_line("connected", "") == "Connected"
+
+
+@pytest.mark.parametrize("state", ["disconnected", "connecting", "revoking"])
+def test_only_the_connected_state_is_decorated(state):
+    """"Not connected as Tommy" is nonsense and "Signing out… as Tommy" is
+    noise -- a stale title must not leak into the other states."""
+    assert copy_mod.account_line(state, "Tommy") == copy_mod.auth_state(state)[0]
+
+
+def test_the_account_line_falls_back_like_auth_state_does():
+    assert copy_mod.account_line("nonsense", "Tommy") == "Not connected"
+
+
 
 HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
 

@@ -155,6 +155,13 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     assert saved["channel_title"] == "Zoolanders"
     assert api._state.settings["channel_id"] == "UC1"
 
+    # Learning the channel is the moment the Settings account line can stop
+    # saying a bare "Connected", so it is refreshed here rather than at the
+    # next launch -- otherwise the very session that learned the name shows
+    # the least informative version of it.
+    state, = fakes.payloads(sent, "onAuthState")
+    assert state == {"state": "connected", "message": "Connected as Zoolanders"}
+
 
 def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
     api, _window, _rows = api_with(tmp_path)
