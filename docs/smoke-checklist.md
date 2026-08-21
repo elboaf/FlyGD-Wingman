@@ -55,10 +55,10 @@ Run on Windows against a real install before each release.
       running past the panel edge.
 - [ ] **Nothing is clipped at the minimum window size.** Drag the window as
       small as it goes at 150%. Expected: the Description box shrinks first
-      and the Retry/Upload Selected row is still fully visible; list columns
-      are cramped but present (accepted degradation — see
-      ui-layout-design.md, "Narrow windows"). A missing Upload button is a
-      defect; a narrow filename column is not.
+      and the Retry/Upload Selected row is still fully visible; every list
+      column is present, with Filename down to its 120px minimum (accepted
+      degradation — see ui-layout-design.md, "Narrow windows"). A missing
+      Upload button is a defect; a narrow filename column is not.
 - [ ] **The window has visible margins on all four edges,** and the
       Description box reads as a bordered field in both light and dark mode
       rather than blending into the panel background. Check the border at
@@ -281,18 +281,18 @@ Run on Windows against a real install before each release.
       **Length**, and that clicking it still sorts by duration (a short
       recording and a long one swap places) — the header text changed but
       the sort key deliberately did not.
-- [ ] **Only the Filename column grows, once there is room for them all.**
-      Widen the window from its minimum to full screen and watch the
-      columns. Below roughly 1000px the window is too narrow for every
-      column's preferred width, so Date, Size and Length grow with it as
-      well; from there up they settle at their preferred widths and stay
-      put, and Filename alone takes the rest. Link and the checkbox column
-      never move. A Size or Length column still ballooning at full screen
-      means `_fit_columns` is not switching regimes.
+- [ ] **Only the Filename column grows.** Widen the window from its
+      minimum to full screen and watch the columns. Expected: Date, Size,
+      Length, Link and the checkbox column hold exactly the same width the
+      whole way, and Filename alone absorbs every pixel of the extra room.
+      Drag back down and they should return to where they started. A Size
+      or Length column that grows with the window means one of them
+      regained `stretch=True` in COLUMN_SPEC.
 - [ ] **LOAD-BEARING: the list at the minimum window width.** Drag the
-      window to its floor (800px at 100%). Expected: every column is still
+      window to its floor (860px at 100%). Expected: every column is still
       present and readable, Filename truncates rather than pushing the
-      others off, and NO horizontal scrollbar appears. Cramped is the
+      others off, and NO horizontal scrollbar appears. A short Filename
+      column is the
       accepted outcome here — a column that vanishes, overlaps, or
       collapses to nothing is not. The preferred widths (620px total) do
       not fit in the pane at that size; the per-column minimums (410px

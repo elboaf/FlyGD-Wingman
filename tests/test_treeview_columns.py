@@ -65,25 +65,32 @@ def test_every_heading_is_anchored_like_its_column(root):
         assert str(tree.heading(key, "anchor")) == anchor, key
 
 
-def test_every_compressible_column_stretches():
-    """A minwidth on a non-stretching column is unreachable.
+def test_filename_is_the_only_stretching_column():
+    """Stretch is symmetric, so it is a wide-window decision too.
 
-    ttk.Treeview distributes a width deficit across its STRETCHING columns
-    only, so `date`, `size` and `duration` must stretch for their minimums
-    to mean anything at the window floor. `link` is exempt: it is a fixed
-    glyph cell already sitting at its minimum, so it neither grows nor
-    needs to shrink.
+    ttk.Treeview distributes both a deficit AND a surplus across its
+    STRETCHING columns, in equal parts. Making date/size/duration stretch
+    so their minimums became reachable at the floor therefore also handed
+    them an equal share of every wide window (Size reached 344px at 1920),
+    repealing "a wider window widens the filename column". That was tried
+    and reverted in favour of a 60px higher window floor, which reaches the
+    same place with no <Configure> handler and no regime switching.
     """
     stretching = [c[0] for c in app.COLUMN_SPEC if c[5]]
-    assert stretching == ["filename", "date", "size", "duration"]
+    assert stretching == ["filename"]
 
 
-def test_minimums_fit_the_pane_at_the_window_floor():
-    # The preferred widths do not fit at the minimum window width; the
-    # minimums are what make that case survive. That the minimums really do
-    # fit is measured against a real window in
+def test_the_column_width_sums_are_what_the_floor_was_derived_from():
+    # Only `filename`'s minimum is reachable (see the stretch test above),
+    # so the real floor is the five fixed columns' PREFERRED widths plus
+    # filename's minimum: 360 + 120 = 480, plus a 10px tree inset = 490px
+    # of viewport, which an 860px window supplies. That the columns really
+    # do fit is measured against a real window in
     # test_app_layout.test_no_column_is_clipped_at_the_minimum_window_size;
-    # these two sums are the numbers that measurement was reasoned from.
+    # these two sums are the numbers that derivation started from.
+    fixed = sum(c[3] for c in app.COLUMN_SPEC if not c[5])
+    filename_min = next(c[4] for c in app.COLUMN_SPEC if c[0] == "filename")
+    assert fixed + filename_min == 480
     assert sum(c[3] for c in app.COLUMN_SPEC) == 620
     assert sum(c[4] for c in app.COLUMN_SPEC) == 410
 

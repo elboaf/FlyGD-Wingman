@@ -110,10 +110,10 @@ def test_no_column_is_clipped_at_the_minimum_window_size(make_window):
     """Every column present and inside the viewport at the window floor.
 
     Measured, not reasoned about: this is the check that caught the design's
-    false arithmetic. With the pre-fix geometry (750px floor, only
-    `filename` stretching) the tree viewport was 381px against 480px of
-    columns — `Length` was 76% clipped and `Link` began 58px past the right
-    edge.
+    false arithmetic. With the pre-fix 750px floor the tree viewport was
+    381px against the 490px the columns need — `Length` was 76% clipped and
+    `Link` began 58px past the right edge. The floor is now 860px, giving
+    491px.
     """
     window = make_window()
     root = window.root
@@ -136,11 +136,12 @@ def test_no_column_is_clipped_at_the_minimum_window_size(make_window):
 
 
 def test_only_the_filename_column_grows_on_a_wide_window(make_window):
-    """The surplus half of the stretch story.
+    """`filename` is the only stretching column, so it takes the whole surplus.
 
-    date/size/duration stretch so a DEFICIT reaches their minimums, but
-    stretch is symmetric — without _fit_columns they took an equal share of
-    the surplus too, and Size ended up 344px wide at 1920.
+    Guards the rejected alternative: making date/size/duration stretch so a
+    deficit could reach their minimums also handed them an equal share of
+    every SURPLUS (Size reached 344px at 1920), which is what this asserts
+    cannot happen.
     """
     window = make_window()
     root = window.root
@@ -157,22 +158,38 @@ def test_only_the_filename_column_grows_on_a_wide_window(make_window):
     assert tree.column("filename", "width") > int(260 * window._dpi_scale)
 
 
-def test_columns_stretch_again_when_the_window_narrows(make_window):
-    # Both directions: the regime must come back, not latch on the first
-    # wide layout.
+def test_no_column_is_clipped_after_widening_and_narrowing_back(make_window):
+    """Both drag directions, since a layout can be path-dependent.
+
+    Replaces a test of the removed _fit_columns regime flag. That flag is
+    gone, but the property it was protecting is not: ttk redistributes from
+    whatever the current widths happen to be, so a return trip is a
+    different code path from the outbound one and worth its own check.
+    """
     window = make_window()
     root = window.root
     root.update()
+    min_w, min_h = root.wm_minsize()
+
     root.geometry("1350x650")
     root.update()
-    root.update()
-    assert window._columns_cramped is False
-    min_w, min_h = root.wm_minsize()
     root.geometry(f"{int(min_w)}x{int(min_h)}")
     root.update()
-    root.update()
-    assert window._columns_cramped is True
-    assert window.tree.column("date", "width") == int(90 * window._dpi_scale)
+
+    tree = window.tree
+    viewport = tree.winfo_width()
+    iid = tree.get_children("")[0]
+    for key, *_rest in app.COLUMN_SPEC:
+        box = tree.bbox(iid, key)
+        assert box, f"{key} has no bbox after the return trip"
+        left, _top, width, _height = box
+        assert left >= 0 and left + width <= viewport, (
+            f"{key} is clipped after widening and narrowing back")
+    # And the fixed columns came back to exactly where they started.
+    for key, _t, _s, preferred, _m, stretch, _a in app.COLUMN_SPEC:
+        if stretch:
+            continue
+        assert tree.column(key, "width") == int(preferred * window._dpi_scale), key
 
 
 def test_ffmpeg_warning_sits_under_stitch_and_wraps(make_window):

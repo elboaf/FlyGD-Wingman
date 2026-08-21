@@ -148,45 +148,49 @@ def spacing(widget: tk.Misc) -> Spacing:
 # Treeview column geometry in pixels at 100%; every value is multiplied by
 # dpi_scale() when the columns are configured.
 #
-# The MINIMUMS are the load-bearing half, and only the columns marked
-# stretch can ever reach them: ttk.Treeview distributes a width deficit
-# across its STRETCHING columns and leaves the rest at their configured
-# width. That is why date/size/duration stretch even though nothing about
-# them wants extra room on a wide window -- with stretch=False their
-# minwidths were unreachable and the list's real floor was the sum of the
-# preferred widths.
+# `filename` is the ONLY stretching column, so it is the only one that
+# grows on a wider window and the only one that can be squeezed on a
+# narrower one: ttk.Treeview distributes both a width surplus and a width
+# deficit across its STRETCHING columns and leaves the rest at their
+# configured width. A minimum on a non-stretching column is therefore
+# never exercised -- it is a floor those columns already sit on.
 #
-# The measured numbers, at 100% with a real window (tree viewport = window
-# width - margins - the 300px panel - the pane gap - the scrollbar, plus a
-# 5px inset inside the tree):
+# The consequence is that the list's real floor is the preferred widths of
+# the five fixed columns plus `filename`'s MINIMUM, and the window minimum
+# is set so that always fits. Measured at 100% against a real window (tree
+# viewport = window width - margins - the 300px panel - the pane gap - the
+# scrollbar, less a 10px inset inside the tree; the inset is a constant 10
+# at 96, 144 and 192 dpi -- it does not scale):
 #
-#   preferred widths sum to 620px
-#   minimums sum to 410px, so 415px of viewport is needed
-#   a 750px window gives a 381px viewport -- 410 does NOT fit
-#   an 800px window gives a 431px viewport -- 410 fits with room to spare
+#   fixed columns (#0 34 + date 120 + size 84 + length 76 + link 46) = 360px
+#   plus filename's 120px minimum                                    = 480px
+#   plus the 10px inset                                              = 490px
+#   a 750px window gives a 381px viewport -- nowhere near enough
+#   an 800px window gives a 431px viewport -- still not enough
+#   an 860px window gives a 491px viewport -- 490 fits
 #
-# So the window minimum IS raised, to 800x450 at 100% (see __init__). The
-# older claim that 410 fits at 750 was simply false arithmetic, and it hid
-# a Length column clipped to a quarter of its width and a Link column
-# entirely off-screen. No horizontal scrollbar is added: on a list whose
-# elastic column is the filename, one trades a rare annoyance for a
-# permanent one. A window dragged to its floor still shows cramped columns
-# -- every column present and readable, none clipped; that is accepted.
+# So the window minimum IS raised, to 860x450 at 100% (see __init__).
+# Making date/size/duration stretch so their minimums became reachable was
+# tried and rejected: stretch is symmetric in ttk, so those columns then
+# also took an equal share of a SURPLUS (a 1920px window handed Size 344px
+# to right-align "1.0 KB" in), and undoing that needed a <Configure>
+# handler switching regimes at a threshold width. 60px more minimum window
+# width buys the same result with no machinery: "a wider window widens the
+# filename column" is true by construction at every width.
 #
-# stretch is symmetric, so the three would also take an equal share of a
-# SURPLUS, which is not wanted -- a 1920px window handed Size 344px to
-# right-align "1.0 KB" in. UploaderWindow._fit_columns pins them back to
-# their preferred width once the tree is wide enough for all of them, so
-# above that width `filename` is again the only elastic column.
+# No horizontal scrollbar is added: on a list whose elastic column is the
+# filename, one trades a rare annoyance for a permanent one. A window
+# dragged to its floor still shows a short filename column -- every column
+# present and readable, none clipped; that is accepted.
 COLUMN_SPEC = (
     # column key, heading text, sort key, width, minwidth, stretch, anchor
     ("#0", "☑", "checked", 34, 34, False, tk.CENTER),
     ("filename", "Filename", "filename", 260, 120, True, tk.W),
-    ("date", "Date", "date", 120, 90, True, tk.W),
-    ("size", "Size", "size", 84, 64, True, tk.E),
+    ("date", "Date", "date", 120, 90, False, tk.W),
+    ("size", "Size", "size", 84, 64, False, tk.E),
     # Header text only. The KEY stays "duration" because _sort_by dispatches
     # on it, and self.infos exposes info.duration under that name.
-    ("duration", "Length", "duration", 76, 56, True, tk.E),
+    ("duration", "Length", "duration", 76, 56, False, tk.E),
     # NOT stretching: a fixed-width glyph cell that must not grow, and it is
     # already at its minimum, so it never needs to compress either.
     ("link", "Link", "link", 46, 46, False, tk.CENTER),
@@ -378,11 +382,11 @@ class UploaderWindow:
         # prevent. At 150% the raw floor is 1200x675, which overflows
         # narrow panels.
         #
-        # 800, not the historical 750: measured against a real window, a
+        # 860, not the historical 750: measured against a real window, a
         # 750px floor leaves the list viewport 381px wide, which cannot hold
-        # the 410px of column minimums (see COLUMN_SPEC) — Length was
-        # clipped and Link fell off the edge entirely. 800 gives 431px.
-        root.minsize(min(int(800 * scale), width), min(int(450 * scale), height))
+        # the 490px the columns need (see COLUMN_SPEC) — Length was clipped
+        # and Link fell off the edge entirely. 860 gives 491px.
+        root.minsize(min(int(860 * scale), width), min(int(450 * scale), height))
         root.protocol("WM_DELETE_WINDOW", self.hide)
         self._build()
         self.refresh()
@@ -443,8 +447,8 @@ class UploaderWindow:
         body.rowconfigure(0, weight=1)
         # Only the list column stretches. The panel is a fixed width (see
         # _build_upload_panel), so all the slack a wider window brings goes
-        # to the list — and _fit_columns keeps it going to the filename
-        # column specifically, the one thing that benefits from it.
+        # to the list — and `filename` being the tree's only stretching
+        # column keeps it going to the one place that benefits from it.
         body.columnconfigure(0, weight=1)
 
         self._build_list_pane(body)
@@ -502,15 +506,6 @@ class UploaderWindow:
         # stretch, heading text and their sort commands. Configuring any of
         # it here would silently revert that task.
         configure_tree_columns(self.tree, self._dpi_scale, self._sort_by)
-        # Preferred total plus the tree's own inset, in scaled pixels: the
-        # width above which _fit_columns hands the slack to the filename
-        # column instead of sharing it. Computed once; nothing here changes
-        # after the build.
-        self._preferred_columns_width = (
-            sum(int(c[3] * self._dpi_scale) for c in COLUMN_SPEC)
-            + int(round(10 * self._dpi_scale)))
-        self._columns_cramped: bool | None = None
-        self.tree.bind("<Configure>", self._fit_columns, add="+")
 
         scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -883,47 +878,6 @@ class UploaderWindow:
         var.set(not var.get())
         self.tree.item(iid, image=self._checkbox_image(var.get()))
         self._update_selection_summary()
-
-    def _fit_columns(self, _event=None) -> None:
-        """Switch the compressible columns between two regimes.
-
-        `date`, `size` and `duration` carry stretch=True in COLUMN_SPEC
-        because that is the ONLY way their minwidths are reachable: ttk
-        distributes a width deficit across stretching columns and leaves
-        the rest at their configured width, so with stretch=False their
-        minimums were decorative and the list clipped its last two columns
-        at the window floor.
-
-        Stretch is symmetric, though — a column that shares the deficit
-        also shares the surplus, in equal parts rather than in proportion.
-        Left alone, a 1920px window gave Size 344px of room to right-align
-        "1.0 KB" in, and the design's rule that a wider window widens the
-        FILENAME is what pays for it. So once the tree is wide enough for
-        every preferred width, those three are pinned back to their
-        preferred width with stretch off, leaving `filename` the only
-        elastic column; below that width they stretch again and compress
-        toward their minimums.
-
-        Cheap and idempotent: it recomputes nothing while the regime holds,
-        and the regime only changes at one width. Re-entrancy is not a
-        concern either — it changes column options, not the tree's own
-        geometry, so it cannot provoke the <Configure> that called it.
-        """
-        width = self.tree.winfo_width()
-        if width <= 1:
-            return  # not realised yet; the first real <Configure> will call back
-        cramped = width < self._preferred_columns_width
-        if cramped == self._columns_cramped:
-            return
-        self._columns_cramped = cramped
-        for key, _text, _sort, preferred, _min, stretch, _anchor in COLUMN_SPEC:
-            if key == "filename" or not stretch:
-                continue  # always elastic / never elastic
-            if cramped:
-                self.tree.column(key, stretch=True)
-            else:
-                self.tree.column(key, width=int(preferred * self._dpi_scale),
-                                 stretch=False)
 
     def _on_tree_click(self, event: tk.Event) -> None:
         if self.tree.identify_region(event.x, event.y) != "tree":
