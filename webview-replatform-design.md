@@ -129,7 +129,7 @@ Replaced:
 | `app.py` (1,728 lines) | `ui/api.py` — the `js_api` bridge class; `ui/window.py` — window construction and lifecycle |
 | `settingsui.py` (493) | Folded into the same bridge; Settings becomes a route in the page, not a second Tk toplevel |
 | `theme.py` (277) | Deleted. CSS custom properties replace the token table; light-mode detection is dropped |
-| `__main__.py` (313) | Retained in shape: tray on a daemon thread, `webview.start()` on the main thread |
+| `__main__.py` (313) | Tray and startup ordering survive, but the Tk event loop does not — `root.after()` currently drives the watcher poll, tray dispatch, and first-run folder selection. See **Process lifecycle and scheduling** |
 | — | `web/` — `index.html`, `settings.html`, `style.css`, `app.js`. No build step, no bundler, no Node in the release pipeline |
 
 The Pillow-generated checkbox images, `dpi_scale`, `spacing`, `row_height`,
@@ -137,38 +137,116 @@ The Pillow-generated checkbox images, `dpi_scale`, `spacing`, `row_height`,
 `_apply_zebra_tags`, `_row_tags`, and `_apply_desc_colors` are all deleted rather
 than ported. CSS covers every one of them.
 
+### Process lifecycle and scheduling
+
+Tk's event loop is doing more work than "UI" today, and pywebview has no
+equivalent of `root.after()`. Everything below must be explicitly rehomed; it is
+not carried by `webview.start()`.
+
+| Responsibility | Today | Becomes |
+|---|---|---|
+| Watcher poll every `POLL_SECONDS` | `root.after(int(POLL_SECONDS*1000), poll)`, self-rescheduling in a `finally` (`__main__.py:302`, `:307`) | A dedicated daemon `threading.Timer` loop owned by a `Scheduler` object, preserving the always-reschedule-on-error guarantee. The poll body runs off the UI thread and reaches the page only through `_push()` |
+| Deferred refresh during upload | `refresh_deferred` flag read on the next `after()` tick | Same flag, read on the next scheduler tick. Behaviour unchanged |
+| Tray open / quit | `root.after(0, window.show)` / `root.after(0, root.quit)` (`__main__.py:229`) | Direct `window.show()` / `window.destroy()` from the pystray thread. Spike Q6 proved cross-thread `destroy()` works; `show()` is the one path still unverified (see Risks) |
+| First-run recording-folder prompt | `resolve_recording_dir()` via `filedialog.askdirectory`, requiring a withdrawn Tk root to exist *before* any window (`__main__.py:135`, `:195`) | **Needs a real answer, not a port.** pywebview's `create_file_dialog` is a method on a window, so no dialog exists before `webview.start()`. Resolution: create the window first, and run first-run resolution as the page's own first screen — a dedicated "choose your recording folder" route that calls `pick_folder`. This changes first-run UX from a bare OS dialog to an in-app screen, which is an improvement, but it is a behaviour change and is called out as such |
+| Shutdown | `root.mainloop()` returns, then `icon.stop()` | `webview.start()` returns, then `icon.stop()`. Same shape, verified by spike Q5/Q6 |
+
+Startup ordering therefore becomes: load settings → build tray → start tray
+thread → create window → `webview.start()` → page requests state → first-run
+folder resolution if needed → watcher scheduler starts.
+
 ### The bridge
 
-One rule, inherited from the existing `_ui()` chokepoint: **worker threads never
-touch the UI directly.** Today that means `root.after(0, ...)`; it becomes a
-single `_push()` that calls `evaluate_js`. Workers themselves do not change.
+One rule carries over from the existing `_ui()` chokepoint: **worker threads never
+touch the UI directly.** What does *not* carry over is the mechanism.
+
+`_ui()` marshals **widget method calls**, not semantic events — `self._ui(self.progress.config,
+{"mode": "indeterminate"})`, `self._ui(self.progress.start, 12)`,
+`self._ui(self.retry_btn.state, ["disabled"])`, `self._ui(messagebox.showerror, ...)`
+(`app.py:1609`–`:1661`). Those call sites know the widget API, so **the workers do
+change**: each becomes a semantic `_push()` of one of the messages below. The
+surface is bounded — roughly five call sites across `_upload_worker`,
+`_combat_log_worker`, and `_retry_worker` — but it is real work and was previously
+understated in this document.
+
+`settingsui.py`'s OAuth polling marshals through `win.after()` rather than `_ui()`
+(`settingsui.py:396`) and is rewritten the same way: a worker plus `onStatus` and
+`onAuthState` pushes, with no polling loop at all.
 
 Python → page (fire-and-forget):
 
 | Message | Payload | Replaces |
 |---|---|---|
-| `onRows` | full row list: path, name, date, size, duration, link | `refresh()` |
-| `onDuration` | one path + duration + definitive flag | `_apply_duration` (streams in from the ffprobe queue) |
-| `onProgress` | pct, text, severity kind | `on_progress` / `on_retry` |
+| `onRows` | full row list: **row id**, name, date, size, duration, link, **preselected flag** | `refresh()` / `refresh(preselect=...)` |
+| `onDuration` | row id + duration + definitive flag | `_apply_duration` (streams in from the ffprobe queue) |
+| `onProgress` | mode (`determinate`\|`indeterminate`), pct, text, severity kind | `on_progress`, `on_retry`, and the `progress.config(mode=…)` / `progress.start` / `progress.stop` transitions around stitching |
 | `onStatus` | text, severity kind | the status label |
-| `onLink` | path + video id | `_set_link` |
-| `onSettings` | current settings dict | settings load/save round-trip |
+| `onRetryAvailable` | bool | `retry_btn.state(["disabled"])` / `(["!disabled"])` |
+| `onLink` | row id + video id | `_set_link` |
+| `onSettings` | current settings dict, plus detected-folder suggestions | settings load/save round-trip |
+| `onAuthState` | connected bool + message | `_refresh_auth_label` |
+| `onDialog` | kind (`info`\|`error`\|`warning`\|`confirm`), title, body, optional request id | `messagebox.showinfo` / `showerror` / `showwarning` / `askyesno` |
+
+`onDialog` is the one genuinely new concept. Modal dialogs are currently native Tk
+message boxes called from workers; they become in-page modals. `confirm` carries a
+request id and the page answers with `dialog_response(id, ok)` — the only
+request/response pair in an otherwise fire-and-forget protocol. **The delete
+confirmation (`app.py:1393`) and the no-selection warning (`app.py:1390`) are
+required behaviour and must survive**; they were missing from an earlier draft of
+this protocol.
 
 Page → Python (invoked via `pywebview.api.*`):
 
-`list_rows`, `delete_selected(paths)`, `start_upload(title, description, privacy,
-category, stitch, paths)`, `upload_combat_logs(paths)`, `retry()`, `open_path(p)`,
-`copy_path(p)`, `pick_folder(which)`, `save_settings(dict)`, `connect_google()`,
-`minimize()`, `close()`.
+`list_rows`, `delete_selected(ids)`, `start_upload(title, description, privacy,
+category, stitch, ids)`, `upload_combat_logs(ids)`, `retry()`, `open_path(id)`,
+`copy_path(id)`, `pick_folder(which)`, `detect_folder(which)`, `save_settings(dict)`,
+`connect_google()`, `dialog_response(id, ok)`, `minimize()`, `close()`.
+
+`detect_folder(which)` is separate from `pick_folder` and exists for both folders:
+Settings has distinct Detect actions for the recording directory (via OBS's own
+config) and the EVE gamelogs directory (`settingsui.py:228`, `:240`, `:263`, `:293`).
+
+`save_settings` **must rebind the live watcher** when the recording directory
+changes, mirroring `on_settings_saved` today (`__main__.py:215`). Persisting the
+setting alone leaves the watcher pointed at the old folder.
+
+#### Row identity
+
+Rows cross the boundary as **opaque ids**, not filesystem paths, and every method
+above resolves an id against the API's current server-side row snapshot. This is
+design hygiene rather than a security boundary — the page is local, bundled in the
+installer, loads no remote content, and is exactly as trusted as the Python — but
+it preserves a property the Tk version gets for free: today `_delete_selected`
+operates on `self._chosen()`, which can only contain objects from the current
+discovered list (`app.py:1387`, `:1398`). Ids keep deletion, opening, and upload
+targeting bounded to rows the backend actually knows about, and make a stale page
+after a refresh fail cleanly instead of acting on a path that has since changed
+meaning.
 
 Deliberately **not** crossing the boundary, because they become pure client state:
-row selection, sort column and direction, zebra striping, row focus, column widths,
-checkbox rendering, and theme application. This is a large part of why `app.py`
-shrinks so much.
+row selection *state* (though the initial preselect comes from `onRows`), sort
+column and direction, zebra striping, column widths, checkbox rendering, and theme
+application.
 
 Severity `kind` values stay `FG` / `SUCCESS` / `WARNING` / `ERROR`, matching
 today's `_status_kind`, so the semantics carry over even though the colours move
 to CSS.
+
+### Interaction behaviour to preserve
+
+These are deliberate behaviours in the current UI, not accidents, and each must be
+reimplemented rather than quietly dropped:
+
+- **Keyboard selection.** Arrow keys move focus; Space toggles the focused row's
+  checkbox; focus is established on first entry into the list (`app.py:917`, `:934`).
+- **Context menu** on a row, offering copy-path and open (`app.py:956`).
+- **Double-click opens the recording without changing the checkbox selection**
+  (`app.py:988`) — clicking a row's checkbox and double-clicking its name are
+  distinct gestures and must stay distinct.
+- **Row focus** is a real concept, not just styling; it is what Space acts on.
+
+All four appear in the smoke checklist (see Testing), since no automated test will
+cover them under the agreed approach.
 
 ### Main window
 
@@ -219,19 +297,35 @@ existing installation must upgrade in place with its settings and sign-in intact
 No settings migration is required — no setting changes meaning. The dropped light
 theme was never persisted; it was detected from the registry at runtime.
 
+One behaviour change is deliberate and called out rather than buried: **first-run
+recording-folder selection moves from a pre-window OS dialog to an in-app screen**
+(see Process lifecycle and scheduling, and Risks item 6). Existing installations
+already have the setting persisted and never see it.
+
 ## Packaging
 
 - `uploader.spec`: drop the sv-ttk `collect_data_files` and the `PIL._tkinter_finder`
   hidden import; add `webview.platforms.edgechromium` and the `web/` directory as
   `datas`. Keep one-folder, keep the ffmpeg binaries, keep `pystray._win32`.
-- `build.yml` / `release.yml`: replace the "Verify sv-ttk theme data is bundled"
-  assertion with the equivalent for `web/`. The reasoning in that step's comment
-  still applies verbatim — PyInstaller exits 0 when a `datas` entry resolves to
-  nothing, and the spike confirmed that trap is still live.
-- `installer.iss`: **add the WebView2 Evergreen bootstrapper**, conditional on the
-  runtime being absent. This is the single genuinely new piece of installer work
-  and the largest residual risk in the whole plan.
-- Pillow stays a dependency (the tray icon uses it); `sv-ttk` is removed.
+- `pyproject.toml`: remove `sv-ttk` (`pyproject.toml:11`); add `pywebview`
+  **pinned** to a known-good 6.x — the spike ran on 6.2.1, and 6.x has live API
+  churn (`FOLDER_DIALOG` is already deprecated). Pillow stays; the tray icon needs it.
+- `build.yml`: the runtime-dependency import check imports `sv_ttk` explicitly
+  (`build.yml:66`) — swap it for `webview`. Replace the "Verify sv-ttk theme data
+  is bundled" step (`build.yml:119`) with the equivalent assertion for `web/`. The
+  reasoning in that step's comment still applies verbatim: PyInstaller exits 0 when
+  a `datas` entry resolves to nothing, and the spike confirmed that trap is live.
+- `release.yml`: **has no sv-ttk assertion to replace** — its import check simply
+  omits `sv_ttk` today (`release.yml:65`). Add `webview` to that check, and add a
+  `web/` bundle assertion mirroring `build.yml`'s, so the release path is not
+  weaker than the build path.
+- `installer.iss`: **add the WebView2 Evergreen bootstrapper.** The installer
+  currently packages only the application tree (`installer.iss:41`), so this needs
+  a full definition, not a mention: how the bootstrapper is acquired (bundled at
+  build time versus downloaded at install time), how its integrity is verified, how
+  an existing runtime is detected, how it is invoked silently, and what happens
+  when it fails or the machine is offline. This is the single genuinely new piece
+  of installer work and the largest residual risk in the whole plan.
 
 Expected bundle size is roughly flat: the spike's webview stack measured 26 MB
 total against a current bundle dominated by ffmpeg.
@@ -257,7 +351,11 @@ Agreed approach: **bridge-level tests plus an extended manual smoke checklist.**
 - `docs/smoke-checklist.md`: extend to cover what automated tests no longer reach —
   tray hide/show/quit, the custom title bar drag, native folder dialogs, sort and
   selection behaviour, progress rendering during a real upload, and first-run on a
-  machine without the WebView2 runtime.
+  machine without the WebView2 runtime. Add explicitly, because they are deliberate
+  behaviours with no automated coverage under this approach: **arrow-key focus and
+  Space-to-toggle, the row context menu, double-click-to-open leaving the checkbox
+  selection unchanged, the delete confirmation dialog, and the indeterminate
+  progress bar during a stitch.**
 
 No Playwright. Real UI regression coverage was considered and rejected: the cost
 of a browser toolchain falls entirely on a solo maintainer, and the riskiest logic
@@ -282,6 +380,16 @@ is already covered by tests that survive the port untouched.
 5. **No incremental path.** The Tk and webview UIs cannot run side by side, so this
    lands as one change. Mitigation is ordering: bridge and page built and driven
    against real data before the Tk UI is removed.
+6. **First-run UX changes.** Today a bare OS folder dialog appears before any
+   window exists, parented to a withdrawn Tk root. Under pywebview no dialog can
+   exist before `webview.start()`, so first-run folder selection becomes an in-app
+   screen. Arguably better, but it is a deliberate behaviour change to an
+   already-shipped flow, not a like-for-like port.
+7. **The worker rewrite is larger than first assessed.** `_ui()` marshals widget
+   method calls rather than semantic events, so `_upload_worker`,
+   `_combat_log_worker`, `_retry_worker`, and `settingsui.py`'s OAuth polling all
+   need reworking to emit bridge messages. Bounded — roughly five call sites — but
+   it is not the no-op an earlier draft of this document claimed.
 
 ## Out of scope
 
