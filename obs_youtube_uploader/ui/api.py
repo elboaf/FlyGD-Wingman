@@ -1045,14 +1045,21 @@ class Api:
             self._alert("warning", "Invalid folder",
                         f"{folder} is not a folder.")
             return False
-        self._state.settings["recording_dir"] = str(folder)
-        self._state.recording_dir = folder
+        # Save from a COPY and adopt only on success, exactly as
+        # save_settings does. Mutating first and returning False on OSError
+        # would leave the app believing it has a recording folder it never
+        # persisted -- state and disk diverged, and the divergence survives
+        # until the next launch reads the file back.
+        cfg = dict(self._state.settings)
+        cfg["recording_dir"] = str(folder)
         try:
-            settings_mod.save(self._state.settings)
+            settings_mod.save(cfg)
         except OSError as exc:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
+        self._state.settings = settings_mod.load()
+        self._state.recording_dir = folder
         if self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
         self.list_rows()

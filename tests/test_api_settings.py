@@ -347,3 +347,26 @@ def test_first_run_refuses_a_folder_that_is_not_one(monkeypatch, tmp_path):
     assert saved == {}
     assert started == []
     assert api._alert.titles() == ["Invalid folder"]
+
+
+def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_path):
+    """State and disk must never diverge, the same guarantee save_settings
+    gives. Mutating before the write means a failed first-run save leaves
+    the app believing it has a recording folder it never persisted."""
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    started = []
+    api._on_recording_dir_ready = started.append
+    before = dict(api._state.settings)
+
+    def boom(cfg, path=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+
+    assert api.set_recording_dir(str(folder)) is False
+    assert api._state.settings == before, "in-memory settings were mutated"
+    assert api._state.recording_dir != folder
+    assert started == [], "the watcher was started despite a failed save"
+    assert api._alert.titles() == ["Could not save settings"]
