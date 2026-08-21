@@ -348,3 +348,86 @@ def test_save_credentials_restricts_permissions(tmp_path):
     if sys.platform != "win32":
         mode = stat.S_IMODE(os.stat(p).st_mode)
         assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+# The exact payload observed in the field: YouTube rejects a video that
+# exceeds the channel's daily upload allowance with status 400 (not 403)
+# and reason uploadLimitExceeded. Classifying it as PERMANENT told users
+# "retrying will not help" about a limit that resets within a day.
+_UPLOAD_LIMIT_BODY = (
+    b'{"error":{"errors":[{"message":"The user has exceeded the number of '
+    b'videos they may upload.","domain":"youtube.video",'
+    b'"reason":"uploadLimitExceeded"}],"code":400}}'
+)
+
+
+@pytest.mark.parametrize("status", [400, 403])
+def test_upload_limit_exceeded_is_its_own_outcome(status):
+    err = FakeHttpError(status, _UPLOAD_LIMIT_BODY)
+    assert uploader.classify(err) is uploader.Outcome.UPLOAD_LIMIT
+
+
+def test_upload_limit_message_is_about_the_channel_not_the_app():
+    """The QUOTA message blames the app's API project; this limit is the
+    user's own channel, and unlike the project quota it can be raised."""
+    text = uploader.message_for(uploader.Outcome.UPLOAD_LIMIT)
+    assert "channel" in text.lower()
+    assert "this app" not in text.lower()
+
+
+def test_upload_limit_is_not_reported_as_unfixable():
+    text = uploader.message_for(uploader.Outcome.UPLOAD_LIMIT)
+    assert "retrying will not help" not in text.lower()
+
+
+def test_upload_failure_is_logged_with_the_underlying_error(caplog):
+    """Without this, a PERMANENT/UPLOAD_LIMIT failure leaves no trace.
+
+    The field diagnosis of the uploadLimitExceeded bug was only possible
+    because a *separate* temp-file cleanup failure happened to log the
+    exception chain. That accident is now fixed, so the record has to be
+    made on purpose or the next unclassified failure is undiagnosable.
+    """
+    err = FakeHttpError(400, _UPLOAD_LIMIT_BODY)
+
+    class Request:
+        def next_chunk(self): raise err
+
+    with caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"):
+        with pytest.raises(uploader.UploadFailed):
+            uploader.upload(Request(), sleep=lambda s: None)
+
+    text = caplog.text
+    assert "upload_limit" in text
+    assert "uploadLimitExceeded" in text
+
+
+# A 503 whose body is OAuth-shaped rather than the API error envelope:
+# valid JSON, but `error` is a string, so payload["error"].get(...) raises.
+_ODD_BODY = b'{"error":"invalid_grant","error_description":"bad"}'
+
+
+@pytest.mark.parametrize("body", [
+    _ODD_BODY,
+    b'[{"reason":"whatever"}]',      # top-level array
+    b'{"error":{"errors":"oops"}}',  # errors is not a list
+    b'{"error":{}}',
+])
+def test_odd_error_bodies_do_not_break_classification(body):
+    """_reasons() must never raise: it is called on the failure path, one
+    line before the raise, so an exception there replaces the real error
+    with an AttributeError and loses the diagnosis entirely."""
+    assert uploader.classify(FakeHttpError(503, body)) is uploader.Outcome.RETRY
+    assert uploader.classify(FakeHttpError(400, body)) is uploader.Outcome.PERMANENT
+
+
+def test_exhausted_retries_on_odd_body_still_raise_upload_failed():
+    err = FakeHttpError(503, _ODD_BODY)
+
+    class Request:
+        def next_chunk(self): raise err
+
+    with pytest.raises(uploader.UploadFailed) as caught:
+        uploader.upload(Request(), max_attempts=2, sleep=lambda s: None,
+                        jitter=lambda: 0.0)
+    assert caught.value.outcome is uploader.Outcome.RETRY

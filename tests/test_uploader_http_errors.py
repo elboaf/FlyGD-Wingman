@@ -46,3 +46,10 @@ def test_classify_real_http_error_401_is_auth():
 
 def test_classify_real_http_error_400_is_permanent():
     assert uploader.classify(_http_error(400)) is uploader.Outcome.PERMANENT
+
+
+def test_classify_real_http_error_400_upload_limit_is_upload_limit():
+    body = (b'{"error":{"errors":[{"message":"The user has exceeded the '
+            b'number of videos they may upload.","domain":"youtube.video",'
+            b'"reason":"uploadLimitExceeded"}],"code":400}}')
+    assert uploader.classify(_http_error(400, body)) is uploader.Outcome.UPLOAD_LIMIT
