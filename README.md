@@ -270,8 +270,8 @@ many videos one channel may upload per day, and rejects the video with
 users of the app, and it is reported separately. The cap is tightest on
 channels that are new or not phone-verified — verifying at
 [youtube.com/verify](https://www.youtube.com/verify) raises it (and lifts the
-15-minute limit on video length). Either way the allowance resets, so the
-upload will go through on a later attempt.
+15-minute limit on video length). The allowance resets, so wait a day and
+upload again.
 
 ## Upgrading from 1.x
 

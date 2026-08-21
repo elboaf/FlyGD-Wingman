@@ -68,7 +68,21 @@ def _reasons(exc: Exception) -> set[str]:
         payload = json.loads(content)
     except ValueError:
         return set()
-    errors = payload.get("error", {}).get("errors", [])
+    # Every hop is type-checked rather than trusted. A body can be valid
+    # JSON in an entirely different shape -- an OAuth error is
+    # {"error": "invalid_grant", ...}, where `error` is a string, so a bare
+    # .get() chain raises AttributeError. That matters more than it looks:
+    # this runs on the failure path immediately before the raise, so an
+    # exception here would replace the real UploadFailed with a type error
+    # and destroy the diagnosis instead of recording it.
+    if not isinstance(payload, dict):
+        return set()
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return set()
+    errors = error.get("errors")
+    if not isinstance(errors, list):
+        return set()
     return {e.get("reason", "") for e in errors if isinstance(e, dict)}
 
 
@@ -81,12 +95,15 @@ def classify(exc: Exception) -> Outcome:
     if status in RETRYABLE_STATUS:
         return Outcome.RETRY
     reasons = _reasons(exc)
-    # Matched on the reason alone, deliberately not on a status: the quota
-    # family is documented under 403, but YouTube returns this particular
-    # one as a 400. Pinning it to a status is what previously dropped it
-    # into PERMANENT, telling users that a limit which resets daily could
-    # never be retried. This is the channel's own video allowance, which is
-    # not the app-wide API quota below.
+    # Checked before the 401/403 branch and without naming a status.
+    # uploadLimitExceeded is documented as a 400, unlike the rest of the
+    # quota family, so a status-keyed rule here would have to duplicate the
+    # reason check anyway -- and if YouTube ever also returns it as a 403,
+    # this still lands. Before this branch existed the 400 matched nothing
+    # and fell to PERMANENT, which told users that a limit resetting within
+    # a day could never be retried. This is the channel's own video
+    # allowance; the app-wide API project quota below is a different limit
+    # with a different audience.
     if "uploadLimitExceeded" in reasons:
         return Outcome.UPLOAD_LIMIT
     if status == 403 and "quotaExceeded" in reasons:
@@ -164,10 +181,12 @@ def upload(request, *, on_progress=None, on_retry=None, max_attempts: int = 5,
                 # UI shows nothing else -- so without this line an
                 # unrecognised failure is undiagnosable after the fact.
                 # Status and reason are pulled out rather than left to the
-                # exception's own str(): googleapiclient's HttpError happens
-                # to include the response body, but nothing guarantees that
-                # for every exception type reaching here, and the reason
-                # string is the single most useful field for diagnosis.
+                # exception's own str(): HttpError formats a reason and
+                # error_details of its own, but nothing guarantees any of
+                # that for the other exception types that reach here, and
+                # the reason string is the single most useful field when
+                # deciding whether a failure was the user's fault, ours, or
+                # YouTube's.
                 logger.warning(
                     "Upload failed (%s) after %d attempt(s): status=%s reasons=%s",
                     outcome.value, attempts, _status_of(exc),

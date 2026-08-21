@@ -400,3 +400,34 @@ def test_upload_failure_is_logged_with_the_underlying_error(caplog):
     text = caplog.text
     assert "upload_limit" in text
     assert "uploadLimitExceeded" in text
+
+
+# A 503 whose body is OAuth-shaped rather than the API error envelope:
+# valid JSON, but `error` is a string, so payload["error"].get(...) raises.
+_ODD_BODY = b'{"error":"invalid_grant","error_description":"bad"}'
+
+
+@pytest.mark.parametrize("body", [
+    _ODD_BODY,
+    b'[{"reason":"whatever"}]',      # top-level array
+    b'{"error":{"errors":"oops"}}',  # errors is not a list
+    b'{"error":{}}',
+])
+def test_odd_error_bodies_do_not_break_classification(body):
+    """_reasons() must never raise: it is called on the failure path, one
+    line before the raise, so an exception there replaces the real error
+    with an AttributeError and loses the diagnosis entirely."""
+    assert uploader.classify(FakeHttpError(503, body)) is uploader.Outcome.RETRY
+    assert uploader.classify(FakeHttpError(400, body)) is uploader.Outcome.PERMANENT
+
+
+def test_exhausted_retries_on_odd_body_still_raise_upload_failed():
+    err = FakeHttpError(503, _ODD_BODY)
+
+    class Request:
+        def next_chunk(self): raise err
+
+    with pytest.raises(uploader.UploadFailed) as caught:
+        uploader.upload(Request(), max_attempts=2, sleep=lambda s: None,
+                        jitter=lambda: 0.0)
+    assert caught.value.outcome is uploader.Outcome.RETRY

@@ -1616,7 +1616,14 @@ class UploaderWindow:
             # already deleted the merged file the session points at, which
             # is the correct trade for never leaking multi-GB temporaries.
             # Retry re-stitches instead.
-            resumable = exc.request is not None and not job.stitch
+            # Gated on RETRY as well, not just on the stitch path: only a
+            # RETRY outcome enables the button below, so for anything else
+            # the retained request is unreachable -- and it keeps the
+            # MediaFileUpload, and with it an open handle on the user's own
+            # recording, alive until the next failure replaces this state.
+            # On Windows that blocks renaming or deleting that file.
+            resumable = (exc.request is not None and not job.stitch
+                         and exc.outcome is uploader.Outcome.RETRY)
             self.retry_state = RetryState(
                 job=job,
                 # On the stitch path `index` never advances past
@@ -1716,7 +1723,13 @@ class UploaderWindow:
             self.retry_state = replace(state, request=exc.request)
             self._status_kind = "ERROR"
             self._ui(self.status.config, {"text": str(exc), "foreground": theme.token("ERROR")})
-            self._ui(self.retry_btn.state, ["!disabled"])
+            # Mirrors _upload_worker: a resumed attempt that fails for a
+            # reason retrying cannot fix must not leave the button live.
+            # Re-enabling unconditionally let a channel-limit or auth
+            # failure hand back a button that only reproduces its own
+            # dialog.
+            if exc.outcome is uploader.Outcome.RETRY:
+                self._ui(self.retry_btn.state, ["!disabled"])
             return
         # The resumed file is done; continue with whatever followed it.
         if state.resume_index + 1 < len(state.job.items):
