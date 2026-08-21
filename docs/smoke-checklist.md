@@ -107,6 +107,20 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       have, so Windows does not treat this window as snappable however it
       hit-tests. Only `WM_NCCALCSIZE` or giving up the custom title bar
       would recover it. Check `Win+Up` still works; do not file the others.
+
+      Dragging the title bar to a screen edge does not snap either, and
+      never has — pywebview moves the window with `SetWindowPos`
+      (`util.py:280`), which never enters the OS drag loop that snap hooks
+      into. An earlier version of this checklist expected it to "snap
+      normally", which was never true. Confirmed against 3.0.0.
+- [ ] **Resizing at 150% or 175% scaling — NOT YET VERIFIED.** Everything
+      above was checked on a single 4K display at 200%, so `scale = 2.0` is
+      the only factor real hardware has ever exercised; 1.5 exists only in
+      the unit tests' arithmetic. Repeat the edge drags on a scaled display
+      when one is available. Expected: the band stays the same apparent
+      thickness. If it does not, the inset and the hit-test have diverged,
+      which presents as "resizing is fiddly on that laptop" rather than as
+      a bug.
 - [ ] **The drag region excludes the controls.** Press and hold on the gear,
       minimize and close in turn and move the pointer a few pixels.
       Expected: none of them drags the window; each still activates on
@@ -127,12 +141,6 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       inset, to the page's own edges, or to DPI handling can take the whole
       thing away silently. There is no automated coverage: CI is ubuntu and
       cannot run a message pump.
-- [ ] **Resizing at 150% or 175% scaling, not just 100%.** Repeat the edge
-      drags on a scaled display. Expected: the band stays the same apparent
-      thickness. The inset and the hit-test are scaled by one factor read at
-      launch; if they ever disagree, half the band goes dead and it presents
-      as "resizing is fiddly on that laptop", not as a bug. This is the
-      failure mode that survived a passing spike once already.
 - [ ] **The window will not shrink below its floor.** Drag any edge inward
       as far as it goes. Expected: it stops at 840x625 logical, and at that
       size nothing in either pane is cut off or unreachable. Those numbers
