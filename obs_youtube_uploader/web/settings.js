@@ -1,0 +1,193 @@
+/* The Settings route.
+ *
+ * Rendered in the same window as a route rather than a separate OS
+ * window, which removes a whole second toplevel's worth of lifecycle
+ * code. The OAuth flow becomes an ordinary worker plus onAuthState
+ * pushes, with no polling loop at all.
+ */
+(function () {
+  'use strict';
+  var WM = window.WM;
+
+  var YOUTUBE_TOS_URL = 'https://www.youtube.com/t/terms';
+
+  var current = {};    // last settings dict from Python
+  var detected = {};   // detected-folder suggestions from the same payload
+  // Fetched once from Python rather than duplicated here: ui/copy.py's
+  // AUTH_STATES is the tested source, and a second table in JavaScript
+  // would drift the moment a label changes.
+  var authLabels = {};
+  var pendingAuth = null;
+
+  WM.send('auth_labels').then(function (table) {
+    authLabels = table || {};
+    if (pendingAuth) { renderAuth(pendingAuth); pendingAuth = null; }
+  });
+
+  // ---- fields ---------------------------------------------------------
+  function setNotify(mode) {
+    var inputs = document.querySelectorAll('input[name="notify"]');
+    Array.prototype.forEach.call(inputs, function (input) {
+      input.checked = (input.value === mode);
+    });
+  }
+
+  function notifyValue() {
+    var picked = document.querySelector('input[name="notify"]:checked');
+    return picked ? picked.value : 'toast';
+  }
+
+  function render(payload) {
+    var s = payload.settings || {};
+    var d = payload.detected || {};
+    current = s;
+    detected = d;
+    WM.el('f-privacy').value = s.privacy || 'unlisted';
+    WM.el('f-category').value = s.category || '20';
+    setNotify(s.notify_mode || 'toast');
+    WM.el('f-recdir').value = s.recording_dir || '';
+    WM.el('f-gamelogs').value = s.gamelogs_dir || '';
+    // The input holds the REAL value and the browser draws the mask, so
+    // the mask can never be written back over the stored webhook — the
+    // failure mode a hand-rolled bullet string invites.
+    WM.el('f-webhook').value = s.discord_webhook || '';
+    // webhook_status() is a pure Python function with its own test and is
+    // the only description of what is stored; discord.describe omits the
+    // token by construction. TOP-LEVEL key, and never reconstructed here.
+    WM.el('webhook-status').textContent = payload.webhook_status
+      || (s.discord_webhook ? '' : 'not configured');
+    // Detect is always offered, but say so when there is nothing to find.
+    WM.el('detect-note').textContent = (d.recording || d.gamelogs)
+      ? 'Detect reads the recording folder from OBS’s own config, and the '
+        + 'gamelogs folder from your EVE Online documents folder.'
+      : 'Detect found neither folder automatically — use Browse to pick '
+        + 'them yourself.';
+  }
+
+  // Task 12 owns the onSettings handler (it needs privacy/category for
+  // start_upload) and re-dispatches the payload, so both modules consume
+  // one push without either owning it exclusively.
+  document.addEventListener('wm:settings', function (ev) {
+    render(ev.detail || {});
+  });
+
+  // ---- folder pickers -------------------------------------------------
+  // Both folders carry BOTH actions: Settings has distinct Detect paths
+  // for the recording directory (via OBS's own config) and the EVE
+  // gamelogs directory. `which` matches Api.pick_folder/detect_folder.
+  var TARGET_FIELD = { recording: 'f-recdir', gamelogs: 'f-gamelogs' };
+
+  function applyFolder(which, path) {
+    if (!path) return;   // a cancelled dialog is also a valid result
+    var field = WM.el(TARGET_FIELD[which]);
+    if (field) field.value = path;
+  }
+
+  document.querySelectorAll('[data-browse]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var which = btn.dataset.browse;
+      WM.send('pick_folder', which).then(function (path) {
+        applyFolder(which, path);
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-detect]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var which = btn.dataset.detect;
+      // The field's LIVE value, not the stored setting: a detection that
+      // agrees with what the user has already typed is reported as
+      // agreement rather than silently rewriting the field.
+      var field = WM.el(TARGET_FIELD[which]);
+      WM.send('detect_folder', which, field ? field.value : '')
+        .then(function (path) { applyFolder(which, path); });
+    });
+  });
+
+  // ---- webhook mask ---------------------------------------------------
+  var webhook = WM.el('f-webhook');
+  var showBtn = WM.el('btn-webhook-show');
+
+  showBtn.addEventListener('click', function () {
+    var revealed = webhook.type === 'text';
+    webhook.type = revealed ? 'password' : 'text';
+    showBtn.textContent = revealed ? 'Show' : 'Hide';
+    showBtn.setAttribute('aria-pressed', String(!revealed));
+  });
+
+  function remask() {
+    webhook.type = 'password';
+    showBtn.textContent = 'Show';
+    showBtn.setAttribute('aria-pressed', 'false');
+  }
+
+  // Leaving the screen re-masks, so a revealed credential cannot be left
+  // on screen by navigating away and back.
+  document.addEventListener('wm:route', function (ev) {
+    if (ev.detail !== 'settings') remask();
+  });
+
+  // ---- Google account -------------------------------------------------
+  function renderAuth(p) {
+    var spec = authLabels[p.state] || authLabels.disconnected;
+    if (!spec) { pendingAuth = p; return; }   // labels not fetched yet
+    var btn = WM.el('btn-auth');
+    btn.textContent = spec.label;
+    btn.disabled = !spec.enabled;
+    var pill = WM.el('auth-pill');
+    var tone = { connected: 'ok', connecting: 'warn', revoking: 'warn' };
+    pill.className = 'pill ' + (tone[p.state] || 'idle');
+    // The message is Python's string when it sends one; the table's is the
+    // fallback.
+    WM.el('auth-text').textContent = p.message || spec.message;
+  }
+
+  WM.handle('onAuthState', renderAuth);
+
+  WM.el('btn-auth').addEventListener('click', function () {
+    // No optimistic local disable: Python answers with a `connecting`
+    // push, and one source of truth for the button is what keeps the pill
+    // and the button two views of ONE state.
+    WM.send('connect_google');
+  });
+
+  WM.el('tos-link').addEventListener('click', function () {
+    window.open(YOUTUBE_TOS_URL, '_blank');
+  });
+
+  // ---- save / cancel --------------------------------------------------
+  function collect() {
+    return {
+      privacy: WM.el('f-privacy').value,
+      category: WM.el('f-category').value.trim(),
+      notify_mode: notifyValue(),
+      recording_dir: WM.el('f-recdir').value.trim() || null,
+      gamelogs_dir: WM.el('f-gamelogs').value.trim() || null,
+      // The real value, never the mask.
+      discord_webhook: webhook.value.trim(),
+      // Carried through untouched: settings.save projects onto DEFAULTS'
+      // keys, so anything omitted here is dropped on every write.
+      channel_id: current.channel_id || '',
+      channel_title: current.channel_title || ''
+    };
+  }
+
+  WM.el('btn-settings-save').addEventListener('click', function () {
+    // save_settings rebinds the live watcher when recording_dir changes;
+    // persisting the setting alone leaves the watcher on the old folder.
+    // That is Python's job, not the page's. It returns false when it
+    // refused, and the form stays open so the edits are not lost.
+    WM.send('save_settings', collect()).then(function (ok) {
+      if (ok === false) return;
+      remask();
+      WM.route('main');
+    });
+  });
+
+  WM.el('btn-settings-cancel').addEventListener('click', function () {
+    render({ settings: current, detected: detected,
+             webhook_status: WM.el('webhook-status').textContent });
+    remask();
+    WM.route('main');
+  });
+}());

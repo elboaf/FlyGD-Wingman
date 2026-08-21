@@ -455,3 +455,76 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .dialog .buttons {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
+
+/* ====================== settings route ==============================
+   A route in this window, not a second OS window. */
+#route-settings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+.settings {
+  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 620px; margin: 0 auto;
+}
+
+/* One label column for the WHOLE screen, not per-card: label columns that
+   do not align across groups are the first thing wrong in settings.png. */
+.settings .row > .lab {
+  width: 118px; flex: none; color: var(--text-dim);
+  font-size: var(--fs-body); text-align: right;
+}
+/* Fields and their buttons share a baseline by sitting in the same
+   align-items:center flex row at the same padding — the second thing
+   wrong in settings.png. */
+.settings .row > .field { flex: 1; min-width: 0; }
+.settings .row > select.field { flex: 0 0 150px; }
+.settings .row > input#f-category { flex: 0 0 90px; }
+
+.settings .sub-hint {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  margin: 6px 0 0 128px;
+}
+.settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
+
+/* "Connected" as a status PILL, not an oversized button. */
+.pill {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  font-size: var(--fs-muted); color: var(--text-faint);
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  background: #101216; border: 1px solid var(--field-border);
+}
+.led {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: currentColor; box-shadow: 0 0 9px currentColor;
+}
+.pill.ok   { color: var(--ok); }
+.pill.warn { color: var(--warn); }
+.pill.err  { color: var(--err); }
+.pill.idle { color: var(--text-faint); }
+.pill.warn .led { animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.radio {
+  display: flex; align-items: center; gap: 9px;
+  margin-bottom: 8px; cursor: pointer;
+}
+.radio:last-child { margin-bottom: 0; }
+.radio input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ring {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1.5px solid #3a3f49; flex: none;
+}
+.radio input:checked + .ring {
+  border: 4.5px solid var(--brand); background: var(--field);
+  box-shadow: 0 0 10px rgba(255, 90, 77, .5);
+}
+.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+
+/* A masked webhook must not be rendered in a proportional font: the mask
+   is what is on screen, and monospace keeps its length honest. */
+#f-webhook { font-family: var(--mono); font-size: var(--fs-mono); letter-spacing: .04em; }
+#f-webhook[type="text"] { letter-spacing: 0; }
+.settings .toggle { flex: none; min-width: 62px; }
+
+.settings-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 4px 0 8px;
+}

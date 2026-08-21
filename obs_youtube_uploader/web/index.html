@@ -92,8 +92,101 @@
     <button id="ctx-open">Open in browser</button>
   </div>
 
-  <!-- Filled by Task 13. -->
-  <div class="route" id="route-settings"></div>
+  <div class="route" id="route-settings">
+    <div class="settings">
+
+      <section class="card">
+        <h2>Google account</h2>
+        <div class="row">
+          <span class="lab">Status</span>
+          <span class="pill idle" id="auth-pill"><span class="led"></span><span id="auth-text">Checking&hellip;</span></span>
+          <span style="flex:1"></span>
+          <button class="btn" id="btn-auth">Sign in with Google</button>
+        </div>
+        <p class="hint">
+          Google hasn't verified this app yet, so the sign-in page shows a warning.
+          Click Advanced, then <b style="color:#c8cdd6">Go to FlyGD Wingman (unsafe)</b> to continue.
+        </p>
+        <p class="hint">
+          Videos are uploaded to YouTube and are subject to the YouTube Terms of Service:
+          <span class="linkish" id="tos-link">https://www.youtube.com/t/terms</span>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Upload defaults</h2>
+        <div class="row">
+          <span class="lab">Privacy</span>
+          <select class="field" id="f-privacy">
+            <option value="private">private</option>
+            <option value="unlisted">unlisted</option>
+            <option value="public">public</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="lab">Category ID</span>
+          <input class="field" id="f-category" type="text" inputmode="numeric"
+                 spellcheck="false">
+          <span class="inline-hint">(20 = Gaming)</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>When a recording finishes</h2>
+        <label class="radio">
+          <input type="radio" name="notify" value="toast"><span class="ring"></span>
+          Show a tray notification
+          <span class="inline-hint">&mdash; recommended</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="notify" value="popup"><span class="ring"></span>
+          Open the uploader window immediately
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Folders</h2>
+        <div class="row">
+          <span class="lab">Recordings</span>
+          <input class="field mono" id="f-recdir" type="text" spellcheck="false">
+          <button class="btn" data-browse="recording">Browse&hellip;</button>
+          <button class="btn" data-detect="recording">Detect</button>
+        </div>
+        <div class="row">
+          <span class="lab">EVE gamelogs</span>
+          <input class="field mono" id="f-gamelogs" type="text" spellcheck="false">
+          <button class="btn" data-browse="gamelogs">Browse&hellip;</button>
+          <button class="btn" data-detect="gamelogs">Detect</button>
+        </div>
+        <p class="sub-hint" id="detect-note">
+          Detect reads the recording folder from OBS's own config, and the gamelogs
+          folder from your EVE Online documents folder.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Discord (combat logs)</h2>
+        <div class="row">
+          <span class="lab">Webhook URL</span>
+          <!-- Masked by default. A webhook URL is a credential: anyone
+               holding it can post to the channel, and this screen is open
+               on a second monitor while streaming and screenshotted when
+               users help each other configure it. -->
+          <input class="field" id="f-webhook" type="password" spellcheck="false"
+                 autocomplete="off">
+          <button class="btn toggle" id="btn-webhook-show"
+                  aria-pressed="false">Show</button>
+        </div>
+        <p class="sub-hint" id="webhook-status">not configured</p>
+      </section>
+
+      <div class="settings-foot">
+        <button class="btn" id="btn-settings-cancel">Cancel</button>
+        <button class="btn acc" id="btn-settings-save">Save</button>
+      </div>
+
+    </div>
+  </div>
 
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
@@ -122,6 +215,7 @@
   <script src="app.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
+  <script src="settings.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>
