@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from . import combatlog, discord, library, paths, settings as settings_mod, stitch, uploader
+from . import (combatlog, discord, library, paths, settings as settings_mod, stitch,
+               theme, uploader)
 
 
 def resolve_binary(name: str) -> str | None:
@@ -96,7 +97,11 @@ class UploaderWindow:
         self.state = state
         self.infos: list[library.VideoInfo] = []
         self.selected: dict[Path, tk.BooleanVar] = {}
-        self.links: dict[Path, tk.Entry] = {}
+        self.links: dict[Path, str] = {}
+        self._preselected: set[Path] = set()
+        self._sort_reverse: dict[str, bool] = {}
+        self._checkbox_images: dict[bool, tk.PhotoImage] = {}
+        self._status_kind: str | None = None
         self.upload_thread: threading.Thread | None = None
         self.on_deleted = None  # set by the tray app to notify the watcher
         self.on_settings_saved = None  # set by the tray app; see _settings_saved
@@ -140,23 +145,45 @@ class UploaderWindow:
         self.list_frame = ttk.Frame(self.root)
         self.list_frame.pack(fill=tk.BOTH, expand=True, padx=5)
 
-        hdr = ttk.Frame(self.list_frame)
-        hdr.pack(fill=tk.X)
-        for text, width in (("☑", 3), ("Filename", 30), ("Date", 14),
-                            ("Size", 9), ("Duration", 8), ("YouTube Link", 48)):
-            anchor = tk.CENTER if text == "☑" else tk.W
-            ttk.Label(hdr, text=text, width=width, anchor=anchor).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(self.list_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+        # Task 4's shared helper — do not compute scale independently here,
+        # or checkbox images and window geometry can disagree.
+        self._dpi_scale = dpi_scale(self.root)
 
-        self.canvas = tk.Canvas(self.list_frame, highlightthickness=0)
-        scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.inner = ttk.Frame(self.canvas)
-        self.inner.bind("<Configure>",
-                        lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.inner, anchor=tk.NW)
-        self.canvas.configure(yscrollcommand=scroll.set)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree = ttk.Treeview(
+            self.list_frame,
+            columns=("filename", "date", "size", "duration", "link"),
+            show="tree headings",
+            # The checkbox is the selection model. A competing
+            # highlight-selection would give the user two contradictory
+            # notions of "selected", and a stray click would wipe out the
+            # watcher's preselection.
+            selectmode="none",
+        )
+        self.tree.heading("#0", text="☑", command=lambda: self._sort_by("checked"))
+        self.tree.column("#0", width=int(34 * self._dpi_scale), anchor=tk.CENTER, stretch=False)
+        for key, text, chars in (
+            ("filename", "Filename", 30),
+            ("date", "Date", 14),
+            ("size", "Size", 9),
+            ("duration", "Duration", 8),
+            ("link", "YouTube Link", 48),
+        ):
+            self.tree.heading(key, text=text, command=lambda k=key: self._sort_by(k))
+            self.tree.column(key, width=int(chars * 7 * self._dpi_scale), anchor=tk.W)
+
+        scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._build_checkbox_images()
+        self._apply_row_height()
+        self._configure_tree_tags()
+        self._build_context_menu()
+        self.tree.bind("<Button-1>", self._on_tree_click)
+        self.tree.bind("<Button-3>", self._show_context_menu)
+        self.tree.bind("<Double-Button-1>", self._on_row_double_click)
+        theme.register(self._on_theme_changed)
 
         self.stitch_var = tk.BooleanVar(value=False)
         bot = ttk.Frame(self.root)
@@ -185,6 +212,179 @@ class UploaderWindow:
         self.status = ttk.Label(self.root, text="")
         self.status.pack(fill=tk.X, padx=5, pady=(0, 5))
 
+    def _build_checkbox_images(self) -> None:
+        """Generate checked/unchecked box images at the current DPI scale
+        and theme colours. Must be re-called on every theme switch — the
+        colours are baked into the pixels, not read live like a ttk style.
+        """
+        from PIL import Image, ImageDraw, ImageTk
+
+        size = max(16, int(16 * self._dpi_scale))
+        border = theme.token("MUTED")
+        check = theme.token("SUCCESS")
+        inset = max(1, size // 8)
+
+        def make(checked: bool) -> tk.PhotoImage:
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle(
+                (inset, inset, size - inset, size - inset),
+                radius=max(2, size // 8),
+                outline=border,
+                width=max(1, size // 10),
+            )
+            if checked:
+                mid_x, mid_y = size * 0.4, size - inset - size * 0.15
+                draw.line((inset + size * 0.15, size * 0.5, mid_x, mid_y),
+                          fill=check, width=max(2, size // 8))
+                draw.line((mid_x, mid_y, size - inset - size * 0.1, inset + size * 0.15),
+                          fill=check, width=max(2, size // 8))
+            return ImageTk.PhotoImage(img)
+
+        # Held on self so the PhotoImage objects stay referenced; Tk drops
+        # unreferenced PhotoImages even while still assigned to a widget.
+        self._checkbox_images = {False: make(False), True: make(True)}
+
+    def _checkbox_image(self, checked: bool) -> tk.PhotoImage:
+        return self._checkbox_images[checked]
+
+    def _apply_row_height(self) -> None:
+        """Grow the Treeview row so the DPI-scaled checkbox is not clipped.
+
+        Not in the task brief, added after measuring: sv-ttk derives
+        rowheight from its own font metrics, which do not follow `tk
+        scaling`, so it stays 16px at every DPI while the checkbox image
+        grows to 20/23/32px at 125/150/200%. Without this the box is cut
+        off on exactly the high-DPI machines the scaling work targets.
+
+        Re-applied from _on_theme_changed because sv_ttk.set_theme rewrites
+        rowheight from its .tcl on every switch; theme.apply runs set_theme
+        before its consumers, so re-asserting here wins.
+        """
+        needed = self._checkbox_images[True].height() + 4
+        style = ttk.Style(self.root)
+        current = style.lookup("Treeview", "rowheight")
+        try:
+            current = int(current)
+        except (TypeError, ValueError):
+            current = 0
+        style.configure("Treeview", rowheight=max(current, needed))
+
+    def _configure_tree_tags(self) -> None:
+        self.tree.tag_configure("row_odd", background=theme.token("ROW_ODD"))
+        self.tree.tag_configure("row_even", background=theme.token("ROW_EVEN"))
+        self.tree.tag_configure("row_preselect", background=theme.token("ROW_PRESELECT"))
+        self.tree.tag_configure("has_link", foreground=theme.token("LINK"))
+
+    def _row_tags(self, path: Path, position: int) -> tuple[str, ...]:
+        # ttk.Treeview gives priority to whichever conflicting tag is
+        # listed FIRST, so preselect (a background) must precede the zebra
+        # tag (also a background) to win.
+        tags = []
+        if path in self._preselected:
+            tags.append("row_preselect")
+        tags.append("row_odd" if position % 2 else "row_even")
+        if self.links.get(path):
+            tags.append("has_link")
+        return tuple(tags)
+
+    def _apply_zebra_tags(self) -> None:
+        """Recompute tags for every displayed row, in current display order.
+
+        Needed both after a sort (position changed) and after _set_link
+        (has_link tag changed) — cheap enough to just redo all of them.
+        """
+        for position, iid in enumerate(self.tree.get_children("")):
+            path = Path(iid)
+            self.tree.item(iid, tags=self._row_tags(path, position))
+
+    def _sort_by(self, column: str) -> None:
+        """Display-only sort: it moves Treeview rows and nothing else.
+
+        self.infos keeps its discovery order, so _chosen() (which iterates
+        self.infos) and stitch.order_for_stitch() (which re-sorts by mtime)
+        are both unaffected by what the user sees on screen.
+        """
+        info_by_path = {i.path: i for i in self.infos}
+
+        def key(path: Path):
+            info = info_by_path[path]
+            if column == "checked":
+                return self.selected[path].get()
+            if column == "filename":
+                return info.path.name.lower()
+            if column == "date":
+                return info.mtime
+            if column == "size":
+                return info.size
+            if column == "duration":
+                return info.duration if info.duration is not None else -1.0
+            if column == "link":
+                return self.links.get(path, "")
+            raise ValueError(f"unknown sort column: {column}")
+
+        reverse = self._sort_reverse.get(column, False)
+        ordered = sorted(info_by_path.keys(), key=key, reverse=reverse)
+        for index, path in enumerate(ordered):
+            self.tree.move(str(path), "", index)
+        self._sort_reverse[column] = not reverse
+        self._apply_zebra_tags()
+
+    def _on_tree_click(self, event: tk.Event) -> None:
+        if self.tree.identify_region(event.x, event.y) != "tree":
+            return  # click landed in a data column, not the checkbox column
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        var = self.selected.get(Path(iid))
+        if var is None:
+            return
+        var.set(not var.get())
+        self.tree.item(iid, image=self._checkbox_image(var.get()))
+
+    def _build_context_menu(self) -> None:
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Copy link", command=self._context_copy)
+        self.context_menu.add_command(label="Open in browser", command=self._context_open)
+        self._context_path: Path | None = None
+
+    def _show_context_menu(self, event: tk.Event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        path = Path(iid)
+        self._context_path = path
+        state = tk.NORMAL if self.links.get(path) else tk.DISABLED
+        self.context_menu.entryconfig("Copy link", state=state)
+        self.context_menu.entryconfig("Open in browser", state=state)
+        self.context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _context_copy(self) -> None:
+        if self._context_path is not None:
+            self._copy(self._context_path)
+
+    def _context_open(self) -> None:
+        if self._context_path is not None:
+            self._open(self._context_path)
+
+    def _on_row_double_click(self, event: tk.Event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self._open(Path(iid))
+
+    def _on_theme_changed(self, mode: str) -> None:
+        """Registered with theme.register in _build. Regenerates everything
+        that bakes theme colours into pixels rather than reading a ttk
+        style live: checkbox images and Treeview tag colours.
+        """
+        self._build_checkbox_images()
+        self._apply_row_height()
+        self._configure_tree_tags()
+        for iid in self.tree.get_children(""):
+            var = self.selected.get(Path(iid))
+            if var is not None:
+                self.tree.item(iid, image=self._checkbox_image(var.get()))
+
     def refresh(self, preselect: set | None = None) -> None:
         """Rebuild the list. Paths in *preselect* start checked.
 
@@ -192,30 +392,30 @@ class UploaderWindow:
         finish a fight, open the window, hit Upload — needs no clicking.
         """
         preselect = preselect or set()
-        for child in self.inner.winfo_children():
-            child.destroy()
+        self._preselected = set(preselect)
         self.selected.clear()
         self.links.clear()
+        for iid in self.tree.get_children(""):
+            self.tree.delete(iid)
         self.infos = [
             library.build_info(p, self.state.ffprobe_bin)
             for p in library.discover(self.state.recording_dir)
         ]
-        for info in self.infos:
-            row = ttk.Frame(self.inner)
-            row.pack(fill=tk.X, pady=1)
+        first_preselected_iid = None
+        for position, info in enumerate(self.infos):
             var = tk.BooleanVar(value=info.path in preselect)
             self.selected[info.path] = var
-            ttk.Checkbutton(row, variable=var, width=2).pack(side=tk.LEFT, padx=2)
-            for text, width in ((info.path.name, 30), (info.date_str, 14),
-                                (info.size_str, 9), (info.duration_str, 8)):
-                ttk.Label(row, text=text, width=width, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-            entry = tk.Entry(row, width=48, state="readonly", relief=tk.FLAT, fg="blue")
-            entry.pack(side=tk.LEFT, padx=2)
-            self.links[info.path] = entry
-            ttk.Button(row, text="Copy", width=5,
-                       command=lambda e=entry: self._copy(e)).pack(side=tk.LEFT, padx=2)
-            ttk.Button(row, text="Open", width=5,
-                       command=lambda e=entry: self._open(e)).pack(side=tk.LEFT, padx=(0, 8))
+            iid = str(info.path)
+            self.tree.insert(
+                "", tk.END, iid=iid,
+                image=self._checkbox_image(var.get()),
+                values=(info.path.name, info.date_str, info.size_str, info.duration_str, ""),
+                tags=self._row_tags(info.path, position),
+            )
+            if info.path in preselect and first_preselected_iid is None:
+                first_preselected_iid = iid
+        if first_preselected_iid is not None:
+            self.tree.see(first_preselected_iid)
         self.status.config(text=f"Found {len(self.infos)} video(s)")
 
     def _set_all(self, value: bool) -> None:
@@ -225,15 +425,17 @@ class UploaderWindow:
     def _chosen(self) -> list[library.VideoInfo]:
         return [i for i in self.infos if self.selected.get(i.path, tk.BooleanVar()).get()]
 
-    def _copy(self, entry: tk.Entry) -> None:
-        url = entry.get()
+    def _copy(self, path: Path) -> None:
+        url = self.links.get(path)
         if url:
             self.root.clipboard_clear()
             self.root.clipboard_append(url)
-            self.status.config(text="Link copied to clipboard", foreground="green")
+            self._status_kind = "SUCCESS"
+            self.status.config(text="Link copied to clipboard",
+                               foreground=theme.token("SUCCESS"))
 
-    def _open(self, entry: tk.Entry) -> None:
-        url = entry.get()
+    def _open(self, path: Path) -> None:
+        url = self.links.get(path)
         if url:
             webbrowser.open(url)
 
@@ -242,14 +444,20 @@ class UploaderWindow:
 
         Position-based matching (as in b04c3a7) shifts every subsequent row
         when one upload returns no ID.
+
+        The existence check below guards a `_ui`-queued update arriving for
+        a path no longer in the rebuilt tree (e.g. the file was deleted, or
+        refresh() ran mid-upload). It does NOT protect against refresh()
+        clearing self.links on every rebuild — that clearing is preserved
+        deliberately (see refresh()); this guard is a different case.
         """
-        entry = self.links.get(path)
-        if entry is None:
+        iid = str(path)
+        if not self.tree.exists(iid):
             return
-        entry.config(state=tk.NORMAL)
-        entry.delete(0, tk.END)
-        entry.insert(0, f"https://www.youtube.com/watch?v={video_id}")
-        entry.config(state="readonly")
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        self.links[path] = url
+        self.tree.set(iid, "link", url)
+        self._apply_zebra_tags()
 
     def _delete_selected(self) -> None:
         chosen = self._chosen()

@@ -28,9 +28,10 @@ a = Analysis(
         # pystray selects its backend implementation dynamically at
         # runtime, which modulegraph cannot follow statically.
         "pystray._win32",
-        # Precautionary, not known-required: the package never imports
-        # ImageTk, so PIL._tkinter_finder may be unused here. Kept because
-        # it is harmless and we cannot test the Windows-only alternative.
+        # Required, not precautionary: app.py imports PIL.ImageTk to build
+        # the Treeview checkbox images, and ImageTk loads PIL._tkinter_finder
+        # dynamically, which modulegraph cannot follow. Without this the
+        # video list renders with no checkboxes.
         "PIL._tkinter_finder",
         # google.* and googleapiclient.* are PEP 420 namespace packages.
         # modulegraph has a known history of mishandling namespace-package
