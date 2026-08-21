@@ -47,10 +47,11 @@ def test_heading_font_is_bold(root):
     assert _font_option(root, app.HEADING_FONT, "-weight") == "bold"
 
 
-def test_both_heading_styles_use_that_font(root):
+def test_both_heading_styles_use_their_own_font(root):
     app.apply_typography(root)
     style = ttk.Style(root)
-    assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == app.HEADING_FONT
+    assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == \
+        app.COLUMN_HEADING_FONT
     assert style.lookup(app.SECTION_HEADING_STYLE, "font") == app.HEADING_FONT
 
 
@@ -92,7 +93,8 @@ def test_registered_consumer_restores_the_styles_after_a_switch(root):
     for mode in ("dark", "light"):
         theme.apply(root, mode)
         style = ttk.Style(root)
-        assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == app.HEADING_FONT
+        assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == \
+            app.COLUMN_HEADING_FONT
         assert style.lookup(app.SECTION_HEADING_STYLE, "font") == app.HEADING_FONT
         assert style.lookup(app.MUTED_STYLE, "foreground") == \
             theme.TOKENS[mode]["MUTED"]
@@ -100,14 +102,15 @@ def test_registered_consumer_restores_the_styles_after_a_switch(root):
 
 def test_heading_font_tracks_the_dpi_rescaled_sv_font(root):
     """theme.apply rescales sv-ttk's fonts BEFORE consumers run, so the
-    copy taken here is the corrected size -- not the 96-DPI one sv.tcl
-    declared. Compared against the source font rather than an absolute
-    number, so this says nothing about metrics."""
+    copy taken here is derived from the corrected size -- not the 96-DPI one
+    sv.tcl declared. Compared against the source font rather than an
+    absolute number, so this says nothing about metrics."""
     root.tk.call("tk", "scaling", 144 / 72.0)
     theme.register(lambda mode: app.apply_typography(root))
     theme.apply(root, "dark")
-    strong = _font_option(root, "SunValleyBodyStrongFont", "-size")
-    assert _font_option(root, app.HEADING_FONT, "-size") == strong
+    strong = int(_font_option(root, "SunValleyBodyStrongFont", "-size"))
+    assert int(_font_option(root, app.HEADING_FONT, "-size")) == \
+        app.scaled_font_size(strong, app.SECTION_RATIO)
 
 
 def test_apply_typography_is_idempotent(root):
@@ -118,3 +121,75 @@ def test_apply_typography_is_idempotent(root):
     for _ in range(3):
         theme.apply(root, "dark")
     assert _font_option(root, app.HEADING_FONT, "-size") == first
+
+
+# --- the type scale --------------------------------------------------------
+
+def test_positive_sizes_are_points_and_scale_upward():
+    assert app.scaled_font_size(10, 1.2) == 12
+
+
+def test_negative_sizes_are_pixels_and_keep_their_sign():
+    """Tk reads a negative -size as pixels. Scaling the magnitude and
+    dropping the sign would silently reinterpret the unit and produce a
+    font an order of magnitude wrong."""
+    assert app.scaled_font_size(-20, 1.2) == -24
+
+
+def test_scaling_down_never_collapses_to_zero_or_flips_sign():
+    for base in (1, 2, 3, -1, -2, -3):
+        out = app.scaled_font_size(base, 0.875)
+        assert out != 0
+        assert (out > 0) == (base > 0)
+
+
+def test_a_zero_or_unreadable_base_is_left_alone():
+    """font configure can hand back 0 for a font that has not resolved yet;
+    inventing a size from it would be worse than inheriting."""
+    assert app.scaled_font_size(0, 1.2) == 0
+
+
+def test_the_three_steps_are_distinct_and_ordered(root):
+    """Hierarchy needs a real ratio between steps. Everything in this app
+    used to render at one size, so nothing guided the eye down a 132-row
+    list."""
+    root.tk.call("tk", "scaling", 144 / 72.0)
+    theme.register(lambda mode: app.apply_typography(root))
+    theme.apply(root, "dark")
+    section = abs(int(_font_option(root, app.HEADING_FONT, "-size")))
+    column = abs(int(_font_option(root, app.COLUMN_HEADING_FONT, "-size")))
+    small = abs(int(_font_option(root, app.SMALL_FONT, "-size")))
+    body = abs(int(_font_option(root, "SunValleyBodyFont", "-size")))
+    assert section > body > small
+    assert column == small
+
+
+def test_section_and_column_headings_are_both_bold(root):
+    app.apply_typography(root)
+    assert _font_option(root, app.HEADING_FONT, "-weight") == "bold"
+    assert _font_option(root, app.COLUMN_HEADING_FONT, "-weight") == "bold"
+
+
+def test_the_tree_heading_no_longer_shares_the_section_font(root):
+    """Column headers label the data; they must not outrank it. They now sit
+    one step BELOW body, where the section heading sits one step above."""
+    app.apply_typography(root)
+    style = ttk.Style(root)
+    assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == \
+        app.COLUMN_HEADING_FONT
+    assert style.lookup(app.SECTION_HEADING_STYLE, "font") == app.HEADING_FONT
+
+
+def test_muted_style_carries_the_small_font(root):
+    app.apply_typography(root)
+    assert ttk.Style(root).lookup(app.MUTED_STYLE, "font") == app.SMALL_FONT
+
+
+def test_the_whole_scale_survives_a_theme_switch(root):
+    theme.register(lambda mode: app.apply_typography(root))
+    for mode in ("dark", "light"):
+        theme.apply(root, mode)
+        style = ttk.Style(root)
+        assert style.lookup(f"{app.TREE_STYLE}.Heading", "font") == \
+            app.COLUMN_HEADING_FONT
+        assert style.lookup(app.MUTED_STYLE, "font") == app.SMALL_FONT

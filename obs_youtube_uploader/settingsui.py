@@ -21,6 +21,53 @@ AUTH_POLL_MS = 50
 # README alone does not satisfy "the API Client must display".
 YOUTUBE_TOS_URL = "https://www.youtube.com/t/terms"
 
+# The character the webhook field is masked with. A bullet rather than "*"
+# so a masked value does not read as a validation error.
+WEBHOOK_MASK = "•"
+
+# What the auth button says, keyed by the token name _set_auth_status was
+# given. The label used to be the constant "Connect Google Account", which
+# sat under the word "Connected" and told the user nothing about what
+# pressing it would do -- while being the control they reach for when they
+# suspect the wrong account is signed in.
+_AUTH_BUTTON = {
+    "SUCCESS": ("Switch account", True),
+    "ERROR": ("Sign in with Google", True),
+    # Both transient states disable the button: a second press during the
+    # lookup races it, and during the browser flow it starts a second OAuth
+    # flow on top of the first.
+    "MUTED": ("Checking…", False),
+    "WARNING": ("Waiting for browser…", False),
+}
+_AUTH_BUTTON_DEFAULT = ("Sign in with Google", True)
+
+
+def auth_button_state(kind: str | None) -> tuple[str, bool]:
+    """(label, enabled) for the Google account button.
+
+    Unknown states, including the None before the first status lands, fall
+    back to an enabled "Sign in with Google": an optimistic label on a
+    working button beats a dead one during that window.
+    """
+    return _AUTH_BUTTON.get(kind, _AUTH_BUTTON_DEFAULT)
+
+
+def webhook_status(raw: str) -> str:
+    """The line under the webhook field, describing what is stored.
+
+    The field itself is masked, so this is the only confirmation of WHICH
+    webhook is configured; discord.describe omits the token by construction.
+
+    An unparseable value reports the parse error rather than "not
+    configured", which is what it used to say for anything invalid -- a URL
+    the user has visibly typed being described as absent reads as the app
+    ignoring them and hides the actual mistake.
+    """
+    if not raw or not raw.strip():
+        return "not configured"
+    hook, error = discord.parse_webhook(raw)
+    return discord.describe(hook) if hook else error
+
 
 class SettingsWindow:
     def __init__(self, parent: tk.Misc, state, on_saved=None):
@@ -148,8 +195,9 @@ class SettingsWindow:
         self.lbl_auth = ttk.Label(auth_row, text="Checking…")
         self.lbl_auth.pack(side=tk.LEFT)
 
-        ttk.Button(acct, text="Connect Google Account",
-                   command=self._connect).pack(anchor=tk.W, pady=(pad.tight, 0))
+        self.btn_connect = ttk.Button(acct, text="Connect Google Account",
+                                      command=self._connect)
+        self.btn_connect.pack(anchor=tk.W, pady=(pad.tight, 0))
         self.lbl_acct_hint = ttk.Label(
             acct,
             text=("Google hasn't verified this app yet, so the sign-in page "
@@ -214,8 +262,18 @@ class SettingsWindow:
         disc.columnconfigure(0, minsize=int(90 * scale))
         ttk.Label(disc, text="Webhook URL:", anchor=tk.E).grid(
             row=0, column=0, sticky=tk.E)
-        ttk.Entry(disc, textvariable=self.webhook, width=44).grid(
-            row=0, column=1, sticky=tk.EW, padx=pad.tight)
+        # Masked by default. A webhook URL is a credential -- anyone holding
+        # it can post to the channel -- and this dialog is open on a second
+        # monitor while streaming, and screenshotted when users help each
+        # other configure it. show= still permits paste, which is the only
+        # way this field is realistically filled.
+        self.webhook_entry = ttk.Entry(disc, textvariable=self.webhook,
+                                       width=44, show=WEBHOOK_MASK)
+        self.webhook_entry.grid(row=0, column=1, sticky=tk.EW, padx=pad.tight)
+        self.webhook_shown = tk.BooleanVar(value=False)
+        ttk.Checkbutton(disc, text="Show", variable=self.webhook_shown,
+                        command=self._toggle_webhook_visible).grid(
+            row=0, column=2, sticky=tk.W, padx=(pad.tight, 0))
         self.lbl_webhook = ttk.Label(disc, text="", foreground=theme.token("MUTED"))
         self.lbl_webhook.grid(row=1, column=1, sticky=tk.W, padx=pad.tight)
         ttk.Label(disc, text="Gamelogs:", anchor=tk.E).grid(
@@ -303,18 +361,33 @@ class SettingsWindow:
             return
         self.gamelogs.set(str(found))
 
+    def _toggle_webhook_visible(self) -> None:
+        """Reveal or re-mask the webhook field.
+
+        Nothing re-masks it automatically on close: the dialog is destroyed
+        on both Save and Cancel, so the next open rebuilds the entry with
+        the default mask regardless of what this was left at.
+        """
+        self.webhook_entry.config(
+            show="" if self.webhook_shown.get() else WEBHOOK_MASK)
+
     def _refresh_webhook_label(self) -> None:
-        hook, _ = discord.parse_webhook(self.webhook.get())
-        self.lbl_webhook.config(
-            text=discord.describe(hook) if hook else "not configured")
+        self.lbl_webhook.config(text=webhook_status(self.webhook.get()))
 
     def _set_auth_status(self, text: str, token_name: str) -> None:
         """Update the status dot + text together. _auth_kind is retained so
-        a live theme switch can re-derive the colour rather than reset it."""
+        a live theme switch can re-derive the colour rather than reset it.
+
+        The button label rides the same call, so it can never disagree with
+        the status line beside it.
+        """
         self._auth_kind = token_name
         color = theme.token(token_name)
         self.auth_dot.itemconfig(self._auth_dot_id, fill=color)
         self.lbl_auth.config(text=text, foreground=color)
+        label, enabled = auth_button_state(token_name)
+        self.btn_connect.config(text=label)
+        self.btn_connect.state(["!disabled"] if enabled else ["disabled"])
 
     def _refresh_auth_label(self) -> None:
         """Resolve the Google auth state without blocking the dialog.

@@ -348,3 +348,48 @@ def test_save_credentials_restricts_permissions(tmp_path):
     if sys.platform != "win32":
         mode = stat.S_IMODE(os.stat(p).st_mode)
         assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+def test_on_response_receives_the_full_insert_response():
+    """The channel a video actually landed on is in this response, and it is
+    the only place the app can learn it: SCOPES holds youtube.upload alone,
+    which does not permit channels.list."""
+    body = {"id": "vid1",
+            "snippet": {"channelId": "UC9", "channelTitle": "Zoolanders"}}
+    seen = []
+    assert uploader.upload(FakeRequest([("done", body)]),
+                           on_response=seen.append) == "vid1"
+    assert seen == [body]
+
+
+def test_on_response_is_optional():
+    assert uploader.upload(FakeRequest([("done", {"id": "vid1"})])) == "vid1"
+
+
+def test_on_response_is_not_called_when_the_upload_fails():
+    seen = []
+    with pytest.raises(uploader.UploadFailed):
+        uploader.upload(FakeRequest([("fail", RuntimeError("boom"))]),
+                        on_response=seen.append, max_attempts=1,
+                        sleep=lambda _s: None, jitter=lambda: 0)
+    assert seen == []
+
+
+def test_channel_of_reads_the_snippet():
+    assert uploader.channel_of(
+        {"snippet": {"channelId": "UC9", "channelTitle": "Zoolanders"}}
+    ) == ("UC9", "Zoolanders")
+
+
+@pytest.mark.parametrize("response", [
+    {},
+    {"snippet": {}},
+    {"snippet": None},
+    {"snippet": {"channelId": 7, "channelTitle": ["x"]}},
+    None,
+    "not a dict",
+])
+def test_channel_of_returns_empty_for_anything_unusable(response):
+    """A response-shape change at Google's end must degrade to "channel
+    unknown", never crash a finished upload or put a repr in a label."""
+    assert uploader.channel_of(response) == ("", "")
