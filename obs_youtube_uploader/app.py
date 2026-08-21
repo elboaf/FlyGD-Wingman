@@ -55,6 +55,15 @@ def dpi_scale(widget: tk.Misc) -> float:
     return float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0)
 
 
+# Shared spacing scale for _build's layout. Kept as module constants (rather
+# than per-call literals) so every section agrees on what "tight" vs "loose"
+# means, and so Task 7 can import the same values instead of guessing them.
+PAD_TIGHT = 4    # between closely related controls (e.g. buttons in one row)
+PAD_NORMAL = 8   # between distinct groups (e.g. a frame and the window edge)
+PAD_LOOSE = 12   # around a whole section
+FRAME_PADDING = 8  # internal padding for bordered frames
+
+
 @dataclass
 class AppState:
     recording_dir: Path
@@ -139,8 +148,8 @@ class UploaderWindow:
         self.root.withdraw()
 
     def _build(self) -> None:
-        meta = ttk.LabelFrame(self.root, text="Video details", padding=8)
-        meta.pack(fill=tk.X, padx=5, pady=3)
+        meta = ttk.LabelFrame(self.root, text="Video details", padding=FRAME_PADDING)
+        meta.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_TIGHT)
         ttk.Label(meta, text="Title:").grid(row=0, column=0, sticky=tk.W)
         self.title_var = tk.StringVar(value="")
         ttk.Entry(meta, textvariable=self.title_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
@@ -150,7 +159,7 @@ class UploaderWindow:
         meta.columnconfigure(1, weight=1)
 
         self.list_frame = ttk.Frame(self.root)
-        self.list_frame.pack(fill=tk.BOTH, expand=True, padx=5)
+        self.list_frame.pack(fill=tk.BOTH, expand=True, padx=PAD_NORMAL)
 
         # Task 4's shared helper — do not compute scale independently here,
         # or checkbox images and window geometry can disagree.
@@ -196,30 +205,48 @@ class UploaderWindow:
 
         self.stitch_var = tk.BooleanVar(value=False)
         bot = ttk.Frame(self.root)
-        bot.pack(fill=tk.X, padx=5, pady=5)
+        bot.pack(fill=tk.X, padx=PAD_NORMAL, pady=PAD_NORMAL)
+
+        ttk.Button(bot, text="Settings", command=self._open_settings).pack(
+            side=tk.LEFT, padx=(0, PAD_LOOSE))
+        ttk.Button(bot, text="Delete Selected", command=self._delete_selected).pack(
+            side=tk.LEFT, padx=PAD_TIGHT)
+        ttk.Button(bot, text="Select All", command=lambda: self._set_all(True)).pack(
+            side=tk.LEFT, padx=PAD_TIGHT)
+        ttk.Button(bot, text="Select None", command=lambda: self._set_all(False)).pack(
+            side=tk.LEFT, padx=PAD_TIGHT)
+
         self.stitch_chk = ttk.Checkbutton(bot, text="Stitch selected videos",
                                           variable=self.stitch_var)
-        self.stitch_chk.pack(side=tk.LEFT)
+        self.stitch_chk.pack(side=tk.LEFT, padx=(PAD_LOOSE, PAD_TIGHT))
+        self.ffmpeg_warn_label = None
         if not self.state.ffmpeg_bin:
             self.stitch_chk.state(["disabled"])
-            ttk.Label(bot, text="(ffmpeg not found — stitching unavailable)",
-                      foreground="orange").pack(side=tk.LEFT, padx=6)
-        for text, cmd in (("Upload Selected", self._start_upload),
-                          ("Delete Selected", self._delete_selected),
-                          ("Select None", lambda: self._set_all(False)),
-                          ("Select All", lambda: self._set_all(True))):
-            ttk.Button(bot, text=text, command=cmd).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(bot, text="Upload combat logs",
-                   command=self._start_combat_log_upload).pack(side=tk.RIGHT, padx=2)
-        self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
-        self.retry_btn.pack(side=tk.RIGHT, padx=2)
-        self.retry_btn.state(["disabled"])
-        ttk.Button(bot, text="Settings", command=self._open_settings).pack(side=tk.LEFT, padx=8)
+            self.ffmpeg_warn_label = ttk.Label(
+                bot, text="(ffmpeg not found — stitching unavailable)",
+                foreground=theme.token("WARNING"))
+            self.ffmpeg_warn_label.pack(side=tk.LEFT, padx=PAD_TIGHT)
 
-        self.progress = ttk.Progressbar(self.root, mode="determinate")
-        self.progress.pack(fill=tk.X, padx=5, pady=(0, 3))
-        self.status = ttk.Label(self.root, text="")
-        self.status.pack(fill=tk.X, padx=5, pady=(0, 5))
+        # Right side, packed in visual order: Upload Selected is the accent
+        # action, Retry sits beside it, and Upload combat logs — added by the
+        # combat-log feature — is a peer upload action, NOT accented, so the
+        # primary action stays unambiguous.
+        ttk.Button(bot, text="Upload Selected", style="Accent.TButton",
+                   command=self._start_upload).pack(side=tk.RIGHT, padx=PAD_TIGHT)
+        self.retry_btn = ttk.Button(bot, text="Retry", command=self._manual_retry)
+        self.retry_btn.pack(side=tk.RIGHT, padx=PAD_TIGHT)
+        self.retry_btn.state(["disabled"])
+        ttk.Button(bot, text="Upload combat logs",
+                   command=self._start_combat_log_upload).pack(
+            side=tk.RIGHT, padx=PAD_TIGHT)
+
+        status_bar = ttk.Frame(self.root, height=48)
+        status_bar.pack(fill=tk.X, padx=PAD_NORMAL, pady=(0, PAD_NORMAL))
+        status_bar.pack_propagate(False)  # fixed height regardless of child content
+        self.progress = ttk.Progressbar(status_bar, mode="determinate")
+        self.progress.pack(fill=tk.X, pady=(PAD_TIGHT, 0))
+        self.status = ttk.Label(status_bar, text="")
+        self.status.pack(fill=tk.X, anchor=tk.W, pady=(PAD_TIGHT, 0))
 
     def _build_checkbox_images(self) -> None:
         """Generate checked/unchecked box images at the current DPI scale
@@ -465,6 +492,31 @@ class UploaderWindow:
             var = self.selected.get(Path(iid))
             if var is not None:
                 self.tree.item(iid, image=self._checkbox_image(var.get()))
+        # Added in Task 6: widgets whose colour was set directly rather
+        # than through a ttk style. _status_kind survives the switch so a
+        # red error stays red rather than snapping back to default.
+        #
+        # Deferred via after_idle rather than applied here directly: sv_ttk's
+        # `ttk::style theme use` (already run by theme.apply before this
+        # consumer fires) queues a Tk <<ThemeChanged>> virtual event rather
+        # than firing it synchronously. That event's handler
+        # (sv.tcl's configure_colors, via tk_setPalette) does not run until
+        # the next idle/event cycle -- i.e. AFTER this method returns -- and
+        # it resets any widget still holding the old theme's literal
+        # foreground back to the new theme's default. Scheduling the
+        # re-colour with after_idle queues it behind that pending event, so
+        # it applies last and wins. Verified against a real window: without
+        # this, a foreground set here reads back correctly immediately but
+        # is stomped to the default by the time the next event-loop tick
+        # (root.update()) runs.
+        if self.ffmpeg_warn_label is not None:
+            self.root.after_idle(
+                lambda label=self.ffmpeg_warn_label, m=mode:
+                    label.config(foreground=theme.token("WARNING", m)))
+        if self._status_kind is not None:
+            self.root.after_idle(
+                lambda kind=self._status_kind, m=mode:
+                    self.status.config(foreground=theme.token(kind, m)))
 
     def refresh(self, preselect: set | None = None) -> None:
         """Rebuild the list. Paths in *preselect* start checked.
@@ -663,8 +715,9 @@ class UploaderWindow:
     def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
         archive = None
         try:
+            self._status_kind = "FG"
             self._ui(self.status.config,
-                     {"text": "Collecting combat logs…", "foreground": "black"})
+                     {"text": "Collecting combat logs…", "foreground": theme.token("FG")})
             selection = combatlog.select_logs(gamelogs_dir, start_utc, end_utc)
             if not selection.logs:
                 self._ui(messagebox.showinfo, "No logs found", (
@@ -673,16 +726,22 @@ class UploaderWindow:
                     f"Folder: {gamelogs_dir}\n\n"
                     "EVE writes log timestamps in UTC, so this window is in "
                     "UTC too."))
-                self._ui(self.status.config, {"text": "No combat logs found."})
+                self._status_kind = "FG"
+                self._ui(self.status.config,
+                         {"text": "No combat logs found.", "foreground": theme.token("FG")})
                 return
 
             stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
             out = paths.tmp_dir() / f"combatlogs-{stamp}.zip"
-            self._ui(self.status.config, {"text": "Building archive…"})
+            self._status_kind = "FG"
+            self._ui(self.status.config,
+                     {"text": "Building archive…", "foreground": theme.token("FG")})
             archive = combatlog.build_archive(selection, out, start_utc, end_utc)
 
             content = combatlog.summarize_archive(archive, start_utc, end_utc)
-            self._ui(self.status.config, {"text": "Posting to Discord…"})
+            self._status_kind = "FG"
+            self._ui(self.status.config,
+                     {"text": "Posting to Discord…", "foreground": theme.token("FG")})
             result = discord.post_archive(hook, archive.path, content)
 
             if result.ok:
@@ -699,8 +758,9 @@ class UploaderWindow:
                 note = combatlog.dropped_note(archive.dropped)
                 if note:
                     status_text += f" ({note})"
+                self._status_kind = "SUCCESS"
                 self._ui(self.status.config,
-                         {"text": status_text, "foreground": "green"})
+                         {"text": status_text, "foreground": theme.token("SUCCESS")})
             else:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told
@@ -708,8 +768,9 @@ class UploaderWindow:
                 self._ui(messagebox.showerror, "Combat log upload failed", (
                     f"{result.message}\n\nThe archive was kept so you can "
                     f"upload it by hand:\n{archive.path}"))
+                self._status_kind = "ERROR"
                 self._ui(self.status.config,
-                         {"text": result.message, "foreground": "red"})
+                         {"text": result.message, "foreground": theme.token("ERROR")})
         except Exception as exc:
             # post_archive never raises, but build_archive and
             # summarize_archive can -- and by then the archive may already be
@@ -722,8 +783,9 @@ class UploaderWindow:
                 detail += ("\n\nThe archive was kept so you can upload it "
                            f"by hand:\n{archive.path}")
             self._ui(messagebox.showerror, "Combat log upload failed", detail)
+            self._status_kind = "ERROR"
             self._ui(self.status.config,
-                     {"text": f"Error: {exc}", "foreground": "red"})
+                     {"text": f"Error: {exc}", "foreground": theme.token("ERROR")})
 
     def _upload_worker(self, job: "UploadJob") -> None:
         from googleapiclient.discovery import build
@@ -764,7 +826,9 @@ class UploaderWindow:
                     self._ui(self._set_link, info.path, vid)
 
             self.retry_state = None
-            self._ui(self.status.config, {"text": "Upload complete!", "foreground": "green"})
+            self._status_kind = "SUCCESS"
+            self._ui(self.status.config,
+                     {"text": "Upload complete!", "foreground": theme.token("SUCCESS")})
             self._ui(self.progress.config, {"value": 100})
             self._ui(self.retry_btn.state, ["disabled"])
         except uploader.UploadFailed as exc:
@@ -783,7 +847,8 @@ class UploaderWindow:
                 request=exc.request if resumable else None,
             )
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
-            self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
+            self._status_kind = "ERROR"
+            self._ui(self.status.config, {"text": str(exc), "foreground": theme.token("ERROR")})
             if exc.outcome is uploader.Outcome.RETRY:
                 self._ui(self.retry_btn.state, ["!disabled"])
         except Exception as exc:
@@ -794,7 +859,9 @@ class UploaderWindow:
             self._ui(self.progress.stop)
             self._ui(self.progress.config, {"mode": "determinate", "value": 0})
             self._ui(messagebox.showerror, "Upload Failed", str(exc))
-            self._ui(self.status.config, {"text": f"Error: {exc}", "foreground": "red"})
+            self._status_kind = "ERROR"
+            self._ui(self.status.config,
+                     {"text": f"Error: {exc}", "foreground": theme.token("ERROR")})
 
     def _upload_one(self, youtube, MediaFileUpload, path, job, index, total) -> str:
         body = uploader.build_body(job.title, job.description, job.privacy,
@@ -809,9 +876,10 @@ class UploaderWindow:
                      {"text": f"Uploading {index + 1}/{total} — {fraction * 100:.1f}%"})
 
         def on_retry(attempt: int, delay: float) -> None:
+            self._status_kind = "WARNING"
             self._ui(self.status.config,
                      {"text": f"Network problem — retrying in {delay:.0f}s "
-                              f"(attempt {attempt})", "foreground": "orange"})
+                              f"(attempt {attempt})", "foreground": theme.token("WARNING")})
 
         return uploader.upload(request, on_progress=on_progress, on_retry=on_retry)
 
@@ -843,7 +911,8 @@ class UploaderWindow:
             self._ui(self._set_link, info.path, vid)
         except uploader.UploadFailed as exc:
             self.retry_state = replace(state, request=exc.request)
-            self._ui(self.status.config, {"text": str(exc), "foreground": "red"})
+            self._status_kind = "ERROR"
+            self._ui(self.status.config, {"text": str(exc), "foreground": theme.token("ERROR")})
             self._ui(self.retry_btn.state, ["!disabled"])
             return
         # The resumed file is done; continue with whatever followed it.
@@ -851,8 +920,9 @@ class UploaderWindow:
             self._upload_worker(replace(state.job, start_index=state.resume_index + 1))
         else:
             self.retry_state = None
+            self._status_kind = "SUCCESS"
             self._ui(self.status.config,
-                     {"text": "Upload complete!", "foreground": "green"})
+                     {"text": "Upload complete!", "foreground": theme.token("SUCCESS")})
             self._ui(self.progress.config, {"value": 100})
             self._ui(self.retry_btn.state, ["disabled"])
 
