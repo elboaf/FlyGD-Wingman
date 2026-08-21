@@ -51,8 +51,17 @@ def dpi_scale(widget: tk.Misc) -> float:
     `tk scaling` is points-per-pixel (set once in __main__.py as dpi/72);
     dividing by the 96-DPI baseline's own scaling value (96/72) converts
     that back to a plain "1.0 at 100%, 1.5 at 150%" multiplier.
+
+    Rounded to 2 decimals because the round-trip through Tcl is lossy: Tcl
+    formats the stored scaling to 5 significant figures, so 96 DPI comes
+    back as 1.3331 rather than 1.33333 and this returns 0.99982, not 1.0.
+    Every caller then truncates with int(), silently losing a pixel from
+    every scaled constant at 100%. Windows display scaling only ever offers
+    quarter steps (1.0, 1.25, 1.5, 1.75, 2.0, ...), all of which 2 decimals
+    represent exactly, so this recovers the intended factor rather than
+    approximating it. Rounding here fixes every call site at once.
     """
-    return float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0)
+    return round(float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0), 2)
 
 
 # Shared spacing scale for _build's layout. Kept as module constants (rather
@@ -302,11 +311,22 @@ class UploaderWindow:
     def _apply_row_height(self) -> None:
         """Grow the Treeview row so the DPI-scaled checkbox is not clipped.
 
-        Not in the task brief, added after measuring: sv-ttk derives
-        rowheight from its own font metrics, which do not follow `tk
-        scaling`, so it stays 16px at every DPI while the checkbox image
-        grows to 20/23/32px at 125/150/200%. Without this the box is cut
-        off on exactly the high-DPI machines the scaling work targets.
+        Two things have to fit: the DPI-scaled checkbox image, and the
+        line box of the text beside it.
+
+        sv-ttk sets `-rowheight` to `[font metrics SunValleyBodyFont
+        -linespace] + 3` inside `ttk::style theme create ... -settings`,
+        which Tcl evaluates ONCE while sourcing sv.tcl - before
+        theme._rescale_sv_fonts() has corrected the font, and never again
+        on later switches. So sv-ttk's value is frozen at the 96-DPI line
+        height and is independent of the font we actually render with.
+
+        That was harmless while the font was pinned at 14px: the row was
+        taller than its text by accident. Now that the font follows `tk
+        scaling`, the checkbox-derived floor only wins below ~125%, and
+        above that a stale rowheight would crop the text it has to hold.
+        So the line height is re-measured HERE, after the rescale, and
+        folded into the same max().
 
         Re-applied from _on_theme_changed because sv_ttk.set_theme rewrites
         rowheight from its .tcl on every switch; theme.apply runs set_theme
@@ -317,10 +337,19 @@ class UploaderWindow:
         trade, reviewed and kept: this is the app's only Treeview, and a
         second one inheriting a row tall enough for a scaled checkbox is
         benign. A named per-widget style would be more precise but buys
-        nothing today. The max() below means a theme's own larger
+        nothing today. The outer max() below means a theme's own larger
         rowheight is never shrunk.
         """
-        needed = self._checkbox_images[True].height() + 4
+        # +3 mirrors sv-ttk's own formula, so a correctly-scaled font
+        # reproduces the padding sv-ttk intended rather than inventing one.
+        # Guarded: the font only exists once sv-ttk has loaded, and this
+        # runs unconditionally from _build.
+        try:
+            linespace = int(self.root.tk.call(
+                "font", "metrics", "SunValleyBodyFont", "-linespace"))
+        except tk.TclError:
+            linespace = 0
+        needed = max(self._checkbox_images[True].height() + 4, linespace + 3)
         style = ttk.Style(self.root)
         current = style.lookup("Treeview", "rowheight")
         try:
@@ -828,8 +857,15 @@ class UploaderWindow:
                 # minutes with no other signal to the user; without this
                 # the window looks hung at "Found N video(s)" the whole
                 # time. Switch the bar to indeterminate for the duration.
+                # Neutral colour set with the text, for the same reason
+                # on_progress does it: _start_upload writes no status before
+                # launching this worker, so a red error from the previous
+                # attempt would otherwise survive into this message.
+                self._status_kind = "FG"
                 self._ui(self.status.config,
-                         {"text": "Stitching with FFmpeg… this can take a while for large recordings"})
+                         {"text": "Stitching with FFmpeg… this can take a while "
+                                  "for large recordings",
+                          "foreground": theme.token("FG")})
                 self._ui(self.progress.config, {"mode": "indeterminate"})
                 self._ui(self.progress.start, 12)
                 with stitch.stitched(sources, self.state.ffmpeg_bin, paths.tmp_dir()) as merged:
