@@ -181,9 +181,9 @@ Run on Windows against a real install before each release.
 - [ ] **Newly announced recordings are pre-checked, scrolled into view, and
       visibly highlighted** — even when they would otherwise be below the
       fold.
-- [ ] **Sorting by Duration while durations are still loading.** Delete
+- [ ] **Sorting by Length while durations are still loading.** Delete
       `durations.json`, launch against a large folder, and click the
-      Duration header while rows still read "…". Expected: pending rows
+      Length header while rows still read "…". Expected: pending rows
       sort together (they have no value yet) and each fills in where it
       sits — rows do NOT re-order themselves under the cursor as results
       arrive. Click the header again afterwards to re-sort with the real
@@ -319,7 +319,7 @@ behavior that only shows up at size.
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
       `%LOCALAPPDATA%\OBSYouTubeUploader\` first). Expected: the list
-      appears at once with every row present, Duration reading "…", and
+      appears at once with every row present, Length reading "…", and
       the values filling in over the next few seconds. The window must be
       draggable and scrollable the whole time — never a frozen white
       rectangle.
