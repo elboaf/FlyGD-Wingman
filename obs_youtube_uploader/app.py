@@ -579,7 +579,25 @@ class UploaderWindow:
             self.ffmpeg_warn_label.grid(row=7, column=0, sticky=tk.EW,
                                         pady=(self._pad.tight, 0))
 
-        # Row 8 is left free for Task 6's selection summary.
+        # Row 8. Muted via Task 4's shared named style rather than a
+        # foreground set here: apply_typography re-asserts MUTED_STYLE on
+        # every theme change, so this label needs no entry in
+        # _on_theme_changed -- a manual recolour would be redundant with the
+        # style and would drift from it the moment the token changes.
+        #
+        # A readout, not a control, and placed immediately above the upload
+        # buttons: it exists to answer "am I about to upload what I think I
+        # am?" at the moment the user is reaching for Upload Selected.
+        #
+        # Deliberately NOT folded into self.status: that line is owned by
+        # progress, errors and "Found N video(s)", all of which overwrite
+        # each other. A summary sharing it would be destroyed by the first
+        # progress tick of the upload it describes.
+        self.selection_summary = ttk.Label(self.upload_panel, text="",
+                                           style=MUTED_STYLE, justify=tk.LEFT,
+                                           wraplength=self._panel_width - self._pad.normal)
+        self.selection_summary.grid(row=8, column=0, sticky=tk.W,
+                                    pady=(self._pad.normal, 0))
 
         # Upload combat logs is a peer upload action, NOT accented, so the
         # primary action stays unambiguous — the same reasoning the old
@@ -809,6 +827,7 @@ class UploaderWindow:
             return
         var.set(not var.get())
         self.tree.item(iid, image=self._checkbox_image(var.get()))
+        self._update_selection_summary()
 
     def _on_tree_click(self, event: tk.Event) -> None:
         if self.tree.identify_region(event.x, event.y) != "tree":
@@ -1020,6 +1039,10 @@ class UploaderWindow:
         self._status_kind = "FG"
         self.status.config(text=f"Found {len(self.infos)} video(s)",
                            foreground=theme.token("FG"))
+        # After the rebuild, not before: self.selected was cleared and
+        # repopulated above, and the watcher's preselect means a refresh can
+        # arrive with rows already checked.
+        self._update_selection_summary()
 
         # Drop cache entries for recordings no longer in the folder, using
         # the scan just performed rather than a second pass over the disk,
@@ -1142,6 +1165,14 @@ class UploaderWindow:
         iid = str(info.path)
         if self.tree.exists(iid):
             self.tree.set(iid, "duration", info.duration_str)
+        # The summary's duration total is only as complete as the probes
+        # behind it. This method is the ONLY place a duration becomes known
+        # after the list is drawn, so without this call the "+" partial
+        # marker would still be showing on a selection that is now fully
+        # measured. Unconditional rather than guarded on "is this info
+        # selected": the check costs a dict lookup either way, and a guard
+        # that gets the membership test subtly wrong fails silently.
+        self._update_selection_summary()
 
     def _probe_now(self, infos: list[library.VideoInfo]) -> None:
         """Resolve a selection's durations synchronously, in place.
@@ -1197,9 +1228,31 @@ class UploaderWindow:
     def _set_all(self, value: bool) -> None:
         for var in self.selected.values():
             var.set(value)
+        # Once, after the loop: the label is recomputed from the whole
+        # selection, so doing it per row would be N identical repaints of
+        # intermediate states.
+        self._update_selection_summary()
 
     def _chosen(self) -> list[library.VideoInfo]:
         return [i for i in self.infos if self.selected.get(i.path, tk.BooleanVar()).get()]
+
+    def _update_selection_summary(self) -> None:
+        """Repaint the panel's selection readout.
+
+        TWO triggers feed this, not one. Selection changes are the obvious
+        one -- _toggle_row, _set_all, and refresh() (which rebuilds
+        self.selected from scratch and re-applies the watcher's preselect).
+        The second is probe completion: _apply_duration writes a resolved
+        duration into one Treeview cell by iid and deliberately touches
+        nothing else, so a summary wired only to selection changes would sit
+        stale behind every probe that lands -- showing a partial total, with
+        its "+" marker, long after the probe that completed it.
+
+        Cheap enough to call unconditionally: _chosen() is a list
+        comprehension over infos already in memory, and the formatter reads
+        only info.size and info.duration.
+        """
+        self.selection_summary.config(text=format_selection_summary(self._chosen()))
 
     def _copy(self, path: Path) -> None:
         url = self.links.get(path)
