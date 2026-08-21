@@ -1,67 +1,13 @@
-"""Pure formatters that live in app.py.
+"""Pure copy formatters.
 
-app.py imports without a display -- only constructing UploaderWindow needs
-one -- so its module-level pure functions are testable here. The Tk wiring
-that consumes them has no harness in this repo (see library.py's docstring),
-which is exactly why the formatting lives in a function and not inline in a
-label update.
+Moved from app.py to ui/copy.py ahead of the webview port; these tests
+cover the copy module directly rather than the Tk window that used to be
+their only harness.
 """
 from pathlib import Path
-import dataclasses
-from types import SimpleNamespace
 
-import pytest
-
-from obs_youtube_uploader import app as app_mod, library
-from obs_youtube_uploader.__main__ import tk_scaling_for
+from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
-
-
-def _widget_at(dpi: int):
-    """A widget whose `tk scaling` is what __main__.main() would have set for
-    this DPI. Monkeypatching dpi_scale instead would prove only that the
-    multiplication happens, not that it is fed the value the app really
-    installs -- the two halves of that contract have drifted before
-    (test_main.test_tk_scaling_and_dpi_scale_round_trip)."""
-    return SimpleNamespace(tk=SimpleNamespace(
-        call=lambda *args, _v=tk_scaling_for(dpi): _v))
-
-
-def test_spacing_base_values_at_100_percent():
-    pad = app_mod.spacing(_widget_at(96))
-    assert (pad.tight, pad.normal, pad.loose, pad.margin, pad.frame) == (
-        4, 8, 12, 16, 8)
-
-
-@pytest.mark.parametrize("dpi, expected", [
-    (96, (4, 8, 12, 16, 8)),
-    (120, (5, 10, 15, 20, 10)),
-    (144, (6, 12, 18, 24, 12)),
-])
-def test_spacing_scales_with_tk_scaling(dpi, expected):
-    pad = app_mod.spacing(_widget_at(dpi))
-    assert (pad.tight, pad.normal, pad.loose, pad.margin, pad.frame) == expected
-
-
-def test_spacing_never_collapses_to_zero():
-    """A pathological scale must still leave a visible gap: 0 padding reads as
-    a layout bug, not as small spacing."""
-    widget = SimpleNamespace(tk=SimpleNamespace(call=lambda *args: 0.01))
-    pad = app_mod.spacing(widget)
-    assert min(pad.tight, pad.normal, pad.loose, pad.margin, pad.frame) >= 1
-
-
-def test_spacing_is_immutable():
-    pad = app_mod.spacing(_widget_at(96))
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        pad.tight = 99
-
-
-def test_old_unscaled_pad_constants_are_gone():
-    """They are removed, not deprecated: leaving them importable invites a new
-    call site that silently ignores DPI."""
-    for name in ("PAD_TIGHT", "PAD_NORMAL", "PAD_LOOSE", "FRAME_PADDING"):
-        assert not hasattr(app_mod, name)
 
 
 def _info(name="a.mkv", size=10, duration=60.0, probed=True):
@@ -112,11 +58,3 @@ def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
 def test_summary_uses_a_middle_dot_separator():
     summary = copy_mod.format_selection_summary([_info()])
     assert " · " in summary and "|" not in summary
-
-
-def test_app_still_exposes_the_moved_copy_helpers():
-    """The Tk UI is not deleted in this commit, and it calls these by bare
-    name. Re-exporting the same objects (identity, not a reimplementation)
-    is what lets the port land one module at a time instead of all at once."""
-    assert app_mod.format_selection_summary is copy_mod.format_selection_summary
-    assert app_mod.format_upload_confirm is copy_mod.format_upload_confirm
