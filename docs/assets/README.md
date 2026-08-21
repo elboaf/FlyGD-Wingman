@@ -7,10 +7,17 @@ README references them by path and needs no edit.
 
 ## `wingman-logo.png`
 
-The FlyGD Wingman emblem. Currently 512×512 PNG with transparency, rendered at
-160 px in the README.
+The FlyGD Wingman emblem. Currently a 489×510 PNG with a genuinely
+transparent background, rendered at 180 px wide in the README.
 
-- Square, transparent background, at least 512×512.
+- Roughly square, at least ~500 px on the short side.
+- **Transparent background, actually transparent.** Check it rather than
+  trusting the file: a PNG can be mode `P` with a transparency chunk and still
+  be fully opaque once composited. `Image.open(f).convert("RGBA")` and look at
+  a corner pixel's alpha — 0 is transparent, 255 is an opaque matte that will
+  render as a coloured box on one of GitHub's two themes.
+- Bear in mind the README is read on both a light and a dark background. Art
+  that is uniformly dark disappears on the dark theme, and vice versa.
 - Must be original or properly licensed artwork. Do **not** use Google,
   YouTube, OBS Studio, EVE Online, or Discord artwork — this project is not
   affiliated with any of them.
