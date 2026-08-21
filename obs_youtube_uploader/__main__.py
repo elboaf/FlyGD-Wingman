@@ -178,7 +178,7 @@ def build_tray(on_open, on_quit):
         pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
         pystray.MenuItem("Quit", lambda *_: on_quit()),
     )
-    return pystray.Icon("obs_youtube_uploader", image, "OBS → YouTube Uploader", menu)
+    return pystray.Icon("obs_youtube_uploader", image, "FlyGD Wingman", menu)
 
 
 def main() -> int:
@@ -258,7 +258,7 @@ def main() -> int:
                     refresh_deferred = True
                     try:
                         icon.notify(f"{len(ready)} new recording(s) ready to upload",
-                                    "OBS → YouTube Uploader")
+                                    "FlyGD Wingman")
                     except Exception:
                         pass  # Notifications are best-effort.
                 else:
@@ -269,7 +269,7 @@ def main() -> int:
                         window.refresh(preselect=set(ready))
                         try:
                             icon.notify(f"{len(ready)} new recording(s) ready to upload",
-                                        "OBS → YouTube Uploader")
+                                        "FlyGD Wingman")
                         except Exception:
                             pass  # Notifications are best-effort.
                     refresh_deferred = False
@@ -295,7 +295,7 @@ def main() -> int:
             if consecutive_failures == FAILURE_NOTIFY_THRESHOLD:
                 try:
                     icon.notify("The recording watcher is having trouble — check the log",
-                                "OBS → YouTube Uploader")
+                                "FlyGD Wingman")
                 except Exception:
                     pass  # Notifications are best-effort.
         finally:

@@ -13,9 +13,22 @@ Run on Windows against a real install before each release.
 
 ## Install
 - [ ] Installer runs without an admin prompt
+- [ ] Installer wizard, Start Menu entry, and Add/Remove Programs all read
+      **FlyGD Wingman**
 - [ ] Start Menu shortcut launches the app
 - [ ] With "start at login" checked, the app appears after a reboot
 - [ ] Uninstall removes the app and leaves `%LOCALAPPDATA%` state intact
+- [ ] **The rename upgrades in place rather than installing a second copy.**
+      Install a pre-rename build (product name "OBS YouTube Uploader"), sign
+      in and change a setting, then run the new installer over it. Expected:
+      Add/Remove Programs lists exactly ONE entry, now named FlyGD Wingman;
+      `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` and `token.json`
+      survive, so the app is still signed in with the same preferences. This
+      is what `AppId=OBS YouTube Uploader` in installer.iss buys — if two
+      entries appear, that pin is wrong or missing.
+- [ ] Window title bar and tray-icon tooltip both read **FlyGD Wingman**
+- [ ] A "new recording(s) ready to upload" notification is titled
+      **FlyGD Wingman**
 
 ## First run
 - [ ] Recording folder is pre-filled from OBS config without being asked
@@ -241,6 +254,19 @@ Run on Windows against a real install before each release.
       label goes to "Waiting for browser…" and STAYS there until the
       sign-in finishes — the startup check completing behind it must not
       flip it to a red "Not connected" mid-sign-in.
+- [ ] **The YouTube Terms of Service link is visible and works.** In the
+      Google account section, confirm the line "Videos are uploaded to
+      YouTube and are subject to the YouTube Terms of Service:" and the
+      https://www.youtube.com/t/terms link beneath it are both fully
+      visible (check at 150% display scaling too — this section grew by
+      two lines), and that clicking the link opens YouTube's terms in a
+      browser. Developer Policies III.A.1 requires this link to be
+      displayed by the application, so it must not be clipped away.
+      Then switch the Windows app mode between Light and Dark with the
+      dialog open: both lines must recolour with the rest of the dialog.
+      They are repainted by `_repaint_tokens`, and a label missing from
+      that pass keeps its old colour — which in dark mode leaves the
+      link a dark blue on a dark background, i.e. displayed but unreadable.
 - [ ] **Close the Settings dialog while a Google sign-in is in flight.**
       Click Connect Google Account, then close the Settings window before
       completing (or without completing) the browser sign-in. The OAuth

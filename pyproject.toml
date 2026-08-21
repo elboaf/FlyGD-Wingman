@@ -1,7 +1,13 @@
 [project]
+# The distribution/import name is deliberately unchanged by the FlyGD Wingman
+# rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
+# entry point, and the release workflow's credential-injection step.
 name = "obs-youtube-uploader"
 version = "2.0.0"
+description = "FlyGD Wingman - Windows companion for OBS recordings: review, stitch, and upload to YouTube."
+readme = "README.md"
 requires-python = ">=3.11"
+maintainers = [{ name = "FlyGD", email = "technical@zoolanders.vip" }]
 dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
@@ -10,6 +16,14 @@ dependencies = [
     "Pillow",
     "sv-ttk",
 ]
+
+[project.urls]
+Homepage = "https://wingman.zoolanders.vip/"
+Issues = "https://github.com/elboaf/OBS-YouTube-Uploader/issues"
+Source = "https://github.com/elboaf/OBS-YouTube-Uploader"
+Releases = "https://github.com/elboaf/OBS-YouTube-Uploader/releases"
+"Privacy Policy" = "https://wingman.zoolanders.vip/privacy"
+"Terms of Service" = "https://wingman.zoolanders.vip/terms"
 
 [project.optional-dependencies]
 dev = ["pytest"]

@@ -3,19 +3,30 @@
 ; an optional run-at-login entry. Run-at-login matters because a tray
 ; watcher the user forgets to start does nothing.
 
-#define AppName "OBS YouTube Uploader"
+#define AppName "FlyGD Wingman"
 #define AppVersion "2.0.0"
 #define AppExe "OBSYouTubeUploader.exe"
 
 [Setup]
+; AppId is the upgrade identity. Inno Setup defaults it to AppName, so the
+; installs already in the wild are registered under the pre-rename product
+; name. Pinning that old string here is what makes the rename an in-place
+; upgrade rather than a second, side-by-side installation. Do not "tidy" this
+; to match AppName -- that would strand every existing installation.
+AppId=OBS YouTube Uploader
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=elboaf
+AppPublisher=FlyGD
+AppPublisherURL=https://wingman.zoolanders.vip/
+AppSupportURL=https://wingman.zoolanders.vip/
+; Install directory and executable name are deliberately NOT renamed: the
+; run-at-login shortcut and the %LOCALAPPDATA% state folder both key off
+; them, and renaming would orphan an existing install's settings and token.
 DefaultDirName={autopf}\OBSYouTubeUploader
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir=..\dist
-OutputBaseFilename=OBS-YouTube-Uploader-Setup-{#AppVersion}
+OutputBaseFilename=FlyGD-Wingman-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 ; Per-user install avoids an admin prompt and keeps the app writable.

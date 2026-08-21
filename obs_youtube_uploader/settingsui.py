@@ -1,6 +1,7 @@
 """Settings dialog: upload defaults, notification mode, Google account."""
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -12,6 +13,13 @@ NOTIFY_CHOICES = ["toast", "popup"]
 
 # How often the dialog checks whether the background auth lookup finished.
 AUTH_POLL_MS = 50
+
+# YouTube API Services Developer Policies III.A.1 requires an API Client to
+# display a link to YouTube's Terms of Service. This is that link: it lives
+# next to the sign-in button because that is where the user opts in to
+# uploading, and it must stay reachable in the shipped UI -- a mention in the
+# README alone does not satisfy "the API Client must display".
+YOUTUBE_TOS_URL = "https://www.youtube.com/t/terms"
 
 
 class SettingsWindow:
@@ -127,8 +135,8 @@ class SettingsWindow:
         self.lbl_acct_hint = ttk.Label(
             acct,
             text=("Google hasn't verified this app yet, so the sign-in page "
-                  "shows a warning. Click Advanced, then \"Go to OBS YouTube "
-                  "Uploader (unsafe)\" to continue."),
+                  "shows a warning. Click Advanced, then \"Go to FlyGD "
+                  "Wingman (unsafe)\" to continue."),
             # wraplength is in PIXELS, so an unscaled 460 wraps this hint at
             # half the apparent width at 200% and turns it into a narrow
             # column beside full-width controls. round(), not int(): the
@@ -138,6 +146,24 @@ class SettingsWindow:
             justify=tk.LEFT,
         )
         self.lbl_acct_hint.pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+
+        self.lbl_tos_hint = ttk.Label(
+            acct,
+            text=("Videos are uploaded to YouTube and are subject to the "
+                  "YouTube Terms of Service:"),
+            foreground=theme.token("MUTED"), wraplength=round(460 * scale),
+            justify=tk.LEFT,
+        )
+        self.lbl_tos_hint.pack(anchor=tk.W, pady=(app_mod.PAD_TIGHT, 0))
+        self.lbl_tos = ttk.Label(
+            acct,
+            text=YOUTUBE_TOS_URL, foreground=theme.token("LINK"),
+            cursor="hand2")
+        self.lbl_tos.pack(anchor=tk.W)
+        # Bound rather than made a Button so it reads as a link. The handler
+        # is wrapped because webbrowser.open raises when no browser can be
+        # resolved, and a dead link must not take the Settings dialog down.
+        self.lbl_tos.bind("<Button-1>", lambda _e: self._open_tos())
 
         up = ttk.LabelFrame(self.win, text="Upload defaults",
                             padding=app_mod.FRAME_PADDING)
@@ -202,6 +228,14 @@ class SettingsWindow:
                    style="Accent.TButton").pack(side=tk.RIGHT)
         ttk.Button(row, text="Cancel", command=self.win.destroy).pack(
             side=tk.RIGHT, padx=app_mod.PAD_TIGHT)
+
+    def _open_tos(self) -> None:
+        try:
+            webbrowser.open(YOUTUBE_TOS_URL)
+        except Exception:
+            messagebox.showinfo(
+                "YouTube Terms of Service",
+                f"Could not open a browser. The terms are at:\n{YOUTUBE_TOS_URL}")
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(initialdir=self.rec_dir.get())
@@ -355,7 +389,8 @@ class SettingsWindow:
 
     def _on_theme_changed(self, mode: str) -> None:
         """Re-apply colours set directly rather than through a ttk style:
-        the Canvas dot, the auth label, and the three hint labels.
+        the Canvas dot, the auth label, the hint labels, and the YouTube
+        Terms of Service link.
 
         Deferred via after_idle for the same reason UploaderWindow defers:
         sv_ttk.set_theme() fires ttk's <<ThemeChanged>>, which Tk QUEUES, and
@@ -371,6 +406,8 @@ class SettingsWindow:
         if not self.win.winfo_exists():
             return  # dialog closed between the switch and the idle callback
         self.lbl_acct_hint.config(foreground=theme.token("MUTED", mode))
+        self.lbl_tos_hint.config(foreground=theme.token("MUTED", mode))
+        self.lbl_tos.config(foreground=theme.token("LINK", mode))
         self.lbl_category_hint.config(foreground=theme.token("MUTED", mode))
         self.lbl_webhook.config(foreground=theme.token("MUTED", mode))
         if self._auth_kind is not None:

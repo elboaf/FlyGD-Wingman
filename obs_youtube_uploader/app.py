@@ -149,7 +149,7 @@ class UploaderWindow:
         self._refresh_generation = 0
         self._probe_queue: queue.Queue = queue.Queue()
 
-        root.title("OBS → YouTube Uploader")
+        root.title("FlyGD Wingman")
         icon_path = paths.icon_file()
         if icon_path is not None:
             try:
