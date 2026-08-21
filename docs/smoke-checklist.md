@@ -734,6 +734,13 @@ behavior that only shows up at size.
       background process remains running.
 
 ## Release
+- [ ] **`uv.lock` carries the new version.** It records this project's own
+      version alongside its dependencies, and CI's version-consistency check
+      covers only `pyproject.toml`, `__init__.py` and `installer.iss` — so a
+      bump that misses the lockfile passes CI and ships a lock claiming the
+      previous version. Run `uv lock` after bumping the three, confirm the
+      `obs-youtube-uploader` entry matches, and commit it with the bump.
+      (It was last observed stale at `2.0.0` against `2.1.0`.)
 - [ ] **Version-consistency check catches a mismatch.** Bump one of
       `pyproject.toml`, `obs_youtube_uploader/__init__.py`, or
       `packaging/installer.iss`'s `AppVersion` (but not the other two),
