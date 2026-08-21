@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
+from obs_youtube_uploader import durations
 from obs_youtube_uploader.ui.api import Api, AppState
+from obs_youtube_uploader.ui.rows import RowSnapshot
+from obs_youtube_uploader.ui.scheduler import Scheduler
+from tests.test_scheduler import FakeClock
 
 
 class FakeWindow:
@@ -212,3 +216,182 @@ def test_confirm_forgets_the_request_once_answered(tmp_path):
     # Left in the map, every dialog the app ever shows leaks an Event for the
     # life of the process.
     assert api._dialogs == {}
+
+
+class InlineThread:
+    """Runs the worker synchronously on start().
+
+    The probe worker is a plain daemon thread in production. Running it
+    inline is what lets these tests assert on a full drain with no sleeps
+    and no join timeouts -- the queue is already loaded by the time
+    list_rows() returns.
+    """
+
+    def __init__(self, target=None, daemon=False):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+@pytest.fixture
+def recordings(tmp_path):
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    for name in ("a.mkv", "b.mkv"):
+        (folder / name).write_bytes(b"\0" * 2048)
+    return folder
+
+
+def rows_api(recordings, tmp_path, clock, probe, window=None):
+    api = Api(make_state(recordings), rows=RowSnapshot(),
+              durations_file=tmp_path / "durations.json",
+              spawn=InlineThread, probe=probe, timer=clock.timer)
+    api._window = window if window is not None else FakeWindow()
+    return api
+
+
+def test_list_rows_pushes_every_row_then_streams_durations(recordings, tmp_path):
+    window = FakeWindow()
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True), window=window)
+
+    api.list_rows()
+
+    # Rows go out immediately, drawn from a plain stat. The whole point of
+    # the split is that the list appears before any ffprobe has run.
+    handler, payload = pushes(window)[0]
+    assert handler == "onRows"
+    assert {row["name"] for row in payload["rows"]} == {"a.mkv", "b.mkv"}
+
+    clock.fire()  # one drain tick
+
+    streamed = [p for name, p in pushes(window) if name == "onDuration"]
+    assert len(streamed) == 2
+    assert {p["duration"] for p in streamed} == {12.5}
+    assert all(p["definitive"] for p in streamed)
+    # KEY IS `id`, matching the row objects onRows delivered.
+    assert {p["id"] for p in streamed} == {r["id"] for r in payload["rows"]}
+
+
+def test_preselect_marks_the_named_paths(recordings, tmp_path):
+    """The watcher's channel: finish a fight, open the window, hit Upload."""
+    window = FakeWindow()
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True), window=window)
+
+    api.list_rows(preselect={recordings / "a.mkv"})
+
+    _handler, payload = pushes(window)[0]
+    marked = {row["name"]: row["preselected"] for row in payload["rows"]}
+    assert marked == {"a.mkv": True, "b.mkv": False}
+
+
+def test_the_panel_text_is_computed_in_python(recordings, tmp_path):
+    """One tested implementation of each string, not two.
+
+    Selection lives in the page, so the page asks for these rather than
+    reimplementing format_selection_summary and format_title_hint in
+    JavaScript. Both carry decisions subtle enough that a second copy would
+    drift: the summary's "+" for an outstanding probe, and the title hint's
+    disclosure that a batch is numbered.
+    """
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+    ids = [row["id"] for row in api._rows.rows()]
+
+    assert api.panel_text([], False)["summary"] == "Nothing selected"
+    assert api.panel_text(ids[:1], False)["summary"].startswith("1 selected")
+
+
+def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(
+        recordings, tmp_path):
+    """Three distinct labels, because three distinct things happen.
+
+    A batch is numbered per file, a stitch collapses to one video, and a
+    single selection needs no disclosure at all. Asserted verbatim against
+    format_title_hint's real strings -- this is copy, and copy is what
+    regresses.
+    """
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+    ids = [row["id"] for row in api._rows.rows()]  # the fixture holds two
+
+    assert api.panel_text(ids, False)["title_hint"] == (
+        "Title (applies to all 2, numbered 1-2)")
+    assert api.panel_text(ids, True)["title_hint"] == "Title (one stitched video)"
+    assert api.panel_text(ids[:1], False)["title_hint"] == "Title"
+
+
+def test_the_summary_ignores_ids_the_snapshot_does_not_know(recordings, tmp_path):
+    """A stale page after a refresh must not make the summary lie."""
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+    assert api.panel_text(["nonsense"], False)["summary"] == "Nothing selected"
+
+
+def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
+    cache_file = tmp_path / "durations.json"
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+    clock.fire()
+
+    assert set(durations.load(cache_file)) == {
+        str(recordings / "a.mkv"), str(recordings / "b.mkv")}
+
+    # Second Api, same cache file: nothing left to probe, so no worker and
+    # no drain loop at all.
+    window2 = FakeWindow()
+    clock2 = FakeClock()
+
+    def explode(path, binary):
+        raise AssertionError("probed a file already in the cache")
+
+    rows_api(recordings, tmp_path, clock2, probe=explode,
+             window=window2).list_rows()
+
+    assert [name for name, _ in pushes(window2)] == ["onRows"]
+    assert clock2.timers == []
+
+
+def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
+    """library.probe's second return value, honoured end to end.
+
+    (None, False) means ffprobe never got a verdict -- no binary, launch
+    failure, timeout. The cache key is (size, mtime) and never changes
+    again for a finished recording, so remembering that answer would pin
+    the row to "?" forever and permanently block its combat-log upload.
+    """
+    clock = FakeClock()
+    window = FakeWindow()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (None, False), window=window)
+    api.list_rows()
+    clock.fire()
+
+    assert durations.load(tmp_path / "durations.json") == {}
+    streamed = [p for name, p in pushes(window) if name == "onDuration"]
+    assert [p["definitive"] for p in streamed] == [False, False]
+
+
+def test_the_drain_loop_stops_once_the_worker_is_done(recordings, tmp_path):
+    clock = FakeClock()
+    api = rows_api(recordings, tmp_path, clock,
+                   probe=lambda path, binary: (12.5, True))
+    api.list_rows()
+
+    clock.fire()
+
+    # The worker's sentinel arrived in that same tick; leaving the loop
+    # armed would burn a timer every 100ms for the life of the process.
+    assert clock.timers[-1].cancelled

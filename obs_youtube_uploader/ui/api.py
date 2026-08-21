@@ -21,12 +21,29 @@ passed in: create_window() needs js_api before a window object exists.
 """
 import json
 import logging
+import queue
 import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import durations, library, paths
+from . import copy as copy_mod
+from .rows import RowSnapshot
+from .scheduler import Scheduler
+
 logger = logging.getLogger(__name__)
+
+# 100ms, carried over from app.PROBE_DRAIN_MS: fast enough that durations
+# appear to fill in live, slow enough that a folder of a hundred recordings
+# is batched into a handful of drains rather than a hundred saves.
+PROBE_DRAIN_S = 0.1
+
+# Long enough for WebView2 to load the page and run app.js, short enough
+# that a first-run user does not stare at an empty window wondering. The
+# push is idempotent from the page's side, so an early one costs nothing
+# beyond a logged drop.
+FIRST_RUN_PUSH_S = 1.5
 
 
 @dataclass
@@ -50,7 +67,12 @@ class AppState:
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
-    def __init__(self, state: AppState, *, id_factory=lambda: uuid.uuid4().hex):
+    def __init__(self, state: AppState, *,
+                 id_factory=lambda: uuid.uuid4().hex,
+                 rows=None, durations_file=None,
+                 drain_interval_s=PROBE_DRAIN_S,
+                 spawn=threading.Thread, probe=library.probe,
+                 timer=threading.Timer):
         self._state = state
         self._window = None          # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
@@ -60,6 +82,20 @@ class Api:
         # request id -> [Event, answer]. An entry exists only while a worker
         # is parked on it.
         self._dialogs: dict[str, list] = {}
+
+        self._rows = rows if rows is not None else RowSnapshot()
+        self._durations_file = durations_file or paths.durations_file()
+        self._cache = durations.load(self._durations_file)
+        self._drain_interval_s = drain_interval_s
+        self._spawn = spawn
+        self._probe = probe
+        self._timer = timer
+        self._probe_queue: queue.Queue = queue.Queue()
+        # Every list_rows() bumps this. A probe result carrying a stale
+        # generation refers to rows that have since been replaced, and is
+        # dropped rather than written into the current list.
+        self._generation = 0
+        self._drain: Scheduler | None = None
 
     # ----- page -> Python -------------------------------------------------
 
@@ -149,3 +185,151 @@ class Api:
         finally:
             with self._dialog_lock:
                 self._dialogs.pop(request_id, None)
+
+    # ----- rows and durations ----------------------------------------------
+
+    def list_rows(self, preselect: set | None = None) -> None:
+        """Rebuild the list and push it, then fill durations in behind it.
+
+        Successor to UploaderWindow.refresh(). Rows are drawn from a plain
+        stat and pushed immediately; durations come from the cache where
+        they can and a background probe where they cannot. The version this
+        replaces once ran one synchronous ffprobe per file before the window
+        appeared, which froze the app for seconds on every launch, tray
+        open, settings save, and delete.
+
+        *preselect* is a set of Path, not of strings -- it comes straight
+        from the watcher's poll result.
+
+        Returns without pushing when no recording folder is configured yet.
+        That is first run, and the page is showing its own route for it; a
+        push of an empty list here would replace that screen with an empty
+        uploader and no explanation.
+        """
+        if self._state.recording_dir is None:
+            return
+        self._generation += 1
+        generation = self._generation
+        self._stop_drain()
+
+        rebuilt = self._rows.rebuild(self._state.recording_dir, preselect=preselect)
+        ids = [row["id"] for row in rebuilt]
+        infos = self._rows.resolve_many(ids)
+        pending = durations.resolve(self._cache, infos)
+        # After the resolve, not after the rebuild: resolve() fills cache
+        # hits into the very VideoInfo objects the snapshot renders from, so
+        # rows() now reports them and the page never flashes "…" on a
+        # duration that was already known.
+        self._push("onRows", {"rows": self._rows.rows()})
+
+        # Identity, not equality: VideoInfo is a plain dataclass, so two
+        # recordings with the same size and mtime compare equal and an `in`
+        # test over the pending list would probe the wrong row.
+        outstanding = {id(info) for info in pending}
+        work = [(row_id, info) for row_id, info in zip(ids, infos)
+                if id(info) in outstanding]
+        if work:
+            self._start_probe(work, generation)
+
+    def panel_text(self, ids: list[str], stitch: bool) -> dict:
+        """Both selection-dependent strings, for the page to render.
+
+        Selection and the stitch checkbox are client state and never cross
+        the bridge, so the page asks for these strings on every change
+        rather than reimplementing them in JavaScript. That keeps one
+        tested implementation of each: format_selection_summary, whose two
+        asymmetries ("+" when a probe is outstanding, never a partial
+        marker on size) are subtle enough that a second copy would drift
+        within a release; and format_title_hint, which discloses that
+        build_body numbers a batch -- a disclosure added deliberately in
+        2.2.0 after users got ten differently-named public videos.
+
+        Returned together because both change on the same events, so one
+        round trip serves both.
+
+        Unknown ids are dropped by resolve_many, so a stale page produces a
+        smaller honest summary rather than a wrong one.
+        """
+        infos = self._rows.resolve_many(ids)
+        return {
+            "summary": copy_mod.format_selection_summary(infos),
+            "title_hint": copy_mod.format_title_hint(len(infos), bool(stitch)),
+        }
+
+    # ----- durations --------------------------------------------------------
+
+    def _start_probe(self, work, generation: int) -> None:
+        """Probe on a worker; apply results from a drain loop.
+
+        The worker touches neither the snapshot nor the page: it pushes onto
+        a queue that the drain reads. Pushing `onDuration` straight from the
+        worker would be shorter, but it would also make the durations cache
+        a structure written from two threads, and it would give up the
+        batching that makes the per-tick save affordable.
+        """
+        def worker() -> None:
+            try:
+                for row_id, info in work:
+                    if generation != self._generation:
+                        break  # A newer list_rows owns the list now.
+                    if info.probed:
+                        continue  # Already resolved on demand.
+                    duration, definitive = self._probe(info.path,
+                                                       self._state.ffprobe_bin)
+                    self._probe_queue.put(
+                        (generation, row_id, info, duration, definitive))
+            except Exception:
+                # probe() swallows its own failures, so reaching here means
+                # something unforeseen. Rows left unprobed sit on "…", and in
+                # a windowed build stderr goes nowhere, so log it.
+                logger.warning("Duration probe worker failed", exc_info=True)
+            finally:
+                # Always sent, including on early exit, so the drain loop
+                # knows to stop rescheduling itself.
+                self._probe_queue.put((generation, None, None, None, False))
+
+        self._drain = Scheduler(
+            self._drain_interval_s,
+            lambda: self._drain_probes(generation),
+            timer=self._timer,
+        )
+        self._spawn(target=worker, daemon=True).start()
+        self._drain.start()
+
+    def _drain_probes(self, generation: int) -> None:
+        """Apply whatever the probe worker has finished since the last tick."""
+        if generation != self._generation:
+            self._stop_drain()  # Superseded; the newer list has its own loop.
+            return
+        done = False
+        applied = 0
+        while True:
+            try:
+                gen, row_id, info, duration, definitive = self._probe_queue.get_nowait()
+            except queue.Empty:
+                break
+            if gen != self._generation:
+                continue  # Straggler from a superseded refresh.
+            if info is None:
+                done = True
+                continue
+            if definitive:
+                durations.remember(self._cache, info.path, info.size,
+                                   info.mtime, duration)
+            self._rows.set_duration(row_id, duration, definitive)
+            self._push("onDuration", {"id": row_id, "duration": duration,
+                                      "definitive": definitive})
+            applied += 1
+        # Per tick rather than once at the end: a cold scan of a large folder
+        # takes a while, and a user who opens the window from the tray and
+        # quits partway through would otherwise lose every duration measured
+        # so far and start the whole scan again next launch.
+        if applied:
+            durations.save(self._durations_file, self._cache)
+        if done:
+            self._stop_drain()
+
+    def _stop_drain(self) -> None:
+        drain, self._drain = self._drain, None
+        if drain is not None:
+            drain.stop()
