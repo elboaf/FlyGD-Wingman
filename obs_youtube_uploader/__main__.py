@@ -114,9 +114,14 @@ def get_system_dpi() -> int:
         return 96
     import ctypes
     try:
-        return ctypes.windll.user32.GetDpiForSystem()
+        dpi = ctypes.windll.user32.GetDpiForSystem()
     except (AttributeError, OSError):
         return 96
+    # Floor, not just an exception guard: GetDpiForSystem returns 0 on
+    # failure rather than raising, so the except above structurally cannot
+    # catch it — and `tk scaling 0.0` would silently collapse every
+    # point-sized font in the app.
+    return dpi if dpi >= 96 else 96
 
 
 def resolve_recording_dir(cfg: dict, ask=filedialog.askdirectory) -> Path | None:

@@ -45,16 +45,32 @@ class SettingsWindow:
         # must scale with it too, or it under-sizes the dialog at 125%/150%
         # relative to today's fix. Compute the natural size after layout,
         # keep a scaled starting width, and let height follow the content,
-        # clamped to the screen so the dialog cannot open larger than the
-        # work area at 150%. Resizable + minsize means a user at an unusual
-        # DPI or font size is never trapped below the window's usable size.
+        # clamped so the dialog cannot open taller than the screen at 150%.
+        #
+        # That clamp subtracts a scaled margin rather than querying the real
+        # work area: Tk exposes only winfo_screenheight(), which includes
+        # the taskbar, and has no cross-platform work-area API. The margin
+        # is a deliberate approximation of a bottom taskbar, not a measured
+        # value.
+        #
+        # minsize normally pins the dialog at its natural size, which is the
+        # b23f9cc guarantee: the user cannot shrink the Save/Cancel row back
+        # out of view. But when the content genuinely does not fit the usable
+        # height, pinning would re-create b23f9cc's own symptom with the
+        # escape hatch closed — Save/Cancel behind the taskbar and no way to
+        # resize down to reach them. In that case the floor drops to a modest
+        # scaled minimum so the window stays shrinkable and movable.
         self.win.update_idletasks()
         scale = app_mod.dpi_scale(self.win)
         width = max(int(520 * scale), self.win.winfo_reqwidth())
         width = min(width, self.win.winfo_screenwidth())
-        height = min(self.win.winfo_reqheight(), self.win.winfo_screenheight())
+        natural_height = self.win.winfo_reqheight()
+        usable_height = self.win.winfo_screenheight() - int(80 * scale)
+        height = min(natural_height, usable_height)
+        min_height = (natural_height if natural_height <= usable_height
+                      else min(int(400 * scale), usable_height))
         self.win.geometry(f"{width}x{height}")
-        self.win.minsize(width, height)
+        self.win.minsize(width, min_height)
         self.win.resizable(True, True)
 
     def _build(self) -> None:

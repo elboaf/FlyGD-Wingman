@@ -107,7 +107,13 @@ class UploaderWindow:
         width = min(int(1350 * scale), root.winfo_screenwidth())
         height = min(int(650 * scale), root.winfo_screenheight())
         root.geometry(f"{width}x{height}")
-        root.minsize(int(750 * scale), int(450 * scale))
+        # Clamped against the geometry above, not just scaled: Tk enforces
+        # minsize over geometry, so an unclamped minsize larger than the
+        # screen would reopen the window oversized *and* make it
+        # unshrinkable — exactly what the clamp two lines up exists to
+        # prevent. At 150% the raw floor is 1125x675, which overflows
+        # narrow panels.
+        root.minsize(min(int(750 * scale), width), min(int(450 * scale), height))
         root.protocol("WM_DELETE_WINDOW", self.hide)
         self._build()
         self.refresh()
