@@ -99,9 +99,8 @@ jobs:
         # provided client secret is invalid" -- with no CI signal at all.
         #
         # Prints only shapes and lengths, never the values.
-        shell: pwsh
+        shell: python
         run: |
-          python - <<'PY'
           import sys
           from obs_youtube_uploader import credentials as c
 
@@ -117,20 +116,17 @@ jobs:
               bad.append("client_secret has leading or trailing whitespace")
           if not cid.endswith(".apps.googleusercontent.com"):
               bad.append("client_id does not end with .apps.googleusercontent.com")
-          if "\n" in cid or "\n" in sec:
+          if chr(10) in cid or chr(10) in sec:
               bad.append("a value contains a newline")
           if not sec:
               bad.append("client_secret is empty")
 
-          print(f"client_id: {len(cid)} chars, ends {cid[-30:]!r}")
-          print(f"client_secret: {len(sec)} chars, starts {sec[:7]!r}")
+          print("client_id: %d chars, ends %r" % (len(cid), cid[-30:]))
+          print("client_secret: %d chars, starts %r" % (len(sec), sec[:7]))
 
-          if bad:
-              for b in bad:
-                  print(f"::error::{b}")
-              sys.exit(1)
-          print("injected credentials are well-formed")
-          PY
+          for b in bad:
+              print("::error::" + b)
+          sys.exit(1 if bad else 0)
 
       - name: Warn that credentials are placeholders
         if: ${{ !inputs.inject_credentials }}
