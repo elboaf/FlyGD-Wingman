@@ -31,6 +31,11 @@ def seen_file() -> Path:
     return state_dir() / "seen.json"
 
 
+def durations_file() -> Path:
+    """Cache of ffprobe durations. Deleting it costs a one-off re-probe."""
+    return state_dir() / "durations.json"
+
+
 def log_dir() -> Path:
     return state_dir() / "logs"
 

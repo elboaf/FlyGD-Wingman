@@ -168,6 +168,13 @@ Run on Windows against a real install before each release.
 - [ ] **Newly announced recordings are pre-checked, scrolled into view, and
       visibly highlighted** — even when they would otherwise be below the
       fold.
+- [ ] **Sorting by Duration while durations are still loading.** Delete
+      `durations.json`, launch against a large folder, and click the
+      Duration header while rows still read "…". Expected: pending rows
+      sort together (they have no value yet) and each fills in where it
+      sits — rows do NOT re-order themselves under the cursor as results
+      arrive. Click the header again afterwards to re-sort with the real
+      values.
 
 ### Icon
 - [ ] **The icon appears in all five locations:** main window title bar,
@@ -219,7 +226,21 @@ Run on Windows against a real install before each release.
 
 ## Settings
 - [ ] Settings button opens the dialog
+- [ ] **The dialog appears immediately, before the account state resolves.**
+      Open Settings on a cold app start (the Google libraries load on first
+      use). Expected: the window is drawn straight away with a grey status
+      dot and "Checking…" beside it, which then becomes green "Connected"
+      or red "Not connected". The dialog must never hang blank before
+      appearing, and must never stay stuck on "Checking…". Flip the OS
+      theme while it still reads "Checking…" and confirm the grey dot
+      re-themes with everything else.
 - [ ] Connect Google Account opens a browser and reports "Connected"
+- [ ] **Click Connect Google Account while the account state is still
+      resolving.** On a cold app start, open Settings and click Connect
+      immediately, while the label still reads "Checking…". Expected: the
+      label goes to "Waiting for browser…" and STAYS there until the
+      sign-in finishes — the startup check completing behind it must not
+      flip it to a red "Not connected" mid-sign-in.
 - [ ] **Close the Settings dialog while a Google sign-in is in flight.**
       Click Connect Google Account, then close the Settings window before
       completing (or without completing) the browser sign-in. The OAuth
@@ -232,6 +253,50 @@ Run on Windows against a real install before each release.
 - [ ] Switching notify mode to popup takes effect on the next recording,
       without a restart
 - [ ] A non-numeric category ID is rejected with a warning
+
+## Video list and durations
+These cover the duration cache and the background probe. Do them against a
+folder with a realistic number of recordings (30+); the whole point is
+behavior that only shows up at size.
+
+- [ ] **The window opens immediately on a large folder.** Launch with 30+
+      recordings and no `durations.json` (delete it from
+      `%LOCALAPPDATA%\OBSYouTubeUploader\` first). Expected: the list
+      appears at once with every row present, Duration reading "…", and
+      the values filling in over the next few seconds. The window must be
+      draggable and scrollable the whole time — never a frozen white
+      rectangle.
+- [ ] **A second launch is instant.** Restart the app without changing the
+      folder. Expected: durations are already filled in on first paint, no
+      "…" at all, and no visible ffprobe activity.
+- [ ] **Saving Settings does not re-freeze the list.** With the same large
+      folder, open Settings, change privacy, Save. Expected: the list
+      refreshes instantly with durations still shown; no pause.
+- [ ] **A new recording probes alone.** Record a short clip and let the
+      watcher announce it. Expected: only the new row shows "…" briefly;
+      every existing row keeps its duration without re-probing.
+- [ ] **Deleting recordings does not grow the cache forever.** Delete
+      several recordings in the app, then check that `durations.json`
+      shrinks to match what remains in the folder. This must happen on the
+      delete itself, not only after some later recording is probed.
+- [ ] **An unreachable recording folder must NOT wipe the cache.** With a
+      warm `durations.json`, disconnect the drive the recordings live on
+      (or rename the folder) and leave the app running through a few poll
+      cycles, opening the window once. Expected: the list shows "Found 0
+      video(s)" but `durations.json` still holds every entry. Reconnect and
+      confirm the durations reappear with no re-probing.
+- [ ] **Missing ffprobe degrades to "?" and stays recoverable.** Rename
+      `bin\ffprobe.exe`, delete `durations.json`, and launch. Expected:
+      rows show "…" then settle on "?" — never stuck on "…". Restore the
+      binary, relaunch, and confirm real durations come back.
+- [ ] **ffprobe removed *while the app is running* must not poison the
+      cache.** With the app open, rename `bin\ffprobe.exe`, then delete a
+      recording to force a refresh of a folder with new files. Expected:
+      affected rows show "?". Restore the binary and relaunch: those
+      recordings must show real durations again. A failure that was never
+      ffprobe's verdict about the file must never be remembered — if it
+      is, the row stays "?" forever and combat-log upload refuses for it
+      permanently.
 
 ## Combat logs
 
@@ -282,6 +347,18 @@ Run on Windows against a real install before each release.
       "Cannot determine the time window" that lists the specific recording
       filename(s) affected and mentions ffprobe. No thread is started.
       Restore the binary afterward.
+- [ ] **Clicking Upload combat logs before the durations finish loading.**
+      Delete `durations.json`, launch against a large folder, and click
+      **Upload combat logs** immediately, while rows still read "…".
+      Expected: a brief pause while just the selected recordings are
+      probed, then the normal upload — NOT the "Cannot determine the time
+      window" warning. That warning must only ever mean ffprobe actually
+      failed.
+- [ ] **Select All then Upload combat logs on a cold cache.** Same setup,
+      but click **Select All** first. Expected: a busy cursor and a status
+      line counting "Reading recording lengths… (n/N)" while it works —
+      the window must explain itself rather than sitting frozen with no
+      indication anything is happening.
 - [ ] **A window matching no logs.** Pick a recording (or a time range) far
       from any real EVE session, or point Gamelogs at an empty folder, and
       upload. Expected: an info dialog "No EVE logs overlap that window,"

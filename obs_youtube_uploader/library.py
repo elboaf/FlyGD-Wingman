@@ -33,6 +33,12 @@ class VideoInfo:
     mtime: float
     size: int
     duration: float | None
+    # False while a background probe is still outstanding. Distinguishes
+    # "not measured yet" from "measured, and ffprobe could not read it" --
+    # both of which leave `duration` None, but which mean opposite things
+    # to the combat-log upload (app._start_combat_log_upload). Defaults to
+    # True so every existing construction keeps meaning "this is final".
+    probed: bool = True
 
     @property
     def date_str(self) -> str:
@@ -44,6 +50,8 @@ class VideoInfo:
 
     @property
     def duration_str(self) -> str:
+        if not self.probed:
+            return "…"
         if self.duration is None:
             return "?"
         minutes, seconds = divmod(int(self.duration), 60)
@@ -80,14 +88,28 @@ def discover(directory: Path) -> list[Path]:
     return [p for p, _ in entries]
 
 
-def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> float | None:
-    """Duration in seconds, or None if ffprobe is absent or fails.
+def probe(path: Path, ffprobe_bin: str | None,
+          runner=subprocess.run) -> tuple[float | None, bool]:
+    """Duration in seconds, plus whether the answer is worth remembering.
 
-    Returning None rather than raising is deliberate: a missing ffprobe
-    degrades the duration column to "?" instead of blocking the app.
+    Returns ``(duration, definitive)``. ``definitive`` is True only when
+    ffprobe actually ran and gave a verdict about this file -- a duration,
+    a non-zero exit, or output that is not a number. It is False when the
+    probe never got a verdict: no binary configured, the process could not
+    be launched, or it hit the timeout.
+
+    That distinction is what keeps a cached failure safe. Both kinds look
+    identical from the outside (None), but caching the second kind is a
+    trap: the cache key is (size, mtime), which never changes again for a
+    finished recording, so a single antivirus quarantine of ffprobe.exe or
+    one timeout under disk load would pin that recording to "?" forever --
+    and, because the combat-log upload refuses on a missing duration, would
+    permanently block log uploads for it with a message blaming ffprobe.
+    Restoring the binary would not help. Only a definitive verdict is
+    allowed into the cache.
     """
     if not ffprobe_bin:
-        return None
+        return None, False
     try:
         result = runner(
             [ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
@@ -95,16 +117,49 @@ def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -
             capture_output=True, text=True, timeout=15, **_NO_WINDOW_KWARGS,
         )
     except Exception:
-        return None
+        # Could not launch, or timed out. Says nothing about the file.
+        return None, False
     if result.returncode != 0 or not result.stdout.strip():
-        return None
+        return None, True  # ffprobe ran and could not read a duration.
     try:
-        return float(result.stdout.strip())
+        return float(result.stdout.strip()), True
     except ValueError:
-        return None
+        return None, True
+
+
+def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> float | None:
+    """Duration in seconds, or None if ffprobe is absent or fails.
+
+    Returning None rather than raising is deliberate: a missing ffprobe
+    degrades the duration column to "?" instead of blocking the app. Use
+    ``probe`` when the caller needs to tell a real verdict apart from a
+    probe that never ran.
+    """
+    duration, _ = probe(path, ffprobe_bin, runner=runner)
+    return duration
+
+
+def stat_info(path: Path) -> VideoInfo:
+    """Everything about a recording that costs no subprocess.
+
+    Split out of build_info so the window can draw its rows from a plain
+    stat and let durations fill in afterwards, instead of blocking the Tk
+    main thread on one ffprobe per file before showing anything at all.
+    """
+    stat = path.stat()
+    return VideoInfo(path=path, mtime=stat.st_mtime, size=stat.st_size,
+                     duration=None, probed=False)
 
 
 def build_info(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> VideoInfo:
+    """Stat plus a synchronous probe, in one call.
+
+    Nothing in the app uses this any more: the list view builds rows from
+    stat_info and fills durations in from the cache or a background probe,
+    and app._probe_now resolves a selection by calling probe_duration on
+    infos it already holds. Kept as the module's straightforward "give me
+    everything about this file" entry point, and still covered by tests.
+    """
     stat = path.stat()
     return VideoInfo(
         path=path,

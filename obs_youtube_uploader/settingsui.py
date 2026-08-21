@@ -10,6 +10,9 @@ from . import combatlog, discord, obsconfig, paths, settings as settings_mod, th
 PRIVACY_CHOICES = ["private", "unlisted", "public"]
 NOTIFY_CHOICES = ["toast", "popup"]
 
+# How often the dialog checks whether the background auth lookup finished.
+AUTH_POLL_MS = 50
+
 
 class SettingsWindow:
     def __init__(self, parent: tk.Misc, state, on_saved=None):
@@ -27,6 +30,7 @@ class SettingsWindow:
         self.win.grab_set()
 
         cfg = state.settings
+        self._auth_generation = 0
         self.privacy = tk.StringVar(value=cfg["privacy"])
         self.category = tk.StringVar(value=cfg["category"])
         self.notify = tk.StringVar(value=cfg["notify_mode"])
@@ -261,8 +265,66 @@ class SettingsWindow:
         self.lbl_auth.config(text=text, foreground=color)
 
     def _refresh_auth_label(self) -> None:
-        creds = uploader.load_credentials(paths.token_file())
-        if creds is not None and not uploader.needs_reauth(creds):
+        """Resolve the Google auth state without blocking the dialog.
+
+        load_credentials() lazily imports google.oauth2, which drags in
+        google.auth, requests and cryptography. Off a PyInstaller build's
+        disk that is a visible pause, and it used to happen in __init__ --
+        before the dialog was drawn, so opening Settings appeared to hang.
+        The label already reads "Checking…", which is now honest.
+
+        The worker touches no Tk object; the main thread polls for its
+        result from an ``after`` callback it scheduled itself, rather than
+        having the worker call ``after`` itself. See app._start_probe for
+        why that indirection is worth it -- here the stake is this label
+        being stuck on "Checking…" permanently.
+
+        Each call takes a ticket and only the newest one may write the
+        status. On a cold start this lookup takes seconds, which is long
+        enough for the user to click Connect Google Account in the
+        meantime; without the ticket the in-flight lookup would land after
+        _connect set "Waiting for browser…" and replace it with a red "Not
+        connected" while the sign-in was still open in the browser.
+        """
+        if not self.lbl_auth.winfo_exists():
+            # _connect's OAuth worker calls back in here when it finishes,
+            # by which time the user may have closed the dialog.
+            return
+        self._auth_generation += 1
+        generation = self._auth_generation
+        # Through _set_auth_status, not a bare config: it also drives the
+        # dot and records _auth_kind, so a theme switch while the lookup is
+        # still running re-derives this colour instead of dropping it.
+        self._set_auth_status("Checking…", "MUTED")
+        result: dict = {}
+
+        def worker() -> None:
+            try:
+                creds = uploader.load_credentials(paths.token_file())
+                result["connected"] = creds is not None and not uploader.needs_reauth(creds)
+            except Exception:
+                # Never leave the label stuck on "Checking…": an unreadable
+                # token is indistinguishable from not being connected, and
+                # that is exactly what the user needs to be told.
+                result["connected"] = False
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        self.win.after(AUTH_POLL_MS,
+                       lambda: self._poll_auth(thread, result, generation))
+
+    def _poll_auth(self, thread: threading.Thread, result: dict,
+                   generation: int) -> None:
+        """Wait for the auth check without blocking. Main thread only."""
+        if generation != self._auth_generation:
+            return  # Superseded, or a sign-in is now in progress.
+        if not self.lbl_auth.winfo_exists():
+            return  # Dialog closed while the check was in flight.
+        if thread.is_alive():
+            self.win.after(AUTH_POLL_MS,
+                           lambda: self._poll_auth(thread, result, generation))
+            return
+        if result.get("connected"):
             self._set_auth_status("Connected", "SUCCESS")
         else:
             self._set_auth_status("Not connected", "ERROR")
@@ -274,6 +336,9 @@ class SettingsWindow:
         thread-safe) -- all UI updates are marshaled back via
         ``self.win.after(0, ...)``.
         """
+        # Claim the auth ticket so a still-running startup check cannot
+        # land on top of "Waiting for browser…" with a stale verdict.
+        self._auth_generation += 1
         self._set_auth_status("Waiting for browser…", "WARNING")
 
         def worker() -> None:
