@@ -24,10 +24,10 @@ import logging
 import queue
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import durations, library, paths
+from .. import durations, library, paths, settings as settings_mod, stitch, uploader
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -44,6 +44,56 @@ PROBE_DRAIN_S = 0.1
 # push is idempotent from the page's side, so an early one costs nothing
 # beyond a logged drop.
 FIRST_RUN_PUSH_S = 1.5
+
+YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
+
+
+def _close_media(media) -> None:
+    """Release the file handle a MediaFileUpload holds, best effort.
+
+    MediaFileUpload closes its descriptor only in `__del__`, so anything
+    that needs the file released *now* -- to unlink a stitched temporary,
+    or to stop blocking a rename of the user's own recording on Windows --
+    has to close it explicitly. Tolerates None and objects without a
+    stream so callers can hand it whatever they have.
+    """
+    stream = getattr(media, "stream", None)
+    if stream is None:
+        return
+    try:
+        stream().close()
+    except Exception:
+        logger.warning("Could not close upload stream", exc_info=True)
+
+
+@dataclass
+class UploadJob:
+    """Every value the upload worker needs, captured before dispatch.
+
+    `ids` runs parallel to `items` so a finished upload can be linked back
+    to the row the page is showing without the worker re-resolving an id
+    against a snapshot that may have been rebuilt underneath it.
+
+    `start_index` lets a retry resume partway through without renumbering
+    the "(2/3)" title suffixes: the worker skips earlier indices but still
+    computes totals from the full list.
+    """
+    items: list
+    ids: list[str]
+    title: str
+    description: str
+    stitch: bool
+    privacy: str
+    category: str
+    start_index: int = 0
+
+
+@dataclass
+class RetryState:
+    """What a manual Retry needs to resume rather than restart."""
+    job: UploadJob
+    resume_index: int
+    request: object | None
 
 
 @dataclass
@@ -96,6 +146,12 @@ class Api:
         # dropped rather than written into the current list.
         self._generation = 0
         self._drain: Scheduler | None = None
+
+        self._upload_thread: threading.Thread | None = None
+        self._retry_state: RetryState | None = None
+        self._links: dict[str, str] = {}
+        self._last_pct: float = 0.0
+        self._watcher = None
 
     # ----- page -> Python -------------------------------------------------
 
@@ -333,3 +389,46 @@ class Api:
         drain, self._drain = self._drain, None
         if drain is not None:
             drain.stop()
+
+    # ----- upload -----------------------------------------------------------
+
+    def _busy(self) -> bool:
+        return self._upload_thread is not None and self._upload_thread.is_alive()
+
+    def start_upload(self, title, description, privacy, category, stitch, ids) -> None:
+        # Resolved one id at a time rather than through resolve_many so ids
+        # and infos stay index-aligned when the page sends an id the
+        # snapshot no longer knows (a stale page after a refresh).
+        pairs = [(rid, info) for rid in ids
+                 if (info := self._rows.resolve(rid)) is not None]
+        if not pairs:
+            self._alert("warning", "No Selection",
+                        "Select at least one video to upload.")
+            return
+        if stitch and len(pairs) < 2:
+            self._alert("warning", "Stitch",
+                        "Select at least two videos to stitch.")
+            return
+        if self._busy():
+            self._alert("warning", "Busy", "An upload is already in progress.")
+            return
+        job = UploadJob(items=[i for _, i in pairs], ids=[r for r, _ in pairs],
+                        title=title, description=description, stitch=bool(stitch),
+                        privacy=privacy, category=category)
+        self._upload_thread = threading.Thread(
+            target=self._confirm_then_upload, args=(job,), daemon=True)
+        self._upload_thread.start()
+
+    def _confirm_then_upload(self, job: UploadJob) -> None:
+        # The confirm runs on the worker, not in start_upload, because
+        # _confirm blocks until the page calls dialog_response -- and
+        # start_upload is running on pywebview's bridge thread, which is
+        # where that answer has to arrive. Asking there would deadlock the
+        # bridge on itself. The busy guard is already set by the time this
+        # dialog is up, which is also what we want.
+        body = copy_mod.format_upload_confirm(
+            job.items, job.title, job.privacy,
+            self._state.settings.get("channel_title", ""), job.stitch)
+        if not self._confirm("Confirm Upload", body):
+            return
+        self._upload_worker(job)
