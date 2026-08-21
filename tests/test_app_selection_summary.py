@@ -43,6 +43,32 @@ def test_select_all_and_none_update_the_summary(make_window):
     assert window.selection_summary.cget("text") != all_text
 
 
+def test_select_all_and_none_repaint_the_checkboxes(make_window):
+    """REGRESSION: _set_all set the vars but not the row images.
+
+    Nothing traces these BooleanVars, so the drawn checkbox is only ever
+    updated where it is written. Before the fix the panel said "2 selected"
+    while both boxes rendered empty — the summary made a pre-existing miss
+    into a visible contradiction.
+
+    Images are compared by identity against _checkbox_image, not by
+    inspecting pixels: the two PhotoImages are cached per state, so the
+    name Tk reports for a row is exactly one of them.
+    """
+    window = make_window()
+    checked = str(window._checkbox_image(True))
+    unchecked = str(window._checkbox_image(False))
+    assert checked != unchecked
+
+    for value, expected in ((True, checked), (False, unchecked)):
+        window._set_all(value)
+        for info in window.infos:
+            drawn = window.tree.item(str(info.path), "image")
+            # Tk returns the image list as a tuple (or a bare string).
+            drawn = drawn[0] if isinstance(drawn, (tuple, list)) else drawn
+            assert str(drawn) == expected, (info.path.name, value)
+
+
 def test_refresh_rebuilds_the_summary_from_the_preselect(make_window):
     # The watcher's preselect arrives through refresh(), which rebuilds
     # self.selected wholesale -- the summary must follow that rebuild, not

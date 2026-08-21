@@ -148,27 +148,47 @@ def spacing(widget: tk.Misc) -> Spacing:
 # Treeview column geometry in pixels at 100%; every value is multiplied by
 # dpi_scale() when the columns are configured.
 #
-# The MINIMUMS are the load-bearing half. The preferred widths sum to 620px,
-# but at the 750px minimum window width the list pane gets roughly 380-420px
-# once the window margin, the 300px upload panel, the pane gap and the
-# scrollbar are taken out, so the preferred widths do not fit. The minimums
-# sum to 410px, which does, and ttk.Treeview compresses toward them.
+# The MINIMUMS are the load-bearing half, and only the columns marked
+# stretch can ever reach them: ttk.Treeview distributes a width deficit
+# across its STRETCHING columns and leaves the rest at their configured
+# width. That is why date/size/duration stretch even though nothing about
+# them wants extra room on a wide window -- with stretch=False their
+# minwidths were unreachable and the list's real floor was the sum of the
+# preferred widths.
 #
-# No horizontal scrollbar is added and the window minimum is not raised.
-# Both were considered and rejected: on a list whose only elastic column is
-# the filename, a horizontal scrollbar trades a rare annoyance for a
-# permanent one, and raising the minimum cannot help on a screen where
-# __main__ already clamps the geometry to the display size. A window dragged
-# to its floor shows cramped columns; that is accepted, not a defect.
+# The measured numbers, at 100% with a real window (tree viewport = window
+# width - margins - the 300px panel - the pane gap - the scrollbar, plus a
+# 5px inset inside the tree):
+#
+#   preferred widths sum to 620px
+#   minimums sum to 410px, so 415px of viewport is needed
+#   a 750px window gives a 381px viewport -- 410 does NOT fit
+#   an 800px window gives a 431px viewport -- 410 fits with room to spare
+#
+# So the window minimum IS raised, to 800x450 at 100% (see __init__). The
+# older claim that 410 fits at 750 was simply false arithmetic, and it hid
+# a Length column clipped to a quarter of its width and a Link column
+# entirely off-screen. No horizontal scrollbar is added: on a list whose
+# elastic column is the filename, one trades a rare annoyance for a
+# permanent one. A window dragged to its floor still shows cramped columns
+# -- every column present and readable, none clipped; that is accepted.
+#
+# stretch is symmetric, so the three would also take an equal share of a
+# SURPLUS, which is not wanted -- a 1920px window handed Size 344px to
+# right-align "1.0 KB" in. UploaderWindow._fit_columns pins them back to
+# their preferred width once the tree is wide enough for all of them, so
+# above that width `filename` is again the only elastic column.
 COLUMN_SPEC = (
     # column key, heading text, sort key, width, minwidth, stretch, anchor
     ("#0", "☑", "checked", 34, 34, False, tk.CENTER),
     ("filename", "Filename", "filename", 260, 120, True, tk.W),
-    ("date", "Date", "date", 120, 90, False, tk.W),
-    ("size", "Size", "size", 84, 64, False, tk.E),
+    ("date", "Date", "date", 120, 90, True, tk.W),
+    ("size", "Size", "size", 84, 64, True, tk.E),
     # Header text only. The KEY stays "duration" because _sort_by dispatches
     # on it, and self.infos exposes info.duration under that name.
-    ("duration", "Length", "duration", 76, 56, False, tk.E),
+    ("duration", "Length", "duration", 76, 56, True, tk.E),
+    # NOT stretching: a fixed-width glyph cell that must not grow, and it is
+    # already at its minimum, so it never needs to compress either.
     ("link", "Link", "link", 46, 46, False, tk.CENTER),
 )
 
@@ -355,9 +375,14 @@ class UploaderWindow:
         # minsize over geometry, so an unclamped minsize larger than the
         # screen would reopen the window oversized *and* make it
         # unshrinkable — exactly what the clamp two lines up exists to
-        # prevent. At 150% the raw floor is 1125x675, which overflows
+        # prevent. At 150% the raw floor is 1200x675, which overflows
         # narrow panels.
-        root.minsize(min(int(750 * scale), width), min(int(450 * scale), height))
+        #
+        # 800, not the historical 750: measured against a real window, a
+        # 750px floor leaves the list viewport 381px wide, which cannot hold
+        # the 410px of column minimums (see COLUMN_SPEC) — Length was
+        # clipped and Link fell off the edge entirely. 800 gives 431px.
+        root.minsize(min(int(800 * scale), width), min(int(450 * scale), height))
         root.protocol("WM_DELETE_WINDOW", self.hide)
         self._build()
         self.refresh()
@@ -365,6 +390,15 @@ class UploaderWindow:
     def show(self, preselect: set | None = None) -> None:
         self.root.deiconify()
         self.root.lift()
+        # Re-applied on every show, not only in _build. _build runs while the
+        # root is still withdrawn, and a window manager can hand out a
+        # different frame after mapping (measured on X11; Tk returns 0x0 for
+        # an unmapped window). Win32 HWNDs do not reparent, so this is
+        # probably redundant on the target platform — but the failure mode
+        # if it is not is silent: both DwmSetWindowAttribute calls simply
+        # no-op on a stale handle, nothing raises, and the title bar stays
+        # light until the user changes their OS theme. Cheap insurance.
+        theme.apply_titlebar(self.root, theme.current_mode())
         self.refresh(preselect)
 
     def hide(self) -> None:
@@ -409,7 +443,8 @@ class UploaderWindow:
         body.rowconfigure(0, weight=1)
         # Only the list column stretches. The panel is a fixed width (see
         # _build_upload_panel), so all the slack a wider window brings goes
-        # to the filename column — the one thing that benefits from it.
+        # to the list — and _fit_columns keeps it going to the filename
+        # column specifically, the one thing that benefits from it.
         body.columnconfigure(0, weight=1)
 
         self._build_list_pane(body)
@@ -467,6 +502,15 @@ class UploaderWindow:
         # stretch, heading text and their sort commands. Configuring any of
         # it here would silently revert that task.
         configure_tree_columns(self.tree, self._dpi_scale, self._sort_by)
+        # Preferred total plus the tree's own inset, in scaled pixels: the
+        # width above which _fit_columns hands the slack to the filename
+        # column instead of sharing it. Computed once; nothing here changes
+        # after the build.
+        self._preferred_columns_width = (
+            sum(int(c[3] * self._dpi_scale) for c in COLUMN_SPEC)
+            + int(round(10 * self._dpi_scale)))
+        self._columns_cramped: bool | None = None
+        self.tree.bind("<Configure>", self._fit_columns, add="+")
 
         scroll = ttk.Scrollbar(self.list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -553,8 +597,12 @@ class UploaderWindow:
         # weight, so the box grows to whatever the panel has spare. Given a
         # visible border because it is now the panel's largest element —
         # unbordered, a box that big reads as a gap rather than a field.
+        # The border width is scaled like every other pixel constant here:
+        # a 1px rule around the panel's dominant element is a hairline at
+        # 200%, which is exactly the class of defect this layout fixes.
         self.desc_txt = tk.Text(self.upload_panel, height=3, wrap=tk.WORD,
-                                relief=tk.SOLID, bd=1, highlightthickness=0)
+                                relief=tk.SOLID, bd=max(1, int(self._dpi_scale)),
+                                highlightthickness=0)
         self.desc_txt.grid(row=5, column=0, sticky=tk.NSEW)
         self._apply_desc_colors()
         # ...and again once the event queue drains. theme.apply runs before
@@ -835,6 +883,47 @@ class UploaderWindow:
         var.set(not var.get())
         self.tree.item(iid, image=self._checkbox_image(var.get()))
         self._update_selection_summary()
+
+    def _fit_columns(self, _event=None) -> None:
+        """Switch the compressible columns between two regimes.
+
+        `date`, `size` and `duration` carry stretch=True in COLUMN_SPEC
+        because that is the ONLY way their minwidths are reachable: ttk
+        distributes a width deficit across stretching columns and leaves
+        the rest at their configured width, so with stretch=False their
+        minimums were decorative and the list clipped its last two columns
+        at the window floor.
+
+        Stretch is symmetric, though — a column that shares the deficit
+        also shares the surplus, in equal parts rather than in proportion.
+        Left alone, a 1920px window gave Size 344px of room to right-align
+        "1.0 KB" in, and the design's rule that a wider window widens the
+        FILENAME is what pays for it. So once the tree is wide enough for
+        every preferred width, those three are pinned back to their
+        preferred width with stretch off, leaving `filename` the only
+        elastic column; below that width they stretch again and compress
+        toward their minimums.
+
+        Cheap and idempotent: it recomputes nothing while the regime holds,
+        and the regime only changes at one width. Re-entrancy is not a
+        concern either — it changes column options, not the tree's own
+        geometry, so it cannot provoke the <Configure> that called it.
+        """
+        width = self.tree.winfo_width()
+        if width <= 1:
+            return  # not realised yet; the first real <Configure> will call back
+        cramped = width < self._preferred_columns_width
+        if cramped == self._columns_cramped:
+            return
+        self._columns_cramped = cramped
+        for key, _text, _sort, preferred, _min, stretch, _anchor in COLUMN_SPEC:
+            if key == "filename" or not stretch:
+                continue  # always elastic / never elastic
+            if cramped:
+                self.tree.column(key, stretch=True)
+            else:
+                self.tree.column(key, width=int(preferred * self._dpi_scale),
+                                 stretch=False)
 
     def _on_tree_click(self, event: tk.Event) -> None:
         if self.tree.identify_region(event.x, event.y) != "tree":
@@ -1237,8 +1326,13 @@ class UploaderWindow:
         durations.save(paths.durations_file(), self.duration_cache)
 
     def _set_all(self, value: bool) -> None:
-        for var in self.selected.values():
+        for path, var in self.selected.items():
             var.set(value)
+            # The image too, not just the var: nothing traces these
+            # BooleanVars, so a row's checkbox is only ever repainted where
+            # it is written. Without this, Select All left every box drawn
+            # empty while the summary underneath said "N selected".
+            self.tree.item(str(path), image=self._checkbox_image(value))
         # Once, after the loop: the label is recomputed from the whole
         # selection, so doing it per row would be N identical repaints of
         # intermediate states.

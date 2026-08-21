@@ -61,7 +61,10 @@ Run on Windows against a real install before each release.
       defect; a narrow filename column is not.
 - [ ] **The window has visible margins on all four edges,** and the
       Description box reads as a bordered field in both light and dark mode
-      rather than blending into the panel background.
+      rather than blending into the panel background. Check the border at
+      200% as well: it is scaled with the display (`bd` is derived from the
+      DPI scale, not a fixed 1px), so a hairline that all but disappears
+      around the panel's largest control means that scaling was lost.
 
 ### Theming
 - [ ] **Launches in light mode when Windows is set to Light.**
@@ -137,6 +140,12 @@ Run on Windows against a real install before each release.
       with no restart. A window that changes only after reopening means the
       call is wired to construction but not to the theme consumer; a window
       that never changes means the consumer is not firing at all.
+- [ ] **The main window's title bar is still themed after a trip through
+      the tray.** In dark mode, close the main window (it hides rather than
+      exits), then reopen it from the tray icon — twice. The title bar must
+      still be dark each time. `show()` re-applies it because the frame
+      handle is only reliable once the window is mapped, and a stale handle
+      fails silently: DWM just no-ops and the bar reverts to light.
 - [ ] **Older Windows builds still work.** On Windows 10 1809-1909 the
       attribute is 19, not 20, and DWM reports the wrong one by returning a
       failing HRESULT rather than raising — so a build where the title bars
@@ -152,7 +161,8 @@ Run on Windows against a real install before each release.
 - [ ] **150% scaling.** Neither window opens larger than the screen.
 - [ ] **200% scaling.** Neither window opens larger than the screen, the
       Settings dialog is still unclipped with Save/Cancel reachable, and the
-      status bar still fits its progress bar and label.
+      status strip under both panes still fits Settings, its progress bar
+      and its status label on one row.
 - [ ] **LOAD-BEARING: list ROW TEXT is not vertically clipped at 200%.**
       Distinct from the checkbox item below, which only covers the image, and
       from the window-fits items above. Read the Filename and Date
@@ -240,6 +250,12 @@ Run on Windows against a real install before each release.
       that Upload Selected agrees with what is checked. Then trigger a list
       rebuild (delete a file, or save Settings) and confirm the keyboard
       still works afterwards without touching the mouse.
+- [ ] **Select All and Select None repaint every checkbox.** Click
+      **Select All** and confirm every row's box is drawn checked — not
+      just that the selection summary says "N selected" — then **Select
+      None** and confirm every box is drawn empty. The summary and the
+      boxes must never disagree; they used to, because nothing traced the
+      per-row variables and only a click repainted a box.
 - [ ] **Treeview tag colours actually render** — zebra striping, the
       preselect highlight, and the blue link foreground, in both light and
       dark. Tag backgrounds under a themed Treeview style are historically
@@ -265,18 +281,25 @@ Run on Windows against a real install before each release.
       **Length**, and that clicking it still sorts by duration (a short
       recording and a long one swap places) — the header text changed but
       the sort key deliberately did not.
-- [ ] **Only the Filename column grows.** Widen the window from its minimum
-      to full screen: Filename takes all the new space; Date, Size, Length
-      and Link stay put.
+- [ ] **Only the Filename column grows, once there is room for them all.**
+      Widen the window from its minimum to full screen and watch the
+      columns. Below roughly 1000px the window is too narrow for every
+      column's preferred width, so Date, Size and Length grow with it as
+      well; from there up they settle at their preferred widths and stay
+      put, and Filename alone takes the rest. Link and the checkbox column
+      never move. A Size or Length column still ballooning at full screen
+      means `_fit_columns` is not switching regimes.
 - [ ] **LOAD-BEARING: the list at the minimum window width.** Drag the
-      window to its floor (750px at 100%). Expected: every column is still
+      window to its floor (800px at 100%). Expected: every column is still
       present and readable, Filename truncates rather than pushing the
       others off, and NO horizontal scrollbar appears. Cramped is the
       accepted outcome here — a column that vanishes, overlaps, or
       collapses to nothing is not. The preferred widths (620px total) do
       not fit in the pane at that size; the per-column minimums (410px
-      total) are what hold it together, so this is the only place that
-      arithmetic is exercised.
+      total) are what hold it together, and they are only reachable because
+      Date, Size and Length stretch — with stretch off, ttk left them at
+      their preferred width and Length and Link ran off the right edge.
+      This is the only place that arithmetic is exercised.
 - [ ] **The Link column shows ↗, not a URL.** After an upload completes, the
       row's Link cell shows a single arrow glyph in the link colour. Then
       confirm the URL is still reachable three ways on that row:
@@ -524,9 +547,10 @@ behavior that only shows up at size.
       of them was hardcoded to black, which was invisible on a dark
       background — this item exists to catch that regressing.
 - [ ] **The Upload combat logs button survived the chrome rework.** Confirm
-      it is present in the action bar, sits beside Retry on the right, and
-      is NOT styled as the accent button — Upload Selected is the primary
-      action.
+      it is present in the **upload panel on the right**, full width on its
+      own row **directly above the Retry / Upload Selected row** (there is
+      no bottom action bar any more), and is NOT styled as the accent
+      button — Upload Selected is the primary action.
 
 ## Upload
 - [ ] **First upload triggers Google sign-in automatically, without

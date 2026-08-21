@@ -65,14 +65,25 @@ def test_every_heading_is_anchored_like_its_column(root):
         assert str(tree.heading(key, "anchor")) == anchor, key
 
 
-def test_filename_is_the_only_stretching_column():
+def test_every_compressible_column_stretches():
+    """A minwidth on a non-stretching column is unreachable.
+
+    ttk.Treeview distributes a width deficit across its STRETCHING columns
+    only, so `date`, `size` and `duration` must stretch for their minimums
+    to mean anything at the window floor. `link` is exempt: it is a fixed
+    glyph cell already sitting at its minimum, so it neither grows nor
+    needs to shrink.
+    """
     stretching = [c[0] for c in app.COLUMN_SPEC if c[5]]
-    assert stretching == ["filename"]
+    assert stretching == ["filename", "date", "size", "duration"]
 
 
 def test_minimums_fit_the_pane_at_the_window_floor():
-    # The preferred widths do not fit at the 750px minimum window width;
-    # the minimums are what make that case survive.
+    # The preferred widths do not fit at the minimum window width; the
+    # minimums are what make that case survive. That the minimums really do
+    # fit is measured against a real window in
+    # test_app_layout.test_no_column_is_clipped_at_the_minimum_window_size;
+    # these two sums are the numbers that measurement was reasoned from.
     assert sum(c[3] for c in app.COLUMN_SPEC) == 620
     assert sum(c[4] for c in app.COLUMN_SPEC) == 410
 

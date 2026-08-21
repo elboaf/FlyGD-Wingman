@@ -23,9 +23,11 @@ It was built for EVE Online fight footage — so it can also bundle the EVE
 combat logs covering a recording and post them to a Discord webhook you
 configure — but the OBS-to-YouTube workflow works with any OBS recording.
 
+<!-- The screenshot still shows the pre-two-pane layout; it needs to be
+     re-shot on Windows. The alt text describes the current window. -->
 <p align="center">
   <img src="docs/assets/wingman-screenshot.png" width="850"
-       alt="The FlyGD Wingman window: a list of OBS recordings with date, size and duration, one row showing a filled-in YouTube link, and Upload Selected / Stitch / Settings controls along the bottom.">
+       alt="The FlyGD Wingman window: a list of OBS recordings with Date, Size and Length columns and a Link column marking an uploaded row, beside an upload panel holding Title, Description, Stitch and Upload Selected.">
 </p>
 
 ## Verification status
@@ -70,7 +72,8 @@ configure — but the OBS-to-YouTube workflow works with any OBS recording.
 6. You fill in a title and description and press **Upload Selected**.
 7. Wingman uploads directly to your YouTube channel — on first upload it opens
    your browser so you can sign in to Google and grant permission.
-8. The **YouTube Link** column fills in. **Copy** or **Open** it.
+8. The **Link** column marks the row with ↗. Right-click it to **Copy link**
+   or **Open in browser**, or just double-click the row.
 
 ## Google & YouTube access
 

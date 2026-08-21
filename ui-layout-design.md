@@ -203,28 +203,55 @@ def apply_titlebar(window, mode, setter=None) -> None:
 | Column | Width @100% | Min | Stretch | Anchor | Notes |
 |---|---|---|---|---|---|
 | `#0` checkbox | 34 | 34 | no | center | unchanged |
-| `filename` | 260 | 120 | **yes** | W | the only stretching column |
-| `date` | 120 | 90 | no | W | reformatted, see below |
-| `size` | 84 | 64 | no | **E** | numeric |
-| `duration` | 76 | 56 | no | **E** | header renamed `Length` |
+| `filename` | 260 | 120 | **yes** | W | the column that absorbs a wider window |
+| `date` | 120 | 90 | **yes**† | W | reformatted, see below |
+| `size` | 84 | 64 | **yes**† | **E** | numeric |
+| `duration` | 76 | 56 | **yes**† | **E** | header renamed `Length` |
 | `link` | 46 | 46 | no | center | `↗` when a link exists, else empty |
+
+† Stretch is the configured value and the resting state on a narrow window.
+`_fit_columns` turns it off once the tree is wide enough for every preferred
+width — see "Wide windows" below.
 
 Every `heading()` gets an `anchor` matching its column, fixing centered headers
 over left-aligned data (finding #3).
 
-**Narrow windows — accepted degradation.** The preferred widths sum to 620px.
-At the existing 750px minimum window width the list pane gets roughly 380–420px
-once the margin, the 300px panel, the pane gap and the scrollbar are taken out,
-so the preferred widths do not fit. The `Min` column above is what makes this
-safe: the minimums sum to 410px, which does fit, and `ttk.Treeview` compresses
-toward them.
+**Narrow windows.** The preferred widths sum to 620px and the minimums to
+410px. Two facts, both measured against a real window rather than reasoned
+about, decide the rest:
 
-No horizontal scrollbar is added, and the window minimum is **not** raised.
-Both were considered and rejected: a horizontal scrollbar on a list whose only
-elastic column is the filename trades a rare annoyance for a permanent one, and
-raising the minimum cannot help on a screen where `__main__` already clamps the
-geometry to the display size (`app.py:159-169`). A window dragged to its
-minimum shows cramped columns; that is accepted, not a defect to design around.
+1. `ttk.Treeview` distributes a width deficit across its **stretching** columns
+   only; a `stretch=False` column keeps its configured width. So a minimum on a
+   non-stretching column is unreachable — the list's real floor is the sum of
+   the *preferred* widths of the fixed columns plus the minimums of the elastic
+   ones. This is why `date`, `size` and `duration` stretch. An earlier draft of
+   this design called `filename` "the only stretching column" and asserted the
+   minimums would be reached anyway; that was false, and the measured result
+   was `Length` clipped to a quarter of its width and `Link` entirely
+   off-screen.
+2. The tree viewport at a 750px window is **381px**, not the 380–420px an
+   earlier draft estimated as adequate. 410px of minimums needs 415px of
+   viewport (there is a 5px inset inside the tree), so **the window minimum is
+   raised from 750 to 800**, which gives a 431px viewport. Verified at 100%,
+   125%, 150% and 200% — the floor and the columns scale together, so the
+   margin holds at every step.
+
+No horizontal scrollbar is added: on a list whose elastic column is the
+filename, one trades a rare annoyance for a permanent one. A window dragged to
+its floor shows cramped columns — every column still present, none clipped —
+and that is accepted.
+
+**Wide windows.** `stretch` is symmetric: a column that takes a share of a
+deficit takes an equal share of a surplus, so left alone the three columns
+above grew with the window (Size reached 344px at 1920px, to right-align
+"1.0 KB" in). `UploaderWindow._fit_columns`, bound to the tree's
+`<Configure>`, therefore runs two regimes: below the width that fits every
+preferred value the three stretch and compress toward their minimums; at or
+above it they are pinned back to their preferred widths with `stretch` off, so
+`filename` is again the only column that grows. Measured at 100% — 800px
+window: filename 131 / date 90 / size 64 / length 56, nothing clipped; 1350px:
+filename 611 with date, size and length at their preferred 120/84/76 — and the
+same shape at 150%.
 
 **Date format:** `Aug 20  17:43`, prefixed with the year (`2025 Nov 02  22:11`)
 only when the recording is not from the current year. Safe because sorting uses
@@ -293,12 +320,13 @@ duration as unknown rather than zero.
 
 - A 300px panel at 100% is comfortable at the default 1350px width. It is
   fixed, so it costs proportionally more the narrower the window gets; see
-  "Narrow windows — accepted degradation" for what that means at the floor. An
-  earlier draft of this design claimed the list would still get ~420px of
-  *comfortable* room at the minimum width, which was arithmetic that had not
-  been done: the preferred column widths sum to 620px and do not fit. The
-  minimums are what make the narrow case work, and the result there is cramped
-  by design.
+  "Narrow windows" for what that means at the floor. An earlier draft of this
+  design claimed the list would still get ~420px of *comfortable* room at the
+  minimum width, which was arithmetic that had not been done: the preferred
+  column widths sum to 620px and do not fit. A later draft claimed the 410px of
+  minimums did fit at 750px; measurement says the viewport there is 381px, so
+  the floor was raised to 800px and the compressible columns were made to
+  stretch. The result at the floor is cramped by design, but complete.
 - `wm_frame()` returns the HWND `DwmSetWindowAttribute` expects. Unverifiable
   on Linux; the smoke checklist covers it, and a failure is cosmetic and
   caught rather than fatal.
