@@ -72,11 +72,13 @@ Run on Windows against a real install before each release.
 - [ ] **Launches in dark mode when Windows is set to Dark.** Same with `Dark`.
       Also check Treeview row striping and the description `tk.Text` box.
       sv-ttk's ttk styling does not cover that box — it is a classic Tk
-      widget — but sv-ttk's `configure_colors` calls `tk_setPalette`, which
-      recolours classic widgets as a side effect, and that is the only
-      reason it looks right. Nothing in this app configures it. So check it
-      for legibility rather than assuming it is styled (a known accepted
-      limitation).
+      widget — but the app no longer leaves it to `tk_setPalette`:
+      `_apply_desc_colors` paints its background from the `ROW_EVEN` token
+      and its text and caret from `FG`, so it must sit slightly OFF the
+      panel background and read as a bordered field. A box the same colour
+      as the window around it is a DEFECT, not an accepted limitation — it
+      means the token paint was lost (see the live-switch item below for the
+      ordering that can cause that).
 - [ ] **The right-click context menu is legible in dark mode.** With Windows
       set to Dark, right-click a list row and read the menu: "Copy link" and
       "Open in browser" must be readable, not white-on-white or black-on-black,
@@ -93,9 +95,10 @@ Run on Windows against a real install before each release.
 - [ ] **LOAD-BEARING: switching the OS theme live, with both windows open.**
       Open the main window and Settings together, then flip
       `Choose your mode`. Within a few seconds both must re-theme fully:
-      status line, ffmpeg warning, auth status dot and text, hint labels,
-      Treeview striping, the preselect highlight, and the checkbox images.
-      No half-themed widget anywhere.
+      status line, ffmpeg warning, the description box's background and
+      text, auth status dot and text, hint labels, Treeview striping, the
+      preselect highlight, and the checkbox images. No half-themed widget
+      anywhere.
       *Why this is load-bearing:* the app sets these colours from a deferred
       `after_idle` callback because `sv_ttk.set_theme()` fires a QUEUED
       `<<ThemeChanged>>` event that runs `tk_setPalette` on the next tick and
