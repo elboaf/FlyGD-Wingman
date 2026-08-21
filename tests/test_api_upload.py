@@ -151,7 +151,7 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     assert channel["channel_id"] == "UC1"
     assert channel["channel_title"] == "Zoolanders"
     # The rendered line rides along, so the page never composes it.
-    assert channel["destination"] == "Uploads go to Zoolanders · unlisted"
+    assert channel["destination"] == "Uploads go to Zoolanders"
     assert saved["channel_title"] == "Zoolanders"
     assert api._state.settings["channel_id"] == "UC1"
 

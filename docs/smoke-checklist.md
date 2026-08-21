@@ -181,6 +181,22 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] **The list at the minimum window width.** Every column still present,
       Filename truncates rather than pushing others off, NO horizontal
       scrollbar.
+- [ ] **The Date column reads as relative time, not a timestamp.** It must
+      say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
+      week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
+      beyond it. It shows the file's MTIME, which is why it must not look
+      like the recording timestamp already in the filename: for a copied or
+      remuxed recording the two legitimately differ by minutes or hours,
+      and printing both as clock times made the app look like it was
+      contradicting itself.
+- [ ] **Sorting by Date still orders newest-first.** Click Date. The order
+      must follow the underlying mtime, NOT the rendered text — a text sort
+      would put "2d ago" before "3h ago" and "Aug" before "Dec". Check with
+      a folder holding both a recording from today and one over a week old.
+- [ ] **The filename column does not swallow the window.** Widen the window
+      well past the default. Filename must stop growing once it fits its
+      text, keeping Date/Size/Length/Link near it, rather than stretching
+      and pushing them to the far edge with a gap in the middle.
 
 ### Frozen build
 - [ ] **LOAD-BEARING: the installed build renders the page at all.** The
@@ -508,9 +524,11 @@ behavior that only shows up at size.
       `youtube.upload` scope, so it cannot look the channel up.
 - [ ] **The destination line fills in after the first successful upload.**
       Complete one upload. Expected: the muted line above Upload Selected
-      changes from "Channel confirmed after the first upload · unlisted" to
-      "Uploads go to &lt;your channel&gt; · unlisted", and still says so after
-      restarting the app (it is persisted to settings.json).
+      changes from "Channel confirmed after the first upload" to
+      "Uploads go to &lt;your channel&gt;", and still says so after
+      restarting the app (it is persisted to settings.json). The privacy
+      setting is deliberately NOT in this line; if it reappears there,
+      format_destination has been reverted.
 - [ ] **A batch's progress text names which file it is measuring.** Upload
       three recordings. Expected: "Uploading file 2 of 3… 41.2%", with the
       bar tracking the whole batch. The previous wording ("Uploading 2/3 —

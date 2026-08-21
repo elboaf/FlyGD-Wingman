@@ -191,24 +191,58 @@ def test_size_str_is_human_readable(tmp_path):
     assert library.build_info(f, None).size_str == "2.0 KB"
 
 
-def test_format_date_omits_the_year_in_the_current_year():
-    mtime = datetime.datetime(2026, 8, 20, 17, 43).timestamp()
-    now = datetime.datetime(2026, 12, 1, 9, 0)
-    assert library.format_date(mtime, now=now) == "Aug 20  17:43"
+NOW = datetime.datetime(2026, 8, 21, 12, 0)
 
 
-def test_format_date_prefixes_the_year_for_an_older_recording():
-    mtime = datetime.datetime(2025, 11, 2, 22, 11).timestamp()
-    now = datetime.datetime(2026, 12, 1, 9, 0)
-    assert library.format_date(mtime, now=now) == "2025 Nov 02  22:11"
+def _ago(**delta):
+    """An mtime that far before NOW."""
+    return (NOW - datetime.timedelta(**delta)).timestamp()
 
 
-def test_format_date_compares_calendar_years_not_elapsed_time():
-    """December 31 and the next January 1 are 24 hours apart and must still
-    take opposite branches -- the rule is the calendar year, not "recent"."""
+@pytest.mark.parametrize("delta,expected", [
+    ({"seconds": 5}, "just now"),
+    ({"seconds": 89}, "just now"),
+    ({"seconds": 90}, "1m ago"),
+    ({"minutes": 45}, "45m ago"),
+    ({"minutes": 59}, "59m ago"),
+    ({"hours": 1}, "1h ago"),
+    ({"hours": 23}, "23h ago"),
+    ({"hours": 25}, "yesterday"),
+    ({"days": 2}, "2d ago"),
+    ({"days": 6}, "6d ago"),
+])
+def test_format_date_is_relative_for_the_last_week(delta, expected):
+    """The column answers "is this recent?", and precision degrades with age
+    on purpose: minutes matter for this session's recording and are noise
+    for last month's."""
+    assert library.format_date(_ago(**delta), now=NOW) == expected
+
+
+def test_format_date_falls_back_to_a_calendar_date_after_a_week():
+    assert library.format_date(_ago(days=8), now=NOW) == "Aug 13"
+
+
+def test_format_date_prefixes_the_year_only_outside_the_current_one():
+    """The year is the least informative part for a recording made this
+    year, and this is the tightest non-elastic column in the list."""
+    older = datetime.datetime(2025, 11, 2, 22, 11).timestamp()
+    assert library.format_date(older, now=NOW) == "2025 Nov 02"
+
+
+def test_format_date_prefers_recency_over_the_calendar_year():
+    """Dec 31 23:59 viewed at Jan 1 00:01 is two minutes old, and saying so
+    beats naming the year. This reverses the pre-relative rule deliberately:
+    the calendar year now only decides the >= 7 day fallback."""
     mtime = datetime.datetime(2025, 12, 31, 23, 59).timestamp()
     now = datetime.datetime(2026, 1, 1, 0, 1)
-    assert library.format_date(mtime, now=now) == "2025 Dec 31  23:59"
+    assert library.format_date(mtime, now=now) == "2m ago"
+
+
+def test_format_date_does_not_render_a_negative_age():
+    """A future mtime is real -- a clock correction, an archive, a file off
+    a machine with a skewed clock -- and must not produce "-3h ago"."""
+    future = (NOW + datetime.timedelta(hours=3)).timestamp()
+    assert library.format_date(future, now=NOW) == "Aug 21"
 
 
 def test_format_date_defaults_now_to_the_clock():

@@ -37,14 +37,23 @@ def test_progress_index_is_zero_based_but_displays_one_based():
 
 def test_destination_names_the_channel_once_it_is_known():
     assert copy_mod.format_destination("Zoolanders", "unlisted") == \
-        "Uploads go to Zoolanders · unlisted"
+        "Uploads go to Zoolanders"
+
+
+def test_destination_omits_the_privacy_setting():
+    """"Uploads go to Zoolanders · unlisted" read as one compound name
+    rather than two facts. Privacy belongs to Settings; repeating it here
+    bought a misreading. Asserted separately from the line above so that
+    reinstating it is a deliberate act with a named test to delete."""
+    for privacy in ("public", "unlisted", "private"):
+        assert privacy not in copy_mod.format_destination("Zoolanders", privacy)
 
 
 def test_destination_is_honest_before_the_first_upload():
     """The app holds only the youtube.upload scope, so the channel cannot be
     looked up; it is learned from the first upload response."""
     assert copy_mod.format_destination("", "public") == \
-        "Channel confirmed after the first upload · public"
+        "Channel confirmed after the first upload"
 
 
 # --- format_title_hint -----------------------------------------------------

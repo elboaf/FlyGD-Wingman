@@ -114,6 +114,13 @@ def format_progress(index: int, total: int, fraction: float) -> str:
 def format_destination(channel_title: str, privacy: str) -> str:
     """The line above Upload Selected naming where the video will land.
 
+    Privacy is deliberately NOT in this string. It was, and "Uploads go to
+    Tommy · unlisted" read as one compound name rather than two facts --
+    the privacy setting lives in Settings, and repeating it here bought a
+    misreading rather than reassurance. `privacy` stays in the signature
+    because every caller already passes it and the decision to leave it out
+    is worth being able to reverse in one line.
+
     Empty channel_title is the normal state before the first successful
     upload, not an error: SCOPES holds youtube.upload alone, which cannot
     call channels.list, so the destination is learned from an insert
@@ -121,8 +128,8 @@ def format_destination(channel_title: str, privacy: str) -> str:
     plainly beats an empty gap where a channel name should be.
     """
     if not channel_title:
-        return f"Channel confirmed after the first upload · {privacy}"
-    return f"Uploads go to {channel_title} · {privacy}"
+        return "Channel confirmed after the first upload"
+    return f"Uploads go to {channel_title}"
 
 
 def format_title_hint(count: int, stitch: bool) -> str:

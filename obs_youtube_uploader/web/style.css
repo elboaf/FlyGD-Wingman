@@ -210,11 +210,27 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .list-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 /* One grid template shared by the header and every row, so the two can
-   never disagree. Columns mirror COLUMN_SPEC: check, filename (elastic),
-   date, size, length, link. */
+   never disagree. Column order matches the header spans in index.html and
+   the cells rowNode() builds in list.js: check, filename (capped), date,
+   size, length, link. (This used to cite app.py's COLUMN_SPEC, which went
+   with the Tk UI.) */
 .grid-row {
   display: grid;
-  grid-template-columns: 34px minmax(120px, 1fr) 120px 84px 76px 46px;
+  /* The filename is capped rather than elastic, and the row left-packs.
+     It used to be minmax(120px, 1fr), which handed it EVERY spare pixel:
+     in a 1300px list that is ~940px of column for ~390px of name, so the
+     four metadata columns were shoved against the right edge with a hole
+     in the middle that reads as misalignment rather than as spacing.
+
+     52ch tracks the text, not the window, so a long name still gets room
+     while a short one stops the group drifting apart. The 120px floor is
+     the same one the narrow-window smoke item checks.
+
+     No 1fr anywhere is deliberate: with nothing elastic the grid packs to
+     content width and the slack collects at the right edge, keeping the
+     name and its metadata legible as one group. The header uses this same
+     rule, so the two can never disagree. */
+  grid-template-columns: 34px minmax(120px, 52ch) 92px 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
   padding: 0 10px;
