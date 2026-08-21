@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://wingman.zoolanders.vip/">Website</a> ·
-  <a href="https://github.com/elboaf/OBS-YouTube-Uploader/releases">Download</a> ·
+  <a href="https://github.com/elboaf/FlyGD-Wingman/releases">Download</a> ·
   <a href="https://wingman.zoolanders.vip/privacy">Privacy Policy</a> ·
   <a href="https://wingman.zoolanders.vip/terms">Terms of Service</a>
 </p>
@@ -199,7 +199,7 @@ Notes:
 ## Installation
 
 1. Download the latest installer from the
-   [Releases page](https://github.com/elboaf/OBS-YouTube-Uploader/releases).
+   [Releases page](https://github.com/elboaf/FlyGD-Wingman/releases).
    It is named `FlyGD-Wingman-Setup-<version>.exe`; releases published before
    the rename are named `OBS-YouTube-Uploader-Setup-<version>.exe`.
 2. Run it. It installs per-user, so there is no administrator prompt.
@@ -306,7 +306,7 @@ script). Manual pre-release verification steps are in
 ## Support
 
 - Bugs and feature requests:
-  [GitHub Issues](https://github.com/elboaf/OBS-YouTube-Uploader/issues)
+  [GitHub Issues](https://github.com/elboaf/FlyGD-Wingman/issues)
 - Email: [technical@zoolanders.vip](mailto:technical@zoolanders.vip)
 - Product information: [wingman.zoolanders.vip](https://wingman.zoolanders.vip/)
 

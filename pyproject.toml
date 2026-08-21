@@ -19,9 +19,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://wingman.zoolanders.vip/"
-Issues = "https://github.com/elboaf/OBS-YouTube-Uploader/issues"
-Source = "https://github.com/elboaf/OBS-YouTube-Uploader"
-Releases = "https://github.com/elboaf/OBS-YouTube-Uploader/releases"
+Issues = "https://github.com/elboaf/FlyGD-Wingman/issues"
+Source = "https://github.com/elboaf/FlyGD-Wingman"
+Releases = "https://github.com/elboaf/FlyGD-Wingman/releases"
 "Privacy Policy" = "https://wingman.zoolanders.vip/privacy"
 "Terms of Service" = "https://wingman.zoolanders.vip/terms"
 
