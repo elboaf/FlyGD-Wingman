@@ -4991,7 +4991,7 @@ git commit -m "Replace the OAuth polling loop with an onAuthState worker"
 
 **Interfaces:**
 - Consumes: nothing yet — registers the `window.on*` handler table Tasks 11–13 fill
-- Produces: `WM.send(method, ...args)`, `WM.handle(name, fn)`, `WM.el(id)`, `WM.make(tag, cls, text)`, `WM.route(name)`, `WM.HANDLERS`; the containers `#route-main`, `#route-settings`, `#panel-slot`, `#statusbar-slot`, `#dialog-slot`; calls `pywebview.api.minimize()`, `close()`, `list_rows()`
+- Produces: `WM.send(method, ...args)`, `WM.handle(name, fn)`, `WM.el(id)`, `WM.make(tag, cls, text)`, `WM.route(name)`, `WM.HANDLERS`; the containers `#route-main`, `#route-settings`, `#statusbar-slot`, `#dialog-slot` (`#panel-slot` is created by Task 11 inside `#route-main`, and filled by Task 12); calls `pywebview.api.minimize()`, `close()`, `list_rows()`
 
 > **Sorting note.** `onRows` carries `date` and `size` as *rendered strings*
 > (`library.format_date` / `format_size`), which cannot be ordered as text —
