@@ -21,7 +21,13 @@ param(
   [string]$Title = "Frameless resize spike",
   [string]$ProcessName = "frameless-resize-spike",
   [int]$MinWidth = 880,
-  [int]$MinHeight = 560
+  [int]$MinHeight = 560,
+  # Stop before anything that MUTATES the window. SetWindowPos and
+  # ShowWindow are synchronous cross-process calls: they block until the
+  # target's message loop answers, so against a wedged window they hang
+  # the probe too and the read-only findings never get printed. Run
+  # read-only first, then re-run without it once the window is known good.
+  [switch]$ReadOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -195,6 +201,11 @@ if ($ownedByChild -gt 0) {
 # Shrink far below min_size and see what the window settles at. WinForms
 # enforces MinimumSize through WM_GETMINMAXINFO, which only survives if
 # the spike chained to the original WndProc before overriding.
+if ($ReadOnly) {
+  Write-Output ""
+  Write-Output "-ReadOnly: skipping the min-size and maximize checks."
+  exit 0
+}
 Write-Output ""
 Write-Output "== min-size clamp =="
 $SWP_NOMOVE = 0x0002; $SWP_NOZORDER = 0x0004
