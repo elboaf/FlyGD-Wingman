@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlyGD Wingman</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="titlebar">
+    <div class="pywebview-drag-region">
+      <span class="mark">&#9654;</span>
+      <span class="name">WINGMAN</span>
+      <span class="sub" id="route-label">Uploader</span>
+    </div>
+    <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
+    <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
+    <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
+  </div>
+
+  <!-- Filled by Task 11 (list) and Task 12 (upload panel). -->
+  <div class="route active" id="route-main"></div>
+
+  <!-- Filled by Task 13. -->
+  <div class="route" id="route-settings"></div>
+
+  <!-- Filled by Task 12 (status strip + progress bar). -->
+  <div id="statusbar-slot"></div>
+
+  <!-- Filled by Task 12 (modal dialog layer). -->
+  <div id="dialog-slot"></div>
+
+  <script src="app.js"></script>
+  <script src="dev.js"></script>
+</body>
+</html>

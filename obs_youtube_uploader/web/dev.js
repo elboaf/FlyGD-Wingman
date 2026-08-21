@@ -1,0 +1,90 @@
+/* Manual-verification harness. Inert inside the real app: it does nothing
+ * unless the page is loaded WITHOUT pywebview and with ?dev=1, which can
+ * only happen in a browser opened by hand. It exists so the page can be
+ * eyeballed without launching Python, and is deliberately the only file
+ * that fabricates data. */
+(function () {
+  'use strict';
+  if (window.pywebview) return;
+  if (!/[?&]dev=1/.test(window.location.search)) return;
+
+  var log = function (name) {
+    return function () {
+      var args = Array.prototype.slice.call(arguments);
+      console.log('DEV api.' + name + '(', args, ')');
+      return Promise.resolve(null);
+    };
+  };
+
+  var api = {};
+  ['delete_selected', 'start_upload', 'upload_combat_logs', 'retry',
+   'open_path', 'copy_path', 'detect_folder', 'save_settings',
+   'connect_google', 'dialog_response', 'minimize', 'close'
+  ].forEach(function (name) { api[name] = log(name); });
+
+  api.pick_folder = function (which) {
+    console.log('DEV api.pick_folder(', which, ')');
+    return Promise.resolve('D:\\Videos\\' + which);
+  };
+
+  // Mirrors Api.panel_text: the page asks Python for both strings rather
+  // than reimplementing format_selection_summary / format_title_hint here.
+  api.panel_text = function (ids, stitch) {
+    console.log('DEV api.panel_text(', ids, stitch, ')');
+    var hint = ids.length <= 1 ? 'Title'
+      : stitch ? 'Title (one stitched video)'
+      : 'Title (applies to all ' + ids.length + ', numbered 1-'
+        + ids.length + ')';
+    return Promise.resolve({
+      summary: ids.length
+        ? ids.length + ' selected \u00b7 1.4 GB \u00b7 0:12:31'
+        : 'Nothing selected',
+      title_hint: hint
+    });
+  };
+
+  api.auth_labels = function () {
+    return Promise.resolve({
+      disconnected: { message: 'Not connected', label: 'Sign in with Google', enabled: true },
+      connecting: { message: 'Waiting for browser\u2026', label: 'Connecting\u2026', enabled: false },
+      connected: { message: 'Connected', label: 'Switch account', enabled: true },
+      revoking: { message: 'Signing out\u2026', label: 'Signing out\u2026', enabled: false }
+    });
+  };
+
+  api.list_rows = function () {
+    console.log('DEV api.list_rows()');
+    setTimeout(function () {
+      window.onRows({ rows: [
+        { id: 'r1', name: '2026-08-21 19-04-11.mkv', date: 'Aug 21  19:04',
+          size: '1.4 GB', duration: '12:31', link: null, preselected: true },
+        { id: 'r2', name: '2026-08-21 17-58-02.mkv', date: 'Aug 21  17:58',
+          size: '812.0 MB', duration: '\u2026', link: null, preselected: false },
+        { id: 'r3', name: '2026-08-20 22-10-49.mkv', date: 'Aug 20  22:10',
+          size: '2.1 GB', duration: '?', link: null, preselected: false },
+        { id: 'r4', name: '2026-08-19 21-00-03.mkv', date: 'Aug 19  21:00',
+          size: '640.5 MB', duration: '4:07',
+          link: 'https://youtu.be/abc123XYZ', preselected: false }
+      ] });
+      window.onSettings({
+        settings: { privacy: 'unlisted', category: '20', notify_mode: 'toast',
+                    recording_dir: 'D:\\Videos',
+                    gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
+                    discord_webhook: 'https://discord.com/api/webhooks/1/tok',
+                    channel_id: 'UC123', channel_title: 'FlyGD' },
+        webhook_status: 'webhook 1538615213203656754 in #combat-logs',
+        detected: { recording: 'D:\\Videos',
+                    gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
+        destination: 'Uploads go to FlyGD \u00b7 unlisted'
+      });
+      window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
+                         destination: 'Uploads go to FlyGD \u00b7 unlisted' });
+      window.onAuthState({ state: 'connected', message: 'Connected' });
+      window.onStatus({ text: 'Ready', kind: 'FG' });
+    }, 0);
+    return Promise.resolve(null);
+  };
+
+  window.pywebview = { api: api };
+  window.dispatchEvent(new Event('pywebviewready'));
+}());

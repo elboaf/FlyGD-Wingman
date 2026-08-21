@@ -1,0 +1,166 @@
+/* FlyGD Wingman — page styles.
+   Direction B, transcribed from the approved spike at wingman-spike/web.
+   Tokens are the successor to theme.py's TOKENS dict. Dark only: light
+   mode and the AppsUseLightTheme detection are dropped, not ported. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* ---- colour ---- */
+  --bg: #0c0d10;
+  --panel: #14161b;
+  --panel-border: #1e2128;
+  --field: #0a0b0e;
+  --field-border: #23262e;
+  --text: #e8eaed;
+  --text-dim: #9aa2b1;
+  --text-faint: #6f7681;
+  --brand: #ff5a4d;
+  --brand-deep: #c81e12;
+  --ok: #4ade80;
+  --warn: #d29922;
+  --err: #f85149;
+
+  /* ---- type scale ----
+     Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
+     headings 1.2x body, body, muted 0.875x body. COLUMN HEADERS USE
+     --fs-muted DELIBERATELY — they sit BELOW body size because they label
+     the data and are not the data. Making them larger undoes a considered
+     decision. */
+  --fs-head: 15.5px;
+  --fs-body: 13px;
+  --fs-muted: 11.5px;
+  --fs-mono: 12px;
+  --fs-label: 10.5px;   /* uppercase tracked section labels (direction B) */
+
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  --row-h: 30px;
+  --titlebar-h: 44px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  /* A desktop chrome should not text-select or rubber-band like a web page. */
+  user-select: none;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+h1 { font-size: var(--fs-head); font-weight: 620; }
+
+/* ---- custom title bar (replaces the OS one; window is frameless) ------ */
+.titlebar {
+  display: flex; align-items: center; gap: 10px;
+  height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
+  background: linear-gradient(180deg, #16181d, #101216);
+  border-bottom: 1px solid #000;
+  box-shadow: inset 0 1px 0 #24272e;
+}
+/* pywebview's documented drag handle for frameless windows. Only this
+   element drags: the buttons must stay clickable. */
+.pywebview-drag-region {
+  flex: 1; height: 100%; display: flex; align-items: center; gap: 10px;
+}
+.mark {
+  width: 20px; height: 20px; border-radius: 5px; flex: none;
+  background: linear-gradient(150deg, var(--brand), var(--brand-deep));
+  display: grid; place-items: center; font-size: 9px; color: #fff;
+  box-shadow: 0 0 12px rgba(230, 50, 45, .45);
+}
+.name { font-weight: 650; letter-spacing: .3px; }
+.sub {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.winbtn {
+  width: 44px; height: 32px; border: 0; background: transparent;
+  color: var(--text-faint); font-size: 13px; cursor: pointer;
+  border-radius: 5px; font-family: inherit; flex: none;
+}
+.winbtn:hover { background: #22252c; color: var(--text); }
+.winbtn.close:hover { background: #d9291c; color: #fff; }
+.winbtn.gear { font-size: 15px; }
+.winbtn.gear.active { background: #22252c; color: var(--brand); }
+
+/* ---- routes ----------------------------------------------------------
+   Settings is a ROUTE in this window, not a second OS window. */
+.route { flex: 1; min-height: 0; display: none; }
+.route.active { display: flex; }
+
+/* ---- shared primitives ---------------------------------------------- */
+.card {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card > h2 {
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: #8b93a1; margin-bottom: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 9px;
+}
+/* The short brand rule preceding every section label. */
+.card > h2::before {
+  content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+}
+
+.row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.row:last-child { margin-bottom: 0; }
+
+input.field, textarea.field, select.field, span.field {
+  flex: 1; min-width: 0; background: var(--field);
+  border: 1px solid var(--field-border); border-radius: var(--radius-sm);
+  padding: 7px 10px; font-size: var(--fs-body); color: var(--text);
+  font-family: inherit; outline: none; user-select: text;
+}
+input.field.mono, span.field.mono, textarea.field.mono {
+  font-family: var(--mono); font-size: var(--fs-mono);
+}
+span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+input.field:focus, textarea.field:focus, select.field:focus {
+  border-color: #39404d;
+  box-shadow: 0 0 0 2px rgba(255, 90, 77, .14);
+}
+textarea.field { resize: none; line-height: 1.5; }
+
+button.btn {
+  background: #1c1f26; border: 1px solid #2a2e37; border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: var(--fs-mono); color: #c8cdd6; flex: none;
+  cursor: pointer; font-family: inherit;
+}
+button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
+button.btn:disabled { opacity: .45; cursor: default; }
+/* The ONE brand-accent control on any screen. */
+button.btn.acc {
+  background: linear-gradient(180deg, var(--brand), #d9291c);
+  border-color: #ff7a6f; color: #fff; font-weight: 600;
+  box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
+}
+button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
+button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+.hint {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  line-height: 1.5; margin-top: 8px; user-select: text;
+}
+.linkish { color: #7aa2f7; cursor: pointer; user-select: text; }
+.linkish:hover { text-decoration: underline; }
+
+/* ---- scrollbar ------------------------------------------------------
+   Tk cannot restyle this at all; the classic Windows scrollbar is one of
+   the most visible tells in newest-version.png and disappears here. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #262a33; border-radius: 5px; border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #333845; }
+::-webkit-scrollbar-corner { background: transparent; }
