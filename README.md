@@ -25,7 +25,7 @@ configure — but the OBS-to-YouTube workflow works with any OBS recording.
 
 <p align="center">
   <img src="docs/assets/wingman-screenshot.png" width="850"
-       alt="The FlyGD Wingman window: a two-pane layout with a dark, frameless title bar. The left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description and a stitch option — above Publish, with the destination channel and buttons to upload the selection, upload combat logs, retry, or delete.">
+       alt="The FlyGD Wingman window: a two-pane layout with a dark, frameless title bar. The left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
 </p>
 
 ## Verification status
@@ -67,7 +67,9 @@ configure — but the OBS-to-YouTube workflow works with any OBS recording.
 3. You click the tray icon to open the window.
 4. You tick the recording(s) you want.
 5. Optionally tick **Stitch selected videos** to merge them into one.
-6. You fill in a title and description and press **Upload Selected**.
+6. You fill in a title and description and press **Upload**. Leave **Also
+   post combat logs to Discord** ticked to have Wingman collect the EVE
+   logs covering the recording and post them alongside.
 7. Wingman uploads directly to your YouTube channel — on first upload it opens
    your browser so you can sign in to Google and grant permission.
 8. The **Link** column marks the row with ↗. Right-click it to **Copy link**
@@ -95,8 +97,9 @@ which requires this scope. Wingman makes no other YouTube API call.
 
 - **Uploads only happen when you start them.** Wingman never uploads
   automatically. A video is uploaded only after you tick it and press
-  **Upload Selected**. Detecting a new recording produces a notification and a
-  list entry — nothing more.
+  **Upload**, and the combat logs go with it only while that box is ticked.
+  Detecting a new recording produces a notification and a list entry —
+  nothing more.
 - **Sign-in only happens when you ask for it**, either via
   **Settings → Connect Google Account** or automatically at the moment of your
   first upload if you have not connected yet.
@@ -174,11 +177,14 @@ This feature is optional, off until you configure it, and **completely
 separate from Google sign-in**. It uses no Google credentials and sends no
 Google user data anywhere.
 
-**Upload combat logs** takes the recordings you have selected, works out the
-time span they cover, collects the EVE Online gamelog files from your local
+With **Also post combat logs to Discord** ticked, an upload does a second
+thing once the video is published: it works out the time span the selected
+recordings cover, collects the EVE Online gamelog files from your local
 `Gamelogs` folder that overlap that span, zips them, and posts the archive to
 the Discord webhook URL you entered in Settings. That is the entire scope of
 the feature: local EVE log files, to a Discord channel you chose.
+
+Untick the box to upload the video alone.
 
 Notes:
 
@@ -243,7 +249,7 @@ you initiate:
 | Destination | When | What is sent |
 |---|---|---|
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
-| A Discord webhook you configure | You press **Upload combat logs** | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
+| A Discord webhook you configure | You press **Upload** with **Also post combat logs to Discord** ticked | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 
 Your Google account data is never sent to Discord, and no Google OAuth token
 ever leaves your machine. Full statement:

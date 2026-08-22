@@ -17,7 +17,7 @@
   };
 
   var api = {};
-  ['delete_selected', 'start_upload', 'upload_combat_logs', 'retry',
+  ['delete_selected', 'start_upload', 'retry',
    'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'set_recording_dir'

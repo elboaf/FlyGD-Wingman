@@ -89,7 +89,7 @@ def test_confirm_names_channel_privacy_and_totals():
         [info(size=2_000_000_000, duration=3600.0),
          info(size=2_000_000_000, duration=3600.0)],
         title="Null", privacy="unlisted", channel_title="Zoolanders",
-        stitch=False)
+        stitch=False, logs=False)
     assert "Zoolanders" in body
     assert "unlisted" in body
     assert "2 recordings" in body
@@ -100,32 +100,63 @@ def test_confirm_names_channel_privacy_and_totals():
 def test_confirm_shows_the_numbering_the_batch_will_actually_get():
     body = copy_mod.format_upload_confirm([info(), info(), info()], title="Fight",
                                      privacy="unlisted", channel_title="Z",
-                                     stitch=False)
+                                     stitch=False, logs=False)
     assert "Fight (1/3)" in body
     assert "Fight (3/3)" in body
 
 
 def test_confirm_shows_the_untitled_fallback_rather_than_an_empty_quote():
     body = copy_mod.format_upload_confirm([info()], title="", privacy="unlisted",
-                                     channel_title="Z", stitch=False)
+                                     channel_title="Z", stitch=False, logs=False)
     assert "Untitled" in body
 
 
 def test_confirm_for_a_stitch_describes_one_video():
     body = copy_mod.format_upload_confirm([info(), info()], title="Fight",
                                      privacy="unlisted", channel_title="Z",
-                                     stitch=True)
+                                     stitch=True, logs=False)
     assert "one video" in body
     assert "(1/2)" not in body
 
 
 def test_confirm_flags_an_unknown_channel_rather_than_leaving_it_blank():
     body = copy_mod.format_upload_confirm([info()], title="x", privacy="unlisted",
-                                     channel_title="", stitch=False)
+                                     channel_title="", stitch=False, logs=False)
     assert "not known yet" in body
 
 
 def test_confirm_says_it_is_public_and_irreversible():
     body = copy_mod.format_upload_confirm([info()], title="x", privacy="public",
-                                     channel_title="Z", stitch=False)
+                                     channel_title="Z", stitch=False, logs=False)
     assert "cannot be undone" in body.lower()
+
+
+def test_confirm_says_when_combat_logs_will_follow_the_upload():
+    """The confirm is the last thing shown before the irreversible action,
+    so it must name everything that action now covers: one button posts to
+    two places, and only this dialog says so before it happens."""
+    body = copy_mod.format_upload_confirm([info()], title="x", privacy="unlisted",
+                                          channel_title="Z", stitch=False,
+                                          logs=True)
+    assert "combat logs" in body.lower()
+    assert "Discord" in body
+
+
+def test_the_irreversibility_warning_covers_the_discord_half_too():
+    """Posting to a webhook has no undo in this app either. Naming only
+    YouTube in the closing line, under a dialog that is now confirming both,
+    understates what the user is about to make permanent."""
+    body = copy_mod.format_upload_confirm([info()], title="x", privacy="unlisted",
+                                          channel_title="Z", stitch=False,
+                                          logs=True)
+    closing = body.rsplit("\n\n", 1)[-1]
+    assert "cannot be undone" in closing
+    assert "Discord" in closing
+
+
+def test_confirm_stays_silent_about_logs_when_the_box_is_unchecked():
+    body = copy_mod.format_upload_confirm([info()], title="x", privacy="unlisted",
+                                          channel_title="Z", stitch=False,
+                                          logs=False)
+    assert "combat" not in body.lower()
+    assert "Discord" not in body

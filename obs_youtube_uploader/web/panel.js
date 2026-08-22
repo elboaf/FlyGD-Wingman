@@ -51,11 +51,8 @@
             WM.el('f-title').value,
             WM.el('f-desc').value,
             WM.el('f-stitch').checked,
+            WM.el('f-logs').checked,
             WM.list.selectedIds());
-  });
-
-  WM.el('btn-combat').addEventListener('click', function () {
-    WM.send('upload_combat_logs', WM.list.selectedIds());
   });
 
   WM.el('btn-delete').addEventListener('click', function () {

@@ -56,16 +56,24 @@ def _hms(total_seconds: int) -> str:
 
 def format_upload_confirm(infos: list[library.VideoInfo], title: str,
                           privacy: str, channel_title: str,
-                          stitch: bool) -> str:
+                          stitch: bool, logs: bool) -> str:
     """The body of the confirm shown before anything is published.
 
-    This is the app's only irreversible action and it was the only one with
-    no confirmation: deleting local files, which are recoverable from the
-    recycle bin, already confirmed with a full file list.
+    This dialog guards the app's irreversible actions, and it was the only
+    one with no confirmation: deleting local files, which are recoverable
+    from the recycle bin, already confirmed with a full file list. Since the
+    upload button merged, it guards TWO of them -- posting to a Discord
+    webhook has no undo here either -- which is why the closing line names
+    whichever ones this particular press will perform.
 
     The title preview is built through uploader.build_body rather than
     reformatted here, so the numbering shown is the numbering that will be
     sent. A second implementation of that rule would drift from it.
+
+    `logs` adds one line rather than a second dialog. One button now
+    publishes to two places, and this is the only screen a user sees
+    between pressing it and the upload starting, so the Discord half has to
+    be named here or it is never disclosed at all.
     """
     total_size = sum(i.size for i in infos)
     total_seconds = int(sum(i.duration or 0.0 for i in infos))
@@ -85,13 +93,20 @@ def format_upload_confirm(infos: list[library.VideoInfo], title: str,
                                        count)["snippet"]["title"]
             titles += f' … "{last}"'
 
+    logs_line = ("Logs:     combat logs posted to Discord afterwards\n"
+                 if logs else "")
+    final = ("Publishing to YouTube and posting to Discord cannot be undone "
+             "from this app." if logs else
+             "Publishing to YouTube cannot be undone from this app.")
+
     return (f"Upload {what} to YouTube?\n\n"
             f"Channel:  {where}\n"
             f"Privacy:  {privacy}\n"
             f"Title:    {titles}\n"
             f"Total:    {library.format_size(total_size)} · "
-            f"{_hms(total_seconds)}\n\n"
-            "Publishing to YouTube cannot be undone from this app.")
+            f"{_hms(total_seconds)}\n"
+            f"{logs_line}\n"
+            f"{final}")
 
 
 def format_progress(index: int, total: int, fraction: float) -> str:
@@ -112,7 +127,7 @@ def format_progress(index: int, total: int, fraction: float) -> str:
 
 
 def format_destination(channel_title: str, privacy: str) -> str:
-    """The line above Upload Selected naming where the video will land.
+    """The line above the Upload button naming where the video will land.
 
     Privacy is deliberately NOT in this string. It was, and "Uploads go to
     Tommy · unlisted" read as one compound name rather than two facts --

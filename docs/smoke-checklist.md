@@ -173,10 +173,10 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] **Display scaling at 100%, 125%, 150% and 200%.** Restart at each.
       Expected: text sharp AND the right apparent size next to Notepad;
       neither route opens larger than the screen; Title, Description,
-      Stitch, the summary, Upload combat logs, Retry and Upload Selected all
+      Stitch, the combat-log checkbox, the summary, Retry and Upload all
       fully visible with nothing clipped.
 - [ ] **Nothing is clipped at the minimum window size** at 150%. The
-      Description box shrinks first and the Retry / Upload Selected row is
+      Description box shrinks first and the Retry / Delete row is
       still fully visible. Drag the window down to its floor (840x625
       logical) to check this — before resizing existed, "minimum" was the
       only size the window ever had and this was free; now a user can
@@ -259,7 +259,7 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       solely for the tray. Confirm the icon is the real app icon, and that
       renaming `app.ico` falls back to the drawn placeholder rather than
       breaking startup.
-- [ ] **The primary action is visually distinct.** `Upload Selected` is the
+- [ ] **The primary action is visually distinct.** `Upload` is the
       only brand-accent control on the screen.
 
 ## Watcher
@@ -474,10 +474,13 @@ behavior that only shows up at size.
 ## Combat logs
 
 - [ ] **No webhook configured.** Clear the Discord webhook field (or use a
-      fresh install), select a recording, and click **Upload combat logs**.
-      Expected: a warning dialog naming the problem ("Enter a Discord
-      webhook URL.") and directing you to add one in Settings. No thread is
-      started, no archive is written.
+      fresh install), select a recording, and press **Upload** with **Also
+      post combat logs to Discord** ticked. Expected: the VIDEO uploads
+      normally, and the status strip finishes on an amber "Upload complete —
+      combat logs skipped: Enter a Discord webhook URL. Set it up in
+      Settings." There is NO dialog, and the video half is never blocked by
+      the Discord half being unconfigured — that regression is the whole
+      reason the two buttons could be merged.
 - [ ] **An invalid webhook URL is refused on Save.** In Settings, paste a
       URL that is not a Discord webhook (e.g. `https://example.com/hook`,
       or `https://discord.com.evil.example/api/webhooks/1/x`) and click
@@ -497,37 +500,47 @@ behavior that only shows up at size.
       token portion of the URL.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
-      Settings, then click **Upload combat logs**. Expected: a warning
-      dialog saying the Gamelogs folder could not be found, telling you to
-      set it in Settings. Then open Settings → **Detect** next to Gamelogs
+      Settings, then press **Upload** with the logs box ticked. Expected:
+      the video uploads, and the strip finishes amber on "…combat logs
+      skipped: your EVE Gamelogs folder was not found. Set it in Settings."
+      No dialog. Then open Settings → **Detect** next to Gamelogs
       with the real folder present: it fills in the entry. Click **Detect**
       again with the field already set to that path: a dialog says it's
       already set to the detected folder, rather than silently re-filling it.
 - [ ] **A normal successful upload.** Select one or more recordings from a
-      real fight, click **Upload combat logs**. Expected: status label
-      steps through "Collecting combat logs…" → "Building archive…" →
+      real fight and press **Upload** with the logs box ticked. Expected:
+      the video uploads first, the strip says "Upload complete!", and then
+      it steps through "Collecting combat logs…" → "Building archive…" →
       "Posting to Discord…" → a green "Posted \<name\>.zip (N KB)." message.
+      "Upload complete!" must NOT be the last thing said — a user who reads
+      it as the end will close the window mid-post.
       In Discord, the message names the character(s) and file count, and
       the attached zip contains a `manifest.json` plus the `.txt` logs. The
       temp archive under `%LOCALAPPDATA%\...\tmp` is gone afterward.
+- [ ] **Unticking the box uploads the video alone.** With a working webhook
+      and Gamelogs folder, untick **Also post combat logs to Discord** and
+      press **Upload**. Expected: the video publishes, the strip rests on
+      "Upload complete!", and NOTHING is posted to Discord — check the
+      channel. This is the only way to get a video without logs, so it has
+      to work.
 - [ ] **Selection spanning one fight in multiple clips posts ONE archive.**
       Select three clips that together cover one continuous fight. Expected:
       a single upload covering the earliest start to the latest end across
       all three — not three separate posts.
 - [ ] **No readable duration (ffprobe missing/failed).** Rename
       `bin\ffprobe.exe` in the install directory, then select a recording and
-      click **Upload combat logs**. Expected: a warning dialog titled
-      "Cannot determine the time window" that lists the specific recording
-      filename(s) affected and mentions ffprobe. No thread is started.
-      Restore the binary afterward.
-- [ ] **Clicking Upload combat logs before the durations finish loading.**
-      Delete `durations.json`, launch against a large folder, and click
-      **Upload combat logs** immediately, while rows still read "…".
-      Expected: a brief pause while just the selected recordings are
-      probed, then the normal upload — NOT the "Cannot determine the time
-      window" warning. That warning must only ever mean ffprobe actually
+      press **Upload** with the logs box ticked. Expected: the video
+      uploads, then an amber "…combat logs skipped: no readable duration for
+      \<filename\>…" naming the specific recordings affected and mentioning
+      ffprobe. No dialog. Restore the binary afterward.
+- [ ] **Uploading before the durations finish loading.** Delete
+      `durations.json`, launch against a large folder, and press **Upload**
+      with the logs box ticked immediately, while rows still read "…".
+      Expected: after the video, a brief pause while just the selected
+      recordings are probed, then the normal log post — NOT the "no readable
+      duration" skip. That message must only ever mean ffprobe actually
       failed.
-- [ ] **Select All then Upload combat logs on a cold cache.** Same setup,
+- [ ] **Select All then Upload on a cold cache.** Same setup,
       but click **Select All** first. Expected: a busy cursor and a status
       line counting "Reading recording lengths… (n/N)" while it works —
       the window must explain itself rather than sitting frozen with no
@@ -557,30 +570,33 @@ behavior that only shows up at size.
       for the general scaling checks (125%, narrow/short screens, checkbox
       clipping); this item only covers the Discord (combat logs) section
       specifically, not a duplicate of those.
-- [ ] **Combat-log and YouTube uploads share one busy guard.** Start a
-      combat-log upload for a large-enough window that it takes a moment,
-      then immediately click **Upload Selected** (YouTube). Expected: the
-      "An upload is already in progress" warning. Then do the reverse —
-      start a YouTube upload, immediately click **Upload combat logs** —
-      and confirm the same warning appears there too.
+- [ ] **One upload at a time, both halves included.** Start an upload with
+      the logs box ticked, and while the Discord half is still posting press
+      **Upload** again. Expected: the "An upload is already in progress"
+      warning. Both halves run on one worker thread, so the guard that
+      always covered the video now covers the log post as well.
 - [ ] **Combat-log status messages are legible in dark mode.** With Windows
-      set to Dark, run a combat-log upload and watch the status line through
+      set to Dark, run an upload with logs and watch the status line through
       "Collecting combat logs…", "Building archive…", and "Posting to
       Discord…". All three must be readable. Before this refresh the first
       of them was hardcoded to black, which was invisible on a dark
       background — this item exists to catch that regressing.
-- [ ] **The Upload combat logs button survived the chrome rework.** Confirm
-      it is present in the **upload panel on the right**, full width on its
-      own row **directly above the Retry / Upload Selected row** (there is
-      no bottom action bar any more), and is NOT styled as the accent
-      button — Upload Selected is the primary action.
+- [ ] **The combat-log checkbox is where the other upload options are.**
+      Confirm **Also post combat logs to Discord** sits in the **Upload card
+      on the right, directly under Stitch** — not in the Publish card beside
+      the buttons — and that it is TICKED on a fresh launch. It is not
+      persisted, so every launch starts ticked.
 
 ## Upload
-- [ ] **Upload Selected confirms before publishing anything.** Select two
+- [ ] **Upload confirms before publishing anything.** Select two
       recordings and press it. Expected: a dialog naming the destination
       channel, the privacy setting, the exact title(s) that will be sent
-      (including the `(1/2)` … `(2/2)` numbering), and the total size and
-      duration. Choose No and confirm nothing uploads. This is the app's
+      (including the `(1/2)` … `(2/2)` numbering), the total size and
+      duration, and — while the logs box is ticked — a "Logs:" line saying
+      combat logs will be posted to Discord afterwards, and a closing line
+      naming BOTH as un-undoable. Untick the box and confirm both the Logs
+      line and the Discord half of the closing line disappear: this dialog
+      is the only disclosure that one press publishes to two places. Choose No and confirm nothing uploads. This is the app's
       only irreversible action, and deleting local files — which are
       recoverable — already confirmed.
 - [ ] **The confirm is honest before the first upload.** With no upload ever
@@ -588,7 +604,7 @@ behavior that only shows up at size.
       this upload)" rather than being blank. The app holds only the
       `youtube.upload` scope, so it cannot look the channel up.
 - [ ] **The destination line fills in after the first successful upload.**
-      Complete one upload. Expected: the muted line above Upload Selected
+      Complete one upload. Expected: the muted line above Upload
       changes from "Channel confirmed after the first upload" to
       "Uploads go to &lt;your channel&gt;", and still says so after
       restarting the app (it is persisted to settings.json). The privacy
@@ -688,12 +704,14 @@ by `onDialog`, with `confirm` answered by `dialog_response(id, ok)` — the one
 request/response pair in an otherwise fire-and-forget protocol. A dropped
 response leaves a worker waiting forever, which presents as a hung upload.
 
-- [ ] **LOAD-BEARING: Upload Selected confirms before publishing anything.**
+- [ ] **LOAD-BEARING: Upload confirms before publishing anything.**
       Select two recordings and press it. Expected: a modal naming the
       destination channel, the privacy setting, the exact title(s) including
-      `(1/2)` … `(2/2)` numbering, and the total size and duration. Choose
-      No: nothing uploads and the app is not left busy. Then repeat and
-      choose Yes. This is the app's only irreversible action.
+      `(1/2)` … `(2/2)` numbering, the total size and duration, and the
+      "Logs:" line while the combat-log box is ticked. Choose No: nothing
+      uploads, NOTHING is posted to Discord, and the app is not left busy.
+      Then repeat and choose Yes. This modal now guards two public actions,
+      not one.
 - [ ] **The confirm is honest before the first upload.** With no upload ever
       completed, the Channel line reads "not known yet (learned from this
       upload)" rather than being blank.
@@ -701,13 +719,12 @@ response leaves a worker waiting forever, which presents as a hung upload.
       cannot be undone, Cancel deletes nothing, Confirm removes and
       refreshes.
 - [ ] **The no-selection and busy warnings are distinct messages.** Press
-      Upload Selected, Upload combat logs and Delete selected each with
-      nothing selected, and read all three. Then start an upload and press
-      the other two mid-flight. These are several specific messages, not one
-      generic guard.
+      Upload and Delete selected each with nothing selected, and read both.
+      Then start an upload and press the other mid-flight. These are
+      several specific messages, not one generic guard.
 - [ ] **Escape and the scrim answer a confirm as "no", never as nothing.**
       Both cancel cleanly and the app is immediately usable — no upload, no
-      stuck busy state, and Upload Selected works on the next press.
+      stuck busy state, and Upload works on the next press.
 - [ ] **A dialog raised from a worker thread reaches the page.** Kill the
       network mid-upload and let the retries exhaust. The error modal
       appears with plain-language text, not a traceback, and the window is
