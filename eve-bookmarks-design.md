@@ -27,8 +27,21 @@ The absorbed feature is deliberately narrower than the standalone script:
   (Flygd/ABH). Every `CurrentMode = 1` branch is removed from the vendored
   script, which is a substantial deletion — the mode is threaded through the
   finishers, the parser, and the status text.
-- **`HomeZeroIs0` is dropped**, as it exists only to serve v21/null-static
-  behaviour.
+- **The `HomeZeroIs0` *option* is dropped, but its behaviour must be pinned
+  deliberately — it is not Protean-specific.** Its GUI label reads "First
+  home hole is 0 (v21/null static mode)" (`:230`), which makes it look like a
+  Protean concern, and an earlier draft of this document dropped it on that
+  basis. That was wrong. `FireRootFinisher` reads it with no reference to
+  `CurrentMode` at all: the condition is `(RootKey = "" && HomeZeroIs0)`
+  (`:870`, `:886`, `:893`), so it governs whether **home-mode** bookmarks are
+  numbered from 0 or from 1 under *both* naming schemes.
+
+  Deleting the flag and letting whichever branch happens to survive take over
+  would silently renumber every home bookmark. The engine therefore hardcodes
+  the current shipped default — `HomeZeroIs0 := 1` (`:32`), i.e. home mode
+  starts at `.0` — so behaviour is unchanged for everyone who never altered
+  the checkbox. Anyone who *had* turned it off gets a behaviour change, which
+  is why import reports it explicitly rather than discarding it silently.
 - **`PrefaceReturn` and `ReturnPreface` are dropped.** The corp does not use
   a return preface character.
 - **The Copy and Paste binds are dropped.** They are personal Dvorak
@@ -118,13 +131,39 @@ resolve there with no edit to the script.
 
 Set Root and Clear Root are operations rather than settings, so they cannot
 travel through the config file. Wingman writes `eve_command.json` holding a
-command and a monotonically increasing sequence number; the engine reads it on
-its existing 2s timer, executes anything newer than the last sequence it ran,
-and records that sequence in `eve_status.json`.
+command and a sequence number; the engine reads it on its existing 2s timer
+(`:77`), executes anything newer than the last sequence it ran, and records
+that sequence in `eve_status.json`.
 
-The sequence number is what preserves the single-writer rule: the engine never
-deletes or rewrites the command file to mark it consumed, it just reports how
-far it has got, and Wingman can see the command land.
+The sequence number preserves the single-writer rule: the engine never deletes
+or rewrites the command file to mark it consumed, it just reports how far it
+has got, and Wingman can see the command land.
+
+Three things this needs to be correct rather than merely plausible:
+
+**Every cross-process file is published atomically.** One writer per file
+prevents *conflicting* writes; it does nothing about a reader observing a
+half-written file. All four files are written to a temporary name on the same
+volume and then renamed over the target — `os.replace` on the Python side,
+`FileMove` with overwrite on the AHK side. Without this a 2s poll can read
+truncated JSON, and the INI is equally exposed since the engine re-reads it
+every 10s while Wingman may be rewriting it.
+
+**The sequence is durable and monotonic across restarts.** It is persisted
+with the rest of the state, not held in memory. If Wingman restarted and
+resumed from zero while a command file with a higher sequence remained on
+disk, commands would either be silently ignored or re-executed depending on
+which side reset first. On engine start, the last-consumed sequence is
+initialised from the command file currently on disk rather than from zero, so
+a stale command left by a previous session is never replayed.
+
+**An unconsumed command is never overwritten.** The slot holds one command,
+and the poll interval is up to two seconds, so a second action taken quickly
+would destroy the first. Wingman does not write a new command while the status
+file shows the previous sequence unconsumed: the buttons disable until the
+engine acknowledges, and surface an error if no acknowledgement arrives within
+a few poll intervals. That doubles as the user-visible signal that the engine
+has stopped responding.
 
 This is the one piece of genuinely new machinery in the design. It reuses the
 existing timer and carries only two commands, so it stays small — but it is a
@@ -169,6 +208,16 @@ the window list.
 are written into a file that drives global keyboard hooks, so a corrupt entry
 falls back to its default and is logged rather than propagated.
 
+**Nesting breaks an assumption the current loader makes.** `load()` starts
+with `data = dict(DEFAULTS)` (`settings.py:38`), a shallow copy — fine while
+every default is a scalar, wrong the moment one is a dict. As written, the
+returned settings would share the `keybinds` and `windows` objects with the
+module-level `DEFAULTS`, so the first in-place edit would corrupt the defaults
+for the rest of the process, and every later `load()` would return the
+mutated values. The nested branch must build fresh dicts (or deep-copy)
+before validating or mutating. This is a quiet, process-lifetime failure
+rather than a crash, so it needs a test that loads, mutates, and reloads.
+
 Two defaults are deliberate:
 
 - **`enabled` defaults to False.** Upgrading users do not silently acquire a
@@ -196,10 +245,16 @@ a file picker, and checks the handful of obvious locations (alongside a
 
 Import parses the INI into the `eve_bookmarks` schema, reports what it found,
 and requires confirmation before overwriting current values. Settings that no
-longer exist — mode, `HomeZeroIs0`, the return preface, and the Copy and Paste
-binds — are **discarded with an explicit note** rather than silently dropped,
-so a user who relied on them learns that here rather than by noticing a key
-has stopped working.
+longer exist — mode, the return preface, and the Copy and Paste binds — are
+**discarded with an explicit note** rather than silently dropped, so a user
+who relied on them learns that here rather than by noticing a key has stopped
+working.
+
+`HomeZeroIs0` gets its own treatment, because discarding it is not neutral.
+An imported INI with `HomeZeroIs0=0` describes a user whose home bookmarks
+number from 1, and the engine now always numbers from 0. Import must say so
+in those terms — "your home bookmarks will start at .0 instead of .1" — not
+report it as a setting that no longer applies.
 
 It is available at any time, not only on first run: users will not all migrate
 on the same day, and a one-shot prompt is easy to dismiss and then
@@ -294,15 +349,22 @@ Four changes rather than deletions:
   **The PID alone is not sufficient identity.** Windows reuses PIDs, and this
   code path exists precisely to run after an unclean shutdown, when the
   recorded PID may since have been handed to something unrelated. Killing on
-  a bare PID match would terminate an arbitrary user process. Before
-  terminating, the process image path must be confirmed to be the bundled
-  AutoHotkey binary; a mismatch means the entry is stale and is discarded
-  rather than acted on.
+  a bare PID match would terminate an arbitrary user process.
 
-  `#SingleInstance Force` overlaps with this: a fresh spawn replaces a
-  surviving copy on its own. The overlap is real but partial — it only helps
-  when Wingman is started again, and does nothing for a user who closes
-  Wingman and never reopens it. Both mechanisms stay.
+  Nor is the image path enough on its own: the bundled interpreter is a
+  general-purpose binary and could legitimately be running some other script.
+  Identity is therefore the image path **plus** a run token — a unique value
+  passed on the engine's command line at spawn and recorded alongside the PID
+  — verified against the running process's command line. A mismatch on either
+  means the entry is stale and is discarded rather than acted on.
+
+  **Neither this nor `#SingleInstance Force` helps the user who never
+  reopens Wingman.** An earlier draft claimed a distinction between them;
+  there is none worth relying on, since both act only at the next spawn. A
+  surviving engine after a crashed Wingman keeps its hook until Wingman is
+  started again. Clean shutdown is what actually covers the common case, and
+  this recovery is the backstop for when that did not happen — not a general
+  answer to orphaned processes.
 - **No auto-restart on unexpected death.** Surface "Stopped unexpectedly"
   with a Start button. A restart loop against a persistent failure — missing
   binary, corrupt INI, antivirus quarantine — respawns forever while
@@ -421,7 +483,7 @@ function.
 Validation the original GUI never performed, all pure and testable:
 
 - reject modifier-only presses
-- detect collisions across all 21 binds — `RefreshHotkeys` (`:707-828`)
+- detect collisions across all 19 binds — `RefreshHotkeys` (`:707-828`)
   registers with `UseErrorLevel` and silently lets one win
 - reject unmappable keys rather than writing a string AHK cannot parse
 
@@ -449,11 +511,25 @@ them is inert unless an enabled EVE window is active.
   verified during implementation, not assumed.
 - `installer.iss:56` copies the one-folder output wholesale; no installer
   change is needed.
-- **Third-party attribution.** AutoHotkey is GPLv2, as is the bundled FFmpeg
-  build. The README's licence section (`:319-321`) states MIT only, so a
-  written offer of source appears to be missing today for FFmpeg. Adding a
-  section covering both is in scope; the pre-existing FFmpeg half rides along
-  at the maintainer's discretion.
+- **GPL source obligations, which attribution alone does not satisfy.**
+  AutoHotkey is GPLv2, as is the bundled FFmpeg build. Distributing the
+  binaries obliges us to provide corresponding source or a valid written
+  offer — a licence note in the README (`:319-321`) is not that, and
+  `fetch_ffmpeg.py` deliberately extracts only `ffmpeg.exe` and `ffprobe.exe`
+  (`:22`, `:54-65`), so no source accompanies either binary today.
+
+  The design's answer: a `THIRD-PARTY-NOTICES` file shipped *in the installed
+  tree*, naming each binary, its exact pinned version, its licence, and a
+  written offer with the upstream source URL for that version. Pinning the
+  version is what makes the offer valid — "latest upstream" does not
+  correspond to what we shipped. The fetchers record the pin already, so the
+  notice can be generated from the same constants rather than hand-maintained
+  and left to drift.
+
+  **This exposes a pre-existing gap for FFmpeg**, which ships today under the
+  same terms with no offer at all. Fixing it is adjacent scope; whether it
+  rides along is the maintainer's call, but adding a second GPL binary is a
+  poor moment to leave the first one unaddressed.
 
 ## Testing and verification
 
@@ -466,7 +542,10 @@ Testable on Linux, covering every decision above:
 | Keybind → AHK notation | table-driven, incl. punctuation and `^;` in INI |
 | Collision + modifier-only rejection | pure |
 | Nested settings validation | corrupt/missing/wrong-type falls back |
-| Command file sequencing | monotonic seq, replay suppression |
+| Nested defaults are not aliased | load → mutate → reload returns defaults |
+| Atomic publication | writers use temp-plus-rename, never in-place |
+| Command file sequencing | monotonic seq, replay suppression, restart init |
+| Unconsumed-command guard | no overwrite before acknowledgement |
 | Supervisor start/stop/liveness | injected `spawner`, per `test_chrome.py` |
 | Orphan recovery incl. PID identity | injected `spawner` + fake PID/status files |
 | Status staleness + failed-bind reporting | fake status files |
@@ -485,6 +564,9 @@ Additions to `docs/smoke-checklist.md`:
 - **every finisher still produces the correct Flygd/ABH name** once the
   Protean branches are threaded out — the check that removing one mode did
   not disturb the other
+- **home-mode bookmarks still number from `.0`** with the flag hardcoded —
+  the check that dropping `HomeZeroIs0` preserved shipped behaviour rather
+  than flipping it
 - the status segment appears in the status bar while on the Uploader route,
   and yields to upload progress at minimum width
 - **rebinding a window-scoped hotkey stops the old binding firing** — the
