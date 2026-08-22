@@ -10,13 +10,39 @@ currently distributed as a standalone AutoHotkey script (`111unified.ahk`,
 1981 lines). Wingman becomes the way that tool is run, and the standalone
 script is retired.
 
-The user-visible result is a `Bookmarks` destination in the window offering
-native configuration — 21 keybinds, four mode settings, per-EVE-window
-enablement — plus a live status readout, backed by a supervised background
-process that provides the hotkey behaviour unchanged.
+The user-visible result is a `Bookmarks` destination in the window holding
+configuration — 19 keybinds and per-EVE-window enablement — and a live status
+readout in the window's existing global status bar, backed by a supervised
+background process providing the hotkey behaviour for the naming scheme the
+corp actually uses.
 
 This is a deliberate widening of the product from "OBS recording companion"
 to "general EVE assistant", confirmed with the maintainer.
+
+### Scope reductions taken on maintainer feedback
+
+The absorbed feature is deliberately narrower than the standalone script:
+
+- **Protean/v21 mode is dropped.** The engine supports one naming scheme
+  (Flygd/ABH). Every `CurrentMode = 1` branch is removed from the vendored
+  script, which is a substantial deletion — the mode is threaded through the
+  finishers, the parser, and the status text.
+- **`HomeZeroIs0` is dropped**, as it exists only to serve v21/null-static
+  behaviour.
+- **`PrefaceReturn` and `ReturnPreface` are dropped.** The corp does not use
+  a return preface character.
+- **The Copy and Paste binds are dropped.** They are personal Dvorak
+  conveniences, not part of the shared workflow.
+- **Set Root becomes window-scoped like everything else.** Its global
+  registration existed solely so that, outside an enabled EVE window, it
+  could paste a raw root number with the preface stripped — a Protean
+  dual-use that disappears with Protean mode.
+
+The consequence worth stating plainly: **no binding is registered globally
+any more.** Every one of the 19 requires an active, enabled EVE window. That
+removes an entire class of risk — a bind shadowing a shortcut in an unrelated
+application — and removes the need for the UI to distinguish bind scopes at
+all.
 
 ## Repository evidence that shaped this
 
@@ -69,22 +95,41 @@ Rejected alternatives:
 
 ## Architecture
 
-### Config and status: two files, one writer each
+### Config, commands and status: three files, one writer each
 
 ```
 settings.json ──generate_ini()──▶ eve_bookmark_helper.ini ──read──▶ engine
    ▲ Wingman writes                   Wingman writes                  │
-   │                                                                  │ writes
+   │                                                                  │
+   │              eve_command.json ──────────read───────────────────▶ │
+   │               Wingman writes                                     │ writes
    └────── bridge push ◀── Wingman reads ◀── eve_status.json ◀────────┘
 ```
 
 `settings.json` is the single source of truth. The INI is a derived artifact,
 regenerated on every save, never hand-edited. The engine reads config and
-writes only its own runtime state. No file has two writers.
+commands, and writes only its own runtime state. **No file has two writers.**
 
-All three live in `paths.state_dir()`. The engine is spawned with
+All four live in `paths.state_dir()`. The engine is spawned with
 `cwd=state_dir()`, which makes the script's relative `IniFile` (`:71`)
 resolve there with no edit to the script.
+
+### The command channel
+
+Set Root and Clear Root are operations rather than settings, so they cannot
+travel through the config file. Wingman writes `eve_command.json` holding a
+command and a monotonically increasing sequence number; the engine reads it on
+its existing 2s timer, executes anything newer than the last sequence it ran,
+and records that sequence in `eve_status.json`.
+
+The sequence number is what preserves the single-writer rule: the engine never
+deletes or rewrites the command file to mark it consumed, it just reports how
+far it has got, and Wingman can see the command land.
+
+This is the one piece of genuinely new machinery in the design. It reuses the
+existing timer and carries only two commands, so it stays small — but it is a
+third channel, and adding more commands to it later should be a deliberate
+decision rather than a habit.
 
 ### Modules
 
@@ -111,14 +156,14 @@ One nested key added to `settings.DEFAULTS`:
 ```python
 "eve_bookmarks": {
     "enabled": False,
-    "mode": 1,                 # 1 = Protean/v21, 2 = Flygd/ABH
-    "home_zero_is_0": True,
-    "preface_return": True,
-    "return_preface": "!",
-    "keybinds": {...},         # 21 entries, AHK notation, "" = unbound
+    "keybinds": {...},         # 19 entries, AHK notation, "" = unbound
     "windows": {...},          # "EVE - Character Name" -> bool
 }
 ```
+
+The mode and preface settings the standalone script carried are gone with the
+scope reductions above, so the schema is only an enable switch, the binds, and
+the window list.
 
 `load()` gains a nested validation pass. It must be defensive: these values
 are written into a file that drives global keyboard hooks, so a corrupt entry
@@ -128,28 +173,110 @@ Two defaults are deliberate:
 
 - **`enabled` defaults to False.** Upgrading users do not silently acquire a
   global keyboard hook; they opt in.
-- **Keybinds default unbound.** The script ships 20 of 21 blank
-  (`:120-140`); preserving that means no surprise collisions on first run.
+- **Keybinds match what the script ships.** Eighteen of the nineteen are
+  blank (`:120-140`), so there are no surprise collisions on first run — but
+  `ConvertScout` ships bound to `^+s` (`:57`, `:140`) and must keep that
+  default. Defaulting every bind to blank would silently take a working
+  binding away from every existing user.
+
+### Migrating an existing installation
+
+Users already running the standalone script have an
+`eve_bookmark_helper.ini` holding their modes, binds and per-window
+enablement (`:71`, `:114-140`, `:143-190`). Retiring the script without
+importing that file discards their configuration, and since this design's
+whole premise is that Wingman *replaces* the script, that would hit every
+current user rather than an edge case.
+
+The script writes its INI relative to its working directory, so its location
+is not knowable in general — there is no reliable path to probe. The route
+therefore offers an explicit **"Import from an existing helper"** action with
+a file picker, and checks the handful of obvious locations (alongside a
+`111unified.ahk` found in common places) to pre-fill it.
+
+Import parses the INI into the `eve_bookmarks` schema, reports what it found,
+and requires confirmation before overwriting current values. Settings that no
+longer exist — mode, `HomeZeroIs0`, the return preface, and the Copy and Paste
+binds — are **discarded with an explicit note** rather than silently dropped,
+so a user who relied on them learns that here rather than by noticing a key
+has stopped working.
+
+It is available at any time, not only on first run: users will not all migrate
+on the same day, and a one-shot prompt is easy to dismiss and then
+irrecoverable.
 
 ## The vendored script
 
 Wingman vendors a stripped copy. Removed: the GUI (`BuildMainGui`,
-`ShowMainGui`, all GUI event handlers), the tray menu (`:63-68`), and all
-config writing (`SaveAllSettings`, `SaveWindowSettings`). Retained: the
-hotkey engine, the INI reader, and `ToolTip` feedback (`ShowRootTooltip`,
-`:682`), which is the in-game feedback users actually read.
+`ShowMainGui`, the config event handlers), the tray menu (`:63-68`), all
+config writing (`SaveAllSettings`, `SaveWindowSettings`), the `DoCopy` and
+`DoPaste` handlers, and every Protean/v21 branch together with the
+`HomeZeroIs0` and return-preface logic. Retained: the hotkey engine, the INI
+reader, and `ToolTip` feedback (`ShowRootTooltip`, `:682`), which is the
+in-game feedback users actually read.
 
-Three changes rather than deletions:
+**The Protean removal is the largest single deletion and the riskiest.** The
+mode is not localised — it branches inside every finisher, the parser, and
+the status text — so this is threading logic out of the engine rather than
+deleting a block. It is also, like the rest of the engine, untestable. The
+smoke pass has to cover the surviving Flygd/ABH path deliberately rather than
+assume that removing a branch left the other one intact.
 
-1. `GoSub, LoadAllSettings` at the top of `RefreshHotkeys`. The 10s timer
-   (`:76`) already re-reads `[Enabled]` (`:716`), but `[Keybinds]` and
-   `[Settings]` are startup-only globals. This one line makes the whole INI
-   hot-reloadable, so config changes apply without restarting the process
-   and losing in-flight state (root system, used slots).
-2. `RefreshStatusTab` (`:365-389`) is repurposed. It already computes the
-   five status values on a 2s timer; only its sink changes, from five
-   `GuiControl` calls to writing `eve_status.json`.
-3. `#SingleInstance` (`:5`) is pinned to `Force`, so a duplicate spawn
+**Two GUI handlers are operations, not configuration, and must survive.**
+`SetManualRoot` and `ClearRoot` (`:218-222`, `:577-634`) mutate live engine
+state: `SetManualRoot` parses a typed system name through `ParseBookmark` and
+resets slot allocation, `ClearRoot` returns the engine to home mode. Removing
+the GUI would delete them with no replacement.
+
+Their coverage is partial rather than absent — `DoSemi` already sets root
+from a selection and enters home mode on an empty clipboard — so the specific
+loss is **setting a root by typing a system name**, which has no hotkey
+equivalent. Both are retained and driven from the route through the command
+channel below.
+
+Four changes rather than deletions:
+
+1. **`RefreshHotkeys` teardown is repaired, and only then made hot-reloadable.**
+   Adding `GoSub, LoadAllSettings` at the top is necessary — the 10s timer
+   (`:76`) already re-reads `[Enabled]` (`:716`) while `[Keybinds]` and
+   `[Settings]` are startup-only globals — but it is **not sufficient**, and
+   an earlier draft of this document wrongly claimed it was.
+
+   Step 1 of `RefreshHotkeys` resets to the global context with
+   `Hotkey, IfWinActive` (`:705-713`) and then disables bindings *in that
+   context*. The eighteen window-scoped bindings are registered under
+   `Hotkey, IfWinActive, %WinTitle%` (`:786`), a different criterion, and
+   AHK v1 disables only the variant matching the current one. Those variants
+   are therefore never torn down. This is a latent bug in the script today,
+   rarely hit because rebinding is rare; routing every config change through
+   this path would make it routine, leaving stale hotkeys live against
+   windows the user has just disabled.
+
+   The repair: record the window titles registered on the previous pass, and
+   before rebinding, re-enter each of those contexts and disable its
+   variants explicitly. Only then is the reload claim true.
+
+   **This enlarges the script work materially.** `RefreshHotkeys` becomes
+   modified logic rather than a deletion, which raises both review burden and
+   the risk carried by the untestable part of this change. If the repair
+   proves unreliable in the smoke pass, the fallback is to restart the
+   process on any change to bindings or window enablement — correct by
+   construction, at the cost of the in-flight state (root system, used slots)
+   that hot reload exists to protect.
+
+2. **Registration failures are recorded.** Every `Hotkey ... On UseErrorLevel`
+   suppresses errors and nothing ever reads the result (`:767-823`), so a
+   bind Windows refuses — one already claimed by another application —
+   fails silently while the engine looks healthy. Each registration checks
+   `ErrorLevel` and accumulates the failures, which are published in the
+   status file and surfaced in the route.
+
+3. `RefreshStatusTab` (`:365-389`) is repurposed. It already computes the
+   five status values on a 2s timer; its sink changes from five `GuiControl`
+   calls to writing `eve_status.json`, and it gains the failed-registration
+   list and the last-consumed command sequence number.
+
+4. `#SingleInstance` (`:5`) is pinned to `Force`, so a duplicate spawn
    replaces cleanly rather than prompting a user who has no GUI to answer.
 
 ## Lifecycle
@@ -162,8 +289,20 @@ Three changes rather than deletions:
 - **Orphan recovery is mandatory.** If Wingman crashes the child survives —
   a global keyboard hook with no UI left to disable it, recoverable only via
   Task Manager by a user who does not know what to look for. The spawned PID
-  is recorded in `state_dir()`; every start terminates a recorded PID that is
-  still alive before spawning.
+  is recorded in `state_dir()` and terminated on the next start.
+
+  **The PID alone is not sufficient identity.** Windows reuses PIDs, and this
+  code path exists precisely to run after an unclean shutdown, when the
+  recorded PID may since have been handed to something unrelated. Killing on
+  a bare PID match would terminate an arbitrary user process. Before
+  terminating, the process image path must be confirmed to be the bundled
+  AutoHotkey binary; a mismatch means the entry is stale and is discarded
+  rather than acted on.
+
+  `#SingleInstance Force` overlaps with this: a fresh spawn replaces a
+  surviving copy on its own. The overlap is real but partial — it only helps
+  when Wingman is started again, and does nothing for a user who closes
+  Wingman and never reopens it. Both mechanisms stay.
 - **No auto-restart on unexpected death.** Surface "Stopped unexpectedly"
   with a Start button. A restart loop against a persistent failure — missing
   binary, corrupt INI, antivirus quarantine — respawns forever while
@@ -179,6 +318,22 @@ Three changes rather than deletions:
 
 ## Status display
 
+**The status values live in the window's global status bar, not in the
+Bookmarks route.** That bar already exists as chrome outside the routes
+(`web/index.html:220-226`), holding upload status, a progress track and a
+percentage, so this needs no new structure — the EVE values become a second
+segment alongside them.
+
+Placing them there rather than in the route is the point: current sig, root,
+next numeric and next alpha stay visible while you are on Uploader, or with
+the window parked on a second monitor. A readout you must navigate to is a
+readout you will not look at mid-chain.
+
+The segment appears only when the engine is enabled, so nothing changes for
+users who never turn it on. At minimum window width it and the upload
+progress compete for room; the EVE segment yields, since an upload in flight
+is the more urgent of the two.
+
 The panel is driven by **engine liveness, not file contents** — a stale
 readout is worse than none, because a plausible-looking dead root system
 would be acted on.
@@ -186,6 +341,22 @@ would be acted on.
 - not enabled → "Not running", no values
 - enabled, process gone → "Stopped", values cleared, not frozen
 - running, status file not updated within a few ticks → "Stale"
+
+**Liveness is not health.** A process can be alive with some or all of its
+bindings unregistered: every registration passes `UseErrorLevel` and nothing
+reads the result (`:767-823`), so a bind Windows refuses — most commonly one
+already claimed by another application — fails silently. Nothing in the five
+status values would reveal it, and the user would simply find that a key does
+nothing.
+
+The status file therefore carries the failed-registration list produced by
+the engine change above. The **Bookmarks route** reports it in full — which
+binds failed, not merely that something did — since that is where the binds
+are configured and fixed. The status bar carries only a warning marker
+pointing there, because a list of failures does not fit a one-line strip.
+Note this is a different failure from the collision check in `bookmarks.py`,
+which can only catch conflicts *within* our own binds — it cannot know what
+the rest of the system has claimed.
 
 Wingman polls while running (existing `ui/scheduler.py`, ~1Hz) and pushes an
 `onEveStatus` semantic event. The in-game tooltip is retained; the two serve
@@ -254,12 +425,14 @@ Validation the original GUI never performed, all pure and testable:
   registers with `UseErrorLevel` and silently lets one win
 - reject unmappable keys rather than writing a string AHK cannot parse
 
-**Two facts the UI must state.** Copy, Paste and Set Root register globally
-(`:765-772`) while the other eighteen require an active enabled EVE window;
-a global bind can shadow a shortcut in every other application, so those
-three are marked rather than presented as uniform rows. And blank is a valid
-value — every row needs an explicit clear affordance, round-tripping to an
-empty INI value that `RefreshHotkeys` already treats as "do not register".
+**One fact the UI must state.** Blank is a valid value — every row needs an
+explicit clear affordance, round-tripping to an empty INI value that
+`RefreshHotkeys` already treats as "do not register".
+
+An earlier draft required the UI to mark Copy, Paste and Set Root as globally
+scoped. That distinction is gone: those two binds are removed and Set Root is
+now window-scoped like the rest, so all 19 rows are uniform and every one of
+them is inert unless an enabled EVE window is active.
 
 ## Packaging and CI
 
@@ -289,18 +462,43 @@ Testable on Linux, covering every decision above:
 | Under test | Approach |
 |---|---|
 | INI generation | golden-file, pure |
+| INI import parsing | golden-file, incl. partial and corrupt inputs |
 | Keybind → AHK notation | table-driven, incl. punctuation and `^;` in INI |
 | Collision + modifier-only rejection | pure |
 | Nested settings validation | corrupt/missing/wrong-type falls back |
+| Command file sequencing | monotonic seq, replay suppression |
 | Supervisor start/stop/liveness | injected `spawner`, per `test_chrome.py` |
-| Orphan recovery, status staleness | injected `spawner` + fake PID/status files |
+| Orphan recovery incl. PID identity | injected `spawner` + fake PID/status files |
+| Status staleness + failed-bind reporting | fake status files |
 
-**Not testable, stated plainly:** no test can confirm the hotkeys still fire
-after the strip. Mitigations are that the strip is deletions plus one changed
-sink, so it reads cleanly in review, and additions to
-`docs/smoke-checklist.md`: hotkeys fire in a real EVE window, config applies
-within 10s, orphan cleanup after a killed Wingman, no console flash, and the
-title-bar drag region still drags with nav present.
+**Not testable, and the gap is wider than an earlier draft claimed.** No test
+can confirm the hotkeys still fire after the strip. That draft argued the
+strip was "deletions plus one changed sink, so it reads cleanly in review" —
+that is no longer true. `RefreshHotkeys` now carries a repaired teardown and
+per-registration error checking, so the untestable part contains **modified
+control flow**, not just removals. Review is correspondingly harder and the
+smoke pass matters more.
+
+Additions to `docs/smoke-checklist.md`:
+
+- hotkeys fire in a real EVE window
+- **every finisher still produces the correct Flygd/ABH name** once the
+  Protean branches are threaded out — the check that removing one mode did
+  not disturb the other
+- the status segment appears in the status bar while on the Uploader route,
+  and yields to upload progress at minimum width
+- **rebinding a window-scoped hotkey stops the old binding firing** — the
+  direct test of the teardown repair, and the one that would have caught the
+  original bug
+- disabling a window stops its bindings firing
+- a deliberately conflicting bind is reported as failed rather than silently dead
+- Set Root and Clear Root from the route reach the engine
+- importing an existing `eve_bookmark_helper.ini` reproduces that setup
+- config applies within 10s without losing root and used slots
+- orphan cleanup after a killed Wingman, and *no* kill when the PID has been
+  reused by something else
+- no console flash on spawn
+- the title-bar drag region still drags with nav present
 
 **One guard, modelled on `test_no_tk.py`:** assert the vendored `.ahk`
 contains no `Gui,` commands and no `IniWrite`. That pins both invariants this
@@ -309,8 +507,13 @@ fails loudly if someone re-syncs from upstream and undoes the strip.
 
 ## Risks and open items
 
-1. **The strip is unverifiable by test.** Highest residual risk. Mitigated by
-   review and the smoke checklist, not eliminated.
+1. **The engine changes are unverifiable by test, and they grew.** Highest
+   residual risk by some margin. What began as deletions plus one changed
+   sink now also includes a repaired `RefreshHotkeys` teardown,
+   per-registration error checking, a command-file reader, and the removal of
+   Protean/v21 logic threaded through the finishers and parser. None of it
+   can be exercised by pytest. Mitigated by review and an expanded smoke
+   checklist, not eliminated.
 2. **AutoHotkey signing is unconfirmed.** If v1.1 binaries are unsigned, the
    CI check cannot mirror the WebView2 one and that should be a conscious
    decision rather than a silent omission.
@@ -348,3 +551,13 @@ fails loudly if someone re-syncs from upstream and undoes the strip.
   feature area would reopen the navigation question.
 - The 10s reload timer is fast enough for config changes to feel applied. If
   not, the timer interval is the adjustment, not the architecture.
+- **Nobody in the corp needs Protean/v21, `HomeZeroIs0`, a return preface, or
+  the Copy and Paste binds.** This is the assumption the scope reductions rest
+  on, and it is the one most likely to be wrong for someone outside the
+  immediate group. Restoring any of them means re-adding logic the vendored
+  script no longer contains, so it is cheap to decide now and expensive to
+  reverse later — which is why import reports discarded settings explicitly
+  rather than dropping them quietly.
+- The status segment and upload progress can share one status bar without
+  either becoming unreadable. If they cannot, the EVE values move rather than
+  the bar growing.
