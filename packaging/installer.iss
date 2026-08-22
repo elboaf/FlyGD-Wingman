@@ -4,7 +4,7 @@
 ; watcher the user forgets to start does nothing.
 
 #define AppName "FlyGD Wingman"
-#define AppVersion "3.0.1"
+#define AppVersion "3.1.0"
 #define AppExe "OBSYouTubeUploader.exe"
 
 [Setup]
