@@ -73,6 +73,10 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
+          <label class="check" style="margin-top:8px">
+            <input type="checkbox" id="f-logs" checked><span class="box"></span>
+            Also post combat logs to Discord
+          </label>
           <p class="summary" id="selection-summary"
              style="margin-top:12px">Nothing selected</p>
         </section>
@@ -81,8 +85,7 @@
           <h2>Publish</h2>
           <p class="destination" id="destination">Channel confirmed after the first upload</p>
           <div class="actions">
-            <button class="btn acc" id="btn-upload">Upload Selected</button>
-            <button class="btn" id="btn-combat">Upload combat logs</button>
+            <button class="btn acc" id="btn-upload">Upload</button>
             <div class="secondary-row">
               <button class="btn" id="btn-retry" disabled>Retry</button>
               <button class="btn" id="btn-delete">Delete selected</button>

@@ -100,6 +100,10 @@ class UploadJob:
     stitch: bool
     privacy: str
     category: str
+    # Carried on the job rather than read from settings at post time so a
+    # Retry posts logs exactly as the confirmed upload promised, even if the
+    # user has since unchecked the box.
+    logs: bool = False
     start_index: int = 0
 
 
@@ -491,7 +495,7 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
-    def start_upload(self, title, description, stitch, ids) -> None:
+    def start_upload(self, title, description, stitch, logs, ids) -> None:
         # privacy and category are NOT parameters. They are settings, and
         # the settings are Python's -- as they were in the Tk build, which
         # read self.state.settings at dispatch time. A page that holds its
@@ -520,7 +524,7 @@ class Api:
             return
         job = UploadJob(items=[i for _, i in pairs], ids=[r for r, _ in pairs],
                         title=title, description=description, stitch=bool(stitch),
-                        privacy=privacy, category=category)
+                        privacy=privacy, category=category, logs=bool(logs))
         self._upload_thread = threading.Thread(
             target=self._confirm_then_upload, args=(job,), daemon=True)
         self._upload_thread.start()
@@ -534,7 +538,7 @@ class Api:
         # dialog is up, which is also what we want.
         body = copy_mod.format_upload_confirm(
             job.items, job.title, job.privacy,
-            self._state.settings.get("channel_title", ""), job.stitch)
+            self._state.settings.get("channel_title", ""), job.stitch, job.logs)
         if not self._confirm("Confirm Upload", body):
             return
         self._upload_worker(job)
@@ -550,12 +554,29 @@ class Api:
         self._rows.set_link(row_id, video_id)
         self._push("onLink", {"id": row_id, "video_id": video_id})
 
-    def _upload_done(self) -> None:
+    def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
         self._push("onStatus", {"text": "Upload complete!", "kind": "SUCCESS"})
         self._push("onProgress", {"mode": "determinate", "pct": 100.0,
                                   "text": "", "kind": "SUCCESS"})
         self._push("onRetryAvailable", {"available": False})
+        # The single point at which the video half is known to have
+        # succeeded -- both the plain worker and the resume tail arrive
+        # here -- so it is where the log half hangs. Retry therefore posts
+        # the logs the confirmed job promised, rather than dropping them
+        # because the first attempt failed.
+        if job.logs:
+            # Guarded, because this runs INSIDE _upload_worker's try: without
+            # it, anything raised before _combat_log_worker's own handler --
+            # a probe blowing up, an unreadable mtime -- lands in the except
+            # for a FAILED UPLOAD and is reported as one. The video is public
+            # and linked by now, so that message would send the user to
+            # re-upload something already on their channel.
+            try:
+                self._post_combat_logs(job)
+            except Exception as exc:
+                logger.warning("Combat log upload failed", exc_info=True)
+                self._skip_logs(str(exc))
 
     def _upload_worker(self, job: UploadJob) -> None:
         from googleapiclient.discovery import build
@@ -598,7 +619,7 @@ class Api:
                     vid = self._upload_one(youtube, MediaFileUpload,
                                            job.items[index].path, job, index, total)
                     self._link(job.ids[index], vid)
-            self._upload_done()
+            self._upload_done(job)
         except uploader.UploadFailed as exc:
             # Stitched failures cannot resume: the context manager has
             # already deleted the merged file the session points at, which
@@ -775,52 +796,61 @@ class Api:
             self._upload_worker(replace(state.job,
                                         start_index=state.resume_index + 1))
         else:
-            self._upload_done()
+            self._upload_done(state.job)
 
     # ----- combat logs --------------------------------------------------------
 
-    def upload_combat_logs(self, ids) -> None:
-        pairs = [(rid, info) for rid in ids
-                 if (info := self._rows.resolve(rid)) is not None]
-        if not pairs:
-            self._alert("warning", "No Selection",
-                        "Select at least one recording to upload logs for.")
-            return
-        # Reuses the SAME guard as the YouTube upload: one upload of either
-        # kind at a time. This inherits the Busy warning and the scheduler's
-        # refresh deferral, both of which key off _upload_thread.
-        if self._busy():
-            self._alert("warning", "Busy", "An upload is already in progress.")
-            return
+    def _skip_logs(self, reason: str) -> None:
+        """Report a log half that could not run, without unwinning the video.
 
+        A status line rather than a dialog, and deliberately not an ERROR:
+        the upload the user asked for DID happen, and a modal apologising
+        for the half that did not would read as though the whole thing had
+        failed. It replaces "Upload complete!" on the strip rather than
+        following it, so the last thing said never overstates what was done.
+        """
+        self._push("onStatus", {
+            "text": f"Upload complete — combat logs skipped: {reason}",
+            "kind": "WARNING"})
+
+    def _post_combat_logs(self, job: UploadJob) -> None:
+        """The log half of a combined upload. Best-effort, by design.
+
+        Every refusal here was a blocking warning dialog when this ran from
+        its own button, and had to stop being one when the button merged:
+        the video is already on YouTube by the time this runs, so a missing
+        Discord webhook can no longer be allowed to mean "nothing was
+        uploaded". Genuine post FAILURES still alert, in _combat_log_worker
+        -- those leave an archive on disk the user needs to be told about.
+
+        Runs on the upload worker thread, not the bridge thread, so the
+        window keeps painting through the probe below.
+        """
         cfg = self._state.settings
         hook, error = discord.parse_webhook(cfg.get("discord_webhook"))
         if hook is None:
-            self._alert("warning", "Discord not configured",
-                        f"{error}\n\nAdd a webhook URL in Settings first.")
+            self._skip_logs(f"{error} Set it up in Settings.")
             return
 
         gamelogs = cfg.get("gamelogs_dir")
         gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
         if gamelogs_dir is None or not gamelogs_dir.is_dir():
-            self._alert("warning", "Gamelogs not found",
-                        "Could not find your EVE Gamelogs folder. "
-                        "Set it in Settings.")
+            self._skip_logs("your EVE Gamelogs folder was not found. "
+                            "Set it in Settings.")
             return
 
         # Resolve any still-pending probe for THIS selection first: an
         # unprobed recording also leaves duration None, and refusing on that
         # would blame ffprobe for a probe that simply had not reached these
         # files yet.
+        pairs = list(zip(job.ids, job.items))
         self._probe_now(pairs)
         missing = [i.path.name for _, i in pairs if i.duration is None]
         if missing:
-            self._alert(
-                "warning", "Cannot determine the time window",
-                "These recordings have no readable duration, so the combat-log "
-                "window cannot be worked out:\n\n  "
-                + "\n  ".join(missing)
-                + "\n\nThis usually means ffprobe is unavailable.")
+            self._skip_logs(
+                "no readable duration for " + ", ".join(missing)
+                + ", so the time window cannot be worked out (this usually "
+                  "means ffprobe is unavailable).")
             return
 
         # Union across the selection: earliest start to latest end, one
@@ -834,19 +864,18 @@ class Api:
             datetime.datetime.fromtimestamp(i.mtime, datetime.timezone.utc)
             for i in infos)
 
-        self._upload_thread = threading.Thread(
-            target=self._combat_log_worker,
-            args=(hook, gamelogs_dir, start_utc, end_utc), daemon=True)
-        self._upload_thread.start()
+        self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc)
 
     def _probe_now(self, pairs) -> None:
         """Resolve a selection's durations synchronously, in place.
 
-        Called from a bridge method that cannot continue without the answer.
-        Blocking here is fine and blocking in the Tk version was not: this
-        runs on pywebview's bridge thread, so the window keeps painting and
-        the progress line below is genuinely live rather than a repaint
-        forced between two frozen frames.
+        Called from the log half, which cannot work out a time window
+        without the answer. Blocking here is fine and blocking in the Tk
+        version was not: this runs on the upload worker thread, so the
+        window keeps painting and the progress line below is genuinely live
+        rather than a repaint forced between two frozen frames. (It ran on
+        pywebview's bridge thread when combat logs had their own button --
+        also off the UI thread, and equally safe.)
 
         A definitive result is REMEMBERED and the cache saved, exactly as
         _apply_duration did. Setting the in-memory flag alone would stop the
@@ -875,6 +904,12 @@ class Api:
             durations.save(self._durations_file, self._cache)
 
     def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+        """Collect, zip, and post the logs. Runs on the upload thread.
+
+        No longer a thread target of its own: it is the tail of the upload
+        the user confirmed, which is what keeps one busy guard covering both
+        halves.
+        """
         archive = None
         try:
             self._push("onStatus", {"text": "Collecting combat logs…", "kind": "FG"})
