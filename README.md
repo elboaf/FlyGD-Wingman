@@ -28,19 +28,6 @@ configure — but the OBS-to-YouTube workflow works with any OBS recording.
        alt="The FlyGD Wingman window: a two-pane layout with a dark, frameless title bar. The left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
 </p>
 
-## Verification status
-
-> **Google hasn't verified this app yet.** The OAuth application is published
-> and in production, so anyone with a Google account can sign in — there is no
-> tester list and no waiting. Until verification completes, Google's consent
-> screen shows a "Google hasn't verified this app" notice: click **Advanced**,
-> then **Go to FlyGD Wingman (unsafe)** to continue. This section will be
-> removed once verification clears.
->
-> This is unrelated to the Windows SmartScreen warning described under
-> [Installation](#installation) — that one is about code signing and will
-> remain until the installer is signed.
-
 ## What Wingman does
 
 - **Watches your OBS recording folder.** The folder is detected from OBS
@@ -219,9 +206,8 @@ separate OBS script to install, and no Google Cloud project for you to set up.
 
 **Windows will warn you** that it "protected your PC": the installer and the
 application are not code-signed. Click **More info** → **Run anyway**. This
-happens once per machine, for the installer and for the first launch. Code
-signing and Google OAuth verification are separate things — completing Google
-verification will not remove this Windows warning.
+happens once per machine, for the installer and for the first launch. This is
+about code signing, and is unrelated to Google sign-in.
 
 ## Settings
 

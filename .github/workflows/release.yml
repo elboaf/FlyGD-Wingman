@@ -218,21 +218,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/FlyGD-Wingman-Setup-*.exe
-          # The OAuth app is PUBLISHED (production), not merely in testing,
-          # so anyone can sign in -- the earlier prerelease guard assumed
-          # testing mode, where non-testers hit a hard 403. That is not the
-          # state we are in. What remains is verification, which only costs
-          # users a click-through warning.
+          # The OAuth app is PUBLISHED (production) and Google-verified,
+          # so anyone can sign in with no warning interstitial.
           prerelease: false
           body: |
             [FlyGD Wingman](https://wingman.zoolanders.vip/) — your OBS
             recording wingman. Watches your OBS recording folder, and uploads
             the recordings you select to your own YouTube channel.
-
-            **Google hasn't verified the app yet.** You can sign in, but the
-            consent screen shows a "Google hasn't verified this app"
-            warning — click **Advanced** then **Go to FlyGD Wingman
-            (unsafe)** to continue.
 
             Windows will show a "Windows protected your PC" warning because
             the installer is unsigned. Click **More info** then **Run anyway**.
