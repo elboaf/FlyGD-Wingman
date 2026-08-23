@@ -3913,6 +3913,10 @@ Append to `bookmarks.js`:
            min-width: 0; overflow: hidden; white-space: nowrap; }
 .evelabel { color: var(--fg-dim); font-size: 10px; letter-spacing: .08em; }
 .evestat.degraded { opacity: .5; }
+/* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
+   specificity, so the display:flex above would keep this visible for every
+   user who never turns the feature on. Same fix as .routenav[hidden]. */
+.evestat[hidden] { display: none; }
 @media (max-width: 720px) { .evestat { display: none; } }
 ```
 
