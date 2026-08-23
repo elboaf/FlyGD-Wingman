@@ -4159,7 +4159,14 @@ git commit -m "build: bundle the engine and assert it was collected"
 
 **Files:**
 - Create: `THIRD-PARTY-NOTICES.md`
-- Modify: `packaging/uploader.spec`, `README.md`
+- Modify: `packaging/uploader.spec`, `README.md`,
+  `packaging/fetch_autohotkey.py`, `tests/test_fetch_autohotkey.py`
+
+Note for the implementer: Task 23 shipped `fetch_autohotkey.py` with
+`WANTED = ("AutoHotkeyU64.exe",)`. This task widens it to include
+`license.txt`. The script asserts `extracted == len(WANTED)`, and Task 23's
+tests assert against that count, so both move together -- changing the
+constant alone will fail the suite.
 
 A README line is not a written offer. Both bundled binaries are GPL and neither ships with source today.
 
