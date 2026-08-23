@@ -258,7 +258,12 @@ def _parse_ini(text: str) -> dict:
     mangles, and we only need two flat sections."""
     out: dict[str, dict[str, str]] = {}
     current = None
-    for line in (text or "").splitlines():
+    # A UTF-8 BOM survives .strip() and would make the first section header
+    # fail the "[" test below, silently discarding that entire section --
+    # which, since the legacy script writes [Keybinds] first, means every
+    # keybind. Notepad adds a BOM whenever someone hand-edits and saves.
+    text = (text or "").lstrip("﻿")
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith(";"):
             continue
@@ -292,14 +297,24 @@ def import_legacy_ini(text: str) -> dict:
     for bid in BIND_IDS:
         if bid in legacy_binds:
             section["keybinds"][bid] = sanitise(legacy_binds[bid])
-    section["windows"] = {title: value.strip() == "1"
-                          for title, value in legacy_windows.items()
-                          if sanitise(title)}
+    discarded_windows = []
+    for title, value in legacy_windows.items():
+        clean = sanitise(title)
+        if not clean:
+            continue
+        if not _is_engine_window_title(clean):
+            # The engine only ever matches ^EVE -  (111unified.ahk:248), so
+            # generate_ini would drop this silently on the next write.
+            discarded_windows.append(clean)
+            continue
+        section["windows"][clean] = value.strip() == "1"
 
     discarded = [f"{name} (setting)" for name in _REMOVED_SETTINGS
-                 if name in legacy_settings]
+                 if legacy_settings.get(name)]
     discarded += [f"{name} (keybind)" for name in _REMOVED_BINDS
                   if legacy_binds.get(name)]
+    discarded += [f"{title} (window, not an EVE client window)"
+                  for title in discarded_windows]
 
     notes = []
     # HomeZeroIs0 defaults to 1 (111unified.ahk:32) and the engine now

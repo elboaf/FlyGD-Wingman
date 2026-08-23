@@ -49,6 +49,7 @@ def test_removed_settings_are_reported():
     got = bookmarks.import_legacy_ini(LEGACY)
     joined = " ".join(got["discarded"])
     assert "Mode" in joined
+    assert "PrefaceReturn" in joined
     assert "ReturnPreface" in joined
 
 
@@ -76,3 +77,28 @@ def test_import_never_enables_the_engine():
 def test_garbage_yields_defaults_rather_than_raising():
     got = bookmarks.import_legacy_ini("not an ini at all\x00\x01")
     assert got["section"]["keybinds"] == bookmarks.DEFAULT_BINDS
+
+
+def test_a_byte_order_mark_does_not_destroy_the_first_section():
+    """Notepad adds a BOM on save. It survives .strip(), so an unguarded
+    parser fails the section-header test on the first line and skips that
+    whole section -- and the legacy script writes [Keybinds] first, so the
+    user would silently lose every bind."""
+    got = bookmarks.import_legacy_ini("﻿" + LEGACY)
+    assert got["section"]["keybinds"]["GrabSig"] == "q"
+    assert got["section"]["keybinds"]["FinH"] == "y"
+
+
+def test_a_byte_order_mark_does_not_suppress_the_numbering_note():
+    off = "﻿" + LEGACY.replace("HomeZeroIs0=1", "HomeZeroIs0=0")
+    note = " ".join(bookmarks.import_legacy_ini(off)["notes"])
+    assert ".0" in note and ".1" in note
+
+
+def test_windows_the_engine_could_never_match_are_reported():
+    """generate_ini drops these on the next write; a loss the user is never
+    told about is exactly what this function exists to prevent."""
+    got = bookmarks.import_legacy_ini(
+        "[Enabled]\r\nNotepad=1\r\nEVE - Ok=1\r\n")
+    assert got["section"]["windows"] == {"EVE - Ok": True}
+    assert any("Notepad" in d for d in got["discarded"])
