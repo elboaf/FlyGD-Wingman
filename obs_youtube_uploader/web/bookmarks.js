@@ -224,6 +224,11 @@
   }, true);
 
   WM.el('eve-enabled').addEventListener('change', function () {
+    // Static markup, so this listener is live before the first
+    // get_bookmarks resolves -- unlike the bind and window rows, which are
+    // only created once state exists. A click in that gap would throw and
+    // silently do nothing.
+    if (!state) return;
     var next = JSON.parse(JSON.stringify(state.settings));
     next.enabled = WM.el('eve-enabled').checked;
     send(next);
