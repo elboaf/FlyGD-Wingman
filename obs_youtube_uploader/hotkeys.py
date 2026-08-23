@@ -40,6 +40,11 @@ _MISSING = ("The bookmark engine is missing from this installation. "
 # (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
 _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
 
+# The only operations the channel carries. Adding to this list should be a
+# deliberate decision: the channel exists because two GUI buttons had no
+# other route, not as a general RPC mechanism.
+COMMANDS = frozenset({"set_root", "clear_root"})
+
 
 @dataclass
 class EngineStatus:
@@ -87,6 +92,7 @@ class HotkeyEngine:
         self._token_factory = token_factory
         self._proc = None
         self._token = None
+        self._seq = 0
         self.last_error: str | None = None
 
     # -- config ------------------------------------------------------
@@ -98,6 +104,58 @@ class HotkeyEngine:
         """
         atomicio.write_atomic(self._ini_path(),
                               bookmarks.generate_ini(section))
+
+    # -- commands ------------------------------------------------------
+    def sync_sequence(self) -> None:
+        """Adopt the sequence already on disk.
+
+        Called after start(). Without it a restarted Wingman would resume
+        from zero while a higher-numbered command file remained, and every
+        command would be ignored as already-consumed until the counter
+        caught up.
+        """
+        self._seq = 0
+        try:
+            for line in self._command_path().read_text().splitlines():
+                key, _, value = line.partition("=")
+                if key.strip() == "Seq":
+                    self._seq = int(value.strip())
+                    return
+        except (OSError, ValueError):
+            self._seq = 0
+
+    def pending_command(self, now: float | None = None) -> int | None:
+        """The sequence awaiting acknowledgement, or None."""
+        if not self._seq:
+            return None
+        consumed = self.status(enabled=True, now=now).consumed_seq
+        return None if consumed >= self._seq else self._seq
+
+    def send_command(self, name: str, argument: str = "",
+                     now: float | None = None) -> bool:
+        """Publish one operation for the engine to execute.
+
+        Refuses while a previous command is unacknowledged: the file holds
+        one slot and the engine polls every 2s, so overwriting would
+        silently discard the earlier action.
+        """
+        if name not in COMMANDS:
+            logger.error("Refusing unknown engine command %r", name)
+            return False
+        if not self.is_running():
+            return False
+        if self.pending_command(now=now) is not None:
+            return False
+
+        self._seq += 1
+        # INI, and sanitised: the argument is free text the user typed and
+        # a newline in it would otherwise add a key to the section.
+        body = ("[Command]\r\n"
+                f"Seq={self._seq}\r\n"
+                f"Name={name}\r\n"
+                f"Argument={bookmarks.sanitise(argument)}\r\n")
+        atomicio.write_atomic(self._command_path(), body)
+        return True
 
     # -- lifecycle ---------------------------------------------------
     def start(self) -> bool:
@@ -289,6 +347,9 @@ class HotkeyEngine:
 
     def _status_path(self) -> Path:
         return self._state_dir / paths.engine_status_file().name
+
+    def _command_path(self) -> Path:
+        return self._state_dir / paths.engine_command_file().name
 
     def _clear_pid_record(self) -> None:
         try:
