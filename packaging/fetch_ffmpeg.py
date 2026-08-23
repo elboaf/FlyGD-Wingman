@@ -23,7 +23,14 @@ OUT_DIR = Path(__file__).parent / "bin"
 # reference -- the notices file this feeds (THIRD-PARTY-NOTICES.md) names it
 # as the licence text installed beside the application. The archive entry is
 # ffmpeg-7.1-essentials_build/LICENSE; extraction matches on basename.
+# WANTED names the archive member; OUTPUT_NAMES renames it on the way to
+# disk. The rename happens here, at fetch time, rather than via
+# uploader.spec's `datas`, because a `datas` tuple's second element is a
+# destination *directory* -- it cannot rename a file, so doing this in the
+# spec instead would have silently created a directory named
+# "ffmpeg-COPYING.txt" containing LICENSE.
 WANTED = ("ffmpeg.exe", "ffprobe.exe", "LICENSE")
+OUTPUT_NAMES = {"LICENSE": "ffmpeg-COPYING.txt"}
 # Sidecar records which pin the binaries in OUT_DIR were extracted from, so a
 # later bump of FFMPEG_SHA256 doesn't silently keep shipping the old binaries.
 VERSION_FILE = OUT_DIR / ".ffmpeg-version"
@@ -32,7 +39,7 @@ VERSION_FILE = OUT_DIR / ".ffmpeg-version"
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if (
-        all((OUT_DIR / name).exists() for name in WANTED)
+        all((OUT_DIR / OUTPUT_NAMES.get(name, name)).exists() for name in WANTED)
         and VERSION_FILE.exists()
         and VERSION_FILE.read_text().strip() == FFMPEG_SHA256
     ):
@@ -65,8 +72,10 @@ def main() -> int:
                 # components before it is joined with OUT_DIR.
                 name = Path(member).name
                 if name in WANTED:
-                    (OUT_DIR / name).write_bytes(archive.read(member))
-                    print(f"  extracted {name}")
+                    out_name = OUTPUT_NAMES.get(name, name)
+                    (OUT_DIR / out_name).write_bytes(archive.read(member))
+                    print(f"  extracted {name} -> {out_name}" if out_name != name
+                          else f"  extracted {name}")
                     extracted += 1
     except zipfile.BadZipFile as exc:
         print(f"ERROR: downloaded archive is not a valid zip file: {exc}")

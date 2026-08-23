@@ -41,12 +41,15 @@ a = Analysis(
         # has to travel with the binaries it covers.
         (str(ROOT / "THIRD-PARTY-NOTICES.md"), "."),
         # The GPL text itself, which section 1 requires accompany the
-        # binary. Renamed on the way in so it cannot be mistaken for a
-        # licence covering Wingman, which is MIT.
-        (str(BIN / "license.txt"), "AutoHotkey-COPYING.txt"),
+        # binary. Renamed by fetch_autohotkey.py at fetch time (not here --
+        # a `datas` tuple's second element is a destination directory, not a
+        # filename, so it cannot rename on the way in) so it cannot be
+        # mistaken for a licence covering Wingman, which is MIT.
+        (str(BIN / "AutoHotkey-COPYING.txt"), "."),
         # FFmpeg is GPL v3 where AutoHotkey is v2, so it needs its own
         # copy -- one shared text would misstate the terms for one of them.
-        (str(BIN / "LICENSE"), "ffmpeg-COPYING.txt"),
+        # Also renamed at fetch time by fetch_ffmpeg.py, for the same reason.
+        (str(BIN / "ffmpeg-COPYING.txt"), "."),
         # The engine is data, not code -- modulegraph cannot see it, and
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green

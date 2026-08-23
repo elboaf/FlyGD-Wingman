@@ -19,8 +19,15 @@ AHK_SHA256 = "6f3663f7cdd25063c8c8728f5d9b07813ced8780522fd1f124ba539e2854215f"
 OUT_DIR = Path(__file__).parent / "bin"
 # license.txt (GPLv2) is bundled alongside the interpreter, not just fetched
 # for reference -- the notices file this feeds (THIRD-PARTY-NOTICES.md)
-# names it as the licence text installed beside the application.
+# names it as the licence text installed beside the application. WANTED
+# names the archive member to match (basename, per the zip-slip comment
+# below); OUTPUT_NAMES renames it on the way to disk. The rename happens
+# here, at fetch time, rather than via uploader.spec's `datas`, because a
+# `datas` tuple's second element is a destination *directory* -- it cannot
+# rename a file, so doing this in the spec instead would have silently
+# created a directory named "AutoHotkey-COPYING.txt" containing license.txt.
 WANTED = ("AutoHotkeyU64.exe", "license.txt")
+OUTPUT_NAMES = {"license.txt": "AutoHotkey-COPYING.txt"}
 # Sidecar records which pin the binary in OUT_DIR was extracted from, so a
 # later bump of AHK_SHA256 doesn't silently keep shipping the old binary.
 VERSION_FILE = OUT_DIR / ".autohotkey-version"
@@ -29,7 +36,7 @@ VERSION_FILE = OUT_DIR / ".autohotkey-version"
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if (
-        all((OUT_DIR / name).exists() for name in WANTED)
+        all((OUT_DIR / OUTPUT_NAMES.get(name, name)).exists() for name in WANTED)
         and VERSION_FILE.exists()
         and VERSION_FILE.read_text().strip() == AHK_SHA256
     ):
@@ -62,8 +69,10 @@ def main() -> int:
                 # component before the join.
                 name = Path(member).name
                 if name in WANTED:
-                    (OUT_DIR / name).write_bytes(archive.read(member))
-                    print(f"  extracted {name}")
+                    out_name = OUTPUT_NAMES.get(name, name)
+                    (OUT_DIR / out_name).write_bytes(archive.read(member))
+                    print(f"  extracted {name} -> {out_name}" if out_name != name
+                          else f"  extracted {name}")
                     extracted += 1
     except zipfile.BadZipFile as exc:
         print(f"ERROR: downloaded archive is not a valid zip file: {exc}")

@@ -229,14 +229,21 @@ jobs:
         # and paths.engine_exe() refuse to fall back to anything else, so a
         # missing file here means a released build with a hotkey feature
         # that never starts and reports no error.
+        #
+        # -PathType Leaf: added while fixing the GPL-notices check below,
+        # which found that a bare Test-Path also returns true for a
+        # directory. Neither of these two paths is currently at risk of
+        # that (nothing renames them through `datas`), but the assertion is
+        # supposed to prove a *file* landed, and Leaf is what actually says
+        # that.
         shell: pwsh
         run: |
           $script = "dist/OBSYouTubeUploader/_internal/engine/eve_bookmarks.ahk"
-          if (-not (Test-Path $script)) {
+          if (-not (Test-Path $script -PathType Leaf)) {
             throw "engine script missing from the bundle - PyInstaller exits 0 when datas fail to collect"
           }
           $exe = "dist/OBSYouTubeUploader/_internal/bin/AutoHotkeyU64.exe"
-          if (-not (Test-Path $exe)) { throw "AutoHotkey interpreter missing from the bundle" }
+          if (-not (Test-Path $exe -PathType Leaf)) { throw "AutoHotkey interpreter missing from the bundle" }
 
       - name: Verify the GPL notices are bundled
         # Deliberately mirrors build.yml's step of the same name. It matters
@@ -245,12 +252,17 @@ jobs:
         # would run fine with these three files missing, which is exactly
         # why nothing short of a build-time assertion would catch it before
         # a release ships without its written offer of source.
+        #
+        # -PathType Leaf, not a bare Test-Path: see build.yml's step of the
+        # same name for why a bare Test-Path would not have caught a rename
+        # attempted through uploader.spec's `datas` (its second element is
+        # a destination directory, not a filename).
         shell: pwsh
         run: |
           $root = "dist\OBSYouTubeUploader\_internal"
           foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
             $path = Join-Path $root $file
-            if (-not (Test-Path $path)) {
+            if (-not (Test-Path $path -PathType Leaf)) {
               throw "$file not found at $path - the corresponding datas entry in uploader.spec did not resolve, and the released installer would omit a GPL-required licence text or the written offer of source"
             }
           }
