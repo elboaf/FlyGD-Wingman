@@ -188,3 +188,44 @@ def parse_ahk(text: str) -> dict:
         else:
             return {"ahk": "", "display": "", "error": "unmappable"}
     return to_ahk({**parts, "code": code})
+
+
+_CRLF = "\r\n"
+
+
+def generate_ini(section: dict) -> str:
+    """Render the engine's INI from a validated eve_bookmarks section.
+
+    Pure: the caller writes it, atomically. Every known bind is emitted even
+    when blank, because a missing key makes IniRead fall back to its
+    compiled-in default -- which would resurrect ConvertScout's ^+s after a
+    user deliberately cleared it.
+    """
+    binds = section.get("keybinds") or {}
+    windows = section.get("windows") or {}
+
+    lines = ["[Keybinds]"]
+    for bid in BIND_IDS:
+        value = binds.get(bid) or ""
+        lines.append(f"{bid}={sanitise(value)}")
+
+    lines.append("")
+    lines.append("[Enabled]")
+    for title, on in windows.items():
+        clean = sanitise(title)
+        if not clean:
+            continue
+        lines.append(f"{clean}={1 if on else 0}")
+
+    return _CRLF.join(lines) + _CRLF
+
+
+def sanitise(value: str) -> str:
+    """Strip anything that could forge an INI line.
+
+    Public because hotkeys.send_command needs it too: the Set Root argument
+    is free text the user typed and lands in a file the engine parses.
+    Window titles come from the OS and bind values from user input; neither
+    is trusted to contain a line break.
+    """
+    return "".join(ch for ch in str(value) if ch not in "\r\n").strip()
