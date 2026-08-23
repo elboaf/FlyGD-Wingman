@@ -1,5 +1,5 @@
 ; ============================================================
-; 111unified.ahk - EVE Bookmark Helper (Protean + Flygd/Thera)
+; eve_bookmarks.ahk - EVE Bookmark Helper (Flygd/ABH)
 ; ============================================================
 #Persistent
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
@@ -23,11 +23,6 @@ Loop %0%
 SetStoreCapsLockMode, Off
 GroupAdd, EVEWindows, EVE -
 
-; --- Mode selection ---
-; 1 = Protean mode (space-separated tokens, .NUMBER TYPE SIGID, all lowercase)
-; 2 = Flygd/Thera mode (hyphen-based, ROOT-SIGID TYPE, all uppercase)
-CurrentMode := 1  ; Default to Protean mode
-
 ; --- Root tracking ---
 RootKey := ""
 RootJustFired := False
@@ -44,11 +39,6 @@ NextNum := 1
 NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
-
-; --- Settings ---
-HomeZeroIs0 := 1   ; Default: first home hole is .0
-PrefaceReturn := 1 ; Default: enabled
-ReturnPreface := "!" ; Default return preface character
 
 ; --- Keybind defaults ---
 KB_GrabSig     := ""
@@ -104,12 +94,6 @@ LoadAllSettings:
 IfNotExist, %IniFile%
     Return
 
-; Load settings
-IniRead, HomeZeroIs0, %IniFile%, Settings, HomeZeroIs0, 1
-IniRead, CurrentMode, %IniFile%, Settings, Mode, 1
-IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
-IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
-
 ; Load keybindings
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
 IniRead, KB_SetRoot,     %IniFile%, Keybinds, SetRoot,   
@@ -137,13 +121,7 @@ if (RootModeActive) {
     ModeText      := RootKey = "" ? "Home/Zero" : "Active"
     RootText      := RootKey = "" ? "(home)" : RootKey
     NextNumText   := BuildSystemKey(RootKey, NextNum,   False)
-    
-    ; For Protean mode, show "N/A" for alpha since alphas aren't used
-    if (CurrentMode = 1) {
-        NextAlphaText := "N/A (Protean mode)"
-    } else {
-        NextAlphaText := BuildSystemKey(RootKey, NextAlpha, True)
-    }
+    NextAlphaText := BuildSystemKey(RootKey, NextAlpha, True)
 } else {
     ModeText      := "Not set"
     RootText      := "---"
@@ -371,13 +349,7 @@ if (RootKey != "") {
     
     ; Build display root
     DisplayRoot := RootKey
-    if (CurrentMode = 1) {
-        DisplayRoot := "." . DisplayRoot
-    }
-    if (PrefaceReturn) {
-        DisplayRoot := ReturnPreface . DisplayRoot
-    }
-    
+
     Clipboard := DisplayRoot
     GoSub, ShowRootTooltip
     Return
@@ -406,11 +378,7 @@ Return
 ShowRootTooltip:
 if (RootModeActive) {
     NextNumDisplay   := BuildSystemKey(RootKey, NextNum,   False)
-    if (CurrentMode = 1) {
-        NextAlphaDisplay := "N/A (Protean mode)"
-    } else {
-        NextAlphaDisplay := BuildSystemKey(RootKey, NextAlpha, True)
-    }
+    NextAlphaDisplay := BuildSystemKey(RootKey, NextAlpha, True)
     if (RootKey = "")
         TipText := "root: home mode`nnext num: " . NextNumDisplay . "  next alpha: " . NextAlphaDisplay
     else
@@ -566,7 +534,7 @@ FindNextAlpha() {
 FireRootFinisher(finChar, isAlpha) {
     global RootKey, RootJustFired, LastSigId, LastFinisherWasAlpha
     global UsedNums, UsedAlphas, NextNum, NextAlpha
-    global ReadyToIncrement, LastUsedNum, LastUsedAlpha, CurrentMode, HomeZeroIs0
+    global ReadyToIncrement, LastUsedNum, LastUsedAlpha
 
     if (isAlpha) {
         if (ReadyToIncrement) {
@@ -581,55 +549,37 @@ FireRootFinisher(finChar, isAlpha) {
         }
     } else {
         if (ReadyToIncrement) {
-            ; HOME MODE: offset by -1 so first bookmark is .0, then .1, .2, etc.
-            ; (only when HomeZeroIs0 is enabled and root is empty)
-            if (RootKey = "" && HomeZeroIs0) {
+            ; Home mode numbers from .0. This was the HomeZeroIs0 option,
+            ; whose default was on (:32); it is now fixed behaviour. It is
+            ; NOT tied to the removed Protean mode -- the original condition
+            ; never mentioned CurrentMode.
+            if (RootKey = "") {
                 Num := NextNum - 1
-                ; Mark the number we're using as used
-                UsedNums[NextNum] := True
-                LastUsedNum := NextNum
-                FindNextNum()
             } else {
-                ; Normal mode: use next available as-is (starts at 1)
                 Num := NextNum
-                UsedNums[NextNum] := True
-                LastUsedNum := NextNum
-                FindNextNum()
             }
+            UsedNums[NextNum] := True
+            LastUsedNum := NextNum
+            FindNextNum()
         } else {
-            ; Correct-in-place: reuse last used number
+            ; Preserve the original structure exactly. The home-mode first
+            ; correction is .0, which the original produced by seeding
+            ; LastUsedNum with 1 and subtracting below -- NOT by seeding it
+            ; with NextNum, which diverges as soon as NextNum > 1.
             if (LastUsedNum = "") {
-                if (RootKey = "" && HomeZeroIs0) {
-                    ; Home mode first correction starts at 0
-                    LastUsedNum := 1  ; This becomes NextNum - 1 = 0
-                } else {
-                    LastUsedNum := NextNum
-                }
+                LastUsedNum := (RootKey = "") ? 1 : NextNum
             }
-            if (RootKey = "" && HomeZeroIs0) {
-                ; Home mode: convert to 0-based
-                Num := LastUsedNum - 1
-            } else {
-                Num := LastUsedNum
-            }
+            Num := (RootKey = "") ? LastUsedNum - 1 : LastUsedNum
         }
         SysKey := BuildSystemKey(RootKey, Num, False)
     }
 
-    ; Format based on mode
+    ; Flygd/Thera: ROOT-SIGID TYPE (hyphen-separated, all uppercase)
     SigClean := LTrim(LastSigId, "-")
-    if (CurrentMode = 1) {
-        ; Protean mode: .ROOT+NUMBER TYPE SIGID (space-separated, all lowercase)
-        StringLower, finType, finChar
-        StringLower, SigClean, SigClean
-        Result := "." . SysKey . " " . finType . " " . SigClean
-    } else {
-        ; Flygd/Thera mode: ROOT-SIGID TYPE (hyphen-separated, all uppercase)
-        StringUpper, finType, finChar
-        StringUpper, SigClean, SigClean
-        Result := SysKey . "-" . SigClean . " " . finType
-    }
-    
+    StringUpper, finType, finChar
+    StringUpper, SigClean, SigClean
+    Result := SysKey . "-" . SigClean . " " . finType
+
     Clipboard := Result
     ClipWait, 2
 
@@ -708,17 +658,9 @@ ClipWait, 2
 ClipSaved := Clipboard
 ClipTrim := SubStr(ClipSaved, 1, 3)
 
-if (CurrentMode = 1) {
-    ; Protean mode: lowercase sig ID
-    StringLower, ClipTrim, ClipTrim
-    Clipboard := "-" . ClipTrim . " "
-    LastSigId := "-" . ClipTrim
-} else {
-    ; Flygd/Thera mode: uppercase sig ID
-    StringUpper, ClipTrim, ClipTrim
-    Clipboard := "-" . ClipTrim . " "
-    LastSigId := "-" . ClipTrim
-}
+StringUpper, ClipTrim, ClipTrim
+Clipboard := "-" . ClipTrim . " "
+LastSigId := "-" . ClipTrim
 
 ReadyToIncrement := True
 RootJustFired := False
@@ -864,13 +806,7 @@ if (DetectedChain != "") {
     
     ; Build display root (bookmark format)
     DisplayRoot := RootKey
-    if (CurrentMode = 1) {
-        DisplayRoot := "." . DisplayRoot
-    }
-    if (PrefaceReturn) {
-        DisplayRoot := ReturnPreface . DisplayRoot
-    }
-    
+
     ; Put bookmark format in clipboard for EVE return bookmark
     Clipboard := DisplayRoot
     ClipWait, 2
@@ -957,434 +893,228 @@ NewM := 0
 NewSFlag := 0
 NewC := 0
 GoSub, ReadField
-if (CurrentMode = 1) {
-    ; Protean mode: parse space-separated tokens
-    GoSub, FormatProteanClipAndPaste
-} else {
-    ; Flygd/Thera mode: use hyphen-based parsing
-    StringUpper, ClipUpper, ClipRaw
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+GoSub, FormatFlygdClipAndPaste
 Return
 
 DoY:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        ; Protean: "hs" (numeric, not alpha)
-        FireRootFinisher("hs", False)
-    } else {
-        ; Flygd/Thera: "H" (alpha)
-        FireRootFinisher("H", True)
-    }
+    FireRootFinisher("H", True)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "hs"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "H"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "H"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 DoO:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        ; Protean: "c13" (numeric)
-        FireRootFinisher("c13", False)
-    } else {
-        ; Flygd/Thera: "13" (numeric)
-        FireRootFinisher("13", False)
-    }
+    FireRootFinisher("13", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c13"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "13"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "13"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 DoP:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        ; Protean: "ls" (numeric)
-        FireRootFinisher("ls", False)
-    } else {
-        ; Flygd/Thera: "L" (alpha)
-        FireRootFinisher("L", True)
-    }
+    FireRootFinisher("L", True)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "ls"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "L"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "L"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 DoDot:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        ; Protean: "ns" (numeric)
-        FireRootFinisher("ns", False)
-    } else {
-        ; Flygd/Thera: "N" (alpha)
-        FireRootFinisher("N", True)
-    }
+    FireRootFinisher("N", True)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "ns"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "N"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "N"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 DoM:
 GoSub, ReadField
-if (CurrentMode = 1) {
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 1
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatProteanClipAndPaste
-} else {
-    StringUpper, ClipUpper, ClipRaw
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 1
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+NewSuffix := ""
+NewE := 0
+NewSlash := 0
+NewM := 1
+NewSFlag := 0
+NewC := 0
+GoSub, FormatFlygdClipAndPaste
 Return
 
 DoS:
 GoSub, ReadField
-if (CurrentMode = 1) {
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 1
-    NewC := 0
-    GoSub, FormatProteanClipAndPaste
-} else {
-    StringUpper, ClipUpper, ClipRaw
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 1
-    NewC := 0
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+NewSuffix := ""
+NewE := 0
+NewSlash := 0
+NewM := 0
+NewSFlag := 1
+NewC := 0
+GoSub, FormatFlygdClipAndPaste
 Return
 
 DoC:
 GoSub, ReadField
-if (CurrentMode = 1) {
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
-    NewC := 1
-    GoSub, FormatProteanClipAndPaste
-} else {
-    StringUpper, ClipUpper, ClipRaw
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
-    NewC := 1
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+NewSuffix := ""
+NewE := 0
+NewSlash := 0
+NewM := 0
+NewSFlag := 0
+NewC := 1
+GoSub, FormatFlygdClipAndPaste
 Return
 
 Do1:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        ; Protean: "c1" (numeric)
-        FireRootFinisher("c1", False)
-    } else {
-        ; Flygd/Thera: "1" (numeric)
-        FireRootFinisher("1", False)
-    }
+    FireRootFinisher("1", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c1"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "1"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "1"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 Do2:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        FireRootFinisher("c2", False)
-    } else {
-        FireRootFinisher("2", False)
-    }
+    FireRootFinisher("2", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c2"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "2"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "2"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 Do3:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        FireRootFinisher("c3", False)
-    } else {
-        FireRootFinisher("3", False)
-    }
+    FireRootFinisher("3", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c3"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "3"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "3"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 Do4:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        FireRootFinisher("c4", False)
-    } else {
-        FireRootFinisher("4", False)
-    }
+    FireRootFinisher("4", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c4"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "4"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "4"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 Do5:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        FireRootFinisher("c5", False)
-    } else {
-        FireRootFinisher("5", False)
-    }
+    FireRootFinisher("5", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c5"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "5"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "5"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 Do6:
 if (RootModeActive) {
-    if (CurrentMode = 1) {
-        FireRootFinisher("c6", False)
-    } else {
-        FireRootFinisher("6", False)
-    }
+    FireRootFinisher("6", False)
 } else {
     GoSub, ReadField
-    if (CurrentMode = 1) {
-        NewSuffix := "c6"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatProteanClipAndPaste
-    } else {
-        StringUpper, ClipUpper, ClipRaw
-        NewSuffix := "6"
-        NewE := 0
-        NewSlash := 0
-        NewM := 0
-        NewSFlag := 0
-        NewC := 0
-        GoSub, FormatFlygdClipAndPaste
-    }
+    StringUpper, ClipUpper, ClipRaw
+    NewSuffix := "6"
+    NewE := 0
+    NewSlash := 0
+    NewM := 0
+    NewSFlag := 0
+    NewC := 0
+    GoSub, FormatFlygdClipAndPaste
 }
 Return
 
 DoQuote:
 GoSub, ReadField
-if (CurrentMode = 1) {
-    NewSuffix := ""
-    NewE := 1
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatProteanClipAndPaste
-} else {
-    StringUpper, ClipUpper, ClipRaw
-    NewSuffix := ""
-    NewE := 1
-    NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+NewSuffix := ""
+NewE := 1
+NewSlash := 0
+NewM := 0
+NewSFlag := 0
+NewC := 0
+GoSub, FormatFlygdClipAndPaste
 Return
 
 DoComma:
 GoSub, ReadField
-if (CurrentMode = 1) {
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 1
-    NewM := 0
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatProteanClipAndPaste
-} else {
-    StringUpper, ClipUpper, ClipRaw
-    NewSuffix := ""
-    NewE := 0
-    NewSlash := 1
-    NewM := 0
-    NewSFlag := 0
-    NewC := 0
-    GoSub, FormatFlygdClipAndPaste
-}
+StringUpper, ClipUpper, ClipRaw
+NewSuffix := ""
+NewE := 0
+NewSlash := 1
+NewM := 0
+NewSFlag := 0
+NewC := 0
+GoSub, FormatFlygdClipAndPaste
 Return
 
 ReadField:
@@ -1394,151 +1124,6 @@ Sleep 50
 Send ^c
 ClipWait, 2
 ClipRaw := Clipboard
-Return
-
-; ============================================================
-; PROTEAN MODE: Parse space-separated tokens
-; Format: .NUMBER TYPE SIGID [tags...]
-; Example: .32 c5 epa e /
-; ============================================================
-FormatProteanClipAndPaste:
-Raw := ClipRaw
-
-; Split by spaces
-Tokens := StrSplit(Raw, " ")
-
-; Token 0 (first) should be the .NUMBER
-; Token 1 should be the TYPE (hs, ls, ns, c1-c6, c13)
-; Token 2 should be the SIGID
-; Tokens 3+ are existing tags
-
-NumberToken := Tokens[1]  ; e.g., ".32"
-TypeToken := Tokens[2]    ; e.g., "c5"
-SigToken := Tokens[3]     ; e.g., "epa"
-
-; Clean up tokens
-NumberToken := Trim(NumberToken)
-TypeToken := Trim(TypeToken)
-SigToken := Trim(SigToken)
-
-; Parse existing tags from tokens 4+
-ExistingE := 0
-ExistingSlash := 0
-ExistingM := 0
-ExistingS := 0
-ExistingC := 0
-
-Loop % Tokens.MaxIndex()
-{
-    idx := A_Index
-    if (idx <= 3)
-        continue
-    t := Trim(Tokens[idx])
-    if (t = "")
-        continue
-    ; Convert to lowercase for case-insensitive comparison
-    StringLower, tLower, t
-    if (tLower = "e")
-        ExistingE := 1
-    else if (tLower = "/")
-        ExistingSlash := 1
-    else if (tLower = "m")
-        ExistingM := 1
-    else if (tLower = "s")
-        ExistingS := 1
-    else if (tLower = "c")
-        ExistingC := 1
-}
-
-; Apply mutual exclusivity rules
-; S and M are mutually exclusive
-if (NewM) {
-    NewSFlag := 0
-}
-if (NewSFlag) {
-    NewM := 0
-}
-
-; / and C are mutually exclusive
-if (NewSlash) {
-    NewC := 0
-}
-if (NewC) {
-    NewSlash := 0
-}
-
-; Determine final suffix (type) - use new if provided, otherwise keep existing
-FinalType := (NewSuffix != "") ? NewSuffix : TypeToken
-
-; Apply mutual exclusivity to final tags
-if (NewM) {
-    FinalM := 1
-    FinalS := 0
-} else if (NewSFlag) {
-    FinalM := 0
-    FinalS := 1
-} else {
-    if (ExistingM && ExistingS) {
-        FinalM := 0
-        FinalS := 1
-    } else {
-        FinalM := ExistingM
-        FinalS := ExistingS
-    }
-}
-
-if (NewSlash) {
-    FinalSlash := 1
-    FinalC := 0
-} else if (NewC) {
-    FinalSlash := 0
-    FinalC := 1
-} else {
-    if (ExistingSlash && ExistingC) {
-        FinalSlash := 0
-        FinalC := 1
-    } else {
-        FinalSlash := ExistingSlash
-        FinalC := ExistingC
-    }
-}
-
-FinalE := (ExistingE || NewE)
-
-; Build the result
-Result := NumberToken
-if (FinalType != "")
-    Result .= " " . FinalType
-if (SigToken != "")
-    Result .= " " . SigToken
-if (FinalE)
-    Result .= " e"
-if (FinalSlash)
-    Result .= " /"
-if (FinalM)
-    Result .= " m"
-if (FinalS)
-    Result .= " s"
-if (FinalC)
-    Result .= " c"
-
-; If we lost the sig token somehow, use the raw as fallback
-if (SigToken = "" || Result = NumberToken) {
-    Result := Raw
-}
-
-Clipboard := Result
-ClipWait, 2
-Sleep 50
-Send ^v
-
-; Reset flags
-NewSuffix := ""
-NewE      := 0
-NewSlash  := 0
-NewM      := 0
-NewSFlag  := 0
-NewC      := 0
 Return
 
 ; ============================================================
