@@ -117,3 +117,28 @@ def test_a_status_written_in_the_future_is_not_stale(tmp_path):
     eng.apply(section())
     eng.start()
     assert eng.status(enabled=True, now=1000.0).state == "running"
+
+
+def test_a_failed_start_reason_reaches_the_status(tmp_path):
+    """The reason a start failed is the one actionable thing the user can be
+    told -- without it the toggle reads "on" while nothing runs. Both
+    API-level tests use a fake whose status() reimplements this logic, so
+    nothing else in the suite would catch this line being dropped."""
+    eng = hotkeys.HotkeyEngine(None, None, tmp_path, spawner=FakeSpawner())
+    assert eng.start() is False
+    got = eng.status(enabled=True)
+    assert got.state == "stopped"
+    assert got.last_error
+    assert "reinstall" in got.last_error.lower()
+
+
+def test_a_clean_stop_reports_no_reason(tmp_path):
+    """Stopped-because-you-turned-it-off must not look like
+    stopped-because-it-failed; a spurious error string is worse than none."""
+    eng = engine(tmp_path, FakeSpawner())
+    eng.apply(section())
+    assert eng.start() is True
+    eng.stop()
+    got = eng.status(enabled=True)
+    assert got.state == "stopped"
+    assert got.last_error is None
