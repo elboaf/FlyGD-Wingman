@@ -116,10 +116,21 @@ class HotkeyEngine:
         """
         self._seq = 0
         try:
-            for line in self._command_path().read_text().splitlines():
-                key, _, value = line.partition("=")
+            text = self._command_path().read_text().lstrip("﻿")
+            in_command = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    in_command = stripped[1:-1].strip().lower() == "command"
+                    continue
+                if not in_command:
+                    continue
+                key, _, value = stripped.partition("=")
                 if key.strip() == "Seq":
-                    self._seq = int(value.strip())
+                    # Clamped: a negative sequence would make
+                    # `consumed >= self._seq` true for every command and
+                    # defeat the unconsumed-command guard outright.
+                    self._seq = max(0, int(value.strip()))
                     return
         except (OSError, ValueError):
             self._seq = 0
@@ -147,14 +158,22 @@ class HotkeyEngine:
         if self.pending_command(now=now) is not None:
             return False
 
-        self._seq += 1
+        next_seq = self._seq + 1
         # INI, and sanitised: the argument is free text the user typed and
         # a newline in it would otherwise add a key to the section.
         body = ("[Command]\r\n"
-                f"Seq={self._seq}\r\n"
+                f"Seq={next_seq}\r\n"
                 f"Name={name}\r\n"
                 f"Argument={bookmarks.sanitise(argument)}\r\n")
-        atomicio.write_atomic(self._command_path(), body)
+        try:
+            atomicio.write_atomic(self._command_path(), body)
+        except OSError:
+            # Advancing the counter without a file on disk would leave
+            # pending_command() waiting forever on a command nothing can
+            # acknowledge, refusing every later command for the session.
+            logger.exception("Could not publish engine command %r", name)
+            return False
+        self._seq = next_seq
         return True
 
     # -- lifecycle ---------------------------------------------------

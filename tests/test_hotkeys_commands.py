@@ -118,3 +118,48 @@ def test_unknown_command_names_are_refused(tmp_path):
     eng = started(tmp_path)
     assert eng.send_command("rm_rf") is False
     assert not (tmp_path / "eve_command.ini").exists()
+
+
+def test_a_failed_write_does_not_wedge_the_channel(tmp_path, monkeypatch):
+    """Advancing the counter without a file on disk leaves
+    pending_command() waiting on a command nothing can acknowledge, and
+    every later command is refused for the rest of the session."""
+    eng = started(tmp_path)
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hotkeys.atomicio, "write_atomic", boom)
+    assert eng.send_command("clear_root", now=1000.0) is False
+    monkeypatch.undo()
+
+    assert eng.send_command("clear_root", now=1000.0) is True
+    assert command(tmp_path)["Seq"] == "1"
+
+
+def test_sync_ignores_a_seq_outside_the_command_section(tmp_path):
+    (tmp_path / "eve_command.ini").write_text(
+        "[Other]\r\nSeq=42\r\n[Command]\r\nSeq=7\r\n", newline="")
+    eng = started(tmp_path)
+    eng.sync_sequence()
+    assert eng._seq == 7
+
+
+def test_sync_clamps_a_negative_sequence(tmp_path):
+    """A negative sequence makes `consumed >= self._seq` true for every
+    command, defeating the unconsumed-command guard outright."""
+    (tmp_path / "eve_command.ini").write_text(
+        "[Command]\r\nSeq=-5\r\n", newline="")
+    eng = started(tmp_path)
+    eng.sync_sequence()
+    assert eng._seq == 0
+
+
+def test_sync_still_survives_a_byte_order_mark(tmp_path):
+    """The section check reintroduces a dependency on the first line
+    parsing correctly, which a BOM breaks."""
+    (tmp_path / "eve_command.ini").write_text(
+        "﻿[Command]\r\nSeq=7\r\n", newline="")
+    eng = started(tmp_path)
+    eng.sync_sequence()
+    assert eng._seq == 7
