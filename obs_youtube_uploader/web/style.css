@@ -529,6 +529,45 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    binds clip with no scrollbar and become unreachable. */
 #route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
 
+/* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
+   "Finisher: C13 (shattered)"), not short field labels like the rest of
+   this route's cards -- the shared `.settings .row > .lab` column below
+   is a fixed 118px right-aligned width tuned for "Privacy" and
+   "Category" and would wrap these onto several right-ragged lines. This
+   override gives the label the row's remaining width instead. */
+#eve-binds .row > .lab {
+  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+}
+
+/* Bind rows. .bindbtn shows the current combination and is the capture
+   target; .linkbtn is the secondary Clear / Type… affordance. Both follow
+   button.btn and .winbtn rather than introducing new colour literals. */
+.bindbtn {
+  min-width: 150px; text-align: left;
+  background: #1c1f26; border: 1px solid #2a2e37;
+  border-radius: var(--radius-sm); padding: 6px 10px;
+  font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text); cursor: pointer; flex: none;
+}
+.bindbtn:hover { background: #242832; }
+
+/* Capturing: the label already changes to "Press a key…", but without a
+   visual state the row does not read as waiting for input. */
+.bindbtn.capturing {
+  border-color: var(--brand); color: var(--brand); background: #22252c;
+}
+
+/* Two actions bound to the same key: AutoHotkey silently lets one win, so
+   the warning above the list names them and this marks which rows. */
+.bindbtn.clash { border-color: var(--err); color: var(--err); }
+
+.linkbtn {
+  background: none; border: 0; color: var(--text-faint);
+  font: inherit; font-size: var(--fs-muted); cursor: pointer;
+  padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
+}
+.linkbtn:hover { color: var(--text); background: #22252c; }
+
 .settings {
   display: flex; flex-direction: column; gap: 12px;
   width: 100%; max-width: 620px; margin: 0 auto;
