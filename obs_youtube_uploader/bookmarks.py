@@ -301,6 +301,8 @@ def import_legacy_ini(text: str) -> dict:
     for title, value in legacy_windows.items():
         clean = sanitise(title)
         if not clean:
+            # Deliberately not reported: a line naming a window with no name
+            # carries no information the user can act on.
             continue
         if not _is_engine_window_title(clean):
             # The engine only ever matches ^EVE -  (111unified.ahk:248), so

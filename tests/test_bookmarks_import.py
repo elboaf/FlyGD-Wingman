@@ -21,6 +21,16 @@ LEGACY = (
     "EVE - Alt=0\r\n"
 )
 
+# Deliberately [Keybinds]-first, matching what the standalone script writes
+# (111unified.ahk:143-165 before :167-171). The BOM test needs this order:
+# with [Settings] first, a BOM destroys [Settings] and the bind assertions
+# would pass whether or not the guard exists.
+KEYBINDS_FIRST = (
+    "[Keybinds]\r\nGrabSig=q\r\nFinH=y\r\nCopy=^c\r\n"
+    "[Settings]\r\nHomeZeroIs0=0\r\nMode=2\r\n"
+    "[Enabled]\r\nEVE - Pilot=1\r\n"
+)
+
 
 def test_binds_that_still_exist_are_carried_over():
     got = bookmarks.import_legacy_ini(LEGACY)
@@ -80,13 +90,14 @@ def test_garbage_yields_defaults_rather_than_raising():
 
 
 def test_a_byte_order_mark_does_not_destroy_the_first_section():
-    """Notepad adds a BOM on save. It survives .strip(), so an unguarded
-    parser fails the section-header test on the first line and skips that
-    whole section -- and the legacy script writes [Keybinds] first, so the
-    user would silently lose every bind."""
-    got = bookmarks.import_legacy_ini("﻿" + LEGACY)
+    """The legacy script writes [Keybinds] first, so an unguarded parser
+    loses every bind to a BOM -- silently, which is the whole failure this
+    function exists to prevent."""
+    got = bookmarks.import_legacy_ini("﻿" + KEYBINDS_FIRST)
     assert got["section"]["keybinds"]["GrabSig"] == "q"
     assert got["section"]["keybinds"]["FinH"] == "y"
+    assert got["section"]["windows"] == {"EVE - Pilot": True}
+    assert any("Copy" in d for d in got["discarded"])
 
 
 def test_a_byte_order_mark_does_not_suppress_the_numbering_note():
