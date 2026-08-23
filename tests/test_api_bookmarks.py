@@ -13,6 +13,7 @@ class FakeEngine:
         self.stopped = 0
         self.commands = []
         self.running = False
+        self.last_error = None
 
     def apply(self, section):
         self.applied.append(section)
@@ -37,8 +38,12 @@ class FakeEngine:
         return True
 
     def status(self, enabled, now=None):
-        return hotkeys.EngineStatus(
-            state="running" if self.running else "off", root="J1234")
+        if not enabled:
+            return hotkeys.EngineStatus(state="off")
+        if not self.running:
+            return hotkeys.EngineStatus(state="stopped",
+                                        last_error=self.last_error)
+        return hotkeys.EngineStatus(state="running", root="J1234")
 
 
 @pytest.fixture
@@ -134,3 +139,21 @@ def test_import_applies_and_reports(api, tmp_path, monkeypatch):
 def test_import_cancelled_changes_nothing(api):
     api._window.dialog_result = None
     assert api.import_bookmarks()["ok"] is False
+
+
+def test_a_failed_start_is_reported_to_the_page(api):
+    """Otherwise the toggle reads "on" while nothing is running, and the
+    reason -- a missing engine binary -- never reaches the user."""
+    api._state.engine.start = lambda: False
+    api._state.engine.last_error = "The bookmark engine is missing."
+    section = dict(api.get_bookmarks()["settings"], enabled=True)
+    got = api.save_bookmarks(section)
+    assert got["engine"]["state"] == "stopped"
+    assert "missing" in got["engine"]["last_error"]
+
+
+def test_a_failed_start_does_not_crash_the_save(api):
+    """A save that raises would leave the page with no response at all."""
+    api._state.engine.start = lambda: False
+    section = dict(api.get_bookmarks()["settings"], enabled=True)
+    assert api.save_bookmarks(section)["settings"]["enabled"] is True

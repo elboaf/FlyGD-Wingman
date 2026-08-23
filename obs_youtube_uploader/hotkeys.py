@@ -57,6 +57,7 @@ class EngineStatus:
     next_alpha: str | None = None
     failed_binds: list = field(default_factory=list)
     consumed_seq: int = 0
+    last_error: str | None = None
 
 
 def _text(value) -> str | None:
@@ -267,7 +268,7 @@ class HotkeyEngine:
         if not enabled:
             return EngineStatus(state="off")
         if not self.is_running():
-            return EngineStatus(state="stopped")
+            return EngineStatus(state="stopped", last_error=self.last_error)
 
         now = time.time() if now is None else now
         try:

@@ -1253,6 +1253,9 @@ class Api:
     def get_bookmarks(self) -> dict:
         """Everything the Bookmarks route renders, in one call."""
         section = self._state.settings["eve_bookmarks"]
+        engine = self._state.engine
+        status = (engine.status(enabled=section["enabled"])
+                  if engine is not None else None)
         return {
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
@@ -1266,6 +1269,13 @@ class Api:
             "displays": {bid: bookmarks.parse_ahk(value)["display"]
                          for bid, value in section["keybinds"].items()
                          if value},
+            "engine": {
+                "state": status.state if status else "off",
+                # Surfaces a failed start straight away. Without this the
+                # toggle reads "on" while nothing is running, and the reason
+                # never reaches the user at all.
+                "last_error": status.last_error if status else None,
+            },
         }
 
     def save_bookmarks(self, section) -> dict:
