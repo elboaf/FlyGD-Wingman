@@ -112,8 +112,17 @@ def test_parse_ahk_is_case_insensitive_and_canonicalising(text, ahk):
     assert bookmarks.parse_ahk(text)["ahk"] == ahk
 
 
-@pytest.mark.parametrize("text", ["Numpad10", "Numpad99", "F0", "F25", "F"])
+@pytest.mark.parametrize("text", ["Numpad10", "Numpad99", "F0", "F25"])
 def test_parse_ahk_rejects_keys_that_do_not_exist(text):
     """A numpad has ten keys and AutoHotkey has F1-F24. Emitting a string
     AutoHotkey cannot register is worse than refusing it."""
     assert bookmarks.parse_ahk(text)["error"] == "unmappable"
+
+
+@pytest.mark.parametrize("text,ahk", [("f", "f"), ("F", "f"), ("^f", "^f")])
+def test_parse_ahk_accepts_the_letter_f(text, ahk):
+    """F is an ordinary letter key. The single-letter branch is checked
+    before the function-key branch and every function key is at least two
+    characters, so there is no ambiguity to guard against -- an earlier fix
+    excluded F on that mistaken basis and made it unbindable."""
+    assert bookmarks.parse_ahk(text)["ahk"] == ahk

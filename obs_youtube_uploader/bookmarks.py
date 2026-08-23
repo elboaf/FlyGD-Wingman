@@ -157,7 +157,7 @@ def parse_ahk(text: str) -> dict:
             break
     if code is None:
         lowered = base.lower()
-        if len(base) == 1 and base.isalpha() and base.upper() != "F":
+        if len(base) == 1 and base.isalpha():
             code = "Key" + base.upper()
         elif len(base) == 1 and base.isdigit():
             code = "Digit" + base
