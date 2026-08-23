@@ -476,6 +476,18 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font-variant-numeric: tabular-nums;
 }
 
+/* Second segment in the status bar. Yields to upload progress at narrow
+   widths: an upload in flight is the more urgent of the two. */
+.evestat { display: flex; gap: 6px; align-items: baseline; flex: 0 1 auto;
+           min-width: 0; overflow: hidden; white-space: nowrap; }
+.evelabel { color: var(--text-dim); font-size: 10px; letter-spacing: .08em; }
+.evestat.degraded { opacity: .5; }
+/* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
+   specificity, so the display:flex above would keep this visible for every
+   user who never turns the feature on. Same fix as .routenav[hidden]. */
+.evestat[hidden] { display: none; }
+@media (max-width: 720px) { .evestat { display: none; } }
+
 /* ====================== modal dialog layer ==========================
    Modals are native Tk message boxes today, called from workers. They
    become in-page modals; `confirm` is the only request/response pair in an

@@ -264,6 +264,12 @@
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
+      <span class="evestat" id="evestat" hidden>
+        <span class="evelabel">SIG</span><span id="eve-sig">—</span>
+        <span class="evelabel">ROOT</span><span id="eve-root">—</span>
+        <span class="evelabel">NEXT</span><span id="eve-next">—</span>
+        <span class="evewarn" id="eve-warn" hidden>⚠</span>
+      </span>
       <span id="status" class="FG">Ready</span>
       <div class="track" id="track"><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>

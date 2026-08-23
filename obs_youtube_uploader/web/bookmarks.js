@@ -292,6 +292,50 @@
 
   WM.handle('onBookmarks', render);
 
+  // The one and only 'onEveStatus' registration: a second WM.handle call
+  // for the same name would silently overwrite this, so it drives BOTH the
+  // global status-bar segment (chrome, visible on every route) and this
+  // route's engine-state line -- renderEngineState() above only covers the
+  // instant after a save, before the next poll tick lands.
+  WM.handle('onEveStatus', function (payload) {
+    var host = WM.el('evestat');
+    // Hidden entirely when off, so nothing changes for users who never
+    // turn the feature on.
+    host.hidden = (payload.state === 'off');
+    if (payload.state === 'off') return;
+
+    var live = payload.state === 'running';
+    // Values are shown ONLY while running. A stopped or stale engine
+    // leaves its last status file on disk, and a plausible-looking dead
+    // root system is worse than no readout -- it gets acted on.
+    WM.el('eve-sig').textContent = live && payload.sig ? payload.sig : '—';
+    WM.el('eve-root').textContent = live && payload.root ? payload.root : '—';
+    WM.el('eve-next').textContent = live && payload.next_num
+      ? payload.next_num + ' / ' + (payload.next_alpha || '—') : '—';
+
+    var warn = WM.el('eve-warn');
+    var failed = payload.failed_binds || [];
+    warn.hidden = failed.length === 0;
+    warn.title = failed.length
+      ? failed.length + ' hotkey(s) failed to register — see Bookmarks'
+      : '';
+
+    var label = { stopped: 'Stopped', stale: 'Not responding',
+                  running: 'Running' }[payload.state] || '';
+    var stateEl = WM.el('eve-engine-state');
+    // Must include last_error, and must match how the route renders it
+    // after a save. Otherwise ticking Enable with a missing engine shows
+    // "Stopped — the engine is missing…" and the next poll tick a second
+    // later overwrites it with a bare "Stopped", so the one actionable
+    // thing the user was told silently disappears.
+    if (stateEl) {
+      stateEl.textContent = payload.last_error
+        ? label + ' — ' + payload.last_error
+        : label;
+    }
+    host.classList.toggle('degraded', !live);
+  });
+
   document.addEventListener('wm:route', function (event) {
     // Refreshed on entry rather than polled: the EVE window list changes
     // when clients open and close, which is not something worth a timer.
