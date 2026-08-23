@@ -29,6 +29,12 @@ _NAMED = {
     "Comma": ",", "Period": ".", "Slash": "/", "Semicolon": ";",
     "Quote": "'", "Backquote": "`", "Minus": "-", "Equal": "=",
     "BracketLeft": "[", "BracketRight": "]", "Backslash": "\\",
+    # The digit/letter numpad codes fall through to the generic Numpad<n>
+    # branch below unchanged, but these six have DOM codes that don't match
+    # the AHK key name AHK expects, so they need an explicit translation.
+    "NumpadAdd": "NumpadAdd", "NumpadSubtract": "NumpadSub",
+    "NumpadMultiply": "NumpadMult", "NumpadDivide": "NumpadDiv",
+    "NumpadDecimal": "NumpadDot", "NumpadEnter": "NumpadEnter",
 }
 
 

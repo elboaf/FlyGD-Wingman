@@ -40,7 +40,9 @@ def test_punctuation(code, ahk):
     """The finishers are historically punctuation-bound -- the handler names
     still read DoComma, DoDot, DoQuote, DoSemi -- so these are the common
     case here, not an edge case."""
-    assert bookmarks.to_ahk(parts(code))["ahk"] == ahk
+    got = bookmarks.to_ahk(parts(code))
+    assert got["ahk"] == ahk
+    assert got["display"] == ahk
 
 
 @pytest.mark.parametrize("code,ahk", [
@@ -52,7 +54,31 @@ def test_punctuation(code, ahk):
     ("Numpad7", "Numpad7"), ("Digit4", "4"),
 ])
 def test_named_keys(code, ahk):
-    assert bookmarks.to_ahk(parts(code))["ahk"] == ahk
+    got = bookmarks.to_ahk(parts(code))
+    assert got["ahk"] == ahk
+    assert got["display"] == ahk
+
+
+def test_modifier_with_nonletter_key():
+    """display must also stay correct on the non-letter path, not just for
+    single alphabetic base keys -- the two branches of the uppercasing rule
+    in to_ahk are otherwise never exercised together."""
+    got = bookmarks.to_ahk(parts("Comma", ctrl=True))
+    assert got["ahk"] == "^,"
+    assert got["display"] == "Ctrl+,"
+
+
+@pytest.mark.parametrize("code,ahk", [
+    ("NumpadAdd", "NumpadAdd"), ("NumpadSubtract", "NumpadSub"),
+    ("NumpadMultiply", "NumpadMult"), ("NumpadDivide", "NumpadDiv"),
+    ("NumpadDecimal", "NumpadDot"), ("NumpadEnter", "NumpadEnter"),
+])
+def test_numpad_operator_keys(code, ahk):
+    """A real numpad also sends these six codes, and three of them need a
+    name translation because the DOM code and the AHK key name differ."""
+    got = bookmarks.to_ahk(parts(code))
+    assert got["ahk"] == ahk
+    assert got["display"] == ahk
 
 
 @pytest.mark.parametrize("code", [
