@@ -114,11 +114,15 @@ def test_window_scoped_teardown_exists(source):
     the declaration and the push too, so the loop body could be gutted while
     the string survives and this test stayed green."""
     assert re.search(r"RegisteredWindows", source, re.IGNORECASE)
-    # The loop must actually re-enter each previously registered criterion.
-    assert re.search(r"For\s+\w+\s*,\s*\w+\s+in\s+RegisteredWindows", source,
-                      re.IGNORECASE)
-    assert re.search(r"Hotkey\s*,\s*IfWinActive\s*,\s*%\w+%", source,
-                      re.IGNORECASE)
+    # One regex spanning the loop header through its body, rather than two
+    # independent searches: the earlier version passed as long as
+    # "Hotkey, IfWinActive, %var%" appeared ANYWHERE in the file, even
+    # outside this loop. `[^}]*` stops the match at the loop's own closing
+    # brace, so the Hotkey line must actually be inside it.
+    assert re.search(
+        r"For\s+\w+\s*,\s*\w+\s+in\s+RegisteredWindows\s*\{[^}]*"
+        r"Hotkey\s*,\s*IfWinActive\s*,\s*%\w+%",
+        source, re.IGNORECASE)
 
 
 def test_status_is_published_atomically(lowered):
