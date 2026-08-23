@@ -123,6 +123,12 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    right. Every pixel here is drag surface given up, so this stays tight;
    past about four destinations the 44px bar needs rethinking. */
 .routenav { display: flex; gap: 2px; align-items: center; flex: none; }
+/* Required, not decorative: .routenav sets display, and an author rule
+   beats the UA stylesheet's [hidden] { display: none } because author
+   origin outranks UA origin. Without this, setting .hidden during first
+   run leaves the nav visible and the user can navigate away from a screen
+   that is not dismissable. Same reason .ctxmenu[hidden] exists below. */
+.routenav[hidden] { display: none; }
 .navbtn {
   background: none; border: 0; color: var(--text-faint);
   font: inherit; font-size: 12px; letter-spacing: .04em;
