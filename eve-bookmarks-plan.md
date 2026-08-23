@@ -3298,7 +3298,33 @@ def test_shutdown_survives_an_engine_that_raises():
             raise OSError("nope")
 
     main_mod.shutdown_engine(Angry(enabled=True))
+
+
+def test_orphans_are_reclaimed_even_when_the_feature_is_disabled():
+    """The gap this closes: stop() clears the pid record even when it could
+    not confirm death, and recover_orphan() otherwise runs only from start(),
+    which runs only when enabled. So a hung engine survives indefinitely once
+    the user turns the feature off -- a global keyboard hook with nothing
+    left able to reclaim it. Each choice is defensible alone; together they
+    leave a hole."""
+    engine = Recorder(enabled=False)
+    main_mod.reclaim_orphaned_engine(engine)
+    assert engine.recovered == 1
+
+
+def test_reclamation_failure_does_not_block_startup():
+    class Angry(Recorder):
+        def recover_orphan(self):
+            raise OSError("nope")
+
+    main_mod.reclaim_orphaned_engine(Angry(enabled=False))
+
+
+def test_reclamation_is_safe_with_no_engine():
+    main_mod.reclaim_orphaned_engine(None)
 ```
+
+The `Recorder` fake needs a `recovered` counter and a `recover_orphan()` that increments it.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -3310,8 +3336,29 @@ Expected: FAIL — `AttributeError: module has no attribute 'start_engine_if_ena
 In `__main__.py`:
 
 ```python
-def start_engine_if_enabled(engine, section) -> None:
-    """Start the hotkey engine only when the user has turned it on.
+def reclaim_orphaned_engine(engine) -> None:
+    """Terminate an engine left behind by a crashed session.
+
+    Runs at startup regardless of whether the feature is enabled, and that
+    is the whole point. stop() clears the pid record even when it could not
+    confirm the process died, and recover_orphan() otherwise runs only from
+    start(), which runs only when enabled. So a hung engine would survive
+    indefinitely the moment a user turned the feature off: a global keyboard
+    hook, with nothing left in the application able to reclaim it and no UI
+    that mentions it. Each of those choices is defensible on its own; the
+    hole is in their combination.
+
+    Never raises: a failure to reclaim must not stop the app starting.
+    """
+    if engine is None:
+        return
+    try:
+        engine.recover_orphan()
+    except Exception:
+        logger.exception("Orphan reclamation failed; continuing startup.")
+
+
+def start_engine_if_enabled(engine, section) -> None:    """Start the hotkey engine only when the user has turned it on.
 
     Opt-in is the whole point: enabling installs a global keyboard hook, and
     an upgrading user must not acquire one by upgrading.
@@ -3343,6 +3390,10 @@ In `main()`, after `AppState` is built:
                                   paths.state_dir())
     state.engine = engine
     engine.apply(state.settings["eve_bookmarks"])
+    # Unconditional, and before the enabled check: an engine orphaned by a
+    # crashed session must be reclaimed even if the user has since turned
+    # the feature off, or nothing ever will.
+    reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 ```
 
