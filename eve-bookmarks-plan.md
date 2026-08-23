@@ -4160,7 +4160,8 @@ git commit -m "build: bundle the engine and assert it was collected"
 **Files:**
 - Create: `THIRD-PARTY-NOTICES.md`
 - Modify: `packaging/uploader.spec`, `README.md`,
-  `packaging/fetch_autohotkey.py`, `tests/test_fetch_autohotkey.py`
+  `packaging/fetch_autohotkey.py`, `tests/test_fetch_autohotkey.py`,
+  `packaging/fetch_ffmpeg.py`
 
 Note for the implementer: Task 23 shipped `fetch_autohotkey.py` with
 `WANTED = ("AutoHotkeyU64.exe",)`. This task widens it to include
@@ -4169,6 +4170,15 @@ tests assert against that count, so both move together -- changing the
 constant alone will fail the suite.
 
 A README line is not a written offer. Both bundled binaries are GPL and neither ships with source today.
+
+Also widen `fetch_ffmpeg.py`'s `WANTED` from `("ffmpeg.exe", "ffprobe.exe")`
+to include `"LICENSE"` (the archive entry is
+`ffmpeg-7.1-essentials_build/LICENSE`, and extraction matches on basename).
+Its `extracted != len(WANTED)` guard counts entries, so the constant and the
+guard move together. This is a deliberate, flagged step outside the EVE
+feature: the notices file this task authors names `ffmpeg-COPYING.txt`, and
+shipping a notice that points at a file nothing produces is worse than not
+writing the notice at all.
 
 - [ ] **Step 1: Write the notice**
 
@@ -4219,6 +4229,10 @@ In `uploader.spec` `datas`:
         # licence covering Wingman, which is MIT.
         (str(ROOT / "packaging" / "bin" / "license.txt"),
          "AutoHotkey-COPYING.txt"),
+        # FFmpeg is GPL v3 where AutoHotkey is v2, so it needs its own
+        # copy -- one shared text would misstate the terms for one of them.
+        (str(ROOT / "packaging" / "bin" / "LICENSE"),
+         "ffmpeg-COPYING.txt"),
 ```
 
 - [ ] **Step 3: Point at it from the README**
