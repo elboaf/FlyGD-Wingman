@@ -18,3 +18,11 @@ def test_url_and_wanted_agree_on_v1():
     text = SOURCE.read_text()
     assert "v1.1" in text
     assert "AutoHotkeyU64.exe" in text
+
+
+def test_wanted_includes_licence_text():
+    """license.txt is what THIRD-PARTY-NOTICES.md's written offer points
+    at as AutoHotkey-COPYING.txt; if it drops out of WANTED, the notice
+    references a file the build never produces."""
+    text = SOURCE.read_text()
+    assert "license.txt" in text

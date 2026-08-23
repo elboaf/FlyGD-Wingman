@@ -283,6 +283,23 @@ jobs:
           }
           Get-Item $icon
 
+      - name: Verify the GPL notices are bundled
+        # Same silent-datas-failure shape as the checks above, but the
+        # consequence here is legal rather than functional: the app would
+        # still run fine with these three files missing, which is exactly
+        # why a build-time assertion is the only thing that would catch it.
+        # These three are what THIRD-PARTY-NOTICES.md's written offer
+        # depends on actually installing them beside the binaries.
+        shell: pwsh
+        run: |
+          $root = "dist\OBSYouTubeUploader\_internal"
+          foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
+            $path = Join-Path $root $file
+            if (-not (Test-Path $path)) {
+              throw "$file not found at $path - the corresponding datas entry in uploader.spec did not resolve, and the shipped installer would omit a GPL-required licence text or the written offer of source"
+            }
+          }
+
       - name: Build installer
         run: iscc packaging/installer.iss
 

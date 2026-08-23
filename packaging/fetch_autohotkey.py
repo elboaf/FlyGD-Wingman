@@ -17,7 +17,10 @@ AHK_URL = ("https://github.com/AutoHotkey/AutoHotkey/releases/download/"
            "v1.1.37.02/AutoHotkey_1.1.37.02.zip")
 AHK_SHA256 = "6f3663f7cdd25063c8c8728f5d9b07813ced8780522fd1f124ba539e2854215f"
 OUT_DIR = Path(__file__).parent / "bin"
-WANTED = ("AutoHotkeyU64.exe",)
+# license.txt (GPLv2) is bundled alongside the interpreter, not just fetched
+# for reference -- the notices file this feeds (THIRD-PARTY-NOTICES.md)
+# names it as the licence text installed beside the application.
+WANTED = ("AutoHotkeyU64.exe", "license.txt")
 # Sidecar records which pin the binary in OUT_DIR was extracted from, so a
 # later bump of AHK_SHA256 doesn't silently keep shipping the old binary.
 VERSION_FILE = OUT_DIR / ".autohotkey-version"

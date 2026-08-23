@@ -19,7 +19,11 @@ FFMPEG_URL = (
 )
 FFMPEG_SHA256 = "fa7d4d7e795db0e2503f49f105f46ed5852386f0cfdd819899be3b65ebde24fc"
 OUT_DIR = Path(__file__).parent / "bin"
-WANTED = ("ffmpeg.exe", "ffprobe.exe")
+# LICENSE (GPLv3) is fetched alongside the binaries, not just for
+# reference -- the notices file this feeds (THIRD-PARTY-NOTICES.md) names it
+# as the licence text installed beside the application. The archive entry is
+# ffmpeg-7.1-essentials_build/LICENSE; extraction matches on basename.
+WANTED = ("ffmpeg.exe", "ffprobe.exe", "LICENSE")
 # Sidecar records which pin the binaries in OUT_DIR were extracted from, so a
 # later bump of FFMPEG_SHA256 doesn't silently keep shipping the old binaries.
 VERSION_FILE = OUT_DIR / ".ffmpeg-version"

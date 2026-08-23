@@ -320,6 +320,10 @@ credentials in a public issue.
 
 Released under the [MIT License](LICENSE).
 
+FFmpeg and AutoHotkey are bundled and are licensed under the GPL. See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for versions, sources, and
+a written offer of source.
+
 FlyGD Wingman is an independent, unofficial project. It is not affiliated
 with, endorsed by, or sponsored by Google LLC, YouTube, the OBS Project /
 OBS Studio, CCP hf. / EVE Online, or Discord Inc. Google, YouTube, OBS Studio,

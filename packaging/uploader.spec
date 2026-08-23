@@ -37,6 +37,16 @@ a = Analysis(
         # Collected at the bundle root so paths.icon_file()'s frozen-case
         # lookup (bundle_dir() / "app.ico") finds it directly.
         (str(ICON), "."),
+        # Must reach the installed tree, not just the repository: the offer
+        # has to travel with the binaries it covers.
+        (str(ROOT / "THIRD-PARTY-NOTICES.md"), "."),
+        # The GPL text itself, which section 1 requires accompany the
+        # binary. Renamed on the way in so it cannot be mistaken for a
+        # licence covering Wingman, which is MIT.
+        (str(BIN / "license.txt"), "AutoHotkey-COPYING.txt"),
+        # FFmpeg is GPL v3 where AutoHotkey is v2, so it needs its own
+        # copy -- one shared text would misstate the terms for one of them.
+        (str(BIN / "LICENSE"), "ffmpeg-COPYING.txt"),
         # The engine is data, not code -- modulegraph cannot see it, and
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green

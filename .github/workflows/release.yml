@@ -238,6 +238,23 @@ jobs:
           $exe = "dist/OBSYouTubeUploader/_internal/bin/AutoHotkeyU64.exe"
           if (-not (Test-Path $exe)) { throw "AutoHotkey interpreter missing from the bundle" }
 
+      - name: Verify the GPL notices are bundled
+        # Deliberately mirrors build.yml's step of the same name. It matters
+        # more here than there: this is the artifact users actually receive,
+        # and the failure mode is legal rather than functional -- the app
+        # would run fine with these three files missing, which is exactly
+        # why nothing short of a build-time assertion would catch it before
+        # a release ships without its written offer of source.
+        shell: pwsh
+        run: |
+          $root = "dist\OBSYouTubeUploader\_internal"
+          foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
+            $path = Join-Path $root $file
+            if (-not (Test-Path $path)) {
+              throw "$file not found at $path - the corresponding datas entry in uploader.spec did not resolve, and the released installer would omit a GPL-required licence text or the written offer of source"
+            }
+          }
+
       - name: Build installer
         run: iscc packaging/installer.iss
 
