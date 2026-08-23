@@ -64,6 +64,11 @@ KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
 ; Maps hotkey string -> label, so we can disable by exact label
 HotkeyLabelMap := {}
 
+; Window titles whose hotkey variants were registered on the last pass.
+; Required for teardown: a variant registered under IfWinActive <title> can
+; only be disabled from inside that same criterion.
+RegisteredWindows := []
+
 ; Single INI file for everything
 IniFile := "eve_bookmark_helper.ini"
 
@@ -395,19 +400,37 @@ ToolTip
 Return
 
 RefreshHotkeys:
-; Step 1: First, disable ALL hotkeys (global ones too)
+GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
+
+; Disable the global-context variants.
 Hotkey, IfWinActive
-; Disable all hotkeys that might be registered
 For hk, lbl in HotkeyLabelMap
 {
     if (hk != "")
         Hotkey, %hk%, Off, UseErrorLevel
 }
 
-; Step 2: Read all enabled windows
+; Disable the window-scoped variants IN THEIR OWN CONTEXT. Turning them off
+; from the global context above does nothing at all -- that is the bug this
+; loop exists to fix. Without it, changing a bind or disabling a window
+; leaves the previous hotkey live.
+For idx, OldTitle in RegisteredWindows
+{
+    Hotkey, IfWinActive, %OldTitle%
+    For hk, lbl in HotkeyLabelMap
+    {
+        if (hk != "")
+            Hotkey, %hk%, Off, UseErrorLevel
+    }
+}
+Hotkey, IfWinActive
+RegisteredWindows := []
+FailedBinds := ""
+
+; Read all enabled windows
 IniRead, EnabledSection, %IniFile%, Enabled
 
-; Step 3: Build the new label map (only non-empty bindings)
+; Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
@@ -448,13 +471,9 @@ if (KB_FinS != "")
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
-; Step 4: Register GLOBAL hotkeys (Set Root) - no window restriction
-; Reset to global context
-Hotkey, IfWinActive
-if (KB_SetRoot != "")
-    Hotkey, %KB_SetRoot%, DoSemi, On UseErrorLevel
-
-; Step 5: Register window-specific hotkeys for enabled windows (excluding set root, which is global)
+; Register window-specific hotkeys for enabled windows. Nothing is global
+; any more -- Set Root moved here too, since its global scope only existed
+; to support the removed dual-use naming mode.
 Loop, Parse, EnabledSection, `n, `r
 {
     Line := Trim(A_LoopField)
@@ -465,52 +484,47 @@ Loop, Parse, EnabledSection, `n, `r
         continue
     WinTitle := Trim(SubStr(Line, 1, EqPos - 1))
     Val      := Trim(SubStr(Line, EqPos + 1))
-    
+
     if (Val = "1") {
         Hotkey, IfWinActive, %WinTitle%
-        ; Register all hotkeys EXCEPT copy, paste, and set root (which are global)
-        if (KB_GrabSig != "")
-            Hotkey, %KB_GrabSig%, DoQ, On UseErrorLevel
-        if (KB_FormatEnf != "")
-            Hotkey, %KB_FormatEnf%, DoE, On UseErrorLevel
-        if (KB_ConvertScout != "")
-            Hotkey, %KB_ConvertScout%, DoConvertScout, On UseErrorLevel
-        if (KB_FinH != "")
-            Hotkey, %KB_FinH%, DoY, On UseErrorLevel
-        if (KB_Fin13 != "")
-            Hotkey, %KB_Fin13%, DoO, On UseErrorLevel
-        if (KB_Fin1 != "")
-            Hotkey, %KB_Fin1%, Do1, On UseErrorLevel
-        if (KB_Fin2 != "")
-            Hotkey, %KB_Fin2%, Do2, On UseErrorLevel
-        if (KB_Fin3 != "")
-            Hotkey, %KB_Fin3%, Do3, On UseErrorLevel
-        if (KB_Fin4 != "")
-            Hotkey, %KB_Fin4%, Do4, On UseErrorLevel
-        if (KB_Fin5 != "")
-            Hotkey, %KB_Fin5%, Do5, On UseErrorLevel
-        if (KB_Fin6 != "")
-            Hotkey, %KB_Fin6%, Do6, On UseErrorLevel
-        if (KB_FinETag != "")
-            Hotkey, %KB_FinETag%, DoQuote, On UseErrorLevel
-        if (KB_FinSlash != "")
-            Hotkey, %KB_FinSlash%, DoComma, On UseErrorLevel
-        if (KB_FinN != "")
-            Hotkey, %KB_FinN%, DoDot, On UseErrorLevel
-        if (KB_FinL != "")
-            Hotkey, %KB_FinL%, DoP, On UseErrorLevel
-        if (KB_FinM != "")
-            Hotkey, %KB_FinM%, DoM, On UseErrorLevel
-        if (KB_FinS != "")
-            Hotkey, %KB_FinS%, DoS, On UseErrorLevel
-        if (KB_FinC != "")
-            Hotkey, %KB_FinC%, DoC, On UseErrorLevel
+        RegisteredWindows.Push(WinTitle)
+        RegisterBind("GrabSig",      KB_GrabSig,      "DoQ")
+        RegisterBind("SetRoot",      KB_SetRoot,      "DoSemi")
+        RegisterBind("FormatEnf",    KB_FormatEnf,    "DoE")
+        RegisterBind("ConvertScout", KB_ConvertScout, "DoConvertScout")
+        RegisterBind("FinH",  KB_FinH,  "DoY")
+        RegisterBind("FinL",  KB_FinL,  "DoP")
+        RegisterBind("FinN",  KB_FinN,  "DoDot")
+        RegisterBind("Fin13", KB_Fin13, "DoO")
+        RegisterBind("Fin1",  KB_Fin1,  "Do1")
+        RegisterBind("Fin2",  KB_Fin2,  "Do2")
+        RegisterBind("Fin3",  KB_Fin3,  "Do3")
+        RegisterBind("Fin4",  KB_Fin4,  "Do4")
+        RegisterBind("Fin5",  KB_Fin5,  "Do5")
+        RegisterBind("Fin6",  KB_Fin6,  "Do6")
+        RegisterBind("FinETag",  KB_FinETag,  "DoQuote")
+        RegisterBind("FinSlash", KB_FinSlash, "DoComma")
+        RegisterBind("FinM", KB_FinM, "DoM")
+        RegisterBind("FinS", KB_FinS, "DoS")
+        RegisterBind("FinC", KB_FinC, "DoC")
     }
 }
 
-; Step 6: Reset the hotkey context
+; Reset the hotkey context
 Hotkey, IfWinActive
 Return
+
+; Every Hotkey ... On UseErrorLevel in the original discarded its result,
+; so a bind Windows refused -- one already claimed by another application --
+; failed silently and the key simply did nothing.
+RegisterBind(id, key, label) {
+    global FailedBinds
+    if (key = "")
+        return
+    Hotkey, %key%, %label%, On UseErrorLevel
+    if (ErrorLevel)
+        FailedBinds .= (FailedBinds = "" ? "" : ",") . id
+}
 
 BuildSystemKey(root, counter, isAlpha) {
     if (isAlpha)
@@ -667,34 +681,12 @@ RootJustFired := False
 Return
 
 ; ============================================================
-; SET ROOT: 
-; If in EVE window: Normal copy/parse/set root flow with resume
-; If NOT in EVE window: Just send the current RootKey
+; SET ROOT: Normal copy/parse/set root flow with resume.
+; The bind is now window-scoped (registered under IfWinActive per enabled
+; EVE window), so this can only fire inside an enabled EVE window -- the
+; dual-use "not in an EVE window" branch it used to need is gone.
 ; ============================================================
 DoSemi:
-; FIRST: Check if we're in an enabled EVE window
-IsEveWindow := False
-WinGetTitle, ActiveTitle, A
-if (ActiveTitle ~= "^EVE - ") {
-    ; Check if this specific EVE window is enabled
-    IniRead, WindowEnabled, %IniFile%, Enabled, %ActiveTitle%, 0
-    if (WindowEnabled = 1) {
-        IsEveWindow := True
-    }
-}
-
-; If NOT in EVE window, just send the current root and exit
-if (!IsEveWindow) {
-    if (RootKey != "") {
-        Sleep 100
-        Send %RootKey%
-    }
-    Return
-}
-
-; --- If we get here, we're in an enabled EVE window ---
-; Do the normal copy/parse/set root flow
-
 ; Reset everything
 RootKey := ""
 RootJustFired := False
