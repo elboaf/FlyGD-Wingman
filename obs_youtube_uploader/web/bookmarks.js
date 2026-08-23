@@ -228,7 +228,14 @@
     // get_bookmarks resolves -- unlike the bind and window rows, which are
     // only created once state exists. A click in that gap would throw and
     // silently do nothing.
-    if (!state) return;
+    if (!state) {
+      // Nothing to render from yet, so put the checkbox back by hand.
+      // Assigning .checked from script does not itself dispatch `change`
+      // (only real user interaction does), so this does not re-enter this
+      // handler.
+      WM.el('eve-enabled').checked = !WM.el('eve-enabled').checked;
+      return;
+    }
     var next = JSON.parse(JSON.stringify(state.settings));
     next.enabled = WM.el('eve-enabled').checked;
     send(next);
