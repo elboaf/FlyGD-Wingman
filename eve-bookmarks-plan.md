@@ -4153,6 +4153,11 @@ pytest — the engine is AutoHotkey.
 - [ ] With the feature off, the status bar shows no EVE segment
 - [ ] Enabling starts the engine; the status bar segment appears
 - [ ] Hotkeys fire in an enabled EVE window and do nothing in an unenabled one
+- [ ] **A bound key does nothing when a non-EVE window is focused** — no bind is
+      global any more, and registration happens inside a function called while
+      an `IfWinActive` criterion is active. If that criterion does not carry
+      into the function, every bind registers globally and fires everywhere.
+      Nothing in the repository can test this; confirm it by hand.
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
       direct test of the teardown repair, and the bug that shipped for years
 - [ ] Disabling a window stops its hotkeys firing, within ~10s
