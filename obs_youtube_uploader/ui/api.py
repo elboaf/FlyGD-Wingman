@@ -1172,6 +1172,28 @@ class Api:
                 for state, (message, label, enabled)
                 in copy_mod.AUTH_STATES.items()}
 
+    def _push_eve_status(self) -> None:
+        """Publish engine status to the page.
+
+        Pushed regardless of which route is showing: the status bar is
+        global chrome, and app.js deliberately never tells Python which
+        route is active.
+        """
+        engine = self._state.engine
+        if engine is None:
+            return
+        enabled = self._state.settings["eve_bookmarks"]["enabled"]
+        status = engine.status(enabled=enabled)
+        self._push("onEveStatus", {
+            "state": status.state, "sig": status.sig, "root": status.root,
+            "next_num": status.next_num, "next_alpha": status.next_alpha,
+            "failed_binds": status.failed_binds,
+            # A failed start is otherwise invisible: this is the one
+            # actionable thing the user can be told ("the engine is
+            # missing, reinstall").
+            "last_error": status.last_error,
+        })
+
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
 

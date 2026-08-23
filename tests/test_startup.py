@@ -55,7 +55,13 @@ def startup(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.stitch, "sweep_orphans", lambda d: None)
     monkeypatch.setattr(main_mod.paths, "tmp_dir", lambda: tmp_path)
     monkeypatch.setattr(main_mod.paths, "resolve_binary", lambda name: None)
-    monkeypatch.setattr(main_mod.settings_mod, "load", lambda path=None: {})
+    # Must include eve_bookmarks: settings.load() guarantees the section on
+    # every path, and main() now relies on that when priming the hotkey
+    # engine. A bare {} here would only ever have worked while nothing
+    # depended on the invariant.
+    monkeypatch.setattr(main_mod.settings_mod, "load",
+                        lambda path=None: {"eve_bookmarks": {
+                            "enabled": False, "keybinds": {}, "windows": {}}})
     monkeypatch.setattr(main_mod.preflight, "require_webview2", lambda: True)
     # None keeps main() off the watcher path: no Scheduler, no polling
     # thread, nothing to tear down. The first-run push is deferred onto a

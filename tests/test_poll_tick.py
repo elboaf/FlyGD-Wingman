@@ -39,6 +39,14 @@ class _FakeApi:
     def _busy(self):
         return self._uploading
 
+    def _push_eve_status(self):
+        # No-op: these tests exercise the watcher tick's own logic, not the
+        # engine status push poll_tick now also makes on every tick. Without
+        # this, poll_tick's try/except would swallow an AttributeError here
+        # and silently report it as a "poll tick failed" -- exactly the
+        # ambiguity poll_tick's own docstring warns about.
+        pass
+
     def list_rows(self, preselect=None):
         self.rows_calls.append(preselect)
 
