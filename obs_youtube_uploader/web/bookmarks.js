@@ -137,6 +137,17 @@
   }
 
   function beginCapture(id, button) {
+    if (capturing) {
+      // Revert the previous row's button WITHOUT the full renderBinds()
+      // that endCapture() would normally trigger: that rebuilds every row's
+      // button from scratch, including the one just clicked to start THIS
+      // capture -- calling it here would detach `button` before it is
+      // armed below. Reuses the same display expression renderBinds()
+      // uses for a bound key, so the reverted label matches exactly what
+      // a full re-render would have shown.
+      capturing.button.classList.remove('capturing');
+      capturing.button.textContent = state.displays[capturing.id] || 'Not set';
+    }
     capturing = { id: id, button: button };
     button.textContent = 'Press a key…';
     button.classList.add('capturing');
