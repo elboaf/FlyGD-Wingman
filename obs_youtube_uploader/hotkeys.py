@@ -12,12 +12,19 @@ import json
 import logging
 import subprocess
 import sys
+import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 
 from . import atomicio, bookmarks, paths, procid
 
 logger = logging.getLogger(__name__)
+
+# The engine republishes every 2s (111unified.ahk:77). Three missed ticks
+# is a deliberate margin: one missed write on a busy machine is normal, a
+# sustained gap means it is alive but not working.
+STALE_AFTER_S = 6.0
 
 # CREATE_NO_WINDOW doesn't exist off Windows, and the tests inject a fake
 # spawner -- same shape as stitch.py:27 and library.py:19.
@@ -32,6 +39,19 @@ _MISSING = ("The bookmark engine is missing from this installation. "
 # Basename match, not a substring: a folder merely containing "autohotkey"
 # (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
 _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
+
+
+@dataclass
+class EngineStatus:
+    """What the UI renders. `state` is authoritative; the values are only
+    populated when state == "running"."""
+    state: str = "off"
+    sig: str | None = None
+    root: str | None = None
+    next_num: str | None = None
+    next_alpha: str | None = None
+    failed_binds: list = field(default_factory=list)
+    consumed_seq: int = 0
 
 
 class HotkeyEngine:
@@ -141,6 +161,38 @@ class HotkeyEngine:
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def status(self, enabled: bool, now: float | None = None) -> EngineStatus:
+        """Report engine state, driven by liveness rather than file contents.
+
+        The status file outlives the process that wrote it. Reading values
+        from it without first establishing that the engine is alive is how
+        a dead root system gets displayed as the current one.
+        """
+        if not enabled:
+            return EngineStatus(state="off")
+        if not self.is_running():
+            return EngineStatus(state="stopped")
+
+        now = time.time() if now is None else now
+        try:
+            raw = json.loads(self._status_path().read_text())
+            written = float(raw["written"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return EngineStatus(state="stale")
+        if now - written > STALE_AFTER_S:
+            return EngineStatus(state="stale")
+
+        failed = raw.get("failed_binds")
+        return EngineStatus(
+            state="running",
+            sig=raw.get("sig") or None,
+            root=raw.get("root") or None,
+            next_num=raw.get("next_num") or None,
+            next_alpha=raw.get("next_alpha") or None,
+            failed_binds=[str(b) for b in failed] if isinstance(failed, list) else [],
+            consumed_seq=int(raw.get("seq") or 0),
+        )
+
     def recover_orphan(self) -> bool:
         """Terminate an engine left behind by a crashed Wingman.
 
@@ -206,6 +258,9 @@ class HotkeyEngine:
 
     def _pid_path(self) -> Path:
         return self._state_dir / paths.engine_pid_file().name
+
+    def _status_path(self) -> Path:
+        return self._state_dir / paths.engine_status_file().name
 
     def _clear_pid_record(self) -> None:
         try:
