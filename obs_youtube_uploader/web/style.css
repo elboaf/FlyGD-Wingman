@@ -481,11 +481,17 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .evestat { display: flex; gap: 6px; align-items: baseline; flex: 0 1 auto;
            min-width: 0; overflow: hidden; white-space: nowrap; }
 .evelabel { color: var(--text-dim); font-size: 10px; letter-spacing: .08em; }
+/* Same token #status.WARNING uses, so the two severities read alike. */
+.evewarn { color: var(--warn); }
 .evestat.degraded { opacity: .5; }
 /* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
    specificity, so the display:flex above would keep this visible for every
    user who never turns the feature on. Same fix as .routenav[hidden]. */
 .evestat[hidden] { display: none; }
+/* NOT dead code, despite MIN_WIDTH being 840 (ui/window.py:44). That is a
+   PHYSICAL-pixel floor: the app is system-DPI-aware (ui/chrome.py:180), so
+   the CSS viewport is 840/scale -- 672px at 125%, 560px at 150%. This rule
+   fires at any scaling above 100%, which is most Windows laptops. */
 @media (max-width: 720px) { .evestat { display: none; } }
 
 /* ====================== modal dialog layer ==========================
