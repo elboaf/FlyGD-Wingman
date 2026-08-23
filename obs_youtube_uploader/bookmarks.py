@@ -213,7 +213,7 @@ def generate_ini(section: dict) -> str:
     lines.append("[Enabled]")
     for title, on in windows.items():
         clean = sanitise(title)
-        if not _is_engine_window_title(clean):
+        if not is_engine_window_title(clean):
             continue
         lines.append(f"{clean}={1 if on else 0}")
 
@@ -239,11 +239,15 @@ def sanitise(value: str) -> str:
 # section header and one starting with ";" as a comment, while an embedded
 # "=" moves the key/value split and makes the entry unmatchable. A title that
 # starts with "EVE - " can do none of those.
-_ENGINE_TITLE_PREFIX = "EVE - "
+#
+# Public: evewindows.list_eve_windows uses this as the single source of what
+# counts as an EVE client window, so the window it offers to enable and the
+# window generate_ini actually writes never drift apart.
+ENGINE_TITLE_PREFIX = "EVE - "
 
 
-def _is_engine_window_title(title: str) -> bool:
-    return title.startswith(_ENGINE_TITLE_PREFIX) and "=" not in title
+def is_engine_window_title(title: str) -> bool:
+    return title.startswith(ENGINE_TITLE_PREFIX) and "=" not in title
 
 
 # Settings the standalone script carried that the engine no longer has.
@@ -304,7 +308,7 @@ def import_legacy_ini(text: str) -> dict:
             # Deliberately not reported: a line naming a window with no name
             # carries no information the user can act on.
             continue
-        if not _is_engine_window_title(clean):
+        if not is_engine_window_title(clean):
             # The engine only ever matches ^EVE -  (111unified.ahk:248), so
             # generate_ini would drop this silently on the next write.
             discarded_windows.append(clean)

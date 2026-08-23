@@ -1,7 +1,7 @@
 """Windows-only at runtime, importable on Linux -- the ui/chrome.py pattern
 (window-resize-plan.md:130-140). The enumerator is injected so the matching
 and de-duplication logic is testable off-platform."""
-from obs_youtube_uploader import evewindows
+from obs_youtube_uploader import bookmarks, evewindows
 
 
 def test_returns_empty_off_windows(monkeypatch):
@@ -37,3 +37,20 @@ def test_enumerator_failure_is_survivable(monkeypatch):
         raise OSError("no window station")
 
     assert evewindows.list_eve_windows(enumerator=boom) == []
+
+
+def test_titles_the_engine_would_drop_are_not_offered(monkeypatch):
+    """A title offered here but rejected by the INI writer gives the user a
+    checkbox that silently does nothing. The rule lives in one place."""
+    monkeypatch.setattr(evewindows.sys, "platform", "win32")
+    titles = ["EVE - Ok", "EVE - Bad=Title"]
+    assert evewindows.list_eve_windows(enumerator=lambda: titles) == ["EVE - Ok"]
+
+
+def test_the_offered_rule_is_the_written_rule(monkeypatch):
+    """Not a duplicate of the above: this pins that the two layers share one
+    predicate rather than happening to agree today."""
+    monkeypatch.setattr(evewindows.sys, "platform", "win32")
+    for title in ["EVE - Ok", "EVE - Bad=Title", "Notepad", "eve - lower"]:
+        offered = evewindows.list_eve_windows(enumerator=lambda t=title: [t]) == [title]
+        assert offered == bookmarks.is_engine_window_title(title), title
