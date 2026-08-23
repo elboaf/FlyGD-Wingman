@@ -2,7 +2,24 @@
 ; 111unified.ahk - EVE Bookmark Helper (Protean + Flygd/Thera)
 ; ============================================================
 #Persistent
-#SingleInstance
+; Force, explicitly: a duplicate spawn must replace the previous copy, not
+; raise a prompt for a user who no longer has a GUI to answer it in.
+#SingleInstance Force
+
+; Wingman passes /token <value> at spawn and records the same value beside
+; the PID. Orphan recovery matches on it before terminating anything, so
+; the interpreter running someone else's script is never killed.
+RunToken := ""
+Loop %0%
+{
+    Arg := %A_Index%
+    if (Arg = "/token" && A_Index < %0%)
+    {
+        Next := A_Index + 1
+        RunToken := %Next%
+    }
+}
+
 SetStoreCapsLockMode, Off
 GroupAdd, EVEWindows, EVE -
 
@@ -34,8 +51,6 @@ PrefaceReturn := 1 ; Default: enabled
 ReturnPreface := "!" ; Default return preface character
 
 ; --- Keybind defaults ---
-KB_Copy        := ""
-KB_Paste       := ""
 KB_GrabSig     := ""
 KB_SetRoot     := ""
 KB_FormatEnf   := ""
@@ -59,14 +74,6 @@ KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
 ; Maps hotkey string -> label, so we can disable by exact label
 HotkeyLabelMap := {}
 
-; --- Tray setup ---
-Menu, Tray, NoStandard
-Menu, Tray, Add, Open GUI, ShowMainGui
-Menu, Tray, Add, Reload Script, ReloadScript
-Menu, Tray, Add, Exit, ExitScript
-Menu, Tray, Default, Open GUI
-Menu, Tray, Tip, EVE Bookmark Helper
-
 ; Single INI file for everything
 IniFile := "eve_bookmark_helper.ini"
 
@@ -89,26 +96,13 @@ NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
 
-; Show GUI on launch
-GoSub, ShowMainGui
-
-Return
-
-ExitScript:
-ExitApp
-Return
-
-ReloadScript:
-Reload
 Return
 
 LoadAllSettings:
-; Create INI file with defaults if it doesn't exist
+; Wingman owns creating and writing eve_bookmark_helper.ini; the engine must
+; only ever read it, never create or rewrite it.
 IfNotExist, %IniFile%
-{
-    GoSub, SaveAllSettings
     Return
-}
 
 ; Load settings
 IniRead, HomeZeroIs0, %IniFile%, Settings, HomeZeroIs0, 1
@@ -117,8 +111,6 @@ IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
 IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
 
 ; Load keybindings
-IniRead, KB_Copy,        %IniFile%, Keybinds, Copy,      
-IniRead, KB_Paste,       %IniFile%, Keybinds, Paste,     
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
 IniRead, KB_SetRoot,     %IniFile%, Keybinds, SetRoot,   
 IniRead, KB_FormatEnf,   %IniFile%, Keybinds, FormatEnf, 
@@ -138,228 +130,6 @@ IniRead, KB_FinM,        %IniFile%, Keybinds, FinM,
 IniRead, KB_FinS,        %IniFile%, Keybinds, FinS,      
 IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,      
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
-Return
-
-SaveAllSettings:
-; Save all keybindings
-IniWrite, %KB_Copy%,        %IniFile%, Keybinds, Copy
-IniWrite, %KB_Paste%,       %IniFile%, Keybinds, Paste
-IniWrite, %KB_GrabSig%,     %IniFile%, Keybinds, GrabSig
-IniWrite, %KB_SetRoot%,     %IniFile%, Keybinds, SetRoot
-IniWrite, %KB_FormatEnf%,   %IniFile%, Keybinds, FormatEnf
-IniWrite, %KB_FinH%,        %IniFile%, Keybinds, FinH
-IniWrite, %KB_Fin13%,       %IniFile%, Keybinds, Fin13
-IniWrite, %KB_Fin1%,        %IniFile%, Keybinds, Fin1
-IniWrite, %KB_Fin2%,        %IniFile%, Keybinds, Fin2
-IniWrite, %KB_Fin3%,        %IniFile%, Keybinds, Fin3
-IniWrite, %KB_Fin4%,        %IniFile%, Keybinds, Fin4
-IniWrite, %KB_Fin5%,        %IniFile%, Keybinds, Fin5
-IniWrite, %KB_Fin6%,        %IniFile%, Keybinds, Fin6
-IniWrite, %KB_FinETag%,     %IniFile%, Keybinds, FinETag
-IniWrite, %KB_FinSlash%,    %IniFile%, Keybinds, FinSlash
-IniWrite, %KB_FinN%,        %IniFile%, Keybinds, FinN
-IniWrite, %KB_FinL%,        %IniFile%, Keybinds, FinL
-IniWrite, %KB_FinM%,        %IniFile%, Keybinds, FinM
-IniWrite, %KB_FinS%,        %IniFile%, Keybinds, FinS
-IniWrite, %KB_FinC%,        %IniFile%, Keybinds, FinC
-IniWrite, %KB_ConvertScout%, %IniFile%, Keybinds, ConvertScout
-
-; Save settings
-IniWrite, %HomeZeroIs0%, %IniFile%, Settings, HomeZeroIs0
-IniWrite, %CurrentMode%, %IniFile%, Settings, Mode
-IniWrite, %PrefaceReturn%, %IniFile%, Settings, PrefaceReturn
-IniWrite, %ReturnPreface%, %IniFile%, Settings, ReturnPreface
-
-; Save window enabled settings (preserve existing if any)
-Loop % GuiWinTotalControls
-{
-    WinTitle := WinControlIndex%A_Index%
-    VarName := "WCB" . A_Index
-    GuiControlGet, Val, Main:, %VarName%
-    IniWrite, %Val%, %IniFile%, Enabled, %WinTitle%
-}
-Return
-
-SaveWindowSettings:
-; Save only window enabled settings
-Loop % GuiWinTotalControls
-{
-    WinTitle := WinControlIndex%A_Index%
-    VarName := "WCB" . A_Index
-    GuiControlGet, Val, Main:, %VarName%
-    IniWrite, %Val%, %IniFile%, Enabled, %WinTitle%
-}
-Return
-
-ShowMainGui:
-GoSub, BuildMainGui
-Return
-
-BuildMainGui:
-Gui, Main:Destroy
-Gui, Main:New, +AlwaysOnTop, Wormhole Bookmark Helper
-Gui, Main:Font, s10
-Gui, Main:Add, Tab3, vMainTab w520 h580, Status|Windows|Keybinds
-
-Gui, Main:Tab, 1
-Gui, Main:Font, s10 bold
-Gui, Main:Add, Text, x20 y50,  Current Sig ID:
-Gui, Main:Add, Text, x20 y78,  Root System:
-Gui, Main:Add, Text, x20 y106, Root Mode:
-Gui, Main:Add, Text, x20 y134, Next Numeric:
-Gui, Main:Add, Text, x20 y162, Next Alpha:
-Gui, Main:Font, s10 norm
-Gui, Main:Add, Text, vStatusSig       x200 y50  w250, ---
-Gui, Main:Add, Text, vStatusRoot      x200 y78  w250, ---
-Gui, Main:Add, Text, vStatusMode      x200 y106 w250, ---
-Gui, Main:Add, Text, vStatusNextNum   x200 y134 w250, ---
-Gui, Main:Add, Text, vStatusNextAlpha x200 y162 w250, ---
-Gui, Main:Font, s10 bold
-Gui, Main:Add, Text, x20 y200, Set Root Manually:
-Gui, Main:Font, s10 norm
-Gui, Main:Add, Edit,   vManualRoot x20  y222 w160
-Gui, Main:Add, Button, x188 y220 w80 gSetManualRoot, Set Root
-Gui, Main:Add, Button, x276 y220 w80 gClearRoot,     Clear Root
-
-Gui, Main:Add, Text, x20 y255, Mode:
-Gui, Main:Add, DropDownList, x80 y252 w150 vModeDropdown gOnModeChange, Protean/v21||Flygd/ABH
-if (CurrentMode = 2)
-    GuiControl, Main: Choose, ModeDropdown, 2
-
-HomeZeroChecked := HomeZeroIs0 ? "Checked" : ""
-Gui, Main:Add, CheckBox, x20 y280 vHomeZeroIs0 %HomeZeroChecked% gOnHomeZeroToggle, First home hole is 0 (v21/null static mode)
-
-; --- Return Preface settings ---
-PrefaceChecked := PrefaceReturn ? "Checked" : ""
-Gui, Main:Add, CheckBox, x20 y310 vPrefaceReturn %PrefaceChecked% gOnPrefaceToggle, Preface return bookmark
-Gui, Main:Add, Text, x20 y335, Return preface value:
-Gui, Main:Add, Edit, x160 y332 w80 vReturnPreface gOnPrefaceChange, %ReturnPreface%
-
-Gui, Main:Tab, 2
-Gui, Main:Font, s9
-Gui, Main:Add, Text, x20 y50 w480, Select which EVE windows have hotkeys active:
-Gui, Main:Add, Button, x20 y70 w80 gRefreshWinList, Refresh
-WinList := []
-WinGet, AllIDs, List
-Loop % AllIDs
-{
-    ID := AllIDs%A_Index%
-    WinGetTitle, Title, ahk_id %ID%
-    if (Title ~= "^EVE - ") {
-        AlreadyAdded := False
-        Loop % WinList.MaxIndex()
-        {
-            if (WinList[A_Index] = Title) {
-                AlreadyAdded := True
-                Break
-            }
-        }
-        if (!AlreadyAdded)
-            WinList.Push(Title)
-    }
-}
-WinYPos := 100
-if (WinList.MaxIndex() = 0) {
-    Gui, Main:Add, Text, x20 y%WinYPos%, No EVE windows found.
-} else {
-    Loop % WinList.MaxIndex()
-    {
-        WinTitle := WinList[A_Index]
-        IniRead, Saved, %IniFile%, Enabled, %WinTitle%, 0
-        Checked := Saved ? "Checked" : ""
-        VarName := "WCB" . A_Index
-        Gui, Main:Add, CheckBox, x20 y%WinYPos% v%VarName% %Checked% gOnWinCheck, %WinTitle%
-        WinControlIndex%A_Index% := WinTitle
-        WinTotalControls := A_Index
-        WinYPos += 24
-    }
-}
-GuiWinTotalControls := WinTotalControls
-
-Gui, Main:Tab, 3
-Gui, Main:Font, s9 bold
-Gui, Main:Add, Text, x20 y50 w220, Function
-Gui, Main:Add, Text, x250 y50 w220, Hotkey (click then press combo)
-Gui, Main:Font, s9 norm
-KBDefs := []
-KBDefs.Push(["Copy",                      "KB_Copy"])
-KBDefs.Push(["Paste",                     "KB_Paste"])
-KBDefs.Push(["Grab Sig ID",               "KB_GrabSig"])
-KBDefs.Push(["Set Root",                  "KB_SetRoot"])
-KBDefs.Push(["Format Enforcer",           "KB_FormatEnf"])
-KBDefs.Push(["Convert EvE-Scout Bookmarks", "KB_ConvertScout"])
-KBDefs.Push(["Finisher: HS (highsec)",     "KB_FinH"])
-KBDefs.Push(["Finisher: LS (lowsec)",      "KB_FinL"])
-KBDefs.Push(["Finisher: NS (nullsec)",     "KB_FinN"])
-KBDefs.Push(["Finisher: C13 (shattered)",  "KB_Fin13"])
-KBDefs.Push(["Finisher: C1",               "KB_Fin1"])
-KBDefs.Push(["Finisher: C2",               "KB_Fin2"])
-KBDefs.Push(["Finisher: C3",               "KB_Fin3"])
-KBDefs.Push(["Finisher: C4",               "KB_Fin4"])
-KBDefs.Push(["Finisher: C5",               "KB_Fin5"])
-KBDefs.Push(["Finisher: C6",               "KB_Fin6"])
-KBDefs.Push(["E Tag (end of life)",       "KB_FinETag"])
-KBDefs.Push(["/ Tag (half mass)",         "KB_FinSlash"])
-KBDefs.Push(["M Tag (medium hole)",       "KB_FinM"])
-KBDefs.Push(["S Tag (frig hole)",         "KB_FinS"])
-KBDefs.Push(["C Tag (critical)",          "KB_FinC"])
-KBYPos := 68
-Loop % KBDefs.MaxIndex()
-{
-    FuncName := KBDefs[A_Index][1]
-    VarRef   := KBDefs[A_Index][2]
-    CurVal   := %VarRef%
-    CtrlName := "KBCtrl" . A_Index
-    KBCtrlRef%A_Index% := VarRef
-    Gui, Main:Add, Text,   x20  y%KBYPos% w220, %FuncName%
-    Gui, Main:Add, Hotkey, x250 y%KBYPos% w220 v%CtrlName% gKBChange Limit1, %CurVal%
-    KBYPos += 22
-}
-KBTotalCtrls := KBDefs.MaxIndex()
-Gui, Main:Add, Button, x20 y%KBYPos% w120 gResetKeybinds, Reset Defaults
-
-Gui, Main:Tab
-Gui, Main:Add, Button, x20 y590 w80 gMainGuiClose, Close
-Gui, Main:Show, w540 h640
-Return
-
-MainGuiClose:
-Gui, Main:Hide
-Return
-
-RefreshWinList:
-GoSub, BuildMainGui
-Return
-
-OnWinCheck:
-GoSub, SaveWindowSettings
-GoSub, RefreshHotkeys
-Return
-
-OnModeChange:
-GuiControlGet, ModeChoice, Main:, ModeDropdown
-if (ModeChoice = "Protean/v21")
-    CurrentMode := 1
-else if (ModeChoice = "Flygd/ABH")
-    CurrentMode := 2
-GoSub, SaveAllSettings
-GoSub, RefreshStatusTab
-Return
-
-OnHomeZeroToggle:
-GuiControlGet, HomeZeroIs0, Main:, HomeZeroIs0
-GoSub, SaveAllSettings
-GoSub, RefreshStatusTab
-Return
-
-OnPrefaceToggle:
-GuiControlGet, PrefaceReturn, Main:, PrefaceReturn
-GoSub, SaveAllSettings
-Return
-
-OnPrefaceChange:
-GuiControlGet, ReturnPreface, Main:, ReturnPreface
-GoSub, SaveAllSettings
 Return
 
 RefreshStatusTab:
@@ -633,52 +403,6 @@ SetTimer, RemoveTooltip, -1500
 GoSub, ShowRootTooltip
 Return
 
-KBChange:
-Loop % KBTotalCtrls
-{
-    CtrlName := "KBCtrl" . A_Index
-    if (A_GuiControl = CtrlName) {
-        VarRef := KBCtrlRef%A_Index%
-        GuiControlGet, NewKey, Main:, %CtrlName%
-        if (NewKey = "" || NewKey = "None") {
-            %VarRef% := ""
-        } else {
-            %VarRef% := NewKey
-        }
-        GoSub, SaveAllSettings
-        GoSub, RefreshHotkeys
-        Break
-    }
-}
-Return
-
-ResetKeybinds:
-KB_Copy        := ""
-KB_Paste       := ""
-KB_GrabSig     := ""
-KB_SetRoot     := ""
-KB_FormatEnf   := ""
-KB_FinH        := ""
-KB_Fin13       := ""
-KB_Fin1        := ""
-KB_Fin2        := ""
-KB_Fin3        := ""
-KB_Fin4        := ""
-KB_Fin5        := ""
-KB_Fin6        := ""
-KB_FinETag     := ""
-KB_FinSlash    := ""
-KB_FinN        := ""
-KB_FinL        := ""
-KB_FinM        := ""
-KB_FinS        := ""
-KB_FinC        := ""
-KB_ConvertScout := "^+s"
-GoSub, SaveAllSettings
-GoSub, RefreshHotkeys
-GoSub, BuildMainGui
-Return
-
 ShowRootTooltip:
 if (RootModeActive) {
     NextNumDisplay   := BuildSystemKey(RootKey, NextNum,   False)
@@ -717,10 +441,6 @@ IniRead, EnabledSection, %IniFile%, Enabled
 
 ; Step 3: Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
-if (KB_Copy != "")
-    HotkeyLabelMap[KB_Copy]      := "DoCopy"
-if (KB_Paste != "")
-    HotkeyLabelMap[KB_Paste]     := "DoPaste"
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
 if (KB_SetRoot != "")
@@ -760,17 +480,13 @@ if (KB_FinS != "")
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
-; Step 4: Register GLOBAL hotkeys (Copy, Paste, and Set Root) - no window restriction
+; Step 4: Register GLOBAL hotkeys (Set Root) - no window restriction
 ; Reset to global context
 Hotkey, IfWinActive
-if (KB_Copy != "")
-    Hotkey, %KB_Copy%, DoCopy, On UseErrorLevel
-if (KB_Paste != "")
-    Hotkey, %KB_Paste%, DoPaste, On UseErrorLevel
 if (KB_SetRoot != "")
     Hotkey, %KB_SetRoot%, DoSemi, On UseErrorLevel
 
-; Step 5: Register window-specific hotkeys for enabled windows (excluding copy, paste, and set root)
+; Step 5: Register window-specific hotkeys for enabled windows (excluding set root, which is global)
 Loop, Parse, EnabledSection, `n, `r
 {
     Line := Trim(A_LoopField)
@@ -984,14 +700,6 @@ AllPrefixesSingle(clip) {
     }
     return foundAny
 }
-
-DoCopy:
-Send ^c
-Return
-
-DoPaste:
-Send ^v
-Return
 
 DoQ:
 Send ^c
