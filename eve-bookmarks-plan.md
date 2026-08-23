@@ -3025,6 +3025,15 @@ def test_get_returns_settings_labels_and_order(api):
     assert got["labels"]["FinH"] == "Finisher: HS (highsec)"
 
 
+def test_get_returns_human_labels_for_bound_keys(api):
+    """The page must never translate a hotkey string itself -- that is why
+    to_ahk returns a display value. Unbound ids are absent rather than
+    empty so the page's `|| 'Not set'` fallback fires."""
+    got = api.get_bookmarks()
+    assert got["displays"]["ConvertScout"] == "Ctrl+Shift+S"
+    assert "FinH" not in got["displays"]
+
+
 def test_get_lists_live_eve_windows(api, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
     monkeypatch.setattr(api_mod.evewindows, "list_eve_windows",
@@ -3111,6 +3120,13 @@ Add `evewindows` and `bookmarks` to the imports in `api.py`, add `engine: object
             "order": list(bookmarks.BIND_IDS),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
+            # Human labels for the bound keys. Computed here rather than in
+            # the page, which is the entire reason to_ahk returns a display
+            # string: the page holds no mapping table and cannot drift from
+            # this one. Without this the UI would show raw "^+s".
+            "displays": {bid: bookmarks.parse_ahk(value)["display"]
+                         for bid, value in section["keybinds"].items()
+                         if value},
         }
 
     def save_bookmarks(self, section) -> dict:
@@ -3608,7 +3624,7 @@ The page holds no mapping table and makes no judgements — it captures, sends, 
       row.appendChild(WM.make('span', 'lab', state.labels[id]));
 
       var button = WM.make('button', 'bindbtn',
-                           state.settings.keybinds[id] || 'Not set');
+                           state.displays[id] || 'Not set');
       if (clashing[id]) button.classList.add('clash');
       button.addEventListener('click', function () { beginCapture(id, button); });
       row.appendChild(button);
