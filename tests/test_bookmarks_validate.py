@@ -39,6 +39,14 @@ def test_blank_binds_never_collide():
     assert bookmarks.collisions(dict(bookmarks.DEFAULT_BINDS)) == {}
 
 
+def test_collision_is_caught_across_modifier_order():
+    """"+^h" and "^+h" are the same physical hotkey; RefreshHotkeys only
+    reports this as a silent ErrorLevel at registration, which is the
+    failure this check exists to catch before it gets there."""
+    binds = dict(bookmarks.DEFAULT_BINDS, FinH="^+h", FinL="+^h")
+    assert bookmarks.collisions(binds) == {"^+h": ["FinH", "FinL"]}
+
+
 def test_parse_ahk_accepts_a_typed_string():
     """The manual escape hatch for non-US layouts, validated by the same
     rules as capture."""

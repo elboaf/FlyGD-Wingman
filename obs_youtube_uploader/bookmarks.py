@@ -121,14 +121,23 @@ def collisions(binds: dict) -> dict:
     """Map each doubly-bound AHK string to every bind id claiming it.
 
     Blank means "do not register" to RefreshHotkeys, so blanks are skipped
-    rather than treated as a shared value.
+    rather than treated as a shared value. Keyed through parse_ahk() rather
+    than the raw trimmed string: AHK accepts modifiers in any order, so
+    "+^s" and "^+s" are the same physical hotkey and must collide here --
+    the check exists precisely to catch what RefreshHotkeys itself only
+    reports as a silent ErrorLevel at registration.
     """
     seen: dict[str, list[str]] = {}
     for bid in BIND_IDS:
         value = (binds.get(bid) or "").strip()
         if not value:
             continue
-        seen.setdefault(value, []).append(bid)
+        # Fall back to the raw value when parse_ahk rejects it: an invalid
+        # bind is still worth flagging if it happens to be typed identically
+        # twice, and the fallback is exactly what a human typed, so it still
+        # reads sensibly if ever shown.
+        key = parse_ahk(value)["ahk"] or value
+        seen.setdefault(key, []).append(bid)
     return {k: v for k, v in seen.items() if len(v) > 1}
 
 
