@@ -271,7 +271,7 @@ class HotkeyEngine:
 
         now = time.time() if now is None else now
         try:
-            raw = json.loads(self._status_path().read_text())
+            raw = json.loads(self._status_path().read_text(encoding="utf-8"))
             written = float(raw["written"])
         except (OSError, ValueError, KeyError, TypeError):
             return EngineStatus(state="stale")

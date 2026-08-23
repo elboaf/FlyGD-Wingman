@@ -30,6 +30,15 @@ EpochNow() {
 SetStoreCapsLockMode, Off
 GroupAdd, EVEWindows, EVE -
 
+; Pin the encoding: the app reads this file with encoding="utf-8", and sig
+; is three characters taken straight from the clipboard, so a non-ASCII
+; signature would otherwise decode differently on each side and show as a
+; permanent "stale" readout. UTF-8-RAW is UTF-8 without a BOM -- a BOM
+; would make json.loads fail on the first character. Set here, in the
+; auto-execute section, so it becomes the default for every later-launched
+; thread (including the RefreshStatusTab timer) rather than just this one.
+FileEncoding, UTF-8-RAW
+
 ; --- Root tracking ---
 RootKey := ""
 RootJustFired := False
@@ -165,13 +174,25 @@ FileAppend, %StatusBody%, eve_status.json.tmp
 FileMove, eve_status.json.tmp, eve_status.json, 1
 Return
 
-; Minimal escaping: these values are system names, sig ids and bind ids --
-; no control characters -- but a stray quote or backslash would still
-; produce a file Python cannot parse, and the UI would read "stale".
+; Strip control characters before escaping. json.loads rejects raw
+; control characters inside strings, and sig is three characters taken
+; straight from the clipboard, so a stray tab or newline is reachable.
+; Stripping rather than \uXXXX-escaping: none of these values
+; legitimately contains one, and a signature with a tab in it is not
+; meaningful. Order matters: strip first, then escape backslashes, then
+; quotes -- escaping backslashes after quotes would double-escape the
+; backslashes the quote replacement introduces.
 JsonEsc(text) {
-    StringReplace, text, text, \, \\, All
-    StringReplace, text, text, ", \", All
-    return text
+    clean := ""
+    Loop, Parse, text
+    {
+        code := Asc(A_LoopField)
+        if (code >= 32 && code != 127)
+            clean .= A_LoopField
+    }
+    StringReplace, clean, clean, \, \\, All
+    StringReplace, clean, clean, ", \", All
+    return clean
 }
 
 JsonList(csv) {
