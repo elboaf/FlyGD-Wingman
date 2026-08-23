@@ -127,6 +127,8 @@ def test_eve_command_is_forwarded(api):
 
 
 def test_import_applies_and_reports(api, tmp_path, monkeypatch):
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
     legacy.write_text("[Keybinds]\r\nFinH=y\r\nCopy=^c\r\n")
     api._window.dialog_result = (str(legacy),)
@@ -136,7 +138,9 @@ def test_import_applies_and_reports(api, tmp_path, monkeypatch):
     assert any("Copy" in d for d in got["discarded"])
 
 
-def test_import_cancelled_changes_nothing(api):
+def test_import_cancelled_changes_nothing(api, monkeypatch):
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     api._window.dialog_result = None
     assert api.import_bookmarks()["ok"] is False
 

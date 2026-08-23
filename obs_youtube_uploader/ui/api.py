@@ -64,6 +64,18 @@ def _folder_dialog_kind():
     return webview.FileDialog.FOLDER
 
 
+def _open_file_dialog_kind():
+    """pywebview's open-file-dialog constant, imported at call time.
+
+    Same seam as _folder_dialog_kind above, for the same two reasons: the
+    tests run on a box with no webview installed, and the constant has
+    moved once already. Importing webview inline at the call site instead
+    is what broke the import tests -- there was no seam left to patch.
+    """
+    import webview
+    return webview.FileDialog.OPEN
+
+
 def _close_media(media) -> None:
     """Release the file handle a MediaFileUpload holds, best effort.
 
@@ -1346,9 +1358,8 @@ class Api:
         directory, so there is no path worth probing -- the user points at
         it.
         """
-        import webview
         chosen = self._window.create_file_dialog(
-            webview.FileDialog.OPEN, directory="")
+            _open_file_dialog_kind(), directory="")
         if not chosen:
             return {"ok": False, "discarded": [], "notes": []}
         try:
