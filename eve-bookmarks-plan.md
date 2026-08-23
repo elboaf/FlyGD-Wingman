@@ -3961,7 +3961,11 @@ AHK_URL = ("https://github.com/AutoHotkey/AutoHotkey/releases/download/"
            "v1.1.37.02/AutoHotkey_1.1.37.02.zip")
 AHK_SHA256 = "6f3663f7cdd25063c8c8728f5d9b07813ced8780522fd1f124ba539e2854215f"
 OUT_DIR = Path(__file__).parent / "bin"
-WANTED = ("AutoHotkeyU64.exe",)
+# license.txt is not optional cargo: GPLv2 section 1 requires giving every
+# recipient a copy of the Licence along with the program, and the written
+# offer in THIRD-PARTY-NOTICES.md answers section 3(b), which is a different
+# obligation. Extracting it here is what makes it available to ship.
+WANTED = ("AutoHotkeyU64.exe", "license.txt")
 VERSION_FILE = OUT_DIR / ".autohotkey-version"
 
 
@@ -4178,6 +4182,7 @@ Source: https://github.com/GyanD/codexffmpeg/releases/tag/7.1
 Version: 1.1.37.02
 Licence: GNU General Public License v2
 Source: https://github.com/AutoHotkey/AutoHotkey/releases/tag/v1.1.37.02
+Licence text: `AutoHotkey-COPYING.txt`, installed beside the application.
 
 ## Written offer
 
@@ -4198,6 +4203,11 @@ In `uploader.spec` `datas`:
         # Must reach the installed tree, not just the repository: the offer
         # has to travel with the binaries it covers.
         (str(ROOT / "THIRD-PARTY-NOTICES.md"), "."),
+        # The GPL text itself, which section 1 requires accompany the
+        # binary. Renamed on the way in so it cannot be mistaken for a
+        # licence covering Wingman, which is MIT.
+        (str(ROOT / "packaging" / "bin" / "license.txt"),
+         "AutoHotkey-COPYING.txt"),
 ```
 
 - [ ] **Step 3: Point at it from the README**
