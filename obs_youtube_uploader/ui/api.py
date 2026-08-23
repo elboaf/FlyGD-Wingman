@@ -1375,3 +1375,12 @@ class Api:
     def alert_import(self, body: str) -> None:
         """Report what an import changed. Uses the existing dialog layer."""
         self._alert("info", "Import complete", str(body))
+
+    def alert_bookmarks(self, body: str) -> None:
+        """Generic Bookmarks-route alert for anything that is not an import
+        summary -- a rejected typed hotkey, a refused engine command, or a
+        failed import's reason. `alert_import` keeps its own "Import
+        complete" title for a completed (if partial) import; that title
+        would be misleading for these.
+        """
+        self._alert("info", "Bookmarks", str(body))

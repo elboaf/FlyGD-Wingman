@@ -12,7 +12,20 @@
   var capturing = null;
 
   function send(section) {
-    WM.send('save_bookmarks', section).then(render);
+    WM.send('save_bookmarks', section).then(function (payload) {
+      if (!payload) {
+        // The save did not happen (bridge failure). A checkbox has
+        // already flipped itself before its change handler ran, and
+        // save_bookmarks never persisted anything -- re-render from the
+        // last known-good state so the control shows what is actually
+        // stored, instead of leaving it displaying something that was
+        // never saved. `state` itself was never mutated: every caller
+        // builds `section` from a deep clone of `state.settings`.
+        render(state);
+        return;
+      }
+      render(payload);
+    });
   }
 
   function render(payload) {
@@ -88,11 +101,20 @@
     });
 
     var warn = WM.el('eve-bind-warning');
-    var names = Object.keys(collisions);
-    warn.hidden = names.length === 0;
-    if (names.length) {
-      warn.textContent = 'Two actions share the same key: ' +
-        names.join(', ') + '. Only one of them will work.';
+    var combos = Object.keys(collisions);
+    warn.hidden = combos.length === 0;
+    if (combos.length) {
+      // Name the ACTIONS, not the raw combo: "^+s" means nothing in a
+      // nineteen-row list, but the two labels sharing it do. The combo's
+      // display string is still shown, once per group, for reference.
+      var groups = combos.map(function (combo) {
+        var ids = collisions[combo];
+        var display = state.displays[ids[0]] || combo;
+        var names = ids.map(function (id) { return state.labels[id]; });
+        return names.join(' and ') + ' both use ' + display;
+      });
+      warn.textContent = groups.join('; ') +
+        '. Only one of each pair will work.';
     }
 
     state.order.forEach(function (id) {
@@ -123,7 +145,7 @@
         WM.send('parse_bind', text).then(function (result) {
           if (!result) return;
           if (result.error) {
-            WM.send('alert_import',
+            WM.send('alert_bookmarks',
                     'That is not a hotkey AutoHotkey can register.');
             return;
           }
@@ -161,6 +183,12 @@
   }
 
   function setBind(id, ahk) {
+    // Any other control acting on the row being captured cancels the
+    // capture. The keydown handler's identity check cannot catch this on
+    // its own: nothing replaces `capturing` here, only `renderBinds()`
+    // rebuilds around it, so it would still match and a later keystroke
+    // would silently re-apply a binding this call just changed or cleared.
+    if (capturing && capturing.id === id) { endCapture(); }
     var next = JSON.parse(JSON.stringify(state.settings));
     next.keybinds[id] = ahk;
     send(next);
@@ -201,19 +229,44 @@
     send(next);
   });
 
+  // `eve_command` returns a bool rather than pushing a status: false means
+  // the engine did not accept it (not running, or a previous command is
+  // still in flight), and without this the button would look like it did
+  // something when nothing happened.
   WM.el('eve-set-root').addEventListener('click', function () {
     var value = WM.el('eve-root-input').value.trim();
     if (!value) return;
-    WM.send('eve_command', 'set_root', value);
+    WM.send('eve_command', 'set_root', value).then(function (ok) {
+      if (!ok) {
+        WM.send('alert_bookmarks',
+                'The engine did not accept that. It may not be running, or '
+                + 'a previous command is still being processed.');
+      }
+    });
   });
 
   WM.el('eve-clear-root').addEventListener('click', function () {
-    WM.send('eve_command', 'clear_root');
+    WM.send('eve_command', 'clear_root').then(function (ok) {
+      if (!ok) {
+        WM.send('alert_bookmarks',
+                'The engine did not accept that. It may not be running, or '
+                + 'a previous command is still being processed.');
+      }
+    });
   });
 
   WM.el('eve-import').addEventListener('click', function () {
     WM.send('import_bookmarks').then(function (result) {
-      if (!result || !result.ok) return;
+      if (!result) return;
+      if (!result.ok) {
+        // A failure carries a reason: an unreadable or malformed file, not
+        // simply the user cancelling the dialog (which comes back with an
+        // empty `notes`, and needs no alert at all).
+        if (result.notes && result.notes.length) {
+          WM.send('alert_bookmarks', result.notes.join('\n\n'));
+        }
+        return;
+      }
       var lines = [];
       if (result.discarded.length) {
         lines.push('These no longer exist and were not imported: ' +
