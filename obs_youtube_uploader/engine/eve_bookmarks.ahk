@@ -10,10 +10,18 @@
 ; the PID. Orphan recovery matches on it before terminating anything, so
 ; the interpreter running someone else's script is never killed.
 RunToken := ""
-Loop %0%
+; ArgCount is captured with a LEGACY assignment (= not :=) on purpose. In an
+; expression, %0% is a double-dereference: it reads variable `0` (the count,
+; e.g. "2") and then dereferences the variable NAMED "2" -- the second
+; argument's text. Writing `A_Index < %0%` therefore compared the index
+; against the token itself, which string-compares true for tokens beginning
+; 1-9 or a-f and false for those beginning "0", silently dropping the token
+; on about one launch in sixteen. `:=` here would reintroduce exactly that.
+ArgCount = %0%
+Loop %ArgCount%
 {
     Arg := %A_Index%
-    if (Arg = "/token" && A_Index < %0%)
+    if (Arg = "/token" && A_Index < ArgCount)
     {
         Next := A_Index + 1
         RunToken := %Next%
