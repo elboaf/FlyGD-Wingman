@@ -4299,6 +4299,18 @@ pytest — the engine is AutoHotkey.
       Wingman terminates it
 - [ ] With the pid file pointing at an unrelated live process, starting
       Wingman does **not** kill it
+- [ ] **A hung engine is reclaimed at startup even with the feature turned
+      off.** Reclamation runs unconditionally, not from the enable path;
+      otherwise disabling the feature stranded a live keyboard hook.
+- [ ] **Enabling with the interpreter deleted shows the reason**, not a bare
+      "Stopped" — and the reason survives the next poll tick a second later
+      rather than being overwritten by it
+- [ ] **At 125% and 150% Windows display scaling the EVE status segment
+      hides** rather than crowding the progress bar. The window's 840px
+      floor is physical pixels, so the CSS viewport is 672px and 560px
+      respectively. Nobody has observed this; it is reasoning only
+- [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
+      the application as **files**, not as directories containing a licence
 ```
 
 - [ ] **Step 2: Run the full suite and commit**
@@ -4315,7 +4327,7 @@ git commit -m "docs: smoke checks for the bookmark engine"
 
 After Task 26:
 
-1. `pytest -q` — the 607 existing tests plus roughly 90 new ones
+1. `pytest -q` — 841 passing (607 at branch start, 234 added)
 2. Read the full diff of `obs_youtube_uploader/engine/eve_bookmarks.ahk` against `111unified.ahk`. This is the part no test covers; it deserves the most reviewer attention in the whole change.
 3. Work the smoke checklist on Windows with EVE running.
 4. Confirm `THIRD-PARTY-NOTICES.md` reached `dist/OBSYouTubeUploader/`.
