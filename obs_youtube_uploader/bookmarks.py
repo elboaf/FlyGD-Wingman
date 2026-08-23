@@ -244,3 +244,70 @@ _ENGINE_TITLE_PREFIX = "EVE - "
 
 def _is_engine_window_title(title: str) -> bool:
     return title.startswith(_ENGINE_TITLE_PREFIX) and "=" not in title
+
+
+# Settings the standalone script carried that the engine no longer has.
+# Named individually so import can tell the user what it dropped.
+_REMOVED_SETTINGS = ("Mode", "PrefaceReturn", "ReturnPreface")
+_REMOVED_BINDS = ("Copy", "Paste")
+
+
+def _parse_ini(text: str) -> dict:
+    """Minimal INI reader. configparser is not used: the legacy file has
+    section keys (window titles) containing '=' and characters configparser
+    mangles, and we only need two flat sections."""
+    out: dict[str, dict[str, str]] = {}
+    current = None
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1]
+            out.setdefault(current, {})
+            continue
+        if current is None or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[current][key.strip()] = value.strip()
+    return out
+
+
+def import_legacy_ini(text: str) -> dict:
+    """Translate a standalone eve_bookmark_helper.ini into a settings section.
+
+    Returns what was imported, what was dropped, and any behaviour change
+    the user needs to be told about in their own terms. Never enables the
+    feature: reading someone's old settings is not consent to start a
+    global keyboard hook.
+    """
+    parsed = _parse_ini(text)
+    legacy_binds = parsed.get("Keybinds", {})
+    legacy_settings = parsed.get("Settings", {})
+    legacy_windows = parsed.get("Enabled", {})
+
+    section = {"enabled": False,
+               "keybinds": dict(DEFAULT_BINDS),
+               "windows": {}}
+    for bid in BIND_IDS:
+        if bid in legacy_binds:
+            section["keybinds"][bid] = sanitise(legacy_binds[bid])
+    section["windows"] = {title: value.strip() == "1"
+                          for title, value in legacy_windows.items()
+                          if sanitise(title)}
+
+    discarded = [f"{name} (setting)" for name in _REMOVED_SETTINGS
+                 if name in legacy_settings]
+    discarded += [f"{name} (keybind)" for name in _REMOVED_BINDS
+                  if legacy_binds.get(name)]
+
+    notes = []
+    # HomeZeroIs0 defaults to 1 (111unified.ahk:32) and the engine now
+    # hardcodes that. Only a user who turned it OFF sees a change: it is not
+    # tied to any naming mode (111unified.ahk:870,886,893), so this must be
+    # described as a renumbering, not as "no longer applies".
+    if legacy_settings.get("HomeZeroIs0", "1").strip() == "0":
+        notes.append(
+            "Your home-mode bookmarks used to start at .1; they will now "
+            "start at .0. That option no longer exists.")
+    return {"section": section, "discarded": discarded, "notes": notes}
