@@ -769,3 +769,49 @@ response leaves a worker waiting forever, which presents as a hung upload.
       icon and `Settings > Apps > Installed apps`. Both should show the real
       icon rather than a generic exe icon, since `installer.iss`'s
       `UninstallDisplayIcon` reads the icon embedded by `uploader.spec`.
+
+## EVE bookmark hotkeys
+
+Requires a Windows machine with EVE running. None of this is covered by
+pytest — the engine is AutoHotkey.
+
+- [ ] Bookmarks appears in the title bar; the window still drags by the
+      wordmark area
+- [ ] With the feature off, the status bar shows no EVE segment
+- [ ] Enabling starts the engine; the status bar segment appears
+- [ ] Hotkeys fire in an enabled EVE window and do nothing in an unenabled one
+- [ ] **A bound key does nothing when a non-EVE window is focused** — no bind is
+      global any more, and registration happens inside a function called while
+      an `IfWinActive` criterion is active. If that criterion does not carry
+      into the function, every bind registers globally and fires everywhere.
+      Nothing in the repository can test this; confirm it by hand.
+- [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
+      direct test of the teardown repair, and the bug that shipped for years
+- [ ] Disabling a window stops its hotkeys firing, within ~10s
+- [ ] Every finisher produces the correct Flygd/ABH name (Protean removal)
+- [ ] Home-mode bookmarks number from `.0`
+- [ ] Deliberately binding two actions to one key shows the collision warning
+- [ ] Binding a key another application owns shows a registration failure,
+      not a silently dead key
+- [ ] Set Root and Clear Root from the route change the status bar values
+- [ ] A second action taken immediately is not lost
+- [ ] Importing an existing `eve_bookmark_helper.ini` reproduces that setup
+      and reports what it discarded
+- [ ] Config changes apply within 10s without losing root or used slots
+- [ ] No console window flashes when the engine starts
+- [ ] Killing Wingman via Task Manager leaves the engine running; restarting
+      Wingman terminates it
+- [ ] With the pid file pointing at an unrelated live process, starting
+      Wingman does **not** kill it
+- [ ] **A hung engine is reclaimed at startup even with the feature turned
+      off.** Reclamation runs unconditionally, not from the enable path;
+      otherwise disabling the feature stranded a live keyboard hook.
+- [ ] **Enabling with the interpreter deleted shows the reason**, not a bare
+      "Stopped" — and the reason survives the next poll tick a second later
+      rather than being overwritten by it
+- [ ] **At 125% and 150% Windows display scaling the EVE status segment
+      hides** rather than crowding the progress bar. The window's 840px
+      floor is physical pixels, so the CSS viewport is 672px and 560px
+      respectively. Nobody has observed this; it is reasoning only
+- [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
+      the application as **files**, not as directories containing a licence
