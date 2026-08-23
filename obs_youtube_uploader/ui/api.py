@@ -1325,7 +1325,16 @@ class Api:
 
         merged = dict(self._state.settings)
         merged["eve_bookmarks"] = settings_mod.validated_eve(section)
-        settings_mod.save(merged)
+        try:
+            settings_mod.save(merged)
+        except OSError as exc:
+            # Same contract as save_settings: bail before touching in-memory
+            # state so state and disk never diverge, and say why rather than
+            # letting the exception escape.
+            self._alert("error", "Could not save settings",
+                        f"Bookmark settings were not saved: {exc}")
+            return self.get_bookmarks()
+
         self._state.settings = settings_mod.load()
         clean = self._state.settings["eve_bookmarks"]
 
