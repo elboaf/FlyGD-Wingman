@@ -1371,3 +1371,7 @@ class Api:
         self.save_bookmarks(result["section"])
         return {"ok": True, "discarded": result["discarded"],
                 "notes": result["notes"]}
+
+    def alert_import(self, body: str) -> None:
+        """Report what an import changed. Uses the existing dialog layer."""
+        self._alert("info", "Import complete", str(body))
