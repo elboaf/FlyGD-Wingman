@@ -20,6 +20,13 @@ Loop %0%
     }
 }
 
+; Unix seconds, to compare against Python's time.time() for staleness.
+EpochNow() {
+    diff := A_NowUTC
+    EnvSub, diff, 19700101000000, Seconds
+    return diff
+}
+
 SetStoreCapsLockMode, Off
 GroupAdd, EVEWindows, EVE -
 
@@ -68,6 +75,11 @@ HotkeyLabelMap := {}
 ; Required for teardown: a variant registered under IfWinActive <title> can
 ; only be disabled from inside that same criterion.
 RegisteredWindows := []
+FailedBinds := ""
+
+; Highest command sequence executed from eve_command.ini. Adopted from disk
+; before the auto-execute section returns; see ReadCommand.
+ConsumedSeq := 0
 
 ; Single INI file for everything
 IniFile := "eve_bookmark_helper.ini"
@@ -90,6 +102,11 @@ NextNum := 1
 NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
+
+; Adopt whatever sequence is already on disk, so a command left by a
+; previous session is not replayed on this one's first tick.
+IniRead, StartSeq, eve_command.ini, Command, Seq, 0
+ConsumedSeq := StartSeq + 0
 
 Return
 
@@ -122,23 +139,69 @@ IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
 Return
 
 RefreshStatusTab:
+GoSub, ReadCommand
 if (RootModeActive) {
-    ModeText      := RootKey = "" ? "Home/Zero" : "Active"
-    RootText      := RootKey = "" ? "(home)" : RootKey
-    NextNumText   := BuildSystemKey(RootKey, NextNum,   False)
+    RootText     := RootKey = "" ? "(home)" : RootKey
+    NextNumText  := BuildSystemKey(RootKey, NextNum,   False)
     NextAlphaText := BuildSystemKey(RootKey, NextAlpha, True)
 } else {
-    ModeText      := "Not set"
-    RootText      := "---"
-    NextNumText   := "---"
-    NextAlphaText := "---"
+    RootText := "", NextNumText := "", NextAlphaText := ""
 }
-SigText := LastSigId = "" ? "---" : LastSigId
-GuiControl, Main:, StatusSig,        %SigText%
-GuiControl, Main:, StatusRoot,       %RootText%
-GuiControl, Main:, StatusMode,       %ModeText%
-GuiControl, Main:, StatusNextNum,    %NextNumText%
-GuiControl, Main:, StatusNextAlpha,  %NextAlphaText%
+SigText := LastSigId
+
+; Written to a temp name and moved over the target: Wingman polls this at
+; ~1Hz and must never read a half-written file.
+StatusBody := "{"
+    . """sig"":""" . JsonEsc(SigText) . ""","
+    . """root"":""" . JsonEsc(RootText) . ""","
+    . """next_num"":""" . JsonEsc(NextNumText) . ""","
+    . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
+    . """failed_binds"":[" . JsonList(FailedBinds) . "],"
+    . """seq"":" . (ConsumedSeq + 0) . ","
+    . """written"":" . EpochNow()
+    . "}"
+FileDelete, eve_status.json.tmp
+FileAppend, %StatusBody%, eve_status.json.tmp
+FileMove, eve_status.json.tmp, eve_status.json, 1
+Return
+
+; Minimal escaping: these values are system names, sig ids and bind ids --
+; no control characters -- but a stray quote or backslash would still
+; produce a file Python cannot parse, and the UI would read "stale".
+JsonEsc(text) {
+    StringReplace, text, text, \, \\, All
+    StringReplace, text, text, ", \", All
+    return text
+}
+
+JsonList(csv) {
+    if (csv = "")
+        return ""
+    out := ""
+    Loop, Parse, csv, `,
+        out .= (out = "" ? "" : ",") . """" . JsonEsc(A_LoopField) . """"
+    return out
+}
+
+ReadCommand:
+IfNotExist, eve_command.ini
+    Return
+IniRead, CmdSeq,  eve_command.ini, Command, Seq, 0
+IniRead, CmdName, eve_command.ini, Command, Name, %A_Space%
+IniRead, CmdArg,  eve_command.ini, Command, Argument, %A_Space%
+CmdSeq += 0
+; Strictly greater: the file is never deleted, so re-running anything at or
+; below the last consumed sequence would replay it on every tick.
+if (CmdSeq <= ConsumedSeq)
+    Return
+ConsumedSeq := CmdSeq
+if (CmdName = "clear_root")
+    GoSub, ClearRoot
+else if (CmdName = "set_root")
+{
+    ManualRoot := Trim(CmdArg)
+    GoSub, SetManualRoot
+}
 Return
 
 ; ============================================================
@@ -328,7 +391,6 @@ ParseBookmarkWithSuffix(input, detectedChain) {
 }
 
 SetManualRoot:
-GuiControlGet, ManualRoot, Main:, ManualRoot
 ManualRoot := Trim(ManualRoot)
 if (ManualRoot = "") {
     GoSub, ClearRoot
@@ -402,7 +464,10 @@ Return
 RefreshHotkeys:
 GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
 
-; Disable the global-context variants.
+; Disable the global-context variants. Permanently dead now: nothing is ever
+; registered globally any more (see the comment below), so this loop never
+; has a live global binding to turn off. Left in place as documentation
+; rather than removed.
 Hotkey, IfWinActive
 For hk, lbl in HotkeyLabelMap
 {
