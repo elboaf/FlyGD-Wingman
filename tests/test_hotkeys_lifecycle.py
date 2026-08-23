@@ -167,3 +167,49 @@ def test_is_running_reflects_process_death(tmp_path):
     assert eng.is_running() is True
     spawner.proc._alive = False
     assert eng.is_running() is False
+
+
+def test_no_window_kwargs_matches_the_platform():
+    """CREATE_NO_WINDOW does not exist off Windows, so passing creationflags
+    there would raise. The sibling test patches this constant directly, so
+    nothing else would catch the idiom being computed wrongly."""
+    if hotkeys.sys.platform == "win32":
+        assert "creationflags" in hotkeys._NO_WINDOW_KWARGS
+    else:
+        assert hotkeys._NO_WINDOW_KWARGS == {}
+
+
+def test_stop_clears_the_record_even_if_terminate_raises(tmp_path):
+    """An already-reaped process raises from terminate(). Leaving the record
+    behind would hand orphan recovery a pid that names nothing."""
+    spawner = FakeSpawner()
+
+    class Vanished(FakeProc):
+        def terminate(self):
+            raise ProcessLookupError("no such process")
+
+    spawner.proc = Vanished()
+    eng = engine(tmp_path, spawner)
+    eng.apply(section())
+    eng.start()
+    eng.stop()
+    assert not (tmp_path / "eve_engine.pid").exists()
+    assert eng.is_running() is False
+
+
+def test_stop_clears_the_record_even_if_kill_raises(tmp_path):
+    spawner = FakeSpawner()
+
+    class Stubborn(FakeProc):
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            raise OSError("bad handle")
+
+    spawner.proc = Stubborn()
+    eng = engine(tmp_path, spawner)
+    eng.apply(section())
+    eng.start()
+    eng.stop(timeout=0.01)
+    assert not (tmp_path / "eve_engine.pid").exists()

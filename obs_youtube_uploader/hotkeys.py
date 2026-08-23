@@ -31,7 +31,14 @@ _MISSING = ("The bookmark engine is missing from this installation. "
 
 
 class HotkeyEngine:
-    """Own the engine process and the files it reads."""
+    """Own the engine process and the files it reads.
+
+    A record left behind by a crashed session is deliberately not cleaned up
+    here: this class can only reason about a process it spawned itself, so
+    deciding whether an on-disk record names a live engine, a dead one, or a
+    pid Windows has since reused belongs to orphan recovery, which verifies
+    the process image and a run token before terminating anything.
+    """
 
     def __init__(self, exe, script, state_dir, *,
                  spawner=subprocess.Popen,
@@ -83,17 +90,37 @@ class HotkeyEngine:
         return True
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Stop the engine and clear its PID record.
+
+        The record clear is in a finally: a process-control call that raises
+        would otherwise leave a record naming a dead pid on disk, which is
+        precisely the ambiguity orphan recovery then has to resolve.
+        """
         proc, self._proc = self._proc, None
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+        try:
+            if proc is None or proc.poll() is not None:
+                return
+            try:
+                proc.terminate()
+            except OSError:
+                # Already gone between the poll and here. Not an error.
+                logger.debug("Engine had already exited before terminate.")
+                return
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 # A hung engine still holds a keyboard hook. Killing it is
                 # the lesser harm.
                 logger.warning("Engine ignored terminate; killing it.")
-                proc.kill()
-        self._clear_pid_record()
+                try:
+                    proc.kill()
+                    proc.wait(timeout=timeout)
+                except (OSError, subprocess.TimeoutExpired):
+                    logger.exception("Engine could not be killed.")
+            except OSError:
+                logger.exception("Could not wait on the engine process.")
+        finally:
+            self._clear_pid_record()
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
