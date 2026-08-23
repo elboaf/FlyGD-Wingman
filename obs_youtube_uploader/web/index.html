@@ -11,8 +11,14 @@
     <div class="pywebview-drag-region">
       <span class="mark">&#9654;</span>
       <span class="name">WINGMAN</span>
-      <span class="sub" id="route-label">Uploader</span>
     </div>
+    <!-- Sibling of the drag region, never a child: style.css:100-102 says
+         only that element drags and buttons must stay clickable. A
+         clickable child of it yields dead buttons or an immovable window. -->
+    <nav class="routenav" id="routenav">
+      <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
+      <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
+    </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
     <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
@@ -192,6 +198,44 @@
         <button class="btn acc" id="btn-settings-save">Save</button>
       </div>
 
+    </div>
+  </div>
+
+  <div class="route" id="route-bookmarks">
+    <div class="settings">
+      <section class="card">
+        <h2>EVE bookmark hotkeys</h2>
+        <div class="row">
+          <span class="lab">Enable</span>
+          <label><input type="checkbox" id="eve-enabled"> Register hotkeys in EVE</label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="eve-engine-state">Not running</span></div>
+        <div class="row"><span class="lab"></span>
+          <button id="eve-import">Import from an existing helper…</button></div>
+      </section>
+
+      <section class="card">
+        <h2>Root</h2>
+        <div class="row">
+          <span class="lab">Set root</span>
+          <input type="text" id="eve-root-input" placeholder="J123456">
+          <button id="eve-set-root">Set</button>
+          <button id="eve-clear-root">Clear</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>EVE windows</h2>
+        <p class="hint">Hotkeys only fire while one of these windows is active.</p>
+        <div id="eve-windows"></div>
+      </section>
+
+      <section class="card">
+        <h2>Keybinds</h2>
+        <p class="hint" id="eve-bind-warning" hidden></p>
+        <div id="eve-binds"></div>
+      </section>
     </div>
   </div>
 

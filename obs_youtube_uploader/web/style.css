@@ -109,10 +109,6 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   box-shadow: 0 0 12px rgba(230, 50, 45, .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
-.sub {
-  color: var(--text-faint); font-size: var(--fs-muted);
-  letter-spacing: .12em; text-transform: uppercase;
-}
 .winbtn {
   width: 44px; height: 32px; border: 0; background: transparent;
   color: var(--text-faint); font-size: 13px; cursor: pointer;
@@ -122,6 +118,18 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .winbtn.close:hover { background: #d9291c; color: #fff; }
 .winbtn.gear { font-size: 15px; }
 .winbtn.gear.active { background: #22252c; color: var(--brand); }
+
+/* Peer destinations, visually distinct from the window actions on the
+   right. Every pixel here is drag surface given up, so this stays tight;
+   past about four destinations the 44px bar needs rethinking. */
+.routenav { display: flex; gap: 2px; align-items: center; flex: none; }
+.navbtn {
+  background: none; border: 0; color: var(--text-faint);
+  font: inherit; font-size: 12px; letter-spacing: .04em;
+  padding: 5px 10px; border-radius: 5px; cursor: pointer;
+}
+.navbtn:hover { color: var(--text); background: #22252c; }
+.navbtn.active { color: var(--text); background: #22252c; }
 
 /* ---- routes ----------------------------------------------------------
    Settings is a ROUTE in this window, not a second OS window. */
