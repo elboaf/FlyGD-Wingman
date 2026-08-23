@@ -35,17 +35,16 @@ class _FakeApi:
         self._state = _FakeState(notify_mode)
         self._uploading = uploading
         self.rows_calls = []
+        # Recorded, not a no-op: otherwise nothing in the suite notices if
+        # the status push is dropped from poll_tick, and the status bar
+        # silently stops updating.
+        self.status_pushes = 0
 
     def _busy(self):
         return self._uploading
 
     def _push_eve_status(self):
-        # No-op: these tests exercise the watcher tick's own logic, not the
-        # engine status push poll_tick now also makes on every tick. Without
-        # this, poll_tick's try/except would swallow an AttributeError here
-        # and silently report it as a "poll tick failed" -- exactly the
-        # ambiguity poll_tick's own docstring warns about.
-        pass
+        self.status_pushes += 1
 
     def list_rows(self, preselect=None):
         self.rows_calls.append(preselect)
@@ -170,6 +169,17 @@ def test_a_tick_never_raises():
     icon = _FakeIcon(exc=RuntimeError("no toast service"))
 
     poll_tick(_FakeWatcher([Path("a.mkv")]), api, icon, window, PollState())
+
+
+def test_each_tick_pushes_engine_status():
+    """The status bar updates only because poll_tick pushes on every tick.
+    Without this assertion, removing that call would silently freeze the
+    readout and no test would fail."""
+    api, icon, window = _FakeApi(), _FakeIcon(), _FakeWindow()
+
+    poll_tick(_FakeWatcher([]), api, icon, window, PollState())
+
+    assert api.status_pushes == 1
 
 
 def test_a_first_run_with_no_folder_no_longer_asks(monkeypatch):
