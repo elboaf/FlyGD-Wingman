@@ -160,17 +160,27 @@
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Escape') { endCapture(); return; }
+    // Held synchronously: by the time the bridge resolves the user may have
+    // pressed Escape (capturing is null) or clicked a different row
+    // (capturing points elsewhere). Reading it in the callback would either
+    // throw or bind this key to the wrong action.
+    var session = capturing;
     WM.send('capture_bind', {
       ctrl: event.ctrlKey, alt: event.altKey,
       shift: event.shiftKey, meta: event.metaKey, code: event.code
     }).then(function (result) {
       // A modifier-only press is not an error the user needs told about --
-      // they are still reaching for the combination.
+      // they are still reaching for the combination. A null result (bridge
+      // failure) falls into the same branch: the capture is left armed
+      // rather than silently disarmed, so the user can simply press
+      // another key or hit Escape.
       if (!result || result.error === 'modifier-only') return;
-      var id = capturing.id;
+      // A result for a capture the user has since abandoned or replaced is
+      // not theirs to apply.
+      if (capturing !== session) return;
       endCapture();
       if (result.error) return;
-      setBind(id, result.ahk);
+      setBind(session.id, result.ahk);
     });
   }, true);
 
