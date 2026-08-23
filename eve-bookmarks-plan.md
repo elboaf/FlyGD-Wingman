@@ -3181,7 +3181,12 @@ Add `evewindows` and `bookmarks` to the imports in `api.py`, add `engine: object
         if not chosen:
             return {"ok": False, "discarded": [], "notes": []}
         try:
-            text = Path(chosen[0]).read_text(encoding="utf-8",
+            # utf-8-sig, not utf-8: the legacy file is routinely hand-edited
+            # in Notepad, which prepends a BOM. import_legacy_ini strips one
+            # too, but handling it at the I/O boundary as well means the
+            # parser never sees it -- and a BOM reaching the parser silently
+            # discarded the whole first section, which is every keybind.
+            text = Path(chosen[0]).read_text(encoding="utf-8-sig",
                                              errors="replace")
         except OSError as exc:
             return {"ok": False, "discarded": [],
