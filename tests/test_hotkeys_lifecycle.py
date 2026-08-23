@@ -129,6 +129,26 @@ def test_start_is_idempotent(tmp_path):
     assert len(spawner.calls) == 1
 
 
+def test_start_stops_the_child_when_the_pid_record_cannot_be_written(tmp_path, monkeypatch):
+    """A write failure here must not leave a running, unrecorded child: with
+    no PID file on disk, orphan recovery could never find it, yet
+    is_running() would keep reporting the engine alive even though start()
+    returned False."""
+    spawner = FakeSpawner()
+    eng = engine(tmp_path, spawner)
+    eng.apply(section())
+
+    def boom(path, text):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hotkeys.atomicio, "write_atomic", boom)
+    assert eng.start() is False
+    assert eng.is_running() is False
+    assert spawner.proc.terminated is True
+    assert "engine" in (eng.last_error or "").lower()
+    assert not (tmp_path / "eve_engine.pid").exists()
+
+
 def test_stop_terminates_and_clears_the_pid_record(tmp_path):
     eng = engine(tmp_path, FakeSpawner())
     eng.apply(section())

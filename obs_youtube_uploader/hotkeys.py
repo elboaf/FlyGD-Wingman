@@ -199,9 +199,23 @@ class HotkeyEngine:
             self._proc = None
             return False
 
-        atomicio.write_atomic(
-            self._pid_path(),
-            json.dumps({"pid": self._proc.pid, "token": self._token}))
+        try:
+            atomicio.write_atomic(
+                self._pid_path(),
+                json.dumps({"pid": self._proc.pid, "token": self._token}))
+        except OSError as exc:
+            # The record is what makes this process findable: without it,
+            # is_running() would still report the engine alive (self._proc
+            # is a real, running Popen) while orphan recovery -- and this
+            # session's own stop() on a later attempt -- has no PID to act
+            # on. A live keyboard hook nobody can address is worse than the
+            # one disruptive kill here, so stop() the child now rather than
+            # leave it running unrecorded; that also clears self._proc, so
+            # is_running() agrees with the False this returns.
+            self.last_error = f"The bookmark engine could not start: {exc}"
+            logger.exception("Could not persist engine PID record")
+            self.stop()
+            return False
         self.last_error = None
         return True
 
@@ -289,6 +303,15 @@ class HotkeyEngine:
             logger.warning("Engine status has a malformed failed_binds.")
             return EngineStatus(state="stale")
 
+        try:
+            # As deliberately guarded as failed_binds above: a non-numeric
+            # seq (string, list, dict) would otherwise raise out of status()
+            # into pending_command, _push_eve_status, and get_bookmarks.
+            consumed_seq = int(raw.get("seq") or 0)
+        except (TypeError, ValueError):
+            logger.warning("Engine status has a malformed seq.")
+            return EngineStatus(state="stale")
+
         return EngineStatus(
             state="running",
             sig=_text(raw.get("sig")),
@@ -296,7 +319,7 @@ class HotkeyEngine:
             next_num=_text(raw.get("next_num")),
             next_alpha=_text(raw.get("next_alpha")),
             failed_binds=[str(b) for b in failed],
-            consumed_seq=int(raw.get("seq") or 0),
+            consumed_seq=consumed_seq,
         )
 
     def recover_orphan(self) -> bool:

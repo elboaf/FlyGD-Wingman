@@ -55,10 +55,18 @@ def terminate(pid: int, runner=subprocess.run) -> bool:
     if sys.platform != "win32":
         return False
     try:
-        runner(["taskkill", "/PID", str(int(pid)), "/F"],
-               capture_output=True, text=True, timeout=10,
-               errors="replace", **_NO_WINDOW_KWARGS)
-        return True
+        done = runner(["taskkill", "/PID", str(int(pid)), "/F"],
+                      capture_output=True, text=True, timeout=10,
+                      errors="replace", **_NO_WINDOW_KWARGS)
     except Exception:
         logger.exception("Could not terminate process %s", pid)
         return False
+    if done.returncode != 0:
+        # taskkill exits non-zero for "process not found" and "access
+        # denied" alike, and not raising on either. Reporting success here
+        # regardless is what let recover_orphan discard a live orphan's PID
+        # record after a kill that never happened.
+        logger.error("taskkill of pid %s failed (rc=%s): %s",
+                     pid, done.returncode, (done.stderr or "").strip())
+        return False
+    return True
