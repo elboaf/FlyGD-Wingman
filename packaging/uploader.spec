@@ -15,6 +15,11 @@ a = Analysis(
     binaries=[
         (str(BIN / "ffmpeg.exe"), "bin"),
         (str(BIN / "ffprobe.exe"), "bin"),
+        # v1.1 interpreter. Bundled-only by design: paths.engine_exe()
+        # deliberately does not fall back to PATH, because a user's
+        # AutoHotkey v2 handed a v1 script fails with parse errors that
+        # read like a bug in the script.
+        (str(BIN / "AutoHotkeyU64.exe"), "bin"),
     ],
     datas=[
         # The page is data, not code: modulegraph only follows Python
@@ -32,6 +37,11 @@ a = Analysis(
         # Collected at the bundle root so paths.icon_file()'s frozen-case
         # lookup (bundle_dir() / "app.ico") finds it directly.
         (str(ICON), "."),
+        # The engine is data, not code -- modulegraph cannot see it, and
+        # PyInstaller exits 0 when a datas entry fails to collect. Without
+        # the post-build assertion below, a missing script produces a green
+        # build and an engine that never starts.
+        (str(ROOT / "obs_youtube_uploader" / "engine"), "engine"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
