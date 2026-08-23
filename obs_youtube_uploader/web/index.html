@@ -207,21 +207,28 @@
         <h2>EVE bookmark hotkeys</h2>
         <div class="row">
           <span class="lab">Enable</span>
-          <label><input type="checkbox" id="eve-enabled"> Register hotkeys in EVE</label>
+          <!-- The .check/.box pattern is not decoration: .check input is
+               opacity:0 and the styled .box is the visible control. A bare
+               checkbox here rendered as a native white widget. -->
+          <label class="check">
+            <input type="checkbox" id="eve-enabled"><span class="box"></span>
+            Register hotkeys in EVE
+          </label>
         </div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="eve-engine-state">Not running</span></div>
         <div class="row"><span class="lab"></span>
-          <button id="eve-import">Import from an existing helper…</button></div>
+          <button class="btn" id="eve-import">Import from an existing helper&hellip;</button></div>
       </section>
 
       <section class="card">
         <h2>Root</h2>
         <div class="row">
           <span class="lab">Set root</span>
-          <input type="text" id="eve-root-input" placeholder="J123456">
-          <button id="eve-set-root">Set</button>
-          <button id="eve-clear-root">Clear</button>
+          <input class="field mono" id="eve-root-input" type="text"
+                 spellcheck="false" placeholder="J123456">
+          <button class="btn" id="eve-set-root">Set</button>
+          <button class="btn" id="eve-clear-root">Clear</button>
         </div>
       </section>
 

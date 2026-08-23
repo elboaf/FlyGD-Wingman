@@ -81,7 +81,11 @@
         next.windows[title] = box.checked;
         send(next);
       });
-      var label = WM.make('label', null, ' ' + title);
+      // Same .check/.box pattern the rest of the app uses: the real input
+      // is opacity:0 and the span is the visible control. Without it these
+      // rendered as native white checkboxes against the dark card.
+      var label = WM.make('label', 'check', ' ' + title);
+      label.prepend(WM.make('span', 'box'));
       label.prepend(box);
       if (live.indexOf(title) === -1) {
         label.appendChild(WM.make('span', 'hint', ' (not running)'));
