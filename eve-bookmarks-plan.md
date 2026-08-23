@@ -742,10 +742,14 @@ def test_semicolon_bind_survives():
 
 def test_newline_in_a_window_title_cannot_forge_a_line():
     """Window titles come from the OS, but a hostile or malformed one must
-    not be able to inject an extra INI entry."""
+    not be able to inject an extra INI entry. Asserted line-anchored: the
+    sanitised title becomes "EVE - BadFinH=1", which *contains* "FinH=1"
+    as a substring without being a forged line."""
     text = bookmarks.generate_ini(section(
         windows={"EVE - Bad\r\nFinH": True}))
-    assert "FinH=1" not in text
+    lines = text.split("\r\n")
+    assert "FinH=1" not in lines
+    assert "EVE - BadFinH=1" in lines
 
 
 def test_no_mode_or_preface_settings():
@@ -2429,8 +2433,13 @@ Delete the variable, its `IniRead`, and every `&& HomeZeroIs0` guard, keeping th
             LastUsedNum := NextNum
             FindNextNum()
         } else {
-            if (LastUsedNum = "")
-                LastUsedNum := NextNum
+            ; Preserve the original structure exactly. The home-mode first
+            ; correction is .0, which the original produced by seeding
+            ; LastUsedNum with 1 and subtracting below -- NOT by seeding it
+            ; with NextNum, which diverges as soon as NextNum > 1.
+            if (LastUsedNum = "") {
+                LastUsedNum := (RootKey = "") ? 1 : NextNum
+            }
             Num := (RootKey = "") ? LastUsedNum - 1 : LastUsedNum
         }
         SysKey := BuildSystemKey(RootKey, Num, False)
@@ -3607,6 +3616,29 @@ The page holds no mapping table and makes no judgements — it captures, sends, 
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { setBind(id, ''); });
       row.appendChild(clear);
+
+      // Manual entry: the escape hatch for non-US layouts, where the
+      // event.code table maps a physical key to the wrong character. The
+      // typed string is validated by the same Python rules as capture, so
+      // the two cannot disagree.
+      var typed = WM.make('button', 'linkbtn', 'Type…');
+      typed.addEventListener('click', function () {
+        var text = window.prompt(
+          'AutoHotkey hotkey for "' + state.labels[id] + '"\n' +
+          '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
+          state.settings.keybinds[id] || '');
+        if (text === null) return;
+        WM.send('parse_bind', text).then(function (result) {
+          if (!result) return;
+          if (result.error) {
+            WM.send('alert_import',
+                    'That is not a hotkey AutoHotkey can register.');
+            return;
+          }
+          setBind(id, result.ahk);
+        });
+      });
+      row.appendChild(typed);
 
       host.appendChild(row);
     });
