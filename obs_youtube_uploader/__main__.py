@@ -201,6 +201,11 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
     """
     try:
         api._push_eve_status()
+    except Exception:
+        # Its own guard: a status-push failure must not count against the
+        # recording watcher's failure counter or skip poll_once.
+        logger.exception("Engine status push failed.")
+    try:
         ready = w.poll_once()
         uploading = api._busy()
         if ready:

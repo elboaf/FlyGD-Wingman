@@ -182,6 +182,26 @@ def test_each_tick_pushes_engine_status():
     assert api.status_pushes == 1
 
 
+def test_a_failing_status_push_does_not_skip_the_poll():
+    """The status push and the watcher poll are separate failure domains: a
+    broken status push must not be miscounted as a failing tick, and must
+    not skip poll_once for that tick."""
+    class _RaisingApi(_FakeApi):
+        def _push_eve_status(self):
+            self.status_pushes += 1
+            raise RuntimeError("status push exploded")
+
+    api = _RaisingApi()
+    icon, window = _FakeIcon(), _FakeWindow()
+    state = PollState()
+
+    poll_tick(_FakeWatcher([Path("a.mkv")]), api, icon, window, state)
+
+    assert api.status_pushes == 1
+    assert api.rows_calls == [{Path("a.mkv")}]
+    assert state.consecutive_failures == 0
+
+
 def test_a_first_run_with_no_folder_no_longer_asks(monkeypatch):
     """The ask fallback is GONE: create_file_dialog is a method on a window
     and no window exists this early. None means "render the first-run
