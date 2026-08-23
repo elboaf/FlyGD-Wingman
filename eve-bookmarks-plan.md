@@ -3959,7 +3959,7 @@ from pathlib import Path
 # Update URL and SHA256 together, never separately.
 AHK_URL = ("https://github.com/AutoHotkey/AutoHotkey/releases/download/"
            "v1.1.37.02/AutoHotkey_1.1.37.02.zip")
-AHK_SHA256 = "REPLACE_WITH_MEASURED_DIGEST"
+AHK_SHA256 = "6f3663f7cdd25063c8c8728f5d9b07813ced8780522fd1f124ba539e2854215f"
 OUT_DIR = Path(__file__).parent / "bin"
 WANTED = ("AutoHotkeyU64.exe",)
 VERSION_FILE = OUT_DIR / ".autohotkey-version"
