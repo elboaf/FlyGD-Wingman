@@ -2,6 +2,7 @@
 would be acted on. Liveness is the authority; the file only supplies values
 once liveness is established."""
 import json
+import pytest
 from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
 
@@ -79,3 +80,40 @@ def test_corrupt_status_file_is_stale_not_a_crash(tmp_path):
     eng.apply(section())
     eng.start()
     assert eng.status(enabled=True, now=1000.0).state == "stale"
+
+
+@pytest.mark.parametrize("bad", ["nope", 7, {"a": 1}, None])
+def test_a_malformed_failed_binds_is_stale_not_empty(tmp_path, bad):
+    """[] means "every hotkey registered fine" -- the one thing an
+    unreadable field does not tell us. A wrong-typed field also means the
+    document is untrustworthy, so `root` must not be shown either."""
+    write_status(tmp_path, failed_binds=bad)
+    eng = engine(tmp_path, FakeSpawner())
+    eng.apply(section())
+    eng.start()
+    got = eng.status(enabled=True, now=1001.0)
+    assert got.state == "stale"
+    assert got.root is None
+
+
+@pytest.mark.parametrize("bad,expected", [
+    ({"a": 1}, None), ([1], None), (True, None), (42, "42"), ("  ", None),
+])
+def test_display_values_are_coerced_for_a_label(tmp_path, bad, expected):
+    """These render into a status bar; a dict would appear as its repr, and
+    a bool as "True", which is not a system name."""
+    write_status(tmp_path, root=bad)
+    eng = engine(tmp_path, FakeSpawner())
+    eng.apply(section())
+    eng.start()
+    assert eng.status(enabled=True, now=1001.0).root == expected
+
+
+def test_a_status_written_in_the_future_is_not_stale(tmp_path):
+    """A backwards clock step makes the difference negative. Reporting stale
+    there would blank a live engine's readout for no reason."""
+    write_status(tmp_path, written=2000.0)
+    eng = engine(tmp_path, FakeSpawner())
+    eng.apply(section())
+    eng.start()
+    assert eng.status(enabled=True, now=1000.0).state == "running"

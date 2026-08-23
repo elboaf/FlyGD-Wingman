@@ -54,6 +54,19 @@ class EngineStatus:
     consumed_seq: int = 0
 
 
+def _text(value) -> str | None:
+    """Coerce a status value for display, or None if it is empty.
+
+    These reach a label; a dict or list from a corrupt file would otherwise
+    be rendered as its repr. bool is excluded deliberately -- str(True) is
+    "True", which would render as a root system named True.
+    """
+    if value is None or isinstance(value, (dict, list, bool)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 class HotkeyEngine:
     """Own the engine process and the files it reads.
 
@@ -167,6 +180,12 @@ class HotkeyEngine:
         The status file outlives the process that wrote it. Reading values
         from it without first establishing that the engine is alive is how
         a dead root system gets displayed as the current one.
+
+        consumed_seq is 0 in every state but "running". That can only make a
+        command look still-pending, never falsely acknowledged, so it fails
+        in the safe direction: the effect is that the action buttons stay
+        disabled through a stale window, which is correct anyway, since a
+        command to a non-responding engine should not be sent.
         """
         if not enabled:
             return EngineStatus(state="off")
@@ -183,13 +202,22 @@ class HotkeyEngine:
             return EngineStatus(state="stale")
 
         failed = raw.get("failed_binds")
+        if not isinstance(failed, list):
+            # A wrong-typed field means the document is not trustworthy, and
+            # there is no reason to believe `root` while disbelieving this.
+            # Reporting [] would be worse than reporting nothing: it says
+            # "every hotkey registered fine", which is exactly what we do
+            # not know.
+            logger.warning("Engine status has a malformed failed_binds.")
+            return EngineStatus(state="stale")
+
         return EngineStatus(
             state="running",
-            sig=raw.get("sig") or None,
-            root=raw.get("root") or None,
-            next_num=raw.get("next_num") or None,
-            next_alpha=raw.get("next_alpha") or None,
-            failed_binds=[str(b) for b in failed] if isinstance(failed, list) else [],
+            sig=_text(raw.get("sig")),
+            root=_text(raw.get("root")),
+            next_num=_text(raw.get("next_num")),
+            next_alpha=_text(raw.get("next_alpha")),
+            failed_binds=[str(b) for b in failed],
             consumed_seq=int(raw.get("seq") or 0),
         )
 
