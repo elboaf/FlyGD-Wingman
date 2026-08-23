@@ -29,8 +29,9 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import (combatlog, discord, durations, library, obsconfig, paths,
-                settings as settings_mod, stitch, uploader)
+from .. import (bookmarks, combatlog, discord, durations, evewindows,
+                library, obsconfig, paths, settings as settings_mod, stitch,
+                uploader)
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -131,6 +132,10 @@ class AppState:
     settings: dict
     ffmpeg_bin: str | None = None
     ffprobe_bin: str | None = None
+    # None until ui.window.create() wires up the HotkeyEngine. Every bridge
+    # method that touches it must handle that -- e.g. by no-op'ing rather
+    # than crashing the bridge thread on an AttributeError.
+    engine: object | None = None
 
 
 class Api:
@@ -1242,3 +1247,95 @@ class Api:
             self._push_auth("disconnected")
             return
         self._push_auth("connected")
+
+    # ---- EVE bookmarks ------------------------------------------------
+
+    def get_bookmarks(self) -> dict:
+        """Everything the Bookmarks route renders, in one call."""
+        section = self._state.settings["eve_bookmarks"]
+        return {
+            "settings": section,
+            "labels": bookmarks.BIND_LABELS,
+            "order": list(bookmarks.BIND_IDS),
+            "windows": evewindows.list_eve_windows(),
+            "collisions": bookmarks.collisions(section["keybinds"]),
+            # Human labels for the bound keys. Computed here rather than in
+            # the page, which is the entire reason to_ahk returns a display
+            # string: the page holds no mapping table and cannot drift from
+            # this one. Without this the UI would show raw "^+s".
+            "displays": {bid: bookmarks.parse_ahk(value)["display"]
+                         for bid, value in section["keybinds"].items()
+                         if value},
+        }
+
+    def save_bookmarks(self, section) -> dict:
+        """Persist the section, regenerate the INI, and match the engine to
+        the enabled flag.
+
+        The payload arrives from the page and lands in a file that registers
+        keyboard hooks, so it is re-validated here rather than trusted.
+        """
+        if not isinstance(section, dict):
+            logger.error("Refusing a non-dict bookmarks payload")
+            return self.get_bookmarks()
+
+        merged = dict(self._state.settings)
+        merged["eve_bookmarks"] = settings_mod.validated_eve(section)
+        settings_mod.save(merged)
+        self._state.settings = settings_mod.load()
+        clean = self._state.settings["eve_bookmarks"]
+
+        engine = self._state.engine
+        if engine is not None:
+            engine.apply(clean)
+            if clean["enabled"] and not engine.is_running():
+                engine.start()
+                engine.sync_sequence()
+            elif not clean["enabled"] and engine.is_running():
+                engine.stop()
+        return self.get_bookmarks()
+
+    def capture_bind(self, parts) -> dict:
+        return bookmarks.to_ahk(parts if isinstance(parts, dict) else {})
+
+    def parse_bind(self, text) -> dict:
+        return bookmarks.parse_ahk(text if isinstance(text, str) else "")
+
+    def eve_command(self, name, argument="") -> bool:
+        engine = self._state.engine
+        if engine is None:
+            return False
+        return bool(engine.send_command(str(name), str(argument or "")))
+
+    def import_bookmarks(self) -> dict:
+        """Import a standalone helper INI chosen by the user.
+
+        The standalone script wrote its INI relative to its working
+        directory, so there is no path worth probing -- the user points at
+        it.
+        """
+        import webview
+        chosen = self._window.create_file_dialog(
+            webview.FileDialog.OPEN, directory="")
+        if not chosen:
+            return {"ok": False, "discarded": [], "notes": []}
+        try:
+            # utf-8-sig, not utf-8: the legacy file is routinely hand-edited
+            # in Notepad, which prepends a BOM. import_legacy_ini strips one
+            # too, but handling it at the I/O boundary as well means the
+            # parser never sees it -- and a BOM reaching the parser silently
+            # discarded the whole first section, which is every keybind.
+            text = Path(chosen[0]).read_text(encoding="utf-8-sig",
+                                             errors="replace")
+        except OSError as exc:
+            return {"ok": False, "discarded": [],
+                    "notes": [f"Could not read that file: {exc}"]}
+
+        result = bookmarks.import_legacy_ini(text)
+        # Import never enables the engine: reading someone's old settings is
+        # not consent to start a keyboard hook.
+        result["section"]["enabled"] = \
+            self._state.settings["eve_bookmarks"]["enabled"]
+        self.save_bookmarks(result["section"])
+        return {"ok": True, "discarded": result["discarded"],
+                "notes": result["notes"]}

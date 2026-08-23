@@ -1,0 +1,136 @@
+"""The bridge is tested headless through FakeWindow, as every other Api
+method is (tests/fakes.py)."""
+import json
+import pytest
+from obs_youtube_uploader import bookmarks, hotkeys, settings
+from tests.fakes import FakeWindow
+
+
+class FakeEngine:
+    def __init__(self):
+        self.applied = []
+        self.started = 0
+        self.stopped = 0
+        self.commands = []
+        self.running = False
+
+    def apply(self, section):
+        self.applied.append(section)
+
+    def start(self):
+        self.started += 1
+        self.running = True
+        return True
+
+    def stop(self, timeout=5.0):
+        self.stopped += 1
+        self.running = False
+
+    def is_running(self):
+        return self.running
+
+    def sync_sequence(self):
+        pass
+
+    def send_command(self, name, argument=""):
+        self.commands.append((name, argument))
+        return True
+
+    def status(self, enabled, now=None):
+        return hotkeys.EngineStatus(
+            state="running" if self.running else "off", root="J1234")
+
+
+@pytest.fixture
+def api(tmp_path, monkeypatch):
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod.paths, "settings_file",
+                        lambda: tmp_path / "s.json")
+    state = api_mod.AppState(recording_dir=tmp_path,
+                             settings=settings.load(tmp_path / "s.json"))
+    state.engine = FakeEngine()
+    built = api_mod.Api(state)
+    built._window = FakeWindow()
+    return built
+
+
+def test_get_returns_settings_labels_and_order(api):
+    got = api.get_bookmarks()
+    assert got["settings"]["enabled"] is False
+    assert got["order"] == list(bookmarks.BIND_IDS)
+    assert got["labels"]["FinH"] == "Finisher: HS (highsec)"
+
+
+def test_get_returns_human_labels_for_bound_keys(api):
+    """The page must never translate a hotkey string itself -- that is why
+    to_ahk returns a display value. Unbound ids are absent rather than
+    empty so the page's `|| 'Not set'` fallback fires."""
+    got = api.get_bookmarks()
+    assert got["displays"]["ConvertScout"] == "Ctrl+Shift+S"
+    assert "FinH" not in got["displays"]
+
+
+def test_get_lists_live_eve_windows(api, monkeypatch):
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod.evewindows, "list_eve_windows",
+                        lambda: ["EVE - Pilot"])
+    assert api.get_bookmarks()["windows"] == ["EVE - Pilot"]
+
+
+def test_save_persists_and_regenerates_the_ini(api, tmp_path):
+    section = dict(api.get_bookmarks()["settings"])
+    section["keybinds"] = dict(bookmarks.DEFAULT_BINDS, FinH="^h")
+    api.save_bookmarks(section)
+    assert api._state.engine.applied[-1]["keybinds"]["FinH"] == "^h"
+    on_disk = json.loads((tmp_path / "s.json").read_text())
+    assert on_disk["eve_bookmarks"]["keybinds"]["FinH"] == "^h"
+
+
+def test_enabling_starts_the_engine_and_disabling_stops_it(api):
+    section = dict(api.get_bookmarks()["settings"], enabled=True)
+    api.save_bookmarks(section)
+    assert api._state.engine.started == 1
+    api.save_bookmarks(dict(section, enabled=False))
+    assert api._state.engine.stopped == 1
+
+
+def test_save_reports_collisions_rather_than_silently_accepting(api):
+    """RefreshHotkeys would let one bind win silently."""
+    section = dict(api.get_bookmarks()["settings"])
+    section["keybinds"] = dict(bookmarks.DEFAULT_BINDS, FinH="^h", FinL="^h")
+    got = api.save_bookmarks(section)
+    assert got["collisions"] == {"^h": ["FinH", "FinL"]}
+
+
+def test_save_rejects_a_non_dict_payload(api):
+    """Everything from the page is untrusted input to a file that drives a
+    keyboard hook."""
+    before = api.get_bookmarks()["settings"]
+    api.save_bookmarks("nonsense")
+    assert api.get_bookmarks()["settings"] == before
+
+
+def test_capture_and_parse_delegate_to_bookmarks(api):
+    assert api.capture_bind({"ctrl": True, "alt": False, "shift": True,
+                             "meta": False, "code": "KeyS"})["ahk"] == "^+s"
+    assert api.parse_bind("+^s")["ahk"] == "^+s"
+
+
+def test_eve_command_is_forwarded(api):
+    api.eve_command("set_root", "J1234")
+    assert api._state.engine.commands == [("set_root", "J1234")]
+
+
+def test_import_applies_and_reports(api, tmp_path, monkeypatch):
+    legacy = tmp_path / "eve_bookmark_helper.ini"
+    legacy.write_text("[Keybinds]\r\nFinH=y\r\nCopy=^c\r\n")
+    api._window.dialog_result = (str(legacy),)
+    got = api.import_bookmarks()
+    assert got["ok"] is True
+    assert api.get_bookmarks()["settings"]["keybinds"]["FinH"] == "y"
+    assert any("Copy" in d for d in got["discarded"])
+
+
+def test_import_cancelled_changes_nothing(api):
+    api._window.dialog_result = None
+    assert api.import_bookmarks()["ok"] is False

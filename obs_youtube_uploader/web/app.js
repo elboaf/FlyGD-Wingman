@@ -48,7 +48,8 @@
   // one visible owner.
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
-                 'onAuthState', 'onDialog', 'onFirstRun'];
+                 'onAuthState', 'onDialog', 'onFirstRun',
+                 'onBookmarks', 'onEveStatus'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
