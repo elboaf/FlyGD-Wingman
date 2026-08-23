@@ -1,6 +1,6 @@
 import json
 import pytest
-from obs_youtube_uploader import settings
+from obs_youtube_uploader import bookmarks, settings
 
 
 def test_defaults_are_the_documented_values():
@@ -13,6 +13,11 @@ def test_defaults_are_the_documented_values():
         "gamelogs_dir": None,
         "channel_id": "",
         "channel_title": "",
+        "eve_bookmarks": {
+            "enabled": False,
+            "keybinds": bookmarks.DEFAULT_BINDS,
+            "windows": {},
+        },
     }
 
 

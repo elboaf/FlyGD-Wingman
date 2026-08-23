@@ -6,7 +6,7 @@ Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 import json
 from pathlib import Path
 
-from . import paths
+from . import bookmarks, paths
 
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
@@ -27,21 +27,72 @@ DEFAULTS = {
     # compared so a changed destination can be called out.
     "channel_id": "",
     "channel_title": "",
+    # Nested, unlike every other key. save() projects onto DEFAULTS keys, so
+    # this whole section travels as one value; load() rebuilds the inner
+    # dicts rather than copying them, because dict(DEFAULTS) below is
+    # shallow and would otherwise hand callers the module globals.
+    "eve_bookmarks": {
+        # Off by default: enabling installs a global keyboard hook, so an
+        # upgrading user has to ask for it rather than be given it.
+        "enabled": False,
+        "keybinds": dict(bookmarks.DEFAULT_BINDS),
+        "windows": {},
+    },
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
 _VALID_NOTIFY = {"toast", "popup"}
 
 
+def _eve_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    return {"enabled": False,
+            "keybinds": dict(bookmarks.DEFAULT_BINDS),
+            "windows": {}}
+
+
+def _fresh_defaults() -> dict:
+    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    data = dict(DEFAULTS)
+    data["eve_bookmarks"] = _eve_defaults()
+    return data
+
+
+def validated_eve(raw) -> dict:
+    section = _eve_defaults()
+    if not isinstance(raw, dict):
+        return section
+
+    # `is True` rather than truthiness: a stray 1 or "yes" from a
+    # hand-edited file must not start a keyboard hook.
+    section["enabled"] = raw.get("enabled") is True
+
+    binds = raw.get("keybinds")
+    if isinstance(binds, dict):
+        for bid in bookmarks.BIND_IDS:
+            value = binds.get(bid)
+            if isinstance(value, str):
+                section["keybinds"][bid] = value.strip()
+    # Ids not in BIND_IDS are dropped by construction: the loop is over the
+    # known ids, so a stale "Copy" from a pre-integration file cannot
+    # survive into the generated INI.
+
+    windows = raw.get("windows")
+    if isinstance(windows, dict):
+        section["windows"] = {k: bool(v) for k, v in windows.items()
+                              if isinstance(k, str)}
+    return section
+
+
 def load(path: Path | None = None) -> dict:
     path = path or paths.settings_file()
-    data = dict(DEFAULTS)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return data
+        return _fresh_defaults()
     if not isinstance(raw, dict):
-        return data
+        return _fresh_defaults()
+    data = dict(DEFAULTS)
     for key in DEFAULTS:
         if key in raw:
             data[key] = raw[key]
@@ -63,6 +114,7 @@ def load(path: Path | None = None) -> dict:
     for key in ("channel_id", "channel_title"):
         if not isinstance(data[key], str):
             data[key] = ""
+    data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
     return data
 
 
