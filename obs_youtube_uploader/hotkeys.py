@@ -13,7 +13,7 @@ import logging
 import subprocess
 import sys
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import atomicio, bookmarks, paths, procid
 
@@ -28,6 +28,10 @@ _NO_WINDOW_KWARGS = (
 
 _MISSING = ("The bookmark engine is missing from this installation. "
             "Reinstall FlyGD Wingman to restore it.")
+
+# Basename match, not a substring: a folder merely containing "autohotkey"
+# (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
+_ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
 
 
 class HotkeyEngine:
@@ -145,7 +149,10 @@ class HotkeyEngine:
         after an unclean shutdown -- and the image alone is not either,
         because the bundled interpreter could be running someone else's
         script. Anything that fails either check is treated as a stale
-        record and discarded rather than killed.
+        record and discarded rather than killed. The one exception is a
+        failed *lookup* (procid.describe raising, or a failed kill): there
+        we do not know the record is stale, so it is kept for the next
+        start rather than thrown away.
 
         Note this only ever runs at the next start. Neither this nor
         #SingleInstance Force helps a user who closes Wingman and never
@@ -159,12 +166,21 @@ class HotkeyEngine:
             self._clear_pid_record()
             return False
 
-        info = procid.describe(pid)
+        try:
+            info = procid.describe(pid)
+        except Exception:
+            # describe() feeds a code path that must never prevent the
+            # engine starting. We could not determine liveness/identity,
+            # so leave the record for the next start rather than discard
+            # it -- if we do not know it is stale, deleting it would lose
+            # our only handle on a still-live orphan.
+            logger.exception("Orphan lookup failed; leaving the record alone.")
+            return False
         if not info:
             self._clear_pid_record()
             return False
 
-        image_ok = "autohotkey" in (info.get("image") or "").lower()
+        image_ok = PureWindowsPath(info.get("image") or "").name.lower() == _ENGINE_IMAGE_NAME
         token_ok = token and token in (info.get("cmdline") or "")
         if not (image_ok and token_ok):
             logger.info("PID %s is not our engine; leaving it alone.", pid)
@@ -172,7 +188,15 @@ class HotkeyEngine:
             return False
 
         logger.warning("Terminating orphaned engine %s", pid)
-        procid.terminate(pid)
+        try:
+            killed = procid.terminate(pid)
+        except Exception:
+            logger.exception("Could not terminate orphaned engine %s", pid)
+            return False
+        if not killed:
+            # Keep the record: it is the only handle for trying again.
+            logger.error("Orphaned engine %s could not be terminated.", pid)
+            return False
         self._clear_pid_record()
         return True
 

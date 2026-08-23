@@ -34,14 +34,21 @@ def describe(pid: int, runner=subprocess.run) -> dict | None:
     try:
         done = runner(["powershell", "-NoProfile", "-Command", script],
                       capture_output=True, text=True, timeout=10,
-                      **_NO_WINDOW_KWARGS)
-    except (OSError, subprocess.SubprocessError):
+                      errors="replace", **_NO_WINDOW_KWARGS)
+    except Exception:
+        # Deliberately broad: this feeds a code path that must never
+        # prevent the engine starting. UnicodeDecodeError in particular is
+        # a ValueError, not an OSError, and a single foreign-locale process
+        # on the machine would otherwise crash startup.
         logger.exception("Could not query process %s", pid)
         return None
     lines = [ln.strip() for ln in (done.stdout or "").splitlines() if ln.strip()]
-    if not lines:
+    if len(lines) != 2:
+        # PowerShell emits no line for a null property, so a short result
+        # means one of the two identity signals is missing -- and taking
+        # lines[0]/lines[-1] anyway would compare the same string twice.
         return None
-    return {"image": lines[0], "cmdline": lines[-1]}
+    return {"image": lines[0], "cmdline": lines[1]}
 
 
 def terminate(pid: int, runner=subprocess.run) -> bool:
@@ -50,8 +57,8 @@ def terminate(pid: int, runner=subprocess.run) -> bool:
     try:
         runner(["taskkill", "/PID", str(int(pid)), "/F"],
                capture_output=True, text=True, timeout=10,
-               **_NO_WINDOW_KWARGS)
+               errors="replace", **_NO_WINDOW_KWARGS)
         return True
-    except (OSError, subprocess.SubprocessError):
+    except Exception:
         logger.exception("Could not terminate process %s", pid)
         return False
