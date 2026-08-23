@@ -4176,13 +4176,17 @@ A README line is not a written offer. Both bundled binaries are GPL and neither 
 # Third-party software in FlyGD Wingman
 
 FlyGD Wingman itself is MIT (see LICENSE). It bundles the following
-programs, which are licensed separately.
+programs, which are licensed separately. The two are under different GPL
+versions -- v3 for FFmpeg, v2 for AutoHotkey -- so each carries its own
+licence text rather than sharing one.
 
 ## FFmpeg
 
 Version: 7.1 (`ffmpeg-7.1-essentials_build`)
-Licence: GNU General Public License v2 or later
-Source: https://github.com/GyanD/codexffmpeg/releases/tag/7.1
+Licence: GNU General Public License v3
+Source: https://github.com/FFmpeg/FFmpeg/commit/b08d7969c5
+Build scripts: https://github.com/GyanD/codexffmpeg/releases/tag/7.1
+Licence text: `ffmpeg-COPYING.txt`, installed beside the application.
 
 ## AutoHotkey
 
