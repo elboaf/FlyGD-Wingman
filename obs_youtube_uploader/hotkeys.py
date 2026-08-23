@@ -15,7 +15,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from . import atomicio, bookmarks, paths
+from . import atomicio, bookmarks, paths, procid
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,7 @@ class HotkeyEngine:
     def start(self) -> bool:
         if self.is_running():
             return True
+        self.recover_orphan()
         if not self._exe or not self._script or not self._script.exists():
             self.last_error = _MISSING
             logger.error("Engine not started: exe=%r script=%r",
@@ -135,6 +136,45 @@ class HotkeyEngine:
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    def recover_orphan(self) -> bool:
+        """Terminate an engine left behind by a crashed Wingman.
+
+        Identity is the image name AND the run token from the command line.
+        The PID alone is not identity -- Windows reuses PIDs and this runs
+        after an unclean shutdown -- and the image alone is not either,
+        because the bundled interpreter could be running someone else's
+        script. Anything that fails either check is treated as a stale
+        record and discarded rather than killed.
+
+        Note this only ever runs at the next start. Neither this nor
+        #SingleInstance Force helps a user who closes Wingman and never
+        reopens it; clean shutdown is what covers the common case.
+        """
+        try:
+            record = json.loads(self._pid_path().read_text())
+            pid = int(record["pid"])
+            token = str(record["token"])
+        except (OSError, ValueError, KeyError, TypeError):
+            self._clear_pid_record()
+            return False
+
+        info = procid.describe(pid)
+        if not info:
+            self._clear_pid_record()
+            return False
+
+        image_ok = "autohotkey" in (info.get("image") or "").lower()
+        token_ok = token and token in (info.get("cmdline") or "")
+        if not (image_ok and token_ok):
+            logger.info("PID %s is not our engine; leaving it alone.", pid)
+            self._clear_pid_record()
+            return False
+
+        logger.warning("Terminating orphaned engine %s", pid)
+        procid.terminate(pid)
+        self._clear_pid_record()
+        return True
 
     # -- paths -------------------------------------------------------
     def _ini_path(self) -> Path:
