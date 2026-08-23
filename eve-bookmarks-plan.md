@@ -3618,8 +3618,27 @@ The page holds no mapping table and makes no judgements — it captures, sends, 
     if (!payload) return;
     state = payload;
     WM.el('eve-enabled').checked = !!payload.settings.enabled;
+    renderEngineState();
     renderWindows();
     renderBinds();
+  }
+
+  // Immediate feedback after a save. The live status push (a later task)
+  // updates this same element on every poll tick, but that only starts once
+  // the recording watcher is running -- so without this, ticking Enable and
+  // having the engine fail to start would look like it worked until the
+  // next tick, or forever if the watcher has not started.
+  function renderEngineState() {
+    var el = WM.el('eve-engine-state');
+    if (!el || !state.engine) return;
+    var label = { off: 'Not running', stopped: 'Stopped',
+                  stale: 'Not responding',
+                  running: 'Running' }[state.engine.state] || '';
+    // The reason matters more than the state: "Stopped" alone leaves the
+    // user with no idea the engine is missing rather than merely idle.
+    el.textContent = state.engine.last_error
+      ? label + ' — ' + state.engine.last_error
+      : label;
   }
 
   function renderWindows() {
