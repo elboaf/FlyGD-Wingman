@@ -1,6 +1,7 @@
 """The INI is a generated artifact: Wingman writes it, the engine only ever
 reads it. These tests pin the exact bytes because the consumer is an AHK
 script we cannot test."""
+import pytest
 from obs_youtube_uploader import bookmarks
 
 
@@ -66,3 +67,24 @@ def test_no_mode_or_preface_settings():
     text = bookmarks.generate_ini(section())
     for gone in ("Mode", "HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
         assert gone not in text
+
+
+@pytest.mark.parametrize("title", [
+    "[Keybinds]", ";EVE - Pilot", "Notepad", "EVE - A=B", "",
+])
+def test_titles_the_engine_could_never_match_are_dropped(title):
+    """Titles are written as INI keys. A leading "[" is parsed as a section
+    header and would relocate every following entry; a leading ";" as a
+    comment; an embedded "=" moves the key/value split. The engine only ever
+    matches ^EVE - , so filtering on that closes all three."""
+    text = bookmarks.generate_ini(section(windows={title: True}))
+    body = text.split("[Enabled]\r\n", 1)[1]
+    assert body.strip() == ""
+
+
+def test_real_eve_titles_still_pass():
+    text = bookmarks.generate_ini(section(
+        windows={"EVE - Pilot One": True, "EVE - Alt Two": False}))
+    lines = text.split("\r\n")
+    assert "EVE - Pilot One=1" in lines
+    assert "EVE - Alt Two=0" in lines

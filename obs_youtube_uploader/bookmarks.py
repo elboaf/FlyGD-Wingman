@@ -213,7 +213,7 @@ def generate_ini(section: dict) -> str:
     lines.append("[Enabled]")
     for title, on in windows.items():
         clean = sanitise(title)
-        if not clean:
+        if not _is_engine_window_title(clean):
             continue
         lines.append(f"{clean}={1 if on else 0}")
 
@@ -221,11 +221,26 @@ def generate_ini(section: dict) -> str:
 
 
 def sanitise(value: str) -> str:
-    """Strip anything that could forge an INI line.
+    """Strip line breaks to prevent multi-line INI entries.
 
     Public because hotkeys.send_command needs it too: the Set Root argument
     is free text the user typed and lands in a file the engine parses.
     Window titles come from the OS and bind values from user input; neither
-    is trusted to contain a line break.
+    is trusted to contain a line break. Note: this does not make arbitrary
+    text safe as an INI key; it only strips line breaks.
     """
     return "".join(ch for ch in str(value) if ch not in "\r\n").strip()
+
+
+# The engine matches window titles against ^EVE -  (111unified.ahk:248), so
+# anything else is dead weight in the generated file. Filtering on that here
+# is also what closes the INI-injection vectors sanitise() does not: the
+# title is written as a KEY, and Windows parses a line starting with "[" as a
+# section header and one starting with ";" as a comment, while an embedded
+# "=" moves the key/value split and makes the entry unmatchable. A title that
+# starts with "EVE - " can do none of those.
+_ENGINE_TITLE_PREFIX = "EVE - "
+
+
+def _is_engine_window_title(title: str) -> bool:
+    return title.startswith(_ENGINE_TITLE_PREFIX) and "=" not in title
