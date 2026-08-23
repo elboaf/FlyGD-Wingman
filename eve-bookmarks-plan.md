@@ -3890,7 +3890,16 @@ Append to `bookmarks.js`:
     var label = { stopped: 'Stopped', stale: 'Not responding',
                   running: 'Running' }[payload.state] || '';
     var stateEl = WM.el('eve-engine-state');
-    if (stateEl) stateEl.textContent = label;
+    // Must include last_error, and must match how the route renders it
+    // after a save. Otherwise ticking Enable with a missing engine shows
+    // "Stopped — the engine is missing…" and the next poll tick a second
+    // later overwrites it with a bare "Stopped", so the one actionable
+    // thing the user was told silently disappears.
+    if (stateEl) {
+      stateEl.textContent = payload.last_error
+        ? label + ' — ' + payload.last_error
+        : label;
+    }
     host.classList.toggle('degraded', !live);
   });
 ```
