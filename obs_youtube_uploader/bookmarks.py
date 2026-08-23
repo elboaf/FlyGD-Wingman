@@ -73,3 +73,93 @@ def to_ahk(parts: dict) -> dict:
         "display": "+".join(labels + [display_key]),
         "error": None,
     }
+
+
+# Order is display order in the Bookmarks route, grouped the way the
+# standalone GUI grouped them (111unified.ahk:285-305): actions, then
+# class finishers, then tag finishers.
+BIND_IDS = (
+    "GrabSig", "SetRoot", "FormatEnf", "ConvertScout",
+    "FinH", "FinL", "FinN", "Fin13",
+    "Fin1", "Fin2", "Fin3", "Fin4", "Fin5", "Fin6",
+    "FinETag", "FinSlash", "FinM", "FinS", "FinC",
+)
+
+# Human labels for the route. Kept beside the ids so the two cannot drift.
+BIND_LABELS = {
+    "GrabSig": "Grab Sig ID",
+    "SetRoot": "Set Root",
+    "FormatEnf": "Format Enforcer",
+    "ConvertScout": "Convert EvE-Scout Bookmarks",
+    "FinH": "Finisher: HS (highsec)",
+    "FinL": "Finisher: LS (lowsec)",
+    "FinN": "Finisher: NS (nullsec)",
+    "Fin13": "Finisher: C13 (shattered)",
+    "Fin1": "Finisher: C1", "Fin2": "Finisher: C2",
+    "Fin3": "Finisher: C3", "Fin4": "Finisher: C4",
+    "Fin5": "Finisher: C5", "Fin6": "Finisher: C6",
+    "FinETag": "E Tag (end of life)",
+    "FinSlash": "/ Tag (half mass)",
+    "FinM": "M Tag (medium hole)",
+    "FinS": "S Tag (frig hole)",
+    "FinC": "C Tag (critical)",
+}
+
+# Only ConvertScout ships bound (111unified.ahk:57,140). The other
+# eighteen are blank on purpose: no default global bind means no surprise
+# collision on first run.
+DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "")
+                 for bid in BIND_IDS}
+
+_SYMBOL_TO_KEY = {sym: key for key, sym, _ in _MODIFIERS}
+
+
+def collisions(binds: dict) -> dict:
+    """Map each doubly-bound AHK string to every bind id claiming it.
+
+    Blank means "do not register" to RefreshHotkeys, so blanks are skipped
+    rather than treated as a shared value.
+    """
+    seen: dict[str, list[str]] = {}
+    for bid in BIND_IDS:
+        value = (binds.get(bid) or "").strip()
+        if not value:
+            continue
+        seen.setdefault(value, []).append(bid)
+    return {k: v for k, v in seen.items() if len(v) > 1}
+
+
+def parse_ahk(text: str) -> dict:
+    """Validate a hand-typed AHK hotkey string.
+
+    The escape hatch for non-US layouts, where the event.code table maps to
+    the wrong character. Routed through the same rules as capture so the
+    two cannot disagree.
+    """
+    raw = (text or "").strip()
+    parts = dict.fromkeys(("ctrl", "alt", "shift", "meta"), False)
+    index = 0
+    while index < len(raw) and raw[index] in _SYMBOL_TO_KEY:
+        parts[_SYMBOL_TO_KEY[raw[index]]] = True
+        index += 1
+    base = raw[index:]
+    if not base:
+        return {"ahk": "", "display": "", "error": "modifier-only"}
+
+    # Reverse the mapping table so a typed "," and a captured Comma agree.
+    code = None
+    for candidate, mapped in _NAMED.items():
+        if mapped.lower() == base.lower():
+            code = candidate
+            break
+    if code is None:
+        if len(base) == 1 and base.isalpha():
+            code = "Key" + base.upper()
+        elif len(base) == 1 and base.isdigit():
+            code = "Digit" + base
+        elif base.lower().startswith("numpad") or (
+                base[:1].upper() == "F" and base[1:].isdigit()):
+            code = base
+        else:
+            return {"ahk": "", "display": "", "error": "unmappable"}
+    return to_ahk({**parts, "code": code})
