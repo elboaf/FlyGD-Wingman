@@ -45,7 +45,10 @@ def _base_key(code: str) -> str | None:
         return code[3].lower()
     if len(code) == 6 and code.startswith("Digit"):
         return code[5]
-    if code.startswith("Numpad") and code[6:].isdigit():
+    # Single digit: a numpad has ten keys. DOM capture only ever emits
+    # Numpad0-9, but parse_ahk reaches here too and the bound belongs with
+    # the mapping, not only with its caller.
+    if code.startswith("Numpad") and len(code) == 7 and code[6:].isdigit():
         return code
     if code.startswith("F") and code[1:].isdigit() and 1 <= int(code[1:]) <= 24:
         return code
@@ -153,13 +156,35 @@ def parse_ahk(text: str) -> dict:
             code = candidate
             break
     if code is None:
-        if len(base) == 1 and base.isalpha():
+        lowered = base.lower()
+        if len(base) == 1 and base.isalpha() and base.upper() != "F":
             code = "Key" + base.upper()
         elif len(base) == 1 and base.isdigit():
             code = "Digit" + base
-        elif base.lower().startswith("numpad") or (
-                base[:1].upper() == "F" and base[1:].isdigit()):
-            code = base
+        elif lowered.startswith("numpad") and base[6:].isdigit():
+            # Canonicalise rather than forward the text: a numpad has ten
+            # keys, so "Numpad10" is not a key at all and "Numpad007" is
+            # the right key spelled wrongly. The named numpad operators
+            # (NumpadAdd and friends) were already matched by the reverse
+            # lookup above and never reach here.
+            digits = base[6:]
+            if len(digits) > 1 and digits.lstrip("0") == "":
+                digits = "0"
+            else:
+                digits = digits.lstrip("0") or "0"
+            if len(digits) != 1:
+                return {"ahk": "", "display": "", "error": "unmappable"}
+            code = "Numpad" + digits
+        elif lowered.startswith("f"):
+            # If it starts with F, it MUST be a function key (F1-F24).
+            # Same reason: int("007") is 7 and passes the range check, but
+            # the literal "F007" is not a hotkey AutoHotkey will register.
+            if not base[1:].isdigit():
+                return {"ahk": "", "display": "", "error": "unmappable"}
+            number = int(base[1:])
+            if not 1 <= number <= 24:
+                return {"ahk": "", "display": "", "error": "unmappable"}
+            code = "F" + str(number)
         else:
             return {"ahk": "", "display": "", "error": "unmappable"}
     return to_ahk({**parts, "code": code})

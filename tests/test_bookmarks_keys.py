@@ -98,3 +98,22 @@ def test_unknown_code_is_rejected():
     got = bookmarks.to_ahk(parts("Fn"))
     assert got["error"] == "unmappable"
     assert got["ahk"] == ""
+
+
+@pytest.mark.parametrize("text,ahk", [
+    ("numpad7", "Numpad7"), ("NUMPAD7", "Numpad7"), ("Numpad007", "Numpad7"),
+    ("f5", "F5"), ("F007", "F7"), ("f24", "F24"),
+    ("numpadadd", "NumpadAdd"), ("^numpad7", "^Numpad7"),
+])
+def test_parse_ahk_is_case_insensitive_and_canonicalising(text, ahk):
+    """parse_ahk is the only binding path for non-US layouts, and it feeds a
+    file the engine re-reads every 10s. Accepting what a human types and
+    emitting exactly what AutoHotkey registers are both required."""
+    assert bookmarks.parse_ahk(text)["ahk"] == ahk
+
+
+@pytest.mark.parametrize("text", ["Numpad10", "Numpad99", "F0", "F25", "F"])
+def test_parse_ahk_rejects_keys_that_do_not_exist(text):
+    """A numpad has ten keys and AutoHotkey has F1-F24. Emitting a string
+    AutoHotkey cannot register is worse than refusing it."""
+    assert bookmarks.parse_ahk(text)["error"] == "unmappable"
