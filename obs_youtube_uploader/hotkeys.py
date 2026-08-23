@@ -102,9 +102,20 @@ class HotkeyEngine:
                 return
             try:
                 proc.terminate()
-            except OSError:
-                # Already gone between the poll and here. Not an error.
+            except ProcessLookupError:
+                # Genuinely gone between the poll above and here.
                 logger.debug("Engine had already exited before terminate.")
+                return
+            except OSError:
+                # terminate() FAILED -- the process is still there. Fall
+                # through to the kill escalation rather than reporting a
+                # clean stop while a keyboard hook is still registered.
+                logger.warning("terminate() failed; escalating to kill.")
+                try:
+                    proc.kill()
+                    proc.wait(timeout=timeout)
+                except (OSError, subprocess.TimeoutExpired):
+                    logger.exception("Engine could not be killed.")
                 return
             try:
                 proc.wait(timeout=timeout)

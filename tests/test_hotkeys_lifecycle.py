@@ -213,3 +213,41 @@ def test_stop_clears_the_record_even_if_kill_raises(tmp_path):
     eng.start()
     eng.stop(timeout=0.01)
     assert not (tmp_path / "eve_engine.pid").exists()
+
+
+def test_a_failed_terminate_escalates_to_kill(tmp_path):
+    """Only ProcessLookupError means the process was already gone. Any other
+    OSError means terminate() failed and the engine is still running -- and
+    still holding a global keyboard hook. Returning there would report a
+    clean stop while the hook survives."""
+    spawner = FakeSpawner()
+
+    class Denied(FakeProc):
+        def terminate(self):
+            raise PermissionError("access denied")
+
+    spawner.proc = Denied()
+    eng = engine(tmp_path, spawner)
+    eng.apply(section())
+    eng.start()
+    eng.stop(timeout=0.01)
+    assert spawner.proc.killed is True
+    assert not (tmp_path / "eve_engine.pid").exists()
+
+
+def test_a_vanished_process_is_not_escalated(tmp_path):
+    """ProcessLookupError is the one case that really does mean gone; killing
+    again would be pointless noise."""
+    spawner = FakeSpawner()
+
+    class Vanished(FakeProc):
+        def terminate(self):
+            raise ProcessLookupError("no such process")
+
+    spawner.proc = Vanished()
+    eng = engine(tmp_path, spawner)
+    eng.apply(section())
+    eng.start()
+    eng.stop()
+    assert spawner.proc.killed is False
+    assert not (tmp_path / "eve_engine.pid").exists()
