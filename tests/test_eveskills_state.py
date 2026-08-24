@@ -623,7 +623,7 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
     os.chmod(bak, 0o644)
 
     target.write_text("{ not json", encoding="utf-8")
-    loaded, warnings = state.load(target)
+    loaded, _warnings = state.load(target)
 
     assert loaded.selected_plan_name == "Good"
 

@@ -157,7 +157,7 @@ def test_an_invalid_webhook_is_refused_with_the_parse_error(monkeypatch, tmp_pat
     assert api.save_settings(
         values(tmp_path, discord_webhook="http://discord.com/api/webhooks/1/2")) is False
     assert saved == {}
-    kind, title, body = api._alert.raised[0]
+    _kind, title, body = api._alert.raised[0]
     assert title == "Invalid webhook"
     assert "https" in body.lower()
 

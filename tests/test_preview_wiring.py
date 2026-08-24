@@ -390,8 +390,7 @@ def test_the_client_window_machinery_is_gone():
                 "obs_youtube_uploader.preview." + name)
         except ImportError:
             continue
-        raise AssertionError("obs_youtube_uploader.preview.%s still exists"
-                             % name)
+        raise AssertionError(f"obs_youtube_uploader.preview.{name} still exists")
     for name in ("save_client_layout", "restore_client_layout",
                  "set_restore_clients_on_launch",
                  "start_client_layouts_if_enabled",

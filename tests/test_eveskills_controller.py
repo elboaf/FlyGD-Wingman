@@ -18,7 +18,6 @@ from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
 
-UTC = UTC
 T0 = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
 
 
@@ -105,9 +104,8 @@ def test_the_state_lock_is_re_entrant(tmp_path):
     """
     controller, _, _ = build(tmp_path)
 
-    with controller._lock:
-        with controller._lock:          # Deadlocks here under threading.Lock.
-            assert True
+    with controller._lock, controller._lock:  # Deadlocks here under threading.Lock.
+        assert True
 
 
 def test_a_missing_state_file_is_an_empty_roster_not_an_error(tmp_path):
@@ -469,7 +467,7 @@ def with_snapshot(**kwargs):
 
 def run_refresh(tmp_path, esi, character=None, clock=None, **kwargs):
     clock = clock or Clock()
-    controller, pushed, alerts = build(
+    controller, pushed, _alerts = build(
         tmp_path, characters=[character or with_snapshot()], client=esi,
         sso=FakeSso(), spawn=DirectSpawn(), now=clock, **kwargs)
     controller.refresh_characters()
@@ -748,7 +746,7 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
                              sso=FakeSso(), spawn=DirectSpawn())
     controller._save_locked = lambda: False
 
-    token, error, definitive = controller._access_token(character.character_id)
+    token, _error, definitive = controller._access_token(character.character_id)
 
     assert token == "access-1", "the refresh itself still succeeded"
     assert definitive is False
@@ -967,7 +965,7 @@ def test_forget_always_pushes(tmp_path):
 
 
 def test_forget_rejects_a_non_positive_id(tmp_path):
-    controller, _, alerts = build(tmp_path, characters=[with_snapshot()])
+    controller, _, _alerts = build(tmp_path, characters=[with_snapshot()])
 
     assert controller.forget(0) is False
     assert controller.forget(-5) is False
@@ -1085,7 +1083,7 @@ def build_auth(tmp_path, monkeypatch, *, events=None, callback=None,
 
 
 def test_a_successful_sign_in_adds_the_character(tmp_path, monkeypatch):
-    controller, pushed, alerts, _, _ = build_auth(tmp_path, monkeypatch)
+    controller, _pushed, alerts, _, _ = build_auth(tmp_path, monkeypatch)
 
     controller.authenticate()
 
@@ -1113,7 +1111,7 @@ def test_a_successful_sign_in_kicks_off_a_refresh(tmp_path, monkeypatch):
     lands, so a sign-in that stopped short of one would look like it did
     nothing."""
     esi = FakeEsi()
-    controller, pushed, _, _, _ = build_auth(tmp_path, monkeypatch, client=esi)
+    controller, _pushed, _, _, _ = build_auth(tmp_path, monkeypatch, client=esi)
 
     controller.authenticate()
 
@@ -1123,7 +1121,7 @@ def test_a_successful_sign_in_kicks_off_a_refresh(tmp_path, monkeypatch):
 def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
     """Two authorisations would fight over the same fixed loopback port,
     and there is no second port registered with CCP to fall back to."""
-    controller, pushed, alerts, _, _ = build_auth(
+    controller, _pushed, alerts, _, _ = build_auth(
         tmp_path, monkeypatch, spawn=DeferredSpawn())
 
     controller.authenticate()
@@ -1151,7 +1149,7 @@ def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
 
 
 def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
-    controller, pushed, alerts, _, _ = build_auth(
+    controller, _pushed, alerts, _, _ = build_auth(
         tmp_path, monkeypatch,
         callback=loopback_mod.Callback(code="", error="access_denied"))
 
@@ -1164,7 +1162,7 @@ def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
 def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypatch):
     """The same owner signing back in must not look like a transfer -- the
     cached snapshot is still theirs."""
-    controller, _, alerts, _, _ = build_auth(
+    controller, _, _alerts, _, _ = build_auth(
         tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
         validate_token=lambda *a, **k: IDENTITY)
 
@@ -1239,7 +1237,7 @@ def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch
     controller, _, alerts, _, _ = build_auth(tmp_path, monkeypatch)
     controller._save_locked = lambda: False   # Simulate an unwritable disk.
 
-    result = controller.authenticate()
+    controller.authenticate()
 
     assert controller.state_payload()["characters"] == []
     assert alerts and alerts[-1][0] == "warning"

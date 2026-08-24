@@ -128,12 +128,12 @@ def test_an_underscore_separated_level_is_rejected():
 
 
 def test_a_unicode_digit_level_is_rejected():
-    """Python trap 3. "٥" is ARABIC-INDIC DIGIT FIVE. Its .isdigit()
-    is True and int("٥") returns 5, so a naive port silently accepts
-    `Navigation ٥` as level V. The guard is
+    """Python trap 3. "\u0665" is ARABIC-INDIC DIGIT FIVE. Its .isdigit()
+    is True and int("\u0665") returns 5, so a naive port silently accepts
+    `Navigation \u0665` as level V. The guard is
     `token.isascii() and token.isdigit()` -- isascii() is what makes
     isdigit() mean "ASCII 0-9" and nothing wider."""
-    assert not plans.parse("Navigation ٥\n").ok
+    assert not plans.parse("Navigation \u0665\n").ok
 
 
 def test_a_whitespace_padded_level_is_rejected():
@@ -143,7 +143,7 @@ def test_a_whitespace_padded_level_is_rejected():
     assert plans._parse_level(" 1 ") is None
 
 
-@pytest.mark.parametrize("token", ["+1", "-1", "1_0", "٥", " 1 ", "١"])
+@pytest.mark.parametrize("token", ["+1", "-1", "1_0", "\u0665", " 1 ", "\u0661"])
 def test_the_level_guard_rejects_every_trap_token(token):
     assert plans._parse_level(token) is None
 
@@ -320,7 +320,7 @@ def test_one_bad_line_rejects_every_good_line_with_it():
 def test_every_bad_line_is_reported_not_just_the_first():
     """Fixing a plan one diagnostic per save-and-reload cycle is why
     parsing continues past the first complaint."""
-    result = plans.parse("A nope\nB 9\nC ٥\n")
+    result = plans.parse("A nope\nB 9\nC \u0665\n")
     assert [d.line for d in result.diagnostics] == [1, 2, 3]
 
 

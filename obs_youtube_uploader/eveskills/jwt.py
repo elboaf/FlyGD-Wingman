@@ -8,6 +8,7 @@ primitive -- see EveJwtValidator.cs, which this module ports.
 """
 import base64
 import binascii
+import contextlib
 import json
 import math
 import re
@@ -128,10 +129,8 @@ def validate(token: str, *, client_id: str,
         # so the previous keys stay in play and the rejection below reports
         # "unknown key" rather than surfacing a fetch failure -- the token is
         # unverifiable either way, and the accurate message is the useful one.
-        try:
+        with contextlib.suppress(JwtError):
             keys = key_source.keys(force=True)
-        except JwtError:
-            pass
     public_key = keys.get(kid)
     if public_key is None:
         raise JwtError("EVE SSO access token was signed by an unknown key.")

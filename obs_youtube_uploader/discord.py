@@ -5,6 +5,7 @@ channel indefinitely. Unlike the OAuth token it does not expire, cannot be
 scoped, and has no revocation UI short of deleting the webhook server-side.
 Nothing here may ever surface one in full.
 """
+import contextlib
 import logging
 import mimetypes
 import traceback
@@ -88,8 +89,7 @@ def redact(text: str, webhook: Webhook | None) -> str:
     out = text.replace(webhook.url, _SENTINEL)
     if webhook.token and len(webhook.token) >= _MIN_REDACTABLE_TOKEN_LEN:
         out = out.replace(webhook.token, "…")
-    out = out.replace(_SENTINEL, describe(webhook))
-    return out
+    return out.replace(_SENTINEL, describe(webhook))
 
 
 class RedactingFilter(logging.Filter):
@@ -117,7 +117,7 @@ class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             webhook = self._get_webhook()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a filter must never raise, or every log call breaks
             return True
         if webhook is None:
             return True
@@ -125,7 +125,7 @@ class RedactingFilter(logging.Filter):
         # in the format string.
         try:
             rendered = record.getMessage()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a filter must never raise, or every log call breaks
             return True
         cleaned = redact(rendered, webhook)
         if cleaned != rendered:
@@ -144,16 +144,14 @@ class RedactingFilter(logging.Filter):
                     record.exc_text = "".join(
                         traceback.format_exception(*record.exc_info))
                 record.exc_text = redact(record.exc_text, webhook)
-            except Exception:
+            except Exception:  # noqa: BLE001,S110 - a filter must never raise, or every log call breaks
                 pass
         # stack_info=True appends record.stack_info the same way; it's
         # already a formatted string by the time a record carries it (built
         # eagerly by Logger._log), so it just needs redacting in place.
         if record.stack_info:
-            try:
+            with contextlib.suppress(Exception):
                 record.stack_info = redact(record.stack_info, webhook)
-            except Exception:
-                pass
         return True
 
 

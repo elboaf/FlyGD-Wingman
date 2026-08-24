@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader import uploader
+from obs_youtube_uploader import credentials, uploader
 
 
 class FakeResp:
@@ -255,9 +255,6 @@ def test_build_body_falls_back_to_untitled():
     assert body["snippet"]["title"] == "Untitled"
 
 
-from obs_youtube_uploader import credentials
-
-
 def test_is_placeholder_true_for_the_source_tree_value():
     assert credentials.is_placeholder() is True
 
@@ -436,9 +433,11 @@ def test_upload_failure_is_logged_with_the_underlying_error(caplog):
     class Request:
         def next_chunk(self): raise err
 
-    with caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"):
-        with pytest.raises(uploader.UploadFailed):
-            uploader.upload(Request(), sleep=lambda s: None)
+    with (
+        caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"),
+        pytest.raises(uploader.UploadFailed),
+    ):
+        uploader.upload(Request(), sleep=lambda s: None)
 
     text = caplog.text
     assert "upload_limit" in text

@@ -110,7 +110,7 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
 
     links = fakes.payloads(sent, "onLink")
     # KEY IS `id`: the page's onLink handler looks up the row by that field.
-    assert [l["id"] for l in links] == ["r1", "r2"]
+    assert [link["id"] for link in links] == ["r1", "r2"]
     assert rows.links == {"r1": "vid123", "r2": "vid123"}
     # The messages really went through evaluate_js, not just through the spy.
     assert window.calls
@@ -204,7 +204,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
     assert modes[0] == "indeterminate"
     assert "determinate" in modes[1:]
     # One stitched video, but every source row gets the link.
-    assert sorted(l["id"] for l in fakes.payloads(sent, "onLink")) == ["r1", "r2"]
+    assert sorted(link["id"] for link in fakes.payloads(sent, "onLink")) == ["r1", "r2"]
 
 
 def failing_upload(outcome, request=object()):
@@ -298,7 +298,7 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     # The FIRST call reuses the stored session -- that is what makes this
     # resume rather than restart -- and the second file follows on.
     assert resumed[0] is session
-    assert [l["video_id"] for l in fakes.payloads(sent, "onLink")] == ["vidA", "vidB"]
+    assert [link["video_id"] for link in fakes.payloads(sent, "onLink")] == ["vidA", "vidB"]
     assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
     assert api._retry_state is None
 

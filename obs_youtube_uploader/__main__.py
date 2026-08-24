@@ -1,4 +1,5 @@
 """Entry point: single-instance tray application."""
+import contextlib
 import logging
 import os
 import sys
@@ -142,10 +143,10 @@ def set_dpi_awareness() -> None:
     if sys.platform != "win32":
         return
     import ctypes
-    try:
+
+    # shcore.dll predates Windows 8.1; nothing to do on older hosts.
+    with contextlib.suppress(AttributeError, OSError):
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
-    except (AttributeError, OSError):
-        pass  # shcore.dll predates Windows 8.1; nothing to do on older hosts.
 
 
 def resolve_recording_dir(cfg: dict) -> Path | None:
@@ -204,10 +205,8 @@ def notify(icon, message: str) -> None:
     be disabled by policy, or the shell may simply refuse. None of that is
     a reason to break a watcher tick.
     """
-    try:
+    with contextlib.suppress(Exception):
         icon.notify(message, "FlyGD Wingman")
-    except Exception:
-        pass
 
 
 @dataclass

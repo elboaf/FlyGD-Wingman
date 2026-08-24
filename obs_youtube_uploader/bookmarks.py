@@ -73,7 +73,7 @@ def to_ahk(parts: dict) -> dict:
     display_key = base.upper() if len(base) == 1 and base.isalpha() else base
     return {
         "ahk": prefix + base,
-        "display": "+".join(labels + [display_key]),
+        "display": "+".join([*labels, display_key]),
         "error": None,
     }
 

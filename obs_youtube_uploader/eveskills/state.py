@@ -16,6 +16,7 @@ is the same posture settings.py's validated_*() functions take and the
 reason preview/layout.py:26-32 gives: a partially-written or hand-edited
 file should cost one row, not the launch.
 """
+import contextlib
 import json
 import os
 import stat as stat_module
@@ -667,20 +668,19 @@ def save(state: SkillsState, path: Path) -> None:
     # existing primary touched at all.
     atomicio.write_atomic(staging, json.dumps(to_dict(state), indent=2))
     if path.exists():
-        try:
-            # Rename, not copy: os.replace carries the source file's own
-            # mode across unchanged (it is the same inode under a new
-            # name), matching what shutil.copy2 gave the old copy-then-write
-            # shape -- and it only runs now, after the new content is
-            # already safely on disk at *staging*, so a primary that was
-            # itself corrupt never gets a chance to overwrite a good .bak
-            # with more corruption.
+        # Rename, not copy: os.replace carries the source file's own
+        # mode across unchanged (it is the same inode under a new
+        # name), matching what shutil.copy2 gave the old copy-then-write
+        # shape -- and it only runs now, after the new content is
+        # already safely on disk at *staging*, so a primary that was
+        # itself corrupt never gets a chance to overwrite a good .bak
+        # with more corruption.
+        #
+        # A backup that cannot be made must not stop the save. Losing
+        # the tier is strictly better than losing the write that the
+        # tier exists to protect.
+        with contextlib.suppress(OSError):
             os.replace(path, bak)
-        except OSError:
-            # A backup that cannot be made must not stop the save. Losing
-            # the tier is strictly better than losing the write that the
-            # tier exists to protect.
-            pass
     # Bounded retry, mirroring atomicio.write_atomic's own retry on this
     # exact rename: a Windows MoveFileExW sharing violation from a reader
     # that does not grant FILE_SHARE_DELETE is transient, so a short wait
@@ -698,23 +698,21 @@ def save(state: SkillsState, path: Path) -> None:
                 raise
             time.sleep(0.05 * (attempt + 1))
     if bak.exists():
-        try:
-            # write_atomic's own temp file is always created at 0600 by
-            # tempfile.mkstemp and carries that mode across on replace, so
-            # *path* is 0600 regardless of what mode the document it just
-            # replaced had. Align .bak to match: without this, a document
-            # that predates this package ever touching it (hand-created,
-            # or migrated from an older release) leaves a laxer-permission
-            # backup sitting beside the hardened primary it just replaced.
-            #
-            # This chmod is a no-op on Windows -- os.chmod there only ever
-            # toggles the read-only attribute, never real permission bits
-            # (uploader.py:286-293 makes the same point about the Google
-            # token file). It costs nothing to still call it (POSIX gets
-            # the real protection it describes), but the actual protection
-            # for this document on Windows is the %LOCALAPPDATA% directory
-            # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
-            # dpapi.py), not these mode bits.
+        # write_atomic's own temp file is always created at 0600 by
+        # tempfile.mkstemp and carries that mode across on replace, so
+        # *path* is 0600 regardless of what mode the document it just
+        # replaced had. Align .bak to match: without this, a document
+        # that predates this package ever touching it (hand-created,
+        # or migrated from an older release) leaves a laxer-permission
+        # backup sitting beside the hardened primary it just replaced.
+        #
+        # This chmod is a no-op on Windows -- os.chmod there only ever
+        # toggles the read-only attribute, never real permission bits
+        # (uploader.py:286-293 makes the same point about the Google
+        # token file). It costs nothing to still call it (POSIX gets
+        # the real protection it describes), but the actual protection
+        # for this document on Windows is the %LOCALAPPDATA% directory
+        # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
+        # dpapi.py), not these mode bits.
+        with contextlib.suppress(OSError):
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))
-        except OSError:
-            pass

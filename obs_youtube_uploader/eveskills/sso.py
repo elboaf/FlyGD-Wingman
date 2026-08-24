@@ -7,6 +7,7 @@ and would protect exactly nothing. PKCE is what stands in for it, which is
 why the verifier checks below are not cosmetic.
 """
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -189,10 +190,8 @@ def _post_token(form: dict, transport) -> dict:
         # else to come from. Everything read here goes through
         # safe_oauth_code before it can reach a message.
         detail = b""
-        try:
+        with contextlib.suppress(OSError):
             detail = exc.read(MAX_TOKEN_RESPONSE_BYTES + 1)
-        except OSError:
-            pass
         code = _read_error_code(detail)
         raise OAuthError(exc.code, code,
                          f"EVE SSO token request returned {exc.code} ({code}).") from exc

@@ -127,7 +127,7 @@ def _parse_date(value):
     if not isinstance(value, str) or not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
@@ -201,7 +201,7 @@ def _default_open_folder(path: Path) -> None:
     """
     if sys.platform != "win32":
         return
-    os.startfile(str(path))  # noqa: attribute exists only on Windows
+    os.startfile(str(path))
 
 
 class SkillsController:

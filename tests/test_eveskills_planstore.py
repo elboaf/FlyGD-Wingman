@@ -369,7 +369,7 @@ def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(
     alpha_lower = _NamedProxy("alpha.txt", backing=alpha)
     plans_ = [write_plan(tmp_path, f"Plan{n:03d}")
               for n in range(planstore.MAX_PLAN_FILES - 1)]
-    entries = [alpha, alpha_lower] + plans_
+    entries = [alpha, alpha_lower, *plans_]
 
     for order in (entries, list(reversed(entries))):
         found, issues = planstore.list_plans(FixedEntries(order))

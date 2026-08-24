@@ -164,4 +164,4 @@ def from_capture(parts) -> dict:
     labels = [label for key, _, label in _MODIFIERS if parts.get(key)]
     if not labels:
         return {"gesture": "", "error": "no-modifier"}
-    return {"gesture": "+".join(labels + [name]), "error": None}
+    return {"gesture": "+".join([*labels, name]), "error": None}

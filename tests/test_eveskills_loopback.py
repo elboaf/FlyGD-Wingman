@@ -144,7 +144,7 @@ def test_rejects_a_line_over_the_line_cap():
 
 def test_rejects_headers_over_the_total_cap():
     """32 KiB of headers. Individually-legal lines still have to stop."""
-    filler = ["X-Pad-%04d: %s" % (index, "a" * 200) for index in range(300)]
+    filler = [f"X-Pad-{index:04d}: {'a' * 200}" for index in range(300)]
     with pytest.raises(ValueError, match="headers"):
         parse(request(extra=filler))
 
@@ -497,9 +497,11 @@ def test_wait_times_out_when_the_browser_never_returns():
     """The overall deadline. Without it the auth worker thread never ends
     and the callback port is held for the life of the process."""
     port = free_port()
-    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
-        with pytest.raises(loopback.CallbackTimeout):
-            listener.wait("expected-state", timeout_s=0.5)
+    with (
+        loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener,
+        pytest.raises(loopback.CallbackTimeout),
+    ):
+        listener.wait("expected-state", timeout_s=0.5)
 
 
 def test_cancel_makes_a_pending_wait_raise():

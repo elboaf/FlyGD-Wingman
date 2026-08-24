@@ -3,6 +3,7 @@
 reconcile() is where a leak would live: a client that disappears without
 being removed leaves a thumbnail registered against a dead source and a
 window that never closes."""
+import itertools
 import logging
 import sys
 
@@ -648,13 +649,13 @@ def test_every_defaulted_preview_in_a_full_stack_is_fully_on_a_monitor(monkeypat
     neighbour hides that neighbour -- both were real, observed on a
     three-monitor setup with staggered tops."""
     h = _placement_host(monkeypatch)
-    placed = [h._resolve_rect("char-%d" % i, i, MONITORS) for i in range(6)]
+    placed = [h._resolve_rect(f"char-{i}", i, MONITORS) for i in range(6)]
     for i, r in enumerate(placed):
         host_mon = next((m for m in MONITORS
                          if r.x >= m.x and r.right <= m.right
                          and r.y >= m.y and r.bottom <= m.bottom), None)
         assert host_mon is not None, (i, r)
-    for a, b in zip(placed, placed[1:]):
+    for a, b in itertools.pairwise(placed):
         assert b.y >= a.bottom, (a, b)
 
 

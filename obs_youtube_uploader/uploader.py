@@ -3,6 +3,7 @@
 Errors are classified before they reach the UI so users see plain language
 instead of a traceback in a log file nobody reads.
 """
+import contextlib
 import enum
 import json
 import logging
@@ -255,7 +256,7 @@ def load_credentials(token_path: Path):
     from google.oauth2.credentials import Credentials
     try:
         return Credentials.from_authorized_user_file(str(token_path), SCOPES)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a corrupted token is not a crash
         return None
 
 
@@ -282,17 +283,15 @@ def save_credentials(creds, token_path: Path) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(creds.to_json())
     finally:
-        try:
-            # Best effort only: on Windows, os.chmod does not set real ACLs —
-            # it merely toggles the read-only attribute, so removing that bit
-            # (as done here) does nothing, and this call cannot make the file
-            # any more restrictive there. It meaningfully protects the token
-            # on Linux/macOS development and CI; real hardening on the actual
-            # Windows deployment target would need icacls or pywin32, which
-            # is out of scope. Do not assume the exposure is closed there.
+        # Best effort only: on Windows, os.chmod does not set real ACLs —
+        # it merely toggles the read-only attribute, so removing that bit
+        # (as done here) does nothing, and this call cannot make the file
+        # any more restrictive there. It meaningfully protects the token
+        # on Linux/macOS development and CI; real hardening on the actual
+        # Windows deployment target would need icacls or pywin32, which
+        # is out of scope. Do not assume the exposure is closed there.
+        with contextlib.suppress(OSError):
             os.chmod(token_path, _stat.S_IRUSR | _stat.S_IWUSR)
-        except OSError:
-            pass
 
 
 def needs_reauth(creds) -> bool:

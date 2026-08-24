@@ -48,11 +48,13 @@ def _read_path(ini: Path) -> Path | None:
         return None
 
     mode = "simple"
-    if parser.has_option("Output", "Mode"):
-        if parser.get("Output", "Mode").strip().lower() == "advanced":
-            mode = "advanced"
-        # Any other value (including "simple" or something unrecognised)
-        # keeps the default -- Simple is also OBS's own default mode.
+    # Any other value (including "simple" or something unrecognised)
+    # keeps the default -- Simple is also OBS's own default mode.
+    if (
+        parser.has_option("Output", "Mode")
+        and parser.get("Output", "Mode").strip().lower() == "advanced"
+    ):
+        mode = "advanced"
 
     primary, secondary = (
         (_ADVANCED_PATH_KEY, _SIMPLE_PATH_KEY) if mode == "advanced"

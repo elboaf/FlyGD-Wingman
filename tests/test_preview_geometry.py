@@ -1,4 +1,6 @@
 """Pure geometry: no Windows, no Pillow, runs in CI on Linux."""
+import itertools
+
 import pytest
 
 from obs_youtube_uploader.preview import geometry as g
@@ -202,7 +204,7 @@ def test_defaults_stacked_on_a_monitor_never_overlap_each_other():
     the clamp itself introduced. Stacking down the monitor avoids it."""
     mon = g.stack_monitor(REAL_MONITORS, REAL_VIRTUAL)
     placed = [g.default_stack(i, mon, (320, 210)) for i in range(6)]
-    for a, b in zip(placed, placed[1:]):
+    for a, b in itertools.pairwise(placed):
         assert b.y >= a.bottom, (a, b)
 
 

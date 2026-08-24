@@ -264,7 +264,7 @@ def test_restore_rejects_an_archive_with_a_path_bearing_entry(tmp_path):
     hostile = store / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
-                         '"source": "%s"}' % profile.as_posix())
+                         f'"source": "{profile.as_posix()}"}}')
         archive.writestr("../escape.dat", "nope")
     with pytest.raises(ValueError):
         backup.restore(store, hostile, tmp_path / "root")
@@ -278,7 +278,7 @@ def test_restore_rejects_an_unexpected_member(tmp_path):
     hostile = store / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
-                         '"source": "%s"}' % profile.as_posix())
+                         f'"source": "{profile.as_posix()}"}}')
         archive.writestr("payload.exe", "nope")
     with pytest.raises(ValueError):
         backup.restore(store, hostile, tmp_path / "root")
@@ -297,7 +297,7 @@ def test_restore_rejects_a_file_archive_carrying_a_passenger_member(tmp_path):
     hostile = store / f"20260824-123456-000-manual-character-{backup.source_key(profile)}-core_char_98123456.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "character", '
-                         '"source": "%s"}' % source.as_posix())
+                         f'"source": "{source.as_posix()}"}}')
         archive.writestr("core_char_98123456.dat", "restored")
         archive.writestr("core_char_222.dat", "passenger")
     with pytest.raises(ValueError):

@@ -421,7 +421,7 @@ def test_an_oauth_error_message_is_readable():
     """The status and the code both appear, because the pair is what a bug
     report needs and neither alone identifies the failure."""
     transport = error_transport(400, {"error": "invalid_grant"})
-    with pytest.raises(sso.OAuthError, match="400.*invalid_grant"):
+    with pytest.raises(sso.OAuthError, match=r"400.*invalid_grant"):
         sso.refresh_token("rt-old", transport=transport)
 
 

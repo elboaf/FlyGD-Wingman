@@ -452,7 +452,7 @@ class EsiClient:
         """
         try:
             raw = exc.read(MAX_ERROR_BODY_BYTES + 1)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a body we cannot read is not a verdict
             # HTTPError is not guaranteed to carry a readable body, and a
             # failure to read the explanation must not replace the status we
             # already have with a traceback.

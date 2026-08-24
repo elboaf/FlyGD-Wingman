@@ -12,6 +12,7 @@ Ground truth: TriffSkills/SkillIdCache.cs and the resolve flow in
 TriffSkillsController.cs (~503-615).
 """
 import concurrent.futures
+import contextlib
 import json
 import os
 import stat as stat_module
@@ -245,18 +246,17 @@ def save(cache: SkillIdCache, path: Path) -> None:
     # existing primary touched at all.
     atomicio.write_atomic(staging, json.dumps(document, indent=2))
     if path.exists():
-        try:
-            # Rename, not copy: os.replace carries the source file's own
-            # mode across unchanged, matching what shutil.copy2 gave the
-            # old copy-then-write shape -- and it only runs now, after the
-            # new content is already safely on disk at *staging*, so a
-            # primary that was itself corrupt never gets a chance to
-            # overwrite a good .bak with more corruption.
+        # Rename, not copy: os.replace carries the source file's own
+        # mode across unchanged, matching what shutil.copy2 gave the
+        # old copy-then-write shape -- and it only runs now, after the
+        # new content is already safely on disk at *staging*, so a
+        # primary that was itself corrupt never gets a chance to
+        # overwrite a good .bak with more corruption.
+        #
+        # A backup that cannot be made must not stop the save. Losing
+        # the tier is strictly better than losing the write it protects.
+        with contextlib.suppress(OSError):
             os.replace(path, bak)
-        except OSError:
-            # A backup that cannot be made must not stop the save. Losing
-            # the tier is strictly better than losing the write it protects.
-            pass
     # Bounded retry, mirroring atomicio.write_atomic's own retry on this
     # exact rename: a Windows MoveFileExW sharing violation from a reader
     # that does not grant FILE_SHARE_DELETE is transient, so a short wait
@@ -275,23 +275,21 @@ def save(cache: SkillIdCache, path: Path) -> None:
             time.sleep(0.05 * (attempt + 1))
 
     if bak.exists():
-        try:
-            # write_atomic's temp file is always created at 0600 and
-            # carries that mode across on replace, so *path* is 0600
-            # regardless of what mode the document it just replaced had.
-            # Align .bak to match: without this, a document that predates
-            # this cache ever touching it leaves a laxer-permission backup
-            # sitting beside the hardened primary it just replaced.
-            #
-            # This chmod is a no-op on Windows -- os.chmod there only ever
-            # toggles the read-only attribute, never real permission bits.
-            # It costs nothing to still call it, but the actual protection
-            # for files under %LOCALAPPDATA% on Windows is the directory's
-            # own ACL, not these mode bits (this cache holds no secret, so
-            # it needs nothing beyond that).
+        # write_atomic's temp file is always created at 0600 and
+        # carries that mode across on replace, so *path* is 0600
+        # regardless of what mode the document it just replaced had.
+        # Align .bak to match: without this, a document that predates
+        # this cache ever touching it leaves a laxer-permission backup
+        # sitting beside the hardened primary it just replaced.
+        #
+        # This chmod is a no-op on Windows -- os.chmod there only ever
+        # toggles the read-only attribute, never real permission bits.
+        # It costs nothing to still call it, but the actual protection
+        # for files under %LOCALAPPDATA% on Windows is the directory's
+        # own ACL, not these mode bits (this cache holds no secret, so
+        # it needs nothing beyond that).
+        with contextlib.suppress(OSError):
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))
-        except OSError:
-            pass
 
 
 def load(path: Path) -> tuple:

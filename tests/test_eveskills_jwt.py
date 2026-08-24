@@ -9,6 +9,7 @@ a module that never verified anything.
 """
 import base64
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -473,7 +474,7 @@ def test_required_scopes_are_a_subset_so_extras_are_fine(keypair, keys):
     Requiring equality would break the moment a user re-consents to a
     superset, or CCP widens what a scope implies.
     """
-    granted = list(REQUIRED) + ["esi-characters.read_notifications.v1"]
+    granted = [*list(REQUIRED), "esi-characters.read_notifications.v1"]
     identity = validate(sign(keypair, claims(scp=granted)), keys)
     assert frozenset(REQUIRED) <= identity.scopes
 
@@ -481,7 +482,7 @@ def test_required_scopes_are_a_subset_so_extras_are_fine(keypair, keys):
 def test_missing_scopes_are_named_in_the_message(keypair, keys):
     """The message is what the user acts on, so it names what is missing."""
     with pytest.raises(evejwt.JwtError,
-                       match="esi-skills.read_skillqueue.v1"):
+                       match=re.escape("esi-skills.read_skillqueue.v1")):
         validate(sign(keypair, claims(scp="esi-skills.read_skills.v1")), keys)
 
 

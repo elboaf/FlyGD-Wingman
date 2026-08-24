@@ -187,7 +187,13 @@ def bind() -> Libs:
     dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-    WNDPROC = wndproc_type()
+    # Called for its side effect only: wndproc_type() is @lru_cache'd, so this
+    # forces the WNDPROC ctypes function-pointer *type* to be built (and any
+    # failure to surface) at bind() time rather than lazily at first window
+    # creation. This is the type, not a bound callback instance -- the actual
+    # per-window callbacks that must outlive their window are built and kept
+    # alive separately, via win32._KEEPALIVE (see host.py and window.py).
+    wndproc_type()
     WINEVENTPROC = winevent_proc_type()
     MONITORENUMPROC = monitor_enum_proc_type()
     HDC, HWND, HANDLE = wintypes.HDC, wintypes.HWND, wintypes.HANDLE

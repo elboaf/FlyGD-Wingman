@@ -68,5 +68,5 @@ def unwrap(blob: str, *, unprotect=dpapi.unprotect):
         return None
     try:
         return unprotect(raw).decode("utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001 - a corrupted token is not a crash
         return None

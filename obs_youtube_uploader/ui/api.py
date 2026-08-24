@@ -746,7 +746,7 @@ class Api:
             self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
             if exc.outcome is uploader.Outcome.RETRY:
                 self._push("onRetryAvailable", {"available": True})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
             self._retry_state = None
             # Covers a stitch failure too (StitchError isn't an
             # UploadFailed): if the bar was left indeterminate above, put it
@@ -1036,10 +1036,8 @@ class Api:
 
             if result.ok:
                 # Only remove the archive once Discord has it.
-                try:
+                with contextlib.suppress(OSError):
                     archive.path.unlink()
-                except OSError:
-                    pass
                 # Discord's own message does not mention the cap; append the
                 # same drop note so the status line does not quietly
                 # disagree with the content the user just sent.
@@ -1056,7 +1054,7 @@ class Api:
                     f"{result.message}\n\nThe archive was kept so you can "
                     f"upload it by hand:\n{archive.path}"))
                 self._push("onStatus", {"text": result.message, "kind": "ERROR"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
             # post_archive never raises, but build_archive and
             # summarize_archive can -- and by then the archive may already be
             # on disk. Without this the user gets a bare str(exc) and the
@@ -1571,7 +1569,7 @@ class Api:
         try:
             creds = uploader.load_credentials(paths.token_file())
             connected = creds is not None and not uploader.needs_reauth(creds)
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable is indistinguishable from disconnected
             # An unreadable token is indistinguishable from not being
             # connected, and leaving the control mid-check forever is the
             # one outcome that helps nobody.
@@ -1594,7 +1592,7 @@ class Api:
         try:
             creds = uploader.run_oauth_flow()
             uploader.save_credentials(creds, paths.token_file())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
             self._alert("error", "Connection failed", str(exc))
             self._push_auth("disconnected")
             return

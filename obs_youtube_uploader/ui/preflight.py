@@ -87,7 +87,7 @@ def _read_pv(hive: str, subkey: str) -> str | None:
         finally:
             winreg.CloseKey(key)
         return str(value)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable key means no runtime recorded here
         return None
 
 
@@ -106,7 +106,7 @@ def webview2_version(reader=_read_pv) -> str | None:
     for hive, subkey in REGISTRY_KEYS:
         try:
             value = reader(hive, subkey)
-        except Exception:
+        except Exception:  # noqa: BLE001,S112 - one unreadable key must not stop the scan of the other two
             continue
         if value is None:
             continue

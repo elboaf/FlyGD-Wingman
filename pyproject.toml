@@ -124,10 +124,14 @@ ignore = [
 #   PL, C901 -- complexity thresholds would flag ui/api.py without
 #           telling anyone something they do not already know.
 #
-# BLE001 is selected even though fifteen sites currently trip it,
-# because fourteen OTHER sites already carry `# noqa: BLE001` with a
-# reason attached. The convention exists; this makes it enforced. Every
-# new suppression must state why the exception is swallowed.
+# BLE001 is selected even though seventeen sites currently trip it.
+# Fourteen `# noqa: BLE001` directives with reasons attached existed
+# before ruff was adopted; eight of those survive, and six turned out to
+# be unused and were removed by RUF100 (one in evesettings/names.py,
+# five in ui/api.py -- their handlers log with exc_info=True, so BLE001
+# never fired there). Nine were added when ruff was adopted. The
+# convention pre-dates the linter; this makes it enforced. Every new
+# suppression must state why the exception is swallowed.
 
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately bind values purely to assert on them later, and

@@ -277,6 +277,7 @@ upload again.
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest tests/
+uv run --extra dev ruff check .
 python -m obs_youtube_uploader
 ```
 

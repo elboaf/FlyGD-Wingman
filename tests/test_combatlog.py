@@ -1,5 +1,7 @@
 import datetime
+import json
 import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -150,8 +152,10 @@ def test_rejects_naive_datetime(tmp_path):
     """The whole point of the UTC-only interface: a naive datetime is the
     bug this prevents, so it must not be silently accepted."""
     with pytest.raises(ValueError):
-        combatlog.select_logs(tmp_path, datetime.datetime(2026, 8, 20, 20, 0),
-                              _utc(2026, 8, 20, 21, 0))
+        combatlog.select_logs(
+            tmp_path,
+            datetime.datetime(2026, 8, 20, 20, 0),  # noqa: DTZ001 - the naive datetime under test
+            _utc(2026, 8, 20, 21, 0))
 
 
 def test_rejects_non_utc_datetime(tmp_path):
@@ -274,10 +278,6 @@ def test_session_just_inside_the_guard_boundary_is_still_selected(tmp_path):
     assert [s.listener for s in sel.logs] == ["Marathon Pilot"]
 
 
-import json
-import zipfile
-
-
 def _selection(tmp_path, count=2):
     logs = []
     for i in range(count):
@@ -393,7 +393,7 @@ def test_summarize_archive_omits_drop_clause_when_nothing_dropped():
     archive = _archive_result(2, ["Alice", "Zed"], 0)
     summary = combatlog.summarize_archive(
         archive, _utc(2026, 8, 20, 21, 0), _utc(2026, 8, 20, 21, 30))
-    assert summary == "Combat logs 2026-08-20 21:00–21:30 UTC · 2 file(s) · Alice, Zed"
+    assert summary == "Combat logs 2026-08-20 21:00\u201321:30 UTC \u00b7 2 file(s) \u00b7 Alice, Zed"
     assert "omitted" not in summary
 
 

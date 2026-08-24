@@ -70,6 +70,18 @@ jobs:
               sys.exit(1)
           print("WebView2 detection predicate agrees across installer.iss and preflight.py")
           PY
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Lint
+        # The pinned ruff from [project.optional-dependencies] dev, not
+        # ruff-action's own copy: a version skew between CI and a
+        # contributor's machine turns "lint is green locally" into a
+        # coin flip.
+        run: |
+          uv sync --locked --extra dev
+          uv run --extra dev ruff check --output-format github
 
   test:
     # windows-latest is not redundant with ubuntu. Seven modules bind

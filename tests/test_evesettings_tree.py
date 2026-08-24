@@ -78,7 +78,7 @@ def test_normalize_selection_heals_a_root_pointed_at_a_profile(tmp_path):
 
 def test_normalize_selection_heals_a_root_pointed_at_a_server(tmp_path):
     profile = build(tmp_path)
-    root, server, selected = tree.normalize_selection(profile.parent, None, None)
+    root, server, _selected = tree.normalize_selection(profile.parent, None, None)
     assert root == tmp_path
     assert server == profile.parent
 

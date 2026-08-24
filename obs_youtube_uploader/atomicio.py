@@ -4,6 +4,7 @@ Every file crossing the Wingman/engine boundary goes through here. Single
 writer ownership settles who may write; it says nothing about what a reader
 polling on a timer observes mid-write, and both sides poll.
 """
+import contextlib
 import os
 import shutil
 import tempfile
@@ -41,10 +42,8 @@ def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
     except BaseException:
         # Leave no debris: a stray .tmp beside the real file is confusing
         # and, in state_dir, indistinguishable from state that matters.
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 
@@ -113,8 +112,6 @@ def copy_atomic(source: Path, target: Path, *, attempts: int = 5,
             os.fsync(dst.fileno())
         replace_with_retry(tmp_name, target, attempts, sleep)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise

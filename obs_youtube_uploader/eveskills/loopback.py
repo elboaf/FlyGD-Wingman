@@ -25,6 +25,7 @@ AUTH_TIMEOUT_S with no diagnostic anywhere. The code is protected by never
 being logged or displayed, not by being rewritten; sso.exchange_code's own
 non-blank / <=2048 / no-NUL checks are what validate it.
 """
+import contextlib
 import hmac
 import socket
 import threading
@@ -261,12 +262,10 @@ def _reply(connection, success: bool) -> None:
         f"Content-Length: {len(body)}\r\n"
         "Cache-Control: no-store\r\n"
         "Connection: close\r\n\r\n").encode("ascii")
-    try:
+    # The browser closing first is normal and is not a failure of the
+    # flow: the callback has already been read off the wire.
+    with contextlib.suppress(OSError):
         connection.sendall(headers + body)
-    except OSError:
-        # The browser closing first is normal and is not a failure of the
-        # flow: the callback has already been read off the wire.
-        pass
 
 
 def _read_request(connection, deadline: float, cancelled: threading.Event) -> bytes:
@@ -386,10 +385,8 @@ class LoopbackListener:
     def close(self) -> None:
         sock, self._socket = self._socket, None
         if sock is not None:
-            try:
+            with contextlib.suppress(OSError):
                 sock.close()
-            except OSError:
-                pass
 
     def cancel(self) -> None:
         """Make a pending wait() raise CallbackCancelled."""
@@ -483,7 +480,5 @@ class LoopbackListener:
                 _reply(connection, success=not error and not _is_blank(code))
                 return Callback(code=code, error=error)
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     connection.close()
-                except OSError:
-                    pass

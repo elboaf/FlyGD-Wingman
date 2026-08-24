@@ -58,9 +58,9 @@ def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
     now than it did for the year branch alone: every threshold here is
     relative to it.
     """
-    when = datetime.datetime.fromtimestamp(mtime)
+    when = datetime.datetime.fromtimestamp(mtime)  # noqa: DTZ006 - local wall-clock, shown to the user
     if now is None:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now()  # noqa: DTZ005 - local wall-clock, shown to the user
 
     seconds = (now - when).total_seconds()
     # Future mtimes are real: a clock correction, a bad archive, a file
@@ -176,7 +176,7 @@ def probe(path: Path, ffprobe_bin: str | None,
              "-of", "csv=p=0", str(path)],
             capture_output=True, text=True, timeout=15, **_NO_WINDOW_KWARGS,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - could not launch, or timed out; not a verdict
         # Could not launch, or timed out. Says nothing about the file.
         return None, False
     if result.returncode != 0 or not result.stdout.strip():

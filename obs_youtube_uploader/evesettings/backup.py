@@ -9,6 +9,7 @@ the same second safe; staging keeps a half-written archive from ever
 appearing under its final name, where filename-only listing would present it
 as restorable. combatlog.build_archive stages for exactly this reason.
 """
+import contextlib
 import hashlib
 import json
 import os
@@ -118,10 +119,8 @@ def _write_archive(claimed: Path, members, manifest: dict) -> None:
         os.replace(staging, claimed)
     except BaseException:
         for debris in (staging, claimed):
-            try:
+            with contextlib.suppress(OSError):
                 debris.unlink()
-            except OSError:
-                pass
         raise
 
 
@@ -331,10 +330,8 @@ def restore(backup_dir, archive_path, root, *, now=None) -> Path:
                                    now=now)
     except BaseException:
         for staging, _destination in staged:
-            try:
+            with contextlib.suppress(OSError):
                 staging.unlink()
-            except OSError:
-                pass
         raise
 
     if kind == "profile":

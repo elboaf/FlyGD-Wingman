@@ -67,7 +67,7 @@ def test_start_spawns_interpreter_script_and_token(tmp_path):
     eng = engine(tmp_path, spawner)
     eng.apply(section())
     assert eng.start() is True
-    argv, kwargs = spawner.calls[0]
+    argv, _kwargs = spawner.calls[0]
     assert argv[0] == str(tmp_path / "ahk.exe")
     assert argv[1] == str(tmp_path / "e.ahk")
     assert "TOKEN123" in argv

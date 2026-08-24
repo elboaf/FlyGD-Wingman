@@ -56,12 +56,12 @@ def _parse_level(token: str):
       * int("1_0") is 10 -- PEP 515 digit separators.
 
     And a fourth, from the obvious screen for them: str.isdigit() is
-    True for Unicode digits, so "٥".isdigit() passes and
-    int("٥") returns 5. `token.isascii()` is what makes the
+    True for Unicode digits, so "\u0665".isdigit() passes and
+    int("\u0665") returns 5. `token.isascii()` is what makes the
     isdigit() check mean "ASCII 0-9" and nothing wider.
 
     A naive port silently accepts `Navigation +5`, `Navigation 1_0`, and
-    `Navigation ٥`. Every one of those is a typo the user wants told
+    `Navigation \u0665`. Every one of those is a typo the user wants told
     about, not reinterpreted.
     """
     roman = _ROMAN.get(token.upper())
