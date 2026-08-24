@@ -40,3 +40,12 @@ broken where they stand. The vendored engine drops them, along with the 20
 When the author ships a new revision, replace this file and re-apply the
 integration layer marked `WINGMAN` in the engine, rather than porting
 changes across by hand. Hand-porting is how the last divergence happened.
+
+## See also
+
+`docs/bookmarks_reference.md` is the helper author's usage documentation —
+what Set Root, Grab Sig ID, the finishers and the tags are each *for*, and
+what each Set Root selection is supposed to do. It is the spec the engine
+should be read against, and it settles questions the scripts alone do not:
+its "Entire bookmark list" row is what says gap-filling is intended
+behaviour, not an accident of the parser.

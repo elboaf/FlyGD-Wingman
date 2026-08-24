@@ -811,21 +811,23 @@ pytest — the engine is AutoHotkey.
       on the clipboard for you to paste by hand. EVE displays signature IDs
       uppercase already, so in practice there should be nothing to see —
       check the sig readout looks right, and say so if it does not.
-- [ ] **KNOWN BEHAVIOUR CHANGE — chained systems no longer resume from a
-      selection of numbered bookmarks.** Select `J2148111-ABC`,
-      `J2148112-DEF`, `J214811A-GHI` and press Set Root.
-      Expected **now**: root `J2148111`, next `J21481111` / `J2148111A` —
-      the first parseable line's whole prefix becomes the root, and the
-      other two do not match it, so no slots are recorded.
-      Before the re-vendor: root `J214811`, next `J2148113` / `J214811B`.
-      The fork found the longest common prefix across the selection
-      (`FindCommonChain`); the author's script has no such function and
-      `Break`s on the first matching line instead. **Report what you
-      actually do here** — if the corp selects a bare system bookmark
-      (`J214811-ABC`, no counter) then root comes out `J214811` and
-      resumption works normally, and this item is a non-issue. If the corp
-      selects numbered bookmarks, this is a regression and the chain logic
-      needs restoring on top of the author's script.
+- [ ] **Set Root on an ENTIRE bookmark list fills gaps.** This is the
+      "Entire bookmark list" row of `docs/bookmarks_reference.md`. Select
+      the whole list of a scanned system — **including the system's own
+      return bookmark**, the one whose prefix is the bare root — and press
+      Set Root. With `1-ABC`, `12-GHI`, `13-MNO` (11 expired), expected:
+      root `1`, next `11` — it refills the gap rather than continuing at 14.
+      Including the return bookmark is what makes this work: DoSemi takes
+      the first parseable line's prefix as the root, and EVE's alphabetical
+      sort puts `1-ABC` ahead of `11-DEF` because "-" sorts before digits.
+      Select only the numbered bookmarks and the root comes out `11` with
+      no gap filling — that is the author's design, not a defect.
+- [ ] **Set Root on a SINGLE bookmark starts fresh numbering.** The "Single
+      bookmark" row of the reference. Select `1-ABC` alone: root `1`, next
+      `11` / `1A`, and the root on the clipboard.
+- [ ] **Set Root with NOTHING selected gives Home/Zero and touches nothing.**
+      The "Nothing" row: fresh numbering at 1/A, and nothing moved to the
+      clipboard.
 - [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
       Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
