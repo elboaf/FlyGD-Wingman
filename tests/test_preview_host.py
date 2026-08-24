@@ -250,3 +250,18 @@ def test_a_changed_client_set_is_reported_once(monkeypatch):
     h._sweep(libs=None)      # unchanged: must not report again
 
     assert seen == [["Alice"]]
+
+
+def test_host_command_messages_are_distinct():
+    """Two commands sharing a value would silently run the wrong handler.
+
+    Lives here rather than in tests/test_preview_win32.py: that file's tests
+    are skipped on non-Windows platforms because most of them exercise
+    bind()'s DLL declarations, but these are plain module-scope integers
+    that need no DLL -- and CI is ubuntu-latest only, so that skip would
+    hide this assertion from every CI run.
+    """
+    commands = {host.win32.WM_APP_SHUTDOWN, host.win32.WM_APP_SWEEP_NOW,
+                host.win32.WM_APP_REBIND}
+    assert len(commands) == 3
+    assert all(c >= host.win32.WM_APP for c in commands)
