@@ -9,6 +9,7 @@ primitive -- see EveJwtValidator.cs, which this module ports.
 import base64
 import binascii
 import json
+import math
 import re
 import threading
 import unicodedata
@@ -62,7 +63,7 @@ def _b64url_decode(segment: str) -> bytes:
     A segment that decodes to different bytes than it reads as is exactly
     the ambiguity signature verification exists to remove.
     """
-    if not _B64URL.match(segment):
+    if not _B64URL.fullmatch(segment):
         raise JwtError("EVE SSO returned an unreadable access token.")
     padded = segment + "=" * (-len(segment) % 4)
     try:
@@ -189,12 +190,26 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
 
     expiry = claims.get("exp")
     # bool is an int subclass, and `exp: true` must not read as one second
-    # past the epoch.
-    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+    # past the epoch. isfinite excludes inf/nan -- json.loads("1e400")
+    # overflows to inf, and `inf + skew_s <= now` is always False, so
+    # without this an unbounded exp would silently read as never-expiring.
+    if (isinstance(expiry, bool) or not isinstance(expiry, (int, float))
+            or not math.isfinite(expiry)):
         raise JwtError("EVE SSO access token had no usable expiry.")
     moment = now or datetime.now(timezone.utc)
     if expiry + skew_s <= moment.timestamp():
         raise JwtError("EVE SSO access token has expired.")
+
+    # EveJwtValidator.cs:120 sets ValidateLifetime = true, which checks
+    # notBefore against the same clock skew as expires. nbf is optional
+    # (RFC 7519); only a PRESENT, future nbf is a rejection.
+    not_before = claims.get("nbf")
+    if not_before is not None:
+        if (isinstance(not_before, bool) or not isinstance(not_before, (int, float))
+                or not math.isfinite(not_before)):
+            raise JwtError("EVE SSO access token had an unusable not-before claim.")
+        if not_before - skew_s > moment.timestamp():
+            raise JwtError("EVE SSO access token is not yet valid.")
 
     subject = claims.get("sub")
     match = _CHARACTER_SUBJECT.match(subject) if isinstance(subject, str) else None
@@ -204,6 +219,10 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
         # number no ESI skills response will ever match.
         raise JwtError("EVE SSO access token had an invalid character subject.")
     character_id = int(match.group(1))
+    if character_id > 2**63 - 1:
+        # The regex allows up to 19 digits, which can exceed Int64 the way
+        # the C# reference's long.TryParse would reject.
+        raise JwtError("EVE SSO access token had an invalid character subject.")
 
     raw_name = claims.get("name")
     name = raw_name.strip() if isinstance(raw_name, str) else ""

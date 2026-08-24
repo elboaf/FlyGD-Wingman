@@ -185,6 +185,37 @@ def test_rejects_a_signature_outside_the_base64url_alphabet(keypair):
                  FakeKeys({"k1": keypair.public_key()}))
 
 
+def test_a_trailing_newline_is_not_a_valid_base64url_segment(keypair):
+    """`$` matches at the true end of a string AND immediately before a
+    trailing newline, so a naive `re.match(r"^[A-Za-z0-9_-]*$", ...)` lets
+    "abc\\n" through the alphabet guard -- `fullmatch` is what actually
+    enforces "the whole segment is base64url, no exceptions"."""
+    token = sign(keypair, claims())
+    with pytest.raises(evejwt.JwtError, match="unreadable"):
+        validate(token + "\n", FakeKeys({"k1": keypair.public_key()}))
+
+
+def test_signature_covers_the_literal_segments_not_a_reserialised_payload(keypair):
+    """Every other token in this file is signed with canonical JSON
+    (separators=(",", ":"), no whitespace, module-default key order), so an
+    implementation that decoded the payload, re-serialised it, and verified
+    THAT would still pass every one of them -- by luck, since Python's
+    canonical dumps happens to round-trip byte for byte. This token is
+    signed with deliberately non-canonical JSON (extra whitespace, and the
+    header keys in a different order) to pin down that verification runs
+    against the ORIGINAL base64url segments, not a re-encoded form.
+    """
+    header = {"kid": "k1", "alg": "RS256"}  # reordered vs. every other fixture
+    payload = claims()
+    head_b64 = b64(json.dumps(header, indent=2).encode("utf-8"))
+    body_b64 = b64(json.dumps(payload, indent=2).encode("utf-8"))
+    signing_input = f"{head_b64}.{body_b64}".encode("ascii")
+    signature = keypair.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    token = f"{head_b64}.{body_b64}.{b64(signature)}"
+    identity = validate(token, FakeKeys({"k1": keypair.public_key()}))
+    assert identity.character_id == 95465499
+
+
 def test_unknown_kid_forces_exactly_one_refresh(keypair):
     """An unknown kid triggers one forced refresh, then a rejection.
 
@@ -301,6 +332,40 @@ def test_rejects_a_missing_or_non_numeric_expiry(keypair, keys):
             validate(sign(keypair, claims(exp=bad)), keys)
 
 
+def test_rejects_a_non_finite_expiry(keypair, keys):
+    """json.loads("1e400") overflows to float('inf'), and `inf + skew_s <=
+    now` is always False -- so without an explicit isfinite check, an
+    out-of-range numeric exp would silently read as never-expiring rather
+    than as the unusable value it is. NaN fails the same comparison in the
+    same silent way.
+    """
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(evejwt.JwtError, match="expiry"):
+            validate(sign(keypair, claims(exp=bad)), keys)
+
+
+def test_nbf_allows_two_minutes_of_skew(keypair, keys):
+    """EveJwtValidator.cs:120 sets ValidateLifetime = true, which checks
+    notBefore against the same clock skew as expires -- a lifetime check
+    the source performs that a bare `exp` check alone does not. nbf is
+    optional per RFC 7519, so its absence (exercised by every other test in
+    this file, none of which set it) must keep validating; only a PRESENT
+    nbf beyond the skew is a rejection.
+    """
+    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+    almost_valid = int(moment.timestamp()) + 60          # a minute from now
+    assert validate(sign(keypair, claims(nbf=almost_valid)), keys, now=moment)
+    not_yet = int(moment.timestamp()) + 121              # past the 120s allowance
+    with pytest.raises(evejwt.JwtError, match="not yet valid"):
+        validate(sign(keypair, claims(nbf=not_yet)), keys, now=moment)
+
+
+def test_rejects_a_non_numeric_or_non_finite_nbf(keypair, keys):
+    for bad in ("soon", True, [1], float("inf"), float("nan")):
+        with pytest.raises(evejwt.JwtError, match="not-before"):
+            validate(sign(keypair, claims(nbf=bad)), keys)
+
+
 def test_subject_must_be_a_character_subject(keypair, keys):
     """CHARACTER:EVE:<id> and nothing else.
 
@@ -314,6 +379,18 @@ def test_subject_must_be_a_character_subject(keypair, keys):
                 "CHARACTER:EVE:95465499 ", "character:eve:95465499"):
         with pytest.raises(evejwt.JwtError, match="character subject"):
             validate(sign(keypair, claims(sub=bad)), keys)
+
+
+def test_character_id_is_bounded_to_int64(keypair, keys):
+    """The regex allows up to 19 digits. EveJwtValidator.cs:76 pairs the
+    same regex with long.TryParse(...) && characterId > 0, so a subject
+    that overflows Int64 is rejected there. Python's arbitrary-precision
+    int has no such ceiling on its own, and nothing downstream is safe to
+    assume a 64-bit column the moment this guard is missing.
+    """
+    with pytest.raises(evejwt.JwtError, match="character subject"):
+        validate(sign(keypair, claims(sub="CHARACTER:EVE:9999999999999999999")),
+                  keys)
 
 
 def test_name_is_trimmed_and_bounded(keypair, keys):
@@ -685,16 +762,33 @@ def test_concurrent_forced_refreshes_share_a_single_fetch(keypair):
     """N threads all observe an unknown kid at once and all call
     keys(force=True). Only the first to acquire the lock should actually
     fetch; the rest, arriving after that fetch bumped the version, must
-    see their own force request already satisfied and reuse its result."""
+    see their own force request already satisfied and reuse its result.
+
+    This has to be deterministic, not merely likely: a fixed sleep before
+    releasing the winner's blocked fetch is a race by construction -- a
+    descheduled thread that has not yet queued behind the lock when the
+    sleep ends will read the POST-bump version, see it equal its own
+    observed_version, and refetch, which is a false failure that teaches
+    people to re-run rather than investigate.
+
+    `_HandoffLock` below removes the guesswork. `keys()` reads
+    `observed_version = self._version` and only THEN touches the lock, so
+    a thread that has reached the lock at all has -- in its own program
+    order, on its own thread -- already done that read. The wrapper lets
+    exactly one thread (whichever wins the real, non-blocking acquire)
+    through as the winner, and sends every other thread through
+    `queued.wait()` before it is allowed to make the real, blocking
+    acquire call. The test's own `queued.wait()` call is the barrier's
+    final party, so it returns only once all 7 losers have arrived -- which
+    is to say, only once all 7 have themselves already read
+    observed_version and found the lock held. Only then is the winner's
+    blocked fetch released. No timing assumption is left standing.
+    """
     release = threading.Event()
+    release.set()  # pre-released: the warm-up fetch below must not block
 
     class SlowHttp(FakeHttp):
         def __call__(self, request, timeout=None):
-            # Every waiting thread reads its "observed version" before
-            # blocking on the lock, then blocks here (mid-fetch) so all of
-            # them are queued behind the lock before the first fetch
-            # completes -- the exact race the version counter exists to
-            # collapse.
             if request.full_url == JWKS_URL:
                 release.wait(timeout=5)
             return super().__call__(request, timeout=timeout)
@@ -704,18 +798,34 @@ def test_concurrent_forced_refreshes_share_a_single_fetch(keypair):
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     source.keys()  # warm the cache so every thread below is a forced refresh
     http.fetched.clear()
+    release.clear()  # now arm the gate for the actual concurrency test
+
+    real_lock = source._lock
+    queued = threading.Barrier(8)  # the 7 losers, plus this thread's own wait()
+
+    class _HandoffLock:
+        def __enter__(self):
+            if real_lock.acquire(blocking=False):
+                return self
+            queued.wait(timeout=5)
+            real_lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            real_lock.release()
+            return False
+
+    source._lock = _HandoffLock()
 
     results = []
-    barrier = threading.Barrier(8)
 
     def worker():
-        barrier.wait(timeout=5)
         results.append(source.keys(force=True))
 
     threads = [threading.Thread(target=worker) for _ in range(8)]
     for thread in threads:
         thread.start()
-    time.sleep(0.1)     # let every thread queue up behind the lock
+    queued.wait(timeout=5)  # returns only once every loser has queued
     release.set()
     for thread in threads:
         thread.join(timeout=5)
