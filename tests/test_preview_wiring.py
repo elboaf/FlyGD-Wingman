@@ -159,12 +159,12 @@ def test_main_tears_previews_down():
     assert "shutdown_previews()" in src
 
 
-def test_the_preview_card_lives_in_settings_not_bookmarks():
+def test_the_preview_card_lives_in_its_own_route():
     """It was first added to the Bookmarks route, between 'EVE bookmark
-    hotkeys' and 'Root' -- so it both sat under the wrong feature and
-    split the bookmarks flow in half. Previews are unrelated to the
-    AutoHotkey engine; Discord is the precedent for an optional,
-    EVE-adjacent integration living in Settings.
+    hotkeys' and 'Root' -- under the wrong feature, and splitting the
+    bookmarks flow in half. Previews get their own destination: the
+    deferred work (labels, opacity, size, hotkeys, cycle groups, alerts)
+    is roughly the volume of the Bookmarks tab.
     """
     import pathlib
     import re
@@ -182,4 +182,21 @@ def test_the_preview_card_lives_in_settings_not_bookmarks():
                 if "EVE client previews" in line)
     ordered = sorted(starts.items(), key=lambda kv: kv[1])
     owner = [name for name, at in ordered if at < card][-1]
-    assert owner == "settings", f"the preview card is in route-{owner}"
+    assert owner == "previews", f"the preview card is in route-{owner}"
+
+
+def test_the_previews_route_is_registered_and_reachable():
+    """A route div with no entry in app.js's routes map never shows, and a
+    nav button with no matching div throws on click. Both halves have to
+    exist, and nothing else in the suite reads the page."""
+    import pathlib
+
+    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    html = (web / "index.html").read_text(encoding="utf-8")
+    app = (web / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="route-previews"' in html
+    assert 'data-route="previews"' in html
+    assert "previews: 'route-previews'" in app
+    # Peer destination, so the gear returns here rather than to Uploader.
+    assert "name === 'previews'" in app

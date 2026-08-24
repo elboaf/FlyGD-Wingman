@@ -90,7 +90,8 @@
   WM.route = function (name) {
     var routes = { main: 'route-main', settings: 'route-settings',
                    firstrun: 'route-firstrun',
-                   bookmarks: 'route-bookmarks' };
+                   bookmarks: 'route-bookmarks',
+                   previews: 'route-previews' };
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
@@ -105,7 +106,9 @@
     WM.el('routenav').hidden = (name === 'firstrun');
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'bookmarks') {
+    if (name === 'main' || name === 'bookmarks' || name === 'previews') {
+      // Peer destinations, unlike Settings: the gear returns to whichever
+      // of these you came from.
       WM.last_destination = name;
     }
     WM.current_route = name;
