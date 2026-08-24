@@ -14,7 +14,8 @@ import ctypes
 import logging
 import threading
 
-from . import discovery, geometry, layout, win32
+from . import cycle, discovery, gestures, geometry, layout, win32
+from . import window as window_mod
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -31,13 +32,57 @@ def reconcile(current: set, desired: set):
             sorted(current & desired))
 
 
+HOTKEY_ID_BASE = 1
+HOTKEY_ID_MAX = 0xBFFF     # Windows reserves 0xC000+ for DLLs
+
+
+def plan_registrations(table) -> list:
+    """(hotkey_id, gesture_text, action) for every registerable binding.
+
+    Pure, and separated from the Win32 half for exactly that reason: id
+    assignment, duplicate rejection and gesture validation are where the
+    bugs are, and none of them need a window.
+
+    Order is deterministic so a rebind that changed nothing produces the
+    same ids -- rebinding unregisters and re-registers wholesale, and an
+    unstable assignment would churn registrations that did not change.
+    """
+    table = table if isinstance(table, dict) else {}
+    characters = table.get("characters")
+    entries = []
+    if isinstance(characters, dict):
+        for name in sorted(characters):
+            entries.append((characters[name], ("focus", name)))
+    entries.append((table.get("cycle_next"), ("cycle", 1)))
+    entries.append((table.get("cycle_prev"), ("cycle", -1)))
+
+    plan, claimed = [], set()
+    for text, action in entries:
+        parsed = gestures.parse(text)
+        if parsed is None:
+            continue
+        canonical = gestures.display(parsed)
+        if canonical in claimed:
+            # Windows would refuse the second registration anyway. Dropping
+            # it here keeps the reported status honest about which binding
+            # actually lost.
+            continue
+        ident = HOTKEY_ID_BASE + len(plan)
+        if ident > HOTKEY_ID_MAX:
+            logger.warning("Too many preview hotkeys; dropping %s", canonical)
+            break
+        claimed.add(canonical)
+        plan.append((ident, canonical, action))
+    return plan
+
+
 class PreviewHost:
     """Owns the preview thread. Public methods are callable from anywhere;
     anything touching an HWND is marshalled onto the thread."""
 
     def __init__(self, on_layout_changed, saved_layouts=None,
                  size=DEFAULT_SIZE, flush_layouts=None,
-                 on_clients_changed=None):
+                 on_clients_changed=None, on_hotkey_status=None):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
@@ -60,6 +105,16 @@ class PreviewHost:
         self._hook = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
+
+        self._on_hotkey_status = on_hotkey_status
+        # The desired table, written by any thread and read by the preview
+        # thread when it processes WM_APP_REBIND. PostMessage cannot carry
+        # a dict, so the value travels in a field and only the signal is
+        # posted -- the same shape _saved already uses.
+        self._desired_hotkeys = {}
+        self._registered = {}     # hotkey_id -> action
+        self._hotkey_status = {}  # gesture text -> registered?
+        self._last_cycled = None
 
     @property
     def is_running(self) -> bool:
@@ -108,6 +163,28 @@ class PreviewHost:
             win32.bind().user32.PostMessageW(self._hwnd,
                                              win32.WM_APP_SWEEP_NOW, 0, 0)
 
+    def set_hotkeys(self, table) -> None:
+        """Replace the whole binding table. Safe from any thread.
+
+        Wholesale rather than diffed: the table is a dozen entries, and
+        diffing registration state against Windows is a bug farm for no
+        measurable gain.
+        """
+        with self._lock:
+            self._desired_hotkeys = dict(table or {})
+        if self._hwnd:
+            win32.bind().user32.PostMessageW(self._hwnd,
+                                             win32.WM_APP_REBIND, 0, 0)
+
+    def hotkey_status(self) -> dict:
+        """Outcome of the most recent registration pass.
+
+        Readable, not only announced. Previews start before the webview
+        exists (__main__.py:406-411), so a conflict found at launch has
+        nowhere to be pushed and would otherwise be lost for the session.
+        """
+        return dict(self._hotkey_status)
+
     # ---- everything below runs ON the preview thread -------------------
 
     def _run(self) -> None:
@@ -130,6 +207,9 @@ class PreviewHost:
 
         self._sweep(libs)
         self._install_hook(libs)
+        with self._lock:
+            initial = dict(self._desired_hotkeys)
+        self._apply_hotkeys(libs, initial)
         libs.user32.SetTimer(self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID),
                              SWEEP_MS, None)
         self._ready.set()
@@ -183,6 +263,14 @@ class PreviewHost:
             return 0
         if msg == win32.WM_APP_SHUTDOWN:
             self._teardown(libs)
+            return 0
+        if msg == win32.WM_APP_REBIND:
+            with self._lock:
+                table = dict(self._desired_hotkeys)
+            self._apply_hotkeys(libs, table)
+            return 0
+        if msg == win32.WM_HOTKEY:
+            self._on_hotkey(libs, wparam)
             return 0
         return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -255,6 +343,51 @@ class PreviewHost:
         return sorted(key for key in self._clients
                       if not key.startswith("hwnd:"))
 
+    def _apply_hotkeys(self, libs, table) -> None:
+        """Unregister everything, then register the new table."""
+        for ident in list(self._registered):
+            libs.user32.UnregisterHotKey(self._hwnd, ident)
+        self._registered.clear()
+
+        status = {}
+        for ident, text, action in plan_registrations(table):
+            parsed = gestures.parse(text)
+            ok = bool(libs.user32.RegisterHotKey(self._hwnd, ident,
+                                                 parsed.mods, parsed.vk))
+            status[text] = ok
+            if ok:
+                self._registered[ident] = action
+            else:
+                # A chord another application already owns. User-actionable,
+                # not a bug -- and the parent design requires it be visible
+                # rather than logged only.
+                logger.warning("Could not register preview hotkey %s; "
+                               "another application may already own it", text)
+        self._hotkey_status = status
+        if self._on_hotkey_status is not None:
+            self._on_hotkey_status(dict(status))
+
+    def _on_hotkey(self, libs, ident) -> None:
+        action = self._registered.get(ident)
+        if action is None:
+            return
+        kind, value = action
+        if kind == "focus":
+            target = value
+        else:
+            foreground = libs.user32.GetForegroundWindow()
+            anchor = next((key for key, client in self._clients.items()
+                           if client.hwnd == foreground), None)
+            # Fall back to the last chord's target when focus is not on a
+            # client at all -- a browser, or Wingman itself.
+            target = cycle.step(self.characters(),
+                                anchor or self._last_cycled, value)
+            self._last_cycled = target
+        client = self._clients.get(target)
+        if client is None:
+            return    # bound to a character that is not running: correct no-op
+        window_mod.activate(libs, client.hwnd)
+
     def _screen(self):
         """Virtual-desktop bounds, re-read each sweep.
 
@@ -278,6 +411,12 @@ class PreviewHost:
                 # Teardown must complete. A settings file that cannot be
                 # written is not a reason to leak HWNDs and a live pump.
                 logger.exception("Could not flush preview layouts on shutdown")
+        # Step 1, before the window they are registered against dies. The
+        # parent design's Lifecycle section lists this first and noted its
+        # absence; it stops being harmless the moment anything registers.
+        for ident in list(self._registered):
+            libs.user32.UnregisterHotKey(self._hwnd, ident)
+        self._registered.clear()
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)   # 1. hook
             self._hook = None
