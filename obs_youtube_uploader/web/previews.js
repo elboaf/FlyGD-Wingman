@@ -266,7 +266,19 @@
   // (dispatched only when the global settings payload changes) would not
   // fire on a plain tab switch and was the wrong event to listen for here.
   document.addEventListener('wm:route', function (event) {
-    if (event.detail === 'previews') { refresh(); }
+    if (event.detail === 'previews') {
+      refresh();
+      return;
+    }
+    // Leaving this route must disarm an in-progress capture. bookmarks.js
+    // now installs its own document-level keydown listener too;
+    // stopPropagation() only stops OTHER listeners further along the same
+    // dispatch, not a sibling listener already attached to the same
+    // document node, so an armed capture left running here would still
+    // consume the next keystroke typed on the Bookmarks route -- writing
+    // a chord meant for a bookmark bind into this one instead, off-screen
+    // and silently persisted.
+    endCapture();
   });
 
   refresh();

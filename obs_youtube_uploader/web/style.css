@@ -566,8 +566,11 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
-   away yet, only would be if bookmarks were turned on. */
-.bindbtn.dim { border-color: #3a3f4a; color: var(--text-faint); }
+   away yet, only would be if bookmarks were turned on. Border is
+   --panel-border, DARKER than .bindbtn's own #2a2e37, so the row recedes
+   rather than stands out -- a lighter border here would make "dim" read
+   as more prominent than a normal, unremarkable binding. */
+.bindbtn.dim { border-color: var(--panel-border); color: var(--text-faint); }
 
 /* Accented, unlike a plain .hint: this warns that two actions share a key
    and AutoHotkey will silently let one win. It shares .bindbtn.clash's
