@@ -811,6 +811,17 @@ pytest — the engine is AutoHotkey.
       on the clipboard for you to paste by hand. EVE displays signature IDs
       uppercase already, so in practice there should be nothing to see —
       check the sig readout looks right, and say so if it does not.
+- [ ] **A Grab Sig that copies nothing says so.** Focus something with no
+      selectable text — an empty area of the probe scanner, or a window with
+      nothing selected — and press the Grab Sig bind.
+      Expected: a tooltip reading "Grab Sig failed - nothing was copied",
+      and the sig readout **unchanged** from before.
+      The bug: the sig silently became the first three characters of
+      whatever was already on the clipboard. Straight after a Set Root that
+      is the root, so root `J214811` produced sig `-J21`, and the next
+      finisher wrote it into a real bookmark with nothing flagging it.
+      Then confirm the normal path still works — select a scanner row,
+      Grab Sig, and check the readout shows that row's signature.
 - [ ] **Set Root on an ENTIRE bookmark list fills gaps.** This is the
       "Entire bookmark list" row of `docs/bookmarks_reference.md`. Select
       the whole list of a scanned system — **including the system's own

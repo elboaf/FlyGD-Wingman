@@ -19,6 +19,14 @@
 ; registration. Each is marked WINGMAN below. There is no channel in the
 ; other direction -- Wingman configures the engine through the INI and
 ; reads its state from the status file, and nothing sends it commands.
+;
+; ONE behaviour block is not the author's: DoQ clears the clipboard before
+; its own Send ^c and checks ClipWait's ErrorLevel, so a copy that does not
+; land is reported instead of silently reading stale clipboard contents as
+; the signature. It is marked WINGMAN like the rest. The divergence is
+; deliberately the smallest available -- it applies the clear-then-check
+; shape the author already uses in DoConvertScout, so it is a fix worth
+; offering back upstream rather than a local invention.
 ; ============================================================
 #Persistent
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
@@ -511,9 +519,24 @@ AllPrefixesSingle(clip) {
 }
 
 DoQ:
+; WINGMAN: clear-then-check, the same shape DoConvertScout already uses a
+; few lines below. The author's version sends ^c onto whatever the
+; clipboard already holds and ignores ClipWait's ErrorLevel, so a copy that
+; does not land reads the PREVIOUS contents -- and ClipWait returns at once
+; rather than stalling, because the clipboard is not empty. DoSemi ends with
+; `Clipboard := RootKey`, so straight after a Set Root that stale content is
+; the root: a failed Grab Sig took root J214811 and produced sig "-J21",
+; which FireRootFinisher then wrote into real bookmarks while the status bar
+; showed it like any ordinary signature.
+Clipboard := ""
 Send ^c
 Sleep 100
 ClipWait, 2
+if (ErrorLevel) {
+    ToolTip, Grab Sig failed - nothing was copied
+    SetTimer, RemoveTooltip, -1500
+    Return
+}
 ClipSaved := Clipboard
 ClipTrim := SubStr(ClipSaved, 1, 3)
 Clipboard := "-" . ClipTrim . " "
