@@ -228,11 +228,14 @@ class PreviewWindow:
     """
 
     def __init__(self, libs, client, rect, on_activate, on_rect_changed,
-                 neighbours, screen):
+                 neighbours, screen, locked=False):
         self._libs = libs
         self.client = client
         self.rect = rect
-        self.locked = False
+        # Restored from the saved layout, not assumed False: a preview the
+        # user locked must still be locked after a restart, and reporting
+        # locked=False on the next drag would erase the flag.
+        self.locked = locked
         self.selected = False
         self._perf = None
         # Last key rendered; None forces the first draw.
@@ -254,9 +257,9 @@ class PreviewWindow:
 
     @classmethod
     def create(cls, libs, client, rect, on_activate, on_rect_changed,
-               neighbours, screen):
+               neighbours, screen, locked=False):
         self = cls(libs, client, rect, on_activate, on_rect_changed,
-                   neighbours, screen)
+                   neighbours, screen, locked)
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
             win32.WS_EX_LAYERED | win32.WS_EX_TOOLWINDOW

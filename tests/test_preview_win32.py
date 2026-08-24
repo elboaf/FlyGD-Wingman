@@ -12,6 +12,7 @@ Linux by design (structs and constants at import time, DLLs only inside
 bind()), so importorskip would not skip -- the test would run and fail in
 CI on the bind() call.
 """
+import ctypes
 import sys
 
 import pytest
@@ -43,6 +44,25 @@ REQUIRED = {
 }
 
 
+# Functions whose RETURN value is pointer-sized. ctypes defaults restype
+# to c_int, which truncates these on 64-bit Windows -- and that is the half
+# that actually bit during design probing, twice: SelectObject and
+# CreateDIBSection both hand back handles, and DefWindowProcW an LRESULT.
+# Checking argtypes alone would have caught neither.
+POINTER_SIZED_RETURNS = {
+    "user32": ["CreateWindowExW", "DefWindowProcW", "GetDC",
+               "GetForegroundWindow", "SetCapture", "SetTimer",
+               "SetWinEventHook", "SetThreadDpiAwarenessContext",
+               "DispatchMessageW"],
+    "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject"],
+    "kernel32": ["GetModuleHandleW"],
+}
+
+# Anything at least as wide as a pointer is acceptable; the failure being
+# guarded against is specifically the c_int default.
+_WIDE = (ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_size_t)
+
+
 def test_every_used_function_is_declared():
     libs = win32.bind()
     missing = []
@@ -55,6 +75,27 @@ def test_every_used_function_is_declared():
             elif f.argtypes is None:
                 missing.append(f"{lib_name}.{fn} has no argtypes")
     assert not missing, "\n".join(missing)
+
+
+def test_pointer_sized_returns_are_not_left_at_the_c_int_default():
+    """The other half of the guard.
+
+    A missing restype does not raise: the call succeeds and hands back a
+    truncated handle, which fails later somewhere unrelated. That is
+    exactly how it presented during probing.
+    """
+    libs = win32.bind()
+    bad = []
+    for lib_name, funcs in POINTER_SIZED_RETURNS.items():
+        lib = getattr(libs, lib_name)
+        for fn in funcs:
+            restype = getattr(lib, fn).restype
+            if restype is ctypes.c_int or restype is None:
+                bad.append(f"{lib_name}.{fn} restype is {restype!r}")
+            elif not (restype in _WIDE
+                      or ctypes.sizeof(restype) >= ctypes.sizeof(ctypes.c_void_p)):
+                bad.append(f"{lib_name}.{fn} restype {restype!r} is too narrow")
+    assert not bad, "\n".join(bad)
 
 
 def test_bind_is_cached_so_declarations_are_applied_once():

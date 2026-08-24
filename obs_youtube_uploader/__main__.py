@@ -311,7 +311,12 @@ def build_preview_host(state):
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
-            size=(section.get("width", 320), section.get("height", 210)))
+            size=(section.get("width", 320), section.get("height", 210)),
+            # A bound method, never a lambda wrapping one: a name resolved
+            # lazily inside a lambda is not checked when this function
+            # runs, and tests/test_preview_wiring.py records what that cost
+            # last time.
+            flush_layouts=store.flush)
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.

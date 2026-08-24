@@ -52,3 +52,68 @@ def test_start_twice_does_not_spawn_two_threads(monkeypatch):
     h.start()
     h.stop()
     assert len(started) == 1
+
+
+def test_shutdown_flushes_pending_layouts(monkeypatch):
+    """Layout writes are debounced by a second. Quitting inside that window
+    after a drag would otherwise discard the move -- and the plan called
+    for this explicitly before anyone noticed it was missing."""
+    flushed = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         flush_layouts=lambda: flushed.append(1))
+
+    class FakeUser32:
+        def __getattr__(self, _name):
+            return lambda *a, **k: 0
+
+    h._teardown(type("L", (), {"user32": FakeUser32()})())
+    assert flushed == [1]
+
+
+def test_teardown_completes_even_if_the_flush_raises():
+    """A settings file that cannot be written is not a reason to leak
+    HWNDs and leave the pump running."""
+    calls = []
+
+    class FakeUser32:
+        def __getattr__(self, name):
+            def record(*a, **k):
+                calls.append(name)
+                return 0
+            return record
+
+    def boom():
+        raise OSError("read-only filesystem")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         flush_layouts=boom)
+    h._teardown(type("L", (), {"user32": FakeUser32()})())
+    assert "PostQuitMessage" in calls
+
+
+def test_a_layout_change_updates_the_in_session_cache():
+    """A client that disappears and comes back mid-session is a new entry
+    to the next sweep. If _saved still held only what was loaded at
+    startup, the preview would be re-placed by default_stack and the
+    user's dragged position would not return until a full restart."""
+    from obs_youtube_uploader.preview.geometry import Rect
+
+    sent = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: sent.append(a))
+    h._layout_changed("Pilot", Rect(10, 20, 320, 210), False)
+
+    assert h._saved["Pilot"].rect == Rect(10, 20, 320, 210)
+    assert sent == [("Pilot", Rect(10, 20, 320, 210), False)]
+
+
+def test_a_restored_lock_survives_into_the_new_window():
+    """layout.Entry carries `locked`, deserialize restores it, and the
+    window reports it back on the next drag. If the window started at
+    False regardless, that report would erase the flag from settings."""
+    from obs_youtube_uploader.preview.geometry import Rect
+    from obs_youtube_uploader.preview.layout import Entry
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         saved_layouts={"Pilot": Entry(Rect(1, 2, 320, 210),
+                                                       locked=True)})
+    assert h._saved["Pilot"].locked is True

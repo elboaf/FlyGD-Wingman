@@ -197,7 +197,12 @@ jobs:
         shell: pwsh
         run: |
           $font = "dist\OBSYouTubeUploader\_internal\assets\fonts\Inter-Regular.ttf"
-          if (-not (Test-Path $font)) {
+          # -PathType Leaf: a DIRECTORY named Inter-Regular.ttf would
+          # satisfy a bare Test-Path and Pillow cannot load one. That is
+          # not hypothetical here -- fetch_autohotkey.py exists because a
+          # datas entry once produced exactly that, a directory where a
+          # file was expected.
+          if (-not (Test-Path $font -PathType Leaf)) {
             throw "Inter-Regular.ttf not found at $font - the assets/fonts datas entry in uploader.spec did not resolve, and preview labels will silently render in Pillow's default face"
           }
       - name: Verify the web page is bundled

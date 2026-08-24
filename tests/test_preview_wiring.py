@@ -200,3 +200,15 @@ def test_the_previews_route_is_registered_and_reachable():
     assert "previews: 'route-previews'" in app
     # Peer destination, so the gear returns here rather than to Uploader.
     assert "name === 'previews'" in app
+
+
+def test_an_unchanged_toggle_still_reports_success(tmp_path):
+    """The no-op short-circuit is a SUCCESS path. Returning None gave it
+    exactly the failure the truthy return exists to prevent: WM.send
+    resolves to null on a bridge error, so the page could not tell a
+    redundant toggle from a broken one and reverted the checkbox."""
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
+    assert api.set_preview_enabled(True) is True
+    assert host.started == 0        # still short-circuited, not restarted

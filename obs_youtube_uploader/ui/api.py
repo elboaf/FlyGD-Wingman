@@ -1240,7 +1240,13 @@ class Api:
             # emit one on re-render. PreviewHost.start/stop are idempotent
             # too, so this is belt and braces -- but the redundant write is
             # real.
-            return
+            #
+            # True, not None: this is a SUCCESS path. Returning None here
+            # gave it exactly the failure the truthy return below exists to
+            # prevent -- WM.send resolves to null on a bridge error, so the
+            # page would read a no-op toggle as a failed call and revert
+            # the checkbox.
+            return True
         section["enabled"] = enabled
         try:
             settings_mod.save(self._state.settings)

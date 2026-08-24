@@ -14,7 +14,7 @@ import ctypes
 import logging
 import threading
 
-from . import discovery, geometry, win32
+from . import discovery, geometry, layout, win32
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,12 @@ class PreviewHost:
     anything touching an HWND is marshalled onto the thread."""
 
     def __init__(self, on_layout_changed, saved_layouts=None,
-                 size=DEFAULT_SIZE):
+                 size=DEFAULT_SIZE, flush_layouts=None):
         self._on_layout_changed = on_layout_changed
+        # Called during teardown, before any window is destroyed. Layout
+        # writes are debounced, so without this a drag in the last second
+        # before quitting is simply lost.
+        self._flush_layouts = flush_layouts
         self._saved = dict(saved_layouts or {})
         self._size = size
         self._thread = None
@@ -74,6 +78,19 @@ class PreviewHost:
             # produces a Wingman that vanishes from the tray and lingers
             # in Task Manager.
             logger.warning("Preview thread did not exit within %.1fs", timeout)
+
+    def _layout_changed(self, stable_key, rect, locked) -> None:
+        """Record the new rect locally, then pass it outward.
+
+        Keeping _saved current matters within a single session: a client
+        that disappears and comes back -- an EVE client restart, or a
+        transient discovery miss -- is a new entry to the next sweep. If
+        _saved still held only what was loaded at startup, that preview
+        would be placed by default_stack and the position the user dragged
+        it to would not return until the whole app was restarted.
+        """
+        self._saved[stable_key] = layout.Entry(rect, locked)
+        self._on_layout_changed(stable_key, rect, locked)
 
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
@@ -192,10 +209,14 @@ class PreviewHost:
             win = PreviewWindow.create(
                 libs, client, rect,
                 on_activate=lambda c: None,
-                on_rect_changed=self._on_layout_changed,
+                on_rect_changed=self._layout_changed,
                 neighbours=lambda k=key: [w.rect for k2, w
                                           in self._windows.items() if k2 != k],
-                screen=self._screen)
+                screen=self._screen,
+                # Restored, not defaulted: a preview locked before the last
+                # restart must come back locked, or the next drag reports
+                # locked=False and erases the flag from settings.
+                locked=bool(entry.locked) if entry else False)
             if win is not None:
                 self._windows[key] = win
 
@@ -215,6 +236,17 @@ class PreviewHost:
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""
+        # First, while the windows still exist and their rects are still
+        # readable. Layout writes are debounced by a second, so quitting
+        # right after a drag would otherwise discard it. settings.save()
+        # is lock-serialised, so writing from this thread is safe.
+        if self._flush_layouts is not None:
+            try:
+                self._flush_layouts()
+            except Exception:
+                # Teardown must complete. A settings file that cannot be
+                # written is not a reason to leak HWNDs and a live pump.
+                logger.exception("Could not flush preview layouts on shutdown")
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)   # 1. hook
             self._hook = None
