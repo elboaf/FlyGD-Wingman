@@ -623,9 +623,9 @@ def _on_a_monitor(r):
                     or r.bottom <= m.y or r.y >= m.bottom) for m in MONITORS)
 
 
-def _placement_host(monkeypatch, saved=None):
+def _placement_host(monkeypatch, saved=None, **kw):
     h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         saved_layouts=saved, size=(320, 210))
+                         saved_layouts=saved, size=(320, 210), **kw)
     monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
     return h
 
@@ -729,4 +729,78 @@ def test_the_sweep_enumerates_monitors_once_for_a_whole_batch(monkeypatch):
     h._sweep(libs=None)
 
     assert len(calls) == 1
+
+
+# --- restore_preview_positions gates the saved rect -------------------------
+
+def test_a_saved_rect_is_ignored_when_restoring_is_off(monkeypatch):
+    """Off means the preview opens where a first-time character's would --
+    and not only at launch, but every time the client appears."""
+    placed = geometry.Rect(3106, 546, 320, 210)
+    h = _placement_host(monkeypatch,
+                        saved={"Isiga": layout.Entry(placed, False)},
+                        restore_positions=lambda: False)
+    assert h._resolve_rect("Isiga", 0, MONITORS) == \
+        h._resolve_rect("never-seen", 0, MONITORS)
+
+
+def test_the_off_path_is_clamped_to_a_monitor_too(monkeypatch):
+    """The clamp must apply on BOTH paths. Branching early and returning
+    the raw default would put the preview back in the dead zone above a
+    staggered monitor -- the bug #30 fixed."""
+    h = _placement_host(monkeypatch,
+                        saved={"Gone": layout.Entry(
+                            geometry.Rect(-9000, 400, 320, 210), False)},
+                        restore_positions=lambda: False)
+    assert h._resolve_rect("Gone", 0, MONITORS) == \
+        geometry.Rect(6062, 309, 320, 210)
+
+
+def test_the_saved_path_is_still_clamped_when_restoring_is_on(monkeypatch):
+    h = _placement_host(monkeypatch,
+                        saved={"Gone": layout.Entry(
+                            geometry.Rect(-9000, 400, 320, 210), False)},
+                        restore_positions=lambda: True)
+    assert _on_a_monitor(h._resolve_rect("Gone", 0, MONITORS))
+
+
+def test_the_setting_is_read_per_placement_not_captured(monkeypatch):
+    """A preview is created whenever its client appears, usually mid-
+    session. Reading the setting once at construction would apply the
+    value the app started with for the rest of the run."""
+    wanted = [False]
+    placed = geometry.Rect(3106, 546, 320, 210)
+    h = _placement_host(monkeypatch,
+                        saved={"Isiga": layout.Entry(placed, False)},
+                        restore_positions=lambda: wanted[0])
+    assert h._resolve_rect("Isiga", 0, MONITORS) != placed
+    wanted[0] = True
+    assert h._resolve_rect("Isiga", 0, MONITORS) == placed
+
+
+def test_an_unreadable_setting_restores_rather_than_discards(monkeypatch):
+    """Placement runs on the preview thread inside the sweep. A raising
+    callable must not take the sweep down, and the safe direction is the
+    behaviour that predates the toggle."""
+    placed = geometry.Rect(3106, 546, 320, 210)
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = _placement_host(monkeypatch,
+                        saved={"Isiga": layout.Entry(placed, False)},
+                        restore_positions=boom)
+    assert h._resolve_rect("Isiga", 0, MONITORS) == placed
+
+
+def test_positions_are_recorded_even_while_restoring_is_off():
+    """Switching back on must restore what the user last had rather than
+    nothing, so a drag is persisted whatever the setting says."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a),
+                         restore_positions=lambda: False)
+    rect = geometry.Rect(10, 20, 320, 210)
+    h._layout_changed("Isiga", rect, False)
+    assert recorded == [("Isiga", rect, False)]
+    assert h._saved["Isiga"].rect == rect
 

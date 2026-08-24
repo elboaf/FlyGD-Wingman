@@ -14,7 +14,7 @@ def test_defaults_carry_every_bind(tmp_path):
 
 
 def test_nested_defaults_are_not_shared_with_the_module_global(tmp_path):
-    """load() starts from dict(DEFAULTS) (settings.py:38), a SHALLOW copy.
+    """load() starts from dict(DEFAULTS) (settings.py:260-262), a SHALLOW copy.
     Fine while every default is a scalar; with a nested dict the returned
     settings would alias DEFAULTS and the first in-place edit would corrupt
     it for the rest of the process -- silently, and for every later load().

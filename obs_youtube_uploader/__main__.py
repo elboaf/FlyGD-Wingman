@@ -356,6 +356,19 @@ def build_preview_host(state, api_box):
             if api is not None:
                 api.push_preview_hotkeys(status)
 
+        def restore_positions():
+            # Read per placement, never captured. The toggle changes
+            # mid-session, and settings._normalize replaces the whole
+            # preview section object on every write -- so this reads
+            # through `state`, which keeps its identity, rather than
+            # holding the section.
+            #
+            # Absent means on: an upgrading user's file predates the key,
+            # and defaulting to off would silently discard every position
+            # they have.
+            return bool(state.settings.get("preview", {}).get(
+                "restore_preview_positions", True))
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
@@ -366,53 +379,12 @@ def build_preview_host(state, api_box):
             # last time.
             flush_layouts=store.flush,
             on_clients_changed=on_clients_changed,
-            on_hotkey_status=on_hotkey_status)
+            on_hotkey_status=on_hotkey_status,
+            restore_positions=restore_positions)
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
         logger.exception("Preview subsystem unavailable")
-        return None
-
-
-def build_client_layout_manager(state):
-    """The EVE client window layout manager, or None where it cannot run.
-
-    Shaped like build_preview_host above, and for the same reasons:
-    Windows-only, None elsewhere so every call site stays a plain no-op,
-    and construction failures are swallowed because this is secondary to
-    the upload workflow.
-
-    NOT gated on preview.enabled. This moves the client windows
-    themselves; it shares a settings section and a tab with previews and
-    nothing else.
-    """
-    if sys.platform != "win32":
-        return None
-    try:
-        from .preview import clientwin32, discovery, geometry
-        from .preview import win32 as preview_win32
-        from .preview.clientlayout import ClientLayoutManager
-
-        def screen():
-            # Re-read per batch, not cached: monitors get plugged in and
-            # rearranged while Wingman runs, and a stale origin makes the
-            # reachability check answer about a desktop that is gone.
-            libs = preview_win32.bind()
-            return geometry.virtual_desktop(libs.user32.GetSystemMetrics)
-
-        return ClientLayoutManager(
-            read_settings=lambda: state.settings,
-            # settings.update, not settings.save: the read must happen
-            # inside _SAVE_LOCK or a concurrent writer is reverted.
-            update_settings=settings_mod.update,
-            list_clients=discovery.list_clients,
-            read_placement=clientwin32.read_placement,
-            apply_placement=clientwin32.apply_placement,
-            work_area_origin=clientwin32.work_area_origin,
-            screen=screen,
-            dpi_context=clientwin32.dpi_context)
-    except Exception:
-        logger.exception("Client layout manager unavailable")
         return None
 
 
@@ -472,8 +444,7 @@ def main() -> int:
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
     api_box = {}
-    api = api_mod.Api(state, preview_host=build_preview_host(state, api_box),
-                      client_layouts=build_client_layout_manager(state))
+    api = api_mod.Api(state, preview_host=build_preview_host(state, api_box))
     api_box["api"] = api
 
     w = None
@@ -502,10 +473,6 @@ def main() -> int:
     # window is destroyed, so anything started after it never runs until
     # the app is already quitting. No-op unless the user enabled previews.
     api.start_previews_if_enabled()
-
-    # Same reason as the line above: window_mod.run() below blocks, so
-    # anything started after it never runs until the app is quitting.
-    api.start_client_layouts_if_enabled()
 
     window = window_mod.create(api)
 
@@ -570,7 +537,6 @@ def main() -> int:
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
     # Manager.
     api.shutdown_previews()
-    api.shutdown_client_layouts()
     return 0
 
 

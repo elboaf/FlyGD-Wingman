@@ -261,6 +261,18 @@
           <span class="hint">Click a preview to switch to that client.
             Drag to move it, drag the bottom-right corner to resize.
             Positions are remembered per character.</span></div>
+        <div class="row">
+          <span class="lab">Position</span>
+          <label class="check">
+            <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
+            Reopen previews where you last put them
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="restore-preview-positions-status">Off opens
+            each preview in a default stack instead. Positions are still
+            remembered while this is off, so turning it back on restores
+            what you last had.</span></div>
       </section>
 
       <section class="card">
@@ -277,27 +289,6 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
-      </section>
-
-      <section class="card">
-        <h2>EVE client windows</h2>
-        <div class="row">
-          <span class="lab">On launch</span>
-          <label class="check">
-            <input type="checkbox" id="client-restore-on-launch"><span class="box"></span>
-            Put client windows back where they were when a client starts
-          </label>
-        </div>
-        <div class="row">
-          <span class="lab">Positions</span>
-          <button class="btn" id="btn-save-client-layout">Save current positions</button>
-          <button class="btn" id="btn-restore-client-layout">Restore now</button>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="client-layout-status">Saves where each EVE
-            client window sits, per character. Clients still at character
-            select are skipped &mdash; there is no character to save
-            against yet.</span></div>
       </section>
     </div>
   </div>

@@ -36,8 +36,6 @@ REQUIRED = {
                "SetWinEventHook", "UnhookWinEvent",
                "RegisterHotKey", "UnregisterHotKey",
                "SetThreadDpiAwarenessContext",
-               "GetWindowPlacement", "SetWindowPlacement",
-               "SystemParametersInfoW",
                "EnumDisplayMonitors", "GetMonitorInfoW"],
     "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject",
               "DeleteObject", "DeleteDC"],

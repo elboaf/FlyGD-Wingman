@@ -571,6 +571,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    rather than stands out -- a lighter border here would make "dim" read
    as more prominent than a normal, unremarkable binding. */
 .bindbtn.dim { border-color: var(--panel-border); color: var(--text-faint); }
+
+/* "We cannot say whether Windows holds this chord" -- previews are off,
+   or no registration pass has reported yet (previews.js's clashes()).
+   Dashed rather than another colour: it must not read as the warning
+   .clash carries (nothing is wrong) and must not be mistaken for
+   .bindbtn.dim above, which already means a latent bookmark collision.
+   Keeping the normal text colour is deliberate -- the binding is real
+   and saved; only its registration is unknown. */
+.bindbtn.unknown { border-style: dashed; border-color: var(--panel-border); }
 /* ====================== EVE Settings route ==========================
    Same card markup as the settings and bookmarks routes, so it needs the
    same column direction and scroll safeguard: three cards, two of them

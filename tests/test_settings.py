@@ -29,8 +29,7 @@ def test_defaults_are_the_documented_values():
             "layouts": {},
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
-            "restore_clients_on_launch": False,
-            "client_layouts": {},
+            "restore_preview_positions": True,
         },
         "eve_settings": {
             "root": None,

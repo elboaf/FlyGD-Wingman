@@ -11,6 +11,10 @@
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false};
   var capturing = null;
+  // Bumped every time `state` is replaced wholesale, by a push or by a
+  // refresh. send() samples it before its bridge call so a save that
+  // resolves late can tell that a newer table has landed meanwhile.
+  var pushes = 0;
   // Set when a render is skipped because a capture is armed; flushed by
   // endCapture(). See requestRender() below for why this exists.
   var pendingRender = false;
@@ -29,7 +33,11 @@
   function rows() {
     // Running first, then known-but-offline, then any binding whose
     // character is in neither -- a chord with no row would be invisible.
-    var seen = {}, out = [];
+    //
+    // Object.create(null), not {}: a character named "constructor" or
+    // "__proto__" finds a truthy INHERITED property on an object literal
+    // and is dropped from the list along with whatever it is bound to.
+    var seen = Object.create(null), out = [];
     state.characters.forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: true}); }
     });
@@ -52,8 +60,22 @@
     if (state.hotkeys.cycle_next === gesture) { count += 1; }
     if (state.hotkeys.cycle_prev === gesture) { count += 1; }
     if (count > 1) { return 'duplicate'; }
-    if (state.registration[gesture] === false) { return 'refused'; }
-    return null;
+    // Three states, not two. Python sends true for a chord Windows
+    // accepted and false for one it refused -- but it sends NEITHER once
+    // the host has stopped, because get_preview_hotkey_state gates on
+    // is_running and returns an empty map. A plain lookup yields
+    // undefined for both "absent" and "refused is false", so testing
+    // `=== false` alone made every chord render as registered at the one
+    // moment Windows was holding none of them.
+    //
+    // hasOwnProperty rather than `in`: the map comes off a JSON payload,
+    // so an entry literally named "toString" would otherwise be found on
+    // Object.prototype and reported as registered.
+    var known = state.registration || {};
+    if (!Object.prototype.hasOwnProperty.call(known, gesture)) {
+      return 'unknown';
+    }
+    return known[gesture] === false ? 'refused' : null;
   }
 
   function makeRow(label, gesture, online, onSet) {
@@ -68,13 +90,21 @@
     var clash = clashes(gesture);
     var shadow = bookmarkClash(gesture);
     // An active bookmark collision warns like any other clash; a latent one
-    // only marks, because nothing is being taken away yet.
-    if (clash || shadow === 'active') { button.classList.add('clash'); }
+    // only marks, because nothing is being taken away yet. `unknown` is
+    // neither: nothing is wrong, we simply cannot say whether Windows is
+    // holding the chord, so it must not borrow the warning colour -- nor
+    // .dim, which already means a latent bookmark collision.
+    if (clash === 'duplicate' || clash === 'refused'
+        || shadow === 'active') { button.classList.add('clash'); }
+    else if (clash === 'unknown') { button.classList.add('unknown'); }
     else if (shadow === 'latent') { button.classList.add('dim'); }
     if (clash === 'refused') {
       button.title = 'Another application already owns this chord.';
     } else if (clash === 'duplicate') {
       button.title = 'This chord is bound twice here.';
+    } else if (clash === 'unknown') {
+      button.title = 'Not registered right now — previews are off, or ' +
+                     'Windows has not reported on this chord yet.';
     } else if (shadow === 'active') {
       button.title = 'An EVE bookmark uses this chord. This binding takes ' +
                      'it while an EVE client is focused.';
@@ -169,18 +199,28 @@
     var off = WM.el('preview-binds-off');
     if (off) { off.style.display = state.enabled ? 'none' : ''; }
 
+    // `true`, not state.enabled: the cycle chords are not characters and
+    // have no online state to report. Dimming them while previews were
+    // off was half of what made the whole list grey at once.
     host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next,
-                             state.enabled,
+                             true,
                              function (g) { setBind('cycle_next', g); }));
     host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev,
-                             state.enabled,
+                             true,
                              function (g) { setBind('cycle_prev', g); }));
 
     var list = rows();
     list.forEach(function (entry) {
       host.appendChild(makeRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],
-        state.enabled && entry.online,
+        // null, not false, while previews are off. makeRow dims only on
+        // a strict false, and dimming means "this character is logged
+        // off" -- a claim we cannot make with the host stopped, because
+        // Python then sends characters: [] and every row would look
+        // offline whoever is actually online. A uniformly dim list is
+        // indistinguishable from one where everyone really has logged
+        // out; the banner above says "off" instead.
+        state.enabled ? entry.online : null,
         function (g) { setCharacterBind(entry.name, g); }));
     });
 
@@ -189,12 +229,30 @@
   }
 
   function send(next) {
+    // Held across the bridge call. onPreviewHotkeys replaces `state`
+    // wholesale and fires whenever an EVE client opens or closes --
+    // routinely while someone is setting a bind. Without this, a save
+    // resolving after such a push wrote its own older table back over
+    // the newer one, and the page then disagreed with Python until the
+    // next refresh.
+    var generation = pushes;
     WM.send('set_preview_binds', next).then(function (ok) {
       if (!ok) {
         // WM.send resolves to null on a bridge error, and Python returns
         // false on a rejected chord. Either way the page must not keep
         // showing a binding the backend never accepted.
         refresh();
+        // ...and must not put it back in silence: repainting from the
+        // backend with nothing said looks exactly like the click never
+        // registering, which is how the same chord gets tried twice.
+        WM.send('alert_bookmarks',
+                'That binding was not saved. Another chord may already ' +
+                'use it, or the settings file could not be written.');
+        return;
+      }
+      if (generation !== pushes) {
+        // A push overtook this save. It carries the newer table, so
+        // dropping this write is what keeps the page and Python in step.
         return;
       }
       state.hotkeys = next;
@@ -222,6 +280,7 @@
     WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
       state = payload;
+      pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
       requestRender();
@@ -267,6 +326,7 @@
   WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
     state = payload;
+    pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
     requestRender();

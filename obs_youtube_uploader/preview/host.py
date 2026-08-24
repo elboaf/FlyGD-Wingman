@@ -82,7 +82,8 @@ class PreviewHost:
 
     def __init__(self, on_layout_changed, saved_layouts=None,
                  size=DEFAULT_SIZE, flush_layouts=None,
-                 on_clients_changed=None, on_hotkey_status=None):
+                 on_clients_changed=None, on_hotkey_status=None,
+                 restore_positions=None):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
@@ -94,6 +95,11 @@ class PreviewHost:
         # persisted settings only.
         self._on_clients_changed = on_clients_changed
         self._saved = dict(saved_layouts or {})
+        # Read per placement, never captured: a preview is created whenever
+        # its client appears, which is usually mid-session, so the value
+        # the app started with is not the value that should apply. None
+        # means "always restore" -- the behaviour that predates the toggle.
+        self._restore_positions = restore_positions
         self._size = size
         self._thread = None
         self._hwnd = None          # message-only window, see _run
@@ -180,7 +186,7 @@ class PreviewHost:
         """Outcome of the most recent registration pass.
 
         Readable, not only announced. Previews start before the webview
-        exists (__main__.py:406-411), so a conflict found at launch has
+        exists (__main__.py:476-478), so a conflict found at launch has
         nowhere to be pushed and would otherwise be lost for the session.
         """
         return dict(self._hotkey_status)
@@ -511,13 +517,18 @@ class PreviewHost:
         somewhere it cannot be seen or grabbed, and a preview that cannot
         be grabbed can never be dragged back to somewhere it can.
 
+        The `restore_preview_positions` setting chooses between the two
+        paths; it does not choose whether to clamp. Returning the raw
+        default on the off path would reintroduce exactly the off-screen
+        placement this method exists to prevent.
+
         *monitors* is passed in rather than read here so one sweep costs
         one enumeration rather than one per added preview -- and, when
         enumeration fails, one log line rather than one per preview.
         """
         if entry is None:
             entry = self._saved.get(key)
-        if entry:
+        if entry and self._restoring():
             # A saved rect is the user's own choice. Only rescued when it
             # is on no display at all -- pulling a preview they deliberately
             # parked half off-screen back on would be the wrong kind of help.
@@ -528,6 +539,23 @@ class PreviewHost:
         target = geometry.stack_monitor(monitors, self._screen())
         return geometry.clamp_to_monitors(
             geometry.default_stack(index, target, self._size), monitors)
+
+    def _restoring(self) -> bool:
+        """Whether a saved rect should be honoured, read live.
+
+        Runs on the preview thread inside the sweep, so it must not be
+        the thing that kills the pump. A callable that raises falls back
+        to restoring -- the behaviour that predates the toggle, and the
+        one that loses none of the user's positioning.
+        """
+        if self._restore_positions is None:
+            return True
+        try:
+            return bool(self._restore_positions())
+        except Exception:
+            logger.exception("Could not read restore_preview_positions; "
+                             "restoring the saved position")
+            return True
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""

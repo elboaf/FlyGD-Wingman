@@ -231,22 +231,22 @@
   });
 }());
 
-// ---- EVE client window layouts -------------------------------------------
-// Separate from the previews block above: this moves the CLIENT windows,
-// not the preview tiles, and works whether or not previews are on.
+// ---- Where a preview opens -----------------------------------------------
+// Separate from the previews block above, and not part of collect()/
+// save_settings either: this key is written by its own bridge method so a
+// write that fails can be reported rather than silently lost.
 //
-// Not part of collect()/save_settings either -- the checkbox starts and
-// stops a watcher thread rather than just persisting a field.
+// This replaces the card that used to move the GAME windows. EVE reads a
+// resize as a resolution change and rewrites its own configuration, so
+// Wingman no longer touches a client's rect at all -- only the preview's.
 (function () {
-  var box = WM.el('client-restore-on-launch');
-  var save = WM.el('btn-save-client-layout');
-  var restore = WM.el('btn-restore-client-layout');
-  var status = WM.el('client-layout-status');
-  if (!box || !save || !restore || !status) { return; }
+  var box = WM.el('restore-preview-positions');
+  var status = WM.el('restore-preview-positions-status');
+  if (!box || !status) { return; }
 
-  function say(text) { status.textContent = text; }
+  var DEFAULT_HINT = status.textContent;
 
-  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
 
   box.addEventListener('change', function () {
     var wanted = box.checked;
@@ -254,68 +254,22 @@
     // rejecting (app.js:38-43). A dict is always truthy, so null is
     // still the only thing that reverts the box -- and a failed write
     // is no longer mistaken for one.
-    WM.send('set_restore_clients_on_launch', wanted).then(function (res) {
+    WM.send('set_restore_preview_positions', wanted).then(function (res) {
       if (!res) { box.checked = !wanted; return; }
       if (!res.persisted) {
-        // The watcher really did change state, so the box stays where
-        // the user put it. What it cannot do is survive a restart, and
-        // saying nothing is how they find that out the hard way.
-        say('Restore-on-launch is ' + (wanted ? 'on' : 'off')
+        // The setting really did change for this session, so the box
+        // stays where the user put it. What it cannot do is survive a
+        // restart, and saying nothing is how they find that out the
+        // hard way.
+        say('Reopening previews in place is ' + (wanted ? 'on' : 'off')
           + ' for this session, but could not be written to settings — '
           + 'it will not survive a restart.');
       } else {
-        // The checkbox already shows the new state; clearing here (rather
-        // than confirming) avoids leaving a stale failure message on
-        // screen after a later toggle succeeds, without adding a
-        // confirmation nobody asked to see on every successful toggle.
+        // The checkbox itself is the success feedback. Restoring the
+        // hint (rather than confirming) clears a prior failure message
+        // without adding noise on every successful toggle.
         say('');
       }
-    });
-  });
-
-  save.addEventListener('click', function () {
-    WM.send('save_client_layout').then(function (res) {
-      if (!res) { say('Could not save client positions.'); return; }
-      if (!res.persisted) {
-        // Saying "Saved N" after the write failed is a lie the user
-        // discovers at their next restart.
-        say('Could not write client positions to settings.');
-        return;
-      }
-      if (!res.saved) {
-        // `failed` is what separates "nothing was running" from "every
-        // running client refused to be read". Only the log could tell
-        // them apart before (clientlayout.py:96).
-        say(res.failed
-            ? 'Could not read the position of any running client.'
-            : 'No named clients are running. Nothing to save.');
-        return;
-      }
-      if (res.failed) {
-        say('Saved ' + plural(res.saved, 'client position.',
-                              'client positions.')
-            + ' Could not read ' + plural(res.failed, 'other.',
-                                          'others.'));
-        return;
-      }
-      say('Saved ' + plural(res.saved, 'client position.',
-                            'client positions.'));
-    });
-  });
-
-  restore.addEventListener('click', function () {
-    WM.send('restore_client_layout').then(function (res) {
-      if (!res) { say('Could not restore client positions.'); return; }
-      if (!res.restored && !res.skipped) {
-        say('Nothing to restore. No running client has a saved position.');
-        return;
-      }
-      var text = 'Restored ' + plural(res.restored, 'client.', 'clients.');
-      if (res.skipped) {
-        text += ' ' + plural(res.skipped, 'was', 'were')
-             + ' skipped — the saved position is off-screen now.';
-      }
-      say(text);
     });
   });
 
@@ -324,6 +278,9 @@
   // already has an owner.
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
-    box.checked = !!(s.preview && s.preview.restore_clients_on_launch);
+    // Absent means on: an upgrading user's file predates the key, and
+    // showing the box unchecked would misreport what will happen.
+    box.checked = !(s.preview
+      && s.preview.restore_preview_positions === false);
   });
 }());

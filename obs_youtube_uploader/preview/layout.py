@@ -1,7 +1,7 @@
 """Preview layout persistence.
 
 Pure: dict in, dict out. The caller owns the file, because settings.save()
-projects the complete document (settings.py:145-149) and has more than one
+projects the complete document (settings.py:281-285) and has more than one
 writer already -- see preview/store.py for who may write and how.
 """
 from typing import NamedTuple
