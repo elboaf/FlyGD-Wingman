@@ -542,27 +542,37 @@ into whichever slice next touches that file.
   read-merge-write inside one transaction. Every settings writer in the
   package went the same way, including two the retrofit found rather than
   inherited.
-- **`tests/test_api_bookmarks.py` overwrites the developer's real
-  `settings.json`.** Two tests reach `settings_mod.save` through
-  `save_bookmarks` with no stub, and nothing redirects
-  `paths.settings_file()`. #23 fixed the one instance in a file it already
-  edited and left these. The durable fix is an autouse `conftest.py` fixture
-  pointing `paths.settings_file()` at `tmp_path`, which closes the whole
-  class rather than the instances anyone happened to notice.
-- **"No named clients are running" is reported when every placement read
-  failed.** `clientlayout._save` returns `saved: 0` for both "nothing was
-  running" and "everything failed to read". The log distinguishes them; the
-  message does not.
-- **The restore-on-launch toggle reports success on a failed persist.**
-  `Api.set_restore_clients_on_launch` swallows `OSError` and still returns
-  truthy, so the checkbox stays checked and the choice is gone at restart.
-  Inconsistent with the save button in the same card, which reports a failed
-  write deliberately.
-- **Enabling restore-on-launch mid-session places already-running clients**
-  on the first tick, two seconds later. Correct at launch, which is what the
-  label describes; arguably surprising mid-session. Seeding `_placed` from
-  the current sweep when `start()` arrives from the toggle rather than from
-  launch is the shape of the fix, if it turns out to bother anyone.
+- ~~**`tests/test_api_bookmarks.py` overwrites the developer's real
+  `settings.json`.**~~ **Done — and the diagnosis was wrong.** No test in
+  that file ever leaked: its `api` fixture already redirected
+  `paths.settings_file()`, and since that patch lands on the module object it
+  covered `settings_mod.save` too. The real leak was one level up at
+  `paths.state_dir()`, reached from three places nobody had stubbed — the
+  upload worker's channel persist (15 tests in `test_api_upload.py`), the
+  probe cache writing `durations.json`, and `set_preview_enabled` (3 tests in
+  `test_preview_wiring.py`). An autouse `tests/conftest.py` redirects
+  `LOCALAPPDATA`, `state_dir()`'s only input, so every derived path moves
+  together. Pointing it at `settings_file()` as suggested here would have
+  broken `tests/test_paths.py`, which asserts on that function's real return.
+- ~~**"No named clients are running" is reported when every placement read
+  failed.**~~ **Done.** `_save` returns a `failed` count beside `saved` and
+  `persisted`, and the card reads it: nothing running and nothing readable
+  are now different messages. It also made the partial case sayable — "Saved
+  3 client positions. Could not read 2 others." — which was silent before.
+- ~~**The restore-on-launch toggle reports success on a failed persist.**~~
+  **Done.** It returns `{"applied": True, "persisted": bool}`, the save
+  button's own key in the same card. The checkbox stays where the user put it,
+  because the watcher really did change state; what the page reports is that
+  the choice will not survive a restart. No retry bookkeeping was needed —
+  `settings.update()` restores the live dict when the block raises, so the
+  next toggle sees a real change and retries on its own.
+- ~~**Enabling restore-on-launch mid-session places already-running
+  clients**~~ **Done — fixed, not left.** `start(seed_placed=True)` marks the
+  current sweep as already placed, and the toggle passes it only on a real
+  transition, so a repeat enabled call cannot consume a client that appeared
+  since. The launch path still calls bare `start()`. Fixed rather than left
+  because `restore_now()` — the Restore button four lines away in the same
+  card — already exists for the user who wants that.
 
 ### Left behind by item 7 (#26)
 
