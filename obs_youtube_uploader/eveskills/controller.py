@@ -35,6 +35,15 @@ from . import state as state_mod
 
 logger = logging.getLogger(__name__)
 
+# TriffSkillsController.cs:847,857 caps both the warnings strip and each
+# plan issue's own diagnostics list at 20 -- this is the largest payload in
+# the app and crosses the bridge on every push, so an unbounded diagnostics
+# list from a single pathologically malformed plan file (thousands of bad
+# lines) would otherwise inflate every subsequent push, not just the one
+# reload that found it.
+MAX_WARNINGS = 20
+MAX_DIAGNOSTICS_PER_ISSUE = 20
+
 
 def _utcnow() -> datetime:
     """Injectable in tests; production reads the real clock exactly here."""
@@ -211,9 +220,10 @@ class SkillsController:
             "plan_issues": [
                 {"file_name": issue.file_name, "message": issue.message,
                  "diagnostics": [{"line": d.line, "message": d.message}
-                                 for d in issue.diagnostics]}
+                                 for d in issue.diagnostics[
+                                     :MAX_DIAGNOSTICS_PER_ISSUE]]}
                 for issue in self._plan_issues],
-            "warnings": list(self._load_warnings),
+            "warnings": list(self._load_warnings[:MAX_WARNINGS]),
             "plans_updated_utc": _iso(self._plans_updated),
         }
 
@@ -305,13 +315,24 @@ class SkillsController:
         self._push_state(force=True)
 
     def select_plan(self, plan_name) -> bool:
-        """Select a plan by name. False when it no longer exists.
+        """Select a plan by name. False when it no longer exists, or when
+        the selection could not be made durable.
 
         The empty string is a valid selection -- it clears the choice -- so
         it is handled before the lookup rather than falling into it.
+
+        On a save failure the in-memory value is rolled back to what was
+        selected before this call. Without the rollback, the controller
+        would hold a selection in memory that was never written to disk --
+        the page would be told it succeeded, and if the process exits
+        before some later, unrelated save happens to persist it, the
+        selection silently reverts with nothing ever having been shown.
+        `_save_locked`'s own docstring says "the caller flags the row
+        accordingly"; this is that caller doing so.
         """
         name = str(plan_name or "")
         with self._lock:
+            previous = self._state.selected_plan_name
             if name:
                 plan = self._find_plan_locked(name)
                 if plan is None:
@@ -324,8 +345,19 @@ class SkillsController:
                 self._state.selected_plan_name = plan.name
             else:
                 self._state.selected_plan_name = ""
-            self._save_locked()
+            saved = self._save_locked()
+            if not saved:
+                self._state.selected_plan_name = previous
+        # Both the push and the alert happen outside the lock, matching
+        # _push_state's own rule: `push`/`alert` reach pywebview, and
+        # holding the state lock across a bridge call would let a slow
+        # page block a refresh worker's commit.
         self._push_state(force=True)
+        if not saved:
+            self._alert("warning", "Could not save the selected plan",
+                        "Your selection was not saved and has been "
+                        "reverted.")
+            return False
         return True
 
     def open_plans_folder(self) -> None:

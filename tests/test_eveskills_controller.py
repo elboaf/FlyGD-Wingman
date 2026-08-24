@@ -185,6 +185,22 @@ def test_selecting_an_unknown_plan_reports_failure(tmp_path):
     assert pushed == []
 
 
+def test_a_save_failure_rolls_back_the_selection_and_warns(tmp_path):
+    """Mirrors TriffSkillsController.cs:331-341's SelectPlan: a save failure
+    must not leave the page believing an unsaved selection is durable.
+
+    Without the rollback, the in-memory value would diverge from disk with
+    nothing shown -- the selection would silently revert on the next
+    unrelated save, or on the next launch, with no warning ever having
+    appeared."""
+    controller, _, alerts = build(tmp_path, plans={"Interceptor": "Navigation V\n"})
+    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+
+    assert controller.select_plan("Interceptor") is False
+    assert controller._state.selected_plan_name == ""      # Rolled back.
+    assert alerts and alerts[-1][0] == "warning"
+
+
 def test_selecting_persists_across_a_reconstruction(tmp_path):
     """The selection lives in the state document, not in the page. Reopening
     Wingman must land on the plan the user was last looking at."""
