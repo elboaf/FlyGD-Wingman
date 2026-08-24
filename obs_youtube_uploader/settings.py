@@ -187,3 +187,21 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def update(read, mutate, path: Path | None = None) -> None:
+    """Atomic read-modify-write of the settings document.
+
+    save() locks only the write. Reading outside that lock leaves a window
+    in which another writer completes and is then reverted by our stale
+    copy -- and AppState.settings is REPLACED wholesale rather than
+    mutated (ui/api.py:139-141), so "stale" here means a whole document,
+    not one key. Every other writer goes through save(), which takes this
+    same lock, so holding it across the read closes the window.
+
+    `read` is called INSIDE the lock for that reason; do not hoist it.
+    """
+    with _SAVE_LOCK:
+        data = read()
+        mutate(data)
+        _save_locked(data, path)
