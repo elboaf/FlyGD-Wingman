@@ -228,11 +228,21 @@ def _coerce_queue(raw) -> tuple:
     return tuple(entries)
 
 
+# TriffSkillsState.cs:159's `.Take(100)` on Scopes -- the one collection in
+# the source that gets its own cap distinct from MAX_LEVEL_ENTRIES/
+# MAX_QUEUE_ENTRIES, so it needs its own constant rather than reusing one
+# of those. A real ESI grant is a handful of scope strings; 100 is
+# headroom against a hand-edited file, not a real ceiling.
+MAX_SCOPES = 100
+
+
 def _coerce_scopes(raw) -> tuple:
     if not isinstance(raw, list):
         return ()
     out = []
     for item in raw:
+        if len(out) >= MAX_SCOPES:
+            break
         if isinstance(item, str) and item and item not in out:
             out.append(item)
     return tuple(out)
@@ -240,6 +250,15 @@ def _coerce_scopes(raw) -> tuple:
 
 def _coerce_text(raw) -> str:
     return raw if isinstance(raw, str) else ""
+
+
+def _coerce_trimmed_text(raw) -> str:
+    """TriffSkillsState.cs:157-158,163 trims CharacterName, OwnerHash and
+    Error. Used only for those three fields -- the token blob and the two
+    ETags are opaque values, not display text, and trimming them would
+    silently corrupt a blob or ETag that happened to start or end with
+    whitespace-looking bytes."""
+    return _coerce_text(raw).strip()
 
 
 def _coerce_selected_plan_name(raw) -> str:
@@ -251,8 +270,13 @@ def _coerce_selected_plan_name(raw) -> str:
     too long to be a real plan file (validate_plan_name in planstore.py
     rejects the same length) is dropped outright rather than mangled into
     something that happens to still parse.
+
+    Trimmed BEFORE the length check (TriffSkillsState.cs:198's .Trim()
+    precedes its length check on the same line) so a value that is only
+    over the cap because of padding whitespace is kept rather than
+    needlessly cleared.
     """
-    text = _coerce_text(raw)
+    text = _coerce_text(raw).strip()
     if len(text) > MAX_SELECTED_PLAN_NAME_CHARS:
         return ""
     return text
@@ -309,34 +333,41 @@ def from_dict(raw: object) -> SkillsState:
     if not isinstance(characters, list):
         return result
 
-    seen = set()
+    # Full scan, not truncated to some multiple of MAX_CHARACTERS before
+    # dedup: a later row for an id must be able to win over an earlier one
+    # no matter how far apart they sit in the file. by_id is a plain dict
+    # assignment, which mirrors TriffSkillsState.cs:164's
+    # `deduped[character.CharacterId] = character` exactly -- the LAST
+    # occurrence's data wins, while the key's position in iteration order
+    # stays wherever it was FIRST inserted (a property both C# Dictionary
+    # and Python dict share). The final cap is applied afterwards, to the
+    # deduped result, not to the raw scan.
+    by_id: dict = {}
     for item in characters:
-        if len(result.characters) >= MAX_CHARACTERS:
-            break
         if not isinstance(item, dict):
             continue
         character_id = _coerce_int(item.get("character_id"))
-        # A second row for the same id would be unreachable: find() and
-        # upsert() both stop at the first match, so the duplicate could
+        # A row with no reachable id would be unreachable: find() and
+        # upsert() both key on character_id, so a 0 or negative one can
         # never be refreshed and never be forgotten.
-        if character_id is None or character_id <= 0 or character_id in seen:
+        if character_id is None or character_id <= 0:
             continue
-        seen.add(character_id)
-        result.characters.append(Character(
+        by_id[character_id] = Character(
             character_id=character_id,
-            character_name=_coerce_text(item.get("character_name")),
-            owner_hash=_coerce_text(item.get("owner_hash")),
+            character_name=_coerce_trimmed_text(item.get("character_name")),
+            owner_hash=_coerce_trimmed_text(item.get("owner_hash")),
             scopes=_coerce_scopes(item.get("scopes")),
             authenticated_utc=_parse_utc(item.get("authenticated_utc")),
             fetched_utc=_parse_utc(item.get("fetched_utc")),
             active_levels=_coerce_levels(item.get("active_levels")),
             trained_levels=_coerce_levels(item.get("trained_levels")),
             queue=_coerce_queue(item.get("queue")),
-            error=_coerce_text(item.get("error")),
+            error=_coerce_trimmed_text(item.get("error")),
             needs_reauth=item.get("needs_reauth") is True,
             refresh_token_blob=_coerce_text(item.get("refresh_token_blob")),
             skills_etag=_coerce_text(item.get("skills_etag")),
-            queue_etag=_coerce_text(item.get("queue_etag"))))
+            queue_etag=_coerce_text(item.get("queue_etag")))
+    result.characters = list(by_id.values())[:MAX_CHARACTERS]
     return result
 
 
@@ -406,23 +437,55 @@ def load(path: Path) -> tuple:
     except FileNotFoundError:
         # First launch. Not an error, and not something to warn about.
         return SkillsState(), warnings
+    except UnicodeDecodeError:
+        # A bad UTF-8 decode is unreadable CONTENT, not an access failure --
+        # TriffSkillsState.cs:104 groups this with JsonException and its own
+        # size-cap exception under one catch, all three routed through
+        # preserve-then-recover-from-backup. Handled here, before the
+        # OSError branch below, because UnicodeDecodeError is a ValueError,
+        # not an OSError, and would otherwise fall through to json.loads
+        # with `text` never assigned.
+        return _recover_from_backup(path, warnings)
     except OSError as exc:
+        # A genuine access failure (permission denied, disk error) rather
+        # than bad content -- TriffSkillsState.cs's other catch clause,
+        # `IsFileFailure`. There is nothing to preserve or recover here:
+        # if the file cannot even be opened, neither can its .bak sibling
+        # for the same reason, and attempting os.replace() on a file we
+        # just failed to read would likely fail identically.
         warnings.append(f"{path.name} could not be read ({exc.strerror}); "
                         "starting with an empty roster.")
         return SkillsState(), warnings
-    except ValueError as exc:
-        # The size-cap check in _read_bounded raises ValueError directly
-        # (no OSError to carry a strerror), so it gets its own branch.
-        warnings.append(f"{path.name} could not be read ({exc}); "
-                        "starting with an empty roster.")
-        return SkillsState(), warnings
+    except ValueError:
+        # _read_bounded's own size-cap check. TriffSkillsState.cs:104 groups
+        # this (InvalidDataException, ReadBoundedText's own overflow) with
+        # JsonException under the SAME catch as corrupt content: an
+        # oversized file is exactly as recoverable-from-backup as a
+        # syntactically broken one, and treating it as a plain access
+        # failure (the previous shape of this branch) meant an oversized
+        # primary discarded the whole roster even with a good .bak sitting
+        # right beside it, and never got moved aside -- so it was re-read,
+        # re-rejected, and re-warned about on every single launch forever.
+        return _recover_from_backup(path, warnings)
 
     try:
-        # json.JSONDecodeError and UnicodeDecodeError are both ValueError.
+        # json.JSONDecodeError is a ValueError; UnicodeDecodeError from
+        # decoding text (as opposed to the read above) is handled the same
+        # way here too, for the same reason: bad content, not bad access.
         return from_dict(json.loads(text)), warnings
     except ValueError:
-        pass
+        return _recover_from_backup(path, warnings)
 
+
+def _recover_from_backup(path: Path, warnings: list) -> tuple:
+    """The corrupt-content path shared by every unreadable-CONTENT case in
+    load(): move the bad primary aside, then try to rebuild from `.bak`.
+
+    Split out because three distinct failures upstream -- a JSON syntax
+    error, a size-cap overflow, and a bad UTF-8 decode -- all mean exactly
+    the same thing here: TriffSkillsState.cs:104 catches all three in one
+    clause for the same reason.
+    """
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
     try:
@@ -442,7 +505,23 @@ def load(path: Path) -> tuple:
     # first-launch branch above, and hand back an empty roster with no
     # warning shown. Re-persisting here closes that window: the primary
     # exists again as soon as recovery succeeds, backed by its own .bak.
-    save(recovered, path)
+    #
+    # Wrapped in its own try: write_atomic can raise OSError (disk full,
+    # permissions, or its own Windows sharing-violation retries exhausted),
+    # and load()'s contract is that it never raises -- least of all here,
+    # while the app is already in its worst state and recovering from
+    # corruption. A failed write-back still returns the recovered roster
+    # in memory; the roster is simply not durable until the next save().
+    try:
+        save(recovered, path)
+    except OSError as exc:
+        warnings.append(
+            f"Recovered {path.name} from backup after the main file could "
+            f"not be read, but the recovery could not be saved back to "
+            f"disk ({exc}); it was preserved as {preserved or 'a copy'}. "
+            "If the app closes before the next successful save, this "
+            "recovery will be lost.")
+        return recovered, warnings
 
     warnings.append(
         f"Recovered {path.name} from backup after the main file could not "

@@ -153,6 +153,54 @@ def test_a_non_positive_character_id_is_dropped():
     assert [c.character_id for c in state.from_dict(raw).characters] == [42]
 
 
+def test_a_later_duplicate_row_wins_over_an_earlier_one():
+    """TriffSkillsState.cs:164's `deduped[character.CharacterId] = character`
+    is a dictionary assignment: the LAST row for a given id supplies the
+    data, while the id's position in the result stays wherever it was
+    FIRST seen. Two rows with identical data (the older, brief-supplied
+    dedup test) cannot distinguish first-wins from last-wins -- this one
+    can, because the two rows disagree."""
+    raw = {"characters": [
+        {"character_id": 1, "character_name": "Stale"},
+        {"character_id": 2, "character_name": "Second"},
+        {"character_id": 1, "character_name": "Fresh"},
+    ]}
+    characters = state.from_dict(raw).characters
+    # Position: id 1 stays first, since that is where it was first seen.
+    assert [c.character_id for c in characters] == [1, 2]
+    # Data: id 1's LATER row is what won.
+    assert characters[0].character_name == "Fresh"
+
+
+def test_scopes_are_capped():
+    """The one collection with no other cap of its own --
+    TriffSkillsState.cs:159's `.Take(100)`."""
+    raw = {"characters": [{"character_id": 1, "scopes": [
+        f"scope-{n}" for n in range(state.MAX_SCOPES + 20)]}]}
+    assert len(state.from_dict(raw).characters[0].scopes) == state.MAX_SCOPES
+
+
+def test_character_name_owner_hash_and_error_are_trimmed():
+    """TriffSkillsState.cs:157-158,163 trims these three fields. The token
+    blob and the two ETags are opaque values rather than display text and
+    must NOT be trimmed -- a blob or ETag that happens to start or end
+    with whitespace-like bytes would be silently corrupted."""
+    raw = {"characters": [{
+        "character_id": 1,
+        "character_name": "  Aiga  ",
+        "owner_hash": "  abc123  ",
+        "error": "  ESI timed out  ",
+        "refresh_token_blob": "  QUJD  ",
+        "skills_etag": '  W/"abc"  ',
+    }]}
+    character = state.from_dict(raw).characters[0]
+    assert character.character_name == "Aiga"
+    assert character.owner_hash == "abc123"
+    assert character.error == "ESI timed out"
+    assert character.refresh_token_blob == "  QUJD  "
+    assert character.skills_etag == '  W/"abc"  '
+
+
 def test_malformed_skill_levels_drop_individually():
     """Per-entry drops, not per-character. One unparseable skill id must
     not cost the whole snapshot -- that would silently turn a character
@@ -236,6 +284,15 @@ def test_selected_plan_name_beyond_120_chars_is_cleared():
 
 def test_selected_plan_name_at_120_chars_is_kept():
     raw = {"selected_plan_name": "x" * 120}
+    assert state.from_dict(raw).selected_plan_name == "x" * 120
+
+
+def test_selected_plan_name_padding_is_trimmed_before_the_length_check():
+    """TriffSkillsState.cs:198's .Trim() runs before its length check on the
+    same line. A name that is only over the cap because of surrounding
+    whitespace is a real, usable plan name once trimmed -- clearing it
+    anyway would be needless data loss."""
+    raw = {"selected_plan_name": " " * 10 + "x" * 120 + " " * 10}
     assert state.from_dict(raw).selected_plan_name == "x" * 120
 
 
@@ -349,8 +406,58 @@ def test_a_file_over_the_size_cap_is_treated_as_unreadable(tmp_path):
     assert warnings and "could not be read" in warnings[0]
 
 
+def test_an_oversized_primary_is_recovered_from_a_good_backup(tmp_path):
+    """TriffSkillsState.cs:104 catches JsonException, InvalidDataException
+    (the size-cap overflow) and DecoderFallbackException in ONE clause,
+    and that clause is what preserves the primary and tries the backup.
+    An oversized file is exactly as recoverable-from-.bak as a
+    syntactically broken one -- treating it as a plain access failure
+    instead would discard a perfectly good backup sitting right beside
+    it, and would never move the bad file aside, so it would be re-read,
+    re-rejected and re-warned about on every single launch forever."""
+    target = tmp_path / "eve_skills.json"
+    # save() only writes .bak from a SECOND call -- the first save has
+    # nothing on disk yet to copy forward. Two identical saves leave a
+    # good backup in place before the primary is corrupted below.
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    oversized = json.dumps({"selected_plan_name": "x" * (
+        state.MAX_STATE_FILE_BYTES + 1024)})
+    target.write_text(oversized, encoding="utf-8")
+
+    loaded, warnings = state.load(target)
+    assert loaded.selected_plan_name == "Good"
+    assert any("Recovered" in w for w in warnings)
+    preserved = [p.name for p in tmp_path.iterdir() if ".corrupt-" in p.name]
+    assert len(preserved) == 1
+
+
+def test_a_failed_recovery_write_back_does_not_raise(tmp_path, monkeypatch):
+    """Mandatory correction 1's re-persist (TriffSkillsState.cs:118-119)
+    must not break load()'s own "never raises" contract. write_atomic can
+    raise OSError (disk full, permissions, an exhausted Windows sharing-
+    violation retry loop), and that would be the worst possible moment for
+    load() to crash the app -- already mid-corruption-recovery. A failed
+    write-back must still hand back the recovered roster in memory, with
+    a warning saying it is not yet durable, rather than propagate."""
+    target = tmp_path / "eve_skills.json"
+    # Same reason as above: a .bak must already exist for there to be
+    # anything to recover from once the primary is corrupted.
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    target.write_text("{ this is not json", encoding="utf-8")
+
+    def _raise(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(state.atomicio, "write_atomic", _raise)
+    loaded, warnings = state.load(target)
+    assert loaded.selected_plan_name == "Good"
+    assert any("could not be saved back" in w for w in warnings)
+
+
 def test_two_corruptions_in_the_same_second_do_not_overwrite_each_other(
-        tmp_path, monkeypatch):
+        tmp_path):
     """Mandatory correction 5. The preserved filename uses millisecond
     resolution so two corruptions within the same wall-clock second get
     distinct names -- a second-resolution stamp would silently make the
