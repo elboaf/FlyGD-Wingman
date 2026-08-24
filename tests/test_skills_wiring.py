@@ -62,13 +62,30 @@ def test_main_builds_the_controller_and_hands_it_to_the_api():
 
 def test_main_tears_the_subsystem_down_last_and_unconditionally():
     """A live loopback socket on the fixed redirect port would make the next
-    launch's sign-in fail to bind, and there is no fallback port."""
-    lines = [line.strip() for line in
-             inspect.getsource(main_mod.main).splitlines() if line.strip()]
+    launch's sign-in fail to bind, and there is no fallback port.
 
-    assert "api.shutdown_skills()" in lines
-    at = lines.index("api.shutdown_skills()")
-    assert lines[at + 1] == "return 0", "nothing may run after the teardown"
-    # Not inside an `if`: the previous line is the other unconditional
-    # teardown, not a guard.
-    assert lines[at - 1] == "api.shutdown_previews()"
+    Unconditionality is checked by INDENTATION against a known sibling
+    statement, not by asserting the exact previous line is
+    `api.shutdown_previews()`. That neighbour check proved "not inside an
+    `if`" only by proxy, and it came with two costs: it forbade a comment
+    between the two teardown calls -- which is what forced the Step 8
+    deviation the very first time this landed -- and it coupled this test
+    to the previews subsystem sitting immediately above, so a future task
+    inserting a third subsystem's teardown between them, or reordering the
+    two, would break this test even though unconditionality still held.
+    Checking indentation instead survives both.
+    """
+    raw = inspect.getsource(main_mod.main).splitlines()
+    stripped = [line.strip() for line in raw if line.strip()]
+
+    assert "api.shutdown_skills()" in stripped
+    at = stripped.index("api.shutdown_skills()")
+    assert stripped[at + 1] == "return 0", "nothing may run after the teardown"
+
+    # Base indent of main()'s body, taken from a known sibling statement
+    # rather than a hardcoded column count.
+    base_indent = next(len(line) - len(line.lstrip())
+                        for line in raw if line.strip() == "shutdown_engine(engine)")
+    skills_line = next(line for line in raw if line.strip() == "api.shutdown_skills()")
+    skills_indent = len(skills_line) - len(skills_line.lstrip())
+    assert skills_indent == base_indent, "must not be nested inside an `if`"
