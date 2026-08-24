@@ -113,7 +113,22 @@
   </div>
 
   <div class="route" id="route-settings">
-    <div class="settings">
+    <!-- A rail, not one long column. Folding Bookmarks and Previews in
+         takes this screen to seven groups, which is past what a single
+         scroll can be navigated by. Built from the same pieces as
+         .skills-rail rather than a second rail idiom. -->
+    <aside class="settings-rail" id="settings-rail">
+      <h3 class="rail-head">Settings</h3>
+      <button class="rail-item active" data-section="account">Account</button>
+      <button class="rail-item" data-section="uploads">Uploads</button>
+      <button class="rail-item" data-section="notify">Notifications</button>
+      <button class="rail-item" data-section="folders">Folders</button>
+      <button class="rail-item" data-section="discord">Discord</button>
+    </aside>
+
+    <div class="settings-pane">
+
+    <div class="settings active" id="section-account">
 
       <section class="card">
         <h2>Google account</h2>
@@ -128,6 +143,10 @@
           <span class="linkish" id="tos-link">https://www.youtube.com/t/terms</span>
         </p>
       </section>
+
+    </div>
+
+    <div class="settings" id="section-uploads">
 
       <section class="card">
         <h2>Upload defaults</h2>
@@ -148,6 +167,10 @@
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
+    </div>
+
+    <div class="settings" id="section-notify">
+
       <section class="card">
         <h2>When a recording finishes</h2>
         <label class="radio">
@@ -161,6 +184,10 @@
         </label>
         <p class="field-msg" id="msg-notify" hidden></p>
       </section>
+
+    </div>
+
+    <div class="settings" id="section-folders">
 
       <section class="card">
         <h2>Folders</h2>
@@ -183,6 +210,10 @@
         </p>
       </section>
 
+    </div>
+
+    <div class="settings" id="section-discord">
+
       <section class="card">
         <h2>Discord (combat logs)</h2>
         <div class="row">
@@ -200,6 +231,8 @@
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
       </section>
+
+    </div>
 
     </div>
   </div>

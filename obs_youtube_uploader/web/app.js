@@ -119,7 +119,54 @@
     }
     WM.current_route = name;
     document.dispatchEvent(new CustomEvent('wm:route', { detail: name }));
+    // Sections live inside the Settings route, so entering or leaving that
+    // route is also entering or leaving whichever section is showing. A
+    // module folded into Settings would otherwise never learn it had been
+    // left -- see WM.section below for why that matters.
+    WM.notify_section(name === 'settings' ? WM.current_section : '');
   };
+
+  // ---- sections -------------------------------------------------------
+  // The Settings route holds several groups and shows one at a time. This
+  // is deliberately the SAME enter/leave contract WM.route provides, not a
+  // simpler "which tab is open" flag.
+  //
+  // The reason is specific. bookmarks.js and previews.js each install a
+  // document-level keydown listener while capturing a keybind, and each
+  // disarms it on being LEFT -- both files carry a comment explaining that
+  // stopPropagation() does not stop a sibling listener on the same node,
+  // so an armed capture consumes the next keystroke typed anywhere and
+  // writes it into the wrong bind, off-screen and silently persisted.
+  // Once those two are sections rather than routes, switching away from
+  // them is no longer a route change, and without this event an armed
+  // capture would survive into Folders or Discord and swallow whatever is
+  // typed there -- its handler preventDefault()s every key, Tab included.
+  WM.current_section = 'account';
+
+  WM.notify_section = function (name) {
+    document.dispatchEvent(new CustomEvent('wm:section', { detail: name }));
+  };
+
+  WM.section = function (name) {
+    WM.current_section = name;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.settings-pane > .settings'),
+      function (node) {
+        node.classList.toggle('active', node.id === 'section-' + name);
+      });
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.rail-item'), function (btn) {
+        btn.classList.toggle('active', btn.dataset.section === name);
+      });
+    WM.notify_section(name);
+  };
+
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.rail-item'), function (btn) {
+      btn.addEventListener('click', function () {
+        WM.section(btn.dataset.section);
+      });
+    });
 
   // ---- title bar ----------------------------------------------------
   WM.el('btn-minimize').addEventListener('click', function () {

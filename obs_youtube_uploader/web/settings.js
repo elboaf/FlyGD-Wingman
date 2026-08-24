@@ -273,10 +273,16 @@
     showBtn.setAttribute('aria-pressed', 'false');
   }
 
-  // Leaving the screen re-masks, so a revealed credential cannot be left
-  // on screen by navigating away and back.
+  // Leaving re-masks, so a revealed credential cannot be left on screen by
+  // navigating away and back. Both events, not just the route: Discord is
+  // one section among several now, and switching to Folders leaves the
+  // webhook just as thoroughly as switching to the Uploader does -- while
+  // firing no route change at all.
   document.addEventListener('wm:route', function (ev) {
     if (ev.detail !== 'settings') remask();
+  });
+  document.addEventListener('wm:section', function (ev) {
+    if (ev.detail !== 'discord') remask();
   });
 
   // ---- Google account -------------------------------------------------
