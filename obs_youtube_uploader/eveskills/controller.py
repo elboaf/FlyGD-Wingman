@@ -1177,3 +1177,19 @@ class SkillsController:
                 for req in analysis.requirements],
         }
 
+    # ----- shutdown -----------------------------------------------------
+
+    def shutdown(self) -> None:
+        """Stop cleanly on the way out. NEVER raises.
+
+        Runs on every exit path from main(), after the window has gone, so
+        like shutdown_engine() it must not be the thing that raises. The
+        listener is what matters: a socket bound to the fixed redirect port
+        with nothing left to accept on it would make the NEXT launch's
+        sign-in fail to bind, with no fallback port to move to.
+        """
+        self._stopping.set()
+        try:
+            self.cancel_auth()
+        except Exception:
+            logger.exception("EVE skills shutdown was not clean")

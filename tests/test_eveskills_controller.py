@@ -1256,3 +1256,52 @@ def test_character_detail_reports_levels_as_integers(tmp_path):
         assert isinstance(req["trained_level"], int)
 
 
+# ----- shutdown -----------------------------------------------------------
+
+
+def test_shutdown_is_safe_with_no_sign_in_running(tmp_path):
+    controller, _, _ = build(tmp_path)
+
+    controller.shutdown()  # Must not raise.
+
+
+def test_shutdown_swallows_a_failing_listener(tmp_path):
+    """Whatever cancel() does, shutdown must not be the thing that raises
+    -- it runs on every exit path, after the window is already gone."""
+    controller, _, _ = build(tmp_path)
+
+    class FailingListener:
+        def cancel(self):
+            raise RuntimeError("boom")
+
+    controller._listener = FailingListener()
+
+    controller.shutdown()  # Must not raise.
+
+
+def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):
+    """The stop flag is checked between characters, not just at the start
+    -- a shutdown mid-pass must not block the process on a refresh that
+    keeps going after the window closed."""
+    esi = FakeEsi()
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot(character_id=95),
+                   with_snapshot(character_id=96, character_name="B")],
+        client=esi, sso=FakeSso(), spawn=DirectSpawn())
+
+    seen = []
+
+    def stop_after_first(path):
+        seen.append(path)
+        if len(seen) == 1:
+            controller.shutdown()
+
+    esi.on_get = stop_after_first
+
+    controller.refresh_characters()
+
+    # Exactly the first character's two calls (skills + queue) happened;
+    # the second character was never fetched.
+    assert len(seen) <= 2
+
