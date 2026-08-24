@@ -18,7 +18,12 @@
 - **Do not run `ruff format` before Task 5.** Tasks 1–4 must stay reviewable; a reformat mixed into them would bury the real change.
 - **`packages = [...]` in `pyproject.toml` is explicit on purpose.** A missing subpackage installs cleanly and fails at import time inside the frozen build. Never replace it with auto-discovery.
 - **The `AppId` in `packaging/installer.iss` must not change.** It is what makes the rename upgrade in place instead of installing a second copy.
-- Baseline: **1839 passed, 6 skipped** before Task 3, and **1840 passed, 6 skipped** from Task 3 onward — Task 3 splits one test in two, so the collected count legitimately rises by one. Check with `python -m pytest tests/ -q`. Tasks 4 onward must match the later number.
+- **Baseline: measure it, do not trust a number written here.** This repository is under concurrent development and the absolute test count has moved three times during this plan's own execution (1839 → 1840 after Task 3's split, → 1850 once `#35` landed). Before starting any task, run `python -m pytest tests/ -q` and record what it says. That figure, not any number in this document, is your baseline.
+
+  The invariants that actually hold, and that every task must preserve:
+  - **No regression:** after your change, `passed` must be ≥ the count you recorded, and `failed` must be 0.
+  - **Both legs reconcile:** on the CI matrix, `passed + skipped` must be identical on `ubuntu-latest` and `windows-latest`. The skip *sets* differ by platform; the collected total must not.
+  - **A rising total is not automatically a regression** — splitting one test into two legitimately adds one. A *falling* total is always worth investigating.
 
 ## PR boundaries
 
@@ -574,7 +579,7 @@ assert result == tmp_path / "thing" / "file.mkv"
 Every fix above must be platform-neutral. Run locally:
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped` — the same numbers as the baseline. A changed count means a fix altered behaviour rather than portability.
+Expected: the baseline you recorded before starting, unchanged. A changed count means a fix altered behaviour rather than portability.
 
 - [ ] **Step 6: Push and confirm Windows is green**
 
@@ -646,7 +651,7 @@ knowing whether a break is platform-specific is the point of a matrix.
 
 The test-suite fixes here are portability only -- encoding, newline
 translation, and file-handle lifetime. The Linux run is unchanged at
-1840 passed, 6 skipped."
+the recorded baseline, unchanged."
 ```
 
 ---
@@ -750,7 +755,7 @@ Expected: about 111 findings resolved. Do **not** pass `--unsafe-fixes`; the 40 
 - [ ] **Step 4: Confirm the auto-fixes broke nothing**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1840 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 This is the entire safety argument for an automated fix pass across 149 files. If the count changed, run `git diff` and find out which fix did it before going further.
 
@@ -765,7 +770,7 @@ git commit -m "Apply ruff's automatic fixes
 Mechanical: import sorting, unused imports, unused noqa directives,
 datetime.timezone.utc over the deprecated alias, f-strings over
 printf-style formatting. No behaviour change; the suite is unchanged at
-1840 passed, 6 skipped.
+the recorded baseline, unchanged.
 
 Kept separate from the hand-written fixes so those stay reviewable."
 ```
@@ -822,7 +827,7 @@ Run: `uv run --extra dev ruff check .`
 Expected: `All checks passed!`
 
 Run: `python -m pytest tests/ -q`
-Expected: `1840 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 - [ ] **Step 8: Add the lint step to CI**
 
@@ -860,7 +865,7 @@ The F821 on ui/window.py was never a live bug -- the annotation is a
 string and pywebview is imported lazily on purpose -- so it becomes a
 TYPE_CHECKING import that says so rather than a behaviour change.
 
-1840 passed, 6 skipped, unchanged."
+the recorded baseline, unchanged."
 ```
 
 ---
@@ -931,7 +936,7 @@ Expected: `149 files reformatted, 27 files left unchanged` (approximately — St
 - [ ] **Step 5: Verify nothing broke**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1840 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 That the suite is unchanged is the whole safety argument for a 149-file mechanical rewrite. Anything else, stop.
 
@@ -1416,7 +1421,7 @@ Tell the maintainer explicitly that `docs/branch-protection.md` needs applying b
 
 | What | How | Expected |
 |------|-----|----------|
-| Suite unchanged throughout | `python -m pytest tests/ -q` | `1840 passed, 6 skipped` |
+| Suite unchanged throughout | `python -m pytest tests/ -q` | baseline unchanged, 0 failed |
 | Lint clean | `uv run --extra dev ruff check .` | `All checks passed!` |
 | Format clean | `uv run --extra dev ruff format --check .` | `176 files already formatted` |
 | Ruff is the pinned version | `uv run --extra dev ruff --version` | `ruff 0.16.4` |
