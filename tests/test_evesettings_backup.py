@@ -89,6 +89,18 @@ def test_a_failed_build_leaves_nothing_listable(tmp_path):
     assert list(store.iterdir()) == []
 
 
+def test_an_abandoned_claim_is_not_listable(tmp_path):
+    """_claim() creates the FINAL name empty and only then stages and
+    replaces. Process death in that window -- a kill, an OOM, a power cut
+    mid-copy -- leaves a 0-byte .zip that parse_name accepts, that restore
+    can only fail on, and that consumes a prune slot from a real backup."""
+    store = tmp_path / "backups"
+    claimed = backup._claim(store, "20260824-120000", "auto", "character",
+                            "aabbccdd", "core_char_1")
+    assert claimed.exists() and claimed.stat().st_size == 0
+    assert backup.enumerate_backups(store) == []
+
+
 def test_backup_contains_the_file_and_a_manifest(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"

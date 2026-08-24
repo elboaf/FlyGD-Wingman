@@ -174,6 +174,16 @@ def enumerate_backups(backup_dir) -> list:
     for entry in entries:
         if not entry.is_file():
             continue
+        # _claim() creates the FINAL name empty and only then stages and
+        # replaces. Process death in that window leaves a 0-byte .zip under
+        # a name this function would otherwise list as restorable -- and
+        # which would consume a prune slot and evict a real backup. The
+        # DirEntry already carries the stat, so this costs nothing.
+        try:
+            if entry.stat().st_size == 0:
+                continue
+        except OSError:
+            continue
         info = parse_name(Path(entry.path).name)
         if info is None:
             continue

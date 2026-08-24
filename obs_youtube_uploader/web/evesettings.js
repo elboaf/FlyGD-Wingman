@@ -11,6 +11,11 @@
 
   var state = null;
   var selected = {};
+  // The rows renderTargets() actually drew. Select-all and the copy list
+  // are both taken from this rather than from rows(), so what the filter
+  // shows and what the button acts on can never disagree.
+  var visible = [];
+  var busy = false;
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -78,9 +83,11 @@
     var needle = (WM.el('es-filter').value || '').toLowerCase();
     var source = WM.el('es-source').value;
     host.innerHTML = '';
+    visible = [];
     rows().forEach(function (row) {
       if (row.path === source) return;
       if (needle && row.name.toLowerCase().indexOf(needle) === -1) return;
+      visible.push(row);
       var label = document.createElement('label');
       label.className = 'row';
       var box = document.createElement('input');
@@ -106,10 +113,10 @@
         item.created + ' · ' + item.kind + ' · ' + item.stem
         + (item.origin === 'auto' ? ' (auto)' : '')));
       line.appendChild(button('Restore', function () {
-        WM.send('eve_settings_restore', item.path).then(refresh);
+        mutate('eve_settings_restore', item.path);
       }));
       line.appendChild(button('Delete', function () {
-        WM.send('eve_settings_delete_backup', item.path).then(refresh);
+        mutate('eve_settings_delete_backup', item.path);
       }));
       host.appendChild(line);
     });
@@ -118,13 +125,40 @@
   function button(text, handler) {
     var el = document.createElement('button');
     el.textContent = text;
+    el.disabled = busy;
     el.addEventListener('click', handler);
     return el;
   }
 
   function chosenTargets() {
-    return Object.keys(selected).filter(function (path) {
-      return selected[path];
+    // Only what is on screen: a path checked before the filter narrowed,
+    // or before it became the source, is no longer a target the user can
+    // see and must not inflate the confirmation's count.
+    return visible.filter(function (row) {
+      return !!selected[row.path];
+    }).map(function (row) { return row.path; });
+  }
+
+  function setBusy(value) {
+    busy = value;
+    WM.el('es-copy').disabled = value;
+    WM.el('es-backup-profile').disabled = value;
+    Array.prototype.forEach.call(
+      WM.el('es-backups').querySelectorAll('button'), function (el) {
+        el.disabled = value;
+      });
+  }
+
+  function mutate(method) {
+    // Every mutation goes through here. The bridge returns as soon as the
+    // worker is spawned, so a falsy answer means no worker started (the
+    // lock was held, or the spawn failed) and nothing will ever push --
+    // anything else waits for onEveSettingsDone.
+    var args = Array.prototype.slice.call(arguments);
+    if (busy) return;
+    setBusy(true);
+    WM.send.apply(null, args).then(function (accepted) {
+      if (!accepted) setBusy(false);
     });
   }
 
@@ -163,7 +197,7 @@
     WM.el('es-source').addEventListener('change', renderTargets);
 
     WM.el('es-all').addEventListener('click', function () {
-      rows().forEach(function (row) { selected[row.path] = true; });
+      visible.forEach(function (row) { selected[row.path] = true; });
       renderTargets();
     });
 
@@ -175,17 +209,15 @@
     WM.el('es-copy').addEventListener('click', function () {
       var targets = chosenTargets();
       if (!targets.length) return;
-      WM.send('eve_settings_copy', WM.el('es-source').value, targets)
-        .then(function () { window.setTimeout(refresh, 250); });
+      mutate('eve_settings_copy', WM.el('es-source').value, targets);
     });
 
     WM.el('es-backup-profile').addEventListener('click', function () {
-      // Without this the backend receives "", which Path() resolves to the
-      // app's own working directory -- producing a junk archive and a
-      // success message rather than doing nothing.
+      // Saves a pointless round trip. It is NOT the guard: _eve_backup_worker
+      // rejects an empty or missing path itself, because this file cannot be
+      // tested and that decision has to be one that is.
       if (!state || !state.profile) return;
-      WM.send('eve_settings_backup', state.profile, 'profile')
-        .then(function () { window.setTimeout(refresh, 250); });
+      mutate('eve_settings_backup', state.profile, 'profile');
     });
 
     document.addEventListener('wm:route', function (event) {
@@ -198,6 +230,15 @@
   }
 
   WM.handle('onEveSettingsNames', function () { refresh(); });
+
+  // The completion signal for every mutation. It replaces a setTimeout that
+  // fired 250ms into a copy the worker had barely started, and it is what
+  // re-enables the buttons disabled on send.
+  WM.handle('onEveSettingsDone', function (payload) {
+    if (payload.ok) selected = {};
+    setBusy(false);
+    refresh();
+  });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', wire);

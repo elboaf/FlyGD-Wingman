@@ -53,6 +53,13 @@ PROBE_DRAIN_S = 0.1
 # beyond a logged drop.
 FIRST_RUN_PUSH_S = 1.5
 
+# The EVE Settings workers hold the mutation lock across their
+# confirmation prompt (by design -- a queued operation would describe state
+# that has since changed), so their wait needs a floor under it. Generous
+# for a human answering a dialog; the case it bounds is a push that never
+# reached the page, which _push swallows silently.
+EVE_CONFIRM_TIMEOUT_S = 300.0
+
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
 
@@ -283,6 +290,15 @@ class Api:
         The Event is registered before the push, not after: `evaluate_js`
         can complete and the user can answer before this method resumes.
         """
+        return self._ask(title, body, timeout=None)
+
+    def _ask(self, title: str, body: str, *, timeout: float | None) -> bool:
+        """The body of _confirm, with the wait made optional.
+
+        `timeout=None` is _confirm's own unbounded wait, unchanged. A
+        deadline is only useful to a caller that holds something while it
+        waits -- see _eve_confirm.
+        """
         request_id = self._id_factory()
         event = threading.Event()
         entry = [event, False]
@@ -291,7 +307,10 @@ class Api:
         try:
             self._push("onDialog", {"kind": "confirm", "title": title,
                                     "body": body, "request_id": request_id})
-            event.wait()
+            if not event.wait(timeout):
+                logger.warning("No answer to %r within %ss; treating it as "
+                               "a refusal", title, timeout)
+                return False
             return bool(entry[1])
         finally:
             with self._dialog_lock:
@@ -1635,8 +1654,37 @@ class Api:
             self._alert("warning", "EVE Settings busy",
                         "Another EVE Settings operation is still running.")
             return False
-        self._spawn(target=worker, args=args, daemon=True).start()
+        try:
+            self._spawn(target=worker, args=args, daemon=True).start()
+        except Exception:  # noqa: BLE001 - reported, never raised
+            # Only the worker releases the lock, and a worker that never
+            # started never will: without this the feature is dead until
+            # the app restarts.
+            self._eve_mutation.release()
+            logger.exception("Could not start the EVE Settings worker")
+            self._alert("error", "EVE Settings",
+                        "That operation could not be started.")
+            return False
+        except BaseException:
+            self._eve_mutation.release()
+            raise
         return True
+
+    def _eve_confirm(self, title: str, body: str) -> bool:
+        """_confirm, bounded, for the workers that hold the mutation lock.
+
+        _push swallows every evaluate_js failure, so a confirmation whose
+        push never reached the page would park the worker forever holding
+        the lock -- permanently refusing every later copy, backup, restore
+        and delete. A missing answer is read as "no".
+        """
+        return self._ask(title, body, timeout=EVE_CONFIRM_TIMEOUT_S)
+
+    def _eve_done(self, ok: bool) -> None:
+        """Tell the page the mutation finished, so it can re-enable its
+        buttons and refresh. The bridge call returned as soon as the worker
+        was spawned, so this push is the page's only completion signal."""
+        self._push("onEveSettingsDone", {"ok": bool(ok)})
 
     def _eve_auto_backup(self, target):
         store = paths.eve_settings_backup_dir()
@@ -1647,15 +1695,17 @@ class Api:
                                (source, [str(t) for t in targets or []]))
 
     def _eve_copy_worker(self, source: str, targets: list) -> None:
+        ok = False
         try:
-            if not self._confirm(
+            if not self._eve_confirm(
                     "Confirm Copy",
                     f"Copy these settings onto {len(targets)} other "
                     f"file(s)?\n\nEach one is backed up first.\n\n"
                     "This cannot be undone except by restoring a backup."):
                 return
             report = evesettings_ops.copy_to_targets(
-                source, targets, backup=self._eve_auto_backup)
+                source, targets, root=self._eve_section().get("root"),
+                backup=self._eve_auto_backup)
             keep = int(self._eve_section().get("auto_keep", 10))
             evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
             if report.failed:
@@ -1668,17 +1718,30 @@ class Api:
                 self._push("onStatus", {
                     "text": f"Copied to {len(report.succeeded)} file(s).",
                     "kind": "FG"})
+                ok = True
         except Exception as error:  # noqa: BLE001 - reported, never raised
             logger.exception("EVE settings copy failed")
             self._alert("error", "Copy failed", str(error))
         finally:
             self._eve_mutation.release()
+            self._eve_done(ok)
 
     def eve_settings_backup(self, path: str, kind: str) -> bool:
         return self._eve_begin(self._eve_backup_worker, (path, kind))
 
     def _eve_backup_worker(self, path: str, kind: str) -> None:
+        ok = False
         try:
+            # Decided here, not in the page: an empty path is what Path()
+            # resolves to the app's own working directory, which
+            # create_profile_backup would happily walk and report as a
+            # successful backup of nothing.
+            if not path:
+                raise ValueError("Choose a settings set to back up first.")
+            resolved = evesettings_tree.require_under(
+                self._eve_section().get("root"), path)
+            if not resolved.exists():
+                raise ValueError("That no longer exists.")
             store = paths.eve_settings_backup_dir()
             if kind == "profile":
                 made = evesettings_backup.create_profile_backup(
@@ -1688,18 +1751,21 @@ class Api:
                     store, path, origin="manual")
             self._push("onStatus", {"text": f"Backed up to {made.name}.",
                                     "kind": "FG"})
+            ok = True
         except Exception as error:  # noqa: BLE001 - reported, never raised
             logger.exception("EVE settings backup failed")
             self._alert("error", "Backup failed", str(error))
         finally:
             self._eve_mutation.release()
+            self._eve_done(ok)
 
     def eve_settings_restore(self, archive: str) -> bool:
         return self._eve_begin(self._eve_restore_worker, (archive,))
 
     def _eve_restore_worker(self, archive: str) -> None:
+        ok = False
         try:
-            if not self._confirm(
+            if not self._eve_confirm(
                     "Confirm Restore",
                     "Restore this backup?\n\nThe current settings are backed "
                     "up first. For a whole settings set, any file not in the "
@@ -1712,26 +1778,31 @@ class Api:
             evesettings_backup.prune(store, keep)
             self._push("onStatus", {"text": f"Restored into {written.name}.",
                                     "kind": "FG"})
+            ok = True
         except Exception as error:  # noqa: BLE001 - reported, never raised
             logger.exception("EVE settings restore failed")
             self._alert("error", "Restore failed", str(error))
         finally:
             self._eve_mutation.release()
+            self._eve_done(ok)
 
     def eve_settings_delete_backup(self, archive: str) -> bool:
         return self._eve_begin(self._eve_delete_backup_worker, (archive,))
 
     def _eve_delete_backup_worker(self, archive: str) -> None:
+        ok = False
         try:
-            if not self._confirm(
+            if not self._eve_confirm(
                     "Confirm Delete",
                     f"Permanently delete {Path(archive).name}?\n\n"
                     "This cannot be undone."):
                 return
             evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
             self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
+            ok = True
         except Exception as error:  # noqa: BLE001 - reported, never raised
             logger.exception("EVE settings backup delete failed")
             self._alert("error", "Delete failed", str(error))
         finally:
             self._eve_mutation.release()
+            self._eve_done(ok)

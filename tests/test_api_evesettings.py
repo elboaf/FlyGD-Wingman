@@ -27,6 +27,9 @@ def build(tmp_path, monkeypatch, answer=True):
     built = api_mod.Api(state, spawn=ImmediateThread)
     built._window = FakeWindow()
     built._confirm = lambda title, body: answer
+    # The EVE workers ask through _eve_confirm, which is _confirm with a
+    # deadline; both are stubbed so a test never parks on a dialog.
+    built._eve_confirm = lambda title, body: answer
     return built
 
 
@@ -157,3 +160,111 @@ def test_no_push_when_a_pass_resolves_nothing(tmp_path, monkeypatch):
     api._eve_names.resolve_missing = lambda ids, **kw: False
     api.eve_settings_resolve_names()
     assert not any("onEveSettingsNames" in call for call in api._window.calls)
+
+
+def test_copy_refuses_a_target_outside_the_configured_root(tmp_path,
+                                                           monkeypatch):
+    """Containment is not the page's job: a junction inside the settings
+    tree is what makes a target that looks local land on another disk."""
+    profile = eve_tree(tmp_path)
+    outside = tmp_path / "elsewhere" / "core_char_2.dat"
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_copy(str(profile / "core_char_1.dat"), [str(outside)])
+    assert not outside.exists() and not outside.parent.exists()
+
+
+def test_backup_refuses_an_empty_path(tmp_path, monkeypatch):
+    """Path("") is the app's own working directory, which
+    create_profile_backup would walk and report as a successful backup."""
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_backup("", "profile")
+    assert api.eve_settings_state()["backups"] == []
+    assert any("Backup failed" in call for call in api._window.calls)
+
+
+def test_backup_refuses_a_path_that_no_longer_exists(tmp_path, monkeypatch):
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    gone = tmp_path / "EVE" / "server_tranquility" / "settings_Gone"
+    api.eve_settings_backup(str(gone), "profile")
+    assert api.eve_settings_state()["backups"] == []
+
+
+def test_backup_refuses_a_path_outside_the_configured_root(tmp_path,
+                                                           monkeypatch):
+    eve_tree(tmp_path)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    (other / "core_char_9.dat").write_bytes(b"x")
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_backup(str(other), "profile")
+    assert api.eve_settings_state()["backups"] == []
+
+
+def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path,
+                                                          monkeypatch):
+    """Only the worker releases the lock, and a worker that never started
+    never will -- every later operation would be refused for good."""
+    profile = eve_tree(tmp_path)
+
+    class Refuses:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    state = api_mod.AppState(recording_dir=tmp_path,
+                             settings=settings.load(tmp_path / "s.json"))
+    api = api_mod.Api(state, spawn=Refuses)
+    api._window = FakeWindow()
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    assert api.eve_settings_copy(str(profile / "core_char_1.dat"),
+                                 [str(profile / "core_char_2.dat")]) is False
+    assert api._eve_mutation.acquire(blocking=False) is True
+    api._eve_mutation.release()
+
+
+def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path,
+                                                                monkeypatch):
+    """_push swallows every evaluate_js failure, so a confirmation whose
+    push never reached the page would park the worker forever holding the
+    lock. The wait is bounded and a missing answer reads as "no"."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    del api._eve_confirm  # back to the real, bounded implementation
+    monkeypatch.setattr(api_mod, "EVE_CONFIRM_TIMEOUT_S", 0.05)
+    api.eve_settings_copy(str(profile / "core_char_1.dat"),
+                          [str(profile / "core_char_2.dat")])
+    assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
+    assert api._eve_mutation.acquire(blocking=False) is True
+    api._eve_mutation.release()
+
+
+def test_every_mutation_pushes_a_completion_the_page_can_wait_on(tmp_path,
+                                                                 monkeypatch):
+    """eve_settings_copy returns as soon as the worker is spawned, so this
+    push is the page's only signal that the work is actually done."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_copy(str(profile / "core_char_1.dat"),
+                          [str(profile / "core_char_2.dat")])
+    done = [c for c in api._window.calls if "onEveSettingsDone" in c]
+    assert len(done) == 1 and '"ok": true' in done[0]
+
+
+def test_a_failed_mutation_still_pushes_a_completion(tmp_path, monkeypatch):
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_backup("", "profile")
+    done = [c for c in api._window.calls if "onEveSettingsDone" in c]
+    assert len(done) == 1 and '"ok": false' in done[0]

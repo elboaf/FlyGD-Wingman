@@ -40,15 +40,24 @@ def _describe(error: BaseException) -> str:
     return str(error) or error.__class__.__name__
 
 
-def copy_to_targets(source, targets, *, backup,
+def copy_to_targets(source, targets, *, root, backup,
                     copy=atomicio.copy_atomic) -> CopyReport:
     """Copy *source* onto each of *targets*, backing each one up first.
+
+    `root` is the configured EVE folder. Every path is resolved and checked
+    to be under it before anything is read or written -- a junction inside
+    the settings tree pointing outside it is what this catches, and
+    copy_atomic creates missing parent directories, so an unchecked target
+    does not merely fail.
 
     `backup` is called with the target path before it is overwritten and
     must raise on failure -- a target whose backup could not be taken is
     skipped untouched rather than overwritten unprotected.
     """
     source = Path(source)
+    # A bad source is the whole batch's problem, so it raises; a bad target
+    # is that target's problem and is reported in the loop below.
+    tree.require_under(root, source, suffix=".dat")
     source_kind = tree.file_kind(source)
     if source_kind is None:
         raise ValueError("Only EVE settings files can be copied.")
@@ -67,6 +76,11 @@ def copy_to_targets(source, targets, *, backup,
 
     outcomes = []
     for target in chosen:
+        try:
+            tree.require_under(root, target, suffix=".dat")
+        except ValueError as error:
+            outcomes.append(TargetOutcome(target, False, str(error)))
+            continue
         target_kind = tree.file_kind(target)
         if target_kind != source_kind:
             outcomes.append(TargetOutcome(
