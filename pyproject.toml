@@ -61,7 +61,11 @@ dev = ["pytest"]
 # every new one must be added by hand, and a missing entry installs cleanly
 # and fails at import time in the built artifact, not in the checkout where
 # the source tree makes it work anyway.
-packages = ["obs_youtube_uploader", "obs_youtube_uploader.ui"]
+packages = [
+    "obs_youtube_uploader",
+    "obs_youtube_uploader.ui",
+    "obs_youtube_uploader.preview",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
