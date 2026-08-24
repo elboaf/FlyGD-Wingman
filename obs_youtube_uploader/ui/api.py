@@ -1361,10 +1361,6 @@ class Api:
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
             "order": list(bookmarks.BIND_IDS),
-            # Which binds fire outside EVE. The standalone GUI left this
-            # discoverable only by reading RefreshHotkeys; the route shows
-            # it per row.
-            "globals": sorted(bookmarks.GLOBAL_BIND_IDS),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
             # Human labels for the bound keys. Computed here rather than in

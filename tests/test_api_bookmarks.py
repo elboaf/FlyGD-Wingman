@@ -156,8 +156,10 @@ def test_import_applies_and_reports(api, tmp_path, monkeypatch):
     assert got["ok"] is True
     binds = api.get_bookmarks()["settings"]["keybinds"]
     assert binds["FinH"] == "y"
-    assert binds["Copy"] == "^c"
-    assert got["discarded"] == []
+    assert "Copy" not in binds
+    # Not empty any more: a legacy Copy bind has nowhere to go and the
+    # route tells the user so.
+    assert got["discarded"] == ["Copy (hotkey, no longer part of Wingman)"]
 
 
 def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
@@ -170,13 +172,13 @@ def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
     legacy.write_bytes(
-        "\ufeff[Keybinds]\r\nFinH=y\r\nCopy=^j\r\n"
+        "\ufeff[Keybinds]\r\nFinH=y\r\nGrabSig=^j\r\n"
         "[Enabled]\r\nEVE - Pilot=1\r\n".encode("utf-16-le"))
     api._window.dialog_result = (str(legacy),)
     assert api.import_bookmarks()["ok"] is True
     section = api.get_bookmarks()["settings"]
     assert section["keybinds"]["FinH"] == "y"
-    assert section["keybinds"]["Copy"] == "^j"
+    assert section["keybinds"]["GrabSig"] == "^j"
     assert section["windows"] == {"EVE - Pilot": True}
 
 

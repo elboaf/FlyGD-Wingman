@@ -32,15 +32,6 @@
     if (!payload) return;
     state = payload;
     WM.el('eve-enabled').checked = !!payload.settings.enabled;
-    WM.el('eve-home-zero').checked = !!payload.settings.home_zero;
-    WM.el('eve-preface-return').checked = !!payload.settings.preface_return;
-    // Not overwritten while the user is mid-edit: every keystroke saves,
-    // and re-rendering from the round-tripped value would move the caret
-    // to the end on each one.
-    var preface = WM.el('eve-return-preface');
-    if (document.activeElement !== preface) {
-      preface.value = payload.settings.return_preface || '';
-    }
     renderEngineState();
     renderRootMode();
     renderWindows();
@@ -147,15 +138,6 @@
     state.order.forEach(function (id) {
       var row = WM.make('div', 'row');
       row.appendChild(WM.make('span', 'lab', state.labels[id]));
-
-      // Copy, Paste and Set Root register with no window restriction
-      // (111unified.ahk:763-771), so they fire in every application. The
-      // standalone GUI left that discoverable only by reading the script.
-      if ((state.globals || []).indexOf(id) !== -1) {
-        row.appendChild(WM.make('span', 'scope', 'everywhere'));
-      } else {
-        row.appendChild(WM.make('span', 'scope dim', 'in EVE'));
-      }
 
       var button = WM.make('button', 'bindbtn',
                            state.displays[id] || 'Not set');
@@ -274,31 +256,6 @@
     }
     var next = JSON.parse(JSON.stringify(state.settings));
     next.enabled = WM.el('eve-enabled').checked;
-    send(next);
-  });
-
-  function saveFlag(id, key) {
-    WM.el(id).addEventListener('change', function () {
-      if (!state) {
-        // Same guard the Enable checkbox needs: this listener is live on
-        // static markup before the first get_bookmarks resolves, and a
-        // click in that gap would throw. Assigning .checked from script
-        // does not re-dispatch `change`.
-        WM.el(id).checked = !WM.el(id).checked;
-        return;
-      }
-      var next = JSON.parse(JSON.stringify(state.settings));
-      next[key] = WM.el(id).checked;
-      send(next);
-    });
-  }
-  saveFlag('eve-home-zero', 'home_zero');
-  saveFlag('eve-preface-return', 'preface_return');
-
-  WM.el('eve-return-preface').addEventListener('change', function () {
-    if (!state) return;
-    var next = JSON.parse(JSON.stringify(state.settings));
-    next.return_preface = WM.el('eve-return-preface').value;
     send(next);
   });
 
