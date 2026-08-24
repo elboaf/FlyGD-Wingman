@@ -4,8 +4,8 @@ Two files used to land in the developer's real state directory on every
 run. Not through save_bookmarks -- test_api_bookmarks.py already
 redirects settings_file() in its api fixture -- but through three other
 paths nobody had stubbed: the upload worker persisting the channel title
-(api.py:748-750, 15 tests in test_api_upload.py), the probe cache
-writing durations.json, and set_preview_enabled (api.py:1259, 3 tests in
+(api.py:789-802, 15 tests in test_api_upload.py), the probe cache
+writing durations.json, and set_preview_enabled (api.py:1291, 3 tests in
 test_preview_wiring.py). Per-test stubs closed the instances someone
 noticed; this closes the class.
 

@@ -389,7 +389,7 @@ Item 2 is verified by the suite itself plus the canary check: run with
 `LOCALAPPDATA` at an empty directory and assert nothing is written there.
 
 Full suite before and after, both numbers reported. Baseline on this branch
-is 1070 passed, 4 skipped.
+is 1371 passed, 4 skipped.
 
 ## What this slice does not do
 

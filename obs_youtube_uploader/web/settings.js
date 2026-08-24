@@ -263,6 +263,12 @@
         say('Restore-on-launch is ' + (wanted ? 'on' : 'off')
           + ' for this session, but could not be written to settings — '
           + 'it will not survive a restart.');
+      } else {
+        // The checkbox already shows the new state; clearing here (rather
+        // than confirming) avoids leaving a stale failure message on
+        // screen after a later toggle succeeds, without adding a
+        // confirmation nobody asked to see on every successful toggle.
+        say('');
       }
     });
   });
