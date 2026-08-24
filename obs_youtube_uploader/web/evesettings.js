@@ -1,4 +1,4 @@
-/* FlyGD Wingman — the EVE Settings route.
+/* FlyGD Wingman — the Profiles route (EVE settings copier).
  *
  * Deliberately dumb, for the same reason bookmarks.js is: this repo has no
  * way to test JavaScript (webview-replatform-design.md:545), so every
@@ -140,7 +140,7 @@
         ? 'No ' + (kind() === 'accounts' ? 'accounts' : 'characters')
           + ' match that filter.'
         : 'No other ' + (kind() === 'accounts' ? 'accounts' : 'characters')
-          + ' in this settings set.'));
+          + ' in this profile.'));
     }
   }
 
