@@ -233,7 +233,10 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        # Bounded: if settings.update() ever deadlocks, this test must
+        # fail loudly instead of hanging until the CI job times out.
+        t.join(timeout=5.0)
+        assert not t.is_alive()
 
     written = json.loads(path.read_text())
     assert written["privacy"] == "public"
