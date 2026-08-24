@@ -41,12 +41,21 @@
       'pill ' + (payload.eve_running ? 'warn' : 'idle');
 
     var warning = WM.el('es-warning');
-    // "Couldn't read" and "nothing there" are different answers, and only
-    // one of them means the folder is wrong.
-    warning.hidden = !payload.unreadable;
-    warning.textContent = payload.unreadable
-      ? "Couldn't read that folder. Check it still exists and is readable."
-      : '';
+    // "Couldn't read", "too wide to be an EVE folder" and "nothing there"
+    // are three different answers, and each asks the user for something
+    // different. Python decides which; this only picks the sentence.
+    warning.hidden = !(payload.unreadable || payload.too_broad);
+    if (payload.too_broad) {
+      warning.textContent =
+        'That folder has too many subfolders to be an EVE settings folder. '
+        + 'Pick the EVE folder itself, usually '
+        + (payload.default_root || '%LOCALAPPDATA%\\CCP\\EVE') + '.';
+    } else if (payload.unreadable) {
+      warning.textContent =
+        "Couldn't read that folder. Check it still exists and is readable.";
+    } else {
+      warning.textContent = '';
+    }
 
     fill('es-server', payload.servers, payload.server);
     fill('es-profile', payload.profiles, payload.profile);
@@ -245,6 +254,18 @@
   }
 
   WM.handle('onEveSettingsNames', function () { refresh(); });
+
+  // The running-client probe answers after the state that triggered it was
+  // already returned, so the pill is repainted in place. Only the pill: a
+  // full refresh would rebuild the target checklist under the user's
+  // cursor for an advisory badge nothing is blocked on.
+  WM.handle('onEveSettingsRunning', function (payload) {
+    var pill = WM.el('es-eve-state');
+    if (!pill) return;
+    if (state) state.eve_running = payload.running;
+    pill.textContent = payload.running ? 'EVE running' : 'EVE closed';
+    pill.className = 'pill ' + (payload.running ? 'warn' : 'idle');
+  });
 
   // The completion signal for every mutation. It replaces a setTimeout that
   // fired 250ms into a copy the worker had barely started, and it is what

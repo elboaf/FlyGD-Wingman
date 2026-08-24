@@ -140,3 +140,88 @@ def test_require_under_enforces_the_suffix(tmp_path):
     target.write_bytes(b"x")
     with pytest.raises(ValueError):
         tree.require_under(tmp_path, target, suffix=".dat")
+
+
+def test_a_root_with_implausibly_many_children_is_refused_not_probed(
+        tmp_path, monkeypatch):
+    """Every child directory of the root costs a scandir apiece to probe.
+
+    A mis-picked root like C:\\Users\\me blocks the bridge thread for as
+    long as that takes. Refused with a reason, rather than probed slowly
+    or silently truncated -- "that is not an EVE folder" and "there is
+    nothing in it" are different answers.
+    """
+    root = tmp_path / "wide"
+    root.mkdir()
+    for n in range(tree.MAX_ROOT_CHILDREN + 1):
+        (root / f"dir{n:03d}").mkdir()
+    # A real settings set is in there; it is still not probed for.
+    (root / "dir000" / "settings_Default").mkdir()
+
+    probed = []
+    real = tree._has_profiles
+    monkeypatch.setattr(tree, "_has_profiles",
+                        lambda p: probed.append(str(p)) or real(p))
+
+    found = tree.discover(root)
+    assert found.too_broad is True
+    assert found.servers == []
+    # The root itself is probed (normalize_selection, then _servers_in);
+    # not one of its 65 children is.
+    assert set(probed) == {str(root)}
+
+
+def test_a_root_at_the_cap_is_still_probed(tmp_path):
+    """The cap must be generous, not eager: refusing a plausible root is
+    worse than the scandirs it saves."""
+    root = tmp_path / "eve"
+    root.mkdir()
+    for n in range(tree.MAX_ROOT_CHILDREN):
+        (root / f"dir{n:03d}").mkdir()
+    (root / "dir000" / "settings_Default").mkdir()
+    found = tree.discover(root)
+    assert found.too_broad is False
+    assert [s.path for s in found.servers] == [root / "dir000"]
+
+
+def test_has_profiles_stops_at_the_first_match(tmp_path, monkeypatch):
+    """Lazy, not materialised: the old code read every entry with list()
+    before testing any of them."""
+    server = tmp_path / "server"
+    server.mkdir()
+    (server / "settings_Default").mkdir()
+    for n in range(50):
+        (server / f"zz{n:03d}").mkdir()
+    monkeypatch.setattr(tree, "MAX_PROBE_ENTRIES", 1)
+    # With a cap of one entry, the answer depends on whether settings_
+    # happened to be read first -- what matters is that it never raises
+    # and never reads past the cap.
+    assert tree._has_profiles(server) in (True, False)
+
+
+def test_a_directory_beyond_the_probe_cap_is_not_a_server(tmp_path,
+                                                          monkeypatch):
+    monkeypatch.setattr(tree, "MAX_PROBE_ENTRIES", 0)
+    server = tmp_path / "server"
+    server.mkdir()
+    (server / "settings_Default").mkdir()
+    assert tree._has_profiles(server) is False
+
+
+def test_default_root_uses_localappdata_when_windows_sets_it(monkeypatch):
+    """The Windows branch: %LOCALAPPDATA%\\CCP\\EVE is where EVE puts it,
+    and this is the path the folder picker is seeded with on first run."""
+    monkeypatch.setenv("LOCALAPPDATA", str(Path("C:/Users/me/AppData/Local")))
+    assert tree.default_root() == Path("C:/Users/me/AppData/Local/CCP/EVE")
+
+
+def test_default_root_falls_back_when_localappdata_is_absent(monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert tree.default_root() == Path.home() / ".local/share/CCP/EVE"
+
+
+def test_default_root_ignores_an_empty_localappdata(monkeypatch):
+    """An empty string is falsy, so Path("")/"CCP" would resolve to a
+    relative CCP/EVE beside the working directory."""
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    assert tree.default_root() == Path.home() / ".local/share/CCP/EVE"

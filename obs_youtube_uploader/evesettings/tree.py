@@ -12,6 +12,21 @@ from pathlib import Path
 _PROFILE_PREFIX = "settings_"
 _KIND_PREFIXES = {"core_char_": "character", "core_user_": "account"}
 
+# A real EVE root holds one directory per shared-cache install -- a
+# handful. Every child directory of the root costs a scandir apiece to
+# probe for settings_* children, on the bridge thread, so a mis-picked
+# root like C:/Users/me turns discovery into hundreds of directory reads
+# for a folder that was never going to be the answer. The cap is generous
+# enough that no plausible EVE root reaches it, and a root that does is
+# refused and SAID SO, rather than probed slowly or truncated silently --
+# the same posture `unreadable` takes.
+MAX_ROOT_CHILDREN = 64
+# _has_profiles answers yes/no. A directory whose first entries hold no
+# settings_* is not a settings server, and reading the remaining entries
+# of, say, a package cache to confirm that buys nothing. Bounded AND
+# lazy: the old code materialised every entry before testing any of them.
+MAX_PROBE_ENTRIES = 4096
+
 # Substring -> (key, display name). TriffView's list, kept as-is: a shard it
 # does not know renders under its raw folder name, which is degraded rather
 # than broken.
@@ -62,6 +77,11 @@ class Tree:
     # directory is not unreadable -- conflating the two is what makes
     # TriffView say "no settings sets" when it means "denied".
     unreadable: bool = False
+    # True when the root held more than MAX_ROOT_CHILDREN directories, so
+    # its children were never probed. Reported rather than swallowed, for
+    # the same reason `unreadable` is: "that is not an EVE folder" and
+    # "there is nothing in it" are different answers.
+    too_broad: bool = False
 
 
 def default_root() -> Path:
@@ -154,27 +174,51 @@ def _is_profile_dir(path) -> bool:
 
 
 def _has_profiles(path) -> bool:
-    entries, _ = _scan(path)
-    return any(e.is_dir() and _is_profile_dir(e.path) for e in entries)
+    """Does *path* hold any settings_* child? Bounded, and short-circuits.
+
+    Deliberately NOT built on _scan(): that materialises every entry with
+    list() before the first test, so probing one wrong directory could
+    read hundreds of thousands of names to answer a question the first
+    entry might have settled.
+    """
+    try:
+        with os.scandir(str(path)) as entries:
+            for seen, entry in enumerate(entries):
+                if seen >= MAX_PROBE_ENTRIES:
+                    return False
+                try:
+                    if entry.is_dir() and _is_profile_dir(entry.path):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
 
 
-def _servers_in(root) -> tuple[list, bool]:
+def _servers_in(root) -> tuple[list, bool, bool]:
     entries, unreadable = _scan(root)
     found = []
     # The root itself counts as a server candidate: some installs put
-    # settings_* directly under it.
+    # settings_* directly under it. One scandir, always affordable.
     if _has_profiles(root):
         key, display = _shard(Path(root).name)
         found.append(Server(Path(root), display, key))
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        name = Path(entry.path).name
-        if _has_profiles(entry.path) or _shard(name)[0] != name:
-            key, display = _shard(name)
-            found.append(Server(Path(entry.path), display, key))
+
+    children = [e for e in entries if e.is_dir()]
+    # Counted BEFORE probing, because the count is the cheap part: the
+    # entries are already in hand, while each _has_profiles below is a
+    # fresh scandir. Bailing here is what keeps a mis-picked root from
+    # blocking the bridge thread for as long as C:/Users/me takes.
+    too_broad = len(children) > MAX_ROOT_CHILDREN
+    if not too_broad:
+        for entry in children:
+            name = Path(entry.path).name
+            if _has_profiles(entry.path) or _shard(name)[0] != name:
+                key, display = _shard(name)
+                found.append(Server(Path(entry.path), display, key))
     found.sort(key=lambda s: (s.key != "tranquility", s.name.lower()))
-    return found, unreadable
+    return found, unreadable, too_broad
 
 
 def _profiles_in(server) -> tuple[list, bool]:
@@ -235,7 +279,7 @@ def discover(root, server=None, profile=None) -> Tree:
     if root is None:
         return Tree()
     root, server, profile = normalize_selection(root, server, profile)
-    servers, unreadable = _servers_in(root)
+    servers, unreadable, too_broad = _servers_in(root)
     chosen_server = None
     if server is not None:
         chosen_server = next((s.path for s in servers
@@ -261,4 +305,5 @@ def discover(root, server=None, profile=None) -> Tree:
                 servers=servers, profiles=profiles,
                 characters=characters, accounts=accounts,
                 unreadable=unreadable or profiles_unreadable
-                or files_unreadable)
+                or files_unreadable,
+                too_broad=too_broad)

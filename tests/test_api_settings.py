@@ -502,3 +502,64 @@ def test_settings_object_identity_survives_a_save(monkeypatch, tmp_path):
     on_disk = json.loads(settings_path.read_text())
     assert "Pilot" in on_disk["preview"]["layouts"]
     assert "Pilot" in api._state.settings["preview"]["layouts"]
+
+
+def test_saving_settings_does_not_revert_the_uploaders_channel(monkeypatch,
+                                                               tmp_path):
+    """save_settings once built its payload from self._state.settings, a
+    snapshot taken outside _SAVE_LOCK, and _save_locked projects the
+    COMPLETE document from DEFAULTS -- so any key another writer set after
+    that snapshot was silently written back to its old value.
+
+    The uploader's own channel is the one that matters: _persist_channel
+    writes it from an upload worker thread on purpose, so an upload
+    finishing while the Settings form is open is an ordinary race, and
+    losing it means the next upload goes to the wrong place with nothing
+    on screen to say so.
+
+    Both writers now go through settings.update() on the live document, so
+    the lock spans each read-modify-write and neither can revert the
+    other. This pins that from the uploader's side;
+    test_settings_object_identity_survives_a_save above pins it from the
+    preview store's.
+    """
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+
+    # Exactly what _persist_channel does when an upload completes.
+    with api_mod.settings_mod.update(api._state.settings) as cfg:
+        cfg["channel_id"] = "UC-live"
+        cfg["channel_title"] = "Live Channel"
+
+    assert api.save_settings(values(tmp_path)) is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert on_disk["channel_title"] == "Live Channel"
+    assert on_disk["channel_id"] == "UC-live"
+    assert on_disk["privacy"] == "public"
+    assert api._state.settings["channel_title"] == "Live Channel"
+
+
+def test_first_run_does_not_revert_the_uploaders_channel(monkeypatch,
+                                                         tmp_path):
+    """set_recording_dir had the identical stale-snapshot shape."""
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+    api._on_recording_dir_ready = lambda _f: None
+
+    with api_mod.settings_mod.update(api._state.settings) as cfg:
+        cfg["channel_title"] = "Live Channel"
+
+    assert api.set_recording_dir(str(folder)) is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert on_disk["channel_title"] == "Live Channel"
+    assert on_disk["recording_dir"] == str(folder)
