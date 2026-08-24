@@ -283,6 +283,65 @@ def test_a_case_differing_pair_of_stems_collides(tmp_path):
         "Plan name collides case-insensitively with another file.")
 
 
+class ReversedGlob:
+    """A plans folder that enumerates in a chosen order.
+
+    list_plans() touches its directory argument in exactly one way --
+    `plans_dir.glob("*.txt")` -- so a shim over that one call is enough
+    to pin enumeration order without pretending to be a Path.
+
+    Injecting the order is the whole point. The defect this guards was
+    invisible to a test that merely created two files and asserted a
+    winner: the machine it was written on enumerated the capitalised
+    stem first and passed, with and without the fix, while CI enumerated
+    the other way and failed. A test that depends on the filesystem's
+    ordering is testing the filesystem.
+    """
+
+    def __init__(self, folder, order):
+        self._folder = folder
+        self._order = order
+
+    def glob(self, pattern):
+        found = {p.name: p for p in self._folder.glob(pattern)}
+        assert set(found) == set(self._order), (sorted(found), self._order)
+        return [found[name] for name in self._order]
+
+
+def test_the_surviving_stem_does_not_depend_on_enumeration_order(tmp_path):
+    """The collision is resolved positionally -- first entry wins -- so
+    the sort ahead of it must be a TOTAL order. Case-folding alone is
+    not: both stems fold to the same key and Python's sort is stable, so
+    the winner falls through to the filesystem. Both orders must name
+    the same survivor."""
+    write_plan(tmp_path, "Rifter")
+    write_plan(tmp_path, "rifter")
+    for order in (["Rifter.txt", "rifter.txt"], ["rifter.txt", "Rifter.txt"]):
+        found, issues = planstore.list_plans(ReversedGlob(tmp_path, order))
+        assert [p.name for p in found] == ["Rifter"], order
+        assert [i.file_name for i in issues] == ["rifter.txt"], order
+
+
+def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(
+        tmp_path):
+    """The cap slices the sorted list, so a tie at the boundary decides
+    which plan is dropped. With a non-total sort that choice was the
+    filesystem's, and `Only the first N of M` would name a different
+    casualty per machine while reading as deterministic."""
+    names = ["Alpha", "alpha"] + [
+        f"Plan{n:03d}" for n in range(planstore.MAX_PLAN_FILES - 1)]
+    for name in names:
+        write_plan(tmp_path, name)
+    files = [f"{n}.txt" for n in names]
+
+    for order in (files, list(reversed(files))):
+        found, issues = planstore.list_plans(ReversedGlob(tmp_path, order))
+        kept = [p.name for p in found]
+        assert "Alpha" in kept and "alpha" not in kept, order
+        assert any(i.file_name == "plans" and "Only the first" in i.message
+                   for i in issues), order
+
+
 def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
     """Two byte-distinct filenames that normalise to the same NFC text
     (e cedilla as one code point vs. e + combining acute) are the same

@@ -113,6 +113,30 @@ class PlanIssue:
                          # parse failure; () for every other kind of issue
 
 
+def _sort_key(path: Path):
+    """A TOTAL order over plan files, not merely a case-insensitive one.
+
+    Case-folding alone is not a total order here: "Rifter" and "rifter"
+    fold to the same key, and Python's sort is stable, so their relative
+    order falls through to whatever the filesystem enumerated. The
+    collision loop below resolves such a pair positionally -- first one
+    wins -- which made the SURVIVING plan filesystem-dependent. The same
+    two files kept "Rifter" on one machine and "rifter" on CI.
+
+    The normalised stem breaks the tie identically everywhere. Byte
+    order decides it, so the capitalised stem wins; which one survives
+    matters far less than that it is the same one every time, on every
+    machine. This is also what makes the MAX_PLAN_FILES cap reproducible
+    for a pair straddling the boundary.
+
+    NFC-normalised to agree with `collision_key` below: a tiebreak that
+    ordered on a different form than the dedup compares could rank two
+    stems by one identity and then discard by another.
+    """
+    normalised = unicodedata.normalize("NFC", path.stem)
+    return (normalised.casefold(), normalised)
+
+
 def list_plans(plans_dir: Path):
     """Read every *.txt in *plans_dir*. Returns (plans, issues).
 
@@ -139,7 +163,7 @@ def list_plans(plans_dir: Path):
     # reload, rather than whichever 200 the filesystem enumerated first.
     # Case-insensitive because byte order puts every capitalised name
     # ahead of every lowercase one and scatters related plans.
-    entries.sort(key=lambda p: p.stem.casefold())
+    entries.sort(key=_sort_key)
     if len(entries) > MAX_PLAN_FILES:
         issues.append(PlanIssue(
             "plans",
