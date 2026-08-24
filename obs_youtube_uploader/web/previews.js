@@ -124,21 +124,22 @@
     var typed = WM.make('button', 'linkbtn', 'Type…');
     typed.addEventListener('click', function () {
       endCapture();
-      var text = window.prompt(
-        'Keybind for "' + label + '"\n' +
-        'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
-        gesture || '');
-      if (text === null) { return; }
-      if (text === '') { onSet(''); return; }
-      WM.send('parse_preview_bind', text).then(function (result) {
-        if (!result) { return; }
-        if (result.error) {
-          WM.send('alert_bookmarks',
-                  'That is not a keybind Windows can register. It needs at ' +
-                  'least one of Ctrl, Alt, Shift or Win, plus a key.');
-          return;
-        }
-        onSet(result.gesture);
+      // The app's own dialog -- see the matching comment in bookmarks.js.
+      WM.prompt('Keybind for "' + label + '"',
+                'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
+                gesture || '').then(function (text) {
+        if (text === null) { return; }
+        if (text === '') { onSet(''); return; }
+        WM.send('parse_preview_bind', text).then(function (result) {
+          if (!result) { return; }
+          if (result.error) {
+            WM.send('alert_bookmarks',
+                    'That is not a keybind Windows can register. It needs at '
+                    + 'least one of Ctrl, Alt, Shift or Win, plus a key.');
+            return;
+          }
+          onSet(result.gesture);
+        });
       });
     });
     row.appendChild(typed);

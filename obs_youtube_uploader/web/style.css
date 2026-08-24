@@ -590,6 +590,11 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .dialog .buttons {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
+/* Only for a prompt. Author [hidden] rule for the same reason .routenav
+   carries one: input.field sets a display via its own rules and the UA
+   [hidden] would otherwise lose to it. */
+#dlg-input { width: 100%; margin-top: 14px; }
+#dlg-input[hidden] { display: none; }
 
 /* ====================== settings route ==============================
    A route in this window, not a second OS window.

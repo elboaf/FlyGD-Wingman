@@ -514,6 +514,10 @@
            aria-labelledby="dlg-title">
         <h3 id="dlg-title"></h3>
         <div class="body" id="dlg-body"></div>
+        <!-- Shown only for a page-raised prompt. The alternative was
+             window.prompt, which WebView2 captions with the page origin. -->
+        <input class="field mono" id="dlg-input" type="text"
+               spellcheck="false" autocomplete="off" hidden>
         <div class="buttons">
           <button class="btn" id="dlg-cancel" hidden>Cancel</button>
           <button class="btn acc" id="dlg-ok">OK</button>

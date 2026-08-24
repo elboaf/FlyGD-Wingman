@@ -167,10 +167,13 @@
       // the two cannot disagree.
       var typed = WM.make('button', 'linkbtn', 'Type…');
       typed.addEventListener('click', function () {
-        var text = window.prompt(
-          'Keybind for "' + state.labels[id] + '"\n' +
-          '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
-          state.settings.keybinds[id] || '');
+        // The app's own dialog, not window.prompt: WebView2 captions that
+        // with the page origin, so entering a keybind in a frameless dark
+        // app raised a grey box mentioning localhost.
+        WM.prompt('Keybind for "' + state.labels[id] + '"',
+                  '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
+                  state.settings.keybinds[id] || '')
+          .then(function (text) {
         if (text === null) return;
         WM.send('parse_bind', text).then(function (result) {
           if (!result) return;
@@ -181,6 +184,7 @@
           }
           setBind(id, result.ahk);
         });
+          });
       });
       row.appendChild(typed);
 
@@ -279,13 +283,22 @@
   });
 
   WM.el('eve-reset-binds').addEventListener('click', function () {
-    // Overwrites all 18 (bookmarks.py BIND_IDS), so it is confirmed. window.confirm is what the
-    // rest of the page uses for a destructive action.
-    if (!window.confirm(
-        'Replace all 18 keybinds with the recommended defaults?')) {
-      return;
-    }
-    WM.send('reset_binds').then(render);
+    // Overwrites all 18 (bookmarks.py BIND_IDS), so it is confirmed.
+    //
+    // NOT window.confirm, which is what this used to call under a comment
+    // claiming it was "what the rest of the page uses for a destructive
+    // action" -- it was the only window.confirm in the app, and WebView2
+    // renders it as browser chrome captioned with the page's origin, so a
+    // destructive prompt in a frameless dark app appeared as a grey box
+    // mentioning localhost. Every other destructive action here goes
+    // through the styled overlay; skills.js:624 records deliberately
+    // avoiding window.confirm for the same reason.
+    WM.confirm('Reset keybinds',
+               'Replace all 18 keybinds with the recommended defaults?')
+      .then(function (ok) {
+        if (!ok) { return; }
+        WM.send('reset_binds').then(render);
+      });
   });
 
   WM.el('eve-import').addEventListener('click', function () {
