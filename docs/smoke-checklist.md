@@ -910,3 +910,42 @@ Enable previews in Settings before starting.
 - [ ] Frozen build only: run the packaged app and confirm labels still
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
+
+## EVE client window layouts
+
+Nothing below is covered by the suite: CI is ubuntu-latest and no Win32
+call runs there. Each item is a claim reasoned from documentation.
+
+- [ ] Two clients logged in, dragged somewhere deliberate. **Save current
+      positions** reports the right count. Move both, press **Restore
+      now** — they go back exactly, not approximately.
+- [ ] A client at character select is not counted by Save and is not
+      moved by Restore.
+- [ ] A **maximized** client: Save, un-maximize and move it, Restore. It
+      comes back maximized, and un-maximizing lands on the saved rect.
+- [ ] A **minimized** client is never restored into minimized.
+- [ ] **Mixed DPI**: put one client on a 100% monitor and one on a 150%
+      or 200% monitor, Save, move both, Restore. Both land exactly. This
+      is the check that the per-batch PMv2 scope actually works — on a
+      single-monitor machine it passes whether or not the code is right.
+- [ ] **Taskbar docked top or left**, then Save and Restore. Windows must
+      not drift by the taskbar's height/width. Confirms the
+      SPI_GETWORKAREA conversion is applied in both directions.
+- [ ] **Borderless fullscreen** client: Save and Restore. Record what
+      happens — accepted, ignored, or a mode switch. This one is
+      genuinely unknown and many EVE users run fullscreen.
+- [ ] Enable **restore on launch**, quit a client, relaunch it. It lands
+      at its saved position once, and can then be **dragged and stays
+      dragged** — the place-once rule.
+- [ ] With restore-on-launch on, unplug a monitor holding a saved
+      position, then relaunch that client. It is skipped, not deposited
+      off-screen, and the log says why.
+- [ ] Save a layout, hand-edit `settings.json` to corrupt one character's
+      entry, relaunch. That character is dropped; the others survive.
+- [ ] Save while a client is **still loading / not responding**. Wingman's
+      window stays responsive — the WPF_ASYNCWINDOWPLACEMENT and
+      non-marshalling-read claims.
+- [ ] Previews **disabled**: Save and Restore still work. This is the
+      whole point of the manager owning its own watcher.
+- [ ] Toggle restore-on-launch twice quickly; exactly one watcher runs
+      and quitting Wingman leaves no process in Task Manager.
