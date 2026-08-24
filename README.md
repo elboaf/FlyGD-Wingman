@@ -318,7 +318,18 @@ credentials in a public issue.
 
 ## License and affiliations
 
-Released under the [MIT License](LICENSE).
+Copyright (C) 2026 elboaf and the FlyGD Wingman contributors.
+
+Released under the [GNU General Public License, version 3 only](LICENSE) (`GPL-3.0-only`).
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
 
 FFmpeg and AutoHotkey are bundled and are licensed under the GPL. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for versions, sources, and

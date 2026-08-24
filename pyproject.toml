@@ -1,3 +1,12 @@
+# Declared explicitly rather than left to pip's implicit fallback. The
+# SPDX `license` string below is PEP 639 and needs setuptools>=77; the
+# fallback backend only guarantees >=40.8, so without this the build
+# depends on whatever pip happens to resolve. build.yml:41 records what
+# a silently-wrong install costs here.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 # The distribution/import name is deliberately unchanged by the FlyGD Wingman
 # rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
@@ -8,6 +17,12 @@ description = "FlyGD Wingman - Windows companion for OBS recordings: review, sti
 readme = "README.md"
 requires-python = ">=3.11"
 maintainers = [{ name = "FlyGD", email = "technical@zoolanders.vip" }]
+# GPL-3.0-only, not -or-later: the preview subsystem this project is
+# growing derives from TriffView, which is v3-only. An "or later" grant
+# here could not survive that combination, so it would be a claim we
+# would have to retract later.
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
