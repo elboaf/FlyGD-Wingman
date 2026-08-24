@@ -398,6 +398,11 @@ def main() -> int:
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()
 
+    # Before the window, not after: window_mod.run() below blocks until the
+    # window is destroyed, so anything started after it never runs until
+    # the app is already quitting. No-op unless the user enabled previews.
+    api.start_previews_if_enabled()
+
     window = window_mod.create(api)
 
     def start_watching(directory) -> None:

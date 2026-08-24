@@ -135,3 +135,25 @@ def test_set_preview_enabled_returns_truthy_on_success(tmp_path):
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": False}
     assert api.set_preview_enabled(True) is True
+
+
+def test_main_actually_calls_start_previews_if_enabled():
+    """The method existed, was tested directly, and nothing called it --
+    so previews never started at launch however the setting was set. A
+    unit test on the method cannot catch that; only reading main() can.
+    """
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    src = inspect.getsource(main_mod.main)
+    assert "start_previews_if_enabled()" in src
+
+
+def test_main_tears_previews_down():
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    src = inspect.getsource(main_mod.main)
+    assert "shutdown_previews()" in src
