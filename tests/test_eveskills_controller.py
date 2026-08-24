@@ -1068,9 +1068,10 @@ class FakeAuthSso:
 def build_auth(tmp_path, monkeypatch, *, events=None, callback=None,
                listener_error=None, on_wait=None, sso=None,
                validate_token=None, **kwargs):
-    # Not registered at developers.eveonline.com in this checkout, so
-    # application.is_configured() is False by default -- authenticate()
-    # would refuse before ever touching the fakes below.
+    # Pinned rather than inherited from application.py: these tests
+    # exercise authenticate()'s own behaviour, and must not start
+    # failing the day the registered client id is rotated or a fork
+    # blanks it back to the placeholder.
     monkeypatch.setattr(application, "CLIENT_ID", "test-client-id")
     events = events if events is not None else []
     listener = FakeListener(events, callback=callback or

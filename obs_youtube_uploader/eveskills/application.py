@@ -16,13 +16,15 @@ that single point.
 """
 from .. import __version__ as _version
 
-# Not yet registered at developers.eveonline.com. is_configured() is
-# what keeps a placeholder build from launching a browser at CCP with
-# this literal in the query string -- the resulting error page is not a
-# recognisable diagnosis for "this build was never registered".
+# Registered at developers.eveonline.com against the REDIRECT_URI and
+# SCOPES below. The placeholder is kept as a named constant rather than
+# deleted: is_configured() is what keeps an unconfigured fork from
+# launching a browser at CCP with a literal in the query string, and
+# CCP's error page is not a recognisable diagnosis for "this build was
+# never registered".
 _PLACEHOLDER_CLIENT_ID = "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
 
-CLIENT_ID = _PLACEHOLDER_CLIENT_ID
+CLIENT_ID = "c2ea757d14a04283980be1fa6aa084ee"
 
 # The redirect is registered with CCP and must match byte for byte, so
 # the parts and the assembled URI are kept in one place: loopback.py

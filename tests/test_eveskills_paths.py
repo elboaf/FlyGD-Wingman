@@ -25,18 +25,30 @@ def test_the_state_document_and_its_backup_are_siblings(monkeypatch, tmp_path):
     assert paths.eve_skills_file().parent == tmp_path
 
 
-def test_the_placeholder_client_id_is_not_configured():
-    """Nobody has registered the EVE application yet. is_configured() is
-    what the controller checks before offering `Add character`: without
-    it the button launches a browser at login.eveonline.com with a
-    literal placeholder in the query string, and CCP's error page is not
-    a recognisable diagnosis for 'this build was never registered'."""
-    assert application.CLIENT_ID == "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
+def test_the_placeholder_client_id_is_not_configured(monkeypatch):
+    """The guard outlives our own registration: a fork that re-points
+    this at its own application starts from the placeholder, and
+    is_configured() is what the controller checks before offering `Add
+    character`. Without it the button launches a browser at
+    login.eveonline.com with a literal placeholder in the query string,
+    and CCP's error page is not a recognisable diagnosis for 'this build
+    was never registered'."""
+    monkeypatch.setattr(application, "CLIENT_ID",
+                        "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID")
     assert application.is_configured() is False
 
 
-def test_a_registered_client_id_is_configured(monkeypatch):
-    monkeypatch.setattr(application, "CLIENT_ID", "abc123def456")
+def test_the_empty_client_id_is_not_configured(monkeypatch):
+    """A fork that blanks the constant rather than replacing it gets the
+    same disabled button, not an authorize URL with `client_id=`."""
+    monkeypatch.setattr(application, "CLIENT_ID", "")
+    assert application.is_configured() is False
+
+
+def test_the_shipped_client_id_is_configured():
+    """This build is registered, so the Skills tab offers `Add
+    character` rather than the not-configured notice."""
+    assert application.CLIENT_ID == "c2ea757d14a04283980be1fa6aa084ee"
     assert application.is_configured() is True
 
 
