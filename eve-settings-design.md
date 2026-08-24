@@ -30,6 +30,7 @@ Two independent passes over `native/EveSettings/` produced the table below.
 | 3 | What does listing backups cost? | **One zip opened and parsed per backup, on every state refresh** — and a refresh follows every operation. The tool gets slower the more it is used. |
 | 4 | Are the file operations tested? | **No.** All 16 tests in that feature cover the name resolver. Every destructive path is untested. |
 | 5 | Can Wingman's `atomicio` be reused as-is? | **No.** `write_atomic` takes `str` and opens the temp in `"w"` mode with an encoding (`atomicio.py:13,35`). `.dat` files are binary; a binary sibling is required. |
+| 6 | Does Wingman already build archives safely? | **Yes, and the precedent is directly applicable.** `combatlog.build_archive` stages to a `.tmp` and `os.replace`s it into place, because "a run that dies partway must not leave a truncated archive that reads as a complete export" (`combatlog.py:283-324`), with a regression test at `tests/test_combatlog.py:349-361`. |
 
 Finding 5 is the load-bearing one for implementation order: it is new code in a
 module whose current 60 lines are entirely about text, and everything in
@@ -69,10 +70,33 @@ Three lanes. The middle one is forced, not chosen.
 The worker-thread rule is the same one `delete_selected` already follows, and
 for the same reason it documents at `ui/api.py:377-389`.
 
+**One mutation at a time.** A per-mutation worker says nothing about how many
+may exist at once, and `_confirm()` parks each one independently
+(`ui/api.py:262-286`) — so two operations approved moments apart can interleave
+over the same files and produce a partial backup or a half-applied restore.
+Every mutation therefore takes a single module-level mutation lock, acquired
+*before* the confirmation prompt and held until the operation finishes. A
+second request that finds the lock held is refused with a message rather than
+queued: queueing behind a dialog the user has not answered yet is worse than
+declining, because the queued operation's own confirmation would describe
+state that has since changed. The UI disables its action buttons while a
+mutation is in flight; the lock is what makes that correct rather than
+merely tidy.
+
 ### Bridge shape
 
 One `eve_settings_state()` returning the whole tree; mutations return a report
 dict; the page re-fetches state afterwards. Request/response, not push.
+
+With one exception, which the request/response shape does not cover on its own:
+**ESI name resolution completes after the state that triggered it was already
+returned.** The first state build hands back `Character 98123456` for every
+row, and nothing in a pure request/response bridge would ever tell the page
+otherwise. So when a resolution pass finishes and produced at least one new
+name, the background thread pushes `onEveSettingsNames` and the page re-fetches
+state. One push per pass, not per name; a pass that resolved nothing pushes
+nothing. This is the same `self._push(...)` channel the upload progress and
+status messages already use.
 
 TriffView pushes a full state object and diffs it against
 `_lastPostedStateJson` to skip no-op sends — but every call site passes
@@ -108,10 +132,17 @@ the selection rather than showing an empty list. Cheap, and the failure
 without it is the most likely first-run confusion.
 
 **Containment is the real defense.** Every path crossing into an operation is
-normalised and checked to be under the configured root, with a
-separator-aware prefix comparison so that `C:\EVE-evil` does not pass as being
-under `C:\EVE`. Files must end `.dat`, backups `.zip` and sit under the backup
-root.
+resolved with `os.path.realpath` — not merely normalised — and checked to be
+under the equally-resolved root, with a separator-aware prefix comparison so
+that `C:\EVE-evil` does not pass as being under `C:\EVE`. Files must end
+`.dat`, backups `.zip` and sit under the backup root.
+
+`realpath` rather than `normpath` because a lexical check cannot see a symlink
+or a Windows junction. Either can sit beneath a legitimate root and redirect a
+delete or an overwrite outside it, and junctions in particular are something a
+user can create by accident with `mklink /J` while reorganising an EVE install.
+Resolving both sides before comparing is what makes the prefix test mean what
+it says.
 
 **Enumeration failures are reported, not swallowed into emptiness.** TriffView
 wraps every enumeration in a helper that returns empty on any exception, which
@@ -142,7 +173,9 @@ nothing about validity. Those IDs are simply left unresolved and retried on
 the next state build.
 
 Transport is stdlib `urllib.request`, following `discord.py:11-12,253`. Wingman
-has no HTTP dependency and one POST does not justify adding `requests`. The
+declares no general-purpose HTTP client — the Google stack brings `httplib2`
+along for its own use (`pyproject.toml:26-30`), but nothing in the app calls a
+request library directly — and one POST does not justify adding `requests`. The
 batch fetch is injected as a parameter, so the whole bisect is testable against
 fixed status/body pairs with no network.
 
@@ -165,31 +198,53 @@ to a reinstall.
 **The filename is the index.**
 
 ```
-20260824-123456-000-auto-character-core_char_98123456.zip
-└ UTC ────────┘ └seq┘ └origin┘ └ kind ┘ └── grouping stem ──┘
+20260824-123456-000-auto-character-a1b2c3d4-core_char_98123456.zip
+└ UTC ────────┘ └seq┘ └origin┘ └ kind ┘ └src┘ └──── stem ────┘
 ```
 
 This closes two of TriffView's defects at once.
 
-The sequence number is claimed with `O_CREAT | O_EXCL` before the archive is
-written, so two backups inside the same second cannot collide — the failure
-that aborts a 40-target copy partway (finding 2).
+The sequence number makes two backups inside the same second distinguishable —
+the collision that aborts a 40-target copy partway (finding 2).
 
-And because origin, kind and source stem are all in the name, **listing
+And because origin, kind, source and stem are all in the name, **listing
 backups is one `listdir` and a parse; no archive is opened** (finding 3). The
-manifest stays inside the zip and remains authoritative for the source path,
-which is too long and too path-shaped to encode in a filename. Restore opens
-exactly one archive: the one being restored.
+manifest stays inside the zip and remains authoritative for the full source
+path, which is too long and too path-shaped to encode in a filename. Restore
+opens exactly one archive: the one being restored.
 
-`kind` is `character`, `account`, or `profile`. For file backups the grouping
-stem is the file stem; for profile backups it is the profile name.
+`kind` is `character`, `account`, or `profile`. `src` is the first 8 hex
+characters of a SHA-256 over the normalised absolute path of the source's
+**parent profile directory**.
 
-**Pruning** groups auto-backups by stem and keeps the newest `auto_keep`.
-Manual backups are never pruned, and are distinguishable without opening
-anything because origin is in the name. Pruning runs after any operation that
-created an auto-backup — a copy or a restore — never on a timer. TriffView
-prunes nothing at all, and since every copy auto-backs-up, a single "copy to
-all others" across 40 characters leaves 40 archives behind forever.
+That `src` segment is not decoration. `core_char_98123456.dat` exists in
+*every* settings set, so a grouping key built from the stem alone would treat
+backups of one character across two profiles as the same source — and backing
+that character up from `settings_Alt` would prune the rollback history
+belonging to `settings_Default`. The grouping key is `(kind, src, stem)`, and
+only that triple.
+
+**Archives are staged, then published.** The final name is claimed with
+`O_CREAT | O_EXCL` so no two writers can pick it, the archive is built to a
+staging file beside it, and `os.replace` moves it into place on success; a
+failure unlinks the staging file and the claimed name.
+
+Claiming alone is not enough, and the repository already knows why:
+`combatlog.build_archive` stages exactly like this because "a run that dies
+partway must not leave a truncated archive that reads as a complete export"
+(`combatlog.py:283-324`, with a regression test at
+`tests/test_combatlog.py:349-361`). Since listing here is filename-only, a
+half-written archive left under its final name would be presented to the user
+as restorable — which would contradict this design's own outcome statement.
+Claim for collision-safety, stage for integrity; the two compose.
+
+**Pruning** groups auto-backups by `(kind, src, stem)` and keeps the newest
+`auto_keep` within that group. Manual backups are never pruned, and are
+distinguishable without opening anything because origin is in the name.
+Pruning runs after any operation that created an auto-backup — a copy or a
+restore — never on a timer. TriffView prunes nothing at all, and since every
+copy auto-backs-up, a single "copy to all others" across 40 characters leaves
+40 archives behind forever.
 
 **Restore.** Two paths.
 
@@ -199,14 +254,22 @@ all others" across 40 characters leaves 40 archives behind forever.
 in this order:
 
 1. Validate the manifest's recorded target still sits under the current root.
-2. Auto-backup the existing profile. **A failure here aborts the restore** —
-   this backup is what makes step 3 recoverable.
-3. Delete every `core_*.dat` in the target directory.
-4. Extract.
+2. **Validate every archive entry before touching anything.** Each name must
+   flatten to a bare `core_*.dat` (or the manifest itself); anything else —
+   a nested path, an absolute path, a `..` component, an unexpected file —
+   fails the whole restore before a single deletion. Validation is complete
+   and up-front, not interleaved with extraction, so a bad archive cannot
+   leave the profile emptied and half-repopulated.
+3. Auto-backup the existing profile. **A failure here aborts the restore** —
+   this backup is what makes step 4 recoverable.
+4. Delete every `core_*.dat` in the target directory.
+5. Extract.
 
-Step 3 means files that were in the profile but not in the backup are gone;
-step 2 is why that is survivable. Archive entries are flattened through
-`os.path.basename` so a crafted archive cannot escape the directory.
+Step 4 means files that were in the profile but not in the backup are gone;
+step 3 is why that is survivable. Archive entries are flattened through
+`os.path.basename` on extraction as well — belt and braces behind step 2's
+allowlist, since flattening alone would silently *accept* an unexpected member
+rather than reject it.
 
 A backup taken under a different root, or after the user repointed the folder,
 fails containment and says so rather than restoring somewhere unexpected.
@@ -267,9 +330,22 @@ between runs resolves to `None` and the UI shows the folder picker rather than
 a broken selection.
 
 This is one section in `settings.json` rather than a separate file, matching
-every other feature in the app, and it inherits the `_SAVE_LOCK` that exists
-because `save()` projects the entire document — two writers interleaving lose
-one side's keys silently.
+every other feature in the app.
+
+**Selection writes read, merge, and save — they do not save a snapshot.**
+`_SAVE_LOCK` serializes the final projection and write (`settings.py:180-189`);
+it does not make the surrounding read-modify-write atomic, and callers that
+build a payload from a stale copy before acquiring it can silently revert
+another writer's key (`ui/api.py:1055-1066` constructs `cfg` from
+`self._state.settings` and then saves it). Since `save()` projects the complete
+document from `DEFAULTS`, a lost key is not a corrupt file — it is a setting
+that quietly reverts, which is far harder to notice.
+
+The pattern to follow already exists: `preview/store.py:56-68` re-reads the
+live settings, merges its own section into that, and saves the result. This
+feature owns exactly one section and writes it only on an explicit user action,
+so the contention window is small — but "small" is what the preview store
+thought too, before three writers existed.
 
 TriffView keeps its own `%APPDATA%\TriffHud\eve-settings.json`, and its notes
 dictionary keys profile notes on the full path, so renaming a settings set
@@ -292,9 +368,20 @@ Top to bottom:
   with search, select-all/none, and a Copy button.
 - A Backups panel: list, restore, delete, and back-up-this-profile.
 
-**The EVE-running pill is advisory**, matching TriffView. Detection is by
-process name `exefile`; `procid.py` and `evewindows.py` already do this kind
-of lookup. Nothing is blocked — the copy explains itself if it fails.
+**The EVE-running pill is advisory**, matching TriffView. Detection reuses
+`preview/discovery.py`, which already resolves a window's PID to an executable
+name, compares it against `CLIENT_IMAGE = "exefile.exe"`, treats an
+unopenable process as "not a client" rather than an error, and caches the
+lookup per PID (`preview/discovery.py:16,39-51,92-139`). If the pill only needs
+"is any client running", that is `list_clients()` — otherwise the image-name
+helper is worth extracting rather than reimplementing.
+
+Not `procid.py` or `evewindows.py`: the first describes one already-known PID
+through PowerShell (`procid.py:21-51`) and the second enumerates window titles
+(`evewindows.py:80-98`). Neither does an executable-name match, and reaching
+for them would mean rebuilding what discovery already has.
+
+Nothing is blocked — the copy explains itself if it fails.
 
 **Confirmation is real, not cosmetic.** Every destructive operation runs on a
 worker thread and blocks on `_confirm()` before touching anything. Worth
@@ -333,12 +420,12 @@ port here except the resolver's own suite, which is worth porting closely.
 
 | Module | Covered |
 |---|---|
-| `tree.py` | A fake EVE tree in `tmp_path`: discovery, the digits-only ID rule, server canonicalisation, self-healing root, and every containment case including `..` traversal and the `C:\EVE-evil` prefix confusion. |
+| `tree.py` | A fake EVE tree in `tmp_path`: discovery, the digits-only ID rule, server canonicalisation, self-healing root, and every containment case including `..` traversal, the `C:\EVE-evil` prefix confusion, and a symlink beneath the root pointing outside it. |
 | `names.py` | `classify_response` against fixed status/body pairs (JSON-`error` 404 vs plain-text 404); `resolve` against a fake batch fetch, asserting a bad ID bisects to isolation while a transient failure neither bisects nor poisons the cache. |
-| `backup.py` | Create/enumerate/restore round-trip, the `O_EXCL` sequence claim under same-second creation, pruning newest-N auto while never touching manual, zip-slip rejection, and a manifest whose target no longer sits under the root. |
+| `backup.py` | Create/enumerate/restore round-trip; two backups in the same second both survive with distinct names; a failure mid-build leaves neither a staging file nor a claimed name behind, and enumeration does not list it; pruning keeps newest-N within `(kind, src, stem)` while never touching manual backups **and never pruning across two profiles holding the same character**; an archive carrying an unexpected or path-bearing entry is rejected before any deletion; a manifest whose target no longer sits under the root fails containment. |
 | `ops.py` | Kind mismatch refused, source excluded from its own targets, duplicates collapsed; failure paths driven by injecting a failing backup or write — backup fails means target untouched, write fails means reported and the loop continues. |
-| `ui/api.py` | Thin delegation and the worker-thread/confirm wiring, following `tests/test_api_bookmarks.py` and `tests/test_preview_wiring.py`. |
-| `settings.py` | `tests/test_settings_evesettings.py`, beside `test_settings_eve.py` and `test_settings_preview.py`. |
+| `ui/api.py` | Thin delegation, the worker-thread/confirm wiring, and the mutation lock: a second mutation attempted while one holds the lock is refused rather than interleaved. Follows `tests/test_api_bookmarks.py` and `tests/test_preview_wiring.py`. |
+| `settings.py` | `tests/test_settings_evesettings.py`, beside `test_settings_eve.py` and `test_settings_preview.py`. Includes a read-merge-save round trip asserting that writing the selection does not drop a key another writer set. |
 
 `test_packaging_completeness.py` already fails if the new package is not
 declared; no new test is needed for that.
