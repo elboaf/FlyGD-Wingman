@@ -474,11 +474,53 @@ frequency. `redraw()` is keyed and a flash would defeat the key, putting a
 never-minimize list), hide-active-preview, hide-all-on-lost-focus,
 always-maximize-on-activate, middle-click to minimize a client.
 
-~~**11. EVE client window layout save/restore**~~ — **Shipped (#23).**
-`preview/placement.py`, `preview/clientwin32.py`, `preview/clientlayout.py`,
-plus a `settings.update()` helper and a second card on the Previews tab.
+~~**11. EVE client window layout save/restore**~~ — **Shipped (#23), and it
+is the wrong feature. Slated for removal.**
 
-Three things it settled that the rest of this roadmap inherits:
+**This implements something nobody asked for.** "Restore clients on launch"
+was meant to restore the PREVIEW windows to their saved size and position.
+What was built moves the GAME client windows, via
+`clientwin32.apply_placement` -> `SetWindowPlacement`.
+
+The behaviour actually wanted already exists and already works, by a
+different route: `preview/layout.py` + `preview/store.py` persist each
+preview tile's rect per character and restore it on launch with no toggle
+and no button. Verified 2026-08-24 against three running clients --
+previews returned byte-identical to their saved rects across a restart.
+
+So this feature is redundant with something that works, and carries a
+hazard that the working path does not:
+
+**Forcing a rect onto a borderless-fullscreen EVE client corrupts that
+client's display settings.** The checklist listed the fullscreen case as
+"genuinely unknown -- accepted, ignored, or a mode switch". It is a fourth
+thing nobody listed: the window accepts the rect, `GetWindowRect` confirms
+it, `apply_placement` returns true and the log says "Restored" -- while EVE
+reads the resize as a resolution change and rewrites its own configuration.
+Every signal the feature reads says success. Three characters' settings
+were destroyed discovering this, on 2026-08-24, with two of the three
+clients unusable afterwards.
+
+`restore_clients_on_launch` defaults to False, which is the only reason
+this has not reached users. Enabled, it would do exactly the above at every
+launch, unattended.
+
+To remove: `preview/placement.py`, `preview/clientwin32.py`,
+`preview/clientlayout.py`, the `save_client_layout` / `restore_client_layout`
+/ `set_restore_clients_on_launch` / `start_client_layouts_if_enabled` bridge
+methods, the card in `web/settings.js`, the `client_layouts` and
+`restore_clients_on_launch` settings keys and their validation, the
+construction in `__main__.py`, the tests, and the whole "EVE client window
+layouts" section of the smoke checklist. Nothing in the preview path
+depends on any of it -- `clientlayout.py` owns its own scheduler precisely
+so `host.py` never had to know about it.
+
+Focus switching is NOT affected and must be left alone: click-to-focus and
+the hotkeys go through `window.py`'s `SetForegroundWindow` +
+`AttachThreadInput` sequence, which only raises a window and never sets a
+rect. That is the one thing the app should be doing to a game client.
+
+What it settled that the rest of this roadmap still inherits:
 
 - **A per-batch DPI scope, not one-time init.** `threading.Timer` starts a
   fresh thread per tick and DPI awareness is thread-local, so a context set at
@@ -605,6 +647,41 @@ recorded anywhere else, deliberately.
   console; a failed save reverts silently; and a successful `send()` can
   clobber a push that arrived while it was in flight. Item 8 fills this tab
   out and should fix them together.
+- **With previews off, the Previews tab claims every chord is registered.**
+  Found by walking the checklist on 2026-08-24; this is the regression the
+  "reads as off, not as live" item exists to catch, and it is back.
+
+  Python is blameless. `Api.get_preview_hotkey_state` gates on
+  `is_running` and correctly returns `characters: []` and
+  `registration: {}` once the host has stopped, exactly as its comment
+  says it does. The whole defect is in the page.
+
+  `clashes()` asks `if (state.registration[gesture] === false)`. With
+  previews off the map is empty, so the lookup is `undefined`, not
+  `false`, the refused branch never runs, and the chord renders as an
+  ordinary button. Three states are being collapsed into two:
+
+  | Python sends | Means | Renders as |
+  |---|---|---|
+  | `true` | registered | normal |
+  | `false` | refused by Windows | warned |
+  | *absent* | unknown / previews off | **normal** |
+
+  Confirmed against Windows at the time: previews off, and
+  `RegisterHotKey` succeeded for all four chords from a probe process --
+  nothing held them while the tab said otherwise.
+
+- **Dimming is the only "off" signal, and it carries no information when
+  everything dims.** `state.enabled && entry.online` forces every row
+  offline when previews are off, so the whole list greys at once. A
+  uniformly dim list is indistinguishable from "all my characters happen
+  to be logged off", and the user reported being unable to tell online
+  from offline in either state. The list needs to say it is off, not
+  imply it by styling every row identically.
+
+  Together these two make the tab read as a healthy, fully-registered
+  bind list at the exact moment the preview thread is gone and Windows
+  holds nothing.
 - **`rows()` builds its dedup set as `{}`**, so a character named
   `constructor` or `__proto__` collides with `Object.prototype`. Absurd
   in practice, one word to fix (`Object.create(null)`).
