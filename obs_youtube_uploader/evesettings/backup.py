@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import atomicio
 from . import tree
 
 MANIFEST_NAME = "wingman-eve-settings-backup.json"
@@ -260,34 +261,70 @@ def restore(backup_dir, archive_path, root, *, now=None) -> Path:
     # repointed the root since the backup was taken.
     tree.require_under(root, target_dir)
 
-    with zipfile.ZipFile(archive_path) as archive:
-        members = _validated_members(archive)
-        if kind != "profile" and members != [source.name]:
-            # A character/account archive backs up exactly one file. Extra
-            # members would be written into the live profile directory while
-            # the pre-restore backup below covers only `source`, silently
-            # clobbering an unrelated character with no way back.
-            raise ValueError(
-                "That archive does not hold exactly the file it claims to "
-                "back up.")
-        if kind == "profile":
-            create_profile_backup(backup_dir, target_dir, origin="auto",
-                                  now=now)
-            for existing in target_dir.iterdir():
-                if tree.file_kind(existing):
-                    existing.unlink()
-        else:
-            if source.exists():
-                create_file_backup(backup_dir, source, origin="auto", now=now)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for name in members:
-            # Belt and braces behind _validated_members: basename again on
-            # the way out, so nothing can escape even if validation grows a
-            # hole later.
-            destination = target_dir / Path(name).name
-            with archive.open(name) as entry, \
-                    open(destination, "wb") as handle:
-                shutil.copyfileobj(entry, handle)
+    # Nothing in target_dir is touched until every member is staged: a
+    # failure partway through extraction, or in the auto-backup that
+    # follows, must leave the profile exactly as it was rather than
+    # half-repopulated. Staging happens in target_dir itself (not a system
+    # temp dir) so the final os.replace stays on one filesystem -- it is
+    # only atomic within one.
+    target_dir.mkdir(parents=True, exist_ok=True)
+    staged = []
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = _validated_members(archive)
+            if kind != "profile" and members != [source.name]:
+                # A character/account archive backs up exactly one file.
+                # Extra members would be written into the live profile
+                # directory while the pre-restore backup below covers only
+                # `source`, silently clobbering an unrelated character with
+                # no way back.
+                raise ValueError(
+                    "That archive does not hold exactly the file it claims "
+                    "to back up.")
+            for name in members:
+                # Belt and braces behind _validated_members: basename again
+                # on the way out, so nothing can escape even if validation
+                # grows a hole later.
+                destination = target_dir / Path(name).name
+                staging = destination.with_name(
+                    f"{destination.name}.{uuid.uuid4().hex}.tmp")
+                # Recorded before the write: open(..., "wb") creates the
+                # file even if the copy that follows raises immediately, so
+                # cleanup must already know about it by then.
+                staged.append((staging, destination))
+                with archive.open(name) as entry, \
+                        open(staging, "wb") as handle:
+                    shutil.copyfileobj(entry, handle)
+
+            # The pre-restore auto-backup, taken only once every member is
+            # safely staged. A failure here must still abort -- nothing
+            # live has been touched yet, so aborting just means unstaging.
+            if kind == "profile":
+                create_profile_backup(backup_dir, target_dir, origin="auto",
+                                      now=now)
+            elif source.exists():
+                create_file_backup(backup_dir, source, origin="auto",
+                                   now=now)
+    except BaseException:
+        for staging, _destination in staged:
+            try:
+                staging.unlink()
+            except OSError:
+                pass
+        raise
+
+    if kind == "profile":
+        for existing in target_dir.iterdir():
+            if tree.file_kind(existing):
+                existing.unlink()
+
+    for staging, destination in staged:
+        # os.replace over open(..., "wb") is what makes this a restore
+        # rather than a truncate-in-place: EVE holds core_*.dat open for a
+        # whole session, and a straight write into that name corrupts it
+        # instead of merely refusing. The same retry ops.copy_to_targets
+        # uses for the identical Windows sharing-violation reason.
+        atomicio.replace_with_retry(str(staging), destination)
     return target_dir
 
 

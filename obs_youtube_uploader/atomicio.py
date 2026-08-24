@@ -37,7 +37,7 @@ def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        _replace_with_retry(tmp_name, path, attempts, sleep)
+        replace_with_retry(tmp_name, path, attempts, sleep)
     except BaseException:
         # Leave no debris: a stray .tmp beside the real file is confusing
         # and, in state_dir, indistinguishable from state that matters.
@@ -48,7 +48,8 @@ def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
         raise
 
 
-def _replace_with_retry(tmp_name: str, path: Path, attempts: int, sleep) -> None:
+def replace_with_retry(tmp_name: str, path: Path, attempts: int = 5,
+                       sleep=time.sleep) -> None:
     """os.replace, retried briefly against a locked destination.
 
     Windows only: os.replace maps to MoveFileExW, which raises a sharing
@@ -60,7 +61,19 @@ def _replace_with_retry(tmp_name: str, path: Path, attempts: int, sleep) -> None
 
     The reads are brief, so a short bounded retry clears it; failing
     outright would surface as settings mysteriously not saving.
+
+    Public: backup.py's restore() stages every archive member before
+    replacing any live file, and needs this same retry for the final
+    replace -- reaching into a private name for that would be worse than
+    exposing it.
+
+    attempts < 1 would otherwise return silently having replaced nothing:
+    `for attempt in range(0)` never runs the loop body, so the caller
+    believes the write succeeded while the destination keeps its old
+    content. That is refused up front rather than left as a footgun.
     """
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
     for attempt in range(attempts):
         try:
             os.replace(tmp_name, path)
@@ -98,7 +111,7 @@ def copy_atomic(source: Path, target: Path, *, attempts: int = 5,
             shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())
-        _replace_with_retry(tmp_name, target, attempts, sleep)
+        replace_with_retry(tmp_name, target, attempts, sleep)
     except BaseException:
         try:
             os.unlink(tmp_name)

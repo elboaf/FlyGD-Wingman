@@ -116,6 +116,42 @@ def test_a_permanently_locked_destination_raises_and_leaves_no_debris(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
 
 
+def test_replace_with_retry_is_exposed_publicly():
+    """backup.py's restore() needs this for its final replace and must not
+    have to reach into a private name to get it."""
+    assert atomicio.replace_with_retry is not None
+
+
+def test_replace_with_retry_rejects_non_positive_attempts(tmp_path):
+    with pytest.raises(ValueError):
+        atomicio.replace_with_retry("src.tmp", tmp_path / "dst", attempts=0)
+
+
+def test_write_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
+        tmp_path):
+    """`for attempt in range(0)` never runs the loop body: without the
+    guard, attempts=0 would return normally having replaced nothing, and
+    the caller would believe the write succeeded."""
+    target = tmp_path / "out.json"
+    target.write_text("old")
+    with pytest.raises(ValueError):
+        atomicio.write_atomic(target, "new", attempts=0)
+    assert target.read_text() == "old"
+    assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
+
+
+def test_copy_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
+        tmp_path):
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"new")
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"old")
+    with pytest.raises(ValueError):
+        atomicio.copy_atomic(source, target, attempts=0)
+    assert target.read_bytes() == b"old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dst.dat", "src.dat"]
+
+
 def test_copy_atomic_writes_bytes(tmp_path):
     source = tmp_path / "src.dat"
     source.write_bytes(b"\x00\x01\x02payload")

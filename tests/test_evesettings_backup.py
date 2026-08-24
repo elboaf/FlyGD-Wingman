@@ -173,6 +173,66 @@ def test_restore_puts_the_file_back(tmp_path):
     assert source.read_bytes() == b"payload-core_char_98123456.dat"
 
 
+def test_restore_failure_during_extraction_leaves_the_profile_untouched(
+        tmp_path):
+    """Extraction now stages every member before anything live is touched.
+    A failure partway through must leave the profile bit-for-bit as it was
+    -- no files deleted, no partial or leftover staging files -- rather
+    than half-repopulated."""
+    profile = profile_with(tmp_path, files=("core_char_1.dat",
+                                            "core_user_2.dat"))
+    store = tmp_path / "backups"
+    made = backup.create_profile_backup(store, profile, origin="manual",
+                                        now=at())
+    before = {p.name: p.read_bytes() for p in profile.iterdir()}
+    backups_before = set(backup.enumerate_backups(store))
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(backup.shutil, "copyfileobj", explode)
+    try:
+        with pytest.raises(OSError):
+            backup.restore(store, made, tmp_path / "root")
+    finally:
+        monkey.undo()
+
+    after = {p.name: p.read_bytes() for p in profile.iterdir()}
+    assert after == before
+    # No auto-backup was taken either: the failure is in extraction, which
+    # now happens before the pre-restore backup, so nothing was even
+    # attempted against the live profile.
+    assert set(backup.enumerate_backups(store)) == backups_before
+
+
+def test_restore_failure_in_the_auto_backup_leaves_the_profile_untouched(
+        tmp_path):
+    """A failure in the pre-restore auto-backup must abort the same as a
+    failure during extraction: every member is already staged by then, but
+    nothing live has been touched, so the fix is to unstage and leave the
+    profile alone."""
+    profile = profile_with(tmp_path, files=("core_char_1.dat",))
+    store = tmp_path / "backups"
+    made = backup.create_profile_backup(store, profile, origin="manual",
+                                        now=at())
+    before = {p.name: p.read_bytes() for p in profile.iterdir()}
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(backup, "create_profile_backup", explode)
+    try:
+        with pytest.raises(OSError):
+            backup.restore(store, made, tmp_path / "root")
+    finally:
+        monkey.undo()
+
+    after = {p.name: p.read_bytes() for p in profile.iterdir()}
+    assert after == before
+
+
 def test_profile_restore_removes_files_absent_from_the_archive(tmp_path):
     profile = profile_with(tmp_path, files=("core_char_1.dat",))
     store = tmp_path / "backups"
