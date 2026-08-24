@@ -1261,7 +1261,6 @@ class Api:
         self._push("onEveStatus", {
             "state": status.state, "sig": status.sig, "root": status.root,
             "next_num": status.next_num, "next_alpha": status.next_alpha,
-            "root_mode": status.root_mode,
             "failed_binds": status.failed_binds,
             # A failed start is otherwise invisible: this is the one
             # actionable thing the user can be told ("the engine is
@@ -1630,7 +1629,6 @@ class Api:
                          if value},
             "engine": {
                 "state": status.state if status else "off",
-                "root_mode": status.root_mode if status else "",
                 # Surfaces a failed start straight away. Without this the
                 # toggle reads "on" while nothing is running, and the reason
                 # never reaches the user at all.
@@ -1676,7 +1674,6 @@ class Api:
             engine.apply(clean)
             if clean["enabled"] and not engine.is_running():
                 engine.start()
-                engine.sync_sequence()
             elif not clean["enabled"] and engine.is_running():
                 engine.stop()
         return {**self.get_bookmarks(), "saved": True}
@@ -1698,12 +1695,6 @@ class Api:
 
     def parse_bind(self, text) -> dict:
         return bookmarks.parse_ahk(text if isinstance(text, str) else "")
-
-    def eve_command(self, name, argument="") -> bool:
-        engine = self._state.engine
-        if engine is None:
-            return False
-        return bool(engine.send_command(str(name), str(argument or "")))
 
     def import_bookmarks(self) -> dict:
         """Import a standalone helper INI chosen by the user.

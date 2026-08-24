@@ -863,13 +863,13 @@ pytest — the engine is AutoHotkey.
 - [ ] **Return bookmarks are NOT prefaced** — no `!`. There is no preface
       anywhere any more: not in the UI, not in settings.json, not in the
       INI, and not in the engine
-- [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
-      tracks Set Root / Clear Root
+- [ ] **There is no Root card on the route.** Root mode, the Set root box
+      and the Clear button are gone. The status bar's ROOT / NEXT readouts
+      are the only root display, and they still update as you use the
+      hotkeys — check they do.
 - [ ] Deliberately binding two actions to one key shows the collision warning
 - [ ] Binding a key another application owns shows a registration failure,
       not a silently dead key
-- [ ] Set Root and Clear Root from the route change the status bar values
-- [ ] A second action taken immediately is not lost
 - [ ] **Importing a REAL `eve_bookmark_helper.ini` reproduces that setup.**
       AutoHotkey writes it as UTF-16 LE; reading it as UTF-8 parsed nothing
       and saved that nothing over the user's settings while reporting

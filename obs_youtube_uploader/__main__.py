@@ -276,8 +276,7 @@ def start_engine_if_enabled(engine, section) -> None:
     """
     if engine is None or not section.get("enabled"):
         return
-    if engine.start():
-        engine.sync_sequence()
+    engine.start()
 
 
 def build_preview_host(state, api_box):

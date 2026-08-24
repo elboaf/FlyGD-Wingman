@@ -225,9 +225,33 @@ def test_set_root_is_scoped_by_registration_alone(source):
         "author's script; re-adding it is a divergence, not a fix"
 
 
-def test_root_mode_is_published(lowered):
-    """The UI must not have to infer it from root == "(home)"."""
-    assert "root_mode" in lowered
+def test_nothing_sends_the_engine_commands(source, lowered):
+    """Wingman configures the engine through the INI and reads its state
+    from the status file. There is no channel in the other direction.
+
+    There used to be: eve_command.ini, ReadCommand, SetManualRoot and
+    ClearRoot existed so two buttons on the Bookmarks route could set and
+    clear the root. Both did a weaker job than the hotkey already does --
+    no selection means no used-slot information, so numbering always
+    restarted -- and neither appears in the author's documented workflow
+    (docs/bookmarks_reference.md). The buttons went, and the channel with
+    them, taking one silent failure along: ReadCommand advanced its
+    sequence before dispatching, so a malformed command file made the
+    button report success while doing nothing.
+
+    Asserted rather than merely deleted because the cost of that channel
+    was never obvious from any one file. Re-adding it should be a decision
+    someone makes on purpose, in front of this test.
+    """
+    assert "eve_command" not in lowered
+    assert "consumedseq" not in lowered
+    for label in ("ReadCommand", "SetManualRoot", "ClearRoot"):
+        assert not re.search(r"^" + label + r":", source, re.MULTILINE), label
+    # The status file is the whole of the engine -> Wingman contract. AHK
+    # escapes a quote by doubling it, so a field reads """name"": in source.
+    published = set(re.findall(r'"""(\w+)"":', source))
+    assert published == {"sig", "root", "next_num", "next_alpha",
+                         "failed_binds", "written"}, published
 
 
 def test_every_registration_records_failures(source):

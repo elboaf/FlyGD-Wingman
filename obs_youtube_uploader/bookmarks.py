@@ -265,8 +265,6 @@ def generate_ini(section: dict) -> str:
 def sanitise(value: str) -> str:
     """Strip line breaks to prevent multi-line INI entries.
 
-    Public because hotkeys.send_command needs it too: the Set Root argument
-    is free text the user typed and lands in a file the engine parses.
     Window titles come from the OS and bind values from user input; neither
     is trusted to contain a line break. Note: this does not make arbitrary
     text safe as an INI key; it only strips line breaks.

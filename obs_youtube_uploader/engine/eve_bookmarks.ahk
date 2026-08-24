@@ -15,8 +15,10 @@
 ; IniWrite calls, ExitScript, ReloadScript, and KBDisplay (a GUI-only
 ; formatter with no remaining caller).
 ;
-; Added: the /token handshake, the status file, the command file, and
-; failure-recording bind registration. Each is marked WINGMAN below.
+; Added: the /token handshake, the status file, and failure-recording bind
+; registration. Each is marked WINGMAN below. There is no channel in the
+; other direction -- Wingman configures the engine through the INI and
+; reads its state from the status file, and nothing sends it commands.
 ; ============================================================
 #Persistent
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
@@ -104,16 +106,12 @@ KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
 ; Maps hotkey string -> label, so we can disable by exact label
 HotkeyLabelMap := {}
 
-; --- WINGMAN: registration and command bookkeeping ----------------
+; --- WINGMAN: registration bookkeeping ----------------------------
 ; Every window title we currently hold registrations against. A
 ; window-scoped hotkey can only be disabled from inside the same criterion
 ; it was registered in, so the teardown in RefreshHotkeys needs this list.
 RegisteredWindows := []
 FailedBinds := ""
-
-; Highest command sequence executed from eve_command.ini. Adopted from disk
-; before the auto-execute section returns; see ReadCommand.
-ConsumedSeq := 0
 
 ; Single INI file for everything
 IniFile := "eve_bookmark_helper.ini"
@@ -136,11 +134,6 @@ NextNum := 1
 NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
-
-; WINGMAN: adopt whatever sequence is already on disk, so a command left by
-; a previous session is not replayed on this one's first tick.
-IniRead, StartSeq, eve_command.ini, Command, Seq, 0
-ConsumedSeq := StartSeq + 0
 
 Return
 
@@ -183,17 +176,12 @@ Return
 ; Written to a temp name and moved over the target: Wingman polls this at
 ; ~1Hz and must never read a half-written file.
 RefreshStatusTab:
-GoSub, ReadCommand
 if (RootModeActive) {
     RootText     := RootKey = "" ? "(home)" : RootKey
     NextNumText  := BuildSystemKey(RootKey, NextNum,   False)
     NextAlphaText := BuildSystemKey(RootKey, NextAlpha, True)
-    ; Published as its own field rather than left for the UI to infer from
-    ; RootText = "(home)": that string exists to be read by a human and is
-    ; free to change without anyone thinking about a parser.
-    RootModeText := RootKey = "" ? "home" : "active"
 } else {
-    RootText := "", NextNumText := "", NextAlphaText := "", RootModeText := ""
+    RootText := "", NextNumText := "", NextAlphaText := ""
 }
 SigText := LastSigId
 
@@ -202,9 +190,7 @@ StatusBody := "{"
     . """root"":""" . JsonEsc(RootText) . ""","
     . """next_num"":""" . JsonEsc(NextNumText) . ""","
     . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
-    . """root_mode"":""" . JsonEsc(RootModeText) . ""","
     . """failed_binds"":[" . JsonList(FailedBinds) . "],"
-    . """seq"":" . (ConsumedSeq + 0) . ","
     . """written"":" . EpochNow()
     . "}"
 FileDelete, eve_status.json.tmp
@@ -241,87 +227,6 @@ JsonList(csv) {
         out .= (out = "" ? "" : ",") . """" . JsonEsc(A_LoopField) . """"
     return out
 }
-
-; ============================================================
-; WINGMAN: command file
-; ============================================================
-ReadCommand:
-IfNotExist, eve_command.ini
-    Return
-IniRead, CmdSeq,  eve_command.ini, Command, Seq, 0
-IniRead, CmdName, eve_command.ini, Command, Name, %A_Space%
-IniRead, CmdArg,  eve_command.ini, Command, Argument, %A_Space%
-CmdSeq += 0
-; Strictly greater: the file is never deleted, so re-running anything at or
-; below the last consumed sequence would replay it on every tick.
-if (CmdSeq <= ConsumedSeq)
-    Return
-ConsumedSeq := CmdSeq
-if (CmdName = "clear_root")
-    GoSub, ClearRoot
-else if (CmdName = "set_root")
-{
-    ManualRoot := Trim(CmdArg)
-    GoSub, SetManualRoot
-}
-Return
-
-; Set Root driven from Wingman's UI rather than from a selection in EVE.
-; The argument is a bare system key, so it is taken as the root directly --
-; there is no clipboard to scan and therefore no used-slot information;
-; numbering starts fresh, exactly as it does for a root typed into the
-; standalone tool.
-SetManualRoot:
-ManualRoot := Trim(ManualRoot)
-if (ManualRoot = "") {
-    GoSub, ClearRoot
-    Return
-}
-; Reduce whatever was typed to a system key exactly the way DoSemi reduces
-; a selected bookmark: the first field, then everything before the "-" that
-; separates the key from the sig. The route offers a free-text box, so
-; pasting a whole bookmark name into it is the obvious thing to do, and
-; taking that whole would set a root no finisher could ever match. The old
-; engine got this for free from ParseBookmark, which the author's script
-; does not have.
-ManualRoot := GetFirstField(ManualRoot)
-HyphenPos := InStr(ManualRoot, "-")
-if (HyphenPos >= 2)
-    ManualRoot := SubStr(ManualRoot, 1, HyphenPos - 1)
-RootKey              := ManualRoot
-StringUpper, RootKey, RootKey
-RootModeActive       := True
-ZeroMode             := False
-ReadyToIncrement     := False
-RootJustFired        := False
-LastFinisherWasAlpha := False
-UsedNums             := {}
-UsedAlphas           := {}
-NextNum              := 1
-NextAlpha            := 1
-LastUsedNum          := ""
-LastUsedAlpha        := ""
-Clipboard := RootKey
-GoSub, ShowRootTooltip
-Return
-
-ClearRoot:
-RootKey              := ""
-RootModeActive       := True
-ZeroMode             := False
-ReadyToIncrement     := False
-RootJustFired        := False
-LastFinisherWasAlpha := False
-UsedNums             := {}
-UsedAlphas           := {}
-NextNum              := 1
-NextAlpha            := 1
-LastUsedNum          := ""
-LastUsedAlpha        := ""
-ToolTip, Root cleared - now in Home/Zero mode
-SetTimer, RemoveTooltip, -1500
-GoSub, ShowRootTooltip
-Return
 
 ShowRootTooltip:
 if (RootModeActive) {
