@@ -96,3 +96,16 @@ def test_a_corrupt_section_does_not_take_the_file_down(tmp_path):
 def test_backup_dir_sits_beside_the_other_state(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     assert paths.eve_settings_backup_dir().parent == paths.state_dir()
+
+
+def test_the_public_surface_returns_the_same_defaults(tmp_path):
+    """ui/api.py's _eve_section() builds the section through
+    validated_eve_settings rather than reaching across the module boundary
+    for the private _eve_settings_defaults. This pins the two together, so
+    the public entry point cannot quietly stop being equivalent."""
+    assert settings.validated_eve_settings({}) == \
+        settings._eve_settings_defaults()
+    first = settings.validated_eve_settings({})
+    first["root"] = "/tmp/mutated"
+    assert settings.validated_eve_settings({})["root"] is None, \
+        "a fresh dict per call, never the module global"

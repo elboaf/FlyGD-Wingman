@@ -1759,8 +1759,13 @@ class Api:
     # ----- EVE Settings ---------------------------------------------------
 
     def _eve_section(self) -> dict:
+        # validated_eve_settings, not the private _eve_settings_defaults:
+        # it is the public surface for this section, and it already returns
+        # a fresh dict per call rather than the module global. Reaching
+        # across a module boundary for a private name is how a caller ends
+        # up depending on something the owning module is free to rename.
         return self._state.settings.setdefault(
-            "eve_settings", settings_mod._eve_settings_defaults())
+            "eve_settings", settings_mod.validated_eve_settings({}))
 
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
