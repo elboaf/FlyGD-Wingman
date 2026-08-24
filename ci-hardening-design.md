@@ -261,6 +261,19 @@ security fix that nobody hears about is worse than a PR nobody merges.
   round.
 - **Branch protection.** A repository setting, not a committable file.
   Delivered as a written checklist rather than configured automatically.
+- **Linting `packaging/`.** Task 4 sets `extend-exclude = ["packaging"]`,
+  because the automatic pass touched two files there and that task's scope
+  forbade it. This exclusion is **temporary by intent and must not become
+  permanent by default** — an exemption with no owner is one nobody
+  revisits. The measured backlog is exactly two findings, both auto-fixable
+  `F401` unused imports, so lifting it costs almost nothing. The reason to
+  lift it is not those two imports: `fetch_autohotkey.py`,
+  `fetch_ffmpeg.py`, and `fetch_webview2.py` decide which third-party
+  binaries ship inside the installer, no test executes them, and the
+  exclusion makes `packaging/` the one place in the tree where an `F821`
+  undefined name can never be caught. Lift it in its own small change,
+  where a break in the release-build path is attributable to that change
+  rather than buried in a 219-finding cleanup.
 
 ## Sequencing
 
