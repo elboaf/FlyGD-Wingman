@@ -119,12 +119,17 @@ def test_home_hole_resumption_is_reachable(source):
     """
     assert re.search(r"ZeroMode\s*:=\s*True", source), \
         "ZeroMode is never entered -- home-hole resumption is dead code"
+    # Anchored on DoSemi's body rather than on a bare call count. Comparing
+    # calls against definitions matched at column 0 would silently start
+    # passing if a future revision ever indented a definition: definitions
+    # drops to 0, calls stays 1, and 1 > 0 holds for code that is still
+    # dead -- reintroducing exactly the bug this test exists to catch.
+    body = re.search(r"^DoSemi:\n(.*?)^Return$", source,
+                     re.DOTALL | re.MULTILINE)
+    assert body, "DoSemi not found"
     for helper in ("CountValidBookmarkLines", "AllPrefixesSingle"):
-        calls = re.findall(helper + r"\s*\(", source)
-        definitions = re.findall(r"^" + helper + r"\s*\(", source,
-                                 re.MULTILINE)
-        assert len(calls) > len(definitions), \
-            f"{helper} is defined but never called"
+        assert re.search(helper + r"\s*\(", body.group(1)), \
+            f"{helper} is not called from DoSemi -- it is dead code"
 
 
 def test_copy_and_paste_are_gone(source):
@@ -212,7 +217,12 @@ def test_set_root_is_scoped_by_registration_alone(source):
     assert 'RegisterBind("SetRoot"' in loop.group(0)
     outside = source.replace(loop.group(0), "")
     assert 'RegisterBind("SetRoot"' not in outside
-    assert "DoSemi" in source
+    # The removal itself, asserted rather than merely described above. The
+    # guard's name is the whole of it: IsEveWindow appears nowhere else in
+    # the engine, so its return would be caught here.
+    assert "IsEveWindow" not in source, \
+        "DoSemi's window guard is back -- it was dropped to track the " \
+        "author's script; re-adding it is a divergence, not a fix"
 
 
 def test_root_mode_is_published(lowered):
@@ -255,24 +265,44 @@ def test_status_is_published_atomically(lowered):
                       lowered)
 
 
-def test_settings_used_inside_functions_are_declared_global(source):
-    """AHK v1 makes an undeclared name inside a function LOCAL. HomeZeroIs0
-    is read in FireRootFinisher, so without the declaration it reads as
-    empty, the home branch never fires, and the setting silently does
-    nothing -- a failure with no error and no log line.
+def test_globals_written_inside_functions_are_declared(source):
+    """AHK v1 makes an undeclared name inside a function LOCAL.
 
-    Only settings read inside a function need this. The return-preface pair
-    is used from DoSemi and SetManualRoot, which are labels running in
-    global scope, so they are deliberately not checked here.
+    This used to guard HomeZeroIs0 in FireRootFinisher. HomeZeroIs0 is gone
+    with the re-vendor, which left the test green and guarding nothing --
+    its whole body sat behind `if "HomeZeroIs0" in text:`. The trap it was
+    written for is still live, and now has a sharper instance: RegisterBind
+    *writes* FailedBinds, so without the declaration every registration
+    failure accumulates into a local that is discarded when the function
+    returns, the status file reports an empty failed_binds, and the UI says
+    every hotkey registered fine. That is a wrong answer, not a missing one.
+
+    Checked for every function that touches a script-level global rather
+    than for one name, so the next function to reach for one is covered
+    without anybody remembering to come back here.
     """
-    body = re.search(r"FireRootFinisher\([^)]*\)\s*\{(.*?)\n\}",
-                     source, re.DOTALL)
-    assert body, "FireRootFinisher not found"
-    text = body.group(1)
-    if "HomeZeroIs0" in text:
-        declarations = re.findall(r"^\s*global\s+([^\n;]+)", text,
+    watched = {"FailedBinds", "UsedNums", "UsedAlphas", "NextNum",
+               "NextAlpha", "RootKey", "RootModeActive", "ZeroMode",
+               "LastSigId", "ConsumedSeq", "ReadyToIncrement"}
+    functions = re.findall(r"^([A-Za-z_]\w*)\s*\([^)]*\)\s*\{(.*?)^\}",
+                           source, re.DOTALL | re.MULTILINE)
+    # `if (...) {` at column 0 matches the same shape as a definition.
+    keywords = {"if", "while", "for", "loop", "else", "return"}
+    functions = [(n, b) for n, b in functions if n.lower() not in keywords]
+    assert functions, "no functions found"
+    checked = 0
+    for name, body in functions:
+        declarations = re.findall(r"^\s*global\s+([^\n;]+)", body,
                                   re.MULTILINE)
-        declared = {name.strip()
-                    for line in declarations for name in line.split(",")}
-        assert "HomeZeroIs0" in declared, \
-            "FireRootFinisher reads HomeZeroIs0 without declaring it global"
+        declared = {n.strip()
+                    for line in declarations for n in line.split(",")}
+        for global_name in watched:
+            if not re.search(r"\b" + global_name + r"\b", body):
+                continue
+            checked += 1
+            assert global_name in declared, (
+                f"{name}() touches {global_name} without declaring it "
+                f"global -- in AHK v1 that is a local, and the write is lost")
+    # Guards against the whole loop quietly matching nothing, which is
+    # exactly how the previous version of this test died.
+    assert checked, "no function touched a watched global -- test is vacuous"

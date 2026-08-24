@@ -803,10 +803,21 @@ pytest — the engine is AutoHotkey.
       the parser mistook the single character for the root. `ZeroMode` was
       dead code in the script the port was made from; the re-vendored
       engine wires it up.
-- [ ] **Set Root still resumes for a chained system.** Select several
-      bookmarks like `J2148111-ABC`, `J2148112-DEF`, `J214811A-GHI` and
-      press Set Root. Expected: root `J214811`, next `J2148113` /
-      `J214811B`. This path worked before and must not regress.
+- [ ] **KNOWN BEHAVIOUR CHANGE — chained systems no longer resume from a
+      selection of numbered bookmarks.** Select `J2148111-ABC`,
+      `J2148112-DEF`, `J214811A-GHI` and press Set Root.
+      Expected **now**: root `J2148111`, next `J21481111` / `J2148111A` —
+      the first parseable line's whole prefix becomes the root, and the
+      other two do not match it, so no slots are recorded.
+      Before the re-vendor: root `J214811`, next `J2148113` / `J214811B`.
+      The fork found the longest common prefix across the selection
+      (`FindCommonChain`); the author's script has no such function and
+      `Break`s on the first matching line instead. **Report what you
+      actually do here** — if the corp selects a bare system bookmark
+      (`J214811-ABC`, no counter) then root comes out `J214811` and
+      resumption works normally, and this item is a non-issue. If the corp
+      selects numbered bookmarks, this is a regression and the chain logic
+      needs restoring on top of the author's script.
 - [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
       Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
@@ -816,9 +827,14 @@ pytest — the engine is AutoHotkey.
 - [ ] **Tags are written lowercase: `e`, `/`, `f`, `c`.** The class
       finishers (`H`/`L`/`N`/`13`/`C1`-`C6`) are a different code path and
       stay uppercase
-- [ ] **CapsLock lowercases the class finishers.** New with the re-vendor:
-      with CapsLock on, `H`/`L`/`N` come out as `h`/`l`/`n`. Wingman never
-      had this; it is the author's behaviour and arrives with the script.
+- [ ] **CapsLock lowercases the class finishers ONLY outside root mode.**
+      New with the re-vendor: `DoY`/`DoP`/`DoDot` pick `h`/`l`/`n` when
+      CapsLock is on. In root mode — the default state, and where you will
+      be for every other item here — `FireRootFinisher` runs
+      `StringUpper` over the whole result before pasting, so you will see
+      `H`/`L`/`N` regardless. Seeing uppercase in root mode is correct, not
+      a failure. The lowercase path is reachable only after a Set Root that
+      found nothing parseable.
 - [ ] **There is no medium-hole tag** — no `M` row in Keybinds, and no key
       writes an ` M`
 - [ ] **The frig tag writes `f`, not `S`.** Same bind and INI key (`FinS`),
