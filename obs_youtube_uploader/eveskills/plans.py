@@ -46,18 +46,29 @@ class ParseResult:
 def _parse_level(token: str):
     """Return 1..5, or None when *token* is not a legal level.
 
-    NAIVE PORT, deliberately: this mirrors what a direct translation of
-    the C# does, and Cycle B replaces it. The source guards with
-    int.TryParse(token, NumberStyles.None) and Python's int() has no
-    equivalent, so this version accepts things it must not.
+    Three Python traps here, none of which exist in the C# source. It
+    parses with int.TryParse(token, NumberStyles.None), which rejects
+    signs, whitespace, and separators outright:
+
+      * int("+1") and int("-1") both succeed in Python.
+      * int(" 1 ") succeeds -- surrounding whitespace is ignored.
+      * int("1_0") is 10 -- PEP 515 digit separators.
+
+    And a fourth, from the obvious screen for them: str.isdigit() is
+    True for Unicode digits, so "٥".isdigit() passes and
+    int("٥") returns 5. `token.isascii()` is what makes the
+    isdigit() check mean "ASCII 0-9" and nothing wider.
+
+    A naive port silently accepts `Navigation +5`, `Navigation 1_0`, and
+    `Navigation ٥`. Every one of those is a typo the user wants told
+    about, not reinterpreted.
     """
     roman = _ROMAN.get(token.upper())
     if roman is not None:
         return roman
-    try:
-        value = int(token)
-    except ValueError:
+    if not (token.isascii() and token.isdigit()):
         return None
+    value = int(token)
     return value if 1 <= value <= 5 else None
 
 

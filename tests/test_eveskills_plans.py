@@ -85,3 +85,49 @@ def test_an_empty_plan_parses_to_nothing_without_complaint():
     the roster shows it Ready for everyone, which is truthful."""
     result = plans.parse("")
     assert result.ok and result.requirements == ()
+
+
+def test_a_signed_level_is_rejected():
+    """Python trap 1, which does not exist in the C#. The source parses
+    with int.TryParse(token, NumberStyles.None), and NumberStyles.None
+    forbids a leading sign. Python's int("+5") returns 5 and int("-5")
+    returns -5, so a naive port accepts `Navigation +5` as level 5 and
+    would reject `Navigation -5` only by the 1..5 range check -- an
+    accident, not a rule."""
+    assert not plans.parse("Navigation +5\n").ok
+    assert not plans.parse("Navigation -5\n").ok
+
+
+def test_an_underscore_separated_level_is_rejected():
+    """Python trap 2. int("1_0") is 10 -- PEP 515 digit separators are a
+    number format C# has no notion of. The range check catches 1_0, but
+    int("_5") raises and int("5_") raises while int("1_0") does not, so
+    the behaviour is inconsistent unless the token is screened first.
+    `Navigation 1_0` must be a diagnostic, not a silent 10."""
+    assert not plans.parse("Navigation 1_0\n").ok
+
+
+def test_a_unicode_digit_level_is_rejected():
+    """Python trap 3. "٥" is ARABIC-INDIC DIGIT FIVE. Its .isdigit()
+    is True and int("٥") returns 5, so a naive port silently accepts
+    `Navigation ٥` as level V. The guard is
+    `token.isascii() and token.isdigit()` -- isascii() is what makes
+    isdigit() mean "ASCII 0-9" and nothing wider."""
+    assert not plans.parse("Navigation ٥\n").ok
+
+
+def test_a_whitespace_padded_level_is_rejected():
+    """The same NumberStyles.None clause: int(" 1 ") succeeds in Python.
+    The line splitter strips before this is reached, so the guard is
+    what protects _parse_level() from any future caller that does not."""
+    assert plans._parse_level(" 1 ") is None
+
+
+@pytest.mark.parametrize("token", ["+1", "-1", "1_0", "٥", " 1 ", "١"])
+def test_the_level_guard_rejects_every_trap_token(token):
+    assert plans._parse_level(token) is None
+
+
+@pytest.mark.parametrize("token", ["1", "5", "I", "v", "IV"])
+def test_the_level_guard_still_accepts_real_levels(token):
+    assert plans._parse_level(token) in (1, 4, 5)
