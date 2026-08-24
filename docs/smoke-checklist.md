@@ -785,17 +785,49 @@ pytest — the engine is AutoHotkey.
       criterion is active; if that criterion does not carry into the
       function, they register globally and fire everywhere. Nothing in the
       repository can test this; confirm it by hand.
-- [ ] **Set Root does nothing outside an EVE window.** It used to be
-      registered with no window restriction (Step 4) and is now inside the
-      per-window loop like everything else. Nothing in the route says
-      "everywhere" any more.
-- [ ] **Set Root still re-checks the active window.** The guard is
-      unreachable on a settled configuration, so it cannot be confirmed
-      from the outside — check by reading `DoSemi`. It covers the window
-      between a window being disabled and the ~10s refresh that tears its
-      binds down, where a press would otherwise run the whole copy/parse
-      flow in whatever is focused: `Send ^c` into a chat window, and the
-      root state reset.
+- [ ] **Set Root does nothing outside an EVE window.** It is registered
+      inside the per-window loop like everything else, and that registration
+      is now the *only* thing scoping it — `DoSemi`'s own `IsEveWindow`
+      re-check was dropped to track the helper author's script exactly. The
+      one gap that guard covered is still real and cannot be tested from
+      the repository: between un-ticking a window and the ~10s refresh that
+      tears its binds down, a press in that window resets the root state.
+      Confirm the normal case by hand; the gap is accepted.
+- [ ] **THE ONE THIS RELEASE IS ABOUT — Set Root resumes numbering for home
+      holes.** Make several home bookmarks whose first field is a single
+      character plus a sig, e.g. `1-ABC`, `2-DEF`, `A-GHI`. Select all of
+      them and press Set Root.
+      Expected: root reads **Home/Zero**, and the next values are **3** and
+      **B** — it resumes past the used slots.
+      The bug: root read `1` and the next values were `11` / `1A`, because
+      the parser mistook the single character for the root. `ZeroMode` was
+      dead code in the script the port was made from; the re-vendored
+      engine wires it up.
+- [ ] **Grab Sig no longer uppercases what it captured.** The fork ran
+      `StringUpper` over the three characters; the author's script does not,
+      and the re-vendor follows the author. Finisher-generated names are
+      unaffected (`FireRootFinisher` uppercases the whole result), so this
+      shows only in the status bar's sig readout and in what Grab Sig puts
+      on the clipboard for you to paste by hand. EVE displays signature IDs
+      uppercase already, so in practice there should be nothing to see —
+      check the sig readout looks right, and say so if it does not.
+- [ ] **Set Root on an ENTIRE bookmark list fills gaps.** This is the
+      "Entire bookmark list" row of `docs/bookmarks_reference.md`. Select
+      the whole list of a scanned system — **including the system's own
+      return bookmark**, the one whose prefix is the bare root — and press
+      Set Root. With `1-ABC`, `12-GHI`, `13-MNO` (11 expired), expected:
+      root `1`, next `11` — it refills the gap rather than continuing at 14.
+      Including the return bookmark is what makes this work: DoSemi takes
+      the first parseable line's prefix as the root, and EVE's alphabetical
+      sort puts `1-ABC` ahead of `11-DEF` because "-" sorts before digits.
+      Select only the numbered bookmarks and the root comes out `11` with
+      no gap filling — that is the author's design, not a defect.
+- [ ] **Set Root on a SINGLE bookmark starts fresh numbering.** The "Single
+      bookmark" row of the reference. Select `1-ABC` alone: root `1`, next
+      `11` / `1A`, and the root on the clipboard.
+- [ ] **Set Root with NOTHING selected gives Home/Zero and touches nothing.**
+      The "Nothing" row: fresh numbering at 1/A, and nothing moved to the
+      clipboard.
 - [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
       Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
@@ -805,6 +837,14 @@ pytest — the engine is AutoHotkey.
 - [ ] **Tags are written lowercase: `e`, `/`, `f`, `c`.** The class
       finishers (`H`/`L`/`N`/`13`/`C1`-`C6`) are a different code path and
       stay uppercase
+- [ ] **CapsLock lowercases the class finishers ONLY outside root mode.**
+      New with the re-vendor: `DoY`/`DoP`/`DoDot` pick `h`/`l`/`n` when
+      CapsLock is on. In root mode — the default state, and where you will
+      be for every other item here — `FireRootFinisher` runs
+      `StringUpper` over the whole result before pasting, so you will see
+      `H`/`L`/`N` regardless. Seeing uppercase in root mode is correct, not
+      a failure. The lowercase path is reachable only after a Set Root that
+      found nothing parseable.
 - [ ] **There is no medium-hole tag** — no `M` row in Keybinds, and no key
       writes an ` M`
 - [ ] **The frig tag writes `f`, not `S`.** Same bind and INI key (`FinS`),
@@ -813,21 +853,23 @@ pytest — the engine is AutoHotkey.
       it with ` f`** rather than leaving both on the line
 - [ ] **There is no Bookmark naming card in the route** — home holes, the
       return-bookmark toggle and the preface field are all gone
-- [ ] **Home bookmarks start at `.1`.** Fixed now, but still written into
-      the INI rather than left to the engine, whose compiled default is the
-      opposite. `HomeZeroIs0` is read inside a *function*, and an undeclared
-      name is local in AHK v1 — if the `global` declaration is lost it reads
-      as empty and the numbering silently changes, with no error anywhere.
-- [ ] **Return bookmarks are NOT prefaced** — no `!`, matching the helper
-      author's own script. Wingman writes `PrefaceReturn=0`; the engine's
-      compiled default is `1`, so this is one the INI has to say out loud
-- [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
-      tracks Set Root / Clear Root
+- [ ] **The generated INI has no `[Settings]` section at all.** Open
+      `%LOCALAPPDATA%\OBSYouTubeUploader\eve_bookmark_helper.ini`: it should
+      contain `[Keybinds]` and `[Enabled]` and nothing else. The engine has
+      no naming settings left to read, so writing them would be config that
+      nothing consumes.
+- [ ] **Home bookmarks start at `.1`** — now a property of the engine
+      itself rather than of a value Wingman writes
+- [ ] **Return bookmarks are NOT prefaced** — no `!`. There is no preface
+      anywhere any more: not in the UI, not in settings.json, not in the
+      INI, and not in the engine
+- [ ] **There is no Root card on the route.** Root mode, the Set root box
+      and the Clear button are gone. The status bar's ROOT / NEXT readouts
+      are the only root display, and they still update as you use the
+      hotkeys — check they do.
 - [ ] Deliberately binding two actions to one key shows the collision warning
 - [ ] Binding a key another application owns shows a registration failure,
       not a silently dead key
-- [ ] Set Root and Clear Root from the route change the status bar values
-- [ ] A second action taken immediately is not lost
 - [ ] **Importing a REAL `eve_bookmark_helper.ini` reproduces that setup.**
       AutoHotkey writes it as UTF-16 LE; reading it as UTF-8 parsed nothing
       and saved that nothing over the user's settings while reporting

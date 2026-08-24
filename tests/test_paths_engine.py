@@ -9,7 +9,6 @@ def test_state_files_live_together(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
     assert paths.engine_ini_file() == tmp_path / "eve_bookmark_helper.ini"
     assert paths.engine_status_file() == tmp_path / "eve_status.json"
-    assert paths.engine_command_file() == tmp_path / "eve_command.ini"
     assert paths.engine_pid_file() == tmp_path / "eve_engine.pid"
 
 

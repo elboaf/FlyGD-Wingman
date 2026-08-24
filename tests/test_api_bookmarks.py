@@ -141,11 +141,6 @@ def test_capture_and_parse_delegate_to_bookmarks(api):
     assert api.parse_bind("+^s")["ahk"] == "^+s"
 
 
-def test_eve_command_is_forwarded(api):
-    api.eve_command("set_root", "J1234")
-    assert api._state.engine.commands == [("set_root", "J1234")]
-
-
 def test_import_applies_and_reports(api, tmp_path, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")

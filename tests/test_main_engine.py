@@ -8,7 +8,6 @@ class Recorder:
         self.enabled = enabled
         self.started = 0
         self.stopped = 0
-        self.synced = 0
         self.recovered = 0
 
     def start(self):
@@ -17,9 +16,6 @@ class Recorder:
 
     def stop(self, timeout=5.0):
         self.stopped += 1
-
-    def sync_sequence(self):
-        self.synced += 1
 
     def apply(self, section):
         pass
@@ -37,11 +33,10 @@ def test_engine_is_not_started_when_disabled():
     assert engine.started == 0
 
 
-def test_engine_starts_and_syncs_when_enabled():
+def test_engine_starts_when_enabled():
     engine = Recorder(enabled=True)
     main_mod.start_engine_if_enabled(engine, {"enabled": True})
     assert engine.started == 1
-    assert engine.synced == 1
 
 
 def test_shutdown_stops_a_running_engine():
