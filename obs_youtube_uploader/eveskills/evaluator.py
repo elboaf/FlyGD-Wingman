@@ -87,7 +87,7 @@ class PlanAnalysis:
     readiness: str
     estimated_finish_utc: datetime | None
     queue_timing_unknown: bool
-    requirements: tuple
+    requirements: tuple[RequirementAnalysis, ...]
 
     def _count(self, state: str) -> int:
         return sum(1 for a in self.requirements if a.state == state)
@@ -116,14 +116,21 @@ class PlanAnalysis:
 def compact_status(analyses) -> str:
     """The worst readiness any requirement contributes.
 
-    Unknown > Missing > Locked > Training > Ready. An empty sequence is
-    Ready: a plan with nothing in it is trivially satisfied, and Unscored
-    is reached by evaluate()'s has_snapshot gate rather than by counting.
+    Unknown > Missing > Locked > Training > Ready. An EMPTY sequence is
+    also Unknown, not Ready (SkillPlanEvaluator.cs:113): there was
+    nothing here to have confirmed, so nothing is confirmed either. This
+    is the same failure mode plans.py already refuses for zero-requirement
+    files -- a plan that reads Ready with nothing behind it scores a
+    character ready for a ship it cannot fly, with no signal anywhere
+    that anything was skipped. Unscored is a different state, reached
+    only through evaluate()'s has_snapshot gate, never by this count.
 
     An unrecognised state contributes Unknown rather than being skipped,
     so a state added to this module without a _CONTRIBUTION entry cannot
     silently score a plan Ready.
     """
+    if not analyses:
+        return READINESS_UNKNOWN
     worst = READY
     for analysis in analyses:
         contribution = _CONTRIBUTION.get(analysis.state, READINESS_UNKNOWN)
@@ -192,15 +199,19 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
 
     readiness = compact_status(analyses)
     timing_unknown = any(a.queue_timing_unknown for a in analyses)
+    # The MAXIMUM finish date among queued requirements, not the minimum:
+    # the plan completes when the LAST one does. Taking the minimum would
+    # promise a date by which the character still cannot fly the ship.
     finishes = [a.queued_finish_utc for a in analyses
                 if a.state == QUEUED and a.queued_finish_utc is not None]
-    # The MAXIMUM, not the minimum: the plan completes when the last
-    # queued requirement does. And only when readiness is exactly
-    # Training -- a Locked plan has a dated queue entry too, and showing
-    # it would promise a completion the inactive clone will not deliver.
-    # One dateless entry suppresses it entirely, because the maximum of
-    # the rest could be beaten by the one with no date.
-    estimated = None
-    if readiness == TRAINING and finishes and not timing_unknown:
-        estimated = max(finishes)
-    return PlanAnalysis(readiness, estimated, timing_unknown, tuple(analyses))
+    # Both the ETA and the sibling flag are gated to readiness being
+    # EXACTLY Training (SkillPlanEvaluator.cs:104-108), not just the ETA.
+    # A Locked plan can have an undated queue entry too -- Mechanics
+    # queued with no date, while Navigation is TrainedInactive -- and
+    # its plan-level queue_timing_unknown must read False: there was no
+    # ETA for the plan to have suppressed. The per-requirement analysis
+    # still reports its own queue_timing_unknown truthfully either way.
+    is_training = readiness == TRAINING
+    estimated = max(finishes) if is_training and finishes and not timing_unknown else None
+    return PlanAnalysis(readiness, estimated, is_training and timing_unknown,
+                        tuple(analyses))

@@ -232,10 +232,12 @@ def test_no_snapshot_is_unscored_with_an_empty_requirement_list():
     assert got.estimated_finish_utc is None
 
 
-def test_an_empty_plan_is_ready():
-    """A plan with no requirements is trivially satisfied. Unscored is
-    reached by the snapshot gate, never by counting requirements."""
-    assert evaluate(()).readiness == ev.READY
+def test_an_empty_plan_is_unknown():
+    """A plan with no requirements cannot be scored at all -- there is
+    nothing to have checked -- so it reads Unknown, not the vacuously-true
+    Ready a naive empty loop would produce (SkillPlanEvaluator.cs:113).
+    Unscored is a different state, reached only by the snapshot gate."""
+    assert evaluate(()).readiness == ev.READINESS_UNKNOWN
 
 
 def test_the_eta_is_the_latest_finish_not_the_earliest():
@@ -284,6 +286,27 @@ def test_a_locked_plan_has_no_eta_even_with_a_dated_queue_entry():
     assert got.estimated_finish_utc is None
 
 
+def test_a_locked_plans_queue_timing_unknown_flag_is_also_gated_to_training():
+    """SkillPlanEvaluator.cs:104-108 gates BOTH the eta and the sibling
+    flag to `readiness == Training`, not just the eta. A Locked plan
+    with an undated queue entry must report queue_timing_unknown=False
+    at the plan level, even though the individual requirement's own
+    queue_timing_unknown is True -- the plan-level flag answers "is the
+    plan's ETA suppressed", and a Locked plan never had one to begin
+    with."""
+    reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
+    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
+                   active={100: 1}, trained={100: 5},
+                   queue=[entry(200, 2, 0, finish=None)])
+    assert got.readiness == ev.LOCKED
+    assert got.queue_timing_unknown is False
+    # The requirement itself still says it's genuinely queued with an
+    # unknown date -- only the plan-level rollup is gated.
+    mechanics = next(r for r in got.requirements if r.skill_name == "Mechanics")
+    assert mechanics.state == ev.QUEUED
+    assert mechanics.queue_timing_unknown is True
+
+
 def test_the_counts_partition_the_requirements():
     reqs = (Requirement("A", 1), Requirement("B", 1), Requirement("C", 1),
             Requirement("D", 1), Requirement("E", 1))
@@ -297,8 +320,11 @@ def test_the_counts_partition_the_requirements():
                 got.unknown_count]) == len(got.requirements)
 
 
-def test_compact_status_of_nothing_is_ready():
-    assert ev.compact_status(()) == ev.READY
+def test_compact_status_of_nothing_is_unknown():
+    """Mirrors SkillPlanEvaluator.cs:113: an empty requirement list is
+    not vacuously Ready -- there was nothing to check, so nothing was
+    confirmed either."""
+    assert ev.compact_status(()) == ev.READINESS_UNKNOWN
 
 
 def test_compact_status_maps_an_unrecognised_state_to_unknown():
