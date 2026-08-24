@@ -96,3 +96,59 @@ def test_parse_ahk_rejects_modifier_only(text):
 
 def test_parse_ahk_rejects_unknown_key():
     assert bookmarks.parse_ahk("^Nope")["error"] == "unmappable"
+
+
+class TestRegistrationBlockers:
+    """Why a running engine would register no hotkeys at all.
+
+    RegisterBind returns early on a blank key WITHOUT recording a failure
+    (eve_bookmarks.ahk), and the per-window loop it sits in does not run at
+    all when no window is enabled. Either way the engine comes up, writes a
+    healthy status file with an empty failed_binds, and registers nothing --
+    so the UI reports "Running", shows no warning, and every keypress does
+    nothing. Indistinguishable from the feature being broken.
+
+    Decided here rather than in the page because Wingman generates the INI
+    and therefore knows what it would produce; the page only renders the
+    answer. Same reasoning that had the engine publish root_mode rather
+    than let the UI infer it from a human-readable string.
+    """
+
+    def test_a_working_setup_has_no_blockers(self):
+        assert bookmarks.registration_blockers(
+            {"windows": {"EVE - Pilot": True},
+             "keybinds": {"FinH": "^y"}}) == []
+
+    def test_no_enabled_window_blocks_everything(self):
+        """The per-window loop is the only place binds are registered, so
+        with nothing ticked it never executes."""
+        assert bookmarks.registration_blockers(
+            {"windows": {}, "keybinds": {"FinH": "^y"}}) == ["no_windows"]
+
+    def test_a_window_present_but_unticked_still_blocks(self):
+        """The INI carries `Title=0`, and the loop tests for "1"."""
+        assert bookmarks.registration_blockers(
+            {"windows": {"EVE - Pilot": False},
+             "keybinds": {"FinH": "^y"}}) == ["no_windows"]
+
+    def test_no_bound_key_blocks_everything(self):
+        assert bookmarks.registration_blockers(
+            {"windows": {"EVE - Pilot": True},
+             "keybinds": {"FinH": "", "FinL": "   "}}) == ["no_binds"]
+
+    def test_both_are_reported_together(self):
+        """Fixing one would leave the user in exactly the same silence, so
+        naming only the first would send them round twice."""
+        assert bookmarks.registration_blockers(
+            {"windows": {}, "keybinds": {"FinH": ""}}) == [
+                "no_windows", "no_binds"]
+
+    def test_a_malformed_section_is_treated_as_blocked(self):
+        """get_bookmarks passes the live settings section, and a
+        hand-edited settings.json can carry anything. Claiming a working
+        setup on the strength of a wrong type is the failure this check
+        exists to prevent."""
+        for section in ({}, {"windows": None, "keybinds": None},
+                        {"windows": "x", "keybinds": 7}):
+            assert bookmarks.registration_blockers(section) == [
+                "no_windows", "no_binds"], section

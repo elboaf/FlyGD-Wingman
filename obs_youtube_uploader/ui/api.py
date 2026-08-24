@@ -1617,6 +1617,12 @@ class Api:
                 # toggle reads "on" while nothing is running, and the reason
                 # never reaches the user at all.
                 "last_error": status.last_error if status else None,
+                # Config states that produce a live engine registering
+                # nothing. Empty while the feature is off: nothing is
+                # running, so there is nothing to warn about, and a warning
+                # on a deliberately-disabled route is just noise.
+                "blockers": (bookmarks.registration_blockers(section)
+                             if section["enabled"] else []),
             },
         }
 
