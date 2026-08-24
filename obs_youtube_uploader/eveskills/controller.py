@@ -57,13 +57,19 @@ MSG_TOKEN_UNREADABLE = (
     "The stored authorisation could not be decrypted. Re-authenticate this character.")
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
 MSG_OWNER_CHANGE_DETECTED = "Character ownership changed. Re-authenticate this character."
-# NOT used by the refresh path above -- that path only detects a change and
-# demands re-auth, it never clears anything, so this wording would be a lie
-# there. This belongs to the commit/auth path (TriffSkillsAuthentication.cs
-# :286-291, "CommitAuthentication"), which is where ActiveLevels,
-# TrainedLevels, Queue, and FetchedUtc actually get cleared -- Task 14's,
-# not this one's. Reserved here rather than invented a second time so that
-# implementation has one place to find the exact wording.
+# NOT used by the refresh path above. That path's own detection IS
+# definitive (owner_changed is in sso._DEFINITIVE), so it does end up
+# clearing the stored refresh token -- _refresh_one hands the definitive
+# error to _commit_failure, which deletes refresh_token_blob so the dead
+# grant is not retried on every future refresh. But it never touches the
+# cached skill/queue data itself (_commit_failure's snapshot is
+# deliberately left untouched, same as any other definitive failure), so
+# "cached skill data was cleared" would still be a lie there. This wording
+# belongs to the commit/auth path (TriffSkillsAuthentication.cs:286-291,
+# "CommitAuthentication"), which is where ActiveLevels, TrainedLevels,
+# Queue, and FetchedUtc actually get cleared -- Task 14's, not this one's.
+# Reserved here rather than invented a second time so that implementation
+# has one place to find the exact wording.
 MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared."
 
 # An access token is refreshed when it expires within this many seconds. The
@@ -705,10 +711,13 @@ class SkillsController:
                 # invalid_grant, identity_mismatch, owner_changed. Everything
                 # else is transient and must not delete the stored token.
                 # owner_changed gets its own wording rather than MSG_REAUTH's
-                # generic one, and NOT MSG_OWNER_CHANGED -- this path only
-                # detects the change and demands re-auth, it never clears
-                # anything, so a message claiming clearing would be a lie
-                # here. See MSG_OWNER_CHANGE_DETECTED's own comment.
+                # generic one, and NOT MSG_OWNER_CHANGED -- returning
+                # definitive=True here does end up clearing the stored
+                # refresh token one layer up (_commit_failure, since
+                # owner_changed is definitive), but it never clears the
+                # cached skill/queue data the way MSG_OWNER_CHANGED claims,
+                # so that wording would still be a lie here. See
+                # MSG_OWNER_CHANGE_DETECTED's own comment.
                 message = (MSG_OWNER_CHANGE_DETECTED if exc.code == "owner_changed" else
                           MSG_REAUTH if exc.definitive else
                           f"EVE SSO refused the token refresh: {exc}")
@@ -763,6 +772,21 @@ class SkillsController:
                     # means the NEXT launch authenticates with a stale
                     # token, and nothing on screen would otherwise explain
                     # why.
+                    #
+                    # Deliberately NOT rolled back to the previous blob,
+                    # unlike select_plan/forget/_upsert_identity: EVE has
+                    # already rotated the OLD refresh token away server-side
+                    # the moment the refresh call above succeeded, so
+                    # restoring it would not undo anything -- it would hand
+                    # this character a credential already known to be dead,
+                    # discarding the one that actually works. Unlike those
+                    # three call sites, this one also runs unattended and
+                    # keeps a still-valid access token cached regardless of
+                    # save success, so the only cost of leaving the new blob
+                    # in memory is deferring the write to the next
+                    # successful save (from anywhere) rather than forcing a
+                    # re-authentication banner on a character that is not
+                    # actually broken.
                     ch.error = MSG_SAVE_FAILED
             return token_set.access_token, "", False
 
