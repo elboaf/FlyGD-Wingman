@@ -1,5 +1,5 @@
 """The preview thread must never call settings.save() itself: it rewrites
-the whole projected document (settings.py:145-149), and there are already
+the whole projected document (settings.py:281-285), and there are already
 two writers without previews -- ui/api.py persists the channel from an
 upload worker thread, deliberately. This store is the merge boundary."""
 import contextlib

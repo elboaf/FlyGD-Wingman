@@ -5,6 +5,12 @@ Findings from walking `docs/smoke-checklist.md` against a live install on
 branch, and the items below were **not** fixed. They are recorded here so
 they are not carried as folklore.
 
+> **Status: all four are now closed.** Findings 1, 2 and 3 were fixed in
+> the branch that followed this walk; finding 4 went with the buttons
+> finding 1 removed. Each is annotated below rather than deleted — the
+> evidence and the monitor configuration needed to reproduce them are the
+> durable part, and finding 1's is the reason a rule exists.
+
 **Test configuration.** This matters more than usual, because every defect
 found was invisible in the ordinary setup:
 
@@ -25,7 +31,9 @@ with aligned tops hides it completely.
 
 ## 1. The client window layout feature is the wrong feature
 
-**Severity: high. Destructive. Slated for removal.**
+**Severity: high. Destructive. REMOVED.** The machinery is gone; the
+checkbox was repurposed to govern where a PREVIEW opens
+(`restore_preview_positions`). See `eve-preview-design.md` item 11.
 
 `restore_clients_on_launch` was meant to restore the **preview** windows to
 their saved size and position. What is implemented moves the **game client**
@@ -101,7 +109,8 @@ window. Raising one to the foreground is the only permitted interaction.
 
 ## 2. With previews off, the Previews tab claims every chord is registered
 
-**Severity: medium. The tab reports the opposite of the truth.**
+**Severity: medium. The tab reports the opposite of the truth. FIXED** —
+absent is now its own state, rendered as neither registered nor refused.
 
 This is the regression the checklist item *"with previews off, the Previews
 tab reads as off, not as live"* exists to catch, and it is back.
@@ -161,11 +170,19 @@ nothing.
 **Fix shape:** give the list an explicit off state rather than implying it
 by styling every row identically.
 
+**Fixed — and the obvious edit would not have done it.** With the host
+stopped Python sends `characters: []`, so every row is *genuinely*
+`online: false`; passing `entry.online` through unchanged leaves the list
+just as uniformly grey. Rows are therefore not dimmed at all while
+previews are off. "Cannot know" must not render as "logged off", which is
+the same principle finding 2 turns on.
+
 ---
 
 ## 4. A successful Restore is indistinguishable from a no-op
 
-**Severity: low. Moot if finding 1 is actioned.**
+**Severity: low. Moot, and now gone with the button** — finding 1 removed
+Restore entirely.
 
 Pressing **Restore now** when the windows already match their saved rects
 produces a correct "Restored 3 clients." and no visible change. During the

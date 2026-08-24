@@ -943,6 +943,31 @@ Enable previews in Settings before starting.
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
 
+### Reopen previews where you last put them
+
+The checkbox on the previews card. It governs where a preview OPENS, at
+launch and mid-session alike — a preview is created whenever its client
+appears, so an item that only restarts the app tests half of it.
+
+- [ ] On (the default): drag two previews somewhere deliberate, restart
+      Wingman. Both come back exactly where they were.
+- [ ] On: with Wingman already running, start a third client. Its preview
+      appears at that character's saved position, not on the stack.
+- [ ] Off: quit that client and start it again. Its preview opens in the
+      default stack, ignoring the saved rect.
+- [ ] Off: drag a preview, switch the checkbox back on, restart. The drag
+      you made while it was off is where the preview returns — positions
+      are recorded whatever the setting says.
+- [ ] **Multiple monitors with staggered tops**, either setting: start a
+      character that has never had a preview. It lands fully on a display,
+      not in the dead zone above one. The clamp runs on both paths, and an
+      arrangement with aligned tops hides a failure here completely.
+- [ ] Make `settings.json` read-only and toggle the checkbox. The hint
+      below it says the choice will not survive a restart. The box stays
+      where you put it — the setting really did change for this session.
+- [ ] Nothing at any point moves or resizes an EVE client. The log has no
+      line about placing or restoring a client window.
+
 ## EVE preview hotkeys
 
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
@@ -975,11 +1000,23 @@ Enable previews in Settings before starting.
   application that owns them gets them back. Switching previews on reclaims
   them.
 - [ ] **With previews off, the Previews tab reads as off, not as live.** Open
-  the tab while previews are switched off. Expected: every character reads
-  as offline (dimmed) even one that is actually running, and no binding
-  claims to be registered. The original bug served the host's last snapshot
-  after teardown, so the tab showed characters online and chords registered
-  when the thread that owned them was gone and Windows held none of them.
+  the tab while previews are switched off. Expected: the banner above the
+  list says previews are off, and every chord renders as neither registered
+  nor refused — a dashed outline, with a tooltip saying it is not
+  registered right now. No chord may render as an ordinary, live binding.
+
+  Rows are **not** dimmed while previews are off. Dimming means "this
+  character is logged off", and it only says that by contrast with an
+  undimmed row; with the host stopped Python sends no character list at
+  all, so dimming every row made the tab indistinguishable from one where
+  everybody really had logged out. That was reported as "I don't see
+  anything that indicates they are online".
+
+  Confirm independently rather than trusting the tab: from a separate
+  probe process, `RegisterHotKey` must succeed for each of those chords.
+  The original bug served the host's last snapshot after teardown; the
+  2026-08-24 regression was the page reading an absent registration entry
+  as a successful one. Both made the tab claim chords Windows did not hold.
 - [ ] **A chord bound to a `Win+` combination never fires.** Windows owns a
   large share of `Win+`key and those chords cannot be taken by
   `RegisterHotKey`. Bind one (e.g. `Win+F1`) and press it: it must appear on
@@ -1047,49 +1084,3 @@ so these are the checks that matter and only a Windows machine can run them.
       Ten auto-backups remain; the manual ones are untouched.
 - [ ] Check the packaged build: the EVE Settings route appears and the
       folder picker opens.
-## EVE client window layouts
-
-Nothing below is covered by the suite: CI is ubuntu-latest and no Win32
-call runs there. Each item is a claim reasoned from documentation.
-
-- [ ] Two clients logged in, dragged somewhere deliberate. **Save current
-      positions** reports the right count. Move both, press **Restore
-      now** — they go back exactly, not approximately.
-- [ ] A client at character select is not counted by Save and is not
-      moved by Restore.
-- [ ] A **maximized** client: Save, un-maximize and move it, Restore. It
-      comes back maximized, and un-maximizing lands on the saved rect.
-- [ ] **Maximized across monitors**: maximize a client on the SECONDARY
-      monitor, Save, un-maximize it and drag it to the primary, then
-      Restore. It must come back maximized on the **secondary** monitor.
-      SetWindowPlacement resolves a maximized showCmd against
-      ptMaxPosition, which apply_placement seeds from the window's current
-      placement — so this is the case that decides whether that seeding is
-      sufficient or whether ptMaxPosition needs deriving from the saved
-      rect's monitor instead.
-- [ ] A **minimized** client is never restored into minimized.
-- [ ] **Mixed DPI**: put one client on a 100% monitor and one on a 150%
-      or 200% monitor, Save, move both, Restore. Both land exactly. This
-      is the check that the per-batch PMv2 scope actually works — on a
-      single-monitor machine it passes whether or not the code is right.
-- [ ] **Taskbar docked top or left**, then Save and Restore. Windows must
-      not drift by the taskbar's height/width. Confirms the
-      SPI_GETWORKAREA conversion is applied in both directions.
-- [ ] **Borderless fullscreen** client: Save and Restore. Record what
-      happens — accepted, ignored, or a mode switch. This one is
-      genuinely unknown and many EVE users run fullscreen.
-- [ ] Enable **restore on launch**, quit a client, relaunch it. It lands
-      at its saved position once, and can then be **dragged and stays
-      dragged** — the place-once rule.
-- [ ] With restore-on-launch on, unplug a monitor holding a saved
-      position, then relaunch that client. It is skipped, not deposited
-      off-screen, and the log says why.
-- [ ] Save a layout, hand-edit `settings.json` to corrupt one character's
-      entry, relaunch. That character is dropped; the others survive.
-- [ ] Save while a client is **still loading / not responding**. Wingman's
-      window stays responsive — the WPF_ASYNCWINDOWPLACEMENT and
-      non-marshalling-read claims.
-- [ ] Previews **disabled**: Save and Restore still work. This is the
-      whole point of the manager owning its own watcher.
-- [ ] Toggle restore-on-launch twice quickly; exactly one watcher runs
-      and quitting Wingman leaves no process in Task Manager.

@@ -14,6 +14,7 @@ class FakeHost:
     def __init__(self):
         self.started = self.stopped = 0
         self.flushed = 0
+        self.sweeps = 0
         self.hotkeys = None
 
     def start(self):
@@ -21,6 +22,9 @@ class FakeHost:
 
     def stop(self, timeout=5.0):
         self.stopped += 1
+
+    def request_sweep(self):
+        self.sweeps += 1
 
     def set_hotkeys(self, table):
         self.hotkeys = table
@@ -222,30 +226,8 @@ def test_an_unchanged_toggle_still_reports_success(tmp_path):
     assert host.started == 0        # still short-circuited, not restarted
 
 
-class FakeClientLayouts:
-    def __init__(self):
-        self.started = self.stopped = 0
-        self.saves = self.restores = 0
-        self.seeded = None
-
-    def save_now(self):
-        self.saves += 1
-        return {"saved": 3, "persisted": True, "failed": 0}
-
-    def restore_now(self):
-        self.restores += 1
-        return {"restored": 2, "skipped": 1}
-
-    def start(self, seed_placed=False):
-        self.started += 1
-        self.seeded = seed_placed
-
-    def stop(self):
-        self.stopped += 1
-
-
 def _no_disk(monkeypatch):
-    """set_restore_clients_on_launch persists through settings.update, and
+    """set_restore_preview_positions persists through settings.update, and
     the real save()/update() write to paths.settings_file() -- the user's
     actual file. Stub both so no test can reach it."""
     from obs_youtube_uploader.ui import api as api_mod
@@ -270,254 +252,65 @@ def _no_disk(monkeypatch):
     return writes
 
 
-def test_save_client_layout_passes_the_count_through(tmp_path):
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    assert api.save_client_layout() == {"saved": 3, "persisted": True,
-                                        "failed": 0}
-    assert manager.saves == 1
-
-
-def test_restore_client_layout_passes_the_counts_through(tmp_path):
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    assert api.restore_client_layout() == {"restored": 2, "skipped": 1}
-
-
-def test_the_client_layout_endpoints_are_no_ops_without_a_manager(
-        tmp_path, monkeypatch):
-    """None off Windows and in most tests, like preview_host.
-
-    _no_disk is not optional here: set_restore_clients_on_launch persists
-    even with no manager, and the real save() writes to
-    paths.settings_file() -- the developer's actual settings file.
-    """
+def test_the_position_toggle_is_a_no_op_without_a_host(tmp_path, monkeypatch):
+    """None off Windows and in most tests, like every other preview
+    endpoint -- but the choice is still persisted, so _no_disk is not
+    optional here."""
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
-    assert api.save_client_layout() == {"saved": 0, "persisted": True,
-                                        "failed": 0}
-    assert api.restore_client_layout() == {"restored": 0, "skipped": 0}
-    assert api.set_restore_clients_on_launch(True) == {
+    assert api.set_restore_preview_positions(False) == {
         "applied": True, "persisted": True}
-    api.shutdown_client_layouts()
-    api.start_client_layouts_if_enabled()
 
 
-def test_enabling_restore_on_launch_starts_the_watcher(tmp_path, monkeypatch):
+def test_the_position_toggle_persists_the_choice(tmp_path, monkeypatch):
     writes = _no_disk(monkeypatch)
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
+    api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
-    assert api.set_restore_clients_on_launch(True) == {
+    assert api.set_restore_preview_positions(False) == {
         "applied": True, "persisted": True}
-    assert manager.started == 1
-    assert api._state.settings["preview"]["restore_clients_on_launch"] is True
+    assert api._state.settings["preview"][
+        "restore_preview_positions"] is False
     assert len(writes) == 1
 
 
-def test_disabling_restore_on_launch_stops_the_watcher(tmp_path, monkeypatch):
-    _no_disk(monkeypatch)
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    api._state.settings["preview"] = {"restore_clients_on_launch": True}
-    api.set_restore_clients_on_launch(False)
-    assert manager.stopped == 1
-
-
-def test_the_toggle_seeds_only_on_a_real_transition(tmp_path, monkeypatch):
-    """A repeat enabled call must not seed: a client that appeared since
-    the toggle would be marked placed without ever being placed, and the
-    restore it was owed would never happen."""
-    _no_disk(monkeypatch)
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    api._state.settings["preview"] = {}
-
-    api.set_restore_clients_on_launch(True)
-    assert manager.seeded is True
-
-    api.set_restore_clients_on_launch(True)
-    assert manager.seeded is False
-
-
-def test_the_launch_path_does_not_seed(tmp_path):
-    """Placing what is already running is what launch is for."""
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    api._state.settings["preview"] = {"restore_clients_on_launch": True}
-    api.start_client_layouts_if_enabled()
-    assert manager.seeded is False
-
-
-def test_an_unwritable_settings_file_does_not_block_the_watcher(
+def test_the_position_toggle_does_not_move_the_previews_already_open(
         tmp_path, monkeypatch):
-    """Same posture as set_preview_enabled: the feature still works."""
+    """The setting says where a preview OPENS. Repositioning windows the
+    user has already arranged is what #29 learned not to do from the
+    toggle it replaces."""
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
+    api.start_previews_if_enabled()
+    api.set_restore_preview_positions(False)
+    assert host.started == 1 and host.stopped == 0
+    assert host.sweeps == 0
+
+
+def test_a_failed_position_write_is_reported_rather_than_claimed(
+        tmp_path, monkeypatch):
+    """#29's contract, carried across the rename: a dict, not a bool, so
+    a write that did not land can be said out loud instead of leaving the
+    checkbox lying about what survives a restart."""
     from obs_youtube_uploader.ui import api as api_mod
 
     def boom(_data, path=None):
         raise OSError("read-only")
 
     monkeypatch.setattr(api_mod.settings_mod, "update", boom)
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
+    api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
-    assert api.set_restore_clients_on_launch(True) == {
+    assert api.set_restore_preview_positions(False) == {
         "applied": True, "persisted": False}
-    assert manager.started == 1
 
 
-def test_the_client_watcher_starts_on_launch_only_when_asked(tmp_path):
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    api._state.settings["preview"] = {}
-    api.start_client_layouts_if_enabled()
-    assert manager.started == 0
-
-    manager2 = FakeClientLayouts()
-    api2 = make_api(tmp_path, client_layouts=manager2)
-    api2._state.settings["preview"] = {"restore_clients_on_launch": True}
-    api2.start_client_layouts_if_enabled()
-    assert manager2.started == 1
-
-
-def test_client_layout_shutdown_never_raises(tmp_path):
-    """Runs on every exit path, like shutdown_previews."""
-    class Exploding:
-        def stop(self):
-            raise RuntimeError("nope")
-
-    make_api(tmp_path, client_layouts=Exploding()).shutdown_client_layouts()
-
-
-def test_build_client_layout_manager_returns_none_off_windows(monkeypatch):
-    """None elsewhere keeps every call site in api.py a plain no-op
-    rather than a platform check."""
-    from obs_youtube_uploader import __main__ as main_mod
-
-    monkeypatch.setattr(main_mod.sys, "platform", "linux")
-    assert main_mod.build_client_layout_manager(object()) is None
-
-
-def test_build_client_layout_manager_body_is_exercised(monkeypatch):
-    """The sys.platform guard means this body never runs in CI, so a
-    NameError or wrong module alias inside it would ship silently and
-    fail only on a user's Windows machine.
-
-    Same known limit as build_preview_host's twin above: this catches
-    only EAGERLY resolved names. A lambda body is not executed here, so
-    collaborators must be bound method references (clientwin32.read_
-    placement, settings_mod.update) rather than lambdas wrapping them.
-    `screen` is the one deliberate closure, and it is not called here.
-    """
-    from types import SimpleNamespace
-
-    from obs_youtube_uploader import __main__ as main_mod
-
-    monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    state = SimpleNamespace(settings={"preview": {
-        "restore_clients_on_launch": False, "client_layouts": {}}})
-    manager = main_mod.build_client_layout_manager(state)
-    assert manager is not None
-
-
-def test_build_client_layout_manager_survives_a_broken_subsystem(monkeypatch):
-    """Client layouts are secondary to the upload workflow; failing to
-    build them must not stop Wingman launching.
-
-    NOT the object() trick the preview twin uses. build_preview_host reads
-    state.settings eagerly, so object() raises there; this builder reads it
-    only inside a lambda, so object() would sail through and return a live
-    manager. Break something the builder DOES touch eagerly instead:
-    settings_mod.update is resolved when the kwargs are built.
-    """
-    from types import SimpleNamespace
-
-    from obs_youtube_uploader import __main__ as main_mod
-
-    monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    monkeypatch.setattr(main_mod, "settings_mod", SimpleNamespace())
-    state = SimpleNamespace(settings={"preview": {}})
-    assert main_mod.build_client_layout_manager(state) is None
-
-
-def test_main_actually_starts_the_client_layout_watcher():
-    """The preview twin of this test exists because the method was
-    written, unit-tested, and never called -- so the feature silently did
-    nothing at launch. Only reading main() catches that."""
-    import inspect
-
-    from obs_youtube_uploader import __main__ as main_mod
-
-    assert "start_client_layouts_if_enabled()" in inspect.getsource(
-        main_mod.main)
-
-
-def test_main_tears_the_client_layout_watcher_down():
-    import inspect
-
-    from obs_youtube_uploader import __main__ as main_mod
-
-    assert "shutdown_client_layouts()" in inspect.getsource(main_mod.main)
-
-
-def test_the_save_button_does_not_blame_an_empty_desktop_for_a_read_failure():
-    """saved: 0 has two causes and the card used to name only one. The
-    page has no test harness, so this asserts on its source the way
-    test_the_client_window_card_lives_on_the_previews_route does."""
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parents[1]
-    js = (root / "obs_youtube_uploader" / "web"
-          / "settings.js").read_text(encoding="utf-8")
-    block = js.split("save_client_layout")[1]
-    assert "res.failed" in block, "the count is returned but never read"
-    # The "nothing is running" message must sit behind a res.failed check,
-    # not fire for every saved: 0.
-    guard = block.split("No named clients are running")[0]
-    assert "res.failed" in guard.split("if (!res.saved)")[1]
-
-
-def test_the_client_window_card_lives_on_the_previews_route():
-    """A second card, not more rows on the previews card: these controls
-    move the CLIENT windows and are not about previews."""
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parents[1]
-    html = (root / "obs_youtube_uploader" / "web"
-            / "index.html").read_text(encoding="utf-8")
-    route = html.split('id="route-previews"')[1].split('id="route-')[0]
-    assert "EVE client windows" in route
-    assert 'id="btn-save-client-layout"' in route
-    assert 'id="btn-restore-client-layout"' in route
-    assert 'id="client-restore-on-launch"' in route
-
-
-def test_a_failed_persist_is_reported_rather_than_claimed_as_success(
+def test_a_failed_position_write_lets_the_next_toggle_retry(
         tmp_path, monkeypatch):
-    """The checkbox stays checked -- the watcher really is running -- but
-    the page has to be able to say the choice is gone at restart."""
-    from obs_youtube_uploader.ui import api as api_mod
-
-    def boom(_data, path=None):
-        raise OSError("read-only")
-
-    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
-    manager = FakeClientLayouts()
-    api = make_api(tmp_path, client_layouts=manager)
-    api._state.settings["preview"] = {}
-    assert api.set_restore_clients_on_launch(True)["persisted"] is False
-    assert manager.started == 1
-
-
-def test_a_failed_write_lets_the_next_toggle_retry(tmp_path, monkeypatch):
     """settings.update() restores the live dict when the block raises, so
     the stored value still reads as the OLD one and the next call sees a
-    real change. This method therefore needs no dirty-flag of its own --
-    but the retry must keep working if update() ever stops providing it,
-    so it is pinned here rather than assumed.
-
-    Stubs _save_locked, not update(): the point is to exercise the REAL
-    update() and its restore-on-failure, with only the disk write faked."""
+    real change. Stubs _save_locked, not update(): the point is to
+    exercise the REAL update() and fake only the disk write."""
     from obs_youtube_uploader.ui import api as api_mod
     calls = []
     real_save_locked = api_mod.settings_mod._save_locked
@@ -529,40 +322,248 @@ def test_a_failed_write_lets_the_next_toggle_retry(tmp_path, monkeypatch):
         real_save_locked(data, tmp_path / "s.json")
 
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", flaky)
-    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
 
-    assert api.set_restore_clients_on_launch(True)["persisted"] is False
-    # The restore means memory still says False, so this is a real change
-    # again rather than a no-op the guard would skip.
-    assert api.set_restore_clients_on_launch(True)["persisted"] is True
+    assert api.set_restore_preview_positions(False)["persisted"] is False
+    assert api.set_restore_preview_positions(False)["persisted"] is True
     assert len(calls) == 2
 
 
-def test_an_unchanged_value_still_does_not_rewrite_the_document(
+def test_an_unchanged_position_toggle_does_not_rewrite_the_document(
         tmp_path, monkeypatch):
     """settings.save projects every key, so a no-op toggle rewriting the
-    whole file is a real cost. Retrying a FAILED write must not cost this."""
+    whole file is a real cost."""
     writes = _no_disk(monkeypatch)
-    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
-    api.set_restore_clients_on_launch(True)
-    api.set_restore_clients_on_launch(True)
+    api.set_restore_preview_positions(False)
+    api.set_restore_preview_positions(False)
     assert len(writes) == 1
 
 
-def test_the_restore_toggle_says_when_the_choice_will_not_survive():
-    """A silent failed write is how the user finds out at their next
-    restart. Reverting the box would be the opposite lie -- the watcher
-    is running -- so only a bridge failure may revert it."""
+def test_the_host_reads_the_position_setting_live(monkeypatch):
+    """build_preview_host must hand the host something that re-reads the
+    document, not the value the app started with: the toggle changes
+    mid-session, and settings._normalize replaces the whole preview
+    section on every write."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {
+        "enabled": False, "width": 320, "height": 210, "layouts": {},
+        "restore_preview_positions": True}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._restoring() is True
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {"restore_preview_positions": False}
+    assert host._restoring() is False
+
+
+def test_the_host_restores_positions_when_the_key_is_absent(monkeypatch):
+    """An upgrading user's file predates the key. Absent must mean on,
+    or their existing layouts are silently discarded on first launch."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    assert main_mod.build_preview_host(state, {})._restoring() is True
+
+
+def test_the_client_window_machinery_is_gone():
+    """It moved the GAME windows: EVE read the resize as a resolution
+    change and rewrote its own configuration, costing three characters'
+    settings. Named here so it cannot come back by import.
+    """
+    import importlib
+
+    from obs_youtube_uploader.ui import api as api_mod
+
+    for name in ("placement", "clientwin32", "clientlayout"):
+        try:
+            importlib.import_module(
+                "obs_youtube_uploader.preview." + name)
+        except ImportError:
+            continue
+        raise AssertionError("obs_youtube_uploader.preview.%s still exists"
+                             % name)
+    for name in ("save_client_layout", "restore_client_layout",
+                 "set_restore_clients_on_launch",
+                 "start_client_layouts_if_enabled",
+                 "shutdown_client_layouts"):
+        assert not hasattr(api_mod.Api, name), name
+
+
+def test_main_never_places_a_client_window():
+    """The one permitted interaction with an EVE window is raising it."""
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    src = inspect.getsource(main_mod)
+    assert "client_layout" not in src
+    assert "SetWindowPlacement" not in src
+    assert "SetWindowPos" not in src
+
+
+def test_the_client_placement_win32_surface_is_not_declared():
+    """`SetWindowPlacement` is the call that rewrote a client's resolution
+    and destroyed three characters' settings. Nothing calls it now, and
+    leaving it bound leaves it one line away from being called again.
+
+    Asserted on the module source rather than the bind list, because
+    tests/test_preview_win32.py is skipped off Windows and CI is ubuntu --
+    so the bind list alone would never be checked by anything that runs.
+
+    `SetWindowPos` is deliberately NOT listed here: window.py:317 uses it
+    to move Wingman's OWN preview windows, which is the whole feature.
+    The rule is about EVE's windows, and no EVE window's HWND reaches any
+    of these calls any more.
+    """
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    js = (root / "obs_youtube_uploader" / "web"
-          / "settings.js").read_text(encoding="utf-8")
-    block = (js.split("set_restore_clients_on_launch")[1]
-               .split("save.addEventListener")[0])
+    src = (root / "obs_youtube_uploader" / "preview"
+           / "win32.py").read_text(encoding="utf-8")
+    for gone in ("SetWindowPlacement", "GetWindowPlacement",
+                 "WINDOWPLACEMENT", "SPI_GETWORKAREA",
+                 "SystemParametersInfoW"):
+        assert gone not in src, gone
+
+
+def _web(name):
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    return (root / "obs_youtube_uploader" / "web"
+            / name).read_text(encoding="utf-8")
+
+
+def test_the_client_window_card_is_gone():
+    """Its buttons drove SetWindowPlacement against a live EVE client."""
+    html = _web("index.html")
+    js = _web("settings.js")
+    for gone in ("EVE client windows", "btn-save-client-layout",
+                 "btn-restore-client-layout", "client-restore-on-launch",
+                 "client-layout-status"):
+        assert gone not in html, gone
+        assert gone not in js, gone
+    for gone in ("save_client_layout", "restore_client_layout",
+                 "set_restore_clients_on_launch"):
+        assert gone not in js, gone
+
+
+def test_the_position_checkbox_sits_with_the_preview_settings():
+    """It is a preview setting now, not a card of its own about clients,
+    and nothing it says may still read as being about a game window."""
+    html = _web("index.html")
+    route = html.split('id="route-previews"')[1].split('id="route-')[0]
+    card = route.split("EVE client previews")[1].split("<section")[0]
+    assert 'id="restore-preview-positions"' in card
+    label = card.split('id="restore-preview-positions"')[1].split(
+        "</label>")[0]
+    assert "client" not in label.lower(), label
+
+
+def test_the_position_toggle_says_when_the_choice_will_not_survive():
+    """#29's contract, carried across the rename. A silent failed write
+    is how the user finds out at their next restart; reverting the box
+    would be the opposite lie, since the setting really did change for
+    this session. Only a bridge failure may revert it."""
+    js = _web("settings.js")
+    block = js.split("set_restore_preview_positions")[1]
     assert "res.persisted" in block, "the flag is returned but never read"
     assert "will not survive a restart" in block
-    # The revert is reachable only from the bridge-failure guard.
     assert "if (!res)" in block.split("box.checked = !wanted")[0]
+
+
+# ---- The Previews tab must not report the opposite of the truth -----------
+#
+# The page has no test harness -- nothing in the suite executes web/*.js --
+# so these assert on its source, the way the settings.js tests above do.
+# That is a real limit: they pin the mechanism, not the rendered result.
+# They are written against named states rather than CSS values so that a
+# rename breaks them loudly instead of silently passing.
+
+def test_an_absent_registration_entry_is_its_own_state():
+    """Three states, not two. `false` is "Windows refused this chord";
+    ABSENT is "we cannot know" -- which is what Python sends for every
+    chord once the host has stopped (api.py gates on is_running and
+    returns registration: {}). Testing only `=== false` collapsed absent
+    into "registered", so with previews off the tab claimed every chord
+    was held while Windows held none of them."""
+    js = _web("previews.js")
+    block = js.split("function clashes")[1].split("function makeRow")[0]
+    assert "hasOwnProperty" in block, (
+        "an absent key must be distinguished from a present one; a plain "
+        "lookup cannot tell `undefined` from a missing entry")
+    assert "'unknown'" in block
+    assert "'refused'" in block
+
+
+def test_an_unknown_chord_is_not_rendered_as_a_refusal():
+    """Unknown is not an error: nothing is wrong, we simply cannot say.
+    Rendering it with .clash would trade one wrong report for another."""
+    js = _web("previews.js")
+    block = js.split("function makeRow")[1].split("function beginCapture")[0]
+    marked = block.split("classList.add('clash')")[0]
+    assert "'unknown'" not in marked, (
+        "the unknown state reaches the .clash branch")
+    assert "classList.add('unknown')" in block
+
+
+def test_the_unknown_state_is_visually_distinct_from_a_latent_clash():
+    """.bindbtn.dim already means "a bookmark would collide with this".
+    Reusing it would make the new state indistinguishable from that one --
+    the same defect, relocated."""
+    css = _web("style.css")
+    assert ".bindbtn.unknown" in css
+
+
+def test_rows_are_not_dimmed_when_previews_are_off():
+    """Dimming means "this character is logged off", and it only carries
+    that meaning by contrast with an undimmed row. With previews off the
+    host is stopped and Python sends characters: [], so every row would
+    dim at once and the list would be indistinguishable from "all my
+    characters happen to be logged out". Off is said by the banner, not
+    implied by styling every row identically."""
+    js = _web("previews.js")
+    block = js.split("function render")[1].split("function send")[0]
+    assert "state.enabled && entry.online" not in block, (
+        "previews being off must not be reported as every character "
+        "being offline")
+    assert "preview-binds-off" in js, "the explicit off banner is the signal"
+
+
+def test_a_rejected_binding_is_not_reverted_in_silence():
+    """set_preview_binds returning false means Python refused the chord.
+    Repainting from the backend without saying anything looks exactly
+    like the click not registering."""
+    js = _web("previews.js")
+    block = js.split("function send")[1].split("function setBind")[0]
+    assert "alert_bookmarks" in block, "the refusal is swallowed"
+
+
+def test_a_resolved_save_cannot_overwrite_a_newer_push():
+    """onPreviewHotkeys replaces `state` wholesale and fires whenever a
+    client opens or closes -- routinely while a bind is being set. A
+    send() resolving afterwards must not write its own older table back
+    over the push that overtook it."""
+    js = _web("previews.js")
+    block = js.split("function send")[1].split("function setBind")[0]
+    assert "generation" in block, (
+        "nothing distinguishes a state that was replaced mid-flight")
+
+
+def test_the_row_dedup_set_cannot_collide_with_object_prototype():
+    """A character named "constructor" or "__proto__" hits a truthy
+    inherited property on a `{}` seen-set and is dropped from the list --
+    silently, along with any binding it has."""
+    js = _web("previews.js")
+    block = js.split("function rows")[1].split("function clashes")[0]
+    assert "Object.create(null)" in block

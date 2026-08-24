@@ -12,7 +12,6 @@ from pathlib import Path
 from . import bookmarks, paths
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
-from .preview import placement as preview_placement
 from .preview import roster as preview_roster
 
 
@@ -31,10 +30,12 @@ def _preview_defaults() -> dict:
             # used to defer profiles.
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
-            # Client WINDOW placement, distinct from `layouts` above,
-            # which is where the preview TILES sit. Off by default: this
-            # one moves the user's game windows.
-            "restore_clients_on_launch": False, "client_layouts": {}}
+            # Where a preview OPENS: on, at the rect the user last dragged
+            # it to; off, at default_stack placement. Positions are
+            # recorded either way, so switching back on restores what they
+            # last had. On by default -- it is what shipped, and the
+            # alternative silently discards existing layouts.
+            "restore_preview_positions": True}
 
 
 def _eve_defaults() -> dict:
@@ -113,8 +114,8 @@ def validated_preview(raw) -> dict:
         return section
     if isinstance(raw.get("enabled"), bool):
         section["enabled"] = raw["enabled"]
-    if isinstance(raw.get("restore_clients_on_launch"), bool):
-        section["restore_clients_on_launch"] = raw["restore_clients_on_launch"]
+    if isinstance(raw.get("restore_preview_positions"), bool):
+        section["restore_preview_positions"] = raw["restore_preview_positions"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -149,8 +150,6 @@ def validated_preview(raw) -> dict:
                 section["hotkeys"][key] = preview_gestures.display(parsed)
 
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
-    section["client_layouts"] = preview_placement.serialize(
-        preview_placement.deserialize(raw.get("client_layouts")))
     return section
 
 

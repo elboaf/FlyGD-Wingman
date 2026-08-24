@@ -171,8 +171,7 @@ class Api:
                  rows=None, durations_file=None,
                  drain_interval_s=PROBE_DRAIN_S,
                  spawn=threading.Thread, probe=library.probe,
-                 timer=threading.Timer, preview_host=None,
-                 client_layouts=None):
+                 timer=threading.Timer, preview_host=None):
         self._state = state
         self._window = None          # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
@@ -211,11 +210,6 @@ class Api:
         self._eve_probe = threading.Lock()
 
         # None off Windows and in most tests, like _preview_host above.
-        # Deliberately NOT gated on preview.enabled: this moves the EVE
-        # client windows themselves and has nothing to do with previews
-        # beyond sharing a tab.
-        self._client_layouts = client_layouts
-
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
         self._cache = durations.load(self._durations_file)
@@ -1398,7 +1392,7 @@ class Api:
         """Everything the bind list needs, in one read.
 
         A read, not a push, and that is the point: previews start before the
-        webview exists (__main__.py:406-411), so a registration conflict
+        webview exists (__main__.py:476-478), so a registration conflict
         found at launch is pushed into a window that is not there yet and
         _push swallows it. The page asks for this on load.
         """
@@ -1461,43 +1455,27 @@ class Api:
             payload["registration"] = status
         self._push("onPreviewHotkeys", payload)
 
-    # ---- EVE client window layouts -------------------------------------
+    # ---- Where a preview opens ------------------------------------------
 
-    def start_client_layouts_if_enabled(self) -> None:
-        """Arm the restore-on-appear watcher, if the user asked for it."""
-        if self._client_layouts is None:
-            return
-        if self._state.settings.get("preview", {}).get(
-                "restore_clients_on_launch"):
-            self._client_layouts.start()
+    def set_restore_preview_positions(self, enabled) -> dict:
+        """Persist whether a preview opens at its saved position.
 
-    def save_client_layout(self) -> dict:
-        """Snapshot where every named client sits."""
-        if self._client_layouts is None:
-            # Same three keys as the manager's, so the page never has to
-            # ask which path produced the answer.
-            return {"saved": 0, "persisted": True, "failed": 0}
-        return self._client_layouts.save_now()
+        Governs ALL preview placement, not only placement at launch: a
+        preview is created whenever its client appears, which is usually
+        mid-session. PreviewHost re-reads the stored value per placement,
+        so nothing has to be pushed to it here -- and nothing should be.
+        The setting says where a preview OPENS; previews already on
+        screen stay where the user put them.
 
-    def restore_client_layout(self) -> dict:
-        if self._client_layouts is None:
-            return {"restored": 0, "skipped": 0}
-        return self._client_layouts.restore_now()
-
-    def set_restore_clients_on_launch(self, enabled) -> dict:
-        """Toggle the watcher and persist the choice.
-
-        Returns the save button's shape -- the same `persisted` key, in
-        the same card -- so one failed write reads one way wherever it
-        happens. Not a bare bool: the watcher changes state whether or not
-        the write lands, so reverting the checkbox would trade one lie for
-        another. The page keeps the box and says what will not survive.
+        Returns a dict rather than a bare bool so a write that did not
+        land can be reported. Leaving the checkbox showing a choice the
+        next restart will discard is the failure this shape exists to
+        prevent.
         """
         enabled = bool(enabled)
         section = self._state.settings.setdefault("preview", {})
-        wanted_change = section.get("restore_clients_on_launch") != enabled
         persisted = True
-        if wanted_change:
+        if section.get("restore_preview_positions") != enabled:
             try:
                 # Through settings.update, not save(): the mutation must
                 # happen inside _SAVE_LOCK or a concurrent writer is
@@ -1507,34 +1485,15 @@ class Api:
                 # which is why this needs no dirty-flag of its own.
                 with settings_mod.update(self._state.settings) as doc:
                     doc.setdefault("preview", {})[
-                        "restore_clients_on_launch"] = enabled
+                        "restore_preview_positions"] = enabled
             except OSError:
                 # Logged and reported, not raised. A settings file that
-                # cannot be written must not block the watcher -- but the
+                # cannot be written must not break the toggle -- but the
                 # page has to be able to say the choice is not saved.
                 persisted = False
                 logger.exception(
-                    "Could not persist the client-restore setting")
-        if self._client_layouts is not None:
-            if enabled:
-                # Seed on the transition, not on the call. start() runs on
-                # every enabled call, and seeding an unchanged one would
-                # mark a client that appeared since the toggle as placed
-                # without ever placing it.
-                self._client_layouts.start(seed_placed=wanted_change)
-            else:
-                self._client_layouts.stop()
+                    "Could not persist restore_preview_positions")
         return {"applied": True, "persisted": persisted}
-
-    def shutdown_client_layouts(self) -> None:
-        """Runs on every exit path, so like shutdown_previews it must
-        never be the thing that raises."""
-        if self._client_layouts is None:
-            return
-        try:
-            self._client_layouts.stop()
-        except Exception:
-            logger.exception("Client layout watcher did not stop cleanly")
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
