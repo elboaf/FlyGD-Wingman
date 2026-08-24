@@ -27,6 +27,18 @@ UNSCORED = "Unscored"
 READINESS_ORDER = (READY, TRAINING, LOCKED, READINESS_MISSING,
                    READINESS_UNKNOWN, UNSCORED)
 
+# Requirement state -> the plan readiness it contributes. Locked ranks
+# WORSE than Training on purpose: a character who has trained a skill but
+# cannot use it (inactive clone, lapsed Omega) needs the user to go do
+# something, while one actively training will arrive on its own.
+_CONTRIBUTION = {
+    ACTIVE: READY,
+    QUEUED: TRAINING,
+    TRAINED_INACTIVE: LOCKED,
+    MISSING: READINESS_MISSING,
+    UNKNOWN: READINESS_UNKNOWN,
+}
+
 
 @dataclass(frozen=True)
 class QueueEntry:
@@ -77,10 +89,60 @@ class PlanAnalysis:
     queue_timing_unknown: bool
     requirements: tuple
 
+    def _count(self, state: str) -> int:
+        return sum(1 for a in self.requirements if a.state == state)
+
+    @property
+    def active_count(self) -> int:
+        return self._count(ACTIVE)
+
+    @property
+    def trained_inactive_count(self) -> int:
+        return self._count(TRAINED_INACTIVE)
+
+    @property
+    def queued_count(self) -> int:
+        return self._count(QUEUED)
+
+    @property
+    def missing_count(self) -> int:
+        return self._count(MISSING)
+
+    @property
+    def unknown_count(self) -> int:
+        return self._count(UNKNOWN)
+
+
+def compact_status(analyses) -> str:
+    """The worst readiness any requirement contributes.
+
+    Unknown > Missing > Locked > Training > Ready. An empty sequence is
+    Ready: a plan with nothing in it is trivially satisfied, and Unscored
+    is reached by evaluate()'s has_snapshot gate rather than by counting.
+
+    An unrecognised state contributes Unknown rather than being skipped,
+    so a state added to this module without a _CONTRIBUTION entry cannot
+    silently score a plan Ready.
+    """
+    worst = READY
+    for analysis in analyses:
+        contribution = _CONTRIBUTION.get(analysis.state, READINESS_UNKNOWN)
+        if READINESS_ORDER.index(contribution) > READINESS_ORDER.index(worst):
+            worst = contribution
+    return worst
+
 
 def evaluate(requirements, skill_ids, active_levels, trained_levels,
              queue, has_snapshot: bool) -> PlanAnalysis:
     """Score *requirements* for one character against one snapshot."""
+    if not has_snapshot:
+        # Unscored, with an EMPTY requirement list. Every newly
+        # authorised character is here until its first refresh lands, so
+        # this is the most common state a user sees -- and marking every
+        # requirement Unknown instead would make an ordinary new
+        # character look like a broken plan.
+        return PlanAnalysis(UNSCORED, None, False, ())
+
     # Case-insensitive on the name, because the cache is keyed on the
     # spelling ESI returned and the plan file carries whatever the user
     # typed. Built once per plan rather than per requirement.
@@ -123,4 +185,18 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
             queue_timing_unknown=bool(chosen is not None
                                       and chosen.finish_date is None),
         ))
-    return PlanAnalysis(READY, None, False, tuple(analyses))
+
+    readiness = compact_status(analyses)
+    timing_unknown = any(a.queue_timing_unknown for a in analyses)
+    finishes = [a.queued_finish_utc for a in analyses
+                if a.state == QUEUED and a.queued_finish_utc is not None]
+    # The MAXIMUM, not the minimum: the plan completes when the last
+    # queued requirement does. And only when readiness is exactly
+    # Training -- a Locked plan has a dated queue entry too, and showing
+    # it would promise a completion the inactive clone will not deliver.
+    # One dateless entry suppresses it entirely, because the maximum of
+    # the rest could be beaten by the one with no date.
+    estimated = None
+    if readiness == TRAINING and finishes and not timing_unknown:
+        estimated = max(finishes)
+    return PlanAnalysis(readiness, estimated, timing_unknown, tuple(analyses))
