@@ -33,8 +33,8 @@ sequence: dependency install, importability verification, ffmpeg /
 AutoHotkey / WebView2 fetches, signature check, PyInstaller invocation,
 bundle verification, Inno Setup build.
 
-They are no longer identical. `build.yml` has nine `Verify` steps;
-`release.yml` has eight. `Verify the app icon is bundled` exists only in
+They are no longer identical. `build.yml` has eight `Verify` steps;
+`release.yml` has seven. `Verify the app icon is bundled` exists only in
 `build.yml` — the workflow producing throwaway artifacts is stricter than
 the one that ships. This is the predictable failure mode of duplication,
 and it is not hypothetical.
@@ -53,19 +53,22 @@ to both.
 The app is Windows-only. Seven modules bind `windll` or `winreg`. Tests
 run on `ubuntu-latest` only.
 
-Four tests are already marked `skipif(sys.platform != "win32")` and have
-never executed anywhere — not in CI, not on the development machine, which
-is WSL:
+Six tests are gated off every non-Windows platform and have never executed
+anywhere — not in CI, not on the development machine, which is WSL:
 
-    tests/test_preview_host.py:145  needs a real message pump and window station
-    tests/test_preview_win32.py:69  binds user32/gdi32/dwmapi
-    tests/test_preview_win32.py:83  binds user32/gdi32/dwmapi
-    tests/test_preview_win32.py:104 binds user32/gdi32/dwmapi
+    tests/test_eveskills_dpapi.py:44   requires real DPAPI
+    tests/test_eveskills_dpapi.py:51   requires real WinDLL
+    tests/test_preview_host.py:145     needs a real message pump and window station
+    tests/test_preview_win32.py:67     binds user32/gdi32/dwmapi
+    tests/test_preview_win32.py:81     binds user32/gdi32/dwmapi
+    tests/test_preview_win32.py:102    binds user32/gdi32/dwmapi
 
 `test_preview_win32.py` asserts that every `user32`, `gdi32`, and `dwmapi`
 symbol the app binds actually resolves. That is precisely the "did we typo
 a Win32 export that only fails on a user's machine" check, and it is
-currently dead code.
+currently dead code. `test_eveskills_dpapi.py` covers DPAPI, which is how
+EVE SSO tokens are encrypted at rest — a path where a silent failure has
+real consequences.
 
 `test_preview_wiring.py:103` states the gap directly:
 
@@ -81,7 +84,7 @@ and `windows-latest`, both on Python 3.11. The version-consistency and
 WebView2-predicate checks stay in a separate ubuntu-only job — they are
 text assertions over files and there is no reason to pay for them twice.
 
-**Known cost.** The first Windows run will likely be red: 1320 tests have
+**Known cost.** The first Windows run will likely be red: 1839 tests have
 only ever seen POSIX. Spot-checking suggests this is better than average
 (`Path("/x") / name` behaves on Windows, `/usr/bin/ffmpeg` is only ever an
 opaque string, and `test_evesettings_tree.py:121` already carries a
@@ -97,22 +100,25 @@ window and will run regardless; those are the valuable ones.
 
 ## 4. Nothing lints anything
 
-No ruff, black, flake8, mypy, pre-commit, or `.editorconfig`. 11,320 lines
-of Python and 3,416 lines of web assets with no automated checking.
-`ui/api.py` alone is 2,147 lines.
+No ruff, black, flake8, mypy, pre-commit, or `.editorconfig`. 16,160 lines
+of application Python, 21,590 lines of tests, and 4,410 lines of web assets
+with no automated checking. `ui/api.py` alone is over 2,000 lines.
 
-Ruff's default rules over the tree find 125 issues across 14,700 lines,
-74 of them auto-fixable. That is a remarkably clean result for a
-never-linted codebase, and the tree already contains ten
+The selected rules find 178 issues, 108 of them auto-fixable. That is a low
+density for a never-linted codebase, and the tree already contains fourteen
 `# noqa: BLE001` comments with real explanations attached — someone has run
 ruff here before and reasoned about its output. Adoption is much cheaper
 than a cold start.
+
+Ruff also reports a malformed `# noqa` directive in
+`eveskills/controller.py` that is not valid syntax, and therefore suppresses
+nothing while appearing to.
 
 **Change.** A `[tool.ruff]` section in `pyproject.toml` targeting `py311`,
 with rules selected against what is actually present:
 
 - **Enable and auto-fix:** `I`, `F`, `E`, `W`, `UP`, `SIM`, `RET`, `PIE`,
-  `FURB`, `RUF`. Roughly 100 of the 125 findings.
+  `FURB`, `RUF`. The large majority of the 178 findings.
 - **Enable, convention already exists:** `BLE001`. Thirteen unsuppressed
   sites, ten already carrying explained `noqa`s. Each new suppression gets
   a reason comment, matching the existing house style rather than
@@ -126,14 +132,13 @@ with rules selected against what is actually present:
 
 `ruff format` is adopted, at the default line length of 88.
 
-The width is not arbitrary: only fifteen lines in the entire codebase
-currently exceed 88 characters and the longest is 104, so the code is
-already written to roughly this shape. Raising the limit to 100 produces a
-smaller diff (3,335 lines rather than 4,276) but rejoins deliberately
-wrapped user-facing message strings into 97-character lines, which is a
-worse result than the churn it saves.
+The width is not arbitrary: the longest line in the tree is 104
+characters, so the code already sits close to this shape. Raising the
+limit to 100 does not reduce the blast radius at all — 149 files reformat
+either way — and it would rejoin deliberately wrapped user-facing message
+strings into 97-character lines.
 
-The cost is real and worth stating plainly: 108 of 116 files are
+The cost is real and worth stating plainly: 149 of 176 files are
 reformatted. Ruff does **not** reflow docstrings or comment prose, so the
 long explanatory blocks throughout this codebase survive untouched — what
 changes is code style, chiefly hand-aligned call continuations becoming
@@ -147,9 +152,11 @@ value:
         4 * 1024 * 1024
     )  # Consumed by app._upload_one when building MediaFileUpload.
 
-This can only occur at the fifteen over-length sites. The fix is to move
-the comment above the statement, after which the line is short and the
-formatter leaves it alone permanently.
+Only two sites in the tree are over-length because of a trailing comment;
+the rest are long because the code is long, which the formatter handles
+correctly. The fix for those two is to move the comment above the
+statement, after which the line is short and the formatter leaves it alone
+permanently.
 
 Two commits, kept separate: the mechanical `ruff format` pass, then the
 hand fixes. The format commit's SHA is recorded in a new
@@ -221,8 +228,8 @@ security fix that nobody hears about is worse than a PR nobody merges.
 
 ## Deliberately out of scope
 
-- **Coverage gates.** 1,320 tests over 11,320 lines. A percentage
-  threshold would be ceremony, not signal.
+- **Coverage gates.** 1,839 tests over 16,160 lines of application code. A
+  percentage threshold would be ceremony, not signal.
 - **mypy.** Real value at the `ui/api.py` bridge seam, but it carries its
   own annotation cost and belongs in its own change.
 - **JS/CSS linting.** 3,416 lines with no checks is a real gap, and
@@ -253,7 +260,7 @@ to exercise the Windows chain without publishing, so it is the proving
 ground for the composite action before `release.yml` depends on it.
 
 Step 3 is verified locally: `ruff check` and `ruff format --check` clean,
-and the full suite still at 1,320 passing. That the suite still passes is
+and the full suite still at 1,839 passing. That the suite still passes is
 the whole safety argument for a 108-file mechanical reformat.
 
 The manual smoke checklist is unaffected by all of this and remains the
