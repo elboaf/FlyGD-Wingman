@@ -39,8 +39,15 @@ class DATA_BLOB(ctypes.Structure):
 
 
 def available() -> bool:
-    """Whether a token can be stored at all. Read by the controller before
-    it tries, so a wrong answer here silently discards a refresh token."""
+    """Whether a token can be stored at all.
+
+    Not read by the controller before it tries -- tokens.wrap/unwrap call
+    protect()/unprotect() directly, and _require_windows() below is what
+    they hit off Windows, raising the same clean OSError available() would
+    otherwise have been used to pre-empt. This is exposed for callers
+    (tests, and any future caller) that want to check ahead of time rather
+    than catch that OSError.
+    """
     return sys.platform == "win32"
 
 
@@ -100,7 +107,15 @@ def _call(func, name: str, data: bytes) -> bytes:
     blob_out = DATA_BLOB()
     if not func(ctypes.byref(blob_in), None, None, None, None, 0,
                 ctypes.byref(blob_out)):
-        raise OSError(ctypes.get_last_error(), f"{name} failed")
+        # ctypes.WinError looks up get_last_error()'s code through
+        # FormatMessage, giving the real Windows error text ("Access is
+        # denied.", "The data is invalid.") rather than just its bare
+        # numeric code -- the difference between a message a user could
+        # act on and one that sends them to a search engine first. Folded
+        # into a fresh OSError so `name` (CryptProtectData vs.
+        # CryptUnprotectData) is still there to say which call failed.
+        error = ctypes.WinError(ctypes.get_last_error())
+        raise OSError(error.errno, f"{name} failed: {error.strerror}") from error
     try:
         return ctypes.string_at(blob_out.pbData, blob_out.cbData)
     finally:
