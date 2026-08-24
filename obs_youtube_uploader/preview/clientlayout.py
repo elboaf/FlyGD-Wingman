@@ -70,7 +70,22 @@ class ClientLayoutManager:
             self._placed |= set(clients)
             return result
 
-    def start(self) -> None:
+    def start(self, seed_placed: bool = False) -> None:
+        """Arm the watcher.
+
+        `seed_placed` marks everything currently running as already
+        placed, so the first tick moves nothing. That is what the toggle
+        wants: the label describes clients that LAUNCH, and yanking a
+        window the user positioned by hand is the failure place-once
+        exists to prevent, arriving through a side door. restore_now()
+        stays the way to re-place on demand.
+
+        The launch path leaves it False -- there, placing what is already
+        running is the feature.
+        """
+        if seed_placed:
+            with self._lock:
+                self._placed |= set(self._named())
         self._scheduler.start()
 
     def stop(self) -> None:
@@ -88,19 +103,25 @@ class ClientLayoutManager:
 
     def _save(self) -> dict:
         found = {}
+        failed = 0
         with self._dpi_context():
             origin = self._work_area_origin()
             for key, c in self._named().items():
                 p = self._read_placement(c.hwnd, origin)
                 if p is None:
                     logger.warning("Could not read placement for %s", key)
+                    # Counted, not just logged: saved: 0 alone cannot tell
+                    # the page whether nothing was running or nothing could
+                    # be read, and those need different messages.
+                    failed += 1
                     continue
                 found[key] = p
         if not found:
-            return {"saved": 0, "persisted": True}
+            return {"saved": 0, "persisted": True, "failed": failed}
         persisted = self._persist(found)
         logger.info("Saved %d client window positions", len(found))
-        return {"saved": len(found), "persisted": persisted}
+        return {"saved": len(found), "persisted": persisted,
+                "failed": failed}
 
     def _persist(self, found) -> bool:
         def mutate(doc):

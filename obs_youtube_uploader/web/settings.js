@@ -251,9 +251,25 @@
   box.addEventListener('change', function () {
     var wanted = box.checked;
     // WM.send resolves to null on any bridge failure rather than
-    // rejecting (app.js:38-43), so check the resolved value.
-    WM.send('set_restore_clients_on_launch', wanted).then(function (ok) {
-      if (!ok) { box.checked = !wanted; }
+    // rejecting (app.js:38-43). A dict is always truthy, so null is
+    // still the only thing that reverts the box -- and a failed write
+    // is no longer mistaken for one.
+    WM.send('set_restore_clients_on_launch', wanted).then(function (res) {
+      if (!res) { box.checked = !wanted; return; }
+      if (!res.persisted) {
+        // The watcher really did change state, so the box stays where
+        // the user put it. What it cannot do is survive a restart, and
+        // saying nothing is how they find that out the hard way.
+        say('Restore-on-launch is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      } else {
+        // The checkbox already shows the new state; clearing here (rather
+        // than confirming) avoids leaving a stale failure message on
+        // screen after a later toggle succeeds, without adding a
+        // confirmation nobody asked to see on every successful toggle.
+        say('');
+      }
     });
   });
 
@@ -267,7 +283,19 @@
         return;
       }
       if (!res.saved) {
-        say('No named clients are running. Nothing to save.');
+        // `failed` is what separates "nothing was running" from "every
+        // running client refused to be read". Only the log could tell
+        // them apart before (clientlayout.py:96).
+        say(res.failed
+            ? 'Could not read the position of any running client.'
+            : 'No named clients are running. Nothing to save.');
+        return;
+      }
+      if (res.failed) {
+        say('Saved ' + plural(res.saved, 'client position.',
+                              'client positions.')
+            + ' Could not read ' + plural(res.failed, 'other.',
+                                          'others.'));
         return;
       }
       say('Saved ' + plural(res.saved, 'client position.',
