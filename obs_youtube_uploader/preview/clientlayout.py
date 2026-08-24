@@ -115,7 +115,18 @@ class ClientLayoutManager:
         try:
             # Through settings.update, not save(): the read must happen
             # inside _SAVE_LOCK or a concurrent writer is reverted.
-            self._update_settings(self._read_settings, mutate)
+            #
+            # settings.update() is a context manager over the LIVE dict,
+            # not a (read, mutate) callback pair -- calling it with two
+            # positional args builds a generator and discards it unentered,
+            # so mutate() never runs and nothing is ever saved (silently:
+            # no exception, "persisted": True). self._read_settings() is
+            # called here, outside the lock, because it returns that live
+            # dict by reference and its identity is stable for the
+            # process -- there is no stale-snapshot window for the lock
+            # to need to cover.
+            with self._update_settings(self._read_settings()) as doc:
+                mutate(doc)
         except OSError:
             # Logged, not raised -- a settings file that cannot be written
             # must not take the feature down. But NOT swallowed either:

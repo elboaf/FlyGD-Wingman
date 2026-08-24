@@ -5,11 +5,13 @@ masked webhook that reports parse errors, an account control that tracks
 four states, two independent Detect actions, and a Save that reaches the
 live watcher and not just the settings file.
 """
+import copy
+import json
 import types
 
 import pytest
 
-from obs_youtube_uploader import uploader
+from obs_youtube_uploader import paths, uploader
 from obs_youtube_uploader.ui import api as api_mod
 from obs_youtube_uploader.ui import copy as copy_mod
 from tests import fakes
@@ -83,12 +85,19 @@ HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
 
 
 def settings_api(tmp_path, monkeypatch, watcher=None, **kw):
+    """Patches _save_locked, not save() or update(): both writers now go
+    through settings_mod.update(), so the real lock-and-rollback machinery
+    stays in the loop and only the actual disk write is faked out."""
     saved = {}
     api, window = fakes.build_api(tmp_path, watcher=watcher, **kw)
     api._alert = fakes.Alerts()
     api.list_rows = lambda preselect=None: None
-    monkeypatch.setattr(api_mod.settings_mod, "save",
-                        lambda cfg, path=None: saved.update(cfg))
+
+    def fake_save_locked(data, path=None):
+        saved.clear()
+        saved.update(copy.deepcopy(data))
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fake_save_locked)
     monkeypatch.setattr(api_mod.settings_mod, "load", lambda path=None: dict(saved))
     return api, window, saved
 
@@ -166,10 +175,10 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypat
     and tell the user, so their edits can be retried."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
 
-    def boom(cfg, path=None):
+    def boom(data, path=None):
         raise OSError("disk full")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     assert api.save_settings(values(tmp_path)) is False
     assert api._state.settings["privacy"] == "unlisted"
@@ -386,10 +395,10 @@ def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_p
     api._on_recording_dir_ready = started.append
     before = dict(api._state.settings)
 
-    def boom(cfg, path=None):
+    def boom(data, path=None):
         raise OSError("disk full")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     assert api.set_recording_dir(str(folder)) is False
     assert api._state.settings == before, "in-memory settings were mutated"
@@ -434,3 +443,62 @@ def test_asking_for_settings_pushes_nothing(tmp_path):
     sent = fakes.record_pushes(api)
     api.get_settings()
     assert sent == []
+
+
+
+# A real-threaded save_settings-vs-LayoutStore stress test was tried here
+# and pulled again: it reproduced the rebind race below at ~1 run in
+# 6-17, and a test that fails that rarely is not a committed regression
+# guard. See rebind-race-repro.py (git-ignored) for the threaded version
+# and test_settings_object_identity_survives_a_save below for a
+# deterministic, non-threaded reproduction of the same defect.
+
+
+def test_settings_object_identity_survives_a_save(monkeypatch, tmp_path):
+    """Regression test for the settings rebind race.
+
+    save_settings, set_recording_dir and save_bookmarks used to finish
+    with `self._state.settings = settings_mod.load()`, which replaced
+    `self._state.settings` with a brand-new dict read back from disk.
+    preview/store.py's LayoutStore keeps its own reference to that same
+    dict and writes through it later. If the store captured its reference
+    before a rebind swapped the object out, the store's write landed on
+    the now-orphaned old dict; the next save through the new object (which
+    never saw that write) then overwrote disk with a document that had
+    silently lost it.
+
+    Deterministic reproduction, no threads required: since save_settings
+    now normalises `self._state.settings` in place instead of rebinding
+    it, the object's identity survives a save, so a write made through a
+    reference captured before that save is not lost by a later one.
+    """
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+
+    # Stands in for LayoutStore's `update_settings=lambda: settings_mod
+    # .update(state.settings)` -- it captures this object once and reuses
+    # it across writes.
+    captured_ref = api._state.settings
+
+    assert api.save_settings(values(tmp_path)) is True
+    # The fix, directly: no rebind means the object this test captured
+    # before the save is still the live one after it.
+    assert api._state.settings is captured_ref
+
+    # A write through that captured reference, exactly as LayoutStore
+    # would make one after this save.
+    with api_mod.settings_mod.update(captured_ref) as cfg:
+        cfg["preview"]["layouts"]["Pilot"] = {"x": 0, "y": 0, "w": 320, "h": 210}
+
+    # A second, unrelated save must not discard that write. Under the old
+    # rebind, self._state.settings would by now be a stale object that
+    # never saw the layout write, and this call would overwrite disk with
+    # it -- reproducing the reported data loss.
+    assert api.save_settings(values(tmp_path, category="99")) is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert "Pilot" in on_disk["preview"]["layouts"]
+    assert "Pilot" in api._state.settings["preview"]["layouts"]

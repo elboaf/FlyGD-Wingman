@@ -71,6 +71,7 @@ WM_APP = 0x8000
 # Host commands, marshalled in from other threads.
 WM_APP_SHUTDOWN = WM_APP + 1
 WM_APP_SWEEP_NOW = WM_APP + 2
+WM_APP_REBIND = WM_APP + 3
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02

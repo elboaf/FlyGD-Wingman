@@ -380,6 +380,16 @@
     // when clients open and close, which is not something worth a timer.
     if (event.detail === 'bookmarks') {
       WM.send('get_bookmarks').then(render);
+      return;
     }
+    // Leaving this route must disarm an in-progress capture. Both this
+    // file and previews.js now install their own document-level keydown
+    // listener; stopPropagation() only stops OTHER listeners further
+    // along the same dispatch, not a sibling listener already attached to
+    // the same document node, so an armed capture left running here would
+    // still consume the next keystroke typed on the OTHER route -- for
+    // example writing a chord meant for a preview bind into this bind
+    // instead, off-screen and silently persisted.
+    endCapture();
   });
 }());

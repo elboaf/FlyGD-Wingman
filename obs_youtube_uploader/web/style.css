@@ -547,6 +547,30 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    binds clip with no scrollbar and become unreachable. */
 #route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
 
+/* ====================== previews route ===============================
+   Same reason as bookmarks above: the Hotkeys card can hold one row per
+   known character, which exceeds the window height on a roster of any
+   size. Without overflow-y the lower rows clip with no scrollbar. */
+#route-previews { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* Character names, like bookmarks' action names, are not short field
+   labels -- see the #eve-binds override below for why the shared 118px
+   column is wrong here. */
+#preview-binds .row > .lab {
+  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+}
+
+/* Offline is information, not an error (previews.js): dim rather than
+   hide, so a character who has logged out still shows its saved binding. */
+#preview-binds .row > .lab.dim { color: var(--text-faint); }
+
+/* A latent bookmark collision (previews.js's bookmarkClash) marks the
+   chord without the warning colour .clash uses -- nothing is being taken
+   away yet, only would be if bookmarks were turned on. Border is
+   --panel-border, DARKER than .bindbtn's own #2a2e37, so the row recedes
+   rather than stands out -- a lighter border here would make "dim" read
+   as more prominent than a normal, unremarkable binding. */
+.bindbtn.dim { border-color: var(--panel-border); color: var(--text-faint); }
 /* ====================== EVE Settings route ==========================
    Same card markup as the settings and bookmarks routes, so it needs the
    same column direction and scroll safeguard: three cards, two of them

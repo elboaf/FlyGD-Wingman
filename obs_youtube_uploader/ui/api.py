@@ -36,6 +36,7 @@ from ..evesettings import backup as evesettings_backup
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
 from ..evesettings import tree as evesettings_tree
+from ..preview import gestures as preview_gestures
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -775,10 +776,10 @@ class Api:
         if (self._state.settings.get("channel_id") == channel_id
                 and self._state.settings.get("channel_title") == channel_title):
             return
-        self._state.settings["channel_id"] = channel_id
-        self._state.settings["channel_title"] = channel_title
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["channel_id"] = channel_id
+                cfg["channel_title"] = channel_title
         except OSError:
             # A settings file that cannot be written must not fail an
             # upload that succeeded.
@@ -1090,27 +1091,29 @@ class Api:
             self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
             return False
 
-        cfg = dict(self._state.settings)
         gamelogs = str(values.get("gamelogs_dir") or "").strip()
-        cfg.update({
-            "privacy": values.get("privacy"),
-            "category": category,
-            "notify_mode": values.get("notify_mode"),
-            "recording_dir": str(rec_dir),
-            "discord_webhook": webhook_raw,
-            "gamelogs_dir": gamelogs or None,
-        })
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.update({
+                    "privacy": values.get("privacy"),
+                    "category": category,
+                    "notify_mode": values.get("notify_mode"),
+                    "recording_dir": str(rec_dir),
+                    "discord_webhook": webhook_raw,
+                    "gamelogs_dir": gamelogs or None,
+                })
         except OSError as exc:
-            # Bail out before touching in-memory state so state and disk
-            # never diverge, and say so rather than failing silently -- the
-            # page keeps the form open with the edits intact.
+            # update() restored the live dict before re-raising, so state
+            # and disk still agree -- the property the old snapshot-then-
+            # save order was written to protect.
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place before saving
+        # (privacy/category/etc coercion), so there is no longer a rebind
+        # here -- see its docstring for why replacing the object was the
+        # rebind-race bug this used to have.
         self._state.recording_dir = rec_dir
         # The watcher is the reason this method is not just a file write.
         # It holds its own directory, so persisting the setting alone would
@@ -1194,20 +1197,21 @@ class Api:
             self._alert("warning", "Invalid folder",
                         f"{folder} is not a folder.")
             return False
-        # Save from a COPY and adopt only on success, exactly as
-        # save_settings does. Mutating first and returning False on OSError
-        # would leave the app believing it has a recording folder it never
-        # persisted -- state and disk diverged, and the divergence survives
-        # until the next launch reads the file back.
-        cfg = dict(self._state.settings)
-        cfg["recording_dir"] = str(folder)
+        # Update inside settings.update(), exactly as save_settings does.
+        # Mutating first and returning False on OSError would leave the
+        # app believing it has a recording folder it never persisted --
+        # state and disk diverged, and the divergence survives until the
+        # next launch reads the file back. update()'s rollback on any
+        # exception is what protects that property now.
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["recording_dir"] = str(folder)
         except OSError as exc:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         self._state.recording_dir = folder
         if self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
@@ -1260,7 +1264,12 @@ class Api:
         """
         if self._preview_host is None:
             return
-        if self._state.settings.get("preview", {}).get("enabled"):
+        section = self._state.settings.get("preview", {})
+        # Pushed before start(): the first registration pass runs inside
+        # start(), and a table applied only after it would leave every
+        # binding unregistered until the next explicit save.
+        self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+        if section.get("enabled"):
             self._preview_host.start()
 
     def set_preview_enabled(self, enabled: bool) -> None:
@@ -1285,9 +1294,9 @@ class Api:
             # page would read a no-op toggle as a failed call and revert
             # the checkbox.
             return True
-        section["enabled"] = enabled
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["enabled"] = enabled
         except OSError:
             # Same posture as the channel persist above: a settings file
             # that cannot be written must not block the feature itself.
@@ -1316,6 +1325,125 @@ class Api:
             self._preview_host.stop()
         except Exception:
             logger.exception("Preview host did not stop cleanly")
+
+    def capture_preview_bind(self, parts) -> dict:
+        return preview_gestures.from_capture(
+            parts if isinstance(parts, dict) else {})
+
+    def parse_preview_bind(self, text) -> dict:
+        parsed = preview_gestures.parse(text if isinstance(text, str) else "")
+        if parsed is None:
+            return {"gesture": "", "error": "unparseable"}
+        return {"gesture": preview_gestures.display(parsed), "error": None}
+
+    def set_preview_binds(self, section) -> bool:
+        """Replace the whole binding table, persist it, and push it down.
+
+        Returns False on a chord that will not parse rather than silently
+        dropping it: the page needs to tell a rejected entry from a saved
+        one, and WM.send resolves to null on a bridge failure, so a bare
+        None would be indistinguishable from a broken call.
+        """
+        if not isinstance(section, dict):
+            return False
+        table = {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+        characters = section.get("characters")
+        if isinstance(characters, dict):
+            for name, text in characters.items():
+                if not isinstance(name, str) or name.startswith("hwnd:"):
+                    return False
+                if not text:
+                    continue      # cleared, not invalid
+                parsed = preview_gestures.parse(text)
+                if parsed is None:
+                    return False
+                table["characters"][name] = preview_gestures.display(parsed)
+        for key in ("cycle_next", "cycle_prev"):
+            text = section.get(key)
+            if not text:
+                continue
+            parsed = preview_gestures.parse(text)
+            if parsed is None:
+                return False
+            table[key] = preview_gestures.display(parsed)
+
+        try:
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["hotkeys"] = table
+        except OSError:
+            logger.exception("Could not persist preview hotkeys")
+            return False
+
+        if self._preview_host is not None:
+            self._preview_host.set_hotkeys(table)
+        return True
+
+    def get_preview_hotkey_state(self) -> dict:
+        """Everything the bind list needs, in one read.
+
+        A read, not a push, and that is the point: previews start before the
+        webview exists (__main__.py:406-411), so a registration conflict
+        found at launch is pushed into a window that is not there yet and
+        _push swallows it. The page asks for this on load.
+        """
+        section = self._state.settings.get("preview", {})
+        host = self._preview_host
+        # is_running, not merely "host is not None": there is a window
+        # between stop() clearing the thread handle and _teardown running
+        # on the preview thread itself where the host object still exists
+        # but owns no chords and no windows. Gating on is_running closes
+        # it -- a stopped host reports the same empty state as no host at
+        # all, rather than serving whatever characters()/hotkey_status()
+        # last held.
+        live = host is not None and host.is_running
+        return {
+            "enabled": bool(section.get("enabled")),
+            "hotkeys": dict(section.get("hotkeys") or {}),
+            "roster": list(section.get("seen") or []),
+            "characters": host.characters() if live else [],
+            "registration": host.hotkey_status() if live else {},
+            "bookmark_chords": self._bookmark_chords(),
+        }
+
+    def _bookmark_chords(self) -> dict:
+        """Bookmark chords, split by whether they are registered right now.
+
+        A preview chord is global; a bookmark chord is an AHK hotkey scoped
+        with #HotIf WinActive. Where they collide the preview wins WHILE EVE
+        IS FOCUSED, silently taking a key from the feature that bind was
+        written for -- and Windows reports nothing, because AHK's scoped
+        hotkey is not a RegisterHotKey registration to collide with. Only
+        Wingman can catch this, by reading both of its own sections.
+
+        Split rather than filtered, because the collision does not stop
+        existing when bookmarks are off -- it goes latent, and enabling them
+        later resurrects it with nothing on screen to explain why that bind
+        stopped working. "active" warns; "latent" only marks.
+
+        Compared in display form. The two features store different notation
+        on purpose (see preview/gestures.py), but bookmarks.parse_ahk
+        renders "^q" as "Ctrl+Q" using the same modifier order and key names
+        gestures.display uses, so the display string is the common ground.
+        """
+        eve = self._state.settings.get("eve_bookmarks") or {}
+        chords = set()
+        for value in (eve.get("keybinds") or {}).values():
+            if not value:
+                continue
+            rendered = bookmarks.parse_ahk(value).get("display")
+            if rendered:
+                chords.add(rendered)
+        live = bool(eve.get("enabled")) and any(eve.get("windows", {}).values())
+        return {"active": sorted(chords) if live else [],
+                "latent": [] if live else sorted(chords)}
+
+    def push_preview_hotkeys(self, status=None) -> None:
+        """Announce a change to a page that is already up. Never the only
+        path -- see get_preview_hotkey_state."""
+        payload = self.get_preview_hotkey_state()
+        if status is not None:
+            payload["registration"] = status
+        self._push("onPreviewHotkeys", payload)
 
     # ---- EVE client window layouts -------------------------------------
 
@@ -1348,16 +1476,23 @@ class Api:
         enabled = bool(enabled)
         section = self._state.settings.setdefault("preview", {})
         if section.get("restore_clients_on_launch") != enabled:
-            def mutate(doc):
-                doc.setdefault("preview", {})[
-                    "restore_clients_on_launch"] = enabled
             try:
-                # Through settings.update, not save(): the read must
+                # Through settings.update, not save(): the mutation must
                 # happen inside _SAVE_LOCK or a concurrent writer is
-                # reverted. update applies mutate before writing, so the
-                # in-memory document is updated even when the disk write
-                # fails -- same as the previous behaviour.
-                settings_mod.update(lambda: self._state.settings, mutate)
+                # reverted.
+                #
+                # Note this changed with the hotkeys merge: update() now
+                # restores the live dict on failure, so a disk write that
+                # fails also reverts the in-memory value rather than
+                # leaving it set for the session. That is the "state and
+                # disk never diverge" contract the rest of this file's
+                # writers already depend on, and one failure rule for all
+                # of them beats a per-setting exception. The watcher below
+                # still acts on `enabled`, so the toggle takes effect this
+                # session either way.
+                with settings_mod.update(self._state.settings) as doc:
+                    doc.setdefault("preview", {})[
+                        "restore_clients_on_launch"] = enabled
             except OSError:
                 # Same posture as set_preview_enabled: a settings file
                 # that cannot be written must not block the feature.
@@ -1505,19 +1640,19 @@ class Api:
             logger.error("Refusing a non-dict bookmarks payload")
             return {**self.get_bookmarks(), "saved": False}
 
-        merged = dict(self._state.settings)
-        merged["eve_bookmarks"] = settings_mod.validated_eve(section)
         try:
-            settings_mod.save(merged)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["eve_bookmarks"] = settings_mod.validated_eve(section)
         except OSError as exc:
-            # Same contract as save_settings: bail before touching in-memory
-            # state so state and disk never diverge, and say why rather than
-            # letting the exception escape.
+            # Same contract as save_settings: update() restored the live
+            # dict before re-raising, so state and disk never diverge, and
+            # say why rather than letting the exception escape.
             self._alert("error", "Could not save settings",
                         f"Bookmark settings were not saved: {exc}")
             return {**self.get_bookmarks(), "saved": False}
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         clean = self._state.settings["eve_bookmarks"]
 
         engine = self._state.engine
@@ -1680,15 +1815,13 @@ class Api:
         picked = str(chosen[0])
         # Selection is cleared, not carried: the old server and profile
         # belong to a tree that is no longer the one on screen.
-        settings_mod.update_section("eve_settings", {
+        settings_mod.update_section(self._state.settings, "eve_settings", {
             "root": picked, "server": None, "profile": None})
-        self._state.settings = settings_mod.load()
         return picked
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
-        settings_mod.update_section("eve_settings", {
+        settings_mod.update_section(self._state.settings, "eve_settings", {
             "server": server or None, "profile": profile or None})
-        self._state.settings = settings_mod.load()
         return True
 
     def eve_settings_resolve_names(self) -> None:

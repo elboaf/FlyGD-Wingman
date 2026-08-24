@@ -4,6 +4,9 @@ enable/disable is idempotent, and shutdown always tears it down.
 make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 """
+import contextlib
+import copy
+
 from tests.test_api import make_api
 
 
@@ -11,12 +14,16 @@ class FakeHost:
     def __init__(self):
         self.started = self.stopped = 0
         self.flushed = 0
+        self.hotkeys = None
 
     def start(self):
         self.started += 1
 
     def stop(self, timeout=5.0):
         self.stopped += 1
+
+    def set_hotkeys(self, table):
+        self.hotkeys = table
 
     @property
     def is_running(self):
@@ -89,7 +96,7 @@ def test_shutdown_without_a_host_is_a_no_op(tmp_path):
 def test_build_preview_host_returns_none_off_windows(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
     monkeypatch.setattr(main_mod.sys, "platform", "linux")
-    assert main_mod.build_preview_host(object()) is None
+    assert main_mod.build_preview_host(object(), {}) is None
 
 
 def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
@@ -112,7 +119,7 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {
         "enabled": False, "width": 320, "height": 210, "layouts": {}}})
-    host = main_mod.build_preview_host(state)
+    host = main_mod.build_preview_host(state, {})
     assert host is not None
     assert not host.is_running     # constructed, never started
 
@@ -123,7 +130,7 @@ def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    assert main_mod.build_preview_host(object()) is None
+    assert main_mod.build_preview_host(object(), {}) is None
 
 
 def test_set_preview_enabled_returns_truthy_on_success(tmp_path, monkeypatch):
@@ -243,10 +250,19 @@ def _no_disk(monkeypatch):
     writes = []
     monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
 
-    def fake_update(read, mutate, path=None):
-        doc = read()
-        mutate(doc)
-        writes.append(doc)
+    def fake_update(data, path=None):
+        # Mirrors the real context manager: yields the LIVE dict, so the
+        # caller's mutation lands on the object it passed in, and records
+        # what would have been written. Records a deepcopy, not `data`
+        # itself -- appending the live reference would let a later
+        # mutation of `data` retroactively rewrite what this list says an
+        # earlier `writes` entry contained.
+        @contextlib.contextmanager
+        def _cm():
+            yield data
+            writes.append(copy.deepcopy(data))
+
+        return _cm()
 
     monkeypatch.setattr(api_mod.settings_mod, "update", fake_update)
     return writes
@@ -307,7 +323,7 @@ def test_an_unwritable_settings_file_does_not_block_the_watcher(
     """Same posture as set_preview_enabled: the feature still works."""
     from obs_youtube_uploader.ui import api as api_mod
 
-    def boom(_read, _mutate, path=None):
+    def boom(_data, path=None):
         raise OSError("read-only")
 
     monkeypatch.setattr(api_mod.settings_mod, "update", boom)

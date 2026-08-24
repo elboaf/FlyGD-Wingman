@@ -143,8 +143,10 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.settings_mod.save",
-                        lambda cfg, path=None: saved.update(cfg))
+    # _remember_channel now writes through settings_mod.update(), which
+    # calls _save_locked internally rather than save() directly.
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.settings_mod._save_locked",
+                        lambda data, path=None: saved.update(data))
 
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)

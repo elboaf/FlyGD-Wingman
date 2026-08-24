@@ -58,19 +58,30 @@ def test_update_section_does_not_drop_another_writers_key(tmp_path):
     A writer that saves a snapshot it built earlier silently reverts keys
     another writer set in between."""
     target = tmp_path / "settings.json"
+    data = settings.load(target)
 
-    settings.update_section("eve_settings", {"root": "C:\\EVE"}, target)
-    settings.update_section("eve_settings", {"server": "tq"}, target)
+    settings.update_section(data, "eve_settings", {"root": "C:\\EVE"}, target)
+    settings.update_section(data, "eve_settings", {"server": "tq"}, target)
 
     live = settings.load(target)
     assert live["eve_settings"]["root"] == "C:\\EVE"
     assert live["eve_settings"]["server"] == "tq"
 
 
-def test_update_section_returns_the_live_document(tmp_path):
+def test_update_section_mutates_the_live_document_in_place(tmp_path):
+    """Identity is the point: update_section takes the caller's live dict
+    and returns that same object, so nobody has to rebind AppState.settings
+    afterwards. The rebind it replaced ran outside the lock and could
+    orphan a concurrent writer's dict -- see settings.update_section."""
     target = tmp_path / "settings.json"
-    live = settings.update_section("eve_settings", {"root": "C:\\EVE"}, target)
-    assert live["eve_settings"]["root"] == "C:\\EVE"
+    data = settings.load(target)
+
+    live = settings.update_section(data, "eve_settings",
+                                   {"root": "C:\\EVE"}, target)
+
+    assert live is data
+    assert data["eve_settings"]["root"] == "C:\\EVE"
+    assert settings.load(target)["eve_settings"]["root"] == "C:\\EVE"
 
 
 def test_a_corrupt_section_does_not_take_the_file_down(tmp_path):

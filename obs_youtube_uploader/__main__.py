@@ -280,13 +280,18 @@ def start_engine_if_enabled(engine, section) -> None:
         engine.sync_sequence()
 
 
-def build_preview_host(state):
+def build_preview_host(state, api_box):
     """The EVE preview host, or None where it cannot run.
 
     Windows-only, and constructed even when the feature is disabled: it
     starts no thread until Api.start_previews_if_enabled() or the settings
     toggle asks it to. Returning None off Windows keeps every call site in
     api.py a plain no-op rather than a platform check.
+
+    `api_box` is a late-bound holder for the Api instance: the host is
+    constructed as an argument to Api(...), so the name `api` does not
+    exist yet when the callbacks below are defined. A plain dict rather
+    than a closure over `api` for the same reason.
     """
     if sys.platform != "win32":
         return None
@@ -296,8 +301,7 @@ def build_preview_host(state):
         from .preview.store import LayoutStore
 
         store = LayoutStore(
-            save_settings=settings_mod.save,
-            read_settings=lambda: state.settings)
+            update_settings=lambda: settings_mod.update(state.settings))
         section = state.settings.get("preview", {})
 
         def on_layout_changed(stable_key, rect, locked):
@@ -308,6 +312,20 @@ def build_preview_host(state):
                 return
             store.record(stable_key, preview_layout.Entry(rect, locked))
 
+        def on_clients_changed(characters):
+            for name in characters:
+                store.record_character(name)
+            # Fires on PreviewHost's own thread, possibly before api_box
+            # is populated below -- degrade to a no-op rather than raise.
+            api = api_box.get("api")
+            if api is not None:
+                api.push_preview_hotkeys()
+
+        def on_hotkey_status(status):
+            api = api_box.get("api")
+            if api is not None:
+                api.push_preview_hotkeys(status)
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
@@ -316,7 +334,9 @@ def build_preview_host(state):
             # lazily inside a lambda is not checked when this function
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
-            flush_layouts=store.flush)
+            flush_layouts=store.flush,
+            on_clients_changed=on_clients_changed,
+            on_hotkey_status=on_hotkey_status)
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
@@ -421,8 +441,10 @@ def main() -> int:
     reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
-    api = api_mod.Api(state, preview_host=build_preview_host(state),
+    api_box = {}
+    api = api_mod.Api(state, preview_host=build_preview_host(state, api_box),
                       client_layouts=build_client_layout_manager(state))
+    api_box["api"] = api
 
     w = None
     scheduler = None
@@ -480,8 +502,13 @@ def main() -> int:
     api._on_recording_dir_ready = start_watching
 
     if rec_dir is not None:
-        cfg["recording_dir"] = str(rec_dir)
-        settings_mod.save(cfg)
+        # Through update(), not save(): start_previews_if_enabled() above
+        # may already have the preview store's debounce thread alive, so
+        # this write races it the same way every other settings writer
+        # does. cfg IS state.settings (passed in above), so mutating it in
+        # place here keeps both in sync exactly as before.
+        with settings_mod.update(cfg) as live:
+            live["recording_dir"] = str(rec_dir)
         # Started before run() rather than from a page-loaded event: the
         # first tick is POLL_SECONDS away and the page asks for its own
         # state on load, so an early push has nothing to race with.
