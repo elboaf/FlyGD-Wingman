@@ -206,28 +206,46 @@ def test_copy_atomic_gives_up_after_the_attempt_budget(tmp_path):
 def test_copy_atomic_closes_the_temp_descriptor_when_the_source_fails(tmp_path):
     """`with A, B` enters A first, so wrapping the temp fd second would leak
     it whenever the source cannot be opened -- unlink removes the name, not
-    the descriptor. Asserted by fstat rather than by counting /proc/self/fd,
-    which drifts by a few descriptors during a full-suite run and cannot
-    tell ambient noise from a leak."""
+    the descriptor.
+
+    Two earlier designs for this test were both wrong:
+
+    1. Counting open descriptors via /proc/self/fd with a `before + 1`
+       tolerance. It passed in isolation but failed in the full suite --
+       ambient descriptor churn during a full run is around 3, a real leak
+       is +20, and the tolerance could not tell them apart. It was also
+       Linux-only, silently skipping on Windows, where EVE actually runs.
+    2. Recording the fd number mkstemp returned and asserting
+       os.fstat(number) raises EBADF. This reasons about descriptor
+       *identity* through a number rather than an object: once closed, that
+       number is free, and anything opening a file between the close and
+       the assertion (traceback machinery, a pytest plugin, capture) can
+       reuse it, making fstat succeed and the test fail spuriously.
+
+    Both share the same root problem: proving descriptor closure through
+    the OS's fd table instead of observing what copy_atomic did with the
+    stream object it created. Instead: patch os.fdopen as copy_atomic sees
+    it, capture the stream it returns, and assert directly that the stream
+    is closed -- no descriptor numbers, no /proc, no platform guard, no
+    tolerance.
+    """
     target = tmp_path / "dst.dat"
     target.write_bytes(b"original")
-    handles = []
-    real_mkstemp = atomicio.tempfile.mkstemp
+    wrapped = []
+    real_fdopen = atomicio.os.fdopen
 
-    def record(*args, **kwargs):
-        handle, name = real_mkstemp(*args, **kwargs)
-        handles.append(handle)
-        return handle, name
+    def record(handle, *args, **kwargs):
+        stream = real_fdopen(handle, *args, **kwargs)
+        wrapped.append(stream)
+        return stream
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(atomicio.tempfile, "mkstemp", record)
+    monkey.setattr(atomicio.os, "fdopen", record)
     try:
         with pytest.raises(OSError):
             atomicio.copy_atomic(tmp_path / "absent.dat", target)
     finally:
         monkey.undo()
 
-    assert len(handles) == 1
-    # EBADF: the descriptor copy_atomic was handed is no longer open.
-    with pytest.raises(OSError):
-        os.fstat(handles[0])
+    assert len(wrapped) == 1
+    assert wrapped[0].closed
