@@ -59,7 +59,7 @@
     // Named in full rather than "check your settings": the whole point is
     // that the user cannot see which of the two is missing.
     el.textContent = parts.length
-      ? 'No hotkeys are registered — ' + parts.join(', and ') + '.'
+      ? 'No keybinds are registered — ' + parts.join(', and ') + '.'
       : '';
   }
 
@@ -168,7 +168,7 @@
       var typed = WM.make('button', 'linkbtn', 'Type…');
       typed.addEventListener('click', function () {
         var text = window.prompt(
-          'AutoHotkey hotkey for "' + state.labels[id] + '"\n' +
+          'Keybind for "' + state.labels[id] + '"\n' +
           '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
           state.settings.keybinds[id] || '');
         if (text === null) return;
@@ -176,7 +176,7 @@
           if (!result) return;
           if (result.error) {
             WM.send('alert_bookmarks',
-                    'That is not a hotkey AutoHotkey can register.');
+                    'That is not a keybind AutoHotkey can register.');
             return;
           }
           setBind(id, result.ahk);
@@ -279,10 +279,10 @@
   });
 
   WM.el('eve-reset-binds').addEventListener('click', function () {
-    // Overwrites all 21, so it is confirmed. window.confirm is what the
+    // Overwrites all 18 (bookmarks.py BIND_IDS), so it is confirmed. window.confirm is what the
     // rest of the page uses for a destructive action.
     if (!window.confirm(
-        'Replace all 21 keybinds with the recommended defaults?')) {
+        'Replace all 18 keybinds with the recommended defaults?')) {
       return;
     }
     WM.send('reset_binds').then(render);
@@ -338,7 +338,7 @@
     var failed = payload.failed_binds || [];
     warn.hidden = failed.length === 0;
     warn.title = failed.length
-      ? failed.length + ' hotkey(s) failed to register — see Bookmarks'
+      ? failed.length + ' keybind(s) failed to register — see Bookmarks'
       : '';
 
     var label = { stopped: 'Stopped', stale: 'Not responding',

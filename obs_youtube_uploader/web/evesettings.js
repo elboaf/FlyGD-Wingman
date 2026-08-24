@@ -112,8 +112,12 @@
       if (row.path === source) return;
       if (needle && row.name.toLowerCase().indexOf(needle) === -1) return;
       visible.push(row);
-      var label = document.createElement('label');
-      label.className = 'row';
+      // The .check/.box pattern, NOT a bare input: nothing in style.css
+      // targets input[type=checkbox], so the dark appearance comes ENTIRELY
+      // from this wrapper (.check input is opacity:0 and the styled .box is
+      // what you see). A bare input here painted one native white Win32
+      // checkbox per character inside a dark card. bookmarks.js:113-115
+      // builds the same control and carries the same warning.
       var box = document.createElement('input');
       box.type = 'checkbox';
       box.value = row.path;
@@ -121,10 +125,23 @@
       box.addEventListener('change', function () {
         selected[row.path] = box.checked;
       });
-      label.appendChild(box);
-      label.appendChild(document.createTextNode(' ' + row.name));
+      var label = WM.make('label', 'check', ' ' + row.name);
+      label.prepend(WM.make('span', 'box'));
+      label.prepend(box);
       host.appendChild(label);
     });
+    // Collapses to ZERO height when nothing matches -- no border, no
+    // background, no min-height -- so the card silently showed a source
+    // dropdown, a filter and a Copy button with a void between them.
+    // Nothing distinguished "filter matched nothing" from "this folder has
+    // no characters" from "not loaded yet".
+    if (!visible.length) {
+      host.appendChild(WM.make('p', 'empty', needle
+        ? 'No ' + (kind() === 'accounts' ? 'accounts' : 'characters')
+          + ' match that filter.'
+        : 'No other ' + (kind() === 'accounts' ? 'accounts' : 'characters')
+          + ' in this settings set.'));
+    }
   }
 
   function renderBackups() {

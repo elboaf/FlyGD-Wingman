@@ -38,6 +38,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* Declared, not implied: without this WebView2 resolves UA-drawn chrome
+     -- fallback focus rings, form controls, scrollbar corners -- for a
+     LIGHT scheme and paints a near-black ring on a near-black page. */
+  color-scheme: dark;
+
   /* ---- colour ---- */
   --bg: #0c0d10;
   --panel: #14161b;
@@ -46,7 +51,11 @@
   --field-border: #23262e;
   --text: #e8eaed;
   --text-dim: #9aa2b1;
-  --text-faint: #6f7681;
+  /* 4.82:1 on --panel, 5.17:1 on --bg. Was #6f7681, which measured
+     3.88-4.24:1 -- below AA for normal text on every surface it is used
+     on, including all five nav tabs and all three window buttons in
+     their resting state. */
+  --text-faint: #7d8492;
   --brand: #ff5a4d;
   --brand-deep: #c81e12;
   --ok: #4ade80;
@@ -185,13 +194,50 @@ button.btn {
 button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
 button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
+/* Near-black ON the brand, not white on it. White measured 3.08:1 against
+   the old gradient's top stop -- a fail for 12px/600 normal text over
+   roughly the upper half of every primary button in the app. Darkening the
+   fill enough for white text needs ~#cf3b28, which visibly dulls the
+   brand; inverting keeps the vermilion at FULL strength and measures
+   6.31:1. The gradient is narrowed to stay inside the range where the dark
+   label holds: 6.96:1 at the top stop, 5.32:1 at the bottom. */
 button.btn.acc {
-  background: linear-gradient(180deg, var(--brand), #d9291c);
-  border-color: #ff7a6f; color: #fff; font-weight: 600;
+  background: linear-gradient(180deg, #ff6b5e, #f04a3c);
+  border-color: #ff8a80; color: #0c0d10; font-weight: 600;
   box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
 }
+/* brightness(1.08) used to make this button HARDER to read -- it lightened
+   the fill under white text, 3.08 -> 2.96. With a dark label the same
+   gesture improves it, 6.31 -> 6.56. */
 button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+/* THE focus indicator. Nothing below styled :focus at all, so every button
+   in the app fell back to the UA ring -- which, before `color-scheme: dark`
+   above, resolved for a light scheme and drew near-black on a near-black
+   page. #ff8a80 measures 7.2-8.5:1 against every surface here, well over
+   the 3:1 that 1.4.11 asks of a non-text indicator.
+
+   :focus-visible, not :focus: a mouse click on a button must not leave a
+   ring behind, which is the reason the ring was removed rather than
+   restyled the first time. */
+.btn:focus-visible,
+.navbtn:focus-visible,
+.winbtn:focus-visible,
+.bindbtn:focus-visible,
+.linkbtn:focus-visible,
+.rail-plan:focus-visible,
+.skills-row-top:focus-visible,
+.ctxmenu button:focus-visible,
+.linkish:focus-visible,
+.list-head > span:focus-visible {
+  outline: 2px solid #ff8a80;
+  outline-offset: 2px;
+}
+/* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
+   concept here -- it is what Space acts on), so an outline on the
+   container as well would read as two competing indicators. */
+.list-scroll:focus-visible { outline: none; }
 
 .hint {
   color: var(--text-faint); font-size: var(--fs-muted);
@@ -542,7 +588,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* ====================== bookmarks route =============================
    Reuses the settings route's card markup, so it needs the same column
-   direction and scroll safeguard: this route will hold nineteen keybind
+   direction and scroll safeguard: this route will hold eighteen keybind
    rows and will exceed the window height. Without overflow-y the lower
    binds clip with no scrollbar and become unreachable. */
 #route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
@@ -700,6 +746,11 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   box-shadow: 0 0 10px rgba(255, 90, 77, .5);
 }
 .radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+
+/* Radios laid out INLINE in a .row, rather than stacked down a card: the
+   8px stacked margin applies to the first of the pair and not the last
+   (.radio:last-child zeroes it), which sits them at different heights. */
+.settings .row > .radio { margin-bottom: 0; }
 
 /* A masked webhook must not be rendered in a proportional font: the mask
    is what is on screen, and monospace keeps its length honest. */
@@ -896,3 +947,21 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .linkbtn.danger:hover { color: #fff; background: #d9291c; }
 button.btn.danger { border-color: var(--err); color: var(--err); }
 button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
+
+/* ====================== reduced motion ==============================
+   Both animations below are INFINITE and long-running -- `slide` for the
+   entire duration of an ffmpeg stitch, `pulse` for as long as the Google
+   account is unhealthy. Neither offers a pause control, so both exceed
+   WCAG 2.2.2's five-second threshold. Stopped rather than shortened: a
+   faster infinite animation is still an infinite animation.
+
+   The bar must still say "working" without claiming a percentage, so it
+   fills the track at reduced opacity instead of animating across it. */
+@media (prefers-reduced-motion: reduce) {
+  .track.indeterminate .bar {
+    animation: none;
+    width: 100%;
+    opacity: .45;
+  }
+  .pill.warn .led { animation: none; }
+}

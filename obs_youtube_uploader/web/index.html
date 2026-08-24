@@ -207,7 +207,7 @@
   <div class="route" id="route-bookmarks">
     <div class="settings">
       <section class="card">
-        <h2>EVE bookmark hotkeys</h2>
+        <h2>EVE bookmarks</h2>
         <div class="row">
           <span class="lab">Enable</span>
           <!-- The .check/.box pattern is not decoration: .check input is
@@ -215,7 +215,7 @@
                checkbox here rendered as a native white widget. -->
           <label class="check">
             <input type="checkbox" id="eve-enabled"><span class="box"></span>
-            Register hotkeys in EVE
+            Register keybinds in EVE
           </label>
         </div>
         <div class="row"><span class="lab"></span>
@@ -229,7 +229,7 @@
 
       <section class="card">
         <h2>EVE windows</h2>
-        <p class="hint">Hotkeys only fire while one of these windows is
+        <p class="hint">Keybinds only fire while one of these windows is
           active.</p>
         <div class="row"><span class="lab"></span>
           <button class="btn" id="eve-refresh-windows">Refresh</button></div>
@@ -279,14 +279,14 @@
       </section>
 
       <section class="card">
-        <h2>Hotkeys</h2>
+        <h2>Keybinds</h2>
         <div class="row"><span class="lab"></span>
-          <span class="hint">Chords are global: they work from any
+          <span class="hint">Keybinds are global: they work from any
             application, including a browser. They are released while
             previews are switched off.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-off" style="display:none">
-            Previews are off, so every chord below is unregistered until
+            Previews are off, so every keybind below is unregistered until
             you turn them back on.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
@@ -316,9 +316,21 @@
 
       <section class="card">
         <h2>Copy settings</h2>
+        <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
+             opacity:0 and the styled .ring is the visible control, so a
+             bare radio here rendered as a native white Windows dot against
+             the dark card. The empty .lab keeps this row's controls on the
+             same 118px column as every labelled row on the screen. -->
         <div class="row">
-          <label><input type="radio" name="es-kind" value="characters" checked> Characters</label>
-          <label><input type="radio" name="es-kind" value="accounts"> Accounts</label>
+          <span class="lab"></span>
+          <label class="radio">
+            <input type="radio" name="es-kind" value="characters" checked><span class="ring"></span>
+            Characters
+          </label>
+          <label class="radio">
+            <input type="radio" name="es-kind" value="accounts"><span class="ring"></span>
+            Accounts
+          </label>
         </div>
         <div class="row">
           <label for="es-source">Copy from</label>

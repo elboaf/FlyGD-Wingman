@@ -99,17 +99,17 @@
     else if (clash === 'unknown') { button.classList.add('unknown'); }
     else if (shadow === 'latent') { button.classList.add('dim'); }
     if (clash === 'refused') {
-      button.title = 'Another application already owns this chord.';
+      button.title = 'Another application already owns this keybind.';
     } else if (clash === 'duplicate') {
-      button.title = 'This chord is bound twice here.';
+      button.title = 'This keybind is bound twice here.';
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
-                     'Windows has not reported on this chord yet.';
+                     'Windows has not reported on this keybind yet.';
     } else if (shadow === 'active') {
-      button.title = 'An EVE bookmark uses this chord. This binding takes ' +
+      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
                      'it while an EVE client is focused.';
     } else if (shadow === 'latent') {
-      button.title = 'An EVE bookmark is configured with this chord. ' +
+      button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';
     }
     button.addEventListener('click', function () {
@@ -125,7 +125,7 @@
     typed.addEventListener('click', function () {
       endCapture();
       var text = window.prompt(
-        'Hotkey for "' + label + '"\n' +
+        'Keybind for "' + label + '"\n' +
         'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
         gesture || '');
       if (text === null) { return; }
@@ -134,7 +134,7 @@
         if (!result) { return; }
         if (result.error) {
           WM.send('alert_bookmarks',
-                  'That is not a hotkey Windows can register. It needs at ' +
+                  'That is not a keybind Windows can register. It needs at ' +
                   'least one of Ctrl, Alt, Shift or Win, plus a key.');
           return;
         }
@@ -246,7 +246,7 @@
         // backend with nothing said looks exactly like the click never
         // registering, which is how the same chord gets tried twice.
         WM.send('alert_bookmarks',
-                'That binding was not saved. Another chord may already ' +
+                'That binding was not saved. Another keybind may already ' +
                 'use it, or the settings file could not be written.');
         return;
       }
@@ -305,9 +305,9 @@
         endCapture();
         WM.send('alert_bookmarks',
                 result.error === 'no-modifier'
-                  ? 'A preview hotkey needs at least one of Ctrl, Alt, ' +
+                  ? 'A preview keybind needs at least one of Ctrl, Alt, ' +
                     'Shift or Win, or it would fire in every application.'
-                  : 'That key cannot be used as a hotkey.');
+                  : 'That key cannot be used as a keybind.');
         return;
       }
       var apply = session.onSet;
