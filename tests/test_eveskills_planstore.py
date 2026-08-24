@@ -114,6 +114,64 @@ def write_plan(folder, stem, body="Navigation IV\n"):
     return path
 
 
+class _NamedProxy:
+    """A Path-like directory entry with a chosen *name*, whose file
+    operations forward to a different, real file (or to nothing, when
+    the stem is expected to be rejected before any file op runs).
+
+    Stands in for a filename that cannot exist as its own real file on
+    every platform this suite runs on: one that collides
+    case-insensitively with a real file already on disk (Windows'
+    filesystem is case-insensitive -- writing "rifter.txt" next to an
+    existing "Rifter.txt" just overwrites it, so two case-variant stems
+    can never both be real files there), or one containing a character
+    Windows refuses at the write outright (a colon).
+    """
+
+    def __init__(self, name, backing=None):
+        self.name = name
+        self.stem = name[:-len(".txt")] if name.endswith(".txt") else name
+        self._backing = backing
+
+    def is_file(self):
+        return True
+
+    def stat(self):
+        assert self._backing is not None, (
+            "stat() on a proxy expected to be rejected before any file op")
+        return self._backing.stat()
+
+    def read_text(self, encoding=None):
+        return self._backing.read_text(encoding=encoding)
+
+
+class FixedEntries:
+    """A plans folder whose glob() returns exactly the given entries, in
+    the given order, instead of enumerating real files. Also pins
+    enumeration order for a test that must not depend on the
+    filesystem's own -- the defect this guards was invisible to a test
+    that merely created two files and asserted a winner: the machine it
+    was written on enumerated the capitalised stem first and passed,
+    with and without the fix, while CI enumerated the other way and
+    failed.
+
+    entries may include _NamedProxy stand-ins for a directory entry that
+    cannot exist as its own real file on every platform this suite runs
+    on.
+    """
+
+    def __init__(self, entries):
+        self._entries = entries
+
+    def glob(self, pattern):
+        # Coupled to the production call the way ReversedGlob (which this
+        # replaced) was, via a real folder.glob(pattern) -- so a change to
+        # list_plans's glob pattern, a second glob, or a move to iterdir()
+        # fails loudly here instead of these tests quietly testing nothing.
+        assert pattern == "*.txt", pattern
+        return list(self._entries)
+
+
 def test_a_missing_folder_lists_nothing_without_raising(tmp_path):
     """The folder is created on first launch, but a user can delete it
     while the app is running. That costs an empty roster, not a crash."""
@@ -257,11 +315,13 @@ def test_a_stem_with_a_windows_invalid_character_is_skipped(tmp_path):
     """A colon is a legal filename byte on Linux, which is exactly why
     this must be caught here rather than assumed away by the OS: the
     released application is Windows-only, and this stem would never
-    reach disk there in the first place. Same validator, same path as a
-    user-typed name (PlanStore.cs:81-85)."""
-    write_plan(tmp_path, "Bad:Name")
-    write_plan(tmp_path, "Real")
-    found, issues = planstore.list_plans(tmp_path)
+    reach disk there in the first place -- Windows refuses to create
+    such a file at all, so this fakes the directory entry instead of
+    writing it. Same validator, same path as a user-typed name
+    (PlanStore.cs:81-85)."""
+    real = write_plan(tmp_path, "Real")
+    found, issues = planstore.list_plans(
+        FixedEntries([_NamedProxy("Bad:Name.txt"), real]))
     assert [p.name for p in found] == ["Real"]
     assert len(issues) == 1 and issues[0].file_name == "Bad:Name.txt"
 
@@ -272,40 +332,18 @@ def test_a_case_differing_pair_of_stems_collides(tmp_path):
     """PlanStore.cs:86-90 -- the seenNames set is case-insensitive.
     Without this, "Rifter.txt" and "rifter.txt" both load and silently
     shadow each other in the rail: whichever the UI picks last wins,
-    invisibly, on every reload."""
-    write_plan(tmp_path, "Rifter")
-    write_plan(tmp_path, "rifter")
-    found, issues = planstore.list_plans(tmp_path)
+    invisibly, on every reload. The pair is faked rather than written
+    as two real files: on Windows the filesystem is case-insensitive,
+    so writing "rifter.txt" once "Rifter.txt" already exists just
+    overwrites that same file."""
+    rifter = write_plan(tmp_path, "Rifter")
+    found, issues = planstore.list_plans(FixedEntries(
+        [rifter, _NamedProxy("rifter.txt", backing=rifter)]))
     assert [p.name for p in found] == ["Rifter"]
     assert len(issues) == 1
     assert issues[0].file_name == "rifter.txt"
     assert issues[0].message == (
         "Plan name collides case-insensitively with another file.")
-
-
-class ReversedGlob:
-    """A plans folder that enumerates in a chosen order.
-
-    list_plans() touches its directory argument in exactly one way --
-    `plans_dir.glob("*.txt")` -- so a shim over that one call is enough
-    to pin enumeration order without pretending to be a Path.
-
-    Injecting the order is the whole point. The defect this guards was
-    invisible to a test that merely created two files and asserted a
-    winner: the machine it was written on enumerated the capitalised
-    stem first and passed, with and without the fix, while CI enumerated
-    the other way and failed. A test that depends on the filesystem's
-    ordering is testing the filesystem.
-    """
-
-    def __init__(self, folder, order):
-        self._folder = folder
-        self._order = order
-
-    def glob(self, pattern):
-        found = {p.name: p for p in self._folder.glob(pattern)}
-        assert set(found) == set(self._order), (sorted(found), self._order)
-        return [found[name] for name in self._order]
 
 
 def test_the_surviving_stem_does_not_depend_on_enumeration_order(tmp_path):
@@ -314,12 +352,12 @@ def test_the_surviving_stem_does_not_depend_on_enumeration_order(tmp_path):
     not: both stems fold to the same key and Python's sort is stable, so
     the winner falls through to the filesystem. Both orders must name
     the same survivor."""
-    write_plan(tmp_path, "Rifter")
-    write_plan(tmp_path, "rifter")
-    for order in (["Rifter.txt", "rifter.txt"], ["rifter.txt", "Rifter.txt"]):
-        found, issues = planstore.list_plans(ReversedGlob(tmp_path, order))
-        assert [p.name for p in found] == ["Rifter"], order
-        assert [i.file_name for i in issues] == ["rifter.txt"], order
+    rifter = write_plan(tmp_path, "Rifter")
+    proxy = _NamedProxy("rifter.txt", backing=rifter)
+    for entries in ([rifter, proxy], [proxy, rifter]):
+        found, issues = planstore.list_plans(FixedEntries(entries))
+        assert [p.name for p in found] == ["Rifter"], entries
+        assert [i.file_name for i in issues] == ["rifter.txt"], entries
 
 
 def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(
@@ -328,14 +366,14 @@ def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(
     which plan is dropped. With a non-total sort that choice was the
     filesystem's, and `Only the first N of M` would name a different
     casualty per machine while reading as deterministic."""
-    names = ["Alpha", "alpha"] + [
-        f"Plan{n:03d}" for n in range(planstore.MAX_PLAN_FILES - 1)]
-    for name in names:
-        write_plan(tmp_path, name)
-    files = [f"{n}.txt" for n in names]
+    alpha = write_plan(tmp_path, "Alpha")
+    alpha_lower = _NamedProxy("alpha.txt", backing=alpha)
+    plans_ = [write_plan(tmp_path, f"Plan{n:03d}")
+              for n in range(planstore.MAX_PLAN_FILES - 1)]
+    entries = [alpha, alpha_lower] + plans_
 
-    for order in (files, list(reversed(files))):
-        found, issues = planstore.list_plans(ReversedGlob(tmp_path, order))
+    for order in (entries, list(reversed(entries))):
+        found, issues = planstore.list_plans(FixedEntries(order))
         kept = [p.name for p in found]
         assert "Alpha" in kept and "alpha" not in kept, order
         assert any(i.file_name == "plans" and "Only the first" in i.message
