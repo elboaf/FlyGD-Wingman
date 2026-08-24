@@ -237,6 +237,16 @@ def test_rejects_an_oversized_refresh_token():
         sso.refresh_token("rt", transport=FakeTransport(payload))
 
 
+def test_rejects_a_response_refresh_token_containing_a_nul():
+    """The local-input NUL guard on the token this module SENDS has a twin
+    on the token EVE SENDS BACK: both are about to be encrypted and written
+    to disk, and a NUL surviving either path corrupts that state file the
+    same way."""
+    payload = dict(GOOD, refresh_token="rt-val\0ue")
+    with pytest.raises(sso.OAuthError, match="refresh token"):
+        sso.refresh_token("rt", transport=FakeTransport(payload))
+
+
 def test_rejects_an_out_of_range_lifetime():
     """0 means already expired and a day-plus means something is wrong with
     the response -- and either would be stored as a refresh deadline.
@@ -304,6 +314,31 @@ def test_rejects_inputs_before_they_reach_the_wire():
     with pytest.raises(sso.OAuthError):
         sso.refresh_token("rt\0value", transport=unused)
     assert unused.requests == []
+
+
+def _transport_that_must_not_be_called(request, timeout=None):
+    """A transport that fails the test outright if the guard it's paired
+    with let anything reach the wire -- stricter than merely recording the
+    call, since an assertion after the fact could be skipped by an earlier
+    unrelated failure."""
+    pytest.fail("a locally-invalid input reached the transport")
+
+
+def test_rejects_a_whitespace_only_code():
+    """`not code` alone (bare truthiness) is False for "   ", so a
+    whitespace-only code would sail through to the wire -- reproducing
+    EveSso.cs:83's IsNullOrWhiteSpace(code) guard is what catches it here
+    instead, at the cost of a round trip this check exists to avoid."""
+    with pytest.raises(sso.OAuthError, match="authorization code"):
+        sso.exchange_code("   ", VERIFIER, transport=_transport_that_must_not_be_called)
+
+
+def test_rejects_a_whitespace_only_refresh_token():
+    """Same reasoning as the whitespace-only code, for the stored refresh
+    token: EveSso.cs:105 rejects it with IsNullOrWhiteSpace, and a bare
+    truthiness check here would not."""
+    with pytest.raises(sso.OAuthError, match="refresh token"):
+        sso.refresh_token("   ", transport=_transport_that_must_not_be_called)
 
 
 def test_definitive_codes_are_exactly_the_three():

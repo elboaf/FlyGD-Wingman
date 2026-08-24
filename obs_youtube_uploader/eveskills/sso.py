@@ -133,7 +133,12 @@ def exchange_code(code: str, verifier: str, *,
     """Trade an authorization code for a token set."""
     # Checked locally: sending a blank code or a malformed verifier spends a
     # round trip to be told about a bug that is entirely on this side.
-    if not code or len(code) > MAX_CODE_CHARS or "\0" in code:
+    # Whitespace-aware (not code.strip()) so a whitespace-only code -- not
+    # code, but not a usable one either -- is caught here, matching
+    # EveSso.cs:83's IsNullOrWhiteSpace(code). A bare truthiness check
+    # would let "   " sail through and spend the very round trip this
+    # guard exists to avoid.
+    if not code.strip() or len(code) > MAX_CODE_CHARS or "\0" in code:
         raise OAuthError(0, "invalid_request", "The authorization code was invalid.")
     if not 43 <= len(verifier) <= 128 or any(ch not in _VERIFIER_CHARS for ch in verifier):
         raise OAuthError(0, "invalid_request", "The PKCE verifier was invalid.")
@@ -149,7 +154,11 @@ def exchange_code(code: str, verifier: str, *,
 
 def refresh_token(token: str, *, transport=_default_transport) -> TokenSet:
     """Trade a stored refresh token for a fresh token set."""
-    if not token or len(token) > MAX_REFRESH_TOKEN_CHARS or "\0" in token:
+    # Whitespace-aware for the same reason as exchange_code's code guard:
+    # EveSso.cs:105 rejects a whitespace-only refresh token with
+    # IsNullOrWhiteSpace, and `not token` alone would let "   " through to
+    # the wire.
+    if not token.strip() or len(token) > MAX_REFRESH_TOKEN_CHARS or "\0" in token:
         raise OAuthError(0, "invalid_request", "The stored refresh token was invalid.")
     payload = _post_token({
         "grant_type": "refresh_token",
