@@ -234,3 +234,28 @@ def test_every_destination_and_section_is_reachable_and_exists():
     assert rail == sections, (
         f"rail and sections disagree: only in rail {rail - sections}, "
         f"only in markup {sections - rail}")
+
+
+def test_opening_a_dialog_disarms_an_armed_keybind_capture():
+    """A module that captures keystrokes must disarm before raising an
+    in-page dialog.
+
+    The capture handler is document-level and preventDefault()s EVERY key,
+    Tab included. While these prompts were window.prompt it did not matter:
+    a native OS dialog takes input outside the page. WM.prompt is an
+    in-page field, so an armed capture swallows everything typed into it --
+    arm a capture on one bind, press Type… on another, and the dialog opens
+    dead.
+
+    previews.js always disarmed here; bookmarks.js did not, and the
+    conversion turned that difference into a bug.
+    """
+    for name in ("bookmarks.js", "previews.js"):
+        src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
+        assert "endCapture" in src, f"{name} has no capture to disarm?"
+        for match in re.finditer(r"WM\.prompt\(", src):
+            # The handler that raises it must disarm somewhere above.
+            before = src[max(0, match.start() - 400):match.start()]
+            assert "endCapture()" in before, (
+                f"{name} raises WM.prompt without disarming an armed "
+                f"capture first")

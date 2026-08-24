@@ -167,6 +167,14 @@
       // the two cannot disagree.
       var typed = WM.make('button', 'linkbtn', 'Type…');
       typed.addEventListener('click', function () {
+        // Disarm first, as previews.js already did. This did not matter
+        // while the prompt was window.prompt: a native OS dialog takes
+        // input outside the page entirely. WM.prompt is an in-page field,
+        // and an armed capture's document-level keydown handler
+        // preventDefault()s EVERY key -- so arming a capture on one bind
+        // and pressing Type… on another opened a prompt that could not be
+        // typed into.
+        endCapture();
         // The app's own dialog, not window.prompt: WebView2 captions that
         // with the page origin, so entering a keybind in a frameless dark
         // app raised a grey box mentioning localhost.
