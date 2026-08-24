@@ -22,15 +22,11 @@ jobs:
   # neither, so `git tag v3.2.2 && git push --tags` built an installer and
   # published a release without a single test having run.
   #
-  # ubuntu-latest for now, DELIBERATELY, even though this ships a Windows
-  # app. The suite has never run on Windows and is not yet green there;
-  # putting windows-latest here would red both workflows immediately and
-  # block Task 2 from proving the composite action. Task 3 fixes Windows
-  # compatibility and then switches this job over. Closing the
-  # zero-tests-on-release hole is worth having a platform-imperfect gate
-  # in the meantime.
+  # windows-latest: this ships a Windows app, and the suite is now green
+  # there (Task 3). It ran on ubuntu-latest until then, deliberately, so
+  # this gate would not go red before Windows compatibility was fixed.
   test:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -18,7 +18,12 @@
 - **Do not run `ruff format` before Task 5.** Tasks 1–4 must stay reviewable; a reformat mixed into them would bury the real change.
 - **`packages = [...]` in `pyproject.toml` is explicit on purpose.** A missing subpackage installs cleanly and fails at import time inside the frozen build. Never replace it with auto-discovery.
 - **The `AppId` in `packaging/installer.iss` must not change.** It is what makes the rename upgrade in place instead of installing a second copy.
-- Baseline before any change: **1839 passed, 6 skipped** via `python -m pytest tests/ -q`.
+- **Baseline: measure it, do not trust a number written here.** This repository is under concurrent development and the absolute test count has moved three times during this plan's own execution (1839 → 1840 after Task 3's split, → 1850 once `#35` landed). Before starting any task, run `python -m pytest tests/ -q` and record what it says. That figure, not any number in this document, is your baseline.
+
+  The invariants that actually hold, and that every task must preserve:
+  - **No regression:** after your change, `passed` must be ≥ the count you recorded, and `failed` must be 0.
+  - **Both legs reconcile:** on the CI matrix, `passed + skipped` must be identical on `ubuntu-latest` and `windows-latest`. The skip *sets* differ by platform; the collected total must not.
+  - **A rising total is not automatically a regression** — splitting one test into two legitimately adds one. A *falling* total is always worth investigating.
 
 ## PR boundaries
 
@@ -574,7 +579,7 @@ assert result == tmp_path / "thing" / "file.mkv"
 Every fix above must be platform-neutral. Run locally:
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped` — the same numbers as the baseline. A changed count means a fix altered behaviour rather than portability.
+Expected: the baseline you recorded before starting, unchanged. A changed count means a fix altered behaviour rather than portability.
 
 - [ ] **Step 6: Push and confirm Windows is green**
 
@@ -601,9 +606,13 @@ gh -R elboaf/FlyGD-Wingman run view --log | grep -E 'SKIPPED|passed|skipped' | t
 | `test_eveskills_dpapi.py:30`, `:38` | `skipif(sys.platform == "win32")` | Linux only |
 | `test_evesettings_tree.py:121` | `skipif(os.name == "nt")` | Linux only |
 
-So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and exactly **three tests skip** (`dpapi:30`, `dpapi:38`, `evesettings_tree:121`). Any Windows-only test still skipping means the matrix is not doing its job.
+So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and the totals reconcile — Windows `passed + skipped` must equal Linux `passed + skipped`, because the same tests are collected on both.
 
-Note that `test_preview_host.py:145` will now **execute** rather than skip. Its reason string — "needs a real message pump and window station" — describes what it requires, not a prediction that a runner lacks it. If it fails on GitHub's Windows runner because the service context provides no window station, that is a real finding: report it and decide whether to narrow the marker, rather than silently widening the skip.
+**Measured on real runs.** Before the bak-mode split (run 32784568339): Linux `1839 passed, 6 skipped`; Windows `1831 passed, 14 skipped`, both totalling 1845. After the split (run 32786643297): Linux `1840 passed, 6 skipped`; Windows `1831 passed, 15 skipped`, both totalling 1846 — the split adds one test, so a rising total is correct here, not a regression.
+
+Windows skips 14 (15 after the split), not 3 — the extra eleven are all legitimately POSIX-only: `chmod`-based unreadable-store tests (Windows does not honour mode 000), POSIX symlink semantics, owner-only permission bits, case-distinct filenames, and the several `*_off_windows` no-op guards. Do not treat the count as a failure; check the *names*, and confirm no `test_preview_win32.py`, `test_preview_host.py`, or `test_eveskills_dpapi.py::test_*_on_windows` entry appears among them. The invariant that matters is that both legs' `passed + skipped` totals agree.
+
+Note that `test_preview_host.py:145` **ran and passed** on the GitHub Windows runner, which settles an open question from the design doc: the service-context runner does provide a real message pump and window station.
 
 - [ ] **Step 7: Switch the `test` jobs in `release.yml` and `build.yml` to Windows**
 
@@ -642,7 +651,7 @@ knowing whether a break is platform-specific is the point of a matrix.
 
 The test-suite fixes here are portability only -- encoding, newline
 translation, and file-handle lifetime. The Linux run is unchanged at
-1839 passed, 6 skipped."
+the recorded baseline, unchanged."
 ```
 
 ---
@@ -746,7 +755,7 @@ Expected: about 111 findings resolved. Do **not** pass `--unsafe-fixes`; the 40 
 - [ ] **Step 4: Confirm the auto-fixes broke nothing**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 This is the entire safety argument for an automated fix pass across 149 files. If the count changed, run `git diff` and find out which fix did it before going further.
 
@@ -761,7 +770,7 @@ git commit -m "Apply ruff's automatic fixes
 Mechanical: import sorting, unused imports, unused noqa directives,
 datetime.timezone.utc over the deprecated alias, f-strings over
 printf-style formatting. No behaviour change; the suite is unchanged at
-1839 passed, 6 skipped.
+the recorded baseline, unchanged.
 
 Kept separate from the hand-written fixes so those stay reviewable."
 ```
@@ -818,7 +827,7 @@ Run: `uv run --extra dev ruff check .`
 Expected: `All checks passed!`
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 - [ ] **Step 8: Add the lint step to CI**
 
@@ -856,7 +865,7 @@ The F821 on ui/window.py was never a live bug -- the annotation is a
 string and pywebview is imported lazily on purpose -- so it becomes a
 TYPE_CHECKING import that says so rather than a behaviour change.
 
-1839 passed, 6 skipped, unchanged."
+the recorded baseline, unchanged."
 ```
 
 ---
@@ -927,7 +936,7 @@ Expected: `149 files reformatted, 27 files left unchanged` (approximately — St
 - [ ] **Step 5: Verify nothing broke**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: the baseline you recorded before starting, unchanged (see Global Constraints — measure, do not trust a written number).
 
 That the suite is unchanged is the whole safety argument for a 149-file mechanical rewrite. Anything else, stop.
 
@@ -960,7 +969,20 @@ A squash merge rewrites the format commit into a brand-new SHA, and the entry yo
 
 Two ways to get this right; pick one and be deliberate:
 
-**A — merge commit (simplest).** Merge this PR with a true merge commit, not squash and not rebase. The format commit's SHA survives, so recording it now works:
+**This repository squash-merges.** Confirmed against `main`: `#33`, `#34`, `#35`, and `#36` all landed as single commits titled `<subject> (#N)`. So the format commit's SHA on this branch **will not exist** in `main`'s history, and Option A below is not actually available without someone deliberately choosing a different merge button. Plan for B.
+
+**B — squash or rebase merge (what this repo does).** Write `.git-blame-ignore-revs` with a placeholder comment and no SHA, merge the PR, then read the squashed commit's SHA off `main` and push one follow-up commit filling it in:
+
+```bash
+# After the PR merges:
+git fetch origin
+POST_MERGE_SHA=$(git log origin/main --format='%H %s' -20 | grep 'Apply ruff format' | cut -d' ' -f1)
+printf '# Mechanical reformats. Configure once with:\n#   git config blame.ignoreRevsFile .git-blame-ignore-revs\n\n# Adopt ruff format across the tree (149 of 176 files, no behaviour change)\n%s\n' "$POST_MERGE_SHA" > .git-blame-ignore-revs
+```
+
+Then commit that directly to a small follow-up PR. Two steps, and the second is easy to forget — so make the PR description say the follow-up is required, and do not close the task until `git blame` on `main` actually skips the reformat.
+
+**A — true merge commit (only if someone deliberately chooses it).** If this PR is merged with a real merge commit rather than squashed, the SHA survives and can be recorded before merging:
 
 ```bash
 FORMAT_SHA=$(git rev-parse HEAD)
@@ -968,7 +990,7 @@ printf '# Mechanical reformats. Configure once with:\n#   git config blame.ignor
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
-**B — squash or rebase merge.** Write the file with a placeholder now, merge, then push one follow-up commit to `main` replacing it with the post-merge SHA read from `git log`. This is two steps and easy to forget, which is why A is preferred.
+Do not assume this path. Verify how the PR was actually merged before trusting any recorded SHA.
 
 Whichever you choose, say so explicitly in the PR description. A reviewer clicking the default merge button is exactly how this breaks.
 
@@ -1399,7 +1421,7 @@ Tell the maintainer explicitly that `docs/branch-protection.md` needs applying b
 
 | What | How | Expected |
 |------|-----|----------|
-| Suite unchanged throughout | `python -m pytest tests/ -q` | `1839 passed, 6 skipped` |
+| Suite unchanged throughout | `python -m pytest tests/ -q` | baseline unchanged, 0 failed |
 | Lint clean | `uv run --extra dev ruff check .` | `All checks passed!` |
 | Format clean | `uv run --extra dev ruff format --check .` | `176 files already formatted` |
 | Ruff is the pinned version | `uv run --extra dev ruff --version` | `ruff 0.16.4` |

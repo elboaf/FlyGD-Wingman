@@ -20,9 +20,11 @@ on:
 
 jobs:
   test:
-    # ubuntu-latest deliberately; see the note in release.yml. Task 3
-    # switches both over once the suite is green on Windows.
-    runs-on: ubuntu-latest
+    # windows-latest: this ships a Windows app, and the suite is now
+    # green there (Task 3). It ran on ubuntu-latest until then,
+    # deliberately, so this job would not go red before Windows
+    # compatibility was fixed.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

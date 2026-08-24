@@ -611,7 +611,12 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
     there. Without this, the roster (character names, ids, scopes, the
     full snapshot -- DPAPI protects only the token blob) would be
     readable from an 0644 .bak sitting right beside a hardened 0600
-    primary."""
+    primary.
+
+    The mode assertion itself is POSIX-only -- see
+    test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix
+    below -- so this only carries the platform-neutral half: the
+    write-back path must run to completion without raising."""
     target = tmp_path / "eve_skills.json"
     bak = tmp_path / "eve_skills.json.bak"
     state.save(state.SkillsState(selected_plan_name="Good"), target)
@@ -622,4 +627,25 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
     loaded, warnings = state.load(target)
 
     assert loaded.selected_plan_name == "Good"
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="POSIX mode bits; on Windows DPAPI does the work")
+def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(
+        tmp_path):
+    """Split from the platform-neutral test above so Windows honestly
+    reports this half as skipped rather than silently passing an
+    assertion it cannot make good on: os.chmod on Windows only ever
+    toggles the read-only attribute, never real permission bits (the
+    call this guards in state.py documents exactly that), so the 0600
+    equality below is a POSIX-only guarantee."""
+    target = tmp_path / "eve_skills.json"
+    bak = tmp_path / "eve_skills.json.bak"
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    os.chmod(bak, 0o644)
+
+    target.write_text("{ not json", encoding="utf-8")
+    state.load(target)
+
     assert stat.S_IMODE(bak.stat().st_mode) == 0o600
