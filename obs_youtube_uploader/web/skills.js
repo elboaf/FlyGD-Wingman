@@ -579,8 +579,12 @@
    * recovering from a misclick means a full SSO round trip through a
    * browser.
    *
-   * Only one row can be armed at a time, which is why `confirming` holds
-   * an id rather than a flag: arming a second row disarms the first.
+   * `confirming` holds an id rather than a flag because arming a second
+   * row overwrites it, so only one row can ever be armed at once -- but
+   * arming happens only from the Forget-button click below, never from
+   * expansion, so an armed row stays armed while another row is opened
+   * and inspected. What actually disarms it: collapsing the armed row
+   * (toggle(), above), Cancel, or Forget itself.
    */
   function forgetNode(ch) {
     var foot = WM.make('div', 'forget-row');

@@ -1267,6 +1267,20 @@ class SkillsController:
                  # Plain ints across the bridge: the page compares these
                  # arithmetically, and `null > 3` is quietly false in
                  # JavaScript rather than an error.
+                 #
+                 # This collapses None into 0 -- a deliberate, LOSSY
+                 # collapse. None means the skill NAME never resolved
+                 # (unrecognised by the type cache); 0 means it resolved
+                 # but was never trained. Those are different facts
+                 # (SkillPlanEvaluator.cs:73,77-78 passes null for the
+                 # former and 0 for the latter, and that distinction
+                 # survives all the way through evaluator.py). `state`
+                 # is what still carries it on this side of the bridge:
+                 # `state == "Unknown"` means the name did not resolve.
+                 # Anything that renders active_level/trained_level
+                 # (e.g. a future "Active n / Trained n" column) must
+                 # check state first -- 0 is not a meaningful count when
+                 # state is Unknown.
                  "active_level": int(req.active_level or 0),
                  "trained_level": int(req.trained_level or 0),
                  "state": req.state,
