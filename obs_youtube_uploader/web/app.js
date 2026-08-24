@@ -49,7 +49,7 @@
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
-                 'onBookmarks', 'onEveStatus'];
+                 'onBookmarks', 'onEveStatus', 'onEveSettingsNames'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -91,7 +91,8 @@
     var routes = { main: 'route-main', settings: 'route-settings',
                    firstrun: 'route-firstrun',
                    bookmarks: 'route-bookmarks',
-                   previews: 'route-previews' };
+                   previews: 'route-previews',
+                   evesettings: 'route-evesettings' };
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
