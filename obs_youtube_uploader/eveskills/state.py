@@ -18,7 +18,6 @@ file should cost one row, not the launch.
 """
 import json
 import os
-import shutil
 import stat as stat_module
 import time
 from dataclasses import dataclass, field
@@ -488,14 +487,54 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
     """
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
-    try:
-        recovered = from_dict(json.loads(_read_bounded(backup)))
-    except (OSError, ValueError):
+    recovered = None
+    for attempt in range(2):
+        try:
+            recovered = from_dict(json.loads(_read_bounded(backup)))
+            break
+        except ValueError:
+            # The backup's own content is bad (missing, not JSON, or over
+            # the size cap). That is permanent -- retrying reads the same
+            # bytes again -- so this is the genuine "no usable backup" case.
+            break
+        except OSError:
+            # A transient sharing violation on a GOOD backup (a Windows
+            # antivirus scan, a backup tool with the file briefly open) must
+            # not be treated the same as a missing or genuinely unreadable
+            # one. The single broad `except (OSError, ValueError)` this
+            # replaced discarded a perfectly good .bak over a hiccup that a
+            # moment's wait resolves, so OSError alone gets one retry before
+            # giving up.
+            if attempt == 0:
+                time.sleep(0.05)
+    if recovered is None:
         warnings.append(
             f"{path.name} could not be read and was preserved as "
             f"{preserved or 'a copy'}; starting with an empty roster. "
             "Any characters you had added will need re-authorising.")
         return SkillsState(), warnings
+
+    if not preserved:
+        # _preserve_corrupt's own os.replace failed, so the corrupt content
+        # is STILL sitting at *path* -- it was never moved aside. Calling
+        # save() here regardless would still see that corrupt file as the
+        # current primary and rotate it into *backup* as save()'s own
+        # first step, overwriting the good backup this very recovery just
+        # read `recovered` from with the corrupt content it was recovering
+        # FROM. Write-then-rotate (below) fixes the ordering bug where a
+        # write failure could destroy a good backup; it does not fix this
+        # one, because here the rotate step's SOURCE is already corrupt
+        # before save() is ever called. The corrupt primary on disk is by
+        # definition worse than the good backup `recovered` came from, so
+        # the safest thing is to do nothing to either file: hand back the
+        # recovered roster in memory and leave both exactly as they are.
+        warnings.append(
+            f"Recovered {path.name} from backup after the main file could "
+            "not be read, but the corrupt file could not be moved aside "
+            "and was left in place; the recovery could not be saved back "
+            "to disk. If the app closes before the next successful save, "
+            "this recovery will be lost.")
+        return recovered, warnings
 
     # TriffSkillsState.cs:118-119: write the recovered document back to
     # *path* immediately, before returning. _preserve_corrupt already moved
@@ -533,27 +572,48 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
 def save(state: SkillsState, path: Path) -> None:
     """Write the roster atomically, keeping one previous copy.
 
-    The .bak copy does NOT extend atomicio.py, deliberately. write_atomic
+    Write-then-rotate, not rotate-then-write: the new content is written to
+    a staging file and confirmed durable BEFORE anything happens to the
+    existing primary or its .bak. The previous shape copied the current
+    primary to .bak first and only then wrote the new content -- so a
+    primary that was itself corrupt (exactly the case _recover_from_backup
+    calls this from) got copied over a good .bak an instant before the new
+    write was known to succeed, destroying the one good copy on a write
+    failure. Here, if anything fails before the final swap, the existing
+    primary and its .bak are untouched.
+
+    The .bak tier does NOT extend atomicio.py, deliberately. write_atomic
     makes no backup because it is shared with the Wingman/engine boundary,
     where a stray .bak sitting beside a polled INI would be its own problem
-    -- the engine reads that directory. The copy is three lines and only
-    this subsystem wants it, because this is the only file holding something
-    (the refresh tokens) that a refresh cannot rebuild.
+    -- the engine reads that directory. The rotation here is a few lines and
+    only this subsystem wants it, because this is the only file holding
+    something (the refresh tokens) that a refresh cannot rebuild.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     bak = path.with_name(path.name + ".bak")
+    staging = path.with_name(path.name + ".new")
+    # Written and confirmed durable first. atomicio.write_atomic's own
+    # mkstemp+fsync+rename gives *staging* the same durability guarantees a
+    # direct write to *path* would have; only once this succeeds is the
+    # existing primary touched at all.
+    atomicio.write_atomic(staging, json.dumps(to_dict(state), indent=2))
     if path.exists():
         try:
-            # copy2 rather than copy: it carries the mode across, so the
-            # backup of a 0600 document is not published at 0644.
-            shutil.copy2(path, bak)
+            # Rename, not copy: os.replace carries the source file's own
+            # mode across unchanged (it is the same inode under a new
+            # name), matching what shutil.copy2 gave the old copy-then-write
+            # shape -- and it only runs now, after the new content is
+            # already safely on disk at *staging*, so a primary that was
+            # itself corrupt never gets a chance to overwrite a good .bak
+            # with more corruption.
+            os.replace(path, bak)
         except OSError:
             # A backup that cannot be made must not stop the save. Losing
             # the tier is strictly better than losing the write that the
             # tier exists to protect.
             pass
-    atomicio.write_atomic(path, json.dumps(to_dict(state), indent=2))
+    os.replace(staging, path)
     if bak.exists():
         try:
             # write_atomic's own temp file is always created at 0600 by
@@ -562,8 +622,16 @@ def save(state: SkillsState, path: Path) -> None:
             # replaced had. Align .bak to match: without this, a document
             # that predates this package ever touching it (hand-created,
             # or migrated from an older release) leaves a laxer-permission
-            # backup sitting beside the hardened primary it was copied
-            # from moments earlier.
+            # backup sitting beside the hardened primary it just replaced.
+            #
+            # This chmod is a no-op on Windows -- os.chmod there only ever
+            # toggles the read-only attribute, never real permission bits
+            # (uploader.py:286-293 makes the same point about the Google
+            # token file). It costs nothing to still call it (POSIX gets
+            # the real protection it describes), but the actual protection
+            # for this document on Windows is the %LOCALAPPDATA% directory
+            # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
+            # dpapi.py), not these mode bits.
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))
         except OSError:
             pass

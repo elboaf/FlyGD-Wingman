@@ -396,7 +396,15 @@ def test_a_file_over_the_size_cap_is_treated_as_unreadable(tmp_path):
     """Mandatory correction 2 / TriffSkillsState.cs:79,102,118 via
     ReadBoundedText. An unbounded read of a multi-gigabyte state.json (or
     one grown that large by a bug or a hostile drop-in) would pull the
-    whole thing into memory before any validation ever runs."""
+    whole thing into memory before any validation ever runs.
+
+    An oversized primary with no .bak beside it still goes through
+    _recover_from_backup (the size cap is a ValueError, handled identically
+    to a JSON syntax error) -- so it must still be preserved and named in
+    the warning, the same as any other corrupt-content case. Asserting only
+    "could not be read" would pass even if the oversized file were left in
+    place forever, re-read and re-rejected on every launch.
+    """
     target = tmp_path / "eve_skills.json"
     oversized = json.dumps({"selected_plan_name": "x" * (
         state.MAX_STATE_FILE_BYTES + 1024)})
@@ -404,6 +412,9 @@ def test_a_file_over_the_size_cap_is_treated_as_unreadable(tmp_path):
     loaded, warnings = state.load(target)
     assert loaded.characters == []
     assert warnings and "could not be read" in warnings[0]
+    preserved = [p.name for p in tmp_path.iterdir() if ".corrupt-" in p.name]
+    assert len(preserved) == 1
+    assert preserved[0] in warnings[0]
 
 
 def test_an_oversized_primary_is_recovered_from_a_good_backup(tmp_path):
@@ -486,7 +497,9 @@ def test_the_document_is_owner_only_on_posix(tmp_path):
     regardless of umask, and os.replace carries the temporary file's mode to
     the destination -- verified, including over a pre-existing 0644 file. So
     an atomically-written file is owner-only on POSIX without any os.open
-    dance, and the .bak copy inherits it because shutil.copy2 copies mode.
+    dance, and the .bak file gets the same mode: save() rotates the OLD
+    primary into .bak with os.replace (which carries its 0644 across
+    unchanged) and then aligns it to the new primary's 0600 explicitly.
     """
     target = tmp_path / "eve_skills.json"
     target.write_text("{}", encoding="utf-8")
@@ -495,6 +508,48 @@ def test_the_document_is_owner_only_on_posix(tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "eve_skills.json.bak").stat().st_mode) \
         == 0o600
+
+
+def test_preservation_failure_does_not_overwrite_a_good_backup(
+        tmp_path, monkeypatch):
+    """The Critical fix: _preserve_corrupt's own os.replace can fail (a
+    concurrent handle, a permissions hiccup), leaving the corrupt content
+    still sitting at *path*. If _recover_from_backup then called save()
+    anyway, save()'s first step would rotate that still-corrupt *path* into
+    *backup* -- destroying the one good copy this whole recovery exists to
+    protect, an instant after reading a correct roster out of it. The guard
+    in _recover_from_backup must skip save() entirely in this case."""
+    target = tmp_path / "eve_skills.json"
+    # Two identical saves leave a good .bak in place before the primary is
+    # corrupted below -- save() only rotates a .bak from a SECOND call.
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    target.write_text("{ this is not json", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def _flaky_replace(src, dst, *a, **kw):
+        # Only _preserve_corrupt's move-aside targets a ".corrupt-" name.
+        # Failing exactly that call, and nothing else, isolates "moving the
+        # corrupt file aside failed" from every other os.replace this test
+        # would otherwise also break (including inside atomicio.write_atomic).
+        if ".corrupt-" in str(dst):
+            raise OSError("simulated: concurrent handle on the target")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(state.os, "replace", _flaky_replace)
+
+    loaded, warnings = state.load(target)
+
+    assert loaded.selected_plan_name == "Good"
+    assert any("could not be saved back" in w for w in warnings)
+    # The corrupt primary was never moved aside (the simulated failure), and
+    # -- the actual assertion under test -- the good backup must still hold
+    # the good roster, untouched by the recovery attempt.
+    assert target.read_text(encoding="utf-8") == "{ this is not json"
+    backup_state = state.from_dict(json.loads(
+        (tmp_path / "eve_skills.json.bak").read_text(encoding="utf-8")))
+    assert backup_state.selected_plan_name == "Good"
 
 
 def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
