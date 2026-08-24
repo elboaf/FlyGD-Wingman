@@ -330,7 +330,16 @@ class PreviewHost:
 
         now = self.characters()
         if now != before and self._on_clients_changed is not None:
-            self._on_clients_changed(now)
+            # Guarded like _flush_layouts in _teardown: this runs inside
+            # _run(), before SetTimer/_ready.set() on the very first sweep.
+            # An exception here would unwind out of _run and kill the pump
+            # while self._hwnd is still set -- previews dead for the
+            # session, and stop() then blocks for JOIN_TIMEOUT_S posting to
+            # a window nothing is pumping for.
+            try:
+                self._on_clients_changed(now)
+            except Exception:
+                logger.exception("on_clients_changed callback raised")
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -365,7 +374,15 @@ class PreviewHost:
                                "another application may already own it", text)
         self._hotkey_status = status
         if self._on_hotkey_status is not None:
-            self._on_hotkey_status(dict(status))
+            # Guarded for the same reason as _on_clients_changed above: the
+            # initial pass runs in _run() before SetTimer/_ready.set(), and
+            # a raise here would otherwise kill the pump and strand
+            # self._hwnd -- or, from WM_APP_REBIND, propagate into the
+            # wndproc where sys.unraisablehook silently swallows it.
+            try:
+                self._on_hotkey_status(dict(status))
+            except Exception:
+                logger.exception("on_hotkey_status callback raised")
 
     def _on_hotkey(self, libs, ident) -> None:
         action = self._registered.get(ident)

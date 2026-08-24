@@ -471,3 +471,48 @@ def test_a_focus_chord_for_an_absent_character_does_nothing(monkeypatch):
     h._on_hotkey(libs, next(iter(user32.registered)))
 
     assert activated == []
+
+
+def test_a_raising_status_callback_does_not_kill_the_registration_pass():
+    """on_hotkey_status is outside code, called from _run() before
+    SetTimer/_ready.set() on the initial pass. Unguarded, a raise here
+    would unwind out of _run and kill the pump while self._hwnd stays
+    set -- previews dead for the session, stop() then blocking for the
+    full JOIN_TIMEOUT_S posting to a window nothing pumps for."""
+    def boom(status):
+        raise RuntimeError("bridge is gone")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         on_hotkey_status=boom)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_FakeUser32())
+
+    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
+                            "cycle_next": "", "cycle_prev": ""})
+
+    # The pass itself must have completed and recorded its own outcome,
+    # despite the callback raising.
+    assert h.hotkey_status() == {"Ctrl+F1": True}
+
+
+def test_a_raising_clients_callback_does_not_kill_the_sweep(monkeypatch):
+    """Identical hazard to on_hotkey_status: _sweep() runs from _run()
+    before _ready.set() on the very first sweep, so a raise here would
+    kill the preview thread the same way."""
+    def boom(now):
+        raise RuntimeError("bridge is gone")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         on_clients_changed=boom)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create",
+                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Alice")])
+
+    h._sweep(libs=None)   # must not raise
+
+    # The sweep itself must have completed despite the callback raising.
+    assert h.characters() == ["Alice"]
