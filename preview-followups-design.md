@@ -61,9 +61,13 @@ that exists on neither branch. Item 4 touches `ui/api.py`, which that branch
 edits heavily — but `set_restore_clients_on_launch` arrived with #23 and is
 not present there, so any conflict is textual and mechanical.
 
-`web/settings.js` is edited by both. That branch moves the *preview-enabled*
-block out into a new `previews.js`; the client-layout card items 3 and 4
-touch arrived with #23 and is not part of that move.
+`web/settings.js` is edited by both, but not in the same place. That
+branch's 69 removed lines *are* the client-layout card — the block items 3
+and 4 edit — showing as removals only because the branch predates #23 and
+never had them. The preview-enabled block above it does not move; it stays
+at `web/settings.js:211-232` on main and at `:200-232` there. So the rebase
+re-adds the card wholesale, and edits made inside it here cannot conflict
+textually with anything that branch contains.
 
 ## Item 2 — the suite writes to real application state
 
@@ -196,11 +200,48 @@ the same fact, as the save button four lines away in the same card.
 - The checkbox stays checked, which is true — restore-on-launch *is* on.
 - The message carries the real news: it will not survive a restart.
 
-The method already skips the write when the stored value equals the wanted
+### The skip-guard makes `persisted` a lie unless it is tracked
+
+The method skips the write when the stored value already equals the wanted
 one (`ui/api.py:1319`), for the reason `set_preview_enabled` documents at
-`:1244-1256` — the page can emit a no-op toggle on re-render, and a rewrite
-of the whole projected document for nothing is a real cost. That path
-returns `persisted: True`: nothing needed writing, so nothing failed.
+`:1244-1256` — a rewrite of the whole projected document for nothing is a
+real cost.
+
+That guard reads memory, and `settings.update` mutates memory *before* the
+write can fail (`settings.py:213-216`, `ui/api.py:1319-1334` retains the
+mutation deliberately). So after a failed write the document is dirty: a
+later call with the same value finds memory already correct, skips the
+write, and would return `persisted: True` while the disk still holds the old
+value. The contract would be false in exactly the case it exists to report.
+
+The fix is to make the guard consult the write, not only the value:
+
+```python
+self._restore_launch_persisted = True     # in __init__
+
+wanted_change = section.get("restore_clients_on_launch") != enabled
+if wanted_change or not self._restore_launch_persisted:
+    ...
+    try:
+        settings_mod.update(lambda: self._state.settings, mutate)
+        self._restore_launch_persisted = True
+    except OSError:
+        self._restore_launch_persisted = False
+        logger.exception("Could not persist the client-restore setting")
+```
+
+Two things follow, both wanted. `persisted` becomes true only when the value
+is genuinely on disk. And a failed write **self-heals**: the next call
+retries rather than skipping, so a settings file that was briefly unwritable
+recovers without the user knowing there was anything to recover from.
+
+No production caller currently makes a repeat same-value call — the one
+caller is a `change` listener (`web/settings.js:255`), and `change` fires
+only on a real transition; the re-render path assigns `box.checked` without
+dispatching (`:299`). This is therefore a latent hole rather than a live
+bug. It is closed anyway: roadmap item 8 adds Previews-tab UI over
+`ui/api.py`, and a second caller is precisely how a latent hole becomes a
+live one.
 
 A dict is always truthy, so the existing bridge-failure guard keeps working
 unchanged — `WM.send` resolves to `null` on a bridge error
@@ -265,7 +306,16 @@ The two call sites are already separate, so nothing new has to be plumbed:
 - `Api.start_client_layouts_if_enabled` (`ui/api.py:1291-1297`), at launch —
   calls `start()`, unchanged.
 - `Api.set_restore_clients_on_launch` (`ui/api.py:1337`), from the toggle —
-  calls `start(seed_placed=True)`.
+  calls `start(seed_placed=wanted_change)`.
+
+Seeding is bound to the **transition**, not to the call. `start()` runs on
+every enabled call, including one whose value was already enabled, and
+seeding unconditionally there would add clients that appeared *since* the
+toggle to `_placed` — suppressing the restore they were owed.
+`Scheduler.start` is idempotent (`ui/scheduler.py:32-37`), but that only
+prevents a second timer; it does nothing about a side effect placed in front
+of it. `wanted_change` is the same flag item 4 computes, so the two fixes
+share one variable.
 
 Default `False` so the launch path reads as it does now and an unseeded
 `start()` keeps its current meaning.
@@ -274,8 +324,9 @@ Clients that appear *after* the toggle are still placed: they are not in
 `_placed`, and `_tick` finds them on the sweep that discovers them. Only the
 set already running at the moment of the toggle is exempted.
 
-`Scheduler.start` is idempotent (`ui/scheduler.py:32-37`), so a double
-toggle re-seeds without doubling the tick rate.
+`Scheduler.start` is idempotent (`ui/scheduler.py:32-37`), so a repeat
+enabled call re-arms nothing and, with the transition flag above, re-seeds
+nothing either.
 
 ## Testing
 
@@ -299,10 +350,18 @@ Behaviour to pin:
 - Toggle with a raising `update`: `persisted is False`, and the watcher
   started anyway.
 - Toggle with a working `update`: `persisted is True`.
+- Toggle raises, then the same value is sent again: the second call
+  **retries** the write rather than skipping it, and reports the retry's
+  outcome. This is the contract hole; it needs a test or it comes back.
+- Toggle to a value that is already stored, with a healthy `update`: no
+  write is attempted, and `persisted is True`.
 - `start(seed_placed=True)` with two clients running: the first tick places
   neither.
 - `start(seed_placed=True)` then a third client appears: the tick places
   only the third.
+- Repeat enabled toggle while a client has appeared but not yet ticked: that
+  client is still placed — seeding is bound to the transition, so the
+  no-op call does not consume it.
 - `start()` with two clients running: the first tick places both
   (the launch path, unchanged).
 
