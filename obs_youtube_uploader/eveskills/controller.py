@@ -911,3 +911,33 @@ class SkillsController:
                 # failed write costs requests on the next refresh and
                 # nothing else.
                 logger.warning("Could not save the skill id cache", exc_info=True)
+
+    # ----- forget -----------------------------------------------------
+
+    def forget(self, character_id) -> bool:
+        """Remove a character and its stored token. One write, always.
+
+        Because the roster row and the DPAPI-wrapped refresh token live in
+        the same document, removing the row removes the token with it. That
+        makes the entire orphan class impossible rather than recoverable --
+        no rollback transaction, no reconciliation sweep, and no window in
+        which a token outlives the character it belongs to.
+
+        Idempotent: removing a character that is not there is a success.
+        The page can hold a stale roster across a refresh that already
+        dropped the row, and a two-step confirm makes a double click easy.
+        """
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            # Arrives from JavaScript, where a missing dataset attribute is
+            # undefined -> None. Refused rather than coerced.
+            logger.warning("Refusing a non-numeric character id: %r", character_id)
+            return False
+        with self._lock:
+            self._state.remove(wanted)
+            self._access_tokens.pop(wanted, None)
+            self._save_locked()
+        self._push_state(force=True)
+        return True
+

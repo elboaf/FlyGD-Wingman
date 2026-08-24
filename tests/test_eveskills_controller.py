@@ -860,8 +860,6 @@ def test_esi_calls_happen_with_the_state_lock_released(tmp_path):
         "call is in flight -- the lock must not be held across it")
 
 
-@pytest.mark.skip(reason="controller.forget() lands in Task 14; "
-                  "un-skip once it exists.")
 def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
     """Auth, refresh, forget and plan selection can all be in flight at
     once. A forget completing during a refresh would be silently undone by
@@ -921,3 +919,50 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
 
     assert resolved == [["Navigation"]]
     assert controller._cache.get("navigation") == 3327
+
+
+# ----- forget -----------------------------------------------------------
+
+
+def test_forget_removes_the_character_and_its_token_in_one_write(tmp_path):
+    """The roster row and its wrapped refresh token live in the same
+    document, so removing the row removes the token with it -- there is no
+    separate credential store to leave an orphaned secret behind in."""
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()])
+
+    assert controller.forget(95) is True
+
+    assert controller.state_payload()["characters"] == []
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    assert reloaded.characters == []
+
+
+def test_forgetting_a_character_that_is_not_there_is_an_idempotent_success(tmp_path):
+    """The page can hold a stale roster across a refresh that already
+    dropped the row. A double click on forget must not be a failure."""
+    controller, _, _ = build(tmp_path)
+
+    assert controller.forget(95) is True
+
+
+def test_forget_rejects_a_payload_that_is_not_an_id(tmp_path):
+    """Arrives from JavaScript, where a missing dataset attribute is
+    undefined -> None. Refused rather than coerced into some other
+    character's id."""
+    controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
+
+    assert controller.forget(None) is False
+    assert controller.forget("not-a-number") is False
+    assert controller.state_payload()["characters"] != []
+    assert pushed == []
+
+
+def test_forget_always_pushes(tmp_path):
+    """A removal the page never sees is a character that never goes away
+    on screen."""
+    controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
+
+    controller.forget(95)
+
+    assert any(handler == "onSkills" for handler, _ in pushed)
+
