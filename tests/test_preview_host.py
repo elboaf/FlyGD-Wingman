@@ -3,6 +3,10 @@
 reconcile() is where a leak would live: a client that disappears without
 being removed leaves a thumbnail registered against a dead source and a
 window that never closes."""
+import sys
+
+import pytest
+
 from obs_youtube_uploader.preview import host
 
 
@@ -135,3 +139,31 @@ def test_a_restored_lock_survives_into_the_new_window():
                          saved_layouts={"Pilot": Entry(Rect(1, 2, 320, 210),
                                                        locked=True)})
     assert h._saved["Pilot"].locked is True
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="needs a real message pump and window station")
+def test_stop_from_another_thread_really_exits_the_pump(monkeypatch):
+    """End to end, on the thread boundary that matters.
+
+    stop() is called from the main thread while the pump runs on the
+    preview thread. PostQuitMessage posts WM_QUIT to the CALLING thread's
+    queue, so a teardown that ran anywhere but the preview thread would
+    leave this pump running forever -- and the process unable to exit.
+
+    Discovery is stubbed to find nothing so the test creates only the
+    host's message-only window, not a preview per running EVE client.
+    """
+    from obs_youtube_uploader.preview import discovery
+
+    monkeypatch.setattr(discovery, "list_clients", lambda **kw: [])
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.start()
+    assert h._ready.wait(10), "preview thread never became ready"
+    assert h.is_running
+
+    thread = h._thread
+    h.stop(timeout=10)
+    assert not thread.is_alive(), "the pump outlived stop()"
+    assert not h.is_running

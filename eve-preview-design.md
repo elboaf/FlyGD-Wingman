@@ -91,10 +91,19 @@ must be wired in alongside them.
 5. `PostQuitMessage` to end the pump.
 6. Join the thread with a timeout, and log if it does not exit.
 
-Steps 1-4 must run *on the preview thread*, so `stop()` from the UI thread
-marshals a shutdown command and waits. A `stop()` that returns while the thread
-still owns HWNDs leaves the process unable to exit cleanly — the failure mode
-is a Wingman that vanishes from the tray but lingers in Task Manager.
+**Steps 1-5 all run *on the preview thread***, so `stop()` from any other
+thread marshals a shutdown command to the host window and then waits. Only
+step 6, the join, belongs to the caller.
+
+Step 5 is easy to get wrong: `PostQuitMessage` posts `WM_QUIT` to the
+*calling* thread's queue, not to a window. Called from the UI thread it would
+end that thread's loop — which pywebview owns — and leave the preview pump
+running forever with its windows still alive. It is not enough for the HWND
+work to be marshalled; the quit must be too.
+
+A `stop()` that returns while the thread still owns HWNDs leaves the process
+unable to exit cleanly — the failure mode is a Wingman that vanishes from the
+tray but lingers in Task Manager.
 
 Disable is the same sequence as shutdown; enable is a fresh `start()`. There is
 no half-running state where the thread is alive but previews are hidden.
