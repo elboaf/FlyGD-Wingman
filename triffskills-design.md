@@ -427,8 +427,23 @@ Ported checks:
 - On a state mismatch the listener serves the failure page and **keeps
   listening**. It does not abort: the real browser tab may still be coming.
 - Per-connection timeout of 10 seconds; overall timeout of 5 minutes.
-- The authorization code is filtered to `[A-Za-z0-9_-]` and truncated before
-  it can reach a log or a message.
+- **The `error` value is filtered** to `[A-Za-z0-9_-]` and truncated before it
+  can reach a log or a message — a hostile error string arrives from the
+  network and must never be echoed anywhere. **The `code` is taken raw**
+  (`EveLoopbackCallback.cs:38-39`: `error` passes through `SafeOAuthCode`,
+  `code` does not). An earlier draft of this design had it backwards, and the
+  consequence of filtering the code is severe and silent: RFC 6749 §4.1.2
+  permits the whole printable-ASCII range, so a legitimate code containing
+  anything outside that alphabet would be treated as *absent*, the listener
+  would keep waiting, and login would hang for the full five minutes with no
+  diagnostic. The code is protected by never being logged, not by being
+  rewritten; `sso.exchange_code`'s non-blank / ≤2048 / no-NUL checks are what
+  validate it.
+- **Once the state matches, the listener returns** — even if neither `code`
+  nor `error` is present, in which case the caller aborts the attempt
+  (`EveSso.cs:60-63`). Staying open after a match would keep a hung listener
+  alive for five minutes on an anomalous request and would let an
+  already-matched state be presented twice; the state is single-use.
 
 **The port is fixed and has no fallback**, because the redirect URI is
 registered with CCP and must match exactly. A bind failure is reported
