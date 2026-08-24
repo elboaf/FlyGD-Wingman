@@ -12,6 +12,7 @@ from pathlib import Path
 from . import bookmarks, paths
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
+from .preview import placement as preview_placement
 from .preview import roster as preview_roster
 
 
@@ -29,7 +30,11 @@ def _preview_defaults() -> dict:
             # without migrating anyone -- the same shape the parent design
             # used to defer profiles.
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
-            "seen": []}
+            "seen": [],
+            # Client WINDOW placement, distinct from `layouts` above,
+            # which is where the preview TILES sit. Off by default: this
+            # one moves the user's game windows.
+            "restore_clients_on_launch": False, "client_layouts": {}}
 
 
 def _eve_defaults() -> dict:
@@ -41,6 +46,14 @@ def _eve_defaults() -> dict:
     return {"enabled": False,
             "keybinds": dict(bookmarks.DEFAULT_BINDS),
             "windows": {}}
+
+
+def _eve_settings_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Three remembered paths and the prune depth. Everything else is derived
+    # from disk on each state build, so there is nothing to migrate and
+    # nothing that can drift out of step with reality.
+    return {"root": None, "server": None, "profile": None, "auto_keep": 10}
 
 
 DEFAULTS = {
@@ -74,6 +87,9 @@ DEFAULTS = {
     # Same reasoning as eve_bookmarks above: built by _preview_defaults()
     # so callers never share one nested dict.
     "preview": _preview_defaults(),
+    # Same reasoning as eve_bookmarks and preview above: built by
+    # _eve_settings_defaults() so callers never share one nested dict.
+    "eve_settings": _eve_settings_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -81,10 +97,11 @@ _VALID_NOTIFY = {"toast", "popup"}
 
 
 def _fresh_defaults() -> dict:
-    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    """dict(DEFAULTS) is shallow, so the nested sections are rebuilt."""
     data = dict(DEFAULTS)
     data["eve_bookmarks"] = _eve_defaults()
     data["preview"] = _preview_defaults()
+    data["eve_settings"] = _eve_settings_defaults()
     return data
 
 
@@ -96,6 +113,8 @@ def validated_preview(raw) -> dict:
         return section
     if isinstance(raw.get("enabled"), bool):
         section["enabled"] = raw["enabled"]
+    if isinstance(raw.get("restore_clients_on_launch"), bool):
+        section["restore_clients_on_launch"] = raw["restore_clients_on_launch"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -130,6 +149,28 @@ def validated_preview(raw) -> dict:
                 section["hotkeys"][key] = preview_gestures.display(parsed)
 
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
+    section["client_layouts"] = preview_placement.serialize(
+        preview_placement.deserialize(raw.get("client_layouts")))
+    return section
+
+
+def validated_eve_settings(raw) -> dict:
+    """Same posture as validated_preview: a malformed section falls back
+    whole, and a malformed single value falls back alone."""
+    section = _eve_settings_defaults()
+    if not isinstance(raw, dict):
+        return section
+    for key in ("root", "server", "profile"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            section[key] = value
+    keep = raw.get("auto_keep")
+    # `not isinstance(keep, bool)` because bool is an int in Python, and
+    # True would silently become a keep depth of 1.
+    if isinstance(keep, int) and not isinstance(keep, bool):
+        # Clamped, not rejected: a depth of zero would delete the backup
+        # taken moments earlier, which is the one nobody can afford to lose.
+        section["auto_keep"] = max(1, min(100, keep))
     return section
 
 
@@ -195,6 +236,7 @@ def _normalize(data: dict) -> dict:
             data[key] = ""
     data["eve_bookmarks"] = validated_eve(data.get("eve_bookmarks"))
     data["preview"] = validated_preview(data.get("preview"))
+    data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     return data
 
 
@@ -277,3 +319,31 @@ def update(data: dict, path: Path | None = None):
             data.clear()
             data.update(before)
             raise
+
+def update_section(data: dict, name: str, values: dict,
+                   path: Path | None = None) -> dict:
+    """Merge *values* into one section of the live settings document.
+
+    A section-shaped wrapper over update(), not a second implementation of
+    it: the hazard and the locking rule are documented there. This exists
+    because the EVE Settings writers touch exactly one section and would
+    otherwise each repeat the same read-merge-assign callback.
+
+    Takes the LIVE settings dict rather than loading a fresh document from
+    disk. Loading a fresh one was the earlier shape, and it forced every
+    caller to rebind `AppState.settings` afterwards to see its own write --
+    a rebind that ran outside this lock and swapped the dict object out
+    from under LayoutStore, which holds its own reference and writes
+    through this same lock. A store write landing between the save and the
+    rebind was silently discarded. Mutating the live dict keeps its
+    identity stable, so no caller needs to rebind and nothing is orphaned.
+
+    The section is rebuilt rather than mutated in place for the same reason
+    update() normalises before saving: a half-merged section must never be
+    what another thread observes.
+    """
+    with update(data, path) as live:
+        section = dict(live.get(name) or {})
+        section.update(values)
+        live[name] = section
+    return data

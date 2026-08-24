@@ -571,6 +571,24 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    rather than stands out -- a lighter border here would make "dim" read
    as more prominent than a normal, unremarkable binding. */
 .bindbtn.dim { border-color: var(--panel-border); color: var(--text-faint); }
+/* ====================== EVE Settings route ==========================
+   Same card markup as the settings and bookmarks routes, so it needs the
+   same column direction and scroll safeguard: three cards, two of them
+   holding a list that is one row per character. Without overflow-y the
+   Copy button and the whole Backups card fall below the window with no
+   scrollbar, exactly as the bookmarks binds did. */
+#route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
+   anything, and .card is not one -- so both lists take content height and
+   grow the route instead of scrolling. Capped the same way the dialog body
+   is, so forty characters scroll inside the card. */
+#es-targets, #es-backups { max-height: 38vh; }
+
+/* Accented, unlike a plain .hint: "couldn't read that folder" is a warning
+   rather than an error (the root may simply not exist yet), following
+   #eve-bind-warning's precedent below. */
+#es-warning { color: var(--warn); }
 
 /* Accented, unlike a plain .hint: this warns that two actions share a key
    and AutoHotkey will silently let one win. It shares .bindbtn.clash's

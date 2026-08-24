@@ -19,6 +19,7 @@
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
       <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
       <button class="navbtn" id="nav-previews" data-route="previews">Previews</button>
+      <button class="navbtn" id="nav-evesettings" data-route="evesettings">EVE Settings</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
@@ -292,6 +293,77 @@
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
       </section>
+
+      <section class="card">
+        <h2>EVE client windows</h2>
+        <div class="row">
+          <span class="lab">On launch</span>
+          <label class="check">
+            <input type="checkbox" id="client-restore-on-launch"><span class="box"></span>
+            Put client windows back where they were when a client starts
+          </label>
+        </div>
+        <div class="row">
+          <span class="lab">Positions</span>
+          <button class="btn" id="btn-save-client-layout">Save current positions</button>
+          <button class="btn" id="btn-restore-client-layout">Restore now</button>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="client-layout-status">Saves where each EVE
+            client window sits, per character. Clients still at character
+            select are skipped &mdash; there is no character to save
+            against yet.</span></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="route" id="route-evesettings">
+    <div class="settings">
+      <section class="card">
+        <h2>EVE Settings</h2>
+        <div class="row">
+          <span id="es-root">No folder selected</span>
+          <button id="es-pick" class="btn">Choose folder…</button>
+          <span id="es-eve-state" class="pill">EVE closed</span>
+        </div>
+        <div class="row">
+          <label for="es-server">Server</label>
+          <select id="es-server" class="field"></select>
+          <label for="es-profile">Settings set</label>
+          <select id="es-profile" class="field"></select>
+        </div>
+        <p id="es-warning" class="hint" hidden></p>
+      </section>
+
+      <section class="card">
+        <h2>Copy settings</h2>
+        <div class="row">
+          <label><input type="radio" name="es-kind" value="characters" checked> Characters</label>
+          <label><input type="radio" name="es-kind" value="accounts"> Accounts</label>
+        </div>
+        <div class="row">
+          <label for="es-source">Copy from</label>
+          <select id="es-source" class="field"></select>
+        </div>
+        <div class="row">
+          <input id="es-filter" class="field" type="search" placeholder="Filter…"
+                aria-label="Filter characters or accounts">
+          <button id="es-all" class="btn">Select all</button>
+          <button id="es-none" class="btn">Clear</button>
+        </div>
+        <div id="es-targets" class="list-scroll"></div>
+        <div class="row">
+          <button id="es-copy" class="btn acc">Copy to selected</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Backups</h2>
+        <div class="row">
+          <button id="es-backup-profile" class="btn">Back up this settings set</button>
+        </div>
+        <div id="es-backups" class="list-scroll"></div>
+      </section>
     </div>
   </div>
 
@@ -350,6 +422,7 @@
   <script src="app.js"></script>
   <script src="bookmarks.js"></script>
   <script src="previews.js"></script>
+  <script src="evesettings.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>

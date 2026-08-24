@@ -30,6 +30,27 @@ SW_HIDE = 0
 SW_SHOWNOACTIVATE = 8
 SW_RESTORE = 9
 
+# --- Window placement ---------------------------------------------------
+# showCmd values. SW_SHOWMINIMIZED is declared for completeness and to
+# make reads legible; it is deliberately never APPLIED -- restoring a
+# client into a minimized window because that is how it was left gives the
+# user a client that vanishes with no indication why.
+SW_SHOWNORMAL = 1
+SW_SHOWMINIMIZED = 2
+SW_SHOWMAXIMIZED = 3
+
+# Posts rather than sends. SetWindowPlacement against another process's
+# window marshals to that window's owning thread and can stall while an
+# EVE client is loading or hung; this is the documented escape.
+WPF_ASYNCWINDOWPLACEMENT = 0x0004
+
+# Set by Windows when a MINIMIZED window will restore to maximized. Without
+# it, a client minimized from maximized reads back as windowed and comes
+# back windowed.
+WPF_RESTORETOMAXIMIZED = 0x0002
+
+SPI_GETWORKAREA = 0x0030
+
 HWND_MESSAGE = -3
 HWND_TOPMOST = -1
 
@@ -109,6 +130,18 @@ class BITMAPINFO(ctypes.Structure):
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class WINDOWPLACEMENT(ctypes.Structure):
+    """rcNormalPosition is in WORKSPACE coordinates, not screen -- offset
+    by the primary monitor's work-area origin. See placement.to_screen.
+
+    `length` must be set before GetWindowPlacement; the call validates it.
+    """
+    _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT), ("ptMinPosition", POINT),
+                ("ptMaxPosition", POINT),
+                ("rcNormalPosition", wintypes.RECT)]
 
 
 class SIZE(ctypes.Structure):
@@ -227,6 +260,12 @@ def bind() -> Libs:
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
+        (user32, "GetWindowPlacement", BOOL,
+         [HWND, ctypes.POINTER(WINDOWPLACEMENT)]),
+        (user32, "SetWindowPlacement", BOOL,
+         [HWND, ctypes.POINTER(WINDOWPLACEMENT)]),
+        (user32, "SystemParametersInfoW", BOOL,
+         [UINT, UINT, ctypes.c_void_p, UINT]),
         (user32, "GetWindowThreadProcessId", DWORD,
          [HWND, ctypes.POINTER(DWORD)]),
         # --- hook, hotkeys, DPI

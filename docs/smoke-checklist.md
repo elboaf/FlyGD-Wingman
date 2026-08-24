@@ -977,3 +977,87 @@ Enable previews in Settings before starting.
   here reverses the hierarchy.
 - [ ] Quitting Wingman with chords bound leaves them released: the owning
   application gets them back without a reboot.
+## EVE Settings
+
+The suite cannot exercise Windows file locking or a real `os.replace` retry,
+so these are the checks that matter and only a Windows machine can run them.
+
+- [ ] Choose the EVE folder. Servers and settings sets populate; characters
+      show names within a second or two of the route opening.
+- [ ] Pull the network cable and reopen the route — characters render as
+      `Character <id>`, nothing errors.
+- [ ] Point the folder picker at a `settings_*` directory. The root heals
+      upward and the tree still populates.
+- [ ] Create a junction inside the EVE settings folder pointing outside it
+      (`mklink /J <root>\junction C:\SomewhereElse`), then try to select it as
+      a settings set. It must be refused as outside the configured folder --
+      containment resolves symlinks and junctions, and this is the one path
+      Linux CI cannot exercise.
+- [ ] Copy one character onto three others with EVE closed. All three
+      update; three auto-backups appear.
+- [ ] Copy with EVE running. It fails with "The file is in use. Close EVE
+      and retry", and every target is left intact.
+- [ ] Restore the pre-copy backup for one character. The original settings
+      come back.
+- [ ] Back up a settings set, delete a `.dat` from it, restore. The deleted
+      file returns.
+- [ ] Add a file to a settings set that was not in its backup, then restore.
+      It is removed, and the pre-restore auto-backup contains it.
+- [ ] Restore with EVE running. Like a copy, it must fail rather than write
+      -- restore stages every file and publishes with the same replace-with-
+      retry, so a live client blocks it. The settings set must be left
+      exactly as it was: nothing deleted, no `.tmp` files behind.
+- [ ] Delete a settings set entirely, then restore its backup. The folder is
+      recreated and the files come back.
+- [ ] Start a copy and immediately try a second one. The second is refused
+      with "EVE Settings busy" rather than interleaving.
+- [ ] With `auto_keep` at its default, copy the same character eleven times.
+      Ten auto-backups remain; the manual ones are untouched.
+- [ ] Check the packaged build: the EVE Settings route appears and the
+      folder picker opens.
+## EVE client window layouts
+
+Nothing below is covered by the suite: CI is ubuntu-latest and no Win32
+call runs there. Each item is a claim reasoned from documentation.
+
+- [ ] Two clients logged in, dragged somewhere deliberate. **Save current
+      positions** reports the right count. Move both, press **Restore
+      now** — they go back exactly, not approximately.
+- [ ] A client at character select is not counted by Save and is not
+      moved by Restore.
+- [ ] A **maximized** client: Save, un-maximize and move it, Restore. It
+      comes back maximized, and un-maximizing lands on the saved rect.
+- [ ] **Maximized across monitors**: maximize a client on the SECONDARY
+      monitor, Save, un-maximize it and drag it to the primary, then
+      Restore. It must come back maximized on the **secondary** monitor.
+      SetWindowPlacement resolves a maximized showCmd against
+      ptMaxPosition, which apply_placement seeds from the window's current
+      placement — so this is the case that decides whether that seeding is
+      sufficient or whether ptMaxPosition needs deriving from the saved
+      rect's monitor instead.
+- [ ] A **minimized** client is never restored into minimized.
+- [ ] **Mixed DPI**: put one client on a 100% monitor and one on a 150%
+      or 200% monitor, Save, move both, Restore. Both land exactly. This
+      is the check that the per-batch PMv2 scope actually works — on a
+      single-monitor machine it passes whether or not the code is right.
+- [ ] **Taskbar docked top or left**, then Save and Restore. Windows must
+      not drift by the taskbar's height/width. Confirms the
+      SPI_GETWORKAREA conversion is applied in both directions.
+- [ ] **Borderless fullscreen** client: Save and Restore. Record what
+      happens — accepted, ignored, or a mode switch. This one is
+      genuinely unknown and many EVE users run fullscreen.
+- [ ] Enable **restore on launch**, quit a client, relaunch it. It lands
+      at its saved position once, and can then be **dragged and stays
+      dragged** — the place-once rule.
+- [ ] With restore-on-launch on, unplug a monitor holding a saved
+      position, then relaunch that client. It is skipped, not deposited
+      off-screen, and the log says why.
+- [ ] Save a layout, hand-edit `settings.json` to corrupt one character's
+      entry, relaunch. That character is dropped; the others survive.
+- [ ] Save while a client is **still loading / not responding**. Wingman's
+      window stays responsive — the WPF_ASYNCWINDOWPLACEMENT and
+      non-marshalling-read claims.
+- [ ] Previews **disabled**: Save and Restore still work. This is the
+      whole point of the manager owning its own watcher.
+- [ ] Toggle restore-on-launch twice quickly; exactly one watcher runs
+      and quitting Wingman leaves no process in Task Manager.

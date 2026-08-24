@@ -29,6 +29,14 @@ def test_defaults_are_the_documented_values():
             "layouts": {},
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
+            "restore_clients_on_launch": False,
+            "client_layouts": {},
+        },
+        "eve_settings": {
+            "root": None,
+            "server": None,
+            "profile": None,
+            "auto_keep": 10,
         },
     }
 
@@ -292,3 +300,34 @@ def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
 def test_validated_preview_cleans_the_roster():
     section = settings.validated_preview({"seen": ["Alice", "hwnd:0x1", 7]})
     assert section["seen"] == ["Alice"]
+
+
+# The two below are ported from the callable-style update(read, mutate)
+# that the EVE Settings work added on main. That API is gone -- update() is
+# a context manager here -- but the properties its tests pinned are real and
+# were not otherwise covered, so they follow the surviving shape.
+def test_update_holds_the_save_lock_across_the_body(tmp_path):
+    """The whole point: the lock spans the caller's mutation, not just the
+    write, or another writer completes in between and is reverted."""
+    path = tmp_path / "settings.json"
+    seen = []
+    data = settings._fresh_defaults()
+
+    with settings.update(data, path) as doc:
+        seen.append(settings._SAVE_LOCK.locked())
+        doc["privacy"] = "public"
+
+    assert seen == [True]
+    assert settings.load(path)["privacy"] == "public"
+
+
+def test_update_releases_the_lock_when_the_body_raises(tmp_path):
+    """A block that throws must not wedge every other writer forever."""
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+
+    with pytest.raises(ValueError):
+        with settings.update(data, path):
+            raise ValueError("nope")
+
+    assert not settings._SAVE_LOCK.locked()
