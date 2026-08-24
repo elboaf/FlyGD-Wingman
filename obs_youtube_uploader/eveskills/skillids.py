@@ -14,7 +14,6 @@ TriffSkillsController.cs (~503-615).
 import concurrent.futures
 import json
 import os
-import shutil
 import stat as stat_module
 import threading
 import time
@@ -219,21 +218,19 @@ def save(cache: SkillIdCache, path: Path) -> None:
     cached name through rate-limited ESI at up to three requests per name,
     so a real cache is hundreds of requests against the shared error-limit
     budget, spent to recover data that was sitting intact in a backup.
-    Shape ported from state.py's save(), which keeps the same tier for a
-    much higher-stakes file (the wrapped refresh tokens).
+
+    Write-then-rotate, not rotate-then-write, matching state.py's save():
+    the new content is written to a staging file and confirmed durable
+    BEFORE anything happens to the existing primary or its .bak. The old
+    shape copied the current primary to .bak first and only then wrote the
+    new content -- so a primary that was itself corrupt (exactly the case
+    _recover_from_backup calls this from) got copied over a good .bak an
+    instant before the new write was known to succeed.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     bak = path.with_name(path.name + ".bak")
-    if path.exists():
-        try:
-            # copy2, not copy: it carries the mode across, so the backup of
-            # a hardened primary is not published at a laxer permission.
-            shutil.copy2(path, bak)
-        except OSError:
-            # A backup that cannot be made must not stop the save. Losing
-            # the tier is strictly better than losing the write it protects.
-            pass
+    staging = path.with_name(path.name + ".new")
 
     document = {
         "version": CACHE_VERSION,
@@ -244,7 +241,23 @@ def save(cache: SkillIdCache, path: Path) -> None:
                      "category_id": SKILL_CATEGORY_ID}
                     for name, type_id in sorted(cache.type_ids().items())],
     }
-    atomicio.write_atomic(path, json.dumps(document, indent=2))
+    # Written and confirmed durable first -- only once this succeeds is the
+    # existing primary touched at all.
+    atomicio.write_atomic(staging, json.dumps(document, indent=2))
+    if path.exists():
+        try:
+            # Rename, not copy: os.replace carries the source file's own
+            # mode across unchanged, matching what shutil.copy2 gave the
+            # old copy-then-write shape -- and it only runs now, after the
+            # new content is already safely on disk at *staging*, so a
+            # primary that was itself corrupt never gets a chance to
+            # overwrite a good .bak with more corruption.
+            os.replace(path, bak)
+        except OSError:
+            # A backup that cannot be made must not stop the save. Losing
+            # the tier is strictly better than losing the write it protects.
+            pass
+    os.replace(staging, path)
 
     if bak.exists():
         try:
@@ -253,7 +266,14 @@ def save(cache: SkillIdCache, path: Path) -> None:
             # regardless of what mode the document it just replaced had.
             # Align .bak to match: without this, a document that predates
             # this cache ever touching it leaves a laxer-permission backup
-            # sitting beside the hardened primary it was just copied from.
+            # sitting beside the hardened primary it just replaced.
+            #
+            # This chmod is a no-op on Windows -- os.chmod there only ever
+            # toggles the read-only attribute, never real permission bits.
+            # It costs nothing to still call it, but the actual protection
+            # for files under %LOCALAPPDATA% on Windows is the directory's
+            # own ACL, not these mode bits (this cache holds no secret, so
+            # it needs nothing beyond that).
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))
         except OSError:
             pass
@@ -305,16 +325,43 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
     """
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
-    try:
-        recovered = _cache_from_raw(json.loads(_read_bounded(backup)))
-    except (OSError, ValueError):
-        recovered = None
+    recovered = None
+    for attempt in range(2):
+        try:
+            recovered = _cache_from_raw(json.loads(_read_bounded(backup)))
+            break
+        except ValueError:
+            # Bad backup content -- permanent, retrying reads the same
+            # bytes again.
+            break
+        except OSError:
+            # A transient sharing violation on a GOOD backup must not be
+            # treated the same as a missing or genuinely unreadable one --
+            # matching state.py's own retry for the identical reason.
+            if attempt == 0:
+                time.sleep(0.05)
 
     if recovered is None:
         warnings.append(
             f"{path.name} could not be read and was preserved as "
             f"{preserved or 'a copy'}; skill names will be resolved again.")
         return SkillIdCache(), warnings
+
+    if not preserved:
+        # _preserve_corrupt's own os.replace failed, so the corrupt content
+        # is STILL sitting at *path*. Calling save() here regardless would
+        # still see that corrupt file as the current primary and rotate it
+        # into *backup* as save()'s own first step, overwriting the good
+        # backup `recovered` just came from with the corrupt content it was
+        # recovering FROM. The corrupt primary on disk is by definition
+        # worse than the good backup, so the safest thing is to do nothing
+        # to either file: hand back the recovered cache in memory.
+        warnings.append(
+            f"Recovered {path.name} from backup after the main file could "
+            "not be read, but the corrupt file could not be moved aside "
+            "and was left in place; the recovery could not be saved back "
+            "to disk.")
+        return recovered, warnings
 
     # Re-persisted immediately, mirroring state.py: _preserve_corrupt has
     # already moved the corrupt primary out of the way, so at this instant

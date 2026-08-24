@@ -326,6 +326,38 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
     assert stat.S_IMODE(bak.stat().st_mode) == 0o600
 
 
+def test_preservation_failure_does_not_overwrite_a_good_backup(
+        tmp_path, monkeypatch):
+    """Same Critical fix as state.py's identically-named test: if
+    _preserve_corrupt's own os.replace fails, the corrupt content is still
+    sitting at *path*. save() must never be called in that case -- its
+    rotate step would otherwise overwrite the good .bak with the still-
+    corrupt primary an instant after reading a good cache out of it."""
+    target = tmp_path / "cache.json"
+    bak = tmp_path / "cache.json.bak"
+    skillids.save(skillids.SkillIdCache({"Navigation": 3449}), target)
+    skillids.save(skillids.SkillIdCache({"Navigation": 3449}), target)
+    target.write_text("{ not json", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def _flaky_replace(src, dst, *a, **kw):
+        if ".corrupt-" in str(dst):
+            raise OSError("simulated: concurrent handle on the target")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(skillids.os, "replace", _flaky_replace)
+
+    loaded, warnings = skillids.load(target)
+
+    assert loaded.get("Navigation") == 3449
+    assert any("could not be saved back" in w for w in warnings)
+    assert target.read_text(encoding="utf-8") == "{ not json"
+    backup_cache = skillids._cache_from_raw(
+        json.loads(bak.read_text(encoding="utf-8")))
+    assert backup_cache.get("Navigation") == 3449
+
+
 # --- Cycle C: resolution over ESI ----------------------------------------
 
 
