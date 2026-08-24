@@ -213,6 +213,28 @@ def test_restore_rejects_an_unexpected_member(tmp_path):
         backup.restore(store, hostile, tmp_path / "root")
 
 
+def test_restore_rejects_a_file_archive_carrying_a_passenger_member(tmp_path):
+    """A character archive backs up exactly one file. An extra member would be
+    written into the live profile while the pre-restore backup covers only the
+    declared source -- clobbering an unrelated character with no way back."""
+    profile = profile_with(tmp_path)
+    bystander = profile / "core_char_222.dat"
+    bystander.write_bytes(b"unrelated")
+    store = tmp_path / "backups"
+    store.mkdir(parents=True)
+    source = profile / "core_char_98123456.dat"
+    hostile = store / "20260824-123456-000-manual-character-{}-core_char_98123456.zip".format(
+        backup.source_key(profile))
+    with zipfile.ZipFile(hostile, "w") as archive:
+        archive.writestr(backup.MANIFEST_NAME, '{"kind": "character", '
+                         '"source": "%s"}' % source.as_posix())
+        archive.writestr("core_char_98123456.dat", "restored")
+        archive.writestr("core_char_222.dat", "passenger")
+    with pytest.raises(ValueError):
+        backup.restore(store, hostile, tmp_path / "root")
+    assert bystander.read_bytes() == b"unrelated"
+
+
 def test_restore_rejects_a_target_outside_the_current_root(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"

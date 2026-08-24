@@ -252,6 +252,14 @@ def restore(backup_dir, archive_path, root, *, now=None) -> Path:
 
     with zipfile.ZipFile(archive_path) as archive:
         members = _validated_members(archive)
+        if kind != "profile" and members != [source.name]:
+            # A character/account archive backs up exactly one file. Extra
+            # members would be written into the live profile directory while
+            # the pre-restore backup below covers only `source`, silently
+            # clobbering an unrelated character with no way back.
+            raise ValueError(
+                "That archive does not hold exactly the file it claims to "
+                "back up.")
         if kind == "profile":
             create_profile_backup(backup_dir, target_dir, origin="auto",
                                   now=now)
