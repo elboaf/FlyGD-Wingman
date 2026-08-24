@@ -7,6 +7,7 @@ down do open a real loopback socket, but the security surface is proved here.
 """
 import socket as _socket
 import threading
+import time
 
 import pytest
 
@@ -451,12 +452,45 @@ def test_state_is_compared_in_constant_time():
     The state is a CSRF token the caller minted; comparing it with == leaks
     a prefix-length oracle to anything that can time the failure page. This
     is asserted on the source because the timing itself is not observable
-    from a test, and the invariant is what matters.
+    from a test, and the invariant is what matters. Checked in both
+    operand orders so a rewrite that merely swaps ("returned ==
+    expected_state" for "expected_state == returned") does not slip past.
     """
     import inspect
     source = inspect.getsource(loopback.LoopbackListener.wait)
     assert "compare_digest" in source
-    assert "== expected_state" not in source
+    assert "expected_state ==" not in source
+    assert "== returned" not in source
+
+
+def test_a_non_ascii_state_does_not_crash_the_listener():
+    """hmac.compare_digest raises TypeError when compared against a
+    non-ASCII str -- Python explicitly refuses to time-compare non-ASCII
+    text -- and a state of "%C3%A9" is valid UTF-8 that survives
+    percent-decoding intact, so any page in the browser can forge it. That
+    must be rejected as an ordinary mismatch (failure page, keep
+    listening), not propagate an unhandled TypeError out of wait() and
+    kill the whole auth attempt -- exactly the rejection-vs-exception
+    inversion this module exists to prevent.
+    """
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        replies = []
+
+        def both():
+            replies.append(send(port, listener_request(
+                port, "/callback/?code=x&state=%C3%A9")))
+            replies.append(send(port, listener_request(
+                port, "/callback/?code=right&state=expected-state")))
+
+        worker = threading.Thread(target=both)
+        worker.start()
+        callback = listener.wait("expected-state", timeout_s=10)
+        worker.join(10)
+
+    assert callback.code == "right"
+    assert len(replies) == 2
+    assert b"not accepted" in replies[0]
 
 
 def test_wait_times_out_when_the_browser_never_returns():
@@ -480,6 +514,44 @@ def test_cancel_makes_a_pending_wait_raise():
                 listener.wait("expected-state", timeout_s=10)
         finally:
             canceller.cancel()
+
+
+def test_cancel_interrupts_a_connection_mid_read():
+    """cancel() must interrupt a read already in progress, not just the
+    idle time between connections.
+
+    connection.settimeout() alone bounds a single recv(), not the
+    connection: a client that sends one byte every few seconds resets that
+    clock on every read and is never cut off by it. The fix gives the
+    connection a real deadline and polls `cancelled` while reading, so a
+    slow or stalled client sitting mid-request does not leave wait()
+    parked. The test above only cancels while idle in accept() and would
+    have passed either way; this one cancels while a connection is stuck
+    mid-header, which is what actually exercises the fix.
+    """
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        client = _socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            # A request line with no terminating blank line: the server is
+            # left waiting for more bytes that never arrive.
+            client.sendall(b"GET /callback/?state=s HTTP/1.1\r\n"
+                            b"Host: 127.0.0.1:%d\r\n" % port)
+            canceller = threading.Timer(0.3, listener.cancel)
+            canceller.start()
+            start = time.monotonic()
+            try:
+                with pytest.raises(loopback.CallbackCancelled):
+                    listener.wait("s", timeout_s=10)
+            finally:
+                canceller.cancel()
+            elapsed = time.monotonic() - start
+        finally:
+            client.close()
+
+    # Cancelled promptly (around the 0.3s timer plus polling slack), not
+    # only once the full 10s wait deadline arrived.
+    assert elapsed < 5
 
 
 def test_an_error_callback_with_a_matching_state_is_returned():
@@ -514,4 +586,50 @@ def test_a_matching_state_with_neither_code_nor_error_returns_promptly():
     assert callback.error == ""
     # Served as a failure page (neither code nor error is a usable outcome),
     # but the wait still ended -- it did not keep listening for another hit.
+    assert b"not accepted" in sink[0]
+
+
+def test_the_failure_reply_is_also_never_cached_and_not_a_redirect():
+    """The success-path reply is checked elsewhere
+    (test_the_reply_is_a_page_not_a_redirect_and_is_never_cached); the
+    failure page is served far more often -- every mismatched state and
+    every probe gets one -- and shares the same _reply() code path, but
+    that was previously asserted only implicitly."""
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        replies = []
+
+        def both():
+            replies.append(send(port, listener_request(
+                port, "/callback/?code=wrong&state=not-the-state")))
+            replies.append(send(port, listener_request(
+                port, "/callback/?code=right&state=expected-state")))
+
+        worker = threading.Thread(target=both)
+        worker.start()
+        listener.wait("expected-state", timeout_s=10)
+        worker.join(10)
+
+    failure = replies[0]
+    assert b"HTTP/1.1 200 OK" in failure
+    assert b"Cache-Control: no-store" in failure
+    assert b"Location:" not in failure
+
+
+def test_a_whitespace_only_code_reads_as_absent_for_the_reply_but_not_the_callback():
+    """Whitespace-aware, matching IsNullOrWhiteSpace at
+    EveLoopbackCallback.cs:40: a code of "  " is not a usable one, so the
+    reply must be the failure page even though the code is technically
+    non-empty. The Callback itself still carries the code RAW and
+    untrimmed, consistent with test_the_authorization_code_is_taken_raw_
+    not_filtered -- the whitespace check governs the reply only, not what
+    is returned to the caller.
+    """
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        worker, sink = deliver(port, "/callback/?code=%20%20&state=s")
+        callback = listener.wait("s", timeout_s=5)
+        worker.join(5)
+
+    assert callback.code == "  "
     assert b"not accepted" in sink[0]

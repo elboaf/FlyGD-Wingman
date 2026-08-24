@@ -260,17 +260,52 @@ def _reply(connection, success: bool) -> None:
         pass
 
 
-def _read_request(connection) -> bytes:
-    """Read until the end of the header block, bounded."""
+def _read_request(connection, deadline: float, cancelled: threading.Event) -> bytes:
+    """Read until the end of the header block, bounded by an overall deadline.
+
+    NOT a per-recv timeout: connection.settimeout() bounds a single recv(),
+    so a client that dribbles one byte every few seconds resets that clock
+    on every read and is never cut off -- EveLoopbackCallback.cs:23-25 gives
+    the whole candidate connection one CancelAfter budget, and that is what
+    `deadline` (already clamped to CONNECTION_TIMEOUT_S and the overall wait
+    deadline by the caller) reproduces here. Each recv() gets only however
+    much of that budget remains, polled short enough that `cancelled` also
+    takes effect mid-read rather than only between connections -- a user
+    closing the auth dialog while a slow client is talking must not leave
+    this thread parked holding the port.
+
+    Note: this terminates only on a literal "\\r\\n\\r\\n", while _read_line
+    (used once headers are handed off) tolerates a bare "\\n". That asymmetry
+    is harmless here -- it only decides when to stop buffering, not how a
+    line is parsed -- but is recorded so it isn't mistaken for a second
+    place needing the same leniency.
+    """
     buffer = bytearray()
     while b"\r\n\r\n" not in buffer:
-        chunk = connection.recv(4096)
+        if cancelled.is_set():
+            raise CallbackCancelled("EVE authentication was cancelled.")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Local callback connection timed out.")
+        connection.settimeout(min(remaining, _ACCEPT_POLL_S))
+        try:
+            chunk = connection.recv(4096)
+        except (socket.timeout, TimeoutError):
+            continue
         if not chunk:
             break
         buffer += chunk
         if len(buffer) > MAX_HEADER_BYTES + MAX_LINE_BYTES:
             raise ValueError("Local callback request exceeded its configured limit.")
     return bytes(buffer)
+
+
+def _is_blank(value: str) -> bool:
+    """Whitespace-aware emptiness check, matching C#'s IsNullOrWhiteSpace at
+    EveLoopbackCallback.cs:40 -- so a code of "  " (all whitespace) serves
+    the failure page exactly as it does in the source, rather than reading
+    as present because it is merely non-empty."""
+    return not value or value.strip() == ""
 
 
 class LoopbackListener:
@@ -344,13 +379,23 @@ class LoopbackListener:
                     raise CallbackCancelled("EVE authentication was cancelled.")
                 raise
             try:
-                # Per-connection timeout: a client that connects and then
-                # says nothing must not hold the whole flow hostage.
-                connection.settimeout(CONNECTION_TIMEOUT_S)
+                # A real deadline for the whole connection, not a per-recv
+                # timeout: bounded by both CONNECTION_TIMEOUT_S and however
+                # much of the overall wait deadline is left, so a slow
+                # client cannot make AUTH_TIMEOUT_S stop meaning what it
+                # says. See _read_request for why a per-recv timeout alone
+                # is not enough.
+                read_deadline = min(deadline, time.monotonic() + CONNECTION_TIMEOUT_S)
                 try:
-                    query = parse_request(_read_request(connection),
-                                          expected_host=self._authority,
-                                          expected_path=self._path)
+                    query = parse_request(
+                        _read_request(connection, read_deadline, self._cancelled),
+                        expected_host=self._authority,
+                        expected_path=self._path)
+                except CallbackCancelled:
+                    # Let this propagate out of wait(): a cancellation that
+                    # arrives mid-read must interrupt the read itself, not
+                    # just the idle time between connections.
+                    raise
                 except (ValueError, OSError):
                     # A rejected request is a probe -- a scanner, a stale
                     # tab, a forged navigation. It is not a failure of the
@@ -358,11 +403,17 @@ class LoopbackListener:
                     # browser tab arrives to a closed port.
                     continue
 
-                # compare_digest, not ==: the state is a CSRF token, and ==
-                # leaks a prefix-length oracle to anything that can time the
-                # failure page below.
+                # compare_digest over UTF-8 BYTES, not str: hmac.compare_digest
+                # raises TypeError on a non-ASCII str (Python explicitly
+                # refuses to time-compare non-ASCII text), and a state value
+                # of "%C3%A9" is valid UTF-8 that survives percent-decoding
+                # intact -- so any page in the browser could forge a request
+                # that crashes wait() rather than being rejected as a
+                # mismatch. EveLoopbackCallback.cs:149-153 compares
+                # Encoding.UTF8.GetBytes of both sides for the same reason.
                 returned = query.get("state", "")
-                if not hmac.compare_digest(expected_state, returned):
+                if not hmac.compare_digest(expected_state.encode("utf-8"),
+                                          returned.encode("utf-8")):
                     _reply(connection, False)
                     continue
 
@@ -379,7 +430,12 @@ class LoopbackListener:
                 # corrupt a legitimate code, and the code is protected by
                 # never being logged, not by being rewritten.
                 code = query.get("code", "")
-                _reply(connection, success=not error and bool(code))
+                # Whitespace-aware, matching IsNullOrWhiteSpace at
+                # EveLoopbackCallback.cs:40: a code of all-whitespace is not
+                # a usable one, so it must serve the failure page exactly
+                # as the source does, even though it is technically
+                # non-empty.
+                _reply(connection, success=not error and not _is_blank(code))
                 return Callback(code=code, error=error)
             finally:
                 try:
