@@ -373,6 +373,12 @@ class PreviewHost:
                 logger.warning("Could not register preview hotkey %s; "
                                "another application may already own it", text)
         self._hotkey_status = status
+        # One line per pass, not per chord: this is the only place that
+        # would tell "nothing is bound" from "everything failed" from
+        # "some chord lost the fight" if a field report ever needed it.
+        logger.info("Preview hotkeys: %d registered, %d refused",
+                    sum(1 for ok in status.values() if ok),
+                    sum(1 for ok in status.values() if not ok))
         if self._on_hotkey_status is not None:
             # Guarded for the same reason as _on_clients_changed above: the
             # initial pass runs in _run() before SetTimer/_ready.set(), and
@@ -387,6 +393,11 @@ class PreviewHost:
     def _on_hotkey(self, libs, ident) -> None:
         action = self._registered.get(ident)
         if action is None:
+            # Not silent by accident: this is the one case Risk 4 (does
+            # WM_HOTKEY even reach this window) would look like on a real
+            # machine, and it must not read the same as "nothing happened
+            # because nothing was pressed".
+            logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
             return
         kind, value = action
         if kind == "focus":
@@ -400,9 +411,14 @@ class PreviewHost:
             target = cycle.step(self.characters(),
                                 anchor or self._last_cycled, value)
             self._last_cycled = target
+        logger.debug("Preview hotkey fired: %s -> %s", action, target)
         client = self._clients.get(target)
         if client is None:
-            return    # bound to a character that is not running: correct no-op
+            # bound to a character that is not running: correct no-op, but
+            # logged -- otherwise this is indistinguishable from the chord
+            # never reaching the process at all.
+            logger.debug("Preview hotkey target %r is not running", target)
+            return
         window_mod.activate(libs, client.hwnd)
 
     def _screen(self):

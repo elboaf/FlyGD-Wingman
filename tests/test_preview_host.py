@@ -3,6 +3,7 @@
 reconcile() is where a leak would live: a client that disappears without
 being removed leaves a thumbnail registered against a dead source and a
 window that never closes."""
+import logging
 import sys
 
 import pytest
@@ -368,6 +369,26 @@ def test_a_refused_chord_is_reported_and_the_others_still_register():
     assert reported == [{"Ctrl+F1": False, "Ctrl+F2": True}]
 
 
+def test_apply_hotkeys_logs_a_one_line_registration_summary(caplog):
+    """Risk 4 of the design -- whether WM_HOTKEY even reaches this window --
+    is unverified on real hardware. If a chord silently never registers,
+    this line (not the per-chord warning, which only fires on a refusal) is
+    what tells 'nothing bound' from 'some bound, some refused'."""
+    refused = gestures.parse("Ctrl+F1")
+    user32 = _FakeUser32(refuse={(refused.mods, refused.vk)})
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+
+    with caplog.at_level(logging.INFO):
+        h._apply_hotkeys(_FakeLibs(user32),
+                         {"characters": {"Alice": "Ctrl+F1",
+                                         "Bravo": "Ctrl+F2"},
+                          "cycle_next": "", "cycle_prev": ""})
+
+    assert any("1 registered" in r.message and "1 refused" in r.message
+              for r in caplog.records)
+
+
 def test_status_is_readable_after_a_pass_that_reported_to_nobody():
     """Previews start BEFORE the webview exists (__main__.py:406-411), so a
     conflict at launch is announced into the void. It has to be readable
@@ -499,6 +520,37 @@ def test_a_focus_chord_for_an_absent_character_does_nothing(monkeypatch):
     h._on_hotkey(libs, next(iter(user32.registered)))
 
     assert activated == []
+
+
+def test_hotkey_dispatch_is_logged_including_silent_early_returns(
+        monkeypatch, caplog):
+    """_on_hotkey had no logging at all: an unknown id and a not-running
+    target both returned silently, and a field report of 'my hotkey does
+    nothing' had no dispatch line to distinguish 'never fired' from 'fired
+    but the target was not running' from 'fired and worked'."""
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1",
+                                           "Ghost": "Ctrl+F2"},
+                            "cycle_next": "", "cycle_prev": ""})
+    ident_by_action = {v: k for k, v in h._registered.items()}
+    alice_ident = ident_by_action[("focus", "Alice")]
+    ghost_ident = ident_by_action[("focus", "Ghost")]
+
+    with caplog.at_level(logging.DEBUG):
+        h._on_hotkey(libs, alice_ident)     # fires: target is running
+        h._on_hotkey(libs, ghost_ident)     # silent early return: not running
+        h._on_hotkey(libs, 0xDEAD)          # silent early return: unknown id
+
+    messages = [r.message for r in caplog.records]
+    assert any("Alice" in m for m in messages)
+    assert any("not running" in m for m in messages)
+    assert any("unknown" in m.lower() for m in messages)
 
 
 def test_a_raising_status_callback_does_not_kill_the_registration_pass():
