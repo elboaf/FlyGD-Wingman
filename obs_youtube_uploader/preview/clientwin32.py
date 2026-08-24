@@ -80,14 +80,28 @@ def read_placement(hwnd, origin, libs=None):
     wp = win32.WINDOWPLACEMENT()
     wp.length = ctypes.sizeof(win32.WINDOWPLACEMENT)
     if not libs.user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+        # Routine, not exceptional: a window that closed between
+        # enumeration and read looks identical to a genuine API failure,
+        # and the common case is the former. get_last_error is Windows-only
+        # (absent from ctypes on Linux, where this module is also imported
+        # and exercised under a double), so it is fetched defensively.
+        last_error = getattr(ctypes, "get_last_error", lambda: None)()
+        logger.debug("GetWindowPlacement failed for hwnd=%s (error=%s)",
+                     hwnd, last_error)
         return None
     r = wp.rcNormalPosition
     rect = Rect(int(r.left), int(r.top),
                 int(r.right) - int(r.left), int(r.bottom) - int(r.top))
     if rect.w <= 0 or rect.h <= 0:
+        logger.debug("hwnd=%s reported a degenerate restore rect %r; "
+                     "not persisting it", hwnd, rect)
         return None
-    return Placement(to_screen(rect, origin),
-                     wp.showCmd == win32.SW_SHOWMAXIMIZED)
+    # A window minimized FROM maximized reports showCmd == SW_SHOWMINIMIZED
+    # and signals its restore-to-maximized intent through this flag instead
+    # -- showCmd alone would save it as windowed.
+    maximized = (wp.showCmd == win32.SW_SHOWMAXIMIZED
+                 or bool(wp.flags & win32.WPF_RESTORETOMAXIMIZED))
+    return Placement(to_screen(rect, origin), maximized)
 
 
 def apply_placement(hwnd, placement, origin, libs=None) -> bool:
@@ -100,6 +114,16 @@ def apply_placement(hwnd, placement, origin, libs=None) -> bool:
     libs = libs or win32.bind()
     rect = to_workspace(placement.rect, origin)
     wp = win32.WINDOWPLACEMENT()
+    wp.length = ctypes.sizeof(win32.WINDOWPLACEMENT)
+    # Seed from the window's CURRENT placement rather than sending a zeroed
+    # struct. ptMaxPosition left at (0, 0) means "maximize with the upper-left
+    # corner at the workspace origin", which lands a maximized client on the
+    # PRIMARY monitor however far away its rcNormalPosition is -- and
+    # multi-monitor is the setup this feature exists for. Reading first keeps
+    # whatever Windows already had; everything we actually intend to change is
+    # overwritten below. Best-effort: if the read fails the struct stays
+    # zeroed, which is no worse than not having read at all.
+    libs.user32.GetWindowPlacement(hwnd, ctypes.byref(wp))
     wp.length = ctypes.sizeof(win32.WINDOWPLACEMENT)
     # Posts rather than sends: a loading or hung client would otherwise
     # stall this thread for as long as it stays wedged.

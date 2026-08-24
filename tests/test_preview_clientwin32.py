@@ -30,11 +30,13 @@ def _libs(user32):
 
 class FakeUser32:
     def __init__(self, *, placement=None, work_area=(0, 0), ok=True,
-                 dpi_previous=7):
+                 dpi_previous=7, max_position=(0, 0)):
+        # placement is (showCmd, rect, flags) or None for "call fails".
         self.placement = placement
         self.work_area = work_area
         self.ok = ok
         self.dpi_previous = dpi_previous
+        self.max_position = max_position
         self.dpi_calls = []
         self.applied = []
 
@@ -54,10 +56,12 @@ class FakeUser32:
         if self.placement is None:
             return 0
         wp = ref._obj
-        wp.showCmd = self.placement[0]
-        rect = self.placement[1]
+        show_cmd, rect, flags = self.placement
+        wp.showCmd = show_cmd
+        wp.flags = flags
         wp.rcNormalPosition = win32.RECT(rect.x, rect.y,
                                          rect.right, rect.bottom)
+        wp.ptMaxPosition = win32.POINT(*self.max_position)
         return 1
 
     def SetWindowPlacement(self, hwnd, ref):
@@ -103,34 +107,58 @@ def test_work_area_origin_falls_back_to_zero_when_the_call_fails():
 
 
 def test_read_placement_converts_workspace_to_screen():
-    user32 = FakeUser32(placement=(win32.SW_SHOWNORMAL, Rect(10, 20, 800, 600)))
-    got = clientwin32.read_placement(1234, (0, 40), _libs(user32))
-    assert got == Placement(Rect(10, 60, 800, 600), False)
+    """Both axes of origin are exercised (20, 40), not just y -- code that
+    dropped ox would pass unnoticed against an origin of (0, N)."""
+    user32 = FakeUser32(placement=(win32.SW_SHOWNORMAL,
+                                   Rect(10, 20, 800, 600), 0))
+    got = clientwin32.read_placement(1234, (20, 40), _libs(user32))
+    assert got == Placement(Rect(30, 60, 800, 600), False)
 
 
 def test_read_placement_reports_maximized():
     user32 = FakeUser32(placement=(win32.SW_SHOWMAXIMIZED,
-                                   Rect(10, 20, 800, 600)))
+                                   Rect(10, 20, 800, 600), 0))
     assert clientwin32.read_placement(1, (0, 0), _libs(user32)).maximized
 
 
 def test_a_minimized_client_still_yields_its_restore_rect():
     """rcNormalPosition is where the window will un-minimize to, which is
-    the thing worth persisting -- and maximized must read False."""
+    the thing worth persisting -- and maximized must read False when the
+    restore-to-maximized flag is not set."""
     user32 = FakeUser32(placement=(win32.SW_SHOWMINIMIZED,
-                                   Rect(10, 20, 800, 600)))
+                                   Rect(10, 20, 800, 600), 0))
     got = clientwin32.read_placement(1, (0, 0), _libs(user32))
     assert got == Placement(Rect(10, 20, 800, 600), False)
+
+
+def test_a_client_minimized_from_maximized_still_reads_as_maximized():
+    """Windows signals restore-to-maximized through the flag, not showCmd.
+    Reading showCmd alone saves a minimized-from-maximized client as
+    windowed, and it comes back windowed."""
+    user32 = FakeUser32(placement=(win32.SW_SHOWMINIMIZED,
+                                   Rect(10, 20, 800, 600),
+                                   win32.WPF_RESTORETOMAXIMIZED))
+    assert clientwin32.read_placement(1, (0, 0), _libs(user32)).maximized
 
 
 def test_read_placement_returns_none_when_the_call_fails():
     assert clientwin32.read_placement(1, (0, 0), _libs(FakeUser32())) is None
 
 
+def test_read_placement_returns_none_for_a_degenerate_rect():
+    """A zero-width restore rect is not something to persist, and DWM
+    rejects an inverted one. Separate path from the failed call above."""
+    user32 = FakeUser32(placement=(win32.SW_SHOWNORMAL,
+                                   Rect(10, 20, 0, 600), 0))
+    assert clientwin32.read_placement(1, (0, 0), _libs(user32)) is None
+
+
 def test_apply_placement_converts_screen_back_to_workspace():
+    """Both axes of origin are exercised (20, 40), matching the read-side
+    test above."""
     user32 = FakeUser32()
     ok = clientwin32.apply_placement(
-        1234, Placement(Rect(10, 60, 800, 600), False), (0, 40),
+        1234, Placement(Rect(30, 60, 800, 600), False), (20, 40),
         _libs(user32))
     assert ok
     hwnd, wp = user32.applied[0]
@@ -168,3 +196,17 @@ def test_apply_placement_never_minimizes():
 def test_apply_placement_reports_failure():
     assert not clientwin32.apply_placement(
         1, Placement(Rect(0, 0, 8, 6)), (0, 0), _libs(FakeUser32(ok=False)))
+
+
+def test_apply_placement_preserves_the_current_max_position():
+    """A fresh WINDOWPLACEMENT has ptMaxPosition (0, 0), which
+    SetWindowPlacement reads as 'maximize onto the primary monitor'. Seeding
+    from the window's current placement keeps whatever monitor it already
+    maximizes to."""
+    user32 = FakeUser32(placement=(win32.SW_SHOWNORMAL,
+                                   Rect(0, 0, 8, 6), 0),
+                        max_position=(2560, 100))
+    clientwin32.apply_placement(1, Placement(Rect(0, 0, 8, 6), True), (0, 0),
+                                _libs(user32))
+    wp = user32.applied[0][1]
+    assert (wp.ptMaxPosition.x, wp.ptMaxPosition.y) == (2560, 100)

@@ -44,6 +44,11 @@ SW_SHOWMAXIMIZED = 3
 # EVE client is loading or hung; this is the documented escape.
 WPF_ASYNCWINDOWPLACEMENT = 0x0004
 
+# Set by Windows when a MINIMIZED window will restore to maximized. Without
+# it, a client minimized from maximized reads back as windowed and comes
+# back windowed.
+WPF_RESTORETOMAXIMIZED = 0x0002
+
 SPI_GETWORKAREA = 0x0030
 
 HWND_MESSAGE = -3
