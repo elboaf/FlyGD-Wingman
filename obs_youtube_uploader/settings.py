@@ -3,6 +3,8 @@
 Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 ``category_id``).
 """
+import contextlib
+import copy
 import json
 import threading
 from pathlib import Path
@@ -187,3 +189,34 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+@contextlib.contextmanager
+def update(data: dict, path: Path | None = None):
+    """Serialise a whole read-modify-write, not just the write.
+
+    _SAVE_LOCK alone is not enough. save() projects the COMPLETE document
+    from DEFAULTS, so a writer that reads, mutates and saves can be
+    interleaved by another doing the same and have its keys reverted --
+    silently, with no error and nothing in the log. Holding the lock across
+    the caller's mutation closes that window.
+
+    On any exception the live dict is restored to its prior contents and
+    nothing is written, so a failed save cannot leave in-memory state and
+    disk disagreeing. ui/api.py's save path depends on that property.
+
+    Deep, not shallow: preview state lives in a nested section, and a
+    shallow snapshot would leave a half-applied mutation behind.
+
+    DO NOT call save() or update() from inside an update() block. The lock
+    is not reentrant and the process will deadlock.
+    """
+    with _SAVE_LOCK:
+        before = copy.deepcopy(data)
+        try:
+            yield data
+            _save_locked(data, path)
+        except BaseException:
+            data.clear()
+            data.update(before)
+            raise

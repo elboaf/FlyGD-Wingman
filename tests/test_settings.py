@@ -166,3 +166,69 @@ def test_load_rejects_recording_dir_supplied_as_a_non_string(tmp_path):
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"recording_dir": 123}))
     assert settings.load(p)["recording_dir"] is None
+
+
+def test_update_saves_on_clean_exit(tmp_path):
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+    with settings.update(data, path) as doc:
+        doc["privacy"] = "public"
+    assert json.loads(path.read_text())["privacy"] == "public"
+
+
+def test_update_rolls_back_and_does_not_write_on_failure(tmp_path):
+    """A failed block must leave neither the file nor the live dict changed.
+
+    ui/api.py bails before touching in-memory state precisely so state and
+    disk cannot diverge; the primitive has to preserve that property or
+    converting that caller would regress it.
+    """
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+    settings.save(data, path)
+    with pytest.raises(RuntimeError):
+        with settings.update(data, path) as doc:
+            doc["privacy"] = "public"
+            raise RuntimeError("boom")
+    assert data["privacy"] == settings.DEFAULTS["privacy"]
+    assert json.loads(path.read_text())["privacy"] == settings.DEFAULTS["privacy"]
+
+
+def test_update_rollback_restores_nested_sections(tmp_path):
+    """Shallow restore would leave a mutated nested dict in place, which is
+    exactly where preview state lives."""
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+    with pytest.raises(RuntimeError):
+        with settings.update(data, path) as doc:
+            doc["preview"]["opacity"] = 40
+            raise RuntimeError("boom")
+    assert data["preview"]["opacity"] == settings.DEFAULTS["preview"]["opacity"]
+
+
+def test_concurrent_updates_do_not_lose_each_other(tmp_path):
+    """The race this whole task exists for: one writer's read-modify-write
+    interleaving with another's and reverting it."""
+    import threading
+
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+    settings.save(data, path)
+    barrier = threading.Barrier(2)
+
+    def writer(key, value):
+        barrier.wait()
+        for _ in range(50):
+            with settings.update(data, path) as doc:
+                doc[key] = value
+
+    threads = [threading.Thread(target=writer, args=("privacy", "public")),
+               threading.Thread(target=writer, args=("category", "22"))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    written = json.loads(path.read_text())
+    assert written["privacy"] == "public"
+    assert written["category"] == "22"
