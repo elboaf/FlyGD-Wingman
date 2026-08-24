@@ -960,7 +960,20 @@ A squash merge rewrites the format commit into a brand-new SHA, and the entry yo
 
 Two ways to get this right; pick one and be deliberate:
 
-**A — merge commit (simplest).** Merge this PR with a true merge commit, not squash and not rebase. The format commit's SHA survives, so recording it now works:
+**This repository squash-merges.** Confirmed against `main`: `#33`, `#34`, `#35`, and `#36` all landed as single commits titled `<subject> (#N)`. So the format commit's SHA on this branch **will not exist** in `main`'s history, and Option A below is not actually available without someone deliberately choosing a different merge button. Plan for B.
+
+**B — squash or rebase merge (what this repo does).** Write `.git-blame-ignore-revs` with a placeholder comment and no SHA, merge the PR, then read the squashed commit's SHA off `main` and push one follow-up commit filling it in:
+
+```bash
+# After the PR merges:
+git fetch origin
+POST_MERGE_SHA=$(git log origin/main --format='%H %s' -20 | grep 'Apply ruff format' | cut -d' ' -f1)
+printf '# Mechanical reformats. Configure once with:\n#   git config blame.ignoreRevsFile .git-blame-ignore-revs\n\n# Adopt ruff format across the tree (149 of 176 files, no behaviour change)\n%s\n' "$POST_MERGE_SHA" > .git-blame-ignore-revs
+```
+
+Then commit that directly to a small follow-up PR. Two steps, and the second is easy to forget — so make the PR description say the follow-up is required, and do not close the task until `git blame` on `main` actually skips the reformat.
+
+**A — true merge commit (only if someone deliberately chooses it).** If this PR is merged with a real merge commit rather than squashed, the SHA survives and can be recorded before merging:
 
 ```bash
 FORMAT_SHA=$(git rev-parse HEAD)
@@ -968,7 +981,7 @@ printf '# Mechanical reformats. Configure once with:\n#   git config blame.ignor
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
-**B — squash or rebase merge.** Write the file with a placeholder now, merge, then push one follow-up commit to `main` replacing it with the post-merge SHA read from `git log`. This is two steps and easy to forget, which is why A is preferred.
+Do not assume this path. Verify how the PR was actually merged before trusting any recorded SHA.
 
 Whichever you choose, say so explicitly in the PR description. A reviewer clicking the default merge button is exactly how this breaks.
 
