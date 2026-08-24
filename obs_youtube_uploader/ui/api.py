@@ -169,7 +169,8 @@ class Api:
                  rows=None, durations_file=None,
                  drain_interval_s=PROBE_DRAIN_S,
                  spawn=threading.Thread, probe=library.probe,
-                 timer=threading.Timer, preview_host=None):
+                 timer=threading.Timer, preview_host=None,
+                 client_layouts=None):
         self._state = state
         self._window = None          # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
@@ -191,6 +192,12 @@ class Api:
         self._eve_mutation = threading.Lock()
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
+
+        # None off Windows and in most tests, like _preview_host above.
+        # Deliberately NOT gated on preview.enabled: this moves the EVE
+        # client windows themselves and has nothing to do with previews
+        # beyond sharing a tab.
+        self._client_layouts = client_layouts
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -1309,6 +1316,69 @@ class Api:
             self._preview_host.stop()
         except Exception:
             logger.exception("Preview host did not stop cleanly")
+
+    # ---- EVE client window layouts -------------------------------------
+
+    def start_client_layouts_if_enabled(self) -> None:
+        """Arm the restore-on-appear watcher, if the user asked for it."""
+        if self._client_layouts is None:
+            return
+        if self._state.settings.get("preview", {}).get(
+                "restore_clients_on_launch"):
+            self._client_layouts.start()
+
+    def save_client_layout(self) -> dict:
+        """Snapshot where every named client sits."""
+        if self._client_layouts is None:
+            return {"saved": 0, "persisted": True}
+        return self._client_layouts.save_now()
+
+    def restore_client_layout(self) -> dict:
+        if self._client_layouts is None:
+            return {"restored": 0, "skipped": 0}
+        return self._client_layouts.restore_now()
+
+    def set_restore_clients_on_launch(self, enabled) -> bool:
+        """Toggle the watcher and persist the choice.
+
+        Truthy on success for the reason settings.js:181 documents:
+        WM.send resolves to null on a bridge failure and cannot otherwise
+        tell that apart from a method that returned None.
+        """
+        enabled = bool(enabled)
+        section = self._state.settings.setdefault("preview", {})
+        if section.get("restore_clients_on_launch") != enabled:
+            def mutate(doc):
+                doc.setdefault("preview", {})[
+                    "restore_clients_on_launch"] = enabled
+            try:
+                # Through settings.update, not save(): the read must
+                # happen inside _SAVE_LOCK or a concurrent writer is
+                # reverted. update applies mutate before writing, so the
+                # in-memory document is updated even when the disk write
+                # fails -- same as the previous behaviour.
+                settings_mod.update(lambda: self._state.settings, mutate)
+            except OSError:
+                # Same posture as set_preview_enabled: a settings file
+                # that cannot be written must not block the feature.
+                logger.exception(
+                    "Could not persist the client-restore setting")
+        if self._client_layouts is not None:
+            if enabled:
+                self._client_layouts.start()
+            else:
+                self._client_layouts.stop()
+        return True
+
+    def shutdown_client_layouts(self) -> None:
+        """Runs on every exit path, so like shutdown_previews it must
+        never be the thing that raises."""
+        if self._client_layouts is None:
+            return
+        try:
+            self._client_layouts.stop()
+        except Exception:
+            logger.exception("Client layout watcher did not stop cleanly")
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.

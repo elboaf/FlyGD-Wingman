@@ -408,6 +408,17 @@ just by the suite.
 5. Layout persistence across restarts.
 6. Enable/disable from the Previews tab.
 
+### Shipped (second slice)
+
+Merged in #23, and item 11 below is struck accordingly. **Not** verified by
+hand — no Win32 call in it has ever run against a real client. That is the
+difference between this slice and the first, and it is why the smoke
+checklist grew thirteen items rather than none.
+
+7. Client window placement saved and restored, keyed by character.
+8. An opt-in watcher that places each client once as it appears.
+9. `settings.update()` — atomic read-modify-write for the settings document.
+
 ### Deferred, in rough priority order
 
 **7. Per-character and cycle-group hotkeys** — `gestures.py` and `cycle.py`.
@@ -445,9 +456,30 @@ frequency. `redraw()` is keyed and a flash would defeat the key, putting a
 never-minimize list), hide-active-preview, hide-all-on-lost-focus,
 always-maximize-on-activate, middle-click to minimize a client.
 
-**11. EVE client window layout save/restore** — `GetWindowPlacement` /
-`MoveWindow` over the clients themselves, with optional restore on launch.
-Distinct from preview layouts, which are already persisted.
+~~**11. EVE client window layout save/restore**~~ — **Shipped (#23).**
+`preview/placement.py`, `preview/clientwin32.py`, `preview/clientlayout.py`,
+plus a `settings.update()` helper and a second card on the Previews tab.
+
+Three things it settled that the rest of this roadmap inherits:
+
+- **A per-batch DPI scope, not one-time init.** `threading.Timer` starts a
+  fresh thread per tick and DPI awareness is thread-local, so a context set at
+  startup is gone by the first tick. Any future off-thread Win32 work that
+  reads or writes coordinates needs the same treatment.
+- **Virtualization follows the calling thread, not the window** — and that
+  includes `GetSystemMetrics(SM_*VIRTUALSCREEN)`, which is easy to overlook
+  because it does not look like a coordinate read. The one real bug found in
+  review was exactly that: a virtual-desktop read outside the scope, compared
+  against physical rects. It is invisible on a single monitor.
+- **`settings.save()` locks only serialization.** `settings.update(read,
+  mutate)` holds `_SAVE_LOCK` across read-mutate-write and is the boundary any
+  new writer should use. `preview/store.py` still writes the old way; that
+  retrofit was deliberately left out of #23 and is listed below.
+
+Still unverified: no Win32 call in it has ever run. Thirteen items in
+`docs/smoke-checklist.md`, of which the mixed-DPI multi-monitor check is the
+one that matters — it passes on a single monitor whether or not the code is
+correct.
 
 **12. Multiple named profiles.** The settings schema was deliberately shaped
 so this can be added without migrating anyone: today's values are a single
@@ -475,6 +507,40 @@ largest pure-parsing job.
   border for it and the cache key includes it, but no caller assigns it.
   Pairs naturally with 10.
 
+### Left behind by item 11 (#23)
+
+Named here rather than in a tracker because each one is small enough to fold
+into whichever slice next touches that file.
+
+- **`preview/store.py` still writes the old way.** `settings.update(read,
+  mutate)` now exists and holds `_SAVE_LOCK` across read-mutate-write;
+  `LayoutStore` still does read-then-`save()`, which leaves a window in which
+  another writer completes and is reverted. Pre-existing, and deliberately
+  not retrofitted in #23 — that would have been a behaviour change to a
+  module the slice otherwise did not touch. It is a five-line change now that
+  the helper exists.
+- **`tests/test_api_bookmarks.py` overwrites the developer's real
+  `settings.json`.** Two tests reach `settings_mod.save` through
+  `save_bookmarks` with no stub, and nothing redirects
+  `paths.settings_file()`. #23 fixed the one instance in a file it already
+  edited and left these. The durable fix is an autouse `conftest.py` fixture
+  pointing `paths.settings_file()` at `tmp_path`, which closes the whole
+  class rather than the instances anyone happened to notice.
+- **"No named clients are running" is reported when every placement read
+  failed.** `clientlayout._save` returns `saved: 0` for both "nothing was
+  running" and "everything failed to read". The log distinguishes them; the
+  message does not.
+- **The restore-on-launch toggle reports success on a failed persist.**
+  `Api.set_restore_clients_on_launch` swallows `OSError` and still returns
+  truthy, so the checkbox stays checked and the choice is gone at restart.
+  Inconsistent with the save button in the same card, which reports a failed
+  write deliberately.
+- **Enabling restore-on-launch mid-session places already-running clients**
+  on the first tick, two seconds later. Correct at launch, which is what the
+  label describes; arguably surprising mid-session. Seeding `_placed` from
+  the current sweep when `start()` arrives from the toggle rather than from
+  launch is the shape of the fix, if it turns out to bother anyone.
+
 **Explicitly excluded**: anything that reads EVE process memory, injects input
 into a client, performs OCR, or automates gameplay. Previews are DWM
 compositions of windows the OS already exposes; focus switching uses documented
@@ -497,6 +563,23 @@ list has been walked; these items have not been exercised by anyone:
 - The frozen build rendering labels in Inter. The font is a `datas` entry and
   PyInstaller exits 0 when one resolves to nothing; there is now a post-build
   assertion, but nobody has looked at the packaged app.
+
+**Every one of the thirteen client-window-layout items is also unwalked** —
+that whole section of the checklist arrived with #23 and nothing in it has
+run. Three of them carry more weight than the rest:
+
+- **Mixed-DPI multi-monitor save and restore.** It passes on a single monitor
+  whether or not the code is correct, which is precisely how a real bug — a
+  virtual-desktop read taken outside the DPI scope — survived ten reviews
+  before the whole-branch pass caught it.
+- **Borderless-fullscreen clients.** Genuinely unknown whether they accept
+  placement, ignore it, or provoke a mode switch. Many EVE users run
+  fullscreen, so "unknown" here covers a large share of the audience.
+- **Maximized restore across monitors.** `apply_placement` seeds
+  `ptMaxPosition` from the window's *current* placement, which names the
+  monitor it is on now rather than the one the saved rect puts it on. That
+  checklist item exists to decide whether the seeding is sufficient or
+  whether `ptMaxPosition` needs deriving from the saved rect's monitor.
 
 One review pass is also unconfirmed: three CodeRabbit rounds ran against the
 branch and the fix for the third round's finding never got a fourth pass,

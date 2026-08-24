@@ -230,3 +230,72 @@
     box.checked = !!(s.preview && s.preview.enabled);
   });
 }());
+
+// ---- EVE client window layouts -------------------------------------------
+// Separate from the previews block above: this moves the CLIENT windows,
+// not the preview tiles, and works whether or not previews are on.
+//
+// Not part of collect()/save_settings either -- the checkbox starts and
+// stops a watcher thread rather than just persisting a field.
+(function () {
+  var box = WM.el('client-restore-on-launch');
+  var save = WM.el('btn-save-client-layout');
+  var restore = WM.el('btn-restore-client-layout');
+  var status = WM.el('client-layout-status');
+  if (!box || !save || !restore || !status) { return; }
+
+  function say(text) { status.textContent = text; }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    // WM.send resolves to null on any bridge failure rather than
+    // rejecting (app.js:38-43), so check the resolved value.
+    WM.send('set_restore_clients_on_launch', wanted).then(function (ok) {
+      if (!ok) { box.checked = !wanted; }
+    });
+  });
+
+  save.addEventListener('click', function () {
+    WM.send('save_client_layout').then(function (res) {
+      if (!res) { say('Could not save client positions.'); return; }
+      if (!res.persisted) {
+        // Saying "Saved N" after the write failed is a lie the user
+        // discovers at their next restart.
+        say('Could not write client positions to settings.');
+        return;
+      }
+      if (!res.saved) {
+        say('No named clients are running. Nothing to save.');
+        return;
+      }
+      say('Saved ' + plural(res.saved, 'client position.',
+                            'client positions.'));
+    });
+  });
+
+  restore.addEventListener('click', function () {
+    WM.send('restore_client_layout').then(function (res) {
+      if (!res) { say('Could not restore client positions.'); return; }
+      if (!res.restored && !res.skipped) {
+        say('Nothing to restore. No running client has a saved position.');
+        return;
+      }
+      var text = 'Restored ' + plural(res.restored, 'client.', 'clients.');
+      if (res.skipped) {
+        text += ' ' + plural(res.skipped, 'was', 'were')
+             + ' skipped — the saved position is off-screen now.';
+      }
+      say(text);
+    });
+  });
+
+  // panel.js owns onSettings and re-dispatches it, so listen on the same
+  // custom event the blocks above use rather than claiming a handler that
+  // already has an owner.
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    box.checked = !!(s.preview && s.preview.restore_clients_on_launch);
+  });
+}());
