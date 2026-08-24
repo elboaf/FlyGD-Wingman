@@ -138,6 +138,45 @@ RECOMMENDED_BINDS = {
 
 _SYMBOL_TO_KEY = {sym: key for key, sym, _ in _MODIFIERS}
 
+# Reasons a running engine would register nothing. Returned as ids rather
+# than sentences: the page owns the wording, this owns the fact.
+NO_WINDOWS = "no_windows"
+NO_BINDS = "no_binds"
+
+
+def registration_blockers(section: dict) -> list[str]:
+    """Why a running engine would register no hotkeys at all.
+
+    Two config states produce a live engine that does nothing, and neither
+    announces itself. RegisterBind returns early on a blank key WITHOUT
+    recording a failure, and the per-window loop it sits inside never
+    executes when no window is enabled. Either way the status file is
+    written normally with an empty failed_binds, so the UI reports
+    "Running", shows no warning, and every keypress does nothing -- which
+    looks exactly like the feature being broken.
+
+    Decided here rather than in the page because Wingman generates the INI
+    and therefore knows what it would produce. Nothing is inferred.
+
+    Both reasons are reported when both apply: fixing one would leave the
+    user in the same silence, and naming only the first sends them round
+    twice.
+    """
+    windows = section.get("windows")
+    binds = section.get("keybinds")
+    reasons = []
+    # isinstance rather than a truthiness test: settings.json is
+    # hand-editable, and a wrong type must not be read as a working setup.
+    # This is the failure the whole check exists to prevent, so it errs
+    # towards warning.
+    if not isinstance(windows, dict) or not any(
+            bool(on) for on in windows.values()):
+        reasons.append(NO_WINDOWS)
+    if not isinstance(binds, dict) or not any(
+            str(value).strip() for value in binds.values()):
+        reasons.append(NO_BINDS)
+    return reasons
+
 
 def collisions(binds: dict) -> dict:
     """Map each doubly-bound AHK string to every bind id claiming it.

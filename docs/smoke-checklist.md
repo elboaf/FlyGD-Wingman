@@ -878,6 +878,18 @@ pytest — the engine is AutoHotkey.
       and the Clear button are gone. The status bar's ROOT / NEXT readouts
       are the only root display, and they still update as you use the
       hotkeys — check they do.
+- [ ] **THE SILENT-NO-OP TRAP: enabled with nothing to register says so.**
+      Tick Enable but leave every EVE window unticked. Expected: a line under
+      the engine state reading "No hotkeys are registered — no EVE window is
+      enabled below." Then tick a window but clear every keybind: the line
+      reads "…no keybinds are set." With both wrong, it names both.
+      Untick Enable and the line disappears entirely.
+      The bug: `RegisterBind` ignores a blank key without recording a
+      failure, and the per-window loop never runs with nothing ticked, so
+      `failed_binds` stayed empty and the UI reported **Running** with no
+      warning while every keypress did nothing — indistinguishable from the
+      feature being broken. This is what a fresh install looks like before
+      you configure it, so it is the first thing a new user would hit.
 - [ ] Deliberately binding two actions to one key shows the collision warning
 - [ ] Binding a key another application owns shows a registration failure,
       not a silently dead key

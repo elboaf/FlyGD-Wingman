@@ -33,8 +33,34 @@
     state = payload;
     WM.el('eve-enabled').checked = !!payload.settings.enabled;
     renderEngineState();
+    renderBlockers();
     renderWindows();
     renderBinds();
+  }
+
+  // Enabled, running, and registering nothing. The two config states that
+  // cause it are decided in Python (bookmarks.registration_blockers) and
+  // only phrased here: RegisterBind ignores a blank key without recording a
+  // failure, and the per-window loop never runs with no window ticked, so
+  // failed_binds stays empty and the engine looks healthy while every
+  // keypress does nothing.
+  function renderBlockers() {
+    var row = WM.el('eve-blockers-row');
+    var el = WM.el('eve-blockers');
+    if (!row || !el) return;
+    var reasons = (state && state.engine && state.engine.blockers) || [];
+    var text = {
+      no_windows: 'no EVE window is enabled below',
+      no_binds: 'no keybinds are set'
+    };
+    var parts = reasons.map(function (r) { return text[r]; })
+                       .filter(Boolean);
+    row.hidden = parts.length === 0;
+    // Named in full rather than "check your settings": the whole point is
+    // that the user cannot see which of the two is missing.
+    el.textContent = parts.length
+      ? 'No hotkeys are registered — ' + parts.join(', and ') + '.'
+      : '';
   }
 
   // Immediate feedback after a save. The live status push (a later task)

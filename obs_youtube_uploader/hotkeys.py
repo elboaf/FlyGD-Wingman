@@ -306,5 +306,12 @@ class HotkeyEngine:
     def _clear_pid_record(self) -> None:
         try:
             self._pid_path().unlink()
-        except OSError:
-            pass
+        except OSError as exc:
+            # Non-fatal on purpose: every caller is a path that must reach
+            # its own outcome whether or not the record went away, and the
+            # next recover_orphan clears it anyway once the pid is dead. It
+            # is logged rather than passed over because a record that
+            # repeatedly cannot be removed means something holds it -- an
+            # AV scanner, a permissions change -- and that is invisible
+            # from the outside otherwise.
+            logger.warning("Could not remove the engine PID record: %s", exc)

@@ -128,3 +128,24 @@ def test_an_unrelated_exe_under_an_autohotkey_folder_is_not_ours(tmp_path, monke
     assert eng.recover_orphan() is False
     assert killed == []
 
+
+def test_an_unremovable_pid_record_is_logged_not_swallowed(tmp_path, caplog):
+    """The bare `except OSError: pass` here left nothing behind at all.
+
+    It is still non-fatal -- every caller has to reach its own outcome
+    whether or not the record went away, and the next recover_orphan clears
+    it once the pid is dead -- but a record that repeatedly cannot be
+    removed means something is holding it, and that was invisible.
+    """
+    import logging
+    eng = engine(tmp_path, FakeSpawner())
+
+    class Boom:
+        def unlink(self):
+            raise OSError("held open by something")
+
+    eng._pid_path = lambda: Boom()
+    with caplog.at_level(logging.WARNING):
+        eng._clear_pid_record()          # must not raise
+    assert "engine PID record" in caplog.text
+    assert "held open by something" in caplog.text

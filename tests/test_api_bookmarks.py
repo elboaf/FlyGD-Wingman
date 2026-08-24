@@ -260,3 +260,34 @@ def test_save_bookmarks_reports_whether_it_actually_wrote(api, monkeypatch):
         raise OSError("nope")
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
     assert api.save_bookmarks(section)["saved"] is False
+
+
+def test_get_bookmarks_reports_registration_blockers(api):
+    """The route must be told, not left to work it out.
+
+    Enabled with no window ticked and no key bound is a live engine that
+    registers nothing: the status file is written normally, failed_binds is
+    empty, and the UI would otherwise say "Running" with no warning while
+    every keypress did nothing.
+    """
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": True, "windows": {}, "keybinds": {"FinH": ""}}
+    got = api.get_bookmarks()
+    assert got["engine"]["blockers"] == ["no_windows", "no_binds"]
+
+
+def test_a_working_setup_reports_no_blockers(api):
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": True,
+        "windows": {"EVE - Pilot": True},
+        "keybinds": {"FinH": "^y"}}
+    assert api.get_bookmarks()["engine"]["blockers"] == []
+
+
+def test_blockers_are_empty_while_the_feature_is_off(api):
+    """Nothing is running, so there is nothing to warn about. Reporting
+    them here would put a warning on a route the user has deliberately
+    switched off."""
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": False, "windows": {}, "keybinds": {"FinH": ""}}
+    assert api.get_bookmarks()["engine"]["blockers"] == []
