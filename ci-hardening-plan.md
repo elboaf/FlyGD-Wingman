@@ -300,7 +300,8 @@ Transformations, applied to every step as you move it:
         uses: actions/upload-artifact@v4
         with:
           name: FlyGD-Wingman-installer
-          path: packaging/Output/*.exe
+          path: dist/FlyGD-Wingman-Setup-*.exe
+          if-no-files-found: error
 
       - name: Upload unpacked build
         uses: actions/upload-artifact@v4
