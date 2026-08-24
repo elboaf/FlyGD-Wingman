@@ -131,3 +131,70 @@ def test_the_level_guard_rejects_every_trap_token(token):
 @pytest.mark.parametrize("token", ["1", "5", "I", "v", "IV"])
 def test_the_level_guard_still_accepts_real_levels(token):
     assert plans._parse_level(token) in (1, 4, 5)
+
+
+def test_skill_names_are_nfc_normalised():
+    """A name pasted from a browser can arrive decomposed -- "e" plus
+    U+0301 rather than U+00E9. Those are different strings, so an
+    un-normalised name would miss the skill-id cache and score Unknown
+    against a skill that resolves perfectly well when composed."""
+    got = parse_one("Café Handling V\n")
+    assert got[0].skill_name == "Café Handling"
+
+
+def test_normalisation_happens_before_the_length_cap():
+    """Decomposed text is longer than its composed form, so capping
+    first would reject a name that is legal once normalised.
+
+    Built from "é" (LATIN SMALL LETTER E + COMBINING ACUTE ACCENT)
+    rather than a literal "é" -- a literal glyph in this source file is
+    already precomposed by the editor/toolchain, which would silently
+    defeat the point of the test."""
+    decomposed = "é" * 150
+    assert len(decomposed) == 300          # 2 code points each, un-composed
+    got = parse_one(f"{decomposed} V\n")   # 150 once composed
+    assert len(got[0].skill_name) == 150
+
+
+def test_a_control_character_in_a_name_is_rejected():
+    """A stray \\x07 or \\x1b comes from a mangled paste or a binary file
+    renamed .txt. It cannot be part of a real skill name, and letting it
+    through puts an escape sequence into a log line and a bridge
+    payload."""
+    assert not plans.parse("Navi\x07gation V\n").ok
+    assert not plans.parse("Navi\x1bgation V\n").ok
+
+
+def test_a_tab_inside_a_name_is_rejected():
+    """TAB is a control character too. It also cannot survive the
+    round trip: rsplit(None, 1) treats it as the separator, so a name
+    containing one is already ambiguous before it gets here."""
+    assert not plans.parse("Navi\tgation V\n").ok
+
+
+def test_duplicates_fold_case_insensitively_keeping_the_maximum_level():
+    """Every name comparison in this subsystem is case-insensitive, and
+    the stricter line governs: a plan asking for III and V wants V."""
+    got = parse_one("Navigation III\nnavigation V\n")
+    assert len(got) == 1
+    assert got[0].level == 5
+
+
+def test_a_lower_duplicate_does_not_lower_the_level():
+    got = parse_one("Navigation V\nNAVIGATION I\n")
+    assert [(r.skill_name, r.level) for r in got] == [("Navigation", 5)]
+
+
+def test_the_first_spelling_of_a_duplicate_wins():
+    """The name is what the user reads in the expanded row, so keep the
+    one they wrote first rather than letting a shouty duplicate rename
+    it. The skill-id lookup is case-insensitive either way."""
+    got = parse_one("Navigation III\nNAVIGATION V\n")
+    assert got[0].skill_name == "Navigation"
+
+
+def test_requirement_order_follows_first_appearance():
+    """The expanded row lists requirements in plan order; re-sorting
+    them would scramble a plan the user grouped on purpose."""
+    got = parse_one("Hull Upgrades IV\nNavigation III\nHull Upgrades V\n")
+    assert [r.skill_name for r in got] == ["Hull Upgrades", "Navigation"]

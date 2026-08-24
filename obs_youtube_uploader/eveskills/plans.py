@@ -10,6 +10,7 @@ partial-success mode: a plan that silently dropped a malformed line
 would score a character Ready for a ship it cannot fly, and nothing in
 the UI would say so.
 """
+import unicodedata
 from dataclasses import dataclass
 
 MAX_CONTENT_CHARS = 512 * 1024
@@ -75,7 +76,10 @@ def _parse_level(token: str):
 def parse(contents: str) -> ParseResult:
     """Parse plan text into requirements, or into diagnostics only."""
     diagnostics = []
-    requirements = []
+    # Insertion-ordered and keyed on the casefolded name: the first
+    # spelling wins, later duplicates only ever raise the level, and
+    # dict ordering keeps the user's own grouping intact.
+    ordered = {}
     for number, raw in enumerate(contents.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -94,9 +98,32 @@ def parse(contents: str) -> ParseResult:
             diagnostics.append(Diagnostic(
                 number, f"'{token}' is not a level. Use I-V or 1-5."))
             continue
-        requirements.append(Requirement(name, level))
+        # Normalise BEFORE the length cap: decomposed text is longer
+        # than its composed form, so capping first rejects names that
+        # are perfectly legal once composed.
+        name = unicodedata.normalize("NFC", name)
+        if len(name) > MAX_SKILL_NAME_CHARS:
+            diagnostics.append(Diagnostic(
+                number, "Skill name is longer than "
+                        f"{MAX_SKILL_NAME_CHARS} characters."))
+            continue
+        if any(unicodedata.category(ch) == "Cc" for ch in name):
+            # A stray \x07 or \x1b comes from a mangled paste. It cannot
+            # be part of a real skill name and must not reach a log line
+            # or a bridge payload as an escape sequence.
+            diagnostics.append(Diagnostic(
+                number, "Skill name contains a control character."))
+            continue
+        key = name.casefold()
+        previous = ordered.get(key)
+        if previous is None:
+            ordered[key] = Requirement(name, level)
+        elif level > previous.level:
+            # Keep the first spelling, raise the level. Two lines for one
+            # skill mean the stricter one governs.
+            ordered[key] = Requirement(previous.skill_name, level)
     if diagnostics:
         # All or nothing. Returning the good lines beside the complaints
         # is the partial-success mode this parser refuses to have.
         return ParseResult((), tuple(diagnostics))
-    return ParseResult(tuple(requirements), ())
+    return ParseResult(tuple(ordered.values()), ())
