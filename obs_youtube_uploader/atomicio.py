@@ -53,9 +53,13 @@ def _replace_with_retry(tmp_name: str, path: Path, attempts: int, sleep) -> None
 
     Windows only: os.replace maps to MoveFileExW, which raises a sharing
     violation if the destination is open by a reader that did not grant
-    FILE_SHARE_DELETE. Shared by both writers here because both destinations
-    are files another process may hold -- the engine polls the INI files, and
-    EVE holds core_*.dat open for the whole session.
+    FILE_SHARE_DELETE -- and GetPrivateProfileString, which the engine uses
+    to poll the INI files every 2-10 seconds, does not. EVE holds
+    core_*.dat open for a whole session, so the copy path needs the same
+    treatment.
+
+    The reads are brief, so a short bounded retry clears it; failing
+    outright would surface as settings mysteriously not saving.
     """
     for attempt in range(attempts):
         try:
@@ -86,7 +90,11 @@ def copy_atomic(source: Path, target: Path, *, attempts: int = 5,
                                         prefix=target.name + ".",
                                         suffix=".tmp")
     try:
-        with open(source, "rb") as src, os.fdopen(handle, "wb") as dst:
+        # The temp descriptor is wrapped FIRST: `with A, B` enters A before
+        # B, so opening the source in the same statement leaks this fd
+        # whenever the source cannot be opened -- the unlink below removes
+        # the name, not the descriptor.
+        with os.fdopen(handle, "wb") as dst, open(source, "rb") as src:
             shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())

@@ -201,3 +201,23 @@ def test_copy_atomic_gives_up_after_the_attempt_budget(tmp_path):
         monkey.undo()
     assert target.read_bytes() == b"original"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["dst.dat", "src.dat"]
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"),
+                    reason="descriptor count needs /proc")
+def test_copy_atomic_does_not_leak_a_descriptor_when_the_source_fails(tmp_path):
+    """`with A, B` enters A first, so wrapping the temp fd second would leak
+    it whenever the source cannot be opened -- unlink removes the name, not
+    the descriptor."""
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"original")
+    missing = tmp_path / "absent.dat"
+
+    def open_fds():
+        return len(os.listdir("/proc/self/fd"))
+
+    before = open_fds()
+    for _ in range(20):
+        with pytest.raises(OSError):
+            atomicio.copy_atomic(missing, target)
+    assert open_fds() <= before + 1
