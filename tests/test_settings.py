@@ -27,6 +27,8 @@ def test_defaults_are_the_documented_values():
             "height": 210,
             "opacity": 235,
             "layouts": {},
+            "restore_clients_on_launch": False,
+            "client_layouts": {},
         },
     }
 
@@ -166,3 +168,39 @@ def test_load_rejects_recording_dir_supplied_as_a_non_string(tmp_path):
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"recording_dir": 123}))
     assert settings.load(p)["recording_dir"] is None
+
+
+def test_update_holds_the_save_lock_across_the_read(tmp_path):
+    """The whole point: reading inside the lock is what stops another
+    writer completing between our read and our save and being reverted."""
+    path = tmp_path / "settings.json"
+    seen = []
+
+    def read():
+        seen.append(settings._SAVE_LOCK.locked())
+        return settings._fresh_defaults()
+
+    settings.update(read, lambda doc: doc.__setitem__("privacy", "public"),
+                    path=path)
+    assert seen == [True]
+    assert settings.load(path)["privacy"] == "public"
+
+
+def test_update_writes_what_the_mutator_changed(tmp_path):
+    path = tmp_path / "settings.json"
+    settings.update(settings._fresh_defaults,
+                    lambda doc: doc["preview"].__setitem__("enabled", True),
+                    path=path)
+    assert settings.load(path)["preview"]["enabled"] is True
+
+
+def test_update_releases_the_lock_when_the_mutator_raises(tmp_path):
+    """A mutator that throws must not wedge every other writer forever."""
+    path = tmp_path / "settings.json"
+
+    def boom(doc):
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError):
+        settings.update(settings._fresh_defaults, boom, path=path)
+    assert not settings._SAVE_LOCK.locked()

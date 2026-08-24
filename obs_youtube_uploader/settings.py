@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import bookmarks, paths
 from .preview import layout as preview_layout
+from .preview import placement as preview_placement
 
 
 def _preview_defaults() -> dict:
@@ -19,7 +20,11 @@ def _preview_defaults() -> dict:
     clients should pay none of that.
     """
     return {"enabled": False, "width": 320, "height": 210,
-            "opacity": 235, "layouts": {}}
+            "opacity": 235, "layouts": {},
+            # Client WINDOW placement, distinct from `layouts` above,
+            # which is where the preview TILES sit. Off by default: this
+            # one moves the user's game windows.
+            "restore_clients_on_launch": False, "client_layouts": {}}
 
 
 def _eve_defaults() -> dict:
@@ -86,6 +91,8 @@ def validated_preview(raw) -> dict:
         return section
     if isinstance(raw.get("enabled"), bool):
         section["enabled"] = raw["enabled"]
+    if isinstance(raw.get("restore_clients_on_launch"), bool):
+        section["restore_clients_on_launch"] = raw["restore_clients_on_launch"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -99,6 +106,8 @@ def validated_preview(raw) -> dict:
     # at load rather than at draw time.
     section["layouts"] = preview_layout.serialize(
         preview_layout.deserialize(raw.get("layouts")))
+    section["client_layouts"] = preview_placement.serialize(
+        preview_placement.deserialize(raw.get("client_layouts")))
     return section
 
 
@@ -187,3 +196,21 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def update(read, mutate, path: Path | None = None) -> None:
+    """Atomic read-modify-write of the settings document.
+
+    save() locks only the write. Reading outside that lock leaves a window
+    in which another writer completes and is then reverted by our stale
+    copy -- and AppState.settings is REPLACED wholesale rather than
+    mutated (ui/api.py:139-141), so "stale" here means a whole document,
+    not one key. Every other writer goes through save(), which takes this
+    same lock, so holding it across the read closes the window.
+
+    `read` is called INSIDE the lock for that reason; do not hoist it.
+    """
+    with _SAVE_LOCK:
+        data = read()
+        mutate(data)
+        _save_locked(data, path)

@@ -126,11 +126,12 @@ def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
     assert main_mod.build_preview_host(object()) is None
 
 
-def test_set_preview_enabled_returns_truthy_on_success(tmp_path):
+def test_set_preview_enabled_returns_truthy_on_success(tmp_path, monkeypatch):
     """WM.send resolves to null on a bridge failure and cannot tell that
     apart from a method that returned None, so the page would revert the
     checkbox on every successful toggle (settings.js:181 records the same
     trap for save_settings)."""
+    _no_disk(monkeypatch)
     host = FakeHost()
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": False}
@@ -212,3 +213,215 @@ def test_an_unchanged_toggle_still_reports_success(tmp_path):
     api._state.settings["preview"] = {"enabled": True}
     assert api.set_preview_enabled(True) is True
     assert host.started == 0        # still short-circuited, not restarted
+
+
+class FakeClientLayouts:
+    def __init__(self):
+        self.started = self.stopped = 0
+        self.saves = self.restores = 0
+
+    def save_now(self):
+        self.saves += 1
+        return {"saved": 3, "persisted": True}
+
+    def restore_now(self):
+        self.restores += 1
+        return {"restored": 2, "skipped": 1}
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _no_disk(monkeypatch):
+    """set_restore_clients_on_launch persists through settings.update, and
+    the real save()/update() write to paths.settings_file() -- the user's
+    actual file. Stub both so no test can reach it."""
+    from obs_youtube_uploader.ui import api as api_mod
+    writes = []
+    monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
+
+    def fake_update(read, mutate, path=None):
+        doc = read()
+        mutate(doc)
+        writes.append(doc)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", fake_update)
+    return writes
+
+
+def test_save_client_layout_passes_the_count_through(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    assert api.save_client_layout() == {"saved": 3, "persisted": True}
+    assert manager.saves == 1
+
+
+def test_restore_client_layout_passes_the_counts_through(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    assert api.restore_client_layout() == {"restored": 2, "skipped": 1}
+
+
+def test_the_client_layout_endpoints_are_no_ops_without_a_manager(
+        tmp_path, monkeypatch):
+    """None off Windows and in most tests, like preview_host.
+
+    _no_disk is not optional here: set_restore_clients_on_launch persists
+    even with no manager, and the real save() writes to
+    paths.settings_file() -- the developer's actual settings file.
+    """
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api.save_client_layout() == {"saved": 0, "persisted": True}
+    assert api.restore_client_layout() == {"restored": 0, "skipped": 0}
+    assert api.set_restore_clients_on_launch(True) is True
+    api.shutdown_client_layouts()
+    api.start_client_layouts_if_enabled()
+
+
+def test_enabling_restore_on_launch_starts_the_watcher(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True) is True
+    assert manager.started == 1
+    assert api._state.settings["preview"]["restore_clients_on_launch"] is True
+    assert len(writes) == 1
+
+
+def test_disabling_restore_on_launch_stops_the_watcher(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api.set_restore_clients_on_launch(False)
+    assert manager.stopped == 1
+
+
+def test_an_unwritable_settings_file_does_not_block_the_watcher(
+        tmp_path, monkeypatch):
+    """Same posture as set_preview_enabled: the feature still works."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_read, _mutate, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True) is True
+    assert manager.started == 1
+
+
+def test_the_client_watcher_starts_on_launch_only_when_asked(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    api.start_client_layouts_if_enabled()
+    assert manager.started == 0
+
+    manager2 = FakeClientLayouts()
+    api2 = make_api(tmp_path, client_layouts=manager2)
+    api2._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api2.start_client_layouts_if_enabled()
+    assert manager2.started == 1
+
+
+def test_client_layout_shutdown_never_raises(tmp_path):
+    """Runs on every exit path, like shutdown_previews."""
+    class Exploding:
+        def stop(self):
+            raise RuntimeError("nope")
+
+    make_api(tmp_path, client_layouts=Exploding()).shutdown_client_layouts()
+
+
+def test_build_client_layout_manager_returns_none_off_windows(monkeypatch):
+    """None elsewhere keeps every call site in api.py a plain no-op
+    rather than a platform check."""
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "linux")
+    assert main_mod.build_client_layout_manager(object()) is None
+
+
+def test_build_client_layout_manager_body_is_exercised(monkeypatch):
+    """The sys.platform guard means this body never runs in CI, so a
+    NameError or wrong module alias inside it would ship silently and
+    fail only on a user's Windows machine.
+
+    Same known limit as build_preview_host's twin above: this catches
+    only EAGERLY resolved names. A lambda body is not executed here, so
+    collaborators must be bound method references (clientwin32.read_
+    placement, settings_mod.update) rather than lambdas wrapping them.
+    `screen` is the one deliberate closure, and it is not called here.
+    """
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {
+        "restore_clients_on_launch": False, "client_layouts": {}}})
+    manager = main_mod.build_client_layout_manager(state)
+    assert manager is not None
+
+
+def test_build_client_layout_manager_survives_a_broken_subsystem(monkeypatch):
+    """Client layouts are secondary to the upload workflow; failing to
+    build them must not stop Wingman launching.
+
+    NOT the object() trick the preview twin uses. build_preview_host reads
+    state.settings eagerly, so object() raises there; this builder reads it
+    only inside a lambda, so object() would sail through and return a live
+    manager. Break something the builder DOES touch eagerly instead:
+    settings_mod.update is resolved when the kwargs are built.
+    """
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    monkeypatch.setattr(main_mod, "settings_mod", SimpleNamespace())
+    state = SimpleNamespace(settings={"preview": {}})
+    assert main_mod.build_client_layout_manager(state) is None
+
+
+def test_main_actually_starts_the_client_layout_watcher():
+    """The preview twin of this test exists because the method was
+    written, unit-tested, and never called -- so the feature silently did
+    nothing at launch. Only reading main() catches that."""
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    assert "start_client_layouts_if_enabled()" in inspect.getsource(
+        main_mod.main)
+
+
+def test_main_tears_the_client_layout_watcher_down():
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    assert "shutdown_client_layouts()" in inspect.getsource(main_mod.main)
+
+
+def test_the_client_window_card_lives_on_the_previews_route():
+    """A second card, not more rows on the previews card: these controls
+    move the CLIENT windows and are not about previews."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    html = (root / "obs_youtube_uploader" / "web"
+            / "index.html").read_text(encoding="utf-8")
+    route = html.split('id="route-previews"')[1].split('id="route-')[0]
+    assert "EVE client windows" in route
+    assert 'id="btn-save-client-layout"' in route
+    assert 'id="btn-restore-client-layout"' in route
+    assert 'id="client-restore-on-launch"' in route
