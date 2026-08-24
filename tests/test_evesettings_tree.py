@@ -352,3 +352,27 @@ def test_a_rescued_keep_without_profiles_is_not_invented(tmp_path):
         (games / f"other{n:03d}").mkdir()
     servers, _unreadable, _too_broad = tree._servers_in(games, keep=empty)
     assert servers == []
+
+
+def test_a_symlinked_keep_does_not_escape_the_root(tmp_path):
+    """The rescued-server path is a containment check like any other, and
+    this module's rule is that a lexical compare cannot see a symlink or a
+    Windows junction. A link sitting directly under the root, pointing at
+    a settings tree outside it, passes `keep.parent == root` lexically."""
+    games = tmp_path / "Games"
+    games.mkdir()
+    for n in range(tree.MAX_ROOT_CHILDREN + 1):
+        (games / f"other{n:03d}").mkdir()
+    outside = tmp_path / "Elsewhere" / "eve-tq"
+    (outside / "settings_Default").mkdir(parents=True)
+
+    link = games / "looks-local"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):  # pragma: no cover - no symlinks
+        pytest.skip("this platform/user cannot create symlinks")
+
+    # Lexically it is a direct child of the root; really it is not.
+    assert link.parent == games
+    servers, _unreadable, _too_broad = tree._servers_in(games, keep=link)
+    assert servers == [], "a symlink walked the selection outside the root"

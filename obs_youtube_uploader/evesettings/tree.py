@@ -256,7 +256,13 @@ def _servers_in(root, keep=None) -> tuple[list, bool, bool]:
         # the cap still holds. too_broad stays True, because the rest of
         # the list really was not enumerated and the page says so.
         keep = Path(keep)
-        if keep.parent == Path(root) and _has_profiles(keep).found:
+        # _real on both sides, not a lexical compare: this module's whole
+        # containment rule is that a lexical check cannot see a symlink or
+        # a Windows junction, and `keep` is a stored value. The operations
+        # themselves re-validate with require_under, so the exposure here
+        # is listing a settings set from outside the root rather than
+        # writing to one -- still not something to offer.
+        if _real(keep).parent == _real(root) and _has_profiles(keep).found:
             key, display = _shard(keep.name)
             found.append(Server(keep, display, key))
     if not too_broad:
