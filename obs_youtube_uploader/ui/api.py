@@ -32,6 +32,10 @@ from pathlib import Path
 from .. import (bookmarks, combatlog, discord, durations, evewindows,
                 library, obsconfig, paths, settings as settings_mod, stitch,
                 uploader)
+from ..evesettings import backup as evesettings_backup
+from ..evesettings import names as evesettings_names
+from ..evesettings import ops as evesettings_ops
+from ..evesettings import tree as evesettings_tree
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -172,6 +176,14 @@ class Api:
         # None off Windows and in most tests: the preview subsystem is
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
+
+        # One mutation at a time. A per-mutation worker says nothing about
+        # how many may exist at once, and _confirm() parks each one
+        # independently -- so two operations approved moments apart could
+        # otherwise interleave over the same files.
+        self._eve_mutation = threading.Lock()
+        # Process-lifetime memo. Names are cosmetic and free to re-fetch.
+        self._eve_names = evesettings_names.NameCache()
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -1514,3 +1526,212 @@ class Api:
         would be misleading for these.
         """
         self._alert("info", "Bookmarks", str(body))
+
+    # ----- EVE Settings ---------------------------------------------------
+
+    def _eve_section(self) -> dict:
+        return self._state.settings.setdefault(
+            "eve_settings", settings_mod._eve_settings_defaults())
+
+    def eve_settings_state(self) -> dict:
+        """The whole visible tree. Cheap enough to answer on the bridge
+        thread: scandir over a few dozen files, and listing backups is one
+        listdir with no archive opened."""
+        section = self._eve_section()
+        root = section.get("root")
+        found = evesettings_tree.discover(root, section.get("server"),
+                                          section.get("profile"))
+        store = paths.eve_settings_backup_dir()
+
+        def describe(record):
+            name = (self._eve_names.label(int(record.file_id))
+                    if record.kind == "character" and record.file_id.isdigit()
+                    else f"Account {record.file_id}")
+            return {"path": str(record.path), "id": record.file_id,
+                    "name": name}
+
+        return {
+            "root": str(found.root) if found.root else "",
+            "default_root": str(evesettings_tree.default_root()),
+            "server": str(found.server) if found.server else "",
+            "profile": str(found.profile) if found.profile else "",
+            "unreadable": found.unreadable,
+            "eve_running": self._eve_client_running(),
+            "servers": [{"path": str(s.path), "name": s.name}
+                        for s in found.servers],
+            "profiles": [{"path": str(p.path), "name": p.name,
+                          "file_count": p.file_count}
+                         for p in found.profiles],
+            "characters": [describe(c) for c in found.characters],
+            "accounts": [describe(a) for a in found.accounts],
+            "backups": [{"path": str(b.path), "created": b.created,
+                         "origin": b.origin, "kind": b.kind, "stem": b.stem}
+                        for b in evesettings_backup.enumerate_backups(store)],
+        }
+
+    def _eve_client_running(self) -> bool:
+        """Advisory only -- nothing is blocked. preview.discovery already
+        matches CLIENT_IMAGE ("exefile.exe"), handles an unopenable process
+        as "not a client", and caches per PID."""
+        try:
+            from ..preview import discovery
+            return bool(discovery.list_clients())
+        except Exception:  # noqa: BLE001 - a pill, never a failure
+            logger.debug("Could not check for a running EVE client",
+                         exc_info=True)
+            return False
+
+    def eve_settings_pick_root(self) -> str:
+        section = self._eve_section()
+        start = str(section.get("root") or evesettings_tree.default_root())
+        chosen = self._window.create_file_dialog(_folder_dialog_kind(),
+                                                 directory=start)
+        if not chosen:
+            return ""
+        picked = str(chosen[0])
+        # Selection is cleared, not carried: the old server and profile
+        # belong to a tree that is no longer the one on screen.
+        settings_mod.update_section("eve_settings", {
+            "root": picked, "server": None, "profile": None})
+        self._state.settings = settings_mod.load()
+        return picked
+
+    def eve_settings_select(self, server: str, profile: str) -> bool:
+        settings_mod.update_section("eve_settings", {
+            "server": server or None, "profile": profile or None})
+        self._state.settings = settings_mod.load()
+        return True
+
+    def eve_settings_resolve_names(self) -> None:
+        """Resolve on a background thread, then tell the page to refetch.
+
+        The one thing a request/response bridge cannot express on its own:
+        the state that triggered this was already returned, carrying
+        fallback ids. One push per pass, not per name.
+        """
+        def worker() -> None:
+            try:
+                found = evesettings_tree.discover(
+                    self._eve_section().get("root"),
+                    self._eve_section().get("server"),
+                    self._eve_section().get("profile"))
+                ids = [int(c.file_id) for c in found.characters
+                       if c.file_id.isdigit()]
+                if self._eve_names.resolve_missing(ids):
+                    self._push("onEveSettingsNames", {})
+            except Exception:  # noqa: BLE001 - names are cosmetic
+                logger.warning("EVE character name lookup failed",
+                               exc_info=True)
+
+        self._spawn(target=worker, daemon=True).start()
+
+    def _eve_begin(self, worker, args) -> bool:
+        """Claim the mutation lock and hand the work to a thread.
+
+        Refused rather than queued: a queued operation's own confirmation
+        would describe state that has since changed.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            self._alert("warning", "EVE Settings busy",
+                        "Another EVE Settings operation is still running.")
+            return False
+        self._spawn(target=worker, args=args, daemon=True).start()
+        return True
+
+    def _eve_auto_backup(self, target):
+        store = paths.eve_settings_backup_dir()
+        evesettings_backup.create_file_backup(store, target, origin="auto")
+
+    def eve_settings_copy(self, source: str, targets: list) -> bool:
+        return self._eve_begin(self._eve_copy_worker,
+                               (source, [str(t) for t in targets or []]))
+
+    def _eve_copy_worker(self, source: str, targets: list) -> None:
+        try:
+            if not self._confirm(
+                    "Confirm Copy",
+                    f"Copy these settings onto {len(targets)} other "
+                    f"file(s)?\n\nEach one is backed up first.\n\n"
+                    "This cannot be undone except by restoring a backup."):
+                return
+            report = evesettings_ops.copy_to_targets(
+                source, targets, backup=self._eve_auto_backup)
+            keep = int(self._eve_section().get("auto_keep", 10))
+            evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
+            if report.failed:
+                names = "\n".join(f"  • {Path(o.path).stem}: {o.reason}"
+                                  for o in report.failed)
+                self._alert("error", "Some copies did not happen",
+                            f"Copied to {len(report.succeeded)} of "
+                            f"{len(report.outcomes)}.\n\n{names}")
+            else:
+                self._push("onStatus", {
+                    "text": f"Copied to {len(report.succeeded)} file(s).",
+                    "kind": "FG"})
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings copy failed")
+            self._alert("error", "Copy failed", str(error))
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_backup(self, path: str, kind: str) -> bool:
+        return self._eve_begin(self._eve_backup_worker, (path, kind))
+
+    def _eve_backup_worker(self, path: str, kind: str) -> None:
+        try:
+            store = paths.eve_settings_backup_dir()
+            if kind == "profile":
+                made = evesettings_backup.create_profile_backup(
+                    store, path, origin="manual")
+            else:
+                made = evesettings_backup.create_file_backup(
+                    store, path, origin="manual")
+            self._push("onStatus", {"text": f"Backed up to {made.name}.",
+                                    "kind": "FG"})
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings backup failed")
+            self._alert("error", "Backup failed", str(error))
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_restore(self, archive: str) -> bool:
+        return self._eve_begin(self._eve_restore_worker, (archive,))
+
+    def _eve_restore_worker(self, archive: str) -> None:
+        try:
+            if not self._confirm(
+                    "Confirm Restore",
+                    "Restore this backup?\n\nThe current settings are backed "
+                    "up first. For a whole settings set, any file not in the "
+                    "backup is removed."):
+                return
+            store = paths.eve_settings_backup_dir()
+            root = self._eve_section().get("root")
+            written = evesettings_backup.restore(store, archive, root)
+            keep = int(self._eve_section().get("auto_keep", 10))
+            evesettings_backup.prune(store, keep)
+            self._push("onStatus", {"text": f"Restored into {written.name}.",
+                                    "kind": "FG"})
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings restore failed")
+            self._alert("error", "Restore failed", str(error))
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_delete_backup(self, archive: str) -> bool:
+        return self._eve_begin(self._eve_delete_backup_worker, (archive,))
+
+    def _eve_delete_backup_worker(self, archive: str) -> None:
+        try:
+            if not self._confirm(
+                    "Confirm Delete",
+                    f"Permanently delete {Path(archive).name}?\n\n"
+                    "This cannot be undone."):
+                return
+            evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
+            self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings backup delete failed")
+            self._alert("error", "Delete failed", str(error))
+        finally:
+            self._eve_mutation.release()
