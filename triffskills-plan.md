@@ -216,6 +216,10 @@ class PlanAnalysis:
     def unknown_count(self) -> int
 
 def compact_status(analyses: Sequence[RequirementAnalysis]) -> str
+    # An EMPTY sequence returns READINESS_UNKNOWN, never READY
+    # (SkillPlanEvaluator.cs:113). Without that guard a zero-requirement
+    # plan reads as flyable -- the exact failure plans.py's own docstring
+    # names: scoring a character Ready for a ship it cannot fly.
 
 def evaluate(requirements: Sequence[Requirement],
              skill_ids: Mapping[str, int],      # case-insensitive lookup

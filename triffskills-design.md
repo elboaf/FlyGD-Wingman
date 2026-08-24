@@ -211,6 +211,22 @@ Per plan, the compact status is the worst requirement present:
 plus `Unscored`, returned early with an empty requirement list whenever the
 character has no successful fetch at all.
 
+**A plan with no requirements at all is `Unknown`, never `Ready`**
+(`SkillPlanEvaluator.cs:113`). The guard sits at the top of `compact_status`,
+before the precedence chain, because "worst requirement present" has no answer
+when none are present and the natural fallthrough is `Ready` — which would
+score every character as able to fly a plan that specifies nothing. Task 2's
+empty-plan diagnostic means a parsed file can no longer reach here empty, but
+`compact_status` is the semantic core's public entry point and must not
+depend on an upstream guard for its own correctness.
+
+**The plan-level `queue_timing_unknown` flag is gated to `Training`, exactly
+as the ETA is** (`SkillPlanEvaluator.cs:107`). Both read
+`readiness == Training && …`. An ungated flag would have a `Locked` plan
+reporting timing-unknown from a queue entry that no longer bears on its
+verdict — and the row only renders timing for `Training`, so the flag would
+be set and invisible.
+
 Three semantics are easy to get wrong and must not be:
 
 - **`Locked` means trained-but-inactive** — the level is trained but the
