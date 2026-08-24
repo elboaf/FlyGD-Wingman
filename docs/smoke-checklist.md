@@ -951,8 +951,10 @@ Enable previews in Settings before starting.
   that matches a bookmark bind shows the collision warning. With bookmarks
   disabled, it does not warn.
 - [ ] **Dimmed rows are visibly less prominent than normal.** Find an offline
-  character and an active collision with a configured-but-inactive bookmark
-  bind. Expected: both read noticeably quieter than normal rows, not more
-  prominent. A visual regression here reverses the hierarchy.
+  character. Then create a latent collision: configure a preview chord that
+  matches a bookmark chord, then disable EVE bookmarks (or close every EVE
+  window) so the collision is not active. Expected: both the offline character
+  and the latent-collision row read noticeably quieter than normal rows, not
+  more prominent. A visual regression here reverses the hierarchy.
 - [ ] Quitting Wingman with chords bound leaves them released: the owning
   application gets them back without a reboot.
