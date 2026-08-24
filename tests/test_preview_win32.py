@@ -100,3 +100,11 @@ def test_pointer_sized_returns_are_not_left_at_the_c_int_default():
 
 def test_bind_is_cached_so_declarations_are_applied_once():
     assert win32.bind() is win32.bind()
+
+
+def test_host_command_messages_are_distinct():
+    """Two commands sharing a value would silently run the wrong handler."""
+    commands = {win32.WM_APP_SHUTDOWN, win32.WM_APP_SWEEP_NOW,
+                win32.WM_APP_REBIND}
+    assert len(commands) == 3
+    assert all(c >= win32.WM_APP for c in commands)
