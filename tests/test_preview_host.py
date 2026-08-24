@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import host
+from obs_youtube_uploader.preview import geometry, host
 
 
 def test_reconcile_reports_additions_and_removals():
@@ -167,3 +167,86 @@ def test_stop_from_another_thread_really_exits_the_pump(monkeypatch):
     h.stop(timeout=10)
     assert not thread.is_alive(), "the pump outlived stop()"
     assert not h.is_running
+
+
+class _FakeClient:
+    def __init__(self, key, hwnd=0x1000, character=None):
+        self.stable_key = key
+        self.hwnd = hwnd
+        self.character = character if character is not None else key
+        self.title = f"EVE - {key}"
+        self.pid = 4242
+
+
+def test_the_client_registry_keeps_clients_with_no_window(monkeypatch):
+    """A client whose preview could not be created is still running, and a
+    chord aimed at it must still work."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Alice"), _FakeClient("Bravo")])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create",
+                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+
+    h._sweep(libs=None)
+
+    assert h._windows == {}
+    assert sorted(h._clients) == ["Alice", "Bravo"]
+    assert h.characters() == ["Alice", "Bravo"]
+
+
+def test_the_registry_refreshes_hwnds_for_a_kept_key(monkeypatch):
+    """reconcile() compares stable keys only, so a character that reappears
+    on a NEW hwnd counts as 'kept' -- a retained record would point at a
+    dead window."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create",
+                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Alice", hwnd=0x1111)])
+    h._sweep(libs=None)
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Alice", hwnd=0x2222)])
+    h._sweep(libs=None)
+
+    assert h._clients["Alice"].hwnd == 0x2222
+
+
+def test_characters_excludes_clients_at_character_select(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create",
+                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(
+        host.discovery, "list_clients",
+        lambda: [_FakeClient("Alice"),
+                 _FakeClient("hwnd:0x9", character=None)])
+    h._sweep(libs=None)
+
+    assert h.characters() == ["Alice"]
+
+
+def test_a_changed_client_set_is_reported_once(monkeypatch):
+    seen = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         on_clients_changed=seen.append)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create",
+                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Alice")])
+
+    h._sweep(libs=None)
+    h._sweep(libs=None)      # unchanged: must not report again
+
+    assert seen == [["Alice"]]

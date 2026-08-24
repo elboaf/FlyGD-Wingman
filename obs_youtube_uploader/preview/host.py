@@ -36,17 +36,27 @@ class PreviewHost:
     anything touching an HWND is marshalled onto the thread."""
 
     def __init__(self, on_layout_changed, saved_layouts=None,
-                 size=DEFAULT_SIZE, flush_layouts=None):
+                 size=DEFAULT_SIZE, flush_layouts=None,
+                 on_clients_changed=None):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
         # before quitting is simply lost.
         self._flush_layouts = flush_layouts
+        # Reported outward when the discovered set changes, so the page can
+        # order the bind list by who is actually online. Nothing else
+        # carries that out of the subsystem: _settings_payload returns
+        # persisted settings only.
+        self._on_clients_changed = on_clients_changed
         self._saved = dict(saved_layouts or {})
         self._size = size
         self._thread = None
         self._hwnd = None          # message-only window, see _run
         self._windows = {}
+        # Every DISCOVERED client, not just those with a window. _windows
+        # drops any whose creation failed, and a chord aimed at a running
+        # client must not depend on its preview having been created.
+        self._clients = {}
         self._hook = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -195,6 +205,12 @@ class PreviewHost:
     def _sweep(self, libs) -> None:
         clients = {c.stable_key: c for c in discovery.list_clients()}
         discovery.flush_image_cache_periodically()
+        before = self.characters()
+        # Wholesale, never merged. reconcile() compares stable keys only, so
+        # a character that reappears on a new HWND between sweeps counts as
+        # "kept" -- keeping the old record would leave it pointing at a dead
+        # window. Keys survive; handles are re-read.
+        self._clients = clients
         added, removed, _kept = reconcile(set(self._windows), set(clients))
 
         for key in removed:
@@ -223,6 +239,21 @@ class PreviewHost:
         if added or removed:
             logger.info("Preview sweep: +%s -%s (%d live)",
                         added, removed, len(self._windows))
+
+        now = self.characters()
+        if now != before and self._on_clients_changed is not None:
+            self._on_clients_changed(now)
+
+    def characters(self) -> list:
+        """Named characters currently discovered, sorted. Safe from any
+        thread: the registry is replaced wholesale, never mutated in place.
+
+        Clients at character-select are excluded -- discovery falls their
+        stable_key back to "hwnd:0x...", which names nothing a user could
+        bind to.
+        """
+        return sorted(key for key in self._clients
+                      if not key.startswith("hwnd:"))
 
     def _screen(self):
         """Virtual-desktop bounds, re-read each sweep.
