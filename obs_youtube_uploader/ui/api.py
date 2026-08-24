@@ -1484,36 +1484,35 @@ class Api:
             return {"restored": 0, "skipped": 0}
         return self._client_layouts.restore_now()
 
-    def set_restore_clients_on_launch(self, enabled) -> bool:
+    def set_restore_clients_on_launch(self, enabled) -> dict:
         """Toggle the watcher and persist the choice.
 
-        Truthy on success for the reason settings.js:181 documents:
-        WM.send resolves to null on a bridge failure and cannot otherwise
-        tell that apart from a method that returned None.
+        Returns the save button's shape -- the same `persisted` key, in
+        the same card -- so one failed write reads one way wherever it
+        happens. Not a bare bool: the watcher changes state whether or not
+        the write lands, so reverting the checkbox would trade one lie for
+        another. The page keeps the box and says what will not survive.
         """
         enabled = bool(enabled)
         section = self._state.settings.setdefault("preview", {})
-        if section.get("restore_clients_on_launch") != enabled:
+        wanted_change = section.get("restore_clients_on_launch") != enabled
+        persisted = True
+        if wanted_change:
             try:
                 # Through settings.update, not save(): the mutation must
                 # happen inside _SAVE_LOCK or a concurrent writer is
-                # reverted.
-                #
-                # Note this changed with the hotkeys merge: update() now
-                # restores the live dict on failure, so a disk write that
-                # fails also reverts the in-memory value rather than
-                # leaving it set for the session. That is the "state and
-                # disk never diverge" contract the rest of this file's
-                # writers already depend on, and one failure rule for all
-                # of them beats a per-setting exception. The watcher below
-                # still acts on `enabled`, so the toggle takes effect this
-                # session either way.
+                # reverted. update() also restores the live dict if the
+                # block raises, so a failed write leaves the stored value
+                # as it was and the next toggle retries on its own --
+                # which is why this needs no dirty-flag of its own.
                 with settings_mod.update(self._state.settings) as doc:
                     doc.setdefault("preview", {})[
                         "restore_clients_on_launch"] = enabled
             except OSError:
-                # Same posture as set_preview_enabled: a settings file
-                # that cannot be written must not block the feature.
+                # Logged and reported, not raised. A settings file that
+                # cannot be written must not block the watcher -- but the
+                # page has to be able to say the choice is not saved.
+                persisted = False
                 logger.exception(
                     "Could not persist the client-restore setting")
         if self._client_layouts is not None:
@@ -1521,7 +1520,7 @@ class Api:
                 self._client_layouts.start()
             else:
                 self._client_layouts.stop()
-        return True
+        return {"applied": True, "persisted": persisted}
 
     def shutdown_client_layouts(self) -> None:
         """Runs on every exit path, so like shutdown_previews it must

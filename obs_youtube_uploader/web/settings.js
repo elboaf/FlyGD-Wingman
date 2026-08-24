@@ -251,9 +251,19 @@
   box.addEventListener('change', function () {
     var wanted = box.checked;
     // WM.send resolves to null on any bridge failure rather than
-    // rejecting (app.js:38-43), so check the resolved value.
-    WM.send('set_restore_clients_on_launch', wanted).then(function (ok) {
-      if (!ok) { box.checked = !wanted; }
+    // rejecting (app.js:38-43). A dict is always truthy, so null is
+    // still the only thing that reverts the box -- and a failed write
+    // is no longer mistaken for one.
+    WM.send('set_restore_clients_on_launch', wanted).then(function (res) {
+      if (!res) { box.checked = !wanted; return; }
+      if (!res.persisted) {
+        // The watcher really did change state, so the box stays where
+        // the user put it. What it cannot do is survive a restart, and
+        // saying nothing is how they find that out the hard way.
+        say('Restore-on-launch is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      }
     });
   });
 

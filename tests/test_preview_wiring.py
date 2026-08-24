@@ -295,7 +295,8 @@ def test_the_client_layout_endpoints_are_no_ops_without_a_manager(
     assert api.save_client_layout() == {"saved": 0, "persisted": True,
                                         "failed": 0}
     assert api.restore_client_layout() == {"restored": 0, "skipped": 0}
-    assert api.set_restore_clients_on_launch(True) is True
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": True}
     api.shutdown_client_layouts()
     api.start_client_layouts_if_enabled()
 
@@ -305,7 +306,8 @@ def test_enabling_restore_on_launch_starts_the_watcher(tmp_path, monkeypatch):
     manager = FakeClientLayouts()
     api = make_api(tmp_path, client_layouts=manager)
     api._state.settings["preview"] = {}
-    assert api.set_restore_clients_on_launch(True) is True
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": True}
     assert manager.started == 1
     assert api._state.settings["preview"]["restore_clients_on_launch"] is True
     assert len(writes) == 1
@@ -332,7 +334,8 @@ def test_an_unwritable_settings_file_does_not_block_the_watcher(
     manager = FakeClientLayouts()
     api = make_api(tmp_path, client_layouts=manager)
     api._state.settings["preview"] = {}
-    assert api.set_restore_clients_on_launch(True) is True
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": False}
     assert manager.started == 1
 
 
@@ -460,3 +463,79 @@ def test_the_client_window_card_lives_on_the_previews_route():
     assert 'id="btn-save-client-layout"' in route
     assert 'id="btn-restore-client-layout"' in route
     assert 'id="client-restore-on-launch"' in route
+
+
+def test_a_failed_persist_is_reported_rather_than_claimed_as_success(
+        tmp_path, monkeypatch):
+    """The checkbox stays checked -- the watcher really is running -- but
+    the page has to be able to say the choice is gone at restart."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_data, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True)["persisted"] is False
+    assert manager.started == 1
+
+
+def test_a_failed_write_lets_the_next_toggle_retry(tmp_path, monkeypatch):
+    """settings.update() restores the live dict when the block raises, so
+    the stored value still reads as the OLD one and the next call sees a
+    real change. This method therefore needs no dirty-flag of its own --
+    but the retry must keep working if update() ever stops providing it,
+    so it is pinned here rather than assumed.
+
+    Stubs _save_locked, not update(): the point is to exercise the REAL
+    update() and its restore-on-failure, with only the disk write faked."""
+    from obs_youtube_uploader.ui import api as api_mod
+    calls = []
+    real_save_locked = api_mod.settings_mod._save_locked
+
+    def flaky(data, path=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("read-only")
+        real_save_locked(data, tmp_path / "s.json")
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", flaky)
+    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api._state.settings["preview"] = {}
+
+    assert api.set_restore_clients_on_launch(True)["persisted"] is False
+    # The restore means memory still says False, so this is a real change
+    # again rather than a no-op the guard would skip.
+    assert api.set_restore_clients_on_launch(True)["persisted"] is True
+    assert len(calls) == 2
+
+
+def test_an_unchanged_value_still_does_not_rewrite_the_document(
+        tmp_path, monkeypatch):
+    """settings.save projects every key, so a no-op toggle rewriting the
+    whole file is a real cost. Retrying a FAILED write must not cost this."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api._state.settings["preview"] = {}
+    api.set_restore_clients_on_launch(True)
+    api.set_restore_clients_on_launch(True)
+    assert len(writes) == 1
+
+
+def test_the_restore_toggle_says_when_the_choice_will_not_survive():
+    """A silent failed write is how the user finds out at their next
+    restart. Reverting the box would be the opposite lie -- the watcher
+    is running -- so only a bridge failure may revert it."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    js = (root / "obs_youtube_uploader" / "web"
+          / "settings.js").read_text(encoding="utf-8")
+    block = (js.split("set_restore_clients_on_launch")[1]
+               .split("save.addEventListener")[0])
+    assert "res.persisted" in block, "the flag is returned but never read"
+    assert "will not survive a restart" in block
+    # The revert is reachable only from the bridge-failure guard.
+    assert "if (!res)" in block.split("box.checked = !wanted")[0]
