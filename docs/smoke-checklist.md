@@ -893,6 +893,21 @@ Enable previews in Settings before starting.
 - [ ] Log in a character that has never been previewed while others are
       already placed: it gets a free slot rather than landing on top of an
       existing preview.
+- [ ] **Monitors whose tops do not line up** (e.g. a 4K panel spanning
+      y 0..2160 beside a 1440p one starting at y 291): a never-previewed
+      character gets a preview that is **on a display**, not in the gap
+      above the shorter monitor. This found a real bug — the virtual
+      desktop is the bounding RECTANGLE of all monitors, not their union,
+      so the space above a shorter monitor is inside it and on no screen.
+      A preview deposited there is invisible AND un-draggable, so it can
+      never acquire the saved position that would rescue it: every new
+      character would be lost permanently. Passes on a single monitor, and
+      on any arrangement with aligned tops, whether or not the code is
+      correct — so it has to be checked on staggered monitors specifically.
+- [ ] Unplug a monitor that holds a saved preview position, then restart
+      Wingman. That preview comes back **on a remaining display**, not at
+      its saved coordinates in empty space. Same clamp as the item above,
+      reached by the other route.
 - [ ] Disable previews in Settings. Every preview vanishes and the
       `wingman-preview` thread exits — check Task Manager shows no extra
       thread and the log has no "did not exit within" warning.

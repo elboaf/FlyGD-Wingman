@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import geometry, gestures, host
+from obs_youtube_uploader.preview import geometry, gestures, host, layout
 
 
 def test_reconcile_reports_additions_and_removals():
@@ -190,6 +190,8 @@ def test_the_client_registry_keeps_clients_with_no_window(monkeypatch):
     monkeypatch.setattr(host.PreviewWindow, "create",
                         classmethod(lambda cls, *a, **k: None))
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
 
     h._sweep(libs=None)
 
@@ -208,6 +210,8 @@ def test_the_registry_refreshes_hwnds_for_a_kept_key(monkeypatch):
     monkeypatch.setattr(host.PreviewWindow, "create",
                         classmethod(lambda cls, *a, **k: None))
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
 
     monkeypatch.setattr(host.discovery, "list_clients",
                         lambda: [_FakeClient("Alice", hwnd=0x1111)])
@@ -226,6 +230,8 @@ def test_characters_excludes_clients_at_character_select(monkeypatch):
     monkeypatch.setattr(host.PreviewWindow, "create",
                         classmethod(lambda cls, *a, **k: None))
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
     monkeypatch.setattr(
         host.discovery, "list_clients",
         lambda: [_FakeClient("Alice"),
@@ -244,6 +250,8 @@ def test_a_changed_client_set_is_reported_once(monkeypatch):
     monkeypatch.setattr(host.PreviewWindow, "create",
                         classmethod(lambda cls, *a, **k: None))
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
     monkeypatch.setattr(host.discovery, "list_clients",
                         lambda: [_FakeClient("Alice")])
 
@@ -589,6 +597,8 @@ def test_a_raising_clients_callback_does_not_kill_the_sweep(monkeypatch):
     monkeypatch.setattr(host.PreviewWindow, "create",
                         classmethod(lambda cls, *a, **k: None))
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
     monkeypatch.setattr(host.discovery, "list_clients",
                         lambda: [_FakeClient("Alice")])
 
@@ -596,3 +606,127 @@ def test_a_raising_clients_callback_does_not_kill_the_sweep(monkeypatch):
 
     # The sweep itself must have completed despite the callback raising.
     assert h.characters() == ["Alice"]
+
+
+# --- Placement must land on a real display ----------------------------------
+
+MONITORS = [
+    geometry.Rect(3840, 291, 2560, 1440),
+    geometry.Rect(-2560, 306, 2560, 1440),
+    geometry.Rect(0, 0, 3840, 2160),
+]
+VIRTUAL = geometry.Rect(-2560, 0, 8960, 2160)
+
+
+def _on_a_monitor(r):
+    return any(not (r.right <= m.x or r.x >= m.right
+                    or r.bottom <= m.y or r.y >= m.bottom) for m in MONITORS)
+
+
+def _placement_host(monkeypatch, saved=None):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None,
+                         saved_layouts=saved, size=(320, 210))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    return h
+
+
+def test_a_defaulted_preview_lands_on_a_monitor(monkeypatch):
+    """A first-time character must be placed on a display, below its top
+    edge -- not in the dead zone above it, and not merely clamped flush
+    against it.
+
+    Pins the exact rect: an assertion that only checks for intersection
+    passes with the nearest-monitor search inverted."""
+    h = _placement_host(monkeypatch)
+    assert h._resolve_rect("Guarzo Togenada", 0, MONITORS) == \
+        geometry.Rect(6062, 309, 320, 210)
+
+
+def test_every_defaulted_preview_in_a_full_stack_is_fully_on_a_monitor(monkeypatch):
+    """Fully on, not merely overlapping. A preview whose top is in the dead
+    zone has its label band off-screen, and one clamped on top of its
+    neighbour hides that neighbour -- both were real, observed on a
+    three-monitor setup with staggered tops."""
+    h = _placement_host(monkeypatch)
+    placed = [h._resolve_rect("char-%d" % i, i, MONITORS) for i in range(6)]
+    for i, r in enumerate(placed):
+        host_mon = next((m for m in MONITORS
+                         if r.x >= m.x and r.right <= m.right
+                         and r.y >= m.y and r.bottom <= m.bottom), None)
+        assert host_mon is not None, (i, r)
+    for a, b in zip(placed, placed[1:]):
+        assert b.y >= a.bottom, (a, b)
+
+
+def test_a_saved_rect_on_a_detached_monitor_is_pulled_back(monkeypatch):
+    h = _placement_host(monkeypatch, saved={"Gone": layout.Entry(
+        geometry.Rect(-9000, 400, 320, 210), False)})
+    assert _on_a_monitor(h._resolve_rect("Gone", 0, MONITORS))
+
+
+def test_a_saved_rect_that_is_already_visible_is_untouched(monkeypatch):
+    placed = geometry.Rect(3106, 546, 320, 210)
+    h = _placement_host(monkeypatch, saved={"Isiga": layout.Entry(placed, False)})
+    assert h._resolve_rect("Isiga", 0, MONITORS) == placed
+
+
+def test_placement_is_not_clamped_when_monitors_cannot_be_enumerated(monkeypatch):
+    """An empty monitor list means "do not move anything". Clamping against
+    a list that is missing a display would haul previews off it."""
+    h = _placement_host(monkeypatch)
+    unclamped = geometry.default_stack(0, VIRTUAL, (320, 210))
+    assert h._resolve_rect("Nobody", 0, []) == unclamped
+
+
+def test_the_sweep_places_a_new_preview_at_its_clamped_rect(monkeypatch):
+    """Ties the two halves together. Without this, host.py could revert to
+    the old unclamped expression and every other test here would pass."""
+    seen = []
+
+    class _Win:
+        rect = geometry.Rect(0, 0, 0, 0)
+
+        def close(self):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append(rect)
+        return _Win()
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, size=(320, 210))
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("Guarzo Togenada")])
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+
+    h._sweep(libs=None)
+
+    assert seen == [geometry.Rect(6062, 309, 320, 210)]
+
+
+def test_the_sweep_enumerates_monitors_once_for_a_whole_batch(monkeypatch):
+    """One EnumDisplayMonitors per sweep, not per added preview -- and, when
+    it fails, one log line rather than one per client."""
+    calls = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        return None
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, size=(320, 210))
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
+                        lambda: None)
+    monkeypatch.setattr(host.discovery, "list_clients",
+                        lambda: [_FakeClient("A"), _FakeClient("B"),
+                                 _FakeClient("C")])
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    monkeypatch.setattr(h, "_monitors",
+                        lambda: (calls.append(1) or MONITORS))
+
+    h._sweep(libs=None)
+
+    assert len(calls) == 1
+

@@ -304,12 +304,15 @@ class PreviewHost:
         for key in removed:
             self._windows.pop(key).close()
 
+        # Once per sweep, not once per added preview: the hardware does not
+        # change between two keys of the same batch, and a failure here must
+        # not log a line per client.
+        monitors = self._monitors() if added else []
+
         for key in added:
             client = clients[key]
             entry = self._saved.get(key)
-            rect = (entry.rect if entry
-                    else geometry.default_stack(len(self._windows),
-                                                self._screen(), self._size))
+            rect = self._resolve_rect(key, len(self._windows), monitors, entry)
             win = PreviewWindow.create(
                 libs, client, rect,
                 on_activate=lambda c: None,
@@ -430,6 +433,101 @@ class PreviewHost:
         """
         libs = win32.bind()
         return geometry.virtual_desktop(libs.user32.GetSystemMetrics)
+
+    def _monitors(self):
+        """Every attached display, as absolute rects.
+
+        Re-read per sweep for the same reason as `_screen`, and separate
+        from it because they are genuinely different shapes: `_screen` is
+        the bounding rectangle of all monitors, this is the monitors
+        themselves. Where the arrangement is not flush-aligned the two
+        differ, and the difference is space no display covers.
+
+        Any failure yields an empty list, which `clamp_to_monitors` treats
+        as "do not move anything". That includes a PARTIAL failure, where
+        the enumeration succeeds but one monitor does not report: a short
+        list is worse than no list, because `clamp_to_monitors` cannot
+        tell a missing display from dead space and would haul every
+        preview off the unreported monitor onto a reported one, silently
+        collapsing the user's layout onto one screen.
+
+        Declining to clamp is the safe direction either way -- the worst
+        case is the placement we had before this existed.
+        """
+        libs = win32.bind()
+        found = []
+        failed = []
+
+        def callback(hmonitor, hdc, lprect, lparam):
+            # Body wrapped for the same reason evewindows.py wraps its
+            # EnumWindows callback: an exception here cannot propagate out
+            # of a ctypes callback, so it would otherwise reach
+            # sys.unraisablehook -- which is stderr, and stderr is nowhere
+            # at all in a console=False frozen build.
+            try:
+                info = win32.MONITORINFO()
+                info.cbSize = ctypes.sizeof(win32.MONITORINFO)
+                if libs.user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+                    r = info.rcMonitor
+                    found.append(geometry.Rect(r.left, r.top,
+                                               r.right - r.left,
+                                               r.bottom - r.top))
+                else:
+                    failed.append(hmonitor)
+            except Exception:
+                logger.exception("Skipped a monitor during enumeration.")
+                failed.append(hmonitor)
+            return True
+
+        proc = win32.monitor_enum_proc_type()(callback)
+        # Held only for the duration of the call: EnumDisplayMonitors is
+        # synchronous and Windows does not retain the pointer afterwards,
+        # unlike the WndProc and WinEvent callbacks that _KEEPALIVE exists
+        # for. A local reference is enough to keep it alive across the call.
+        if not libs.user32.EnumDisplayMonitors(None, None, proc, 0):
+            logger.warning("EnumDisplayMonitors failed; preview placement "
+                           "will not be clamped to a display this sweep")
+            return []
+        if failed:
+            logger.warning("GetMonitorInfoW failed for %d of %d monitors; "
+                           "preview placement will not be clamped to a "
+                           "display this sweep", len(failed),
+                           len(failed) + len(found))
+            return []
+        if not found:
+            # A TRUE return with no callbacks at all: an RDP session or
+            # every display asleep. Distinguishable from "clamping ran and
+            # nothing needed moving" only if it is said out loud.
+            logger.warning("EnumDisplayMonitors reported no displays; "
+                           "preview placement will not be clamped")
+        return found
+
+    def _resolve_rect(self, key, index, monitors, entry=None):
+        """Where preview *key* should sit: its saved rect, or a default.
+
+        Clamped either way. The default can land in a dead zone of the
+        virtual desktop's bounding box, and a saved rect can name a
+        monitor that has since been unplugged; both put the preview
+        somewhere it cannot be seen or grabbed, and a preview that cannot
+        be grabbed can never be dragged back to somewhere it can.
+
+        *monitors* is passed in rather than read here so one sweep costs
+        one enumeration rather than one per added preview -- and, when
+        enumeration fails, one log line rather than one per preview.
+        """
+        if entry is None:
+            entry = self._saved.get(key)
+        if entry:
+            # A saved rect is the user's own choice. Only rescued when it
+            # is on no display at all -- pulling a preview they deliberately
+            # parked half off-screen back on would be the wrong kind of help.
+            return geometry.clamp_to_monitors(entry.rect, monitors)
+        # A default is ours, so it is placed properly rather than merely
+        # rescued: down the rightmost display, anchored to that display's
+        # top edge instead of the bounding box's.
+        target = geometry.stack_monitor(monitors, self._screen())
+        return geometry.clamp_to_monitors(
+            geometry.default_stack(index, target, self._size), monitors)
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""
