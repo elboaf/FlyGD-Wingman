@@ -39,6 +39,15 @@ MAX_HEADER_BYTES = 32 * 1024
 MAX_QUERY_KEY_CHARS = 128
 MAX_QUERY_VALUE_CHARS = 8192
 
+# How long __enter__ retries a failing bind before giving up, and how long
+# it sleeps between attempts. Sized for the TIME_WAIT this same fixed port
+# sits in for a few seconds after a previous run's server-initiated close
+# (every completed auth, and every cancelled one, closes from this side) --
+# long enough to absorb that ordinary case, short enough that a port truly
+# held by something else still fails within one user-noticeable pause.
+_BIND_RETRY_TOTAL_S = 3.0
+_BIND_RETRY_INTERVAL_S = 0.2
+
 # How long a blocking accept() waits before rechecking cancellation and the
 # overall deadline. Short enough that cancel() feels immediate, long enough
 # that a five-minute wait is not a busy loop.
@@ -326,8 +335,44 @@ class LoopbackListener:
         # and a bind failure means something else already holds the port --
         # a plain, reportable condition, not something to paper over by
         # sharing the port with whatever that something is.
+        #
+        # SO_EXCLUSIVEADDRUSE is the Windows-only opposite of that same
+        # coin: without it, Windows lets a *later* process rebind this
+        # port out from under an already-listening socket (the historical
+        # "port hijacking" hole SO_REUSEADDR opens on that platform), which
+        # would hand our redirect URI to whatever bound it second. Setting
+        # it keeps this listener the sole owner of the port for as long as
+        # it holds the socket, without loosening the bind-failure semantics
+        # above -- it changes who *else* can grab the port, not whether a
+        # genuine conflict is still reported as one.
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        # A bind can fail transiently even with no other owner: this same
+        # fixed port was very likely listening a moment ago (the previous
+        # auth attempt, or this app's own last run) and, having closed the
+        # connection from this side, is sitting in TIME_WAIT. That is not
+        # "something else holds the port" -- it is this port, recently
+        # ours, finishing its own teardown -- so it gets a short bounded
+        # retry rather than an immediate, misleading failure.
+        deadline = time.monotonic() + _BIND_RETRY_TOTAL_S
+        while True:
+            try:
+                sock.bind((self._host, self._port))
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    sock.close()
+                    raise OSError(
+                        exc.errno,
+                        f"Could not bind the local callback port "
+                        f"{self._authority}: {exc.strerror or exc}. "
+                        "Another program may be using this port, or a "
+                        "previous sign-in attempt has not finished closing "
+                        "it yet -- if so, waiting a few seconds and trying "
+                        "again should clear it."
+                    ) from exc
+                time.sleep(_BIND_RETRY_INTERVAL_S)
         try:
-            sock.bind((self._host, self._port))
             sock.listen(4)
         except OSError:
             sock.close()

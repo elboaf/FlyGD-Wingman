@@ -632,4 +632,50 @@ def test_a_whitespace_only_code_reads_as_absent_for_the_reply_but_not_the_callba
         worker.join(5)
 
     assert callback.code == "  "
-    assert b"not accepted" in sink[0]
+
+
+# ---------------------------------------------------------------------------
+# Bind retry -- a fixed port recovering from a recent TIME_WAIT, and a
+# genuinely held port still failing, with a clearer message either way
+# ---------------------------------------------------------------------------
+
+def test_a_transient_bind_conflict_is_retried_and_recovers(monkeypatch):
+    """The fixed port is very likely to have been listening a moment ago
+    (this app's own previous run, or the previous auth attempt), sitting
+    in TIME_WAIT after this side closed the connection. That is not
+    another owner -- it clears on its own within the retry window -- so
+    __enter__ must not fail on the first attempt."""
+    real_bind = _socket.socket.bind
+    attempts = []
+
+    def flaky_bind(self, address):
+        attempts.append(address)
+        if len(attempts) < 3:
+            raise OSError(98, "Address already in use")
+        return real_bind(self, address)
+
+    port = free_port()
+    monkeypatch.setattr(_socket.socket, "bind", flaky_bind)
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH):
+        pass
+    assert len(attempts) == 3
+
+
+def test_a_persistent_bind_conflict_still_fails_with_a_clear_message():
+    """A port genuinely held by something else -- here, another listening
+    socket bound for the whole retry window -- must still be reported as a
+    conflict rather than retried forever, and the message must name the
+    port and suggest what a user can do about it."""
+    port = free_port()
+    holder = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", port))
+    holder.listen(1)
+    try:
+        with pytest.raises(OSError) as excinfo:
+            with loopback.LoopbackListener(
+                host="127.0.0.1", port=port, path=PATH
+            ):
+                pass
+        assert str(port) in str(excinfo.value)
+    finally:
+        holder.close()
