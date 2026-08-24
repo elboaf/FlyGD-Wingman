@@ -164,9 +164,13 @@ class AppState:
     handle that rather than substituting a default: a fallback to the home
     directory would have list_rows() scan it for recordings.
 
-    `settings` is REPLACED wholesale by save_settings rather than mutated,
-    so anything holding the original dict goes stale -- which is why the
-    poll loop and the bridge both read it through this object each time.
+    `settings` is MUTATED IN PLACE, never rebound. It used to be replaced
+    wholesale on every write, which meant anything holding the original
+    dict went stale -- preview/store.py's LayoutStore captures exactly such
+    a reference and writes through it later, and a write it made against
+    the orphaned object was then overwritten by the next save. Every writer
+    now goes through settings.update, which normalises in place under the
+    save lock. Do not reintroduce an assignment to this attribute.
     """
     recording_dir: Path | None
     settings: dict
@@ -1094,66 +1098,10 @@ class Api:
         is listening. So it is a read, matching what app.js already does
         for `list_rows` and settings.js for `auth_labels`.
 
-        Returns the same shape `save_settings` pushes, so the page has one
-        renderer for both.
+        Returns the same shape the per-field endpoints push after a
+        successful write, so the page has one renderer for both.
         """
         return self._settings_payload()
-
-    def save_settings(self, values: dict) -> bool:
-        """Validate, persist, and make the change reach the running app.
-
-        Returns False when the page should keep the form open with the
-        user's edits intact.
-        """
-        category = str(values.get("category", "")).strip()
-        if not category.isdigit():
-            self._alert("warning", "Invalid category",
-                        "Category ID must be a number, e.g. 20.")
-            return False
-        webhook_raw = str(values.get("discord_webhook", "") or "").strip()
-        if webhook_raw:
-            _, webhook_error = discord.parse_webhook(webhook_raw)
-            if webhook_error:
-                self._alert("warning", "Invalid webhook", webhook_error)
-                return False
-        rec_dir = Path(str(values.get("recording_dir", "")))
-        if not rec_dir.is_dir():
-            self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
-            return False
-
-        gamelogs = str(values.get("gamelogs_dir") or "").strip()
-        try:
-            with settings_mod.update(self._state.settings) as cfg:
-                cfg.update({
-                    "privacy": values.get("privacy"),
-                    "category": category,
-                    "notify_mode": values.get("notify_mode"),
-                    "recording_dir": str(rec_dir),
-                    "discord_webhook": webhook_raw,
-                    "gamelogs_dir": gamelogs or None,
-                })
-        except OSError as exc:
-            # update() restored the live dict before re-raising, so state
-            # and disk still agree -- the property the old snapshot-then-
-            # save order was written to protect.
-            self._alert("error", "Could not save settings",
-                        f"Settings were not saved: {exc}")
-            return False
-
-        # update() normalises self._state.settings in place before saving
-        # (privacy/category/etc coercion), so there is no longer a rebind
-        # here -- see its docstring for why replacing the object was the
-        # rebind-race bug this used to have.
-        self._state.recording_dir = rec_dir
-        # The watcher is the reason this method is not just a file write.
-        # It holds its own directory, so persisting the setting alone would
-        # leave it polling the old folder forever. Guarded on a real change
-        # because rebind() re-baselines `seen`.
-        if self._watcher is not None and rec_dir != Path(self._watcher.directory):
-            self._watcher.rebind(rec_dir)
-        self._push("onSettings", self._settings_payload())
-        self.list_rows()
-        return True
 
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""
@@ -1210,43 +1158,6 @@ class Api:
                         f"Already set to the detected folder:\n{detected}")
             return ""
         return str(detected)
-
-    def set_recording_dir(self, path: str) -> bool:
-        """Accept the first-run folder choice: persist it and start watching.
-
-        Returns False when the folder is unusable, so the page keeps the
-        first-run screen up rather than dropping the user into an empty
-        list with no explanation of why.
-
-        _on_recording_dir_ready is assigned by __main__ and is what actually
-        creates the Watcher and starts the poll loop; the bridge does not
-        own either.
-        """
-        folder = Path(str(path or "").strip())
-        if not folder.is_dir():
-            self._alert("warning", "Invalid folder",
-                        f"{folder} is not a folder.")
-            return False
-        # Update inside settings.update(), exactly as save_settings does.
-        # Mutating first and returning False on OSError would leave the
-        # app believing it has a recording folder it never persisted --
-        # state and disk diverged, and the divergence survives until the
-        # next launch reads the file back. update()'s rollback on any
-        # exception is what protects that property now.
-        try:
-            with settings_mod.update(self._state.settings) as cfg:
-                cfg["recording_dir"] = str(folder)
-        except OSError as exc:
-            self._alert("error", "Could not save settings",
-                        f"Settings were not saved: {exc}")
-            return False
-        # update() normalises self._state.settings in place; no rebind
-        # needed (see save_settings's comment above for why not).
-        self._state.recording_dir = folder
-        if self._on_recording_dir_ready is not None:
-            self._on_recording_dir_ready(folder)
-        self.list_rows()
-        return True
 
     # ---- per-field settings writes -------------------------------------
     #
@@ -1331,8 +1242,9 @@ class Api:
     def set_discord_webhook(self, value) -> dict:
         """The combat-log webhook.
 
-        Empty is REFUSED here, unlike in save_settings, which treats it as
-        "clear the webhook" and writes "". Under immediate-save that made
+        Empty is REFUSED here. The whole-document `save_settings` this
+        replaced treated it as "clear the webhook" and wrote "". Under
+        immediate-save that made
         select-all, Delete, then look away silently destroy a configured
         secret -- with no Cancel to take it back and no pre-edit copy
         anywhere on the page. Removing a webhook is now its own explicit
@@ -1360,14 +1272,15 @@ class Api:
         `which` mirrors pick_folder and detect_folder rather than inventing
         a second spelling for the same discriminator.
 
-        This also closes a hole that predates immediate-save.
-        set_recording_dir could only CREATE a watcher (__main__'s
-        start_watching returns early when a scheduler already exists) and
-        save_settings could only REPOINT one (its rebind is guarded on
-        _watcher being set). With _watcher None, save_settings persisted
-        the folder and set _state.recording_dir -- which un-gates
-        list_rows, so the window looked healthy -- while nothing ever
-        started polling. Handling both cases here is the fix.
+        This is also the only folder endpoint, which closes a hole that
+        predates it. There used to be two: `set_recording_dir` could only
+        CREATE a watcher (__main__'s start_watching returns early when a
+        scheduler already exists) and `save_settings` could only REPOINT
+        one (its rebind was guarded on _watcher being set). With _watcher
+        None the folder persisted and _state.recording_dir was set --
+        which un-gates list_rows, so the window looked healthy -- while
+        nothing ever started polling. Both are gone; this handles both
+        cases, and first run calls it too.
         """
         if which == "gamelogs":
             text = str(path or "").strip()

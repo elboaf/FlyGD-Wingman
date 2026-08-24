@@ -110,90 +110,21 @@ def values(tmp_path, **kw):
     return payload
 
 
-def test_saving_persists_and_reloads_the_canonical_settings(monkeypatch, tmp_path):
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    sent = fakes.record_pushes(api)
-
-    assert api.save_settings(values(tmp_path)) is True
-
-    assert saved["privacy"] == "public"
-    assert api._state.settings["privacy"] == "public"
-    pushed, = fakes.payloads(sent, "onSettings")
-    assert pushed["settings"]["privacy"] == "public"
-
-
-def test_saving_a_new_recording_folder_rebinds_the_live_watcher(monkeypatch, tmp_path):
-    """Persisting the setting alone leaves the watcher polling the old
-    folder, so new recordings in the new one are never noticed."""
-    new_dir = tmp_path / "elsewhere"
-    new_dir.mkdir()
-    watcher = fakes.FakeWatcher(tmp_path)
-    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
-
-    api.save_settings(values(tmp_path, recording_dir=str(new_dir)))
-
-    assert watcher.rebound == [new_dir]
-    assert api._state.recording_dir == new_dir
-
-
-def test_saving_the_same_folder_does_not_rebind(monkeypatch, tmp_path):
-    """rebind() re-baselines `seen`; doing it on every Save would be work
-    with a chance of announcing existing files as new."""
-    watcher = fakes.FakeWatcher(tmp_path)
-    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
-    api.save_settings(values(tmp_path))
-    assert watcher.rebound == []
-
-
-def test_a_non_numeric_category_is_refused_before_anything_is_written(monkeypatch, tmp_path):
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    assert api.save_settings(values(tmp_path, category="gaming")) is False
-    assert saved == {}
-    assert api._alert.titles() == ["Invalid category"]
-
-
-def test_an_invalid_webhook_is_refused_with_the_parse_error(monkeypatch, tmp_path):
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    assert api.save_settings(
-        values(tmp_path, discord_webhook="http://discord.com/api/webhooks/1/2")) is False
-    assert saved == {}
-    kind, title, body = api._alert.raised[0]
-    assert title == "Invalid webhook"
-    assert "https" in body.lower()
-
-
-def test_a_recording_folder_that_is_not_a_folder_is_refused(monkeypatch, tmp_path):
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    assert api.save_settings(
-        values(tmp_path, recording_dir=str(tmp_path / "nope"))) is False
-    assert saved == {}
-    assert api._alert.titles() == ["Invalid folder"]
-
-
-def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypatch, tmp_path):
-    """State and disk must never diverge: bail out before touching memory
-    and tell the user, so their edits can be retried."""
-    api, _window, _saved = settings_api(tmp_path, monkeypatch)
-
-    def boom(data, path=None):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
-
-    assert api.save_settings(values(tmp_path)) is False
-    assert api._state.settings["privacy"] == "unlisted"
-    assert api._alert.titles() == ["Could not save settings"]
-
-
-def test_the_pushed_settings_describe_the_webhook_without_its_token(monkeypatch, tmp_path):
+def test_the_settings_payload_describes_the_webhook_without_its_token(
+        monkeypatch, tmp_path):
     """The field is masked in the page, so this line is the only
-    confirmation of WHICH webhook is stored. Top-level key, not nested."""
+    confirmation of WHICH webhook is stored. Top-level key, not nested.
+
+    Read off get_settings rather than off a save-time push: _settings_payload
+    builds it either way, and the page renders it on first load now rather
+    than only after a Save."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    sent = fakes.record_pushes(api)
-    api.save_settings(values(tmp_path, discord_webhook=HOOK))
-    pushed, = fakes.payloads(sent, "onSettings")
-    assert "1538615213203656754" in pushed["webhook_status"]
-    assert "tok" not in pushed["webhook_status"].split("/")[-1]
+    api.set_discord_webhook(HOOK)
+
+    payload = api.get_settings()
+
+    assert "1538615213203656754" in payload["webhook_status"]
+    assert "tok" not in payload["webhook_status"].split("/")[-1]
 
 
 
@@ -357,56 +288,6 @@ def test_an_unreadable_token_reads_as_not_connected(monkeypatch, tmp_path):
     assert fakes.payloads(sent, "onAuthState")[-1]["state"] == "disconnected"
 
 
-def test_first_run_persists_the_folder_and_starts_the_watcher(monkeypatch, tmp_path):
-    folder = tmp_path / "recordings"
-    folder.mkdir()
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    started = []
-    api._on_recording_dir_ready = started.append
-
-    assert api.set_recording_dir(str(folder)) is True
-
-    assert saved["recording_dir"] == str(folder)
-    assert api._state.recording_dir == folder
-    assert started == [folder], "the watcher was never started"
-
-
-def test_first_run_refuses_a_folder_that_is_not_one(monkeypatch, tmp_path):
-    """Returning False is what keeps the first-run screen up. Dropping the
-    user into an empty list with no explanation is the failure mode."""
-    api, _window, saved = settings_api(tmp_path, monkeypatch)
-    started = []
-    api._on_recording_dir_ready = started.append
-
-    assert api.set_recording_dir(str(tmp_path / "nope")) is False
-    assert saved == {}
-    assert started == []
-    assert api._alert.titles() == ["Invalid folder"]
-
-
-def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_path):
-    """State and disk must never diverge, the same guarantee save_settings
-    gives. Mutating before the write means a failed first-run save leaves
-    the app believing it has a recording folder it never persisted."""
-    folder = tmp_path / "recordings"
-    folder.mkdir()
-    api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    started = []
-    api._on_recording_dir_ready = started.append
-    before = dict(api._state.settings)
-
-    def boom(data, path=None):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
-
-    assert api.set_recording_dir(str(folder)) is False
-    assert api._state.settings == before, "in-memory settings were mutated"
-    assert api._state.recording_dir != folder
-    assert started == [], "the watcher was started despite a failed save"
-    assert api._alert.titles() == ["Could not save settings"]
-
-
 def test_the_page_can_ask_for_the_stored_settings_at_load(tmp_path):
     """The bridge's answer to "what is configured?".
 
@@ -454,112 +335,3 @@ def test_asking_for_settings_pushes_nothing(tmp_path):
 # deterministic, non-threaded reproduction of the same defect.
 
 
-def test_settings_object_identity_survives_a_save(monkeypatch, tmp_path):
-    """Regression test for the settings rebind race.
-
-    save_settings, set_recording_dir and save_bookmarks used to finish
-    with `self._state.settings = settings_mod.load()`, which replaced
-    `self._state.settings` with a brand-new dict read back from disk.
-    preview/store.py's LayoutStore keeps its own reference to that same
-    dict and writes through it later. If the store captured its reference
-    before a rebind swapped the object out, the store's write landed on
-    the now-orphaned old dict; the next save through the new object (which
-    never saw that write) then overwrote disk with a document that had
-    silently lost it.
-
-    Deterministic reproduction, no threads required: since save_settings
-    now normalises `self._state.settings` in place instead of rebinding
-    it, the object's identity survives a save, so a write made through a
-    reference captured before that save is not lost by a later one.
-    """
-    settings_path = tmp_path / "settings.json"
-    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
-    api, _window = fakes.build_api(tmp_path)
-    api._alert = fakes.Alerts()
-    api.list_rows = lambda preselect=None: None
-
-    # Stands in for LayoutStore's `update_settings=lambda: settings_mod
-    # .update(state.settings)` -- it captures this object once and reuses
-    # it across writes.
-    captured_ref = api._state.settings
-
-    assert api.save_settings(values(tmp_path)) is True
-    # The fix, directly: no rebind means the object this test captured
-    # before the save is still the live one after it.
-    assert api._state.settings is captured_ref
-
-    # A write through that captured reference, exactly as LayoutStore
-    # would make one after this save.
-    with api_mod.settings_mod.update(captured_ref) as cfg:
-        cfg["preview"]["layouts"]["Pilot"] = {"x": 0, "y": 0, "w": 320, "h": 210}
-
-    # A second, unrelated save must not discard that write. Under the old
-    # rebind, self._state.settings would by now be a stale object that
-    # never saw the layout write, and this call would overwrite disk with
-    # it -- reproducing the reported data loss.
-    assert api.save_settings(values(tmp_path, category="99")) is True
-
-    on_disk = json.loads(settings_path.read_text())
-    assert "Pilot" in on_disk["preview"]["layouts"]
-    assert "Pilot" in api._state.settings["preview"]["layouts"]
-
-
-def test_saving_settings_does_not_revert_the_uploaders_channel(monkeypatch,
-                                                               tmp_path):
-    """save_settings once built its payload from self._state.settings, a
-    snapshot taken outside _SAVE_LOCK, and _save_locked projects the
-    COMPLETE document from DEFAULTS -- so any key another writer set after
-    that snapshot was silently written back to its old value.
-
-    The uploader's own channel is the one that matters: _persist_channel
-    writes it from an upload worker thread on purpose, so an upload
-    finishing while the Settings form is open is an ordinary race, and
-    losing it means the next upload goes to the wrong place with nothing
-    on screen to say so.
-
-    Both writers now go through settings.update() on the live document, so
-    the lock spans each read-modify-write and neither can revert the
-    other. This pins that from the uploader's side;
-    test_settings_object_identity_survives_a_save above pins it from the
-    preview store's.
-    """
-    settings_path = tmp_path / "settings.json"
-    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
-    api, _window = fakes.build_api(tmp_path)
-    api._alert = fakes.Alerts()
-    api.list_rows = lambda preselect=None: None
-
-    # Exactly what _persist_channel does when an upload completes.
-    with api_mod.settings_mod.update(api._state.settings) as cfg:
-        cfg["channel_id"] = "UC-live"
-        cfg["channel_title"] = "Live Channel"
-
-    assert api.save_settings(values(tmp_path)) is True
-
-    on_disk = json.loads(settings_path.read_text())
-    assert on_disk["channel_title"] == "Live Channel"
-    assert on_disk["channel_id"] == "UC-live"
-    assert on_disk["privacy"] == "public"
-    assert api._state.settings["channel_title"] == "Live Channel"
-
-
-def test_first_run_does_not_revert_the_uploaders_channel(monkeypatch,
-                                                         tmp_path):
-    """set_recording_dir had the identical stale-snapshot shape."""
-    folder = tmp_path / "recordings"
-    folder.mkdir()
-    settings_path = tmp_path / "settings.json"
-    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
-    api, _window = fakes.build_api(tmp_path)
-    api._alert = fakes.Alerts()
-    api.list_rows = lambda preselect=None: None
-    api._on_recording_dir_ready = lambda _f: None
-
-    with api_mod.settings_mod.update(api._state.settings) as cfg:
-        cfg["channel_title"] = "Live Channel"
-
-    assert api.set_recording_dir(str(folder)) is True
-
-    on_disk = json.loads(settings_path.read_text())
-    assert on_disk["channel_title"] == "Live Channel"
-    assert on_disk["recording_dir"] == str(folder)

@@ -9,8 +9,11 @@ The harness is `test_api_settings.settings_api`, reused rather than
 rebuilt: it fakes only `_save_locked`, so the real lock-and-rollback
 machinery in `settings.update` stays in the loop.
 """
+import json
+
 import pytest
 
+from obs_youtube_uploader import paths
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.test_api_settings import settings_api
@@ -237,3 +240,90 @@ def test_a_gamelogs_folder_that_does_not_exist_is_refused(monkeypatch, tmp_path)
 
     assert api.set_folder("gamelogs", str(tmp_path / "nope"))["applied"] is False
     assert saved == {}
+
+
+# ---- invariants carried over from save_settings -----------------------
+#
+# These were written against save_settings and are ported here rather than
+# retired with it: they encode properties of ANY settings write, and the
+# per-field endpoints are the writer now.
+
+def test_the_settings_object_survives_a_per_field_write(monkeypatch, tmp_path):
+    """Regression test for the settings rebind race, re-aimed.
+
+    save_settings, set_recording_dir and save_bookmarks used to finish with
+    `self._state.settings = settings_mod.load()`, replacing the dict with a
+    fresh one read back from disk. preview/store.py's LayoutStore keeps its
+    own reference to that same dict and writes through it later, so a store
+    reference captured before a rebind landed on an orphaned object, and
+    the next save overwrote disk with a document that had silently lost it.
+
+    `_write_setting` goes through settings.update, which normalises in
+    place, so identity survives. Asserted directly, because nothing else
+    would notice if a future edit reintroduced a rebind.
+    """
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+
+    # Stands in for LayoutStore, which captures this object once and reuses
+    # it across writes.
+    captured_ref = api._state.settings
+
+    assert api.set_category("22")["applied"] is True
+    assert api._state.settings is captured_ref
+
+    with api_mod.settings_mod.update(captured_ref) as cfg:
+        cfg["preview"]["layouts"]["Pilot"] = {"x": 0, "y": 0, "w": 320, "h": 210}
+
+    # A second, unrelated write must not discard that layout.
+    assert api.set_privacy("public")["applied"] is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert "Pilot" in on_disk["preview"]["layouts"]
+    assert "Pilot" in api._state.settings["preview"]["layouts"]
+
+
+def test_a_per_field_write_does_not_revert_the_uploaders_channel(monkeypatch,
+                                                                 tmp_path):
+    """save_settings once built its payload from a snapshot taken outside
+    _SAVE_LOCK, so a channel learned from an upload mid-save was projected
+    away. The per-field endpoints mutate the live document inside the lock
+    instead of sending a payload at all, which is what makes this hold."""
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+
+    # As the uploader records it after videos.insert answers.
+    with api_mod.settings_mod.update(api._state.settings) as cfg:
+        cfg["channel_id"] = "UC123"
+        cfg["channel_title"] = "Test Channel"
+
+    assert api.set_category("22")["applied"] is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert on_disk["channel_id"] == "UC123"
+    assert on_disk["channel_title"] == "Test Channel"
+
+
+def test_a_failed_write_leaves_state_and_disk_agreeing(monkeypatch, tmp_path):
+    """State and disk must never diverge: a divergence survives until the
+    next launch reads the file back. settings.update restores the live dict
+    when the block raises, which is what protects this."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    before = api._state.settings["privacy"]
+
+    def boom(data, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
+    result = api.set_privacy("public")
+
+    assert result["persisted"] is False
+    # The rollback is what matters: the live dict must not be left holding
+    # a value that never reached disk.
+    assert api._state.settings["privacy"] == before
