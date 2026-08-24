@@ -13,8 +13,9 @@ def ordered(keys) -> list:
 
     Not discovery order -- that reshuffles as clients appear and disappear,
     which would make "next" mean something different between two presses.
+    Deduplicate to ensure list.index() finds the same instance of each name.
     """
-    return sorted(keys)
+    return sorted(set(keys))
 
 
 def step(keys, anchor, delta: int):

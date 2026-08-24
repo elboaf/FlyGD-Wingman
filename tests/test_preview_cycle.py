@@ -46,3 +46,9 @@ def test_a_client_joining_does_not_skip_the_anchor():
     silently points at a different character."""
     assert cycle.next_key({"Alice", "Charlie"}, "Alice") == "Charlie"
     assert cycle.next_key({"Alice", "Bravo", "Charlie"}, "Alice") == "Bravo"
+
+
+def test_a_duplicate_in_a_list_input_does_not_stall_the_cycle():
+    """list.index() finds the first occurrence, so an undeduped duplicate
+    makes "next" land on the same name again instead of advancing."""
+    assert cycle.next_key(["Alice", "Alice", "Bravo"], "Alice") == "Bravo"
