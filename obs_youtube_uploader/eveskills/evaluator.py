@@ -57,3 +57,70 @@ def lowest_sufficient_entry(queue, skill_id: int, required_level: int):
     if not candidates:
         return None
     return min(candidates, key=lambda e: (e.finished_level, e.queue_position))
+
+
+@dataclass(frozen=True)
+class RequirementAnalysis:
+    skill_name: str
+    required_level: int
+    active_level: int | None
+    trained_level: int | None
+    state: str
+    queued_finish_utc: datetime | None
+    queue_timing_unknown: bool
+
+
+@dataclass(frozen=True)
+class PlanAnalysis:
+    readiness: str
+    estimated_finish_utc: datetime | None
+    queue_timing_unknown: bool
+    requirements: tuple
+
+
+def evaluate(requirements, skill_ids, active_levels, trained_levels,
+             queue, has_snapshot: bool) -> PlanAnalysis:
+    """Score *requirements* for one character against one snapshot."""
+    # Case-insensitive on the name, because the cache is keyed on the
+    # spelling ESI returned and the plan file carries whatever the user
+    # typed. Built once per plan rather than per requirement.
+    lookup = {str(name).casefold(): int(type_id)
+              for name, type_id in skill_ids.items()}
+
+    analyses = []
+    for req in requirements:
+        skill_id = lookup.get(req.skill_name.casefold())
+        if skill_id is None:
+            # Unknown is about the plan, not the character. No levels are
+            # reported because there is no id to have looked them up by.
+            analyses.append(RequirementAnalysis(
+                skill_name=req.skill_name, required_level=req.level,
+                active_level=None, trained_level=None, state=UNKNOWN,
+                queued_finish_utc=None, queue_timing_unknown=False))
+            continue
+        active = active_levels.get(skill_id)
+        trained = trained_levels.get(skill_id)
+        chosen = None
+        # First match wins, in exactly this order. Active before trained
+        # because a skill that is usable is usable; trained before queued
+        # because owning it beats being on the way to owning it.
+        if active is not None and active >= req.level:
+            state = ACTIVE
+        elif trained is not None and trained >= req.level:
+            state = TRAINED_INACTIVE
+        else:
+            chosen = lowest_sufficient_entry(queue, skill_id, req.level)
+            state = QUEUED if chosen is not None else MISSING
+        analyses.append(RequirementAnalysis(
+            skill_name=req.skill_name,
+            required_level=req.level,
+            active_level=active,
+            trained_level=trained,
+            state=state,
+            queued_finish_utc=chosen.finish_date if chosen else None,
+            # A paused queue reports null dates. The requirement is still
+            # queued; what is unknown is when it lands.
+            queue_timing_unknown=bool(chosen is not None
+                                      and chosen.finish_date is None),
+        ))
+    return PlanAnalysis(READY, None, False, tuple(analyses))
