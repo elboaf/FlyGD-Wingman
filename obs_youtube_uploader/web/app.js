@@ -49,7 +49,8 @@
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
-                 'onBookmarks', 'onEveStatus', 'onEveSettingsNames',
+                 'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
+                 'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone'];
 
   WM.handle = function (name, fn) {
