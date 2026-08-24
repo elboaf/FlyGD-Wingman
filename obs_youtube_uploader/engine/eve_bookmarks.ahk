@@ -365,8 +365,11 @@ For hk, lbl in HotkeyLabelMap
 ; WINGMAN: disable the window-scoped variants IN THEIR OWN CONTEXT.
 ; Turning them off from the global context above does nothing at all.
 ; Without this, changing a bind or disabling a window leaves the previous
-; hotkey live -- the author's script has no equivalent because its GUI
-; reloaded the whole script rather than refreshing in place.
+; hotkey live. The author's script has no equivalent -- its Step 1 clears
+; only the global context. Why it gets away with that is not recorded
+; anywhere and is not worth guessing at; what matters here is that Wingman
+; rewrites the INI on every save and refreshes in place, so the stale
+; registration is reachable and has to be torn down.
 For idx, OldTitle in RegisteredWindows
 {
     Hotkey, IfWinActive, %OldTitle%
