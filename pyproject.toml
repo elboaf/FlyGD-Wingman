@@ -65,6 +65,7 @@ packages = [
     "obs_youtube_uploader",
     "obs_youtube_uploader.ui",
     "obs_youtube_uploader.preview",
+    "obs_youtube_uploader.evesettings",
 ]
 
 [tool.pytest.ini_options]
