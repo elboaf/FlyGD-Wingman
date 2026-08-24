@@ -165,18 +165,16 @@ def validated_eve(raw) -> dict:
     return section
 
 
-def load(path: Path | None = None) -> dict:
-    path = path or paths.settings_file()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _fresh_defaults()
-    if not isinstance(raw, dict):
-        return _fresh_defaults()
-    data = dict(DEFAULTS)
-    for key in DEFAULTS:
-        if key in raw:
-            data[key] = raw[key]
+def _normalize(data: dict) -> dict:
+    """Apply load()'s validation/coercion rules to `data` in place.
+
+    Factored out of load() so update() can run the same rules on the live
+    in-memory dict after a caller's mutation, under the same lock that
+    protects the save -- see update()'s docstring for why that matters.
+    Idempotent: load() already re-validated every field on every write
+    (the old rebind-from-disk this replaces), so running it again on
+    already-valid data is a no-op.
+    """
     if data["privacy"] not in _VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
     if data["notify_mode"] not in _VALID_NOTIFY:
@@ -195,9 +193,24 @@ def load(path: Path | None = None) -> dict:
     for key in ("channel_id", "channel_title"):
         if not isinstance(data[key], str):
             data[key] = ""
-    data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
-    data["preview"] = validated_preview(raw.get("preview"))
+    data["eve_bookmarks"] = validated_eve(data.get("eve_bookmarks"))
+    data["preview"] = validated_preview(data.get("preview"))
     return data
+
+
+def load(path: Path | None = None) -> dict:
+    path = path or paths.settings_file()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _fresh_defaults()
+    if not isinstance(raw, dict):
+        return _fresh_defaults()
+    data = dict(DEFAULTS)
+    for key in DEFAULTS:
+        if key in raw:
+            data[key] = raw[key]
+    return _normalize(data)
 
 
 # save() projects the COMPLETE document from DEFAULTS, so two writers
@@ -237,6 +250,20 @@ def update(data: dict, path: Path | None = None):
     Deep, not shallow: preview state lives in a nested section, and a
     shallow snapshot would leave a half-applied mutation behind.
 
+    Normalises `data` in place, under this same lock, before saving --
+    load()'s privacy/notify_mode/category/eve_bookmarks/preview coercions,
+    applied to the live dict instead of a fresh object loaded back from
+    disk. ui/api.py used to rebind `self._state.settings` to a brand-new
+    `settings_mod.load()` result after every save to pick up those
+    coercions; that rebind ran OUTSIDE any lock and swapped the dict
+    object out from under LayoutStore, which keeps its own reference to
+    the settings dict and updates it via this same update() call. A store
+    write landing on the object between the save above and the rebind
+    below was silently discarded once the rebind replaced it -- see
+    rebind-race-repro.py. Normalizing in place instead means the object
+    identity `self._state.settings` holds never changes, so a concurrent
+    holder of that reference is never left writing to an orphaned dict.
+
     DO NOT call save() or update() from inside an update() block. The lock
     is not reentrant and the process will deadlock.
     """
@@ -244,6 +271,7 @@ def update(data: dict, path: Path | None = None):
         before = copy.deepcopy(data)
         try:
             yield data
+            _normalize(data)
             _save_locked(data, path)
         except BaseException:
             data.clear()

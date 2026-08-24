@@ -1072,7 +1072,10 @@ class Api:
                         f"Settings were not saved: {exc}")
             return False
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place before saving
+        # (privacy/category/etc coercion), so there is no longer a rebind
+        # here -- see its docstring for why replacing the object was the
+        # rebind-race bug this used to have.
         self._state.recording_dir = rec_dir
         # The watcher is the reason this method is not just a file write.
         # It holds its own directory, so persisting the setting alone would
@@ -1169,7 +1172,8 @@ class Api:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         self._state.recording_dir = folder
         if self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
@@ -1539,7 +1543,8 @@ class Api:
                         f"Bookmark settings were not saved: {exc}")
             return {**self.get_bookmarks(), "saved": False}
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         clean = self._state.settings["eve_bookmarks"]
 
         engine = self._state.engine

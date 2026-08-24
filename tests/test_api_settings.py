@@ -6,6 +6,7 @@ four states, two independent Detect actions, and a Save that reaches the
 live watcher and not just the settings file.
 """
 import copy
+import json
 import types
 
 import pytest
@@ -446,7 +447,58 @@ def test_asking_for_settings_pushes_nothing(tmp_path):
 
 
 # A real-threaded save_settings-vs-LayoutStore stress test was tried here
-# and pulled again: it reproduces a genuine, but separate and out-of-scope,
-# race in the post-write `self._state.settings = settings_mod.load()`
-# rebind (see task-2-report.md and _race_probe_rebind_confound.py), and a
-# test that fails ~1 run in 6-10 is not a committed regression guard.
+# and pulled again: it reproduced the rebind race below at ~1 run in
+# 6-17, and a test that fails that rarely is not a committed regression
+# guard. See rebind-race-repro.py (git-ignored) for the threaded version
+# and test_settings_object_identity_survives_a_save below for a
+# deterministic, non-threaded reproduction of the same defect.
+
+
+def test_settings_object_identity_survives_a_save(monkeypatch, tmp_path):
+    """Regression test for the settings rebind race.
+
+    save_settings, set_recording_dir and save_bookmarks used to finish
+    with `self._state.settings = settings_mod.load()`, which replaced
+    `self._state.settings` with a brand-new dict read back from disk.
+    preview/store.py's LayoutStore keeps its own reference to that same
+    dict and writes through it later. If the store captured its reference
+    before a rebind swapped the object out, the store's write landed on
+    the now-orphaned old dict; the next save through the new object (which
+    never saw that write) then overwrote disk with a document that had
+    silently lost it.
+
+    Deterministic reproduction, no threads required: since save_settings
+    now normalises `self._state.settings` in place instead of rebinding
+    it, the object's identity survives a save, so a write made through a
+    reference captured before that save is not lost by a later one.
+    """
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: settings_path)
+    api, _window = fakes.build_api(tmp_path)
+    api._alert = fakes.Alerts()
+    api.list_rows = lambda preselect=None: None
+
+    # Stands in for LayoutStore's `update_settings=lambda: settings_mod
+    # .update(state.settings)` -- it captures this object once and reuses
+    # it across writes.
+    captured_ref = api._state.settings
+
+    assert api.save_settings(values(tmp_path)) is True
+    # The fix, directly: no rebind means the object this test captured
+    # before the save is still the live one after it.
+    assert api._state.settings is captured_ref
+
+    # A write through that captured reference, exactly as LayoutStore
+    # would make one after this save.
+    with api_mod.settings_mod.update(captured_ref) as cfg:
+        cfg["preview"]["layouts"]["Pilot"] = {"x": 0, "y": 0, "w": 320, "h": 210}
+
+    # A second, unrelated save must not discard that write. Under the old
+    # rebind, self._state.settings would by now be a stale object that
+    # never saw the layout write, and this call would overwrite disk with
+    # it -- reproducing the reported data loss.
+    assert api.save_settings(values(tmp_path, category="99")) is True
+
+    on_disk = json.loads(settings_path.read_text())
+    assert "Pilot" in on_disk["preview"]["layouts"]
+    assert "Pilot" in api._state.settings["preview"]["layouts"]
