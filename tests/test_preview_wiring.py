@@ -126,11 +126,12 @@ def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
     assert main_mod.build_preview_host(object()) is None
 
 
-def test_set_preview_enabled_returns_truthy_on_success(tmp_path):
+def test_set_preview_enabled_returns_truthy_on_success(tmp_path, monkeypatch):
     """WM.send resolves to null on a bridge failure and cannot tell that
     apart from a method that returned None, so the page would revert the
     checkbox on every successful toggle (settings.js:181 records the same
     trap for save_settings)."""
+    _no_disk(monkeypatch)
     host = FakeHost()
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": False}
