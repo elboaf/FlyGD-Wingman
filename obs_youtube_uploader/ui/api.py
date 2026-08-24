@@ -158,7 +158,7 @@ class Api:
                  rows=None, durations_file=None,
                  drain_interval_s=PROBE_DRAIN_S,
                  spawn=threading.Thread, probe=library.probe,
-                 timer=threading.Timer):
+                 timer=threading.Timer, preview_host=None):
         self._state = state
         self._window = None          # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
@@ -168,6 +168,10 @@ class Api:
         # request id -> [Event, answer]. An entry exists only while a worker
         # is parked on it.
         self._dialogs: dict[str, list] = {}
+
+        # None off Windows and in most tests: the preview subsystem is
+        # optional and every call site below tolerates its absence.
+        self._preview_host = preview_host
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -1206,6 +1210,68 @@ class Api:
             # missing, reinstall").
             "last_error": status.last_error,
         })
+
+    # ---- EVE client previews ------------------------------------------
+
+    def start_previews_if_enabled(self) -> None:
+        """Start the preview thread only if the user asked for it.
+
+        Called on launch. Lazy on purpose: enabling costs a thread, a
+        700ms discovery sweep and a foreground hook, and a user who never
+        previews EVE clients should pay none of it.
+        """
+        if self._preview_host is None:
+            return
+        if self._state.settings.get("preview", {}).get("enabled"):
+            self._preview_host.start()
+
+    def set_preview_enabled(self, enabled: bool) -> None:
+        """Toggle previews and persist the choice.
+
+        start() and stop() are both idempotent, so a double-click on the
+        checkbox cannot orphan a second pump owning HWNDs that nothing
+        will tear down.
+        """
+        enabled = bool(enabled)
+        section = self._state.settings.setdefault("preview", {})
+        if section.get("enabled") == enabled:
+            # A no-op toggle rewrites the whole settings document for
+            # nothing (settings.save projects every key), and the page can
+            # emit one on re-render. PreviewHost.start/stop are idempotent
+            # too, so this is belt and braces -- but the redundant write is
+            # real.
+            return
+        section["enabled"] = enabled
+        try:
+            settings_mod.save(self._state.settings)
+        except OSError:
+            # Same posture as the channel persist above: a settings file
+            # that cannot be written must not block the feature itself.
+            logger.exception("Could not persist the preview setting")
+        if self._preview_host is not None:
+            if enabled:
+                self._preview_host.start()
+            else:
+                self._preview_host.stop()
+        # Truthy on success: WM.send resolves to null on a bridge failure
+        # and cannot otherwise distinguish that from a method that simply
+        # returned None (settings.js:181 documents the same trap).
+        return True
+
+    def shutdown_previews(self) -> None:
+        """Tear the preview thread down on the way out.
+
+        Runs on every exit path, so like shutdown_engine() it must never
+        be the thing that raises. A stop() that does not happen leaves a
+        thread owning HWNDs and Wingman lingering in Task Manager after
+        it has left the tray.
+        """
+        if self._preview_host is None:
+            return
+        try:
+            self._preview_host.stop()
+        except Exception:
+            logger.exception("Preview host did not stop cleanly")
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
