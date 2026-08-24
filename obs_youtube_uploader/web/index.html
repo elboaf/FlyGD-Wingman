@@ -17,8 +17,6 @@
          clickable child of it yields dead buttons or an immovable window. -->
     <nav class="routenav" id="routenav">
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
-      <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
-      <button class="navbtn" id="nav-previews" data-route="previews">Previews</button>
       <button class="navbtn" id="nav-evesettings" data-route="evesettings">EVE Settings</button>
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
     </nav>
@@ -124,6 +122,8 @@
       <button class="rail-item" data-section="notify">Notifications</button>
       <button class="rail-item" data-section="folders">Folders</button>
       <button class="rail-item" data-section="discord">Discord</button>
+      <button class="rail-item" data-section="bookmarks">Bookmarks</button>
+      <button class="rail-item" data-section="previews">Previews</button>
     </aside>
 
     <div class="settings-pane">
@@ -234,11 +234,13 @@
 
     </div>
 
-    </div>
-  </div>
-
-  <div class="route" id="route-bookmarks">
-    <div class="settings">
+        <!-- Was a top-level destination. It is configuration: you come here to
+         switch the feature on and bind keys, twice ever, and it produces
+         nothing on its own screen -- it configures global keybinds that
+         fire in EVE. That is a Settings section, not a peer of the
+         Uploader, and as a peer it was spending the scarcest chrome in
+         the app on one of its least-visited screens. -->
+    <div class="settings" id="section-bookmarks">
       <section class="card">
         <h2>EVE bookmarks</h2>
         <div class="row">
@@ -277,10 +279,11 @@
           <button class="btn" id="eve-reset-binds">Reset to defaults</button></div>
       </section>
     </div>
-  </div>
 
-  <div class="route" id="route-previews">
-    <div class="settings">
+        <!-- Same reasoning as Bookmarks above: this configures floating
+         windows that appear elsewhere on the desktop and shows nothing of
+         its own. -->
+    <div class="settings" id="section-previews">
       <section class="card">
         <h2>EVE client previews</h2>
         <div class="row">
@@ -326,6 +329,8 @@
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
       </section>
+    </div>
+
     </div>
   </div>
 

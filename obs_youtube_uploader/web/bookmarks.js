@@ -338,7 +338,8 @@
     var failed = payload.failed_binds || [];
     warn.hidden = failed.length === 0;
     warn.title = failed.length
-      ? failed.length + ' keybind(s) failed to register — see Bookmarks'
+      ? failed.length + ' keybind(s) failed to register — see Settings › '
+        + 'Bookmarks'
       : '';
 
     var label = { stopped: 'Stopped', stale: 'Not responding',
@@ -357,21 +358,30 @@
     host.classList.toggle('degraded', !live);
   });
 
-  document.addEventListener('wm:route', function (event) {
+  // wm:section, not wm:route: this is a section of the Settings route now,
+  // so switching to Folders is a leave and fires no route change at all.
+  // WM.route dispatches wm:section('') whenever it leaves Settings, so one
+  // listener still covers BOTH ways of leaving -- see app.js.
+  document.addEventListener('wm:section', function (event) {
     // Refreshed on entry rather than polled: the EVE window list changes
     // when clients open and close, which is not something worth a timer.
     if (event.detail === 'bookmarks') {
       WM.send('get_bookmarks').then(render);
       return;
     }
-    // Leaving this route must disarm an in-progress capture. Both this
-    // file and previews.js now install their own document-level keydown
-    // listener; stopPropagation() only stops OTHER listeners further
-    // along the same dispatch, not a sibling listener already attached to
-    // the same document node, so an armed capture left running here would
-    // still consume the next keystroke typed on the OTHER route -- for
-    // example writing a chord meant for a preview bind into this bind
-    // instead, off-screen and silently persisted.
+    // Leaving must disarm an in-progress capture. Both this file and
+    // previews.js install their own document-level keydown listener;
+    // stopPropagation() only stops OTHER listeners further along the same
+    // dispatch, not a sibling listener already attached to the same
+    // document node, so an armed capture left running here would still
+    // consume the next keystroke typed anywhere else -- writing a keybind
+    // meant for a preview bind into this one instead, off-screen and
+    // silently persisted.
+    //
+    // The neighbours are now Folders and Discord rather than another
+    // route, which makes this strictly worse if it ever regresses: the
+    // capture handler preventDefault()s EVERY key, Tab included, so an
+    // escaped capture would swallow a path or a webhook being typed.
     endCapture();
   });
 }());

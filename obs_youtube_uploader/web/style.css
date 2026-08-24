@@ -611,18 +611,12 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .settings-pane .settings { display: none; }
 .settings-pane .settings.active { display: flex; }
 
-/* ====================== bookmarks route =============================
-   Reuses the settings route's card markup, so it needs the same column
-   direction and scroll safeguard: this route will hold eighteen keybind
-   rows and will exceed the window height. Without overflow-y the lower
-   binds clip with no scrollbar and become unreachable. */
-#route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
-
-/* ====================== previews route ===============================
-   Same reason as bookmarks above: the Hotkeys card can hold one row per
-   known character, which exceeds the window height on a roster of any
-   size. Without overflow-y the lower rows clip with no scrollbar. */
-#route-previews { flex-direction: column; overflow-y: auto; padding: 12px; }
+/* Bookmarks and Previews are sections of the Settings route now, so the
+   scroll safeguard that used to live on each of them is .settings-pane's
+   overflow-y instead -- one scroller for every section rather than one per
+   route. The reason it is still needed is unchanged: Bookmarks holds
+   eighteen keybind rows and Previews holds one row per known character,
+   and either exceeds the window height. */
 
 /* Character names, like bookmarks' action names, are not short field
    labels -- see the #eve-binds override below for why the shared 118px

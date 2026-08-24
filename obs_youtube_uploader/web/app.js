@@ -91,10 +91,10 @@
   // Settings is a route in this window, not a second OS window. Switching
   // is pure client state; Python is not told which route is showing.
   WM.route = function (name) {
+    // Bookmarks and Previews are NOT here any more: both are sections of
+    // the Settings route, reached through WM.section.
     var routes = { main: 'route-main', settings: 'route-settings',
                    firstrun: 'route-firstrun',
-                   bookmarks: 'route-bookmarks',
-                   previews: 'route-previews',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills' };
     Object.keys(routes).forEach(function (key) {
@@ -111,8 +111,7 @@
     WM.el('routenav').hidden = (name === 'firstrun');
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'bookmarks' || name === 'previews'
-        || name === 'evesettings' || name === 'skills') {
+    if (name === 'main' || name === 'evesettings' || name === 'skills') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;
