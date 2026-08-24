@@ -78,3 +78,43 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     with caplog.at_level("INFO"):
         assert window.activate(FakeLibs(), 123) is False
     assert any("Activation of" in r.message for r in caplog.records)
+
+
+class _RecordingWindow(window.PreviewWindow):
+    """PreviewWindow with the Win32 edges stubbed, to count renders."""
+
+    def __init__(self, rect):
+        class FakeUser32:
+            def SetWindowPos(self, *a):
+                return True
+
+        class FakeLibs:
+            user32 = FakeUser32()
+
+        client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot",
+                                "hwnd": 1})()
+        super().__init__(FakeLibs(), client, rect, lambda c: None,
+                         lambda *a: None, lambda: [], lambda: rect)
+        self.hwnd = 1
+        self.renders = 0
+
+    def redraw(self, force=False):
+        self.renders += 1
+
+
+def test_a_pure_move_does_not_re_render_the_chrome():
+    """A drag emits mouse-moves at >100Hz. Re-rendering a Pillow image and
+    pushing ~67k pixels on each one is what made dragging stutter -- and
+    none of it changes when only x/y do."""
+    w = _RecordingWindow(Rect(100, 100, 320, 210))
+    for i in range(30):
+        w.move(Rect(100 + i, 100 + i, 320, 210))
+    assert w.renders == 0
+
+
+def test_a_resize_does_re_render():
+    """The layered bitmap is sized to the window, so a resize must re-push
+    it or the surface stays at the old dimensions."""
+    w = _RecordingWindow(Rect(100, 100, 320, 210))
+    w.move(Rect(100, 100, 400, 260))
+    assert w.renders == 1

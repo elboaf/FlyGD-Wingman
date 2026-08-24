@@ -165,6 +165,9 @@ class PreviewWindow:
         self.client = client
         self.rect = rect
         self.locked = False
+        self.selected = False
+        # Last key rendered; None forces the first draw.
+        self._chrome_cache_key = None
         self._on_activate = on_activate
         self._on_rect_changed = on_rect_changed
         # Supplied by the host, which is the only thing that knows about
@@ -205,22 +208,49 @@ class PreviewWindow:
         return self
 
     # -- rendering -------------------------------------------------------
-    def redraw(self) -> None:
+    def _chrome_key(self):
+        return (self.rect.w, self.rect.h,
+                self.client.character or self.client.title, self.selected)
+
+    def redraw(self, force: bool = False) -> None:
+        """Re-render the chrome bitmap and push it to the layered surface.
+
+        Skipped when nothing that affects the bitmap has changed. Rendering
+        is a fresh Pillow image plus a ~67k-pixel DIB push, and a drag
+        emits a mouse-move at well over 100Hz -- doing this per move is
+        what made dragging stutter.
+        """
+        key = self._chrome_key()
+        if not force and key == self._chrome_cache_key:
+            return
         label = self.client.character or self.client.title
         img = chrome.render((self.rect.w, self.rect.h), label,
                             border_color=(0, 200, 220, 255),
-                            border=BORDER, label_h=LABEL_H)
+                            border=BORDER, label_h=LABEL_H,
+                            selected=self.selected)
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
+        self._chrome_cache_key = key
 
     def move(self, rect) -> None:
+        """Reposition and, only if the size changed, re-render.
+
+        A pure move needs SetWindowPos alone. The layered surface survives
+        a move, and the thumbnail's destination is in CLIENT coordinates,
+        so neither has to be touched when only x/y change.
+        """
+        resized = (rect.w, rect.h) != (self.rect.w, self.rect.h)
         self.rect = rect
         # SWP_NOACTIVATE | SWP_NOZORDER: moving a preview must not steal
         # focus from the client the user is about to click into.
         self._libs.user32.SetWindowPos(self.hwnd, None, rect.x, rect.y,
                                        rect.w, rect.h, 0x0010 | 0x0004)
-        self.redraw()
-        if self._thumb is not None:
-            self._thumb.update(geometry.thumbnail_rect(rect, BORDER, LABEL_H))
+        if resized:
+            # The bitmap is sized to the window, so a resize must re-push
+            # it or the surface stays at the old dimensions.
+            self.redraw()
+            if self._thumb is not None:
+                self._thumb.update(
+                    geometry.thumbnail_rect(rect, BORDER, LABEL_H))
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):
