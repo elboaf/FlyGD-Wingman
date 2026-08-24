@@ -10,11 +10,9 @@
  * each plan's ready_count, and the denominator is characters.length, which
  * the page already holds.
  *
- * renderRoster() is a no-op stub in this task, replaced by Task 17's real
- * implementation -- expanded, details, pendingDetail, and filterText exist
- * here only as the seam it builds on. Nothing in THIS task ever populates
- * `expanded`, so the one caller that would reach into it (selectPlan,
- * below) never actually runs its body.
+ * buildRoster() groups characters by readiness (see the lockout guard
+ * comment on that function); the roster, its in-row expansion, and the
+ * two-step forget confirm are what everything else here builds toward.
  */
 (function () {
   'use strict';
@@ -235,9 +233,389 @@
   // Collapsed by default because <details> is: a plan file with a typo is
   // worth surfacing, not worth pushing the roster down the page.
 
-  // Replaced by Task 17, which builds the roster, its groups and the
-  // in-row expansion. A no-op rather than an undefined call so this
-  // commit renders a quiet empty pane instead of throwing a caught
-  // ReferenceError into the console on every state push.
-  function renderRoster() {}
+  // ---- the roster ------------------------------------------------------
+  // Group order is fixed and matches evaluator.READINESS_ORDER, with a
+  // trailing catch-all. OTHER is not in that list on purpose: it exists to
+  // catch a readiness string this page has never heard of.
+  var GROUPS = ['Ready', 'Training', 'Locked', 'Missing', 'Unknown',
+                'Unscored'];
+  var OTHER = 'Other';
+
+  var GROUP_LABEL = {
+    Ready: 'Ready', Training: 'Training', Locked: 'Locked',
+    Missing: 'Missing requirements', Unknown: 'Unknown skills',
+    Unscored: 'Not yet refreshed', Other: 'Unrecognised'
+  };
+
+  /* THE LOCKOUT GUARD.
+   *
+   * This iterates CHARACTERS and selects a group for each one. It must
+   * NEVER enumerate the readiness groups and pull matching characters out
+   * of them -- the trailing OTHER bucket exists so that a readiness string
+   * this page does not recognise still produces a row.
+   *
+   * That is not tidiness. The expanded row is the ONLY surface in the
+   * whole application for forgetting a character or re-authenticating it,
+   * so a character with no row is a character that cannot be repaired --
+   * not from here, not from Settings, not from anywhere but deleting
+   * eve_skills.json by hand.
+   *
+   * And the group most likely to be affected is the most common one:
+   * "Unscored" is the state of EVERY character between authorisation and
+   * its first successful refresh, and of every character whose first
+   * refresh failed. A roster driven by enumerating known groups would
+   * strand exactly the characters most likely to need repair -- the ones
+   * that just failed to authenticate.
+   */
+  function buildRoster(chars) {
+    var buckets = {};
+    GROUPS.forEach(function (name) { buckets[name] = []; });
+    buckets[OTHER] = [];
+
+    chars.forEach(function (ch) {
+      var key = GROUPS.indexOf(ch.readiness) === -1 ? OTHER : ch.readiness;
+      buckets[key].push(ch);
+    });
+
+    var order = GROUPS.concat([OTHER]);
+    var groups = [];
+    order.forEach(function (name) {
+      var rows = buckets[name];
+      if (!rows.length) return;          // empty groups are omitted
+      rows.sort(name === 'Missing' ? byMissingThenName : byName);
+      groups.push({ name: name, rows: rows });
+    });
+    return groups;
+  }
+
+  function byName(a, b) {
+    return (a.character_name || '').toLowerCase()
+      .localeCompare((b.character_name || '').toLowerCase());
+  }
+
+  // Fewest missing first. This is the whole surviving remnant of
+  // TriffView's "Train next" tab: the tab never shipped, but the ordering
+  // it existed to provide did, as the sort inside this one group.
+  function byMissingThenName(a, b) {
+    if (a.missing_count !== b.missing_count) {
+      return a.missing_count - b.missing_count;
+    }
+    return byName(a, b);
+  }
+
+  // The exact strings the design specifies, and the only place they are
+  // composed. "Training -- timing unknown" is a real state, not a fallback:
+  // a queued requirement with no finish date means EVE reported a paused
+  // queue, and claiming an ETA from the rest would be a guess.
+  function statusLine(ch) {
+    if (ch.readiness === 'Ready') return 'Ready';
+    if (ch.readiness === 'Training') {
+      var eta = formatEta(ch.estimated_finish_utc);
+      return (ch.queue_timing_unknown || !eta)
+        ? 'Training — timing unknown' : 'Training — ' + eta;
+    }
+    if (ch.readiness === 'Locked') return 'Locked';
+    if (ch.readiness === 'Missing') return 'Missing ' + ch.missing_count;
+    if (ch.readiness === 'Unknown') return 'Unknown';
+    if (ch.readiness === 'Unscored') return 'Unscored';
+    // The catch-all's row shows the raw string rather than inventing a
+    // label for a state this page has never heard of.
+    return ch.readiness || 'Unrecognised';
+  }
+
+  // "2d 4h", "4h 20m", "12m". Two units at most: a plan finishing in
+  // eleven days does not want its minutes.
+  function formatEta(iso) {
+    if (!iso) return '';
+    var finish = Date.parse(iso);
+    if (isNaN(finish)) return '';
+    var mins = Math.round((finish - Date.now()) / 60000);
+    // A finish date already in the past means the queue completed since
+    // the snapshot was taken. "Due" is honest; a negative duration is not.
+    if (mins <= 0) return 'due';
+    var days = Math.floor(mins / 1440);
+    var hours = Math.floor((mins % 1440) / 60);
+    if (days) return days + 'd ' + hours + 'h';
+    if (hours) return hours + 'h ' + (mins % 60) + 'm';
+    return mins + 'm';
+  }
+
+  function formatFetched(iso) {
+    if (!iso) return 'Never fetched';
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) return 'Never fetched';
+    // Local time, deliberately: the ISO string crosses the bridge in UTC
+    // because that is what the state document stores, but the person
+    // reading the row is not in UTC.
+    return 'Last fetched ' + when.toLocaleString();
+  }
+
+  function matching() {
+    var needle = filterText.trim().toLowerCase();
+    if (!needle) return characters();
+    return characters().filter(function (ch) {
+      return (ch.character_name || '').toLowerCase().indexOf(needle) !== -1;
+    });
+  }
+
+  function renderRoster() {
+    var host = WM.el('skills-roster');
+    var empty = WM.el('skills-empty');
+    host.textContent = '';
+    empty.textContent = '';
+    WM.el('skills-filter-clear').hidden = !filterText.trim();
+
+    if (!characters().length) {
+      empty.hidden = false;
+      empty.textContent =
+        'No characters yet. Add one from the actions on the left.';
+      return;
+    }
+    if (!plans().length) {
+      empty.hidden = false;
+      empty.textContent = 'No local plans yet. Drop a .txt plan in the '
+        + 'plans folder, then reload.';
+      return;
+    }
+
+    var rows = matching();
+    if (!rows.length) {
+      // The clear action is already visible (it is shown whenever a filter
+      // is active), so this line does not repeat it as a button.
+      empty.hidden = false;
+      empty.textContent = 'No characters match “'
+        + filterText.trim() + '”.';
+      return;
+    }
+    empty.hidden = true;
+
+    buildRoster(rows).forEach(function (group) {
+      host.appendChild(groupNode(group));
+    });
+  }
+
+  function groupNode(group) {
+    var block = WM.make('div', 'skills-group');
+    var head = WM.make('div', 'skills-group-head');
+    head.appendChild(WM.make('span', 'skills-key key-' + group.name));
+    head.appendChild(WM.make('span', 'skills-group-name',
+                             GROUP_LABEL[group.name] || group.name));
+    head.appendChild(WM.make('span', 'skills-group-count',
+                             String(group.rows.length)));
+    block.appendChild(head);
+    group.rows.forEach(function (ch) { block.appendChild(rowNode(ch)); });
+    return block;
+  }
+
+  WM.el('skills-filter').addEventListener('input', function () {
+    filterText = WM.el('skills-filter').value;
+    renderRoster();
+  });
+
+  WM.el('skills-filter-clear').addEventListener('click', function () {
+    WM.el('skills-filter').value = '';
+    filterText = '';
+    renderRoster();
+  });
+
+  function rowNode(ch) {
+    var row = WM.make('div', 'skills-row');
+    if (expanded[ch.character_id]) row.classList.add('open');
+
+    var top = WM.make('button', 'skills-row-top');
+    top.appendChild(WM.make('span', 'chev',
+                            expanded[ch.character_id] ? '▾' : '▸'));
+    top.appendChild(WM.make('span', 'skills-name', ch.character_name
+                                                   || String(ch.character_id)));
+    // EXCEPTION-ONLY, and this is the considered half of it: an earlier
+    // draft carried a per-row "Current" label beside this one. In the
+    // common case every row had one, which is noise -- a badge that is
+    // always present tells you nothing. Stale is worth a badge precisely
+    // because it is rare.
+    if (ch.stale) {
+      var badge = WM.make('span', 'badge-stale', 'Stale');
+      badge.title = 'You are looking at the last data that fetched '
+        + 'successfully. The most recent refresh failed.';
+      top.appendChild(badge);
+    }
+    top.appendChild(WM.make('span', 'skills-status status-' + ch.readiness,
+                            statusLine(ch)));
+    top.addEventListener('click', function () { toggle(ch.character_id); });
+    row.appendChild(top);
+
+    if (expanded[ch.character_id]) row.appendChild(detailNode(ch));
+    return row;
+  }
+
+  function toggle(id) {
+    if (expanded[id]) {
+      delete expanded[id];
+      // Collapsing abandons a half-typed confirmation. Leaving it armed
+      // would mean re-opening the row a minute later shows a Forget button
+      // already primed to fire on one click.
+      if (confirming === id) confirming = 0;
+    } else {
+      expanded[id] = true;
+      requestDetail(id);
+    }
+    renderRoster();
+  }
+
+  /* Details are requested lazily -- one call per expansion, never a
+   * prefetch. A forty-character roster asking for forty requirement lists
+   * on entry would evaluate thirty-nine plans nobody opened.
+   *
+   * The request id is what makes the reply safe to render. A plan switch
+   * clears `details` and `pendingDetail` while a call is in flight, and
+   * that reply describes the OLD plan -- rendering it would put the wrong
+   * requirement list under an open row, with nothing on screen to say so.
+   * A cleared or superseded entry no longer matches, so the reply is
+   * dropped.
+   */
+  function requestDetail(id) {
+    if (details[id]) return;
+    detailSeq += 1;
+    var token = detailSeq;
+    pendingDetail[id] = token;
+    var plan = (STATE && STATE.selected_plan_name) || '';
+    WM.send('skills_character_detail', id, plan).then(function (payload) {
+      if (pendingDetail[id] !== token) return;
+      delete pendingDetail[id];
+      // A null is a bridge failure, not an answer (app.js:38-43). The row
+      // must say something rather than sit on "Loading requirements…"
+      // forever.
+      details[id] = payload || {
+        ok: false, message: 'The requirement list could not be loaded.',
+        requirements: []
+      };
+      renderRoster();
+    });
+  }
+
+  function detailNode(ch) {
+    var box = WM.make('div', 'skills-detail');
+
+    // The re-authenticate banner comes FIRST: it is the only action that
+    // makes any of the rest of this row work again.
+    if (ch.needs_reauth) {
+      var banner = WM.make('div', 'reauth');
+      banner.appendChild(WM.make(
+        'span', '',
+        'This character needs to sign in to EVE again. Its stored token was '
+        + 'rejected and has been removed.'));
+      var again = WM.make('button', 'btn', 'Re-authenticate');
+      // The same call Add character makes. EVE's own flow is what decides
+      // which character comes back, and re-authorising an existing one
+      // updates it in place rather than adding a second row.
+      again.disabled = !STATE.auth_configured || STATE.auth_in_progress;
+      again.addEventListener('click', function () {
+        WM.send('skills_add_character');
+      });
+      banner.appendChild(again);
+      box.appendChild(banner);
+    }
+
+    if (ch.error) box.appendChild(WM.make('p', 'row-error', ch.error));
+    box.appendChild(WM.make('p', 'row-fetched', formatFetched(ch.fetched_utc)));
+
+    var detail = details[ch.character_id];
+    if (!detail) {
+      box.appendChild(WM.make('p', 'hint', 'Loading requirements…'));
+    } else if (!detail.ok) {
+      box.appendChild(WM.make('p', 'row-error',
+                              detail.message || 'No requirements available.'));
+    } else {
+      box.appendChild(requirementsNode(detail));
+    }
+
+    box.appendChild(forgetNode(ch));
+    return box;
+  }
+
+  var STATE_LABEL = {
+    TrainedInactive: 'Trained, inactive', Queued: 'Queued',
+    Missing: 'Missing', Unknown: 'Unknown skill'
+  };
+
+  function requirementsNode(detail) {
+    var list = WM.make('div', 'req-list');
+    // Active requirements are FILTERED OUT. This list answers "what does
+    // it still need"; a requirement already met at the active level is not
+    // outstanding, and on a nearly-ready character the met ones would bury
+    // the two that are not.
+    var outstanding = (detail.requirements || []).filter(function (req) {
+      return req.state !== 'Active';
+    });
+    if (!outstanding.length) {
+      list.appendChild(WM.make('p', 'hint',
+                               'Nothing outstanding — every '
+                               + 'requirement is trained and active.'));
+      return list;
+    }
+    outstanding.forEach(function (req) {
+      var line = WM.make('div', 'req');
+      line.appendChild(WM.make('span', 'req-name',
+                               req.skill_name + ' ' + roman(req.required_level)));
+      var note = STATE_LABEL[req.state] || req.state;
+      if (req.state === 'Queued') {
+        var eta = req.queue_timing_unknown ? '' : formatEta(req.queued_finish_utc);
+        note = eta ? 'Queued — ' + eta : 'Queued — timing unknown';
+      }
+      line.appendChild(WM.make('span', 'req-state state-' + req.state, note));
+      list.appendChild(line);
+    });
+    return list;
+  }
+
+  // Plans are written in roman numerals and EVE shows skills that way, so
+  // the requirement reads back in the notation it was authored in.
+  function roman(level) {
+    return ['', 'I', 'II', 'III', 'IV', 'V'][level] || String(level);
+  }
+
+  /* Two-step, and inline rather than window.confirm. Forget deletes the
+   * character's stored refresh token along with its snapshot -- the whole
+   * point of one document is that this is a single atomic write -- so
+   * recovering from a misclick means a full SSO round trip through a
+   * browser.
+   *
+   * Only one row can be armed at a time, which is why `confirming` holds
+   * an id rather than a flag: arming a second row disarms the first.
+   */
+  function forgetNode(ch) {
+    var foot = WM.make('div', 'forget-row');
+    if (confirming !== ch.character_id) {
+      var start = WM.make('button', 'linkbtn danger', 'Forget character');
+      start.addEventListener('click', function () {
+        confirming = ch.character_id;
+        renderRoster();
+      });
+      foot.appendChild(start);
+      return foot;
+    }
+    foot.appendChild(WM.make(
+      'span', 'forget-warn',
+      'Forget ' + (ch.character_name || 'this character')
+      + '? You will have to sign in to EVE again to add it back.'));
+    var yes = WM.make('button', 'btn danger', 'Forget');
+    yes.addEventListener('click', function () {
+      confirming = 0;
+      // False is a real answer here, unlike the other mutations: it means
+      // the character was already gone (contract: `True` / `False`). Either
+      // way the push re-syncs the roster, so the row is dropped by the
+      // render that follows rather than by this callback.
+      WM.send('skills_forget_character', ch.character_id);
+      delete expanded[ch.character_id];
+      delete details[ch.character_id];
+      delete pendingDetail[ch.character_id];
+    });
+    var no = WM.make('button', 'btn', 'Cancel');
+    no.addEventListener('click', function () {
+      confirming = 0;
+      renderRoster();
+    });
+    foot.appendChild(yes);
+    foot.appendChild(no);
+    return foot;
+  }
 }());
