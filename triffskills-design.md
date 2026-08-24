@@ -33,16 +33,39 @@ outlives the choice.
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | Wingman registers its own EVE application; the client id is a **plain source constant** | EVE's flow is PKCE public-client — `client_id` only, no secret. Unlike `credentials.py`'s Google secret there is nothing to protect, so the build-time injection precedent does not apply. TriffView does the same (`EveApplication.cs:12` is a plain const). |
-| 2 | Refresh tokens live in **one JSON file, each token DPAPI-encrypted** | Keeps roster and tokens in one document, so forget is a single atomic write. See "Token storage" below for the two-store failure class this avoids. |
+| # | Decision | Why |
+|---|---|---|
+| 1 | Wingman registers its own EVE application; the client id is a **plain source constant** | EVE's flow is PKCE public-client — `client_id` only, no secret, so there is no confidentiality argument for build-time injection. TriffView does the same (`EveApplication.cs:12` is a plain const). See the tradeoff below: this is not purely a secret-handling question. |
+| 2 | Roster, snapshots, and **DPAPI-encrypted refresh tokens live in one document** | One file means forget is a single atomic write. See "Token storage" for the two-store failure class this avoids. |
 | 3 | The bridge grows **thin façade methods**, not a generic dispatcher | pywebview takes exactly one `js_api` object (`ui/window.py:141`), so a second bridge object is not available. Nine one-to-three-line delegating methods keep `api.py`'s growth to pure delegation while preserving its return conventions. |
 | 4 | **Last-good data stays visible** and is marked stale | A transient ESI blip must not look like data loss. Ported verbatim from TriffView. |
-| 5 | The subsystem gets **its own state files and no `settings.py` section** | `settings.save()` projects the complete document from `DEFAULTS` and already has three writers. See "Persistence". |
+| 5 | The subsystem gets **its own state file and no `settings.py` section** | `settings.save()` projects the complete document from `DEFAULTS` and already has three writers. See "Persistence". |
+
+**What decision 1 costs, recorded rather than glossed.** The Google precedent
+is not only about secrecy: `.github/workflows/release.yml:78-90` injects the
+client *id* as well as the secret, and `credentials.py:4-10` already says
+plainly that the desktop secret is extractable and that this is fine. So the
+injection machinery exists at least partly to separate **deployment identity**,
+and choosing a source constant gives that up. Three consequences follow, and
+all three were accepted knowingly:
+
+- A source checkout and a release build share one identity, so development
+  traffic is indistinguishable from released-app traffic in CCP's dashboard.
+- A fork inherits Wingman's application identity unless it edits one line, and
+  its users' consent screens will name Wingman.
+- If the application is ever rate-limited or revoked by CCP for abuse
+  originating from a fork or a modified build, every release is affected
+  together, and the remedy is a new registration and a new build.
+
+If any of those becomes real, the answer is to move the id to build-time
+injection alongside the Google one — the change is one constant and one
+workflow step, and nothing else in the design depends on where the value comes
+from. `application.py` exists to be that single point.
 
 Two further decisions were taken during design and are argued where they land:
-pure-Python RS256 verification rather than a new dependency ("Authentication"),
-and conditional ESI requests rather than TriffView's unconditional refetch
-("The ESI client").
+RS256 verification via the already-present `cryptography` library
+("Authentication"), and conditional ESI requests rather than TriffView's
+unconditional refetch ("The ESI client").
 
 ## Architecture
 
@@ -86,6 +109,45 @@ What it does need is to keep the network off the bridge thread:
 - **One interactive auth at a time**, via a non-blocking lock. Two concurrent
   authorisations would fight over the same fixed loopback port.
 
+### Who owns the state, and who may write it
+
+The two latches above are independent of each other, which is exactly the
+problem: they stop two refreshes and two authorisations, but **auth, refresh,
+forget, and plan selection can all be in flight at once.** Every one of them
+mutates the same roster and saves the same document, and `atomicio.py:1-5` is
+explicit that atomic replacement addresses torn *reads* and says nothing about
+lost *updates* — *"single writer ownership settles who may write."* Without a
+stated owner, a forget completing during a refresh is silently undone by the
+refresh's save, and a character authorised mid-refresh disappears.
+
+So the contract, which is not optional:
+
+- **`SkillsController` owns the roster in memory and is the only writer of the
+  state document.** Nothing else opens it for writing — not the auth worker,
+  not the refresh worker, not the bridge.
+- **A single re-entrant lock is held across every read-modify-write.** Mutate
+  the live roster and save inside the same critical section. It is never
+  correct to read a snapshot, work from it, and save later — the document is
+  written whole, so a stale snapshot silently reverts everything committed
+  since it was taken. This is the same hazard `settings.py`'s three writers
+  have, made explicit here rather than rediscovered.
+- **Network calls happen outside the lock; only the commit is inside it.** A
+  refresh holds nothing for the duration of eighty HTTP requests. Each
+  character's result is merged under the lock as it arrives, one short
+  critical section per character.
+- **A character forgotten while its refresh is in flight stays forgotten.**
+  The commit re-checks that the character is still present and drops the
+  result if it is not. Merging by character id rather than replacing the
+  roster is what makes that safe, and it is the same
+  merge-per-key-never-wholesale rule `preview/store.py` already carries.
+- **Forget is one write.** Remove the character and its token together, save
+  once. Because they live in one document (see "Token storage"), there is no
+  window in which one exists without the other and no rollback to get wrong.
+
+The lock is re-entrant because commit paths call helpers that also save; a
+plain `Lock` would deadlock on the first such nesting, and discovering that at
+runtime costs a hung worker rather than an exception.
+
 ## Module boundaries
 
 New package `obs_youtube_uploader/eveskills/`, split so the majority is pure
@@ -102,8 +164,8 @@ and testable on Linux — the discipline `preview/` already sets.
 | `esi.py` | Path hardening, retries, error-limit backoff | Injectable transport |
 | `sso.py` | PKCE, authorize URL, token exchange and refresh | Injectable transport |
 | `loopback.py` | Callback listener and its strict request parser | Sockets |
-| `jwt.py` | Claim and RS256 signature validation, JWKS cache | **Pure** given injected fetch |
-| `tokens.py` | Token store, atomic forget | Pure + fs, injected crypt |
+| `jwt.py` | Claim validation, RS256 via `cryptography`, JWKS cache | **Pure** given injected fetch |
+| `tokens.py` | Refresh-token wrap/unwrap inside the state document | Pure + fs, injected crypt |
 | `dpapi.py` | `CryptProtectData` / `CryptUnprotectData` | **Windows only** |
 | `controller.py` | Orchestration, worker threads, pushes | Threads |
 
@@ -255,12 +317,50 @@ that is eighty unconditional requests per click, all of it charged against
 ESI's error-limit budget to re-download data that mostly has not changed.
 
 The port stores an ETag per (character, endpoint) in the state file and sends
-`If-None-Match`; a `304` keeps the existing snapshot and advances
-`fetched_utc` only. Roughly thirty lines and two state fields, and it is what
-ESI's own guidance asks clients to do.
+`If-None-Match`; a `304` means "what you have is current". Roughly thirty
+lines and two state fields, and it is what ESI's own guidance asks clients to
+do.
 
 This is the one place the port knowingly improves on its source rather than
 matching it. Recorded here so a future reader does not "fix" it back.
+
+### The snapshot commits all-or-nothing
+
+Conditional requests introduce **per-endpoint freshness**, and that is a
+hazard the unconditional source does not have. A character's refresh is two
+independent requests — skills and queue — and each can now return 200, 304, or
+an error, independently of the other. Nine combinations, against a single
+`fetched_utc` and a single `stale` flag that both claim to describe one
+coherent snapshot.
+
+Left unstated, the failure is quiet and wrong rather than loud: current skills
+evaluated against a stale queue produce a `Training` verdict with an ETA drawn
+from a queue the character has since changed, and the row shows no error
+because the skills call succeeded.
+
+So the commit rule, ported from TriffView's all-or-nothing `ApplyFetchSuccess`
+and extended to cover 304:
+
+- **Both requests must resolve successfully — 200 or 304 — before anything is
+  committed.** A 304 on either endpoint means the stored half is already
+  current and is kept as-is.
+- **If either fails, nothing is committed.** The whole snapshot is left
+  untouched, `fetched_utc` does not move, and the error is recorded against
+  the character, which marks it stale. The existing rule that skills failing
+  short-circuits the queue call is kept: there is no point spending the second
+  request when the result cannot be committed.
+- **`fetched_utc` means "both halves were confirmed current at this time"**,
+  which is what makes it safe for the UI to treat the snapshot as coherent. It
+  advances on an all-304 refresh, because nothing being modified is a
+  successful confirmation, not a skipped one.
+- **ETags are stored per endpoint but are not freshness state.** They are
+  request optimisation only; the snapshot's freshness is the single
+  `fetched_utc`, and no UI surface reads a per-endpoint timestamp.
+
+Keeping one timestamp rather than two is the deliberate half of this. Two
+would be more precise and would make every consumer — the roster, the ETA, the
+stale badge — responsible for reconciling them, which is precision bought at
+the cost of the guarantee that makes the readiness verdict meaningful.
 
 ## Authentication
 
@@ -309,23 +409,46 @@ the client id; optional `azp` which must equal the client id when present;
 expiry with 2 minutes of skew; `sub` matching `CHARACTER:EVE:<id>`; and the
 required scopes as a **subset** of those granted, with extras allowed.
 
-Signature verification is **pure-Python RS256**, roughly sixty lines: decode
-the JWKS modulus and exponent from base64url to ints, compute
-`pow(sig, e, n)`, then check the PKCS#1 v1.5 padding and the SHA-256
-`DigestInfo` prefix against `hashlib.sha256` of the signing input, comparing
-with `hmac.compare_digest`.
+Signature verification uses **`cryptography`, which this application already
+ships**. `google-auth` 2.56.3 depends on it unconditionally (`uv.lock:382-387`),
+and `cryptography` 50.0.0 is installed in the venv and bundled into every
+release today. Verification is therefore about ten lines against an audited
+implementation:
 
-No new dependency. That matters in a repo that does HTTP with stdlib `urllib`
-and stores its Google token without `keyring` — and `cryptography`, which
-`PyJWT[crypto]` would pull in, is a large binary wheel entering a release
-workflow that already carries four post-build assertions because PyInstaller
-exits 0 on a missing entry.
+```python
+public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+```
 
-The `alg` must be exactly `RS256`, checked on the **unvalidated header before
-key selection**. That is the `alg:none` and HMAC-confusion guard and its
-ordering is not incidental. JWKS keys are cached for 5 minutes, refreshed
-once on an unknown `kid`, and the cache is replaced only on a fully successful
-fetch — so a failed refresh leaves the previous keys usable.
+An earlier draft of this design specified roughly sixty lines of hand-written
+RSA — decoding the JWKS modulus and exponent to ints, computing
+`pow(sig, e, n)`, and checking the PKCS#1 v1.5 padding by hand — on the
+explicit grounds that it added no dependency. **That premise was false**, and
+the note survives because the reasoning is worth not repeating: older
+`google-auth` releases pulled `rsa` rather than `cryptography`, and the claim
+was made from that memory instead of from `uv.lock`. Hand-rolled
+signature verification would have been sixty lines of security-critical code
+written to avoid a dependency that was already present — and it would have had
+to get encoded-message length, minimum padding length, full-block equality,
+and malformed key parameters all right, none of which the draft specified.
+
+**Check the lock file before claiming something is a new dependency.**
+
+Two constraints on the verification path:
+
+- **`alg` must be exactly `RS256`, checked on the unvalidated header before
+  key selection.** This is algorithm pinning, and the ordering is not
+  incidental: reading `alg` after choosing a key is what lets `alg:none`
+  through. Pinning alone is *not* the whole HMAC-confusion defence, though —
+  the actual defence is that this code never dispatches on the token's own
+  `alg` to pick a verifier or a key type. There is one code path, it is RSA,
+  and a token asking for anything else is rejected rather than routed.
+- **JWKS keys are filtered before use** to RSA keys with a non-blank `kid`
+  and a `use` of `sig` where present. A key the token names but which is not
+  an RSA signing key is a rejection, never a fallback.
+
+JWKS keys are cached for 5 minutes, refreshed once on an unknown `kid`, and
+the cache is replaced only on a fully successful fetch — so a failed refresh
+leaves the previous keys usable.
 
 ### Refresh and failure classification
 
@@ -353,9 +476,16 @@ not saved for offline use".
 
 ## Token storage
 
-One file, `eve_skills_tokens.json`, written `0600` via `os.open` with an
-explicit mode. Each refresh token is wrapped with `CryptProtectData` before
-writing; the roster metadata beside it is plaintext.
+**One document holds everything about a character**: its identity, its scopes,
+its skill snapshot, its queue, its ETags, and its DPAPI-wrapped refresh token.
+There is no separate token file.
+
+An earlier draft split the roster into `eve_skills_state.json` and the tokens
+into `eve_skills_tokens.json` — while claiming, in the same design, that a
+single document was what made forget atomic. That was incoherent: two files
+means forget is two writes, which is the exact failure this decision exists to
+avoid, and it would have carried a *third* copy of the roster metadata in the
+token file. The split is gone.
 
 **Why one document rather than TriffView's Windows Credential Manager.** The
 source splits tokens into Credential Manager and the roster into `state.json`,
@@ -367,7 +497,8 @@ exists only to enumerate Credential Manager by prefix and resurrect
 placeholder rows for tokens whose state entry went missing. Roughly forty
 lines of that file are the split, not the feature. One document makes forget a
 single atomic write and makes the entire orphan class impossible rather than
-recoverable.
+recoverable — no rollback transaction, no reconciliation sweep, no window in
+which a character exists without its token or a token without its character.
 
 **Why DPAPI rather than plain JSON.** `uploader.py:286-293` is explicit that
 `os.chmod` on Windows only toggles the read-only attribute and that one must
@@ -377,25 +508,38 @@ rest — a stolen laptop, a disk image, a backup, or a `%LOCALAPPDATA%`
 redirected into OneDrive all expose it. `CryptProtectData` is user-scoped and
 closes that gap for about forty lines of ctypes.
 
+Only the refresh token is wrapped. The roster metadata beside it stays
+plaintext, so a corrupt or unreadable DPAPI blob costs one character a
+re-authentication rather than making the whole document unparseable.
+
 **What DPAPI does not buy.** Against malware running as the same user, DPAPI,
 Credential Manager, and a plain file are equivalent: `CryptUnprotectData`
 succeeds for that user with no prompt. This is a defence against data at rest,
 not against local code execution, and the design should not be read as
 claiming otherwise.
 
-The `protect`/`unprotect` callables are injected, so `tokens.py` — the store
-logic, the atomic forget, the corruption handling — is fully testable on
-Linux while only `dpapi.py` is Windows-only.
+**On file mode.** The document contains tokens, so it wants owner-only
+permissions — but it must not be written with `os.open(..., 0o600)` the way
+`uploader.py` writes the Google token, because that is incompatible with
+`atomicio.write_atomic`, which creates and owns its own temporary descriptor
+(`atomicio.py:13-38`). It does not need to be: `tempfile.mkstemp` already
+creates at `0600`, and `os.replace` carries the temporary file's mode to the
+destination, so an atomically-written file is owner-only on POSIX without
+asking. On Windows the mode is decorative either way — which is the whole
+reason DPAPI is doing the actual work here.
+
+The `protect`/`unprotect` callables are injected, so `tokens.py` — the wrap
+and unwrap, and the handling of a blob that fails to decrypt — is fully
+testable on Linux while only `dpapi.py` is Windows-only.
 
 ## Persistence
 
-Four new zero-arg helpers in `paths.py`, matching its rule that every state
+Three new zero-arg helpers in `paths.py`, matching its rule that every state
 path is a function returning a `Path`, never a module constant:
 
 | Path | Contents | Writer |
 |---|---|---|
-| `eve_skills_state.json` | Roster, snapshots, queue, ETags, selected plan | `atomicio.write_atomic` |
-| `eve_skills_tokens.json` | DPAPI blobs, `0600` | `os.open` + `atomicio` |
+| `eve_skills.json` | Roster, snapshots, queue, ETags, DPAPI token blobs, selected plan | `atomicio.write_atomic`, controller only |
 | `eve_skills_cache.json` | Skill name → type id | `atomicio.write_atomic` |
 | `skill_plans/` | Plan `.txt` files | User, plus a seeded starter plan |
 
@@ -419,19 +563,34 @@ the launch."
 
 ### Corruption
 
-Simpler than TriffView's two-tier scheme: preserve the bad file as
-`.corrupt-<timestamp>`, start empty, surface a warning in the UI.
+Preserve the bad file as `.corrupt-<timestamp>`, start empty, surface a
+warning in the UI. `eve_skills_cache.json` needs nothing more than that — it
+rebuilds completely by re-resolving names against ESI.
 
-**No `.bak` recovery tier.** TriffView's `AtomicFile.Replace` leaves one as a
-side effect; `atomicio.write_atomic`'s `os.replace` does not, and adding that
-machinery is not worth it when both the state file and the id cache rebuild
-completely from one refresh.
+**`eve_skills.json` keeps one previous copy**, and consolidating the tokens
+into it is precisely why. Before each atomic write the controller copies the
+current file to `eve_skills.json.bak`; a load that fails parsing tries the
+backup before giving up, exactly as TriffView does.
 
-The honest exception, stated rather than glossed: the **token** file is the
-one that does not rebuild. Losing it costs re-authorising every character.
-That is recoverable and safe — no data is destroyed and no credential leaks —
-but it is a worse outcome than the other two files and a reader should know it
-before deciding the tier is unnecessary.
+An earlier draft of this design argued *against* a backup tier, on the grounds
+that state and cache both rebuild from a refresh and only the separate token
+file did not. Merging the tokens into the state document — the right fix for a
+worse problem — moved the non-rebuildable thing into the file that had no
+backup. **The argument for skipping the tier did not survive the merge**, so
+the tier goes in. The alternative is a single bad write costing every
+character's authorisation.
+
+This does not extend `atomicio.py`. `write_atomic` deliberately makes no
+backup, and it is shared with the Wingman/engine boundary where a stray `.bak`
+beside a polled INI would be its own problem. The copy is three lines in this
+subsystem, which is the only place that wants it.
+
+Two things the tier still does not cover, stated rather than implied: a
+failure that corrupts the primary and the backup together — a failing disk, a
+sync client rewriting both — and a `%LOCALAPPDATA%` restored from a backup
+older than the last token rotation, where the stored refresh token may already
+have been superseded. Both end at the same place: re-authorise, which is safe
+and needs no manual cleanup.
 
 ## UI integration
 
@@ -566,10 +725,10 @@ the real bugs live:
 |---|---|
 | `plans.py` | The grammar, every cap, and the three Python parse traps by name |
 | `evaluator.py` | The full precedence table, `Locked` above `Training`, ETA as max, `Unscored` on no snapshot |
-| `jwt.py` | RS256 against fixed vectors; `alg:none` and HMAC confusion rejected; the `aud` conjunction |
+| `jwt.py` | RS256 against fixed vectors; `alg:none` and a non-RSA `kid` rejected; the `aud` conjunction |
 | `state.py` | Tolerant normalisation, per-entry drops, corruption preservation |
 | `skillids.py` | Category-16 enforcement, batching, the explicit-`category_id` divergence |
-| `tokens.py` | Atomic forget, corruption, injected crypt |
+| `tokens.py` | Wrap/unwrap, an undecryptable blob costing one character, injected crypt |
 | `loopback.py` | Duplicate query keys, wrong `Host`, wrong path, state mismatch keeps listening |
 | `esi.py` | Path validation, retry set, backoff order, token redaction, synthetic 503 |
 
@@ -641,10 +800,15 @@ design has a reason to widen them.
 3. **CCP may rotate `X-Compatibility-Date` expectations.** The header is
    pinned to a date, as in the source. A stale value degrades to whatever ESI
    decides, which is a change this design cannot anticipate.
-4. **Pure-Python RS256 is unusual enough to attract a well-meaning
-   "simplification".** The tests and the comment in `jwt.py` should make the
-   reason for it — and the reason `alg` is checked before key selection —
-   hard to miss.
+4. **`cryptography` is a transitive dependency, not a declared one.** RS256
+   verification relies on it, but it reaches the install through `google-auth`
+   (`uv.lock:382-387`) rather than through `pyproject.toml`. A future change
+   that drops or replaces the Google client libraries would take the JWT
+   verifier's dependency with it, and the failure would surface at
+   authentication rather than at install. Declaring `cryptography` explicitly
+   in `pyproject.toml` — where it is already installed, so the resolution does
+   not change — is the cheap insurance, and the implementation plan should do
+   it.
 5. **A forty-character refresh is eighty sequential requests.** With ETags most
    return 304, but the first refresh after adding many characters will take
    visible time. Progress is pushed per character so it does not look hung; if
@@ -659,7 +823,12 @@ design has a reason to widen them.
 ## Sizing
 
 Roughly 2,600 lines of C# plus five React components in the source. The
-Python port of this slice lands near 2,000 lines across thirteen modules, of
-which about 1,400 are pure and covered by CI, plus around 600 lines of
+Python port of this slice lands near 1,900 lines across thirteen modules, of
+which about 1,300 are pure and covered by CI, plus around 600 lines of
 `skills.js` and CSS, and roughly 90 lines of delegation and wiring in
 `api.py`, `paths.py`, `__main__.py`, and `pyproject.toml`.
+
+The estimate came down after review: using `cryptography` for RS256 replaces
+about sixty lines of hand-written RSA with about ten, and merging the token
+file into the state document removes a second loader, a second writer, and the
+reconciliation between them.
