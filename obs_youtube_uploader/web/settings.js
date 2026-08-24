@@ -24,6 +24,59 @@
     if (pendingAuth) { renderAuth(pendingAuth); pendingAuth = null; }
   });
 
+  // ---- immediate save -------------------------------------------------
+  // There is no Save button. Every field commits on its own through a
+  // per-field endpoint returning {applied, persisted, error}.
+  //
+  // THE HYDRATION GATE. get_settings resolves asynchronously (app.js), and
+  // until it does every field on this screen is blank. Any commit fired in
+  // that window would send blanks over a configured install -- exactly the
+  // regression tests/test_api_settings.py:409-421 exists to prevent. The
+  // Save button made that window nearly unreachable; committing on change
+  // reopens it for any early focus, so nothing may commit until the first
+  // payload has landed.
+  var hydrated = false;
+
+  function say(slot, text, tone) {
+    var el = WM.el(slot);
+    if (!el) { return; }
+    el.textContent = text || '';
+    el.className = 'field-msg' + (tone ? ' ' + tone : '');
+    el.hidden = !text;
+  }
+
+  // `revert` repaints the field from the last known-good payload. Called
+  // only when Python REFUSED a value -- never on a failed write, where the
+  // setting really did take effect for this session and snapping the
+  // control back would misreport it.
+  function commit(slot, args, revert) {
+    if (!hydrated) { return; }
+    WM.send.apply(null, args).then(function (res) {
+      // WM.send resolves to null on any bridge failure rather than
+      // rejecting (app.js). A dict is always truthy, so null is still the
+      // only thing that means "the call never landed".
+      if (!res) {
+        say(slot, 'Could not reach the app. Nothing was changed.', 'err');
+        if (revert) { revert(); }
+        return;
+      }
+      if (!res.applied) {
+        say(slot, res.error || 'That value was not accepted.', 'err');
+        if (revert) { revert(); }
+        return;
+      }
+      if (!res.persisted) {
+        // In effect for this session but not on disk. The control stays
+        // where the user put it; what it cannot do is survive a restart,
+        // and saying nothing is how they find that out the hard way.
+        say(slot, 'Changed for this session, but could not be written to '
+                + 'settings — it will not survive a restart.', 'warn');
+        return;
+      }
+      say(slot, '');
+    });
+  }
+
   // ---- fields ---------------------------------------------------------
   function setNotify(mode) {
     var inputs = document.querySelectorAll('input[name="notify"]');
@@ -37,20 +90,34 @@
     return picked ? picked.value : 'toast';
   }
 
+  // Every successful commit pushes the COMPLETE settings payload back, so
+  // a plain assignment would rewrite whichever field the user is still
+  // typing in -- including rewriting a path into str(Path(...)) form
+  // under the cursor. The focused field is left alone; it holds the more
+  // recent value by definition.
+  function setField(id, value) {
+    var el = WM.el(id);
+    if (!el || el === document.activeElement) { return; }
+    el.value = value;
+  }
+
   function render(payload) {
     var s = payload.settings || {};
     var d = payload.detected || {};
     current = s;
     detected = d;
-    WM.el('f-privacy').value = s.privacy || 'unlisted';
-    WM.el('f-category').value = s.category || '20';
-    setNotify(s.notify_mode || 'toast');
-    WM.el('f-recdir').value = s.recording_dir || '';
-    WM.el('f-gamelogs').value = s.gamelogs_dir || '';
+    setField('f-privacy', s.privacy || 'unlisted');
+    setField('f-category', s.category || '20');
+    if (document.activeElement
+        && document.activeElement.name !== 'notify') {
+      setNotify(s.notify_mode || 'toast');
+    }
+    setField('f-recdir', s.recording_dir || '');
+    setField('f-gamelogs', s.gamelogs_dir || '');
     // The input holds the REAL value and the browser draws the mask, so
     // the mask can never be written back over the stored webhook — the
     // failure mode a hand-rolled bullet string invites.
-    WM.el('f-webhook').value = s.discord_webhook || '';
+    setField('f-webhook', s.discord_webhook || '');
     // webhook_status() is a pure Python function with its own test and is
     // the only description of what is stored; discord.describe omits the
     // token by construction. TOP-LEVEL key, and never reconstructed here.
@@ -62,7 +129,34 @@
         + 'gamelogs folder from your EVE Online documents folder.'
       : 'Detect found neither folder automatically — use Browse to pick '
         + 'them yourself.';
+    // Last: everything above has painted real values, so a commit fired
+    // from here on sends what is stored rather than a blank form.
+    hydrated = true;
   }
+
+  // ---- committing each field -------------------------------------------
+  // Discrete controls commit on change. There is nothing to mistype, the
+  // value is one of a fixed set, and a refusal is recoverable.
+  WM.el('f-privacy').addEventListener('change', function () {
+    commit('msg-uploads', ['set_privacy', WM.el('f-privacy').value],
+           function () { setField('f-privacy', current.privacy || 'unlisted'); });
+  });
+
+  // `change` on a text input fires on blur AND on Enter. That is safe for
+  // this field -- it drives nothing but its own value, and a refusal is
+  // shown inline. It is NOT safe for the folders and the webhook below.
+  WM.el('f-category').addEventListener('change', function () {
+    commit('msg-uploads', ['set_category', WM.el('f-category').value],
+           function () { setField('f-category', current.category || '20'); });
+  });
+
+  Array.prototype.forEach.call(
+    document.querySelectorAll('input[name="notify"]'), function (input) {
+      input.addEventListener('change', function () {
+        commit('msg-notify', ['set_notify_mode', notifyValue()],
+               function () { setNotify(current.notify_mode || 'toast'); });
+      });
+    });
 
   // panel.js owns the onSettings handler (it renders the destination line)
   // and re-dispatches the payload, so both modules consume one push
@@ -77,11 +171,49 @@
   // gamelogs directory. `which` matches Api.pick_folder/detect_folder.
   var TARGET_FIELD = { recording: 'f-recdir', gamelogs: 'f-gamelogs' };
 
+  // A folder is NEVER committed on blur. save_settings rebinds the live
+  // watcher, and Watcher.rebind marks every file already in the folder as
+  // seen -- so committing a half-typed path that happens to name a real
+  // directory silently suppresses the announcement for every recording
+  // that arrived this session, and the corrective commit does it again to
+  // the right folder. Irreversible from here.
+  //
+  // Browse and Detect are explicit choices and commit directly. Typing
+  // commits on Enter; a blur with unsaved text says so and keeps the text,
+  // so nothing is lost either way.
+  function commitFolder(which) {
+    var field = WM.el(TARGET_FIELD[which]);
+    if (!field) { return; }
+    commit('msg-folders', ['set_folder', which, field.value], function () {
+      setField(TARGET_FIELD[which],
+               (which === 'gamelogs' ? current.gamelogs_dir
+                                     : current.recording_dir) || '');
+    });
+  }
+
   function applyFolder(which, path) {
     if (!path) return;   // a cancelled dialog is also a valid result
     var field = WM.el(TARGET_FIELD[which]);
-    if (field) field.value = path;
+    if (field) { field.value = path; }
+    commitFolder(which);
   }
+
+  Object.keys(TARGET_FIELD).forEach(function (which) {
+    var field = WM.el(TARGET_FIELD[which]);
+    if (!field) { return; }
+    field.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter') { return; }
+      ev.preventDefault();
+      commitFolder(which);
+    });
+    field.addEventListener('blur', function () {
+      var stored = (which === 'gamelogs' ? current.gamelogs_dir
+                                         : current.recording_dir) || '';
+      if (field.value.trim() === stored) { return; }
+      say('msg-folders', 'Press Enter to use this folder, or click '
+                       + 'Browse\u2026', 'warn');
+    });
+  });
 
   document.querySelectorAll('[data-browse]').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -113,6 +245,26 @@
     webhook.type = revealed ? 'password' : 'text';
     showBtn.textContent = revealed ? 'Show' : 'Hide';
     showBtn.setAttribute('aria-pressed', String(!revealed));
+  });
+
+  // Same rule as the folders, for a different reason: an empty value used
+  // to mean "clear the webhook", so select-all, Delete and look away
+  // destroyed a configured secret. Setting one commits on Enter; removing
+  // one is its own button.
+  webhook.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter') { return; }
+    ev.preventDefault();
+    commit('msg-discord', ['set_discord_webhook', webhook.value],
+           function () { setField('f-webhook', current.discord_webhook || ''); });
+  });
+
+  webhook.addEventListener('blur', function () {
+    if (webhook.value.trim() === (current.discord_webhook || '')) { return; }
+    say('msg-discord', 'Press Enter to save this webhook.', 'warn');
+  });
+
+  WM.el('btn-webhook-remove').addEventListener('click', function () {
+    commit('msg-discord', ['clear_discord_webhook']);
   });
 
   function remask() {
@@ -155,55 +307,19 @@
     window.open(YOUTUBE_TOS_URL, '_blank');
   });
 
-  // ---- save / cancel --------------------------------------------------
-  function collect() {
-    return {
-      privacy: WM.el('f-privacy').value,
-      category: WM.el('f-category').value.trim(),
-      notify_mode: notifyValue(),
-      recording_dir: WM.el('f-recdir').value.trim() || null,
-      gamelogs_dir: WM.el('f-gamelogs').value.trim() || null,
-      // The real value, never the mask.
-      discord_webhook: webhook.value.trim(),
-      // Carried through untouched: settings.save projects onto DEFAULTS'
-      // keys, so anything omitted here is dropped on every write.
-      channel_id: current.channel_id || '',
-      channel_title: current.channel_title || ''
-    };
-  }
-
-  WM.el('btn-settings-save').addEventListener('click', function () {
-    // save_settings rebinds the live watcher when recording_dir changes;
-    // persisting the setting alone leaves the watcher on the old folder.
-    // That is Python's job, not the page's. It returns false when it
-    // refused, and the form stays open so the edits are not lost.
-    //
-    // `!ok` rather than `=== false`: WM.send resolves to null on any bridge
-    // failure, and treating that as success would navigate away with the
-    // form reset and nothing saved — the exact outcome this guard exists
-    // to prevent.
-    WM.send('save_settings', collect()).then(function (ok) {
-      if (!ok) return;
-      remask();
-      WM.route('main');
-    });
-  });
-
-  WM.el('btn-settings-cancel').addEventListener('click', function () {
-    render({ settings: current, detected: detected,
-             webhook_status: WM.el('webhook-status').textContent });
-    remask();
-    WM.route('main');
-  });
+  // No save / cancel block. Every field above commits on its own, and a
+  // Cancel would promise a rollback nothing here can perform: `current` is
+  // reassigned on every render, so no pre-edit snapshot survives.
 }());
 
 // ---- EVE client previews -------------------------------------------------
 // Deliberately not in bookmarks.js: that module owns the AutoHotkey engine
 // and its status plumbing, and previews share none of it.
 //
-// Also not part of collect()/save_settings above: toggling this has to
-// start or stop a thread, not just persist a field, so it calls its own
-// endpoint.
+// It calls its own endpoint because toggling this has to start or stop a
+// thread, not merely persist a field. That was already true when the rest
+// of this screen still had a Save button; now every field commits on its
+// own, this block is simply the first that always did.
 (function () {
   var box = WM.el('preview-enabled');
   if (!box) { return; }
@@ -232,9 +348,10 @@
 }());
 
 // ---- Where a preview opens -----------------------------------------------
-// Separate from the previews block above, and not part of collect()/
-// save_settings either: this key is written by its own bridge method so a
-// write that fails can be reported rather than silently lost.
+// Separate from the previews block above: this key is written by its own
+// bridge method so a write that fails can be reported rather than silently
+// lost. Its {applied, persisted} return is the shape the per-field
+// endpoints at the top of this file were modelled on.
 //
 // This replaces the card that used to move the GAME windows. EVE reads a
 // resize as a resolution change and rewrites its own configuration, so

@@ -145,6 +145,7 @@
                  spellcheck="false">
           <span class="inline-hint">(20 = Gaming)</span>
         </div>
+        <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
       <section class="card">
@@ -158,6 +159,7 @@
           <input type="radio" name="notify" value="popup"><span class="ring"></span>
           Open the uploader window immediately
         </label>
+        <p class="field-msg" id="msg-notify" hidden></p>
       </section>
 
       <section class="card">
@@ -174,6 +176,7 @@
           <button class="btn" data-browse="gamelogs">Browse&hellip;</button>
           <button class="btn" data-detect="gamelogs">Detect</button>
         </div>
+        <p class="field-msg" id="msg-folders" hidden></p>
         <p class="sub-hint" id="detect-note">
           Detect reads the recording folder from OBS's own config, and the gamelogs
           folder from your EVE Online documents folder.
@@ -192,14 +195,11 @@
                  autocomplete="off">
           <button class="btn toggle" id="btn-webhook-show"
                   aria-pressed="false">Show</button>
+          <button class="btn" id="btn-webhook-remove">Remove</button>
         </div>
         <p class="sub-hint" id="webhook-status">not configured</p>
+        <p class="field-msg" id="msg-discord" hidden></p>
       </section>
-
-      <div class="settings-foot">
-        <button class="btn" id="btn-settings-cancel">Cancel</button>
-        <button class="btn acc" id="btn-settings-save">Save</button>
-      </div>
 
     </div>
   </div>

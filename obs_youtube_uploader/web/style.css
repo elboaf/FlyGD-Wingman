@@ -758,10 +758,24 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #f-webhook[type="text"] { letter-spacing: 0; }
 .settings .toggle { flex: none; min-width: 62px; }
 
-.settings-foot {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 4px 0 8px;
+/* Per-card inline message, where a refusal or an unwritable-file warning
+   lands now that there is no Save button. Deliberately NOT _alert's modal:
+   that queues (web/panel.js), so a webhook URL typed a character at a time
+   used to stack a pile of dialogs on top of each other.
+
+   Indented to the field column, not the label column, so it reads as
+   belonging to the control it is about. Author [hidden] rule for the same
+   reason .routenav and .evestat carry one: this sets display, and an
+   author rule beats the UA stylesheet's [hidden] { display: none }. */
+.field-msg {
+  display: block; margin: 8px 0 0 128px;
+  font-size: var(--fs-muted); line-height: 1.45; color: var(--text-dim);
 }
+.field-msg[hidden] { display: none; }
+/* Same two tokens the status strip and #eve-bind-warning already use, so
+   one severity reads the same everywhere in the app. */
+.field-msg.warn { color: var(--warn); }
+.field-msg.err { color: var(--err); }
 
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
