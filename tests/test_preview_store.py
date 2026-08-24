@@ -154,3 +154,63 @@ def test_write_goes_through_one_atomic_transaction():
     assert opened == ["enter", "exit"]
     assert live["preview"]["layouts"]["Scout Alt"] == {
         "x": 1, "y": 2, "w": 3, "h": 4, "locked": False}
+
+
+def _updater(live, log=None):
+    import contextlib
+
+    @contextlib.contextmanager
+    def fake_update():
+        if log is not None:
+            log.append("enter")
+        yield live
+        if log is not None:
+            log.append("exit")
+
+    return fake_update
+
+
+def test_record_character_moves_a_seen_name_to_the_front():
+    live = {"preview": {"seen": ["Bravo", "Alice"]}}
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("Alice")
+    store.flush()
+    assert live["preview"]["seen"] == ["Alice", "Bravo"]
+
+
+def test_record_character_never_persists_a_character_select_client():
+    live = {"preview": {"seen": []}}
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("hwnd:0x1234")
+    store.flush()
+    assert live["preview"]["seen"] == []
+
+
+def test_a_bound_character_is_protected_from_eviction():
+    live = {"preview": {"seen": [f"C{i}" for i in range(64)],
+                        "hotkeys": {"characters": {"C63": "Ctrl+F1"}}}}
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("New")
+    store.flush()
+    assert "C63" in live["preview"]["seen"]
+
+
+def test_layout_and_roster_writes_share_one_transaction():
+    """A drag and a discovery landing together must not open the settings
+    document twice.
+
+    Uses FakeTimer, not _ImmediateTimer: _ImmediateTimer fires synchronously
+    on start(), so record() and record_character() would each open their own
+    transaction before the other call ever lands -- exactly the double-open
+    this test exists to catch. FakeTimer defers (start() is a no-op) and
+    flush() calls _write() directly, so both pending kinds land together."""
+    live = {"preview": {"layouts": {}, "seen": []}}
+    opened = []
+    store = LayoutStore(update_settings=_updater(live, opened),
+                        timer=FakeTimer)
+    store.record("Alice", layout.Entry(Rect(1, 2, 3, 4), False))
+    store.record_character("Alice")
+    store.flush()
+    assert opened.count("enter") == 1
+    assert live["preview"]["seen"] == ["Alice"]
+    assert "Alice" in live["preview"]["layouts"]

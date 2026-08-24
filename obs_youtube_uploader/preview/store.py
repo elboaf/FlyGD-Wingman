@@ -18,7 +18,7 @@ Two rules the tests pin, both of which a naive implementation breaks:
 import logging
 import threading
 
-from . import layout
+from . import layout, roster
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class LayoutStore:
         self._debounce_s = debounce_s
         self._timer_factory = timer
         self._pending = {}
+        self._pending_names = []
         self._timer = None
         self._lock = threading.Lock()
 
@@ -42,6 +43,22 @@ class LayoutStore:
         """Note a preview's new position. Safe from the preview thread."""
         with self._lock:
             self._pending[stable_key] = entry
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = self._timer_factory(self._debounce_s, self._write)
+        self._timer.start()
+
+    def record_character(self, name: str) -> None:
+        """Note that *name* was seen. Safe from the preview thread.
+
+        Shares the layout debounce rather than adding a second one: a sweep
+        that discovers a client often coincides with a layout write, and two
+        timers would open the settings document twice for one event.
+        """
+        with self._lock:
+            if name in self._pending_names:
+                return
+            self._pending_names.append(name)
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = self._timer_factory(self._debounce_s, self._write)
@@ -59,17 +76,26 @@ class LayoutStore:
     def _write(self) -> None:
         with self._lock:
             pending, self._pending = dict(self._pending), {}
+            names, self._pending_names = list(self._pending_names), []
             self._timer = None
-        if not pending:
+        if not pending and not names:
             return
         try:
             with self._update_settings() as live:
                 section = live.setdefault("preview", {})
-                layouts = dict(section.setdefault("layouts", {}))
-                layouts.update(layout.serialize(pending))   # per-key merge
-                section["layouts"] = layouts
+                if pending:
+                    layouts = dict(section.setdefault("layouts", {}))
+                    layouts.update(layout.serialize(pending))  # per-key merge
+                    section["layouts"] = layouts
+                for name in names:
+                    # Bound characters are protected: evicting one would
+                    # leave a chord the bind list has no row to show.
+                    bound = set(section.get("hotkeys", {})
+                                .get("characters", {}))
+                    section["seen"] = roster.touch(section.get("seen", []),
+                                                   name, protected=bound)
         except OSError:
             # A settings file that cannot be written must not take the
             # preview thread down -- same posture as ui/api.py's channel
             # persist, which swallows OSError for the same reason.
-            logger.exception("Could not persist preview layouts")
+            logger.exception("Could not persist preview state")
