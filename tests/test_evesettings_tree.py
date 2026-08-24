@@ -186,17 +186,41 @@ def test_a_root_at_the_cap_is_still_probed(tmp_path):
 
 def test_has_profiles_stops_at_the_first_match(tmp_path, monkeypatch):
     """Lazy, not materialised: the old code read every entry with list()
-    before testing any of them."""
+    before testing any of them, so probing one wrong directory could read
+    hundreds of thousands of names to answer a yes/no question.
+
+    Driven through a fake scandir rather than real files, because real
+    scandir order is arbitrary and "did it stop early" is not observable
+    from the answer alone.
+    """
     server = tmp_path / "server"
     server.mkdir()
     (server / "settings_Default").mkdir()
-    for n in range(50):
-        (server / f"zz{n:03d}").mkdir()
-    monkeypatch.setattr(tree, "MAX_PROBE_ENTRIES", 1)
-    # With a cap of one entry, the answer depends on whether settings_
-    # happened to be read first -- what matters is that it never raises
-    # and never reads past the cap.
-    assert tree._has_profiles(server) in (True, False)
+
+    consumed = []
+
+    class Entry:
+        def __init__(self, name):
+            self.path = str(server / name)
+
+        def is_dir(self):
+            return True
+
+    class FakeScan:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def __iter__(self):
+            for name in ("settings_Default", "second", "third"):
+                consumed.append(name)
+                yield Entry(name)
+
+    monkeypatch.setattr(tree.os, "scandir", lambda _p: FakeScan())
+    assert tree._has_profiles(server) is True
+    assert consumed == ["settings_Default"], "it read past the first match"
 
 
 def test_a_directory_beyond_the_probe_cap_is_not_a_server(tmp_path,

@@ -279,6 +279,11 @@ def test_state_reports_an_unreadable_backup_store(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     store = paths.eve_settings_backup_dir()
+    # Guard, not decoration: build() monkeypatches LOCALAPPDATA, and this
+    # test chmods the directory to 000. If that redirection ever stopped
+    # working, the line below would strip the real user's backup folder of
+    # every permission. Fail loudly instead.
+    assert str(store).startswith(str(tmp_path)), store
     store.mkdir(parents=True, exist_ok=True)
     store.chmod(0o000)
     try:
