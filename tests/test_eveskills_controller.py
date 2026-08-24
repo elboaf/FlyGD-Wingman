@@ -968,6 +968,24 @@ def test_forget_always_pushes(tmp_path):
     assert any(handler == "onSkills" for handler, _ in pushed)
 
 
+def test_forget_rejects_a_non_positive_id(tmp_path):
+    controller, _, alerts = build(tmp_path, characters=[with_snapshot()])
+
+    assert controller.forget(0) is False
+    assert controller.forget(-5) is False
+    assert controller.state_payload()["characters"][0]["character_id"] == 95
+
+
+def test_a_forget_save_failure_rolls_back_and_warns(tmp_path):
+    controller, _, alerts = build(tmp_path, characters=[with_snapshot()])
+    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+
+    assert controller.forget(95) is False
+
+    assert controller.state_payload()["characters"][0]["character_id"] == 95
+    assert alerts and alerts[-1][0] == "warning"
+
+
 # ----- interactive sign-in ------------------------------------------------
 
 IDENTITY = jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",

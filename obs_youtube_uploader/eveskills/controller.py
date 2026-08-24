@@ -947,6 +947,10 @@ class SkillsController:
         Idempotent: removing a character that is not there is a success.
         The page can hold a stale roster across a refresh that already
         dropped the row, and a two-step confirm makes a double click easy.
+        A save failure is not: it would leave the character back on disk,
+        token and all, ready to reappear on the next launch even though the
+        user was told it was gone. Rolled back and reported instead, the
+        same idiom select_plan uses for its own save failure.
         """
         try:
             wanted = int(character_id)
@@ -955,11 +959,28 @@ class SkillsController:
             # undefined -> None. Refused rather than coerced.
             logger.warning("Refusing a non-numeric character id: %r", character_id)
             return False
+        if wanted <= 0:
+            # ForgetAsync:60 rejects this outright rather than treating it
+            # as a no-op success -- ids are always positive, so this is a
+            # caller bug, not an empty roster.
+            logger.warning("Refusing a non-positive character id: %r", wanted)
+            return False
         with self._lock:
+            previous = self._state.find(wanted)
+            previous_token = self._access_tokens.get(wanted)
             self._state.remove(wanted)
             self._access_tokens.pop(wanted, None)
-            self._save_locked()
+            saved = self._save_locked()
+            if not saved and previous is not None:
+                self._state.upsert(previous)
+                if previous_token is not None:
+                    self._access_tokens[wanted] = previous_token
         self._push_state(force=True)
+        if not saved:
+            self._alert("warning", "Could not save the change",
+                        "The character was not forgotten and has been "
+                        "restored.")
+            return False
         return True
 
     # ----- interactive sign-in --------------------------------------------
