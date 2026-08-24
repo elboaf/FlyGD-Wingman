@@ -107,7 +107,8 @@
     WM.el('routenav').hidden = (name === 'firstrun');
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'bookmarks' || name === 'previews') {
+    if (name === 'main' || name === 'bookmarks' || name === 'previews'
+        || name === 'evesettings') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;

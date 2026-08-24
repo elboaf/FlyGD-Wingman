@@ -180,6 +180,10 @@
     });
 
     WM.el('es-backup-profile').addEventListener('click', function () {
+      // Without this the backend receives "", which Path() resolves to the
+      // app's own working directory -- producing a junk archive and a
+      // success message rather than doing nothing.
+      if (!state || !state.profile) return;
       WM.send('eve_settings_backup', state.profile, 'profile')
         .then(function () { window.setTimeout(refresh, 250); });
     });
