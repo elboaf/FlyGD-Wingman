@@ -18,7 +18,7 @@
 - **Do not run `ruff format` before Task 5.** Tasks 1–4 must stay reviewable; a reformat mixed into them would bury the real change.
 - **`packages = [...]` in `pyproject.toml` is explicit on purpose.** A missing subpackage installs cleanly and fails at import time inside the frozen build. Never replace it with auto-discovery.
 - **The `AppId` in `packaging/installer.iss` must not change.** It is what makes the rename upgrade in place instead of installing a second copy.
-- Baseline before any change: **1839 passed, 6 skipped** via `python -m pytest tests/ -q`.
+- Baseline: **1839 passed, 6 skipped** before Task 3, and **1840 passed, 6 skipped** from Task 3 onward — Task 3 splits one test in two, so the collected count legitimately rises by one. Check with `python -m pytest tests/ -q`. Tasks 4 onward must match the later number.
 
 ## PR boundaries
 
@@ -603,7 +603,9 @@ gh -R elboaf/FlyGD-Wingman run view --log | grep -E 'SKIPPED|passed|skipped' | t
 
 So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and the totals reconcile — Windows `passed + skipped` must equal Linux `passed + skipped`, because the same tests are collected on both.
 
-**Measured on a real run (32784568339):** Linux `1839 passed, 6 skipped`; Windows `1831 passed, 14 skipped`. Both total 1845, so nothing was lost. Windows skips 14, not 3 — the extra eleven are all legitimately POSIX-only: `chmod`-based unreadable-store tests (Windows does not honour mode 000), POSIX symlink semantics, owner-only permission bits, case-distinct filenames, and the several `*_off_windows` no-op guards. Do not treat 14 as a failure; check the *names*, not the count, and confirm no `test_preview_win32.py`, `test_preview_host.py`, or `test_eveskills_dpapi.py::test_*_on_windows` entry appears among them.
+**Measured on real runs.** Before the bak-mode split (run 32784568339): Linux `1839 passed, 6 skipped`; Windows `1831 passed, 14 skipped`, both totalling 1845. After the split (run 32786643297): Linux `1840 passed, 6 skipped`; Windows `1831 passed, 15 skipped`, both totalling 1846 — the split adds one test, so a rising total is correct here, not a regression.
+
+Windows skips 14 (15 after the split), not 3 — the extra eleven are all legitimately POSIX-only: `chmod`-based unreadable-store tests (Windows does not honour mode 000), POSIX symlink semantics, owner-only permission bits, case-distinct filenames, and the several `*_off_windows` no-op guards. Do not treat the count as a failure; check the *names*, and confirm no `test_preview_win32.py`, `test_preview_host.py`, or `test_eveskills_dpapi.py::test_*_on_windows` entry appears among them. The invariant that matters is that both legs' `passed + skipped` totals agree.
 
 Note that `test_preview_host.py:145` **ran and passed** on the GitHub Windows runner, which settles an open question from the design doc: the service-context runner does provide a real message pump and window station.
 
@@ -644,7 +646,7 @@ knowing whether a break is platform-specific is the point of a matrix.
 
 The test-suite fixes here are portability only -- encoding, newline
 translation, and file-handle lifetime. The Linux run is unchanged at
-1839 passed, 6 skipped."
+1840 passed, 6 skipped."
 ```
 
 ---
@@ -748,7 +750,7 @@ Expected: about 111 findings resolved. Do **not** pass `--unsafe-fixes`; the 40 
 - [ ] **Step 4: Confirm the auto-fixes broke nothing**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: `1840 passed, 6 skipped`
 
 This is the entire safety argument for an automated fix pass across 149 files. If the count changed, run `git diff` and find out which fix did it before going further.
 
@@ -763,7 +765,7 @@ git commit -m "Apply ruff's automatic fixes
 Mechanical: import sorting, unused imports, unused noqa directives,
 datetime.timezone.utc over the deprecated alias, f-strings over
 printf-style formatting. No behaviour change; the suite is unchanged at
-1839 passed, 6 skipped.
+1840 passed, 6 skipped.
 
 Kept separate from the hand-written fixes so those stay reviewable."
 ```
@@ -820,7 +822,7 @@ Run: `uv run --extra dev ruff check .`
 Expected: `All checks passed!`
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: `1840 passed, 6 skipped`
 
 - [ ] **Step 8: Add the lint step to CI**
 
@@ -858,7 +860,7 @@ The F821 on ui/window.py was never a live bug -- the annotation is a
 string and pywebview is imported lazily on purpose -- so it becomes a
 TYPE_CHECKING import that says so rather than a behaviour change.
 
-1839 passed, 6 skipped, unchanged."
+1840 passed, 6 skipped, unchanged."
 ```
 
 ---
@@ -929,7 +931,7 @@ Expected: `149 files reformatted, 27 files left unchanged` (approximately — St
 - [ ] **Step 5: Verify nothing broke**
 
 Run: `python -m pytest tests/ -q`
-Expected: `1839 passed, 6 skipped`
+Expected: `1840 passed, 6 skipped`
 
 That the suite is unchanged is the whole safety argument for a 149-file mechanical rewrite. Anything else, stop.
 
@@ -1414,7 +1416,7 @@ Tell the maintainer explicitly that `docs/branch-protection.md` needs applying b
 
 | What | How | Expected |
 |------|-----|----------|
-| Suite unchanged throughout | `python -m pytest tests/ -q` | `1839 passed, 6 skipped` |
+| Suite unchanged throughout | `python -m pytest tests/ -q` | `1840 passed, 6 skipped` |
 | Lint clean | `uv run --extra dev ruff check .` | `All checks passed!` |
 | Format clean | `uv run --extra dev ruff format --check .` | `176 files already formatted` |
 | Ruff is the pinned version | `uv run --extra dev ruff --version` | `ruff 0.16.4` |
