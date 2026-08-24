@@ -1,0 +1,356 @@
+"""The plans folder: listing, reading, and the name rules.
+
+Filesystem-only -- tmp_path, no network, no EVE client. The name rules
+are Windows' rules even when the suite runs on Linux, because the
+released application is Windows-only and a name accepted here would fail
+at the write.
+"""
+import pytest
+
+from obs_youtube_uploader.eveskills import plans, planstore
+
+
+# ---------------------------------------------------------------------------
+# Cycle A -- name validation
+# ---------------------------------------------------------------------------
+
+def test_an_ordinary_name_is_valid():
+    assert planstore.validate_plan_name("Core Ship Skills") == ""
+
+
+def test_an_empty_or_blank_name_is_rejected():
+    assert planstore.validate_plan_name("") != ""
+    assert planstore.validate_plan_name("   ") != ""
+
+
+def test_leading_or_trailing_whitespace_is_rejected():
+    """Rejected rather than silently trimmed: the name is the identity
+    the selected_plan_name field stores, and trimming here would make
+    the stored name and the typed name differ."""
+    assert planstore.validate_plan_name(" Core") != ""
+    assert planstore.validate_plan_name("Core ") != ""
+
+
+def test_a_name_over_120_characters_is_rejected():
+    assert planstore.validate_plan_name("N" * 120) == ""
+    assert planstore.validate_plan_name("N" * 121) != ""
+
+
+@pytest.mark.parametrize("bad", ['a<b', 'a>b', 'a:b', 'a"b', 'a/b', 'a\\b',
+                                 'a|b', 'a?b', 'a*b'])
+def test_path_invalid_characters_are_rejected(bad):
+    """Windows refuses all nine outright. `/` and `\\` are also the
+    traversal primitives, so this check is doing two jobs."""
+    assert planstore.validate_plan_name(bad) != ""
+
+
+def test_a_control_character_is_rejected():
+    assert planstore.validate_plan_name("Core\x00Ship") != ""
+    assert planstore.validate_plan_name("Core\x1bShip") != ""
+
+
+def test_dot_dot_is_rejected():
+    """".." is not in the invalid-character set -- there is no dot in it
+    -- and ".." is a perfectly legal filename fragment right up until it
+    is joined to a path. `plans_dir / ".."` escapes the folder, and the
+    plan name arrives from the bridge, which is to say from the page."""
+    assert planstore.validate_plan_name("..") != ""
+    assert planstore.validate_plan_name("Core..Ship") != ""
+    assert planstore.validate_plan_name("../secrets") != ""
+
+
+def test_a_single_dot_inside_a_name_is_allowed():
+    """v1.2 is a name a user will reasonably type. Only the doubled dot
+    is a traversal primitive."""
+    assert planstore.validate_plan_name("Rifter v1.2") == ""
+
+
+def test_a_trailing_dot_is_rejected():
+    """Windows silently strips a trailing dot when creating the file, so
+    "Core." becomes "Core" on disk and the name the user selected no
+    longer matches any file. The failure is a plan that vanishes on
+    reload, which reads as data loss."""
+    assert planstore.validate_plan_name("Core.") != ""
+
+
+@pytest.mark.parametrize("reserved", ["CON", "PRN", "AUX", "NUL", "COM1",
+                                      "COM9", "LPT1", "LPT9"])
+def test_reserved_windows_device_names_are_rejected(reserved):
+    """These are device names, not files. CreateFile on CON.txt opens the
+    console; the write appears to succeed and nothing lands on disk."""
+    assert planstore.validate_plan_name(reserved) != ""
+    assert planstore.validate_plan_name(reserved.lower()) != ""
+
+
+def test_the_reserved_check_looks_at_the_stem_before_the_first_dot():
+    """Windows applies the device rule to the base name, so "NUL.txt"
+    and even "NUL.plan.txt" are the device -- the reserved-ness is not
+    escaped by adding an extension."""
+    assert planstore.validate_plan_name("NUL.plan") != ""
+
+
+def test_a_name_merely_starting_with_a_device_name_is_fine():
+    """"CONVOY" is not CON. Matching by prefix rather than by the whole
+    stem would reject ordinary names."""
+    assert planstore.validate_plan_name("CONVOY") == ""
+    assert planstore.validate_plan_name("COM10") == ""
+
+
+def test_a_non_string_name_is_rejected_rather_than_raising():
+    """The name crosses the bridge from JavaScript, so its type is not
+    guaranteed. A TypeError here would surface on the bridge thread."""
+    assert planstore.validate_plan_name(None) != ""
+    assert planstore.validate_plan_name(5) != ""
+
+
+# ---------------------------------------------------------------------------
+# Cycle B -- listing the folder
+# ---------------------------------------------------------------------------
+
+def write_plan(folder, stem, body="Navigation IV\n"):
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{stem}.txt"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_missing_folder_lists_nothing_without_raising(tmp_path):
+    """The folder is created on first launch, but a user can delete it
+    while the app is running. That costs an empty roster, not a crash."""
+    found, warnings = planstore.list_plans(tmp_path / "gone")
+    assert found == [] and warnings == []
+
+
+def test_each_txt_file_becomes_a_plan_named_by_its_stem(tmp_path):
+    write_plan(tmp_path, "Core Ship Skills")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Core Ship Skills"]
+    assert warnings == []
+
+
+def test_the_contents_are_parsed(tmp_path):
+    write_plan(tmp_path, "Rifter", "Navigation IV\nMechanics III\n")
+    found, _ = planstore.list_plans(tmp_path)
+    assert found[0].ok
+    assert [(r.skill_name, r.level) for r in found[0].requirements] == [
+        ("Navigation", 4), ("Mechanics", 3)]
+
+
+def test_a_plan_with_diagnostics_is_listed_and_not_ok(tmp_path):
+    """A broken plan must still appear -- it is the row that carries the
+    diagnostics into the plan-issues disclosure. Dropping it would leave
+    the user with a file on disk and no explanation anywhere."""
+    write_plan(tmp_path, "Broken", "Navigation nope\n")
+    found, _ = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Broken"]
+    assert not found[0].ok
+    assert found[0].requirements == ()
+    assert found[0].diagnostics[0].line == 1
+
+
+def test_non_txt_files_are_ignored(tmp_path):
+    write_plan(tmp_path, "Real")
+    (tmp_path / "notes.md").write_text("Navigation IV\n", encoding="utf-8")
+    (tmp_path / "Old.txt.bak").write_text("Navigation IV\n", encoding="utf-8")
+    found, _ = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Real"]
+
+
+def test_a_directory_named_like_a_plan_is_ignored(tmp_path):
+    """glob("*.txt") matches directories too, and read_text() on one
+    raises IsADirectoryError -- which would become a warning about a
+    file the user never created."""
+    (tmp_path / "Folder.txt").mkdir(parents=True)
+    write_plan(tmp_path, "Real")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Real"]
+    assert warnings == []
+
+
+def test_plans_are_sorted_case_insensitively(tmp_path):
+    """Byte order puts every capitalised name before every lowercase
+    one, which scatters "Rifter" and "rifter alt" across the rail."""
+    for stem in ("zeta", "Alpha", "beta"):
+        write_plan(tmp_path, stem)
+    found, _ = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Alpha", "beta", "zeta"]
+
+
+def test_an_undecodable_file_warns_and_does_not_stop_the_others(tmp_path):
+    """A .txt saved as UTF-16 by Notepad, or a binary file renamed. One
+    unreadable file costs its own row, not the folder -- the same
+    per-entry tolerance preview/layout.py takes."""
+    write_plan(tmp_path, "Good")
+    (tmp_path / "Bad.txt").write_bytes(b"\xff\xfe\x00\x00Navigation")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Good"]
+    assert len(warnings) == 1 and "Bad.txt" in warnings[0]
+
+
+def test_at_most_200_files_are_read(tmp_path):
+    """The cap bounds the work one `Reload plans` click can do. It warns
+    rather than failing, because the plans the user can see still work."""
+    for n in range(planstore.MAX_PLAN_FILES + 5):
+        write_plan(tmp_path, f"Plan{n:04d}")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert len(found) == planstore.MAX_PLAN_FILES
+    assert len(warnings) == 1 and "200" in warnings[0]
+
+
+def test_the_cap_keeps_the_first_files_in_sort_order(tmp_path):
+    """Truncating after the sort rather than before means the same 200
+    plans appear on every reload, instead of whichever 200 the
+    filesystem happened to enumerate first."""
+    for n in range(planstore.MAX_PLAN_FILES + 5):
+        write_plan(tmp_path, f"Plan{n:04d}")
+    found, _ = planstore.list_plans(tmp_path)
+    assert found[0].name == "Plan0000"
+    assert found[-1].name == f"Plan{planstore.MAX_PLAN_FILES - 1:04d}"
+
+
+# --- Mandatory correction 1: each stem is run through validate_plan_name ---
+
+def test_a_file_whose_stem_fails_validation_is_skipped_with_an_issue(tmp_path):
+    """PlanStore.cs:81-85 -- a stem is validated before it is trusted as
+    a plan identity. Without this, "CON.txt" -- a Windows device name,
+    not a file -- would be handed to the parser as an ordinary plan."""
+    write_plan(tmp_path, "CON")
+    write_plan(tmp_path, "Real")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Real"]
+    assert len(warnings) == 1
+    assert "CON.txt" in warnings[0]
+    assert "reserved" in warnings[0].lower()
+
+
+def test_a_stem_with_a_windows_invalid_character_is_skipped(tmp_path):
+    """A colon is a legal filename byte on Linux, which is exactly why
+    this must be caught here rather than assumed away by the OS: the
+    released application is Windows-only, and this stem would never
+    reach disk there in the first place. Same validator, same path as a
+    user-typed name (PlanStore.cs:81-85)."""
+    write_plan(tmp_path, "Bad:Name")
+    write_plan(tmp_path, "Real")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Real"]
+    assert len(warnings) == 1 and "Bad:Name.txt" in warnings[0]
+
+
+# --- Mandatory correction 2: reject stems colliding case-insensitively ---
+
+def test_a_case_differing_pair_of_stems_collides(tmp_path):
+    """PlanStore.cs:86-90 -- the seenNames set is case-insensitive.
+    Without this, "Rifter.txt" and "rifter.txt" both load and silently
+    shadow each other in the rail: whichever the UI picks last wins,
+    invisibly, on every reload."""
+    write_plan(tmp_path, "Rifter")
+    write_plan(tmp_path, "rifter")
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Rifter"]
+    assert len(warnings) == 1
+    assert "rifter.txt" in warnings[0]
+    assert "collides case-insensitively" in warnings[0]
+
+
+def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
+    """Two byte-distinct filenames that normalise to the same NFC text
+    (e cedilla as one code point vs. e + combining acute) are the same
+    plan identity once validate_plan_name's NFC pass runs. Comparing raw
+    bytes would miss this collision entirely."""
+    nfc = "Caf\u00e9"          # U+00E9 LATIN SMALL LETTER E WITH ACUTE
+    nfd = "Cafe\u0301"         # e + U+0301 COMBINING ACUTE ACCENT
+    assert nfc != nfd          # distinct code points, or this test
+                               # proves nothing
+    write_plan(tmp_path, nfc)
+    write_plan(tmp_path, nfd)
+    found, warnings = planstore.list_plans(tmp_path)
+    assert len(found) == 1
+    assert len(warnings) == 1
+    assert "collides case-insensitively" in warnings[0]
+
+
+# --- Mandatory correction 3: bound the read by file size before reading ---
+
+def test_an_oversized_file_is_rejected_by_size_before_its_contents_are_read(
+    tmp_path,
+):
+    """PlanStore.cs:92-97 checks FileInfo.Length against the 512 KiB cap
+    before calling AtomicFile.ReadBoundedText. plans.parse's own
+    MAX_CONTENT_CHARS cap only runs after read_text() has already loaded
+    the whole file, so an unconditional read_text() would pull a
+    multi-gigabyte file fully into memory before anything rejects it --
+    this test only proves the *outcome* (skipped, warned, others still
+    load), not that the read was actually skipped; that guarantee is
+    structural, in the code path, not in what a unit test can observe."""
+    write_plan(tmp_path, "Good")
+    oversized = tmp_path / "Huge.txt"
+    oversized.write_bytes(b"x" * (plans.MAX_CONTENT_CHARS + 1))
+    found, warnings = planstore.list_plans(tmp_path)
+    assert [p.name for p in found] == ["Good"]
+    assert len(warnings) == 1
+    assert "Huge.txt" in warnings[0]
+    assert "512" in warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# Cycle C -- the starter plan
+# ---------------------------------------------------------------------------
+
+def test_the_starter_plan_is_written_into_an_empty_folder(tmp_path):
+    folder = tmp_path / "skill_plans"
+    assert planstore.seed_starter_plan(folder) is True
+    assert (folder / "Core Ship Skills.txt").is_file()
+
+
+def test_the_starter_plan_creates_the_folder(tmp_path):
+    """First launch has no state directory tree at all, and seeding is
+    what makes `Open plans folder` open something rather than fail."""
+    folder = tmp_path / "deep" / "skill_plans"
+    assert planstore.seed_starter_plan(folder) is True
+    assert folder.is_dir()
+
+
+def test_the_starter_plan_parses_cleanly(tmp_path):
+    """A seeded plan with a diagnostic would greet every new user with a
+    plan-issues disclosure about a file they did not write."""
+    folder = tmp_path / "skill_plans"
+    planstore.seed_starter_plan(folder)
+    found, warnings = planstore.list_plans(folder)
+    assert warnings == []
+    assert len(found) == 1 and found[0].ok
+    assert found[0].requirements
+
+
+def test_seeding_is_skipped_when_any_txt_is_present(tmp_path):
+    """Keyed on "the folder has no plans", not on "this file is
+    missing": a user who deletes the starter must not get it back on
+    every launch."""
+    folder = tmp_path / "skill_plans"
+    write_plan(folder, "My Own Plan")
+    assert planstore.seed_starter_plan(folder) is False
+    assert not (folder / "Core Ship Skills.txt").exists()
+
+
+def test_seeding_twice_writes_once(tmp_path):
+    folder = tmp_path / "skill_plans"
+    assert planstore.seed_starter_plan(folder) is True
+    (folder / "Core Ship Skills.txt").write_text("Mechanics V\n",
+                                                 encoding="utf-8")
+    assert planstore.seed_starter_plan(folder) is False
+    assert (folder / "Core Ship Skills.txt").read_text(
+        encoding="utf-8") == "Mechanics V\n"
+
+
+def test_seeding_into_an_unwritable_location_returns_false(tmp_path):
+    """A read-only or occupied state directory costs the starter plan,
+    not the launch -- the same policy resolve_binary() and
+    configure_logging() take with a missing resource."""
+    blocker = tmp_path / "skill_plans"
+    blocker.write_text("not a directory", encoding="utf-8")
+    assert planstore.seed_starter_plan(blocker) is False
+
+
+def test_the_starter_plan_name_passes_validation():
+    """It is written by us and selected by name like any other, so it
+    has to satisfy the same rules a user-typed name does."""
+    assert planstore.validate_plan_name(planstore.STARTER_PLAN_NAME) == ""
