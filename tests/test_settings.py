@@ -28,6 +28,12 @@ def test_defaults_are_the_documented_values():
             "opacity": 235,
             "layouts": {},
         },
+        "eve_settings": {
+            "root": None,
+            "server": None,
+            "profile": None,
+            "auto_keep": 10,
+        },
     }
 
 
