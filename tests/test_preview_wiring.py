@@ -5,6 +5,7 @@ make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 """
 import contextlib
+import copy
 
 from tests.test_api import make_api
 
@@ -252,11 +253,14 @@ def _no_disk(monkeypatch):
     def fake_update(data, path=None):
         # Mirrors the real context manager: yields the LIVE dict, so the
         # caller's mutation lands on the object it passed in, and records
-        # what would have been written.
+        # what would have been written. Records a deepcopy, not `data`
+        # itself -- appending the live reference would let a later
+        # mutation of `data` retroactively rewrite what this list says an
+        # earlier `writes` entry contained.
         @contextlib.contextmanager
         def _cm():
             yield data
-            writes.append(data)
+            writes.append(copy.deepcopy(data))
 
         return _cm()
 

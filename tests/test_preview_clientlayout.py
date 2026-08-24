@@ -48,11 +48,16 @@ class Harness:
     def read_settings(self):
         return self.doc
 
-    def update_settings(self, read, mutate):
+    @contextlib.contextmanager
+    def update_settings(self, doc):
+        # Mirrors settings.update()'s real shape: a context manager over
+        # the caller-supplied live dict, entered once per call. The manager
+        # under test must call this AND enter it (`with ... as doc:`) --
+        # building the generator without entering is exactly the bug this
+        # harness exists to catch.
         if self.raise_on_save is not None:
             raise self.raise_on_save
-        doc = read()
-        mutate(doc)
+        yield doc
         self.writes += 1
 
     def read_placement(self, hwnd, origin):
@@ -103,6 +108,42 @@ def test_save_stores_every_named_client():
     stored = h.doc["preview"]["client_layouts"]
     assert set(stored) == {"Pilot One", "Pilot Two"}
     assert stored["Pilot Two"]["maximized"] is True
+
+
+def test_save_actually_reaches_the_settings_document_on_disk(tmp_path):
+    """Regression test for a merge defect: _persist used to call
+    settings.update with main's superseded (read, mutate) signature. Against
+    the surviving settings.update -- a context manager over the live dict --
+    that built a `_GeneratorContextManager` and discarded it UNENTERED:
+    mutate() never ran, nothing was ever saved, and _persist still reported
+    {"persisted": True}.
+
+    Asserting on `h.doc`/`{"persisted": True}` alone cannot catch that class
+    of bug -- both looked right while nothing was written. This wires the
+    REAL settings.update (not the Harness fake above) and reloads from disk,
+    so a call-shape mismatch fails here instead of silently no-opping on a
+    user's Windows machine.
+    """
+    from obs_youtube_uploader import settings as settings_mod
+
+    path = tmp_path / "settings.json"
+    settings_mod.save(settings_mod._fresh_defaults(), path)
+    doc = settings_mod.load(path)
+
+    manager = ClientLayoutManager(
+        read_settings=lambda: doc,
+        update_settings=lambda data: settings_mod.update(data, path),
+        list_clients=lambda: [client("Pilot", 1)],
+        read_placement=lambda hwnd, origin: Placement(Rect(0, 0, 800, 600)),
+        apply_placement=lambda hwnd, placement, origin: True,
+        work_area_origin=lambda: (0, 0),
+        screen=lambda: SCREEN,
+        dpi_context=contextlib.nullcontext)
+
+    assert manager.save_now() == {"saved": 1, "persisted": True}
+
+    reloaded = settings_mod.load(path)
+    assert "Pilot" in reloaded["preview"]["client_layouts"]
 
 
 def test_save_excludes_a_client_at_character_select():

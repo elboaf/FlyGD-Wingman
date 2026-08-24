@@ -215,7 +215,18 @@ def _normalize(data: dict) -> dict:
     Idempotent: load() already re-validated every field on every write
     (the old rebind-from-disk this replaces), so running it again on
     already-valid data is a no-op.
+
+    Tolerant of a partial `data`, the way _save_locked's DEFAULTS-projected
+    payload already is: a caller passing a dict missing one of these scalar
+    keys (tests/fakes.py builds exactly such a dict) gets that key filled
+    from DEFAULTS instead of a KeyError. setdefault, not indexing, so a key
+    that IS present is left exactly as validated below -- only an absent
+    key is touched here.
     """
+    for key in ("privacy", "notify_mode", "category", "recording_dir",
+                "discord_webhook", "gamelogs_dir", "channel_id",
+                "channel_title"):
+        data.setdefault(key, DEFAULTS[key])
     if data["privacy"] not in _VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
     if data["notify_mode"] not in _VALID_NOTIFY:
@@ -306,6 +317,13 @@ def update(data: dict, path: Path | None = None):
     identity `self._state.settings` holds never changes, so a concurrent
     holder of that reference is never left writing to an orphaned dict.
 
+    That stability is scoped to the DOCUMENT, not its nested sections:
+    _normalize reassigns data["eve_bookmarks"], data["preview"] and
+    data["eve_settings"] wholesale on every call (see validated_eve and
+    friends above), so a reference held to one of those inner dicts across
+    an update() call goes stale even though `data` itself does not. Hold
+    `data`, not `data["preview"]`, across a call.
+
     DO NOT call save() or update() from inside an update() block. The lock
     is not reentrant and the process will deadlock.
     """
@@ -319,6 +337,7 @@ def update(data: dict, path: Path | None = None):
             data.clear()
             data.update(before)
             raise
+
 
 def update_section(data: dict, name: str, values: dict,
                    path: Path | None = None) -> dict:
