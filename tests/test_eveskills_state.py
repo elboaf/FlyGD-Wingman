@@ -73,7 +73,8 @@ def test_upsert_refuses_a_new_character_past_capacity():
     refusing an update would strand a character mid-refresh for no reason
     tied to capacity at all."""
     roster = state.SkillsState(characters=[
-        state.Character(character_id=n) for n in range(1, state.MAX_CHARACTERS + 1)])
+        state.Character(character_id=n)
+        for n in range(1, state.MAX_CHARACTERS + 1)])
     with pytest.raises(ValueError):
         roster.upsert(state.Character(character_id=state.MAX_CHARACTERS + 1))
     # Updating one already present must still succeed at full capacity.
