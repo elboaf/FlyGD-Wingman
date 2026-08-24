@@ -312,7 +312,7 @@ class FakeTimer:
         self.cancelled = True
 
 
-def _watched(h):
+def _watched(h, seed_placed=False):
     timers = []
 
     def timer(interval, fn):
@@ -321,7 +321,7 @@ def _watched(h):
         return t
 
     m = h.manager(timer=timer)
-    m.start()
+    m.start(seed_placed=seed_placed)
     return m, timers
 
 
@@ -435,3 +435,39 @@ def test_stop_cancels_the_pending_timer():
     m, timers = _watched(h)
     m.stop()
     assert timers[-1].cancelled
+
+
+def test_seeding_leaves_already_running_clients_where_they_are():
+    """Enabling the toggle mid-session used to move every running client
+    two seconds later. "Restore on launch" describes clients that launch,
+    and the Restore button is right there for the user who wants the
+    other thing."""
+    h = Harness(clients=[client("Pilot One", 1), client("Pilot Two", 2)],
+                saved={"Pilot One": entry(100, 200, 800, 600),
+                       "Pilot Two": entry(300, 400, 800, 600)})
+    _m, timers = _watched(h, seed_placed=True)
+    _tick(timers)
+    assert h.applied == []
+
+
+def test_seeding_still_places_a_client_that_appears_afterwards():
+    """The watcher's actual job. Only the set running at the moment of
+    the toggle is exempt."""
+    h = Harness(clients=[client("Already Up", 1)],
+                saved={"Already Up": entry(100, 200, 800, 600),
+                       "Latecomer": entry(300, 400, 800, 600)})
+    _m, timers = _watched(h, seed_placed=True)
+    _tick(timers)
+    h.clients = [client("Already Up", 1), client("Latecomer", 2)]
+    _tick(timers)
+    assert [hwnd for hwnd, _p in h.applied] == [2]
+
+
+def test_the_launch_path_still_places_everything_running():
+    """Unseeded start() must not change: at launch, placing what is
+    already running is the whole point of the feature."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    assert len(h.applied) == 1

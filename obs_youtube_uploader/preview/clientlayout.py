@@ -70,7 +70,22 @@ class ClientLayoutManager:
             self._placed |= set(clients)
             return result
 
-    def start(self) -> None:
+    def start(self, seed_placed: bool = False) -> None:
+        """Arm the watcher.
+
+        `seed_placed` marks everything currently running as already
+        placed, so the first tick moves nothing. That is what the toggle
+        wants: the label describes clients that LAUNCH, and yanking a
+        window the user positioned by hand is the failure place-once
+        exists to prevent, arriving through a side door. restore_now()
+        stays the way to re-place on demand.
+
+        The launch path leaves it False -- there, placing what is already
+        running is the feature.
+        """
+        if seed_placed:
+            with self._lock:
+                self._placed |= set(self._named())
         self._scheduler.start()
 
     def stop(self) -> None:

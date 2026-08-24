@@ -226,6 +226,7 @@ class FakeClientLayouts:
     def __init__(self):
         self.started = self.stopped = 0
         self.saves = self.restores = 0
+        self.seeded = None
 
     def save_now(self):
         self.saves += 1
@@ -235,8 +236,9 @@ class FakeClientLayouts:
         self.restores += 1
         return {"restored": 2, "skipped": 1}
 
-    def start(self):
+    def start(self, seed_placed=False):
         self.started += 1
+        self.seeded = seed_placed
 
     def stop(self):
         self.stopped += 1
@@ -320,6 +322,31 @@ def test_disabling_restore_on_launch_stops_the_watcher(tmp_path, monkeypatch):
     api._state.settings["preview"] = {"restore_clients_on_launch": True}
     api.set_restore_clients_on_launch(False)
     assert manager.stopped == 1
+
+
+def test_the_toggle_seeds_only_on_a_real_transition(tmp_path, monkeypatch):
+    """A repeat enabled call must not seed: a client that appeared since
+    the toggle would be marked placed without ever being placed, and the
+    restore it was owed would never happen."""
+    _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+
+    api.set_restore_clients_on_launch(True)
+    assert manager.seeded is True
+
+    api.set_restore_clients_on_launch(True)
+    assert manager.seeded is False
+
+
+def test_the_launch_path_does_not_seed(tmp_path):
+    """Placing what is already running is what launch is for."""
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api.start_client_layouts_if_enabled()
+    assert manager.seeded is False
 
 
 def test_an_unwritable_settings_file_does_not_block_the_watcher(

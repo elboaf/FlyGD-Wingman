@@ -1517,7 +1517,11 @@ class Api:
                     "Could not persist the client-restore setting")
         if self._client_layouts is not None:
             if enabled:
-                self._client_layouts.start()
+                # Seed on the transition, not on the call. start() runs on
+                # every enabled call, and seeding an unchanged one would
+                # mark a client that appeared since the toggle as placed
+                # without ever placing it.
+                self._client_layouts.start(seed_placed=wanted_change)
             else:
                 self._client_layouts.stop()
         return {"applied": True, "persisted": persisted}
