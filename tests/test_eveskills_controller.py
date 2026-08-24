@@ -391,3 +391,106 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
 
     # Two passes over the one character: two skills calls, two queue calls.
     assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
+
+
+def with_snapshot(**kwargs):
+    """A character that already has committed data, so a later refresh has
+    something to preserve or overwrite."""
+    defaults = dict(character_id=95, character_name="Aiga Otsolen",
+                    refresh_token_blob="blob", fetched_utc=T0,
+                    active_levels={3327: 3}, trained_levels={3327: 3},
+                    skills_etag='"old-s"', queue_etag='"old-q"')
+    defaults.update(kwargs)
+    return state_mod.Character(**defaults)
+
+
+def run_refresh(tmp_path, esi, character=None, clock=None, **kwargs):
+    clock = clock or Clock()
+    controller, pushed, alerts = build(
+        tmp_path, characters=[character or with_snapshot()], client=esi,
+        sso=FakeSso(), spawn=DirectSpawn(), now=clock, **kwargs)
+    controller.refresh_characters()
+    return controller, pushed, clock
+
+
+def test_200_and_200_commits_both_halves(tmp_path):
+    """The ordinary path. fetched_utc moves, both etags are stored, and any
+    previous error is cleared."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi()
+    controller, _, _ = run_refresh(tmp_path, esi, clock=clock)
+
+    row = controller.state_payload()["characters"][0]
+    ch = controller._state.characters[0]
+    assert row["fetched_utc"] == clock.value.isoformat()
+    assert ch.active_levels == {3327: 4} and ch.trained_levels == {3327: 5}
+    assert (ch.skills_etag, ch.queue_etag) == ('"s1"', '"q1"')
+    assert row["error"] == "" and row["stale"] is False
+
+
+def test_304_and_304_keeps_the_data_and_still_advances_fetched_utc(tmp_path):
+    """fetched_utc means "both halves were confirmed current at this time",
+    not "both halves were re-downloaded". Nothing being modified is a
+    successful confirmation, not a skipped one -- and if it did NOT advance,
+    a character whose skills never change would drift toward looking stale
+    forever."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(skills=[esi_response(304)], queue=[esi_response(304)])
+    controller, _, _ = run_refresh(tmp_path, esi, clock=clock)
+
+    ch = controller._state.characters[0]
+    assert ch.fetched_utc == clock.value
+    assert ch.active_levels == {3327: 3}          # Untouched.
+    assert ch.skills_etag == '"old-s"'            # A 304 carries no new etag.
+
+
+def test_200_and_304_commits_the_fresh_half_and_keeps_the_stored_one(tmp_path):
+    """Per-endpoint freshness is the hazard conditional requests introduce.
+    The rule that makes it safe: a 304 means the stored half is already
+    current, so the pair is still one coherent snapshot."""
+    esi = FakeEsi(queue=[esi_response(304)])
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    ch = controller._state.characters[0]
+    assert ch.active_levels == {3327: 4}          # Fresh skills committed.
+    assert ch.queue_etag == '"old-q"'             # Stored queue kept.
+    assert ch.error == ""
+
+
+def test_a_failing_queue_call_commits_nothing_at_all(tmp_path):
+    """THE critical rule. Current skills evaluated against a stale queue
+    produce a Training verdict with an ETA drawn from a queue the character
+    has since changed -- and the row shows no error, because the skills call
+    succeeded. Quiet and wrong is worse than loud and stale."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(queue=[esi_response(500, error="upstream")])
+    controller, _, _ = run_refresh(tmp_path, esi, clock=clock)
+
+    ch = controller._state.characters[0]
+    assert ch.active_levels == {3327: 3}, "the fresh skills must NOT be kept"
+    assert ch.skills_etag == '"old-s"', "nor the etag that would hide it next time"
+    assert ch.fetched_utc == T0, "fetched_utc must not move"
+    assert ch.error and ch.needs_reauth is False
+    assert controller.state_payload()["characters"][0]["stale"] is True
+
+
+def test_a_failing_skills_call_skips_the_queue_call_entirely(tmp_path):
+    """Ported short-circuit. The queue result could not be committed on its
+    own, so spending the request only burns error-limit budget."""
+    esi = FakeEsi(skills=[esi_response(503, error="busy")])
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    assert [c[0] for c in esi.calls] == ["/v4/characters/95/skills/"]
+    assert controller._state.characters[0].fetched_utc == T0
+
+
+def test_cached_skill_data_survives_a_failure(tmp_path):
+    """A transient ESI blip must not look like data loss. This is what makes
+    `stale` mean "you are looking at last-good data" rather than "empty"."""
+    esi = FakeEsi(skills=[esi_response(503, error="busy")])
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    assert controller._state.characters[0].active_levels == {3327: 3}
