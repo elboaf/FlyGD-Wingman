@@ -236,11 +236,19 @@ class FakeClientLayouts:
 
 
 def _no_disk(monkeypatch):
-    """set_restore_clients_on_launch persists, and the real save() writes
-    to paths.settings_file() -- the user's actual file. Stub it."""
+    """set_restore_clients_on_launch persists through settings.update, and
+    the real save()/update() write to paths.settings_file() -- the user's
+    actual file. Stub both so no test can reach it."""
     from obs_youtube_uploader.ui import api as api_mod
     writes = []
     monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
+
+    def fake_update(read, mutate, path=None):
+        doc = read()
+        mutate(doc)
+        writes.append(doc)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", fake_update)
     return writes
 
 
@@ -299,10 +307,10 @@ def test_an_unwritable_settings_file_does_not_block_the_watcher(
     """Same posture as set_preview_enabled: the feature still works."""
     from obs_youtube_uploader.ui import api as api_mod
 
-    def boom(_d):
+    def boom(_read, _mutate, path=None):
         raise OSError("read-only")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
     manager = FakeClientLayouts()
     api = make_api(tmp_path, client_layouts=manager)
     api._state.settings["preview"] = {}

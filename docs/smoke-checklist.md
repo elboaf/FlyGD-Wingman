@@ -923,6 +923,14 @@ call runs there. Each item is a claim reasoned from documentation.
       moved by Restore.
 - [ ] A **maximized** client: Save, un-maximize and move it, Restore. It
       comes back maximized, and un-maximizing lands on the saved rect.
+- [ ] **Maximized across monitors**: maximize a client on the SECONDARY
+      monitor, Save, un-maximize it and drag it to the primary, then
+      Restore. It must come back maximized on the **secondary** monitor.
+      SetWindowPlacement resolves a maximized showCmd against
+      ptMaxPosition, which apply_placement seeds from the window's current
+      placement — so this is the case that decides whether that seeding is
+      sufficient or whether ptMaxPosition needs deriving from the saved
+      rect's monitor instead.
 - [ ] A **minimized** client is never restored into minimized.
 - [ ] **Mixed DPI**: put one client on a 100% monitor and one on a 150%
       or 200% monitor, Save, move both, Restore. Both land exactly. This

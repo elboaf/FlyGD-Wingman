@@ -1317,9 +1317,16 @@ class Api:
         enabled = bool(enabled)
         section = self._state.settings.setdefault("preview", {})
         if section.get("restore_clients_on_launch") != enabled:
-            section["restore_clients_on_launch"] = enabled
+            def mutate(doc):
+                doc.setdefault("preview", {})[
+                    "restore_clients_on_launch"] = enabled
             try:
-                settings_mod.save(self._state.settings)
+                # Through settings.update, not save(): the read must
+                # happen inside _SAVE_LOCK or a concurrent writer is
+                # reverted. update applies mutate before writing, so the
+                # in-memory document is updated even when the disk write
+                # fails -- same as the previous behaviour.
+                settings_mod.update(lambda: self._state.settings, mutate)
             except OSError:
                 # Same posture as set_preview_enabled: a settings file
                 # that cannot be written must not block the feature.

@@ -126,9 +126,16 @@ class ClientLayoutManager:
 
     def _restore(self, clients, keys) -> dict:
         saved = self._saved()
-        screen = self._screen()
         restored = skipped = 0
         with self._dpi_context():
+            # GetSystemMetrics(SM_*VIRTUALSCREEN) is DPI-virtualized to the
+            # calling thread's awareness context, exactly like a window
+            # rect. Read outside this scope it comes back in system-DPI
+            # units, run under the process default -- while every rect it
+            # is compared against below was read inside PMv2, in physical
+            # pixels. Comparing the two would silently skip clients on a
+            # non-system-DPI monitor as "off-screen".
+            screen = self._screen()
             origin = self._work_area_origin()
             for key in keys:
                 p = saved.get(key)

@@ -39,6 +39,7 @@ class Harness:
         self.writes = 0
         self.dpi_depth = 0
         self.reads_inside_dpi = []
+        self.screen_inside_dpi = []
 
     # --- injected collaborators
     def list_clients(self):
@@ -66,6 +67,7 @@ class Harness:
         return (0, 0)
 
     def screen(self):
+        self.screen_inside_dpi.append(self.dpi_depth > 0)
         return SCREEN
 
     @contextlib.contextmanager
@@ -197,6 +199,17 @@ def test_restore_carries_maximized_through():
                 saved={"Pilot": entry(100, 200, 800, 600, maximized=True)})
     h.manager().restore_now()
     assert h.applied[0][1].maximized is True
+
+
+def test_restore_reads_the_screen_inside_the_dpi_scope():
+    """GetSystemMetrics is virtualized to the calling thread exactly like a
+    window rect. Read outside the scope, the desktop comes back in system-DPI
+    units and is compared against physical rects -- so a client on a
+    non-system-DPI monitor is silently skipped as off-screen."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    h.manager().restore_now()
+    assert h.screen_inside_dpi == [True]
 
 
 def test_batches_are_serialised_by_the_manager_lock():
