@@ -296,8 +296,7 @@ def build_preview_host(state):
         from .preview.store import LayoutStore
 
         store = LayoutStore(
-            save_settings=settings_mod.save,
-            read_settings=lambda: state.settings)
+            update_settings=lambda: settings_mod.update(state.settings))
         section = state.settings.get("preview", {})
 
         def on_layout_changed(stable_key, rect, locked):
@@ -433,8 +432,13 @@ def main() -> int:
     api._on_recording_dir_ready = start_watching
 
     if rec_dir is not None:
-        cfg["recording_dir"] = str(rec_dir)
-        settings_mod.save(cfg)
+        # Through update(), not save(): start_previews_if_enabled() above
+        # may already have the preview store's debounce thread alive, so
+        # this write races it the same way every other settings writer
+        # does. cfg IS state.settings (passed in above), so mutating it in
+        # place here keeps both in sync exactly as before.
+        with settings_mod.update(cfg) as live:
+            live["recording_dir"] = str(rec_dir)
         # Started before run() rather than from a page-loaded event: the
         # first tick is POLL_SECONDS away and the page asks for its own
         # state on load, so an early push has nothing to race with.

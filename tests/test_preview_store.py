@@ -2,9 +2,13 @@
 the whole projected document (settings.py:145-149), and there are already
 two writers without previews -- ui/api.py persists the channel from an
 upload worker thread, deliberately. This store is the merge boundary."""
+import contextlib
+import copy
+
 from obs_youtube_uploader.preview.store import LayoutStore
 from obs_youtube_uploader.preview.layout import Entry
 from obs_youtube_uploader.preview.geometry import Rect
+from obs_youtube_uploader.preview import layout
 
 
 class FakeTimer:
@@ -24,7 +28,26 @@ class FakeTimer:
         self.fn()
 
 
+class _ImmediateTimer:
+    """Fires on start() instead of after a delay, so debounce does not make
+    the test sleep."""
+
+    def __init__(self, delay, fn):
+        self._fn = fn
+
+    def start(self):
+        self._fn()
+
+    def cancel(self):
+        pass
+
+
 def _store(saves, stored=None):
+    """update_settings= is a zero-arg context-manager factory now, not a
+    save_settings/read_settings pair. `saves` still collects one snapshot
+    per completed write -- taken after the `with` body runs, so it reflects
+    whatever the block (or a concurrent mutation of `live`) left behind --
+    to keep the existing per-write assertions unchanged."""
     timers = []
 
     def timer(interval, fn):
@@ -33,8 +56,13 @@ def _store(saves, stored=None):
         return t
 
     live = stored if stored is not None else {"preview": {"layouts": {}}}
-    s = LayoutStore(save_settings=saves.append,
-                    read_settings=lambda: live, timer=timer)
+
+    @contextlib.contextmanager
+    def update_settings():
+        yield live
+        saves.append(copy.deepcopy(live))
+
+    s = LayoutStore(update_settings=update_settings, timer=timer)
     return s, timers, live
 
 
@@ -85,9 +113,9 @@ def test_layouts_for_clients_not_running_are_preserved():
 
 
 def test_reads_settings_at_write_time_not_at_construction():
-    """settings.save() projects the WHOLE document, so saving from a
-    snapshot taken earlier writes back stale values for every unrelated
-    key -- including ones another thread changed in between."""
+    """settings.update() re-yields the LIVE dict at write time, so saving
+    from a snapshot taken earlier would write back stale values for every
+    unrelated key -- including ones another thread changed in between."""
     saves = []
     live = {"preview": {"layouts": {}}, "channel_title": "before"}
     s, timers, _ = _store(saves, live)
@@ -104,3 +132,25 @@ def test_flush_with_nothing_pending_does_not_write():
     s, _, _ = _store(saves)
     s.flush()
     assert saves == []
+
+
+def test_write_goes_through_one_atomic_transaction():
+    """The store must not read settings, mutate, and save as three steps:
+    another writer can land between the read and the save and lose one
+    side's keys entirely."""
+    live = {"preview": {"layouts": {}}}
+    opened = []
+
+    @contextlib.contextmanager
+    def fake_update():
+        opened.append("enter")
+        yield live
+        opened.append("exit")
+
+    store = LayoutStore(update_settings=fake_update, timer=_ImmediateTimer)
+    store.record("Scout Alt", layout.Entry(Rect(1, 2, 3, 4), False))
+    store.flush()
+
+    assert opened == ["enter", "exit"]
+    assert live["preview"]["layouts"]["Scout Alt"] == {
+        "x": 1, "y": 2, "w": 3, "h": 4, "locked": False}

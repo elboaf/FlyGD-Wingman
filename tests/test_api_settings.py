@@ -5,11 +5,12 @@ masked webhook that reports parse errors, an account control that tracks
 four states, two independent Detect actions, and a Save that reaches the
 live watcher and not just the settings file.
 """
+import copy
 import types
 
 import pytest
 
-from obs_youtube_uploader import uploader
+from obs_youtube_uploader import paths, uploader
 from obs_youtube_uploader.ui import api as api_mod
 from obs_youtube_uploader.ui import copy as copy_mod
 from tests import fakes
@@ -83,12 +84,19 @@ HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
 
 
 def settings_api(tmp_path, monkeypatch, watcher=None, **kw):
+    """Patches _save_locked, not save() or update(): both writers now go
+    through settings_mod.update(), so the real lock-and-rollback machinery
+    stays in the loop and only the actual disk write is faked out."""
     saved = {}
     api, window = fakes.build_api(tmp_path, watcher=watcher, **kw)
     api._alert = fakes.Alerts()
     api.list_rows = lambda preselect=None: None
-    monkeypatch.setattr(api_mod.settings_mod, "save",
-                        lambda cfg, path=None: saved.update(cfg))
+
+    def fake_save_locked(data, path=None):
+        saved.clear()
+        saved.update(copy.deepcopy(data))
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fake_save_locked)
     monkeypatch.setattr(api_mod.settings_mod, "load", lambda path=None: dict(saved))
     return api, window, saved
 
@@ -166,10 +174,10 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypat
     and tell the user, so their edits can be retried."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
 
-    def boom(cfg, path=None):
+    def boom(data, path=None):
         raise OSError("disk full")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     assert api.save_settings(values(tmp_path)) is False
     assert api._state.settings["privacy"] == "unlisted"
@@ -386,10 +394,10 @@ def test_first_run_leaves_state_untouched_when_the_save_fails(monkeypatch, tmp_p
     api._on_recording_dir_ready = started.append
     before = dict(api._state.settings)
 
-    def boom(cfg, path=None):
+    def boom(data, path=None):
         raise OSError("disk full")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     assert api.set_recording_dir(str(folder)) is False
     assert api._state.settings == before, "in-memory settings were mutated"
@@ -434,3 +442,11 @@ def test_asking_for_settings_pushes_nothing(tmp_path):
     sent = fakes.record_pushes(api)
     api.get_settings()
     assert sent == []
+
+
+
+# A real-threaded save_settings-vs-LayoutStore stress test was tried here
+# and pulled again: it reproduces a genuine, but separate and out-of-scope,
+# race in the post-write `self._state.settings = settings_mod.load()`
+# rebind (see task-2-report.md and _race_probe_rebind_confound.py), and a
+# test that fails ~1 run in 6-10 is not a committed regression guard.

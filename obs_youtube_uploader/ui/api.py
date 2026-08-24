@@ -737,10 +737,10 @@ class Api:
         if (self._state.settings.get("channel_id") == channel_id
                 and self._state.settings.get("channel_title") == channel_title):
             return
-        self._state.settings["channel_id"] = channel_id
-        self._state.settings["channel_title"] = channel_title
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["channel_id"] = channel_id
+                cfg["channel_title"] = channel_title
         except OSError:
             # A settings file that cannot be written must not fail an
             # upload that succeeded.
@@ -1052,22 +1052,21 @@ class Api:
             self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
             return False
 
-        cfg = dict(self._state.settings)
         gamelogs = str(values.get("gamelogs_dir") or "").strip()
-        cfg.update({
-            "privacy": values.get("privacy"),
-            "category": category,
-            "notify_mode": values.get("notify_mode"),
-            "recording_dir": str(rec_dir),
-            "discord_webhook": webhook_raw,
-            "gamelogs_dir": gamelogs or None,
-        })
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.update({
+                    "privacy": values.get("privacy"),
+                    "category": category,
+                    "notify_mode": values.get("notify_mode"),
+                    "recording_dir": str(rec_dir),
+                    "discord_webhook": webhook_raw,
+                    "gamelogs_dir": gamelogs or None,
+                })
         except OSError as exc:
-            # Bail out before touching in-memory state so state and disk
-            # never diverge, and say so rather than failing silently -- the
-            # page keeps the form open with the edits intact.
+            # update() restored the live dict before re-raising, so state
+            # and disk still agree -- the property the old snapshot-then-
+            # save order was written to protect.
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
@@ -1156,15 +1155,15 @@ class Api:
             self._alert("warning", "Invalid folder",
                         f"{folder} is not a folder.")
             return False
-        # Save from a COPY and adopt only on success, exactly as
-        # save_settings does. Mutating first and returning False on OSError
-        # would leave the app believing it has a recording folder it never
-        # persisted -- state and disk diverged, and the divergence survives
-        # until the next launch reads the file back.
-        cfg = dict(self._state.settings)
-        cfg["recording_dir"] = str(folder)
+        # Update inside settings.update(), exactly as save_settings does.
+        # Mutating first and returning False on OSError would leave the
+        # app believing it has a recording folder it never persisted --
+        # state and disk diverged, and the divergence survives until the
+        # next launch reads the file back. update()'s rollback on any
+        # exception is what protects that property now.
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["recording_dir"] = str(folder)
         except OSError as exc:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
@@ -1247,9 +1246,9 @@ class Api:
             # page would read a no-op toggle as a failed call and revert
             # the checkbox.
             return True
-        section["enabled"] = enabled
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["enabled"] = enabled
         except OSError:
             # Same posture as the channel persist above: a settings file
             # that cannot be written must not block the feature itself.

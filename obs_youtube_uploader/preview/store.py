@@ -10,9 +10,10 @@ Two rules the tests pin, both of which a naive implementation breaks:
     the previews seen this session deletes the saved position of every
     client that happened not to be running -- which is most of them, most
     of the time.
-  * Read the settings document at write time, never from a snapshot.
-    settings.save() projects the complete document, so an older snapshot
-    writes back stale values for unrelated keys that other threads own.
+  * Write inside settings.update(), never as a read-then-save pair. The
+    document is projected complete from DEFAULTS, so a writer interleaving
+    between another writer's read and its save reverts keys it never
+    touched.
 """
 import logging
 import threading
@@ -25,10 +26,12 @@ DEBOUNCE_S = 1.0
 
 
 class LayoutStore:
-    def __init__(self, save_settings, read_settings, debounce_s=DEBOUNCE_S,
+    def __init__(self, update_settings, debounce_s=DEBOUNCE_S,
                  timer=threading.Timer):
-        self._save_settings = save_settings
-        self._read_settings = read_settings
+        # One context manager, not a read/save pair. The pair could not be
+        # made atomic by the caller: another writer lands between them and
+        # reverts whatever this one did not re-read.
+        self._update_settings = update_settings
         self._debounce_s = debounce_s
         self._timer_factory = timer
         self._pending = {}
@@ -60,12 +63,11 @@ class LayoutStore:
         if not pending:
             return
         try:
-            live = self._read_settings()
-            section = live.setdefault("preview", {})
-            layouts = dict(section.setdefault("layouts", {}))
-            layouts.update(layout.serialize(pending))   # per-key merge
-            section["layouts"] = layouts
-            self._save_settings(live)
+            with self._update_settings() as live:
+                section = live.setdefault("preview", {})
+                layouts = dict(section.setdefault("layouts", {}))
+                layouts.update(layout.serialize(pending))   # per-key merge
+                section["layouts"] = layouts
         except OSError:
             # A settings file that cannot be written must not take the
             # preview thread down -- same posture as ui/api.py's channel
