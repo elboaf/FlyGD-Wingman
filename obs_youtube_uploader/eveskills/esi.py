@@ -11,6 +11,7 @@ import json
 import re
 import socket
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -22,6 +23,10 @@ MAX_ERROR_BODY_BYTES = 8192
 MAX_SUCCESS_BODY_BYTES = 4 * 1024 * 1024
 RETRY_STATUSES = frozenset({408, 420, 429, 500, 502, 503, 504})
 TIMEOUT_S = 20.0
+
+# EsiClient.cs's Sanitize() caps the extracted error TEXT (not the raw body
+# read from the wire) at this length before it can reach a log or the UI.
+_SANITIZE_MAX_CHARS = 2048
 
 # Server-suggested waits are honoured but capped: a misconfigured or hostile
 # Retry-After of 86400 would otherwise hold a refresh worker for a day, and
@@ -79,8 +84,41 @@ def validate_path(path: str) -> str:
     return path
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects on any ESI request.
+
+    Ported from discord.py:175-197, which exists for the identical reason:
+    urllib's default HTTPRedirectHandler.redirect_request() carries every
+    request header across a redirect except Content-Length and
+    Content-Type -- Authorization is NOT stripped, and there is no
+    same-origin check on the Location header. .NET's HttpClientHandler
+    strips Authorization on a cross-host redirect; urllib does not, and
+    EsiClient.cs never had to think about this because of it.
+
+    Every authenticated call here carries a live EVE Bearer token in that
+    header. Without this handler, a 3xx response -- from ESI, from a
+    compromised or misconfigured proxy in front of it, or from anything
+    on the path -- would silently resend that token to wherever Location
+    points, with no host check at all. Returning None here tells urllib
+    "don't redirect"; the 3xx then surfaces as an ordinary HTTPError, like
+    any other non-2xx status, and nothing is ever sent past the URL this
+    module itself built.
+    """
+
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        return None
+
+
+# Module-level so every call shares one opener, matching discord.py's
+# _opener -- and so a test can assert on _opener.handlers directly rather
+# than only on _NoRedirectHandler in isolation (see
+# test_the_default_opener_refuses_redirects in test_discord.py, which this
+# module's own equivalent test is modelled on).
+_opener = urllib.request.build_opener(_NoRedirectHandler)
+
+
 def _default_transport(request, timeout=None):
-    return urllib.request.urlopen(request, timeout=timeout)
+    return _opener.open(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -101,26 +139,94 @@ class EsiResponse:
         return self.status == 304
 
 
+# Below this length a token is a common substring, and blindly replacing
+# every occurrence of it anywhere in a log line would corrupt unrelated
+# text instead of redacting a secret -- the same reasoning discord.py:25-31
+# gives for _MIN_REDACTABLE_TOKEN_LEN there. Real EVE access tokens run to
+# hundreds of characters, so the guard never fires in production; it exists
+# so a short token (this file's own fixtures use "tok") cannot make this
+# function destructive. EsiClient.cs's Redact() has no such floor -- it is
+# never handed anything but a real, long secret, so the case never arose
+# there. Named, not a bare literal, to match discord.py's own constant.
+_MIN_REDACTABLE_TOKEN_LEN = 8
+
+
 def _redact(text: str, token) -> str:
-    """Strip an access token out of anything that could reach a log.
-
-    Guarded on length because a very short token would be a common
-    substring and redacting it would mangle unrelated text. Real EVE access
-    tokens run to hundreds of characters, so the guard never fires in
-    production -- it exists so a test fixture using "tok" cannot make this
-    function destructive.
-
-    EsiClient.cs's own Redact() has no such floor -- TriffView never hands
-    it a short secret, so the case never arose there. This is a deliberate,
-    documented divergence rather than a silent gap: the floor only ever
-    matters against a short *test* token, and this file's own fixtures use
-    exactly that ("tok"), so removing it would make this function corrupt
-    strings in this project's test output the day someone adds a fixture
-    using a short bearer value.
-    """
-    if token and len(token) >= 8:
+    """Strip an access token out of anything that could reach a log."""
+    if token and len(token) >= _MIN_REDACTABLE_TOKEN_LEN:
         return text.replace(token, "[redacted]")
     return text
+
+
+def _sanitize(text) -> str:
+    """Strip control characters, fold newlines to spaces, and cap length.
+
+    Ports EsiClient.cs's Sanitize() (:258-268) whole. \\r, \\n and \\t are
+    kept through the filtering step and folded (\\r, \\n only) to a space
+    AFTER the length cap is applied, not before: dropping them first would
+    let a message that is mostly newlines pad itself out with characters
+    about to become nothing anyway, silently admitting more real content
+    than the cap is meant to allow. Every other Unicode control character
+    (category Cc) is dropped outright -- an error string reaches a log file
+    and a UI row, neither of which should ever render raw control bytes.
+
+    Never returns an empty string: a body that sanitizes down to nothing
+    (all control characters, or blank) is exactly as uninformative as one
+    that failed to parse at all, so both get the same fixed message.
+    """
+    text = text if isinstance(text, str) else ""
+    filtered = "".join(
+        ch for ch in text
+        if ch in "\r\n\t" or unicodedata.category(ch) != "Cc"
+    )[:_SANITIZE_MAX_CHARS]
+    cleaned = filtered.replace("\r", " ").replace("\n", " ").strip()
+    return cleaned if cleaned else "Remote service returned an unreadable error."
+
+
+def _extract_remote_error(text: str, token) -> str:
+    """Pull the "error" field out of an ESI error body, sanitized and
+    redacted. Ports EsiClient.cs's ReadError() (:164-179) whole.
+
+    Only ever the "error" field, never the raw body -- see _error_text's
+    own docstring for why. Any parse failure (not JSON, not an object, no
+    "error" field, or a non-string/blank one) collapses to the same fixed
+    message ESI-Client.cs uses, rather than leaking whatever the body
+    actually contained.
+    """
+    if not text or not text.strip():
+        return "No response body."
+    try:
+        parsed = json.loads(text)
+        remote = parsed.get("error") if isinstance(parsed, dict) else None
+    except ValueError:
+        return "Remote service returned an unreadable error."
+    if not isinstance(remote, str) or not remote.strip():
+        return "Remote service returned an unreadable error."
+    return _redact(_sanitize(remote), token)
+
+
+def _append_rate_limit(error: str, headers) -> str:
+    """Append the error-limit and Retry-After headers to *error*.
+
+    Ports EsiClient.cs's AppendRateLimit() (:212-222) whole. This is the
+    one signal that makes ESI's shared error-limit budget visible at all;
+    without it, a character silently backing off from 420s looks identical
+    to one failing for any other reason. Re-sanitizes the combined string
+    (matching the source exactly) rather than trusting the values are
+    already clean -- a header value is attacker- or proxy- controlled
+    input exactly as much as the body is.
+    """
+    if headers is None:
+        return error
+    parts = []
+    for name in ("X-Esi-Error-Limit-Remain", "X-Esi-Error-Limit-Reset",
+                "Retry-After"):
+        value = headers.get(name)
+        if value is not None:
+            parts.append(f"{name}={_sanitize(str(value))}")
+    if not parts:
+        return error
+    return _sanitize(f"{error} ({'; '.join(parts)})")
 
 
 def _header_seconds(headers, name: str):
@@ -298,6 +404,19 @@ class EsiClient:
 
     @staticmethod
     def _error_text(exc, token) -> str:
+        """The full non-success handling ESI-Client.cs splits across
+        ReadError() (:164-179) and AppendRateLimit() (:212-222): read the
+        body, extract only the "error" field, sanitize it, redact the
+        token, then append the rate-limit headers.
+
+        Deliberately narrow at the extraction step: only the JSON "error"
+        field is ever surfaced, never the raw body. A raw pass-through
+        would put whatever the server -- or a misconfigured or hostile
+        proxy in front of it -- chose to send (arbitrary markup, escape
+        sequences, unbounded length) directly into a field that reaches
+        the UI, which is exactly the shape of injection this port must
+        not reopen.
+        """
         try:
             raw = exc.read(MAX_ERROR_BODY_BYTES + 1)
         except Exception:
@@ -309,5 +428,17 @@ class EsiClient:
         if len(raw) > MAX_ERROR_BODY_BYTES:
             # Truncated rather than dropped: the first 8 KiB of an error
             # page is where the reason is, and the rest is usually markup.
+            # If this cut a JSON document mid-string, _extract_remote_error
+            # below will simply fail to parse it and fall back to its own
+            # generic message -- matching ReadLimitedBodyAsync's identical
+            # truncate-then-hand-to-ReadError order in the source.
             text = text[:MAX_ERROR_BODY_BYTES] + "... [truncated]"
-        return _redact(f"HTTP {exc.code}: {text}".strip(), token)
+        error = _extract_remote_error(text, token)
+        # Rate-limit headers are appended AFTER extraction/sanitization,
+        # not folded into the raw body beforehand: appending first would
+        # feed AppendRateLimit's own output back through Sanitize a second
+        # time against a base that was never validated as JSON, and could
+        # let a long, un-sanitized base swallow the values this step exists
+        # to surface. Matches EsiClient.cs's own ordering: AppendRateLimit
+        # runs on ReadError's already-sanitized result, not on the raw text.
+        return _append_rate_limit(error, exc.headers)

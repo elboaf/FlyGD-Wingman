@@ -16,6 +16,7 @@ import io
 import json
 import socket
 import urllib.error
+import urllib.request
 from email.message import Message
 
 import pytest
@@ -393,13 +394,60 @@ def test_the_access_token_is_redacted_from_error_text():
     assert "[redacted]" in response.error
 
 
-def test_an_oversized_error_body_is_truncated():
-    """An error page can be a full HTML document. 8 KiB is enough to see
-    what happened and small enough not to fill the log."""
+def test_an_oversized_non_json_error_body_falls_back_to_the_generic_message():
+    """An error page can be a full HTML document -- 16 KiB of 'x' here,
+    truncated to 8 KiB before it ever reaches the JSON parser. Truncating a
+    non-JSON body still leaves non-JSON, so _extract_remote_error's own
+    parse failure is what actually produces the message; the truncation
+    marker itself never reaches the caller because it is never inside the
+    "error" field of a document that never had one."""
     body = b"x" * (esi.MAX_ERROR_BODY_BYTES * 2)
     response = _client([_http_error(400, body)]).get("/v6/characters/1/skills/")
-    assert response.error.endswith("... [truncated]")
-    assert len(response.error) < esi.MAX_ERROR_BODY_BYTES + 200
+    assert response.error == "Remote service returned an unreadable error."
+
+
+def test_an_oversized_json_error_field_is_capped_at_2048_characters():
+    """Unlike the raw body, the extracted "error" field itself can still be
+    arbitrarily long -- CCP or a proxy in front of it controls its content,
+    not its length. Sanitize()'s 2048-character cap is what actually bounds
+    what reaches a log or the UI here, matching EsiClient.cs exactly."""
+    body = json.dumps({"error": "x" * 5000}).encode("utf-8")
+    response = _client([_http_error(400, body)]).get("/v6/characters/1/skills/")
+    assert len(response.error) == 2048
+    assert response.error == "x" * 2048
+
+
+def test_a_blank_error_body_reports_no_response_body():
+    response = _client([_http_error(400, b"")]).get("/v6/characters/1/skills/")
+    assert response.error == "No response body."
+
+
+def test_a_non_json_error_body_reports_the_generic_message():
+    response = _client([_http_error(400, b"<html>Service Unavailable</html>")]) \
+        .get("/v6/characters/1/skills/")
+    assert response.error == "Remote service returned an unreadable error."
+
+
+def test_rate_limit_headers_are_appended_to_the_error_text():
+    """AppendRateLimit() is the one signal that makes ESI's shared
+    error-limit budget visible at all -- neither the brief nor the original
+    design mentioned it; EsiClient.cs has it and the discovery was reported
+    back before this fix landed."""
+    body = json.dumps({"error": "forbidden"}).encode("utf-8")
+    headers = _headers(X_Esi_Error_Limit_Remain=42, X_Esi_Error_Limit_Reset=15,
+                       Retry_After=3)
+    response = _client([_http_error(403, body, headers=headers)]) \
+        .get("/v6/characters/1/skills/")
+    assert "forbidden" in response.error
+    assert "X-Esi-Error-Limit-Remain=42" in response.error
+    assert "X-Esi-Error-Limit-Reset=15" in response.error
+    assert "Retry-After=3" in response.error
+
+
+def test_no_rate_limit_headers_leaves_the_error_text_unchanged():
+    body = json.dumps({"error": "forbidden"}).encode("utf-8")
+    response = _client([_http_error(403, body)]).get("/v6/characters/1/skills/")
+    assert response.error == "forbidden"
 
 
 def test_an_oversized_success_body_raises():
@@ -442,3 +490,38 @@ def test_a_post_to_any_other_route_is_not_retried():
     response = client.post("/v1/ui/openwindow/", {})
     assert response.status == 503
     assert len(transport.requests) == 1
+
+
+def test_the_default_opener_refuses_redirects():
+    """Guards _default_transport's actual wiring, not just _NoRedirectHandler
+    in isolation -- every other test in this file injects a fake transport,
+    so nothing else would catch a refactor that rebuilt _opener without the
+    no-redirect handler (which would then silently follow a Location header
+    to a host validate_path() never validated, carrying the Authorization
+    header with it). Modelled directly on test_discord.py's
+    test_the_default_opener_refuses_redirects.
+    """
+    names = [type(h).__name__ for h in esi._opener.handlers]
+    assert "HTTPRedirectHandler" not in names
+    assert "_NoRedirectHandler" in names
+
+
+def test_a_cross_host_redirect_does_not_leak_the_authorization_header():
+    """The property that actually matters: _NoRedirectHandler.redirect_request
+    must return None for a 302 pointing at a different host while an
+    Authorization header is present on the original request -- that None is
+    what makes urllib raise the 302 as an ordinary HTTPError instead of
+    building and sending a follow-up request carrying the token. Calling
+    redirect_request directly (rather than spinning a real HTTP server)
+    tests the exact method the stdlib itself calls to decide whether to
+    forward the request, without depending on network timing or ports.
+    """
+    handler = esi._NoRedirectHandler()
+    request = urllib.request.Request(
+        "https://esi.evetech.net/v6/characters/1/skills/",
+        headers={"Authorization": "Bearer super-secret-token"})
+    redirect_headers = _headers(Location="https://evil.example/steal")
+    result = handler.redirect_request(
+        request, None, 302, "Found", redirect_headers,
+        "https://evil.example/steal")
+    assert result is None
