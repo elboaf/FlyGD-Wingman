@@ -154,4 +154,14 @@ def parse(contents: str) -> ParseResult:
         # All or nothing. Returning the good lines beside the complaints
         # is the partial-success mode this parser refuses to have.
         return ParseResult((), tuple(diagnostics))
+    if not ordered:
+        # A file with no requirements -- empty, or only blank lines and
+        # comments -- parses cleanly and produces nothing. Without this,
+        # it is a VALID plan with zero requirements: list_plans lists it,
+        # the rail shows a 0/N ratio, and compact_status([]) returns
+        # Unknown, so every character reads Unknown with nothing anywhere
+        # explaining why. This is what turns that silent poisoning into a
+        # message naming the file.
+        return ParseResult((), (Diagnostic(
+            0, "Plan contains no skill requirements."),))
     return ParseResult(tuple(ordered.values()), ())

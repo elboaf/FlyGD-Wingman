@@ -80,11 +80,31 @@ def test_diagnostic_line_numbers_are_one_based():
     assert [d.line for d in result.diagnostics] == [2]
 
 
-def test_an_empty_plan_parses_to_nothing_without_complaint():
-    """An empty file is a plan with no requirements, not a broken one --
-    the roster shows it Ready for everyone, which is truthful."""
+def test_an_empty_plan_is_a_whole_file_diagnostic():
+    """A file yielding no requirements is itself a diagnostic
+    (SkillPlanParser.cs:112-114), not a silently-valid plan with zero
+    requirements. Without this rule, an empty file lists in list_plans,
+    the rail shows a 0/N ratio, and compact_status([]) returns Unknown --
+    so every character reads Unknown with nothing explaining why."""
     result = plans.parse("")
-    assert result.ok and result.requirements == ()
+    assert not result.ok
+    assert result.diagnostics == (
+        plans.Diagnostic(0, "Plan contains no skill requirements."),)
+
+
+def test_a_whitespace_only_plan_is_a_whole_file_diagnostic():
+    result = plans.parse("   \n\t\n   \n")
+    assert not result.ok
+    assert result.diagnostics[0].line == 0
+
+
+def test_a_comments_only_plan_is_a_whole_file_diagnostic():
+    """The trickier case: this parses cleanly, line by line, with no
+    per-line diagnostic anywhere -- it is the total absence of
+    requirements, not any one bad line, that must be reported."""
+    result = plans.parse("# Core Ship Skills\n# nothing else here\n")
+    assert not result.ok
+    assert result.diagnostics[0].line == 0
 
 
 def test_a_signed_level_is_rejected():
@@ -128,9 +148,11 @@ def test_the_level_guard_rejects_every_trap_token(token):
     assert plans._parse_level(token) is None
 
 
-@pytest.mark.parametrize("token", ["1", "5", "I", "v", "IV"])
-def test_the_level_guard_still_accepts_real_levels(token):
-    assert plans._parse_level(token) in (1, 4, 5)
+@pytest.mark.parametrize("token,expected", [
+    ("1", 1), ("5", 5), ("I", 1), ("v", 5), ("IV", 4),
+])
+def test_the_level_guard_still_accepts_real_levels(token, expected):
+    assert plans._parse_level(token) == expected
 
 
 def test_skill_names_are_nfc_normalised():
@@ -166,9 +188,10 @@ def test_a_control_character_in_a_name_is_rejected():
 
 
 def test_a_tab_inside_a_name_is_rejected():
-    """TAB is a control character too. It also cannot survive the
-    round trip: rsplit(None, 1) treats it as the separator, so a name
-    containing one is already ambiguous before it gets here."""
+    """TAB is a control character too. rsplit(None, 1) splits at the LAST
+    whitespace run, which here is the space before "V" -- the tab is not
+    the separator and survives into the name, where the later
+    category(ch) == "Cc" check is what actually rejects it."""
     assert not plans.parse("Navi\tgation V\n").ok
 
 
@@ -215,14 +238,20 @@ def test_content_exactly_at_the_content_cap_is_accepted():
     """Off-by-one on a cap is the classic way a legal file starts being
     rejected after a refactor.
 
-    Built from many short comment lines rather than one huge line: a
-    single ~512 KiB line would independently trip the per-line cap
-    tested separately below, which would test that cap instead of this
-    one."""
-    line = "#" + "A" * 510 + "\n"     # 511-char raw line, under MAX_LINE_CHARS
-    filler = line * (plans.MAX_CONTENT_CHARS // len(line))  # len(line) == 512
+    Built from many short comment lines plus one real requirement line,
+    rather than comment lines alone: a comments-only file has zero
+    requirements, which is itself now a whole-file diagnostic (see
+    test_a_comments_only_plan_is_a_whole_file_diagnostic above), so an
+    all-comment filler would test that rule instead of the content cap.
+    A single ~512 KiB line is avoided too -- it would independently trip
+    the per-line cap tested separately below."""
+    comment_line = "#" + "A" * 510 + "\n"    # 512 raw chars incl. newline
+    requirement = "Navigation V"
+    last_line = " " * (512 - len(requirement)) + requirement  # 512 chars
+    filler = comment_line * 1023 + last_line
     assert len(filler) == plans.MAX_CONTENT_CHARS
-    assert plans.parse(filler).ok
+    got = parse_one(filler)
+    assert [r.skill_name for r in got] == ["Navigation"]
 
 
 def test_more_than_5000_lines_is_a_whole_file_diagnostic():
