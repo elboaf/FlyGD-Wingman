@@ -251,6 +251,16 @@ case-insensitively keeping the **maximum** level, with the first spelling
 winning. **Any diagnostic rejects the whole file** — there is no
 partial-success mode.
 
+**A file that yields no requirements is itself a diagnostic** —
+`Plan contains no skill requirements.`, reported against line 0
+(`SkillPlanParser.cs:112-114`). This covers an empty file and, less
+obviously, one containing only blank lines and `#` comments, which parses
+cleanly and produces nothing. Without the rule such a file is a *valid* plan
+with zero requirements: the rail lists it, and `compact_status([])` returns
+`Unknown`, so every character reads Unknown with nothing anywhere explaining
+why. The diagnostic is what turns a silent poisoning into a message naming
+the file.
+
 **Four Python-specific traps, none of which exist in the C#.** The source
 uses `int.TryParse(token, NumberStyles.None)`, which rejects signs,
 whitespace, and separators. Python's `int()` accepts all three — `int("+1")`,

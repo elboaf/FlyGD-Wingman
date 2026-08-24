@@ -145,6 +145,19 @@ class ParseResult:
 def parse(contents: str) -> ParseResult
 ```
 
+**A file yielding no requirements is itself a diagnostic:**
+`Diagnostic(0, "Plan contains no skill requirements.")`, emitted when there
+are zero requirements AND no other diagnostic (`SkillPlanParser.cs:112-114`).
+It catches an empty file and, less obviously, one of only blank lines and `#`
+comments — which parses cleanly and produces nothing. Without it such a file
+is a *valid* plan with zero requirements: `list_plans` lists it, the rail
+shows a `0/N` ratio, and `compact_status([])` returns `Unknown`, so every
+character reads Unknown with nothing explaining why.
+
+**Consequence for the cap tests:** any test building content from comment
+lines alone is a zero-requirement plan and must include at least one real
+requirement line, or it asserts the wrong thing.
+
 ### `evaluator.py`
 
 ```python
