@@ -364,9 +364,11 @@ Expected: `1`, `0`, `0` — the check now lives in exactly one place and both ca
 
 - [ ] **Step 9: Verify no secret is referenced from inside the action**
 
-Run: `grep -n 'secrets\.' .github/actions/build-installer/action.yml || echo "no secrets referenced - correct"`
+Run: `grep -nE '\$\{\{ *secrets\.' .github/actions/build-installer/action.yml || echo "no secrets expression - correct"`
 
-Expected: `no secrets referenced - correct`. A composite action silently resolves `secrets.*` to an empty string rather than erroring, which would produce an installer with placeholder credentials that builds green.
+Expected: `no secrets expression - correct`. A composite action silently resolves `secrets.*` to an empty string rather than erroring, which would produce an installer with placeholder credentials that builds green.
+
+Match the **expression** `${{ secrets.` rather than the bare word `secrets.` — otherwise the check fires on the action's own header comment explaining that secrets are passed as inputs, and forces prose to be reworded to satisfy a grep.
 
 - [ ] **Step 10: Commit**
 
