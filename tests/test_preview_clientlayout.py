@@ -207,3 +207,144 @@ def test_batches_are_serialised_by_the_manager_lock():
     assert isinstance(m._lock, type(threading.Lock()))
     with m._lock:
         assert not m._lock.acquire(blocking=False)
+
+
+# ---- the watcher --------------------------------------------------------
+
+class FakeTimer:
+    """Runs nothing until fire(). scheduler.py's injection pattern."""
+
+    def __init__(self, interval, fn):
+        self.fn, self.cancelled = fn, False
+        self.daemon = False
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _watched(h):
+    timers = []
+
+    def timer(interval, fn):
+        t = FakeTimer(interval, fn)
+        timers.append(t)
+        return t
+
+    m = h.manager(timer=timer)
+    m.start()
+    return m, timers
+
+
+def _tick(timers):
+    """Fire the newest armed timer, the way Scheduler re-arms after each."""
+    timers[-1].fn()
+
+
+def test_a_new_client_is_placed_once_and_not_again():
+    """Re-placing every tick would make client windows physically
+    undraggable: a drag would snap back within two seconds, forever."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    _tick(timers)
+    _tick(timers)
+    assert len(h.applied) == 1
+
+
+def test_a_client_with_no_saved_position_is_not_re_examined():
+    h = Harness(clients=[client("Stranger", 1)])
+    m, timers = _watched(h)
+    _tick(timers)
+    assert "Stranger" in m._placed
+
+
+def test_a_restarted_client_is_placed_again():
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    h.clients = [client("Other", 9)]           # Pilot gone...
+    _tick(timers)
+    _tick(timers)                              # ...for two sweeps
+    h.clients = [client("Pilot", 2)]           # ...and back
+    _tick(timers)
+    assert len(h.applied) == 2
+
+
+def test_one_transient_miss_does_not_re_place_a_running_client():
+    """discovery omits a client when its PID lookup raises
+    (discovery.py:62-68). Pruning on a single absence would let that
+    re-place a window the user has since dragged."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    h.clients = [client("Other", 9)]           # one miss only
+    _tick(timers)
+    h.clients = [client("Pilot", 1)]
+    _tick(timers)
+    assert len(h.applied) == 1
+
+
+def test_an_empty_enumeration_prunes_nothing():
+    """A failed EnumWindows returns [] (discovery.py:52-56), which is
+    indistinguishable from "no clients running". The safe reading is the
+    first one."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    m, timers = _watched(h)
+    _tick(timers)
+    h.clients = []
+    _tick(timers)
+    _tick(timers)
+    _tick(timers)
+    assert "Pilot" in m._placed
+    h.clients = [client("Pilot", 1)]
+    _tick(timers)
+    assert len(h.applied) == 1
+
+
+def test_the_watcher_excludes_a_client_at_character_select():
+    h = Harness(clients=[client("hwnd:0xdead", 1)],
+                saved={"hwnd:0xdead": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    assert h.applied == []
+
+
+def test_restore_now_overrides_place_once():
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    m, timers = _watched(h)
+    _tick(timers)
+    m.restore_now()
+    assert len(h.applied) == 2
+
+
+def test_a_raising_tick_does_not_stop_the_watcher():
+    """Scheduler's finally re-arms whatever the body did; a watcher that
+    stopped on the first raise would look healthy and do nothing."""
+    h = Harness(clients=[client("Pilot", 1)])
+    boom = [True]
+
+    def exploding():
+        if boom[0]:
+            boom[0] = False
+            raise RuntimeError("transient")
+        return [client("Pilot", 1)]
+
+    h.list_clients = exploding
+    _m, timers = _watched(h)
+    _tick(timers)
+    assert len(timers) >= 2, "Scheduler must have re-armed"
+
+
+def test_stop_cancels_the_pending_timer():
+    h = Harness(clients=[])
+    m, timers = _watched(h)
+    m.stop()
+    assert timers[-1].cancelled

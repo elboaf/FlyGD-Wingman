@@ -149,4 +149,39 @@ class ClientLayoutManager:
         return {"restored": restored, "skipped": skipped}
 
     def _tick(self) -> None:
-        raise NotImplementedError   # Task 7
+        with self._lock:
+            clients = self._named()
+            if clients:
+                self._prune(set(clients))
+            # An EMPTY result prunes nothing. A failed EnumWindows returns
+            # [] (discovery.py:52-56) and is indistinguishable from "no
+            # clients running"; the safe reading is the first.
+            fresh = [k for k in clients if k not in self._placed]
+            if not fresh:
+                return
+            self._restore(clients, fresh)
+            # Marked placed even when nothing was saved for them, so they
+            # are not re-examined every tick. Saving a position while a
+            # client runs therefore takes effect at its next launch --
+            # correct, since the alternative is a save button that moves
+            # the window it just measured.
+            self._placed |= set(fresh)
+
+    def _prune(self, present: set) -> None:
+        """Forget a key only after two consecutive non-empty misses.
+
+        One absence does not prove a client exited: discovery omits a
+        client when its PID or image-name lookup raises
+        (discovery.py:62-68). Pruning immediately would let a transient
+        miss re-place a running client the user has since dragged -- which
+        is exactly the undraggable window place-once exists to prevent,
+        arriving through a side door.
+        """
+        for key in list(self._placed):
+            if key in present:
+                self._misses.pop(key, None)
+                continue
+            self._misses[key] = self._misses.get(key, 0) + 1
+            if self._misses[key] >= PRUNE_AFTER_MISSES:
+                self._placed.discard(key)
+                del self._misses[key]
