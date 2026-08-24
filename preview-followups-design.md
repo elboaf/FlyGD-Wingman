@@ -391,6 +391,53 @@ Item 2 is verified by the suite itself plus the canary check: run with
 Full suite before and after, both numbers reported. Baseline on this branch
 is 1371 passed, 4 skipped.
 
+## Known limits, recorded rather than fixed
+
+Surfaced by the whole-branch review. None is a defect in this slice; each is
+something the next person over this code would otherwise have to rediscover.
+
+**The design's own justification for item 4 is weaker than it reads.** This
+document argues the checkbox should stay checked after a failed write because
+"the watcher really is on". That holds for the toggle's own round-trip. It does
+not hold across an unrelated settings push: `#26`'s `update()` reverts the live
+dict on failure, so `_settings_payload()` ships the *old* value and the
+`wm:settings` listener assigns `box.checked` from it — unchecking a box whose
+watcher is running. This is a consequence of `#26`, not of this branch, and the
+branch strictly improves on what came before (the same revert-and-repaint
+happened, with no message at all to explain it). But the next person to revisit
+this card should not read the justification above and assume it covers more
+than it does.
+
+**A failed `EnumWindows` at seed time seeds nothing.** `start(seed_placed=True)`
+seeds from `_named()`, and discovery returns `[]` when enumeration fails. An
+empty seed means the first tick treats every running client as fresh and places
+it — exactly what item 5 removes. The window is one enumeration wide, on a
+user-initiated action, and the module already accepts this class of miss
+elsewhere ("an EMPTY result prunes nothing"). Not worth new machinery; worth
+knowing about.
+
+**Two adjacent toggles now have different contracts.** `set_preview_enabled`
+returns bare `True` and swallows `OSError`; `set_restore_clients_on_launch`
+returns a dict and reports. That asymmetry is the stated exclusion above, not
+an accident. The next slice over `ui/api.py` inherits the choice of whether to
+close it.
+
+**`applied` is never read by the page.** The toggle returns
+`{"applied": True, "persisted": bool}` and `settings.js` checks only `!res` and
+`res.persisted`. `applied` earns its place by mirroring the save button's
+`saved`/`persisted` pairing — the coherence this slice was buying — not by
+being consumed.
+
+**The `failed`-branch source assertion has a blind spot.** It pins that
+"No named clients are running" sits behind a `res.failed` check, but it would
+still pass if the ternary's arms were swapped, since its split anchor sits
+after the token either way. That is the cost Ruling 2 accepted when this repo
+declined to add a JS test runner.
+
+**The autouse fixture costs about 20% of suite wall-clock** (11.4s → 13.9s
+measured), because every test now materialises a `tmp_path`. Acceptable for
+per-test isolation of real application state.
+
 ## What this slice does not do
 
 - Item 1, for the reason recorded above.
