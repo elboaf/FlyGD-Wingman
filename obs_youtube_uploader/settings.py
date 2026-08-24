@@ -38,6 +38,14 @@ def _eve_defaults() -> dict:
             "windows": {}}
 
 
+def _eve_settings_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Three remembered paths and the prune depth. Everything else is derived
+    # from disk on each state build, so there is nothing to migrate and
+    # nothing that can drift out of step with reality.
+    return {"root": None, "server": None, "profile": None, "auto_keep": 10}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -69,6 +77,9 @@ DEFAULTS = {
     # Same reasoning as eve_bookmarks above: built by _preview_defaults()
     # so callers never share one nested dict.
     "preview": _preview_defaults(),
+    # Same reasoning as eve_bookmarks and preview above: built by
+    # _eve_settings_defaults() so callers never share one nested dict.
+    "eve_settings": _eve_settings_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -76,10 +87,11 @@ _VALID_NOTIFY = {"toast", "popup"}
 
 
 def _fresh_defaults() -> dict:
-    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    """dict(DEFAULTS) is shallow, so the nested sections are rebuilt."""
     data = dict(DEFAULTS)
     data["eve_bookmarks"] = _eve_defaults()
     data["preview"] = _preview_defaults()
+    data["eve_settings"] = _eve_settings_defaults()
     return data
 
 
@@ -108,6 +120,26 @@ def validated_preview(raw) -> dict:
         preview_layout.deserialize(raw.get("layouts")))
     section["client_layouts"] = preview_placement.serialize(
         preview_placement.deserialize(raw.get("client_layouts")))
+    return section
+
+
+def validated_eve_settings(raw) -> dict:
+    """Same posture as validated_preview: a malformed section falls back
+    whole, and a malformed single value falls back alone."""
+    section = _eve_settings_defaults()
+    if not isinstance(raw, dict):
+        return section
+    for key in ("root", "server", "profile"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            section[key] = value
+    keep = raw.get("auto_keep")
+    # `not isinstance(keep, bool)` because bool is an int in Python, and
+    # True would silently become a keep depth of 1.
+    if isinstance(keep, int) and not isinstance(keep, bool):
+        # Clamped, not rejected: a depth of zero would delete the backup
+        # taken moments earlier, which is the one nobody can afford to lose.
+        section["auto_keep"] = max(1, min(100, keep))
     return section
 
 
@@ -175,6 +207,7 @@ def load(path: Path | None = None) -> dict:
             data[key] = ""
     data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
     data["preview"] = validated_preview(raw.get("preview"))
+    data["eve_settings"] = validated_eve_settings(raw.get("eve_settings"))
     return data
 
 
@@ -214,3 +247,26 @@ def update(read, mutate, path: Path | None = None) -> None:
         data = read()
         mutate(data)
         _save_locked(data, path)
+
+
+def update_section(name: str, values: dict, path: Path | None = None) -> dict:
+    """Merge *values* into one section of the stored document.
+
+    A section-shaped wrapper over update(), not a second implementation of
+    it: the hazard and the locking rule are documented there. This exists
+    because the EVE Settings writers touch exactly one section and would
+    otherwise each repeat the same read-merge-assign callback.
+
+    Reads from disk rather than from an in-memory copy, so it is safe to
+    call from a worker thread that holds no settings snapshot of its own.
+    """
+    captured: dict = {}
+
+    def mutate(data: dict) -> None:
+        section = dict(data.get(name) or {})
+        section.update(values)
+        data[name] = section
+        captured.update(data)
+
+    update(lambda: load(path), mutate, path)
+    return captured

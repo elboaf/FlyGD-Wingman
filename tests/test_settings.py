@@ -30,6 +30,12 @@ def test_defaults_are_the_documented_values():
             "restore_clients_on_launch": False,
             "client_layouts": {},
         },
+        "eve_settings": {
+            "root": None,
+            "server": None,
+            "profile": None,
+            "auto_keep": 10,
+        },
     }
 
 

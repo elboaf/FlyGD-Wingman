@@ -911,6 +911,44 @@ Enable previews in Settings before starting.
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
 
+## EVE Settings
+
+The suite cannot exercise Windows file locking or a real `os.replace` retry,
+so these are the checks that matter and only a Windows machine can run them.
+
+- [ ] Choose the EVE folder. Servers and settings sets populate; characters
+      show names within a second or two of the route opening.
+- [ ] Pull the network cable and reopen the route — characters render as
+      `Character <id>`, nothing errors.
+- [ ] Point the folder picker at a `settings_*` directory. The root heals
+      upward and the tree still populates.
+- [ ] Create a junction inside the EVE settings folder pointing outside it
+      (`mklink /J <root>\junction C:\SomewhereElse`), then try to select it as
+      a settings set. It must be refused as outside the configured folder --
+      containment resolves symlinks and junctions, and this is the one path
+      Linux CI cannot exercise.
+- [ ] Copy one character onto three others with EVE closed. All three
+      update; three auto-backups appear.
+- [ ] Copy with EVE running. It fails with "The file is in use. Close EVE
+      and retry", and every target is left intact.
+- [ ] Restore the pre-copy backup for one character. The original settings
+      come back.
+- [ ] Back up a settings set, delete a `.dat` from it, restore. The deleted
+      file returns.
+- [ ] Add a file to a settings set that was not in its backup, then restore.
+      It is removed, and the pre-restore auto-backup contains it.
+- [ ] Restore with EVE running. Like a copy, it must fail rather than write
+      -- restore stages every file and publishes with the same replace-with-
+      retry, so a live client blocks it. The settings set must be left
+      exactly as it was: nothing deleted, no `.tmp` files behind.
+- [ ] Delete a settings set entirely, then restore its backup. The folder is
+      recreated and the files come back.
+- [ ] Start a copy and immediately try a second one. The second is refused
+      with "EVE Settings busy" rather than interleaving.
+- [ ] With `auto_keep` at its default, copy the same character eleven times.
+      Ten auto-backups remain; the manual ones are untouched.
+- [ ] Check the packaged build: the EVE Settings route appears and the
+      folder picker opens.
 ## EVE client window layouts
 
 Nothing below is covered by the suite: CI is ubuntu-latest and no Win32
