@@ -27,7 +27,19 @@ def wrap(token: str, *, protect=dpapi.protect) -> str:
 
     Text, not bytes, because the result is stored as a JSON string field in
     the state document.
+
+    "" in, "" out -- never encrypted. state.Character.refresh_token_blob
+    documents "" as the sentinel for "no token stored", and unwrap("") is
+    already the confirmed no-token case. Without this guard, protecting an
+    empty string produces a non-empty blob that decrypts back to "": a
+    value that reads as PRESENT to every `if character.refresh_token_blob:`
+    check while carrying nothing, collapsing "never authenticated" and
+    "authenticated with an empty token" into the same on-disk shape at
+    exactly the point Task 14 decides whether to show a re-authenticate
+    banner.
     """
+    if not token:
+        return ""
     return base64.b64encode(protect(token.encode("utf-8"))).decode("ascii")
 
 

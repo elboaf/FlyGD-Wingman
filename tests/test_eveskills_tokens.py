@@ -65,3 +65,27 @@ def test_unwrap_returns_none_when_the_plaintext_is_not_utf8():
     """DPAPI can succeed on a blob written by something else entirely. Its
     output is then arbitrary bytes, not our token."""
     assert tokens.unwrap("QUJD", unprotect=lambda _b: b"\xff\xfe\x00") is None
+
+
+def test_wrap_of_an_empty_token_is_the_empty_blob():
+    """state.Character.refresh_token_blob documents "" as "no token
+    stored", which unwrap("") already treats as the confirmed no-token
+    case. Encrypting "" would instead produce a non-empty blob that
+    decrypts back to "" -- present-looking but empty -- collapsing "never
+    authenticated" and "authenticated with an empty token" into the same
+    on-disk shape. protect must never even be called."""
+    def must_not_be_called(_data):
+        raise AssertionError("protect() called for an empty token")
+
+    assert tokens.wrap("", protect=must_not_be_called) == ""
+
+
+def test_a_token_at_the_2048_character_boundary_round_trips():
+    """EVE refresh tokens approach 2048 characters, and sso.py validates
+    against that cap in a later task. The injected fake cipher does not
+    behave differently by size, so this only guards against a future
+    real-DPAPI buffer assumption that nothing here can otherwise exercise
+    -- the Windows-only skip means no test in this file reaches crypt32."""
+    token = "t" * 2048
+    blob = tokens.wrap(token, protect=_reverse_protect)
+    assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == token

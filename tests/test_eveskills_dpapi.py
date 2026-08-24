@@ -46,3 +46,15 @@ def test_round_trips_on_windows():
     """The only place the real crypt32 path is exercised. The smoke
     checklist carries the same check for a release build."""
     assert dpapi.unprotect(dpapi.protect(b"secret")) == b"secret"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real WinDLL")
+def test_crypt32_binding_is_cached():
+    """_crypt32/_kernel32 are @lru_cache'd, matching preview/win32.py's
+    bind() -- reopening an already-loaded DLL is harmless, but redeclaring
+    argtypes/restype on every protect()/unprotect() call is wasted work
+    repeated once per character on every state load. Identity, not just a
+    call count, is the property that matters: a second WinDLL("crypt32")
+    handle would still work but silently double the redeclaration cost."""
+    assert dpapi._crypt32() is dpapi._crypt32()
+    assert dpapi._kernel32() is dpapi._kernel32()

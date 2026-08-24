@@ -24,6 +24,7 @@ closes that gap for about forty lines.
 """
 import ctypes
 import sys
+from functools import lru_cache
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -50,7 +51,12 @@ def _require_windows() -> None:
         raise OSError("DPAPI is only available on Windows.")
 
 
+@lru_cache(maxsize=1)
 def _crypt32():
+    # Cached: preview/win32.py:142-166 establishes the same shape -- the
+    # DLL handle and its argtypes/restype declarations are process-global
+    # mutations, so redoing them on every protect()/unprotect() call (once
+    # per character on every state load) is wasted work, not just noise.
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     # BOOL CryptProtectData(DATA_BLOB *in, LPCWSTR desc, DATA_BLOB *entropy,
     #                       PVOID reserved, PROMPTSTRUCT *prompt,
@@ -72,6 +78,7 @@ def _crypt32():
     return crypt32
 
 
+@lru_cache(maxsize=1)
 def _kernel32():
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     # HLOCAL LocalFree(HLOCAL) -- both pointer-sized. Undeclared, the
