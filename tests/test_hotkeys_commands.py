@@ -158,8 +158,12 @@ def test_sync_clamps_a_negative_sequence(tmp_path):
 def test_sync_still_survives_a_byte_order_mark(tmp_path):
     """The section check reintroduces a dependency on the first line
     parsing correctly, which a BOM breaks."""
+    # encoding is named, not inherited: write_text falls back to the
+    # locale encoding, which is cp1252 on Windows and cannot encode a BOM
+    # at all -- the test died in its own setup line rather than testing
+    # anything. UTF-8 is what it was already getting on Linux.
     (tmp_path / "eve_command.ini").write_text(
-        "﻿[Command]\r\nSeq=7\r\n", newline="")
+        "﻿[Command]\r\nSeq=7\r\n", newline="", encoding="utf-8")
     eng = started(tmp_path)
     eng.sync_sequence()
     assert eng._seq == 7

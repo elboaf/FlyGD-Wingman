@@ -54,3 +54,22 @@ def test_the_offered_rule_is_the_written_rule(monkeypatch):
     for title in ["EVE - Ok", "EVE - Bad=Title", "Notepad", "eve - lower"]:
         offered = evewindows.list_eve_windows(enumerator=lambda t=title: [t]) == [title]
         assert offered == bookmarks.is_engine_window_title(title), title
+
+
+def test_enumerate_titles_is_derived_from_the_handle_enumerator(monkeypatch):
+    """One enumeration path, two views of it. If these drift, the preview
+    subsystem and the bookmarks checkbox disagree about which clients
+    exist, and only one of them is visible to the user."""
+    monkeypatch.setattr(evewindows.sys, "platform", "win32")
+    monkeypatch.setattr(evewindows, "_enumerate_windows",
+                        lambda: [(0x10, "EVE - Pilot"), (0x20, "Notepad")])
+    assert evewindows._enumerate_titles() == ["EVE - Pilot", "Notepad"]
+
+
+def test_list_eve_windows_still_returns_plain_sorted_titles(monkeypatch):
+    """ui/api.py hands this list straight to the page. The return type is
+    frozen; adding handles here would break it silently."""
+    monkeypatch.setattr(evewindows.sys, "platform", "win32")
+    monkeypatch.setattr(evewindows, "_enumerate_windows",
+                        lambda: [(0x20, "EVE - B"), (0x10, "EVE - A")])
+    assert evewindows.list_eve_windows() == ["EVE - A", "EVE - B"]

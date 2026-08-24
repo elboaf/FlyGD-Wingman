@@ -196,3 +196,37 @@
     WM.route('main');
   });
 }());
+
+// ---- EVE client previews -------------------------------------------------
+// Deliberately not in bookmarks.js: that module owns the AutoHotkey engine
+// and its status plumbing, and previews share none of it.
+//
+// Also not part of collect()/save_settings above: toggling this has to
+// start or stop a thread, not just persist a field, so it calls its own
+// endpoint.
+(function () {
+  var box = WM.el('preview-enabled');
+  if (!box) { return; }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    // WM.send resolves to null on any bridge failure rather than
+    // rejecting (app.js:38-43), so check the resolved value. Python
+    // returns True on success precisely so this can tell the two apart.
+    WM.send('set_preview_enabled', wanted).then(function (ok) {
+      if (!ok) {
+        // Put it back rather than leave the checkbox showing a state the
+        // backend never accepted.
+        box.checked = !wanted;
+      }
+    });
+  });
+
+  // panel.js owns the onSettings handler and re-dispatches it, so this
+  // listens on the same custom event the folder fields above use rather
+  // than claiming a handler that already has an owner.
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    box.checked = !!(s.preview && s.preview.enabled);
+  });
+}());

@@ -122,7 +122,21 @@ class HotkeyEngine:
         """
         self._seq = 0
         try:
-            text = self._command_path().read_text().lstrip("﻿")
+            # decode_ini_bytes, not read_text(): the engine is AutoHotkey
+            # and IniWrite produces UTF-16 LE with a BOM on a Unicode
+            # build (bookmarks.decode_ini_bytes documents the three
+            # encodings this file turns up in). read_text() has no
+            # encoding, so it used the locale default -- UTF-8 on Linux,
+            # where a BOM decodes to U+FEFF and the lstrip below removes
+            # it, but cp1252 on Windows, where the same bytes decode to
+            # "ï»¿", nothing is stripped, the first line reads
+            # "ï»¿[Command]" and no section ever matches. Wingman only
+            # ships on Windows, so this was broken wherever it actually
+            # runs: after a restart the engine resumed from zero and
+            # ignored every command until the counter caught up, exactly
+            # as the docstring above warns.
+            raw = self._command_path().read_bytes()
+            text = bookmarks.decode_ini_bytes(raw).lstrip("﻿")
             in_command = False
             for line in text.splitlines():
                 stripped = line.strip()
@@ -346,7 +360,12 @@ class HotkeyEngine:
         reopens it; clean shutdown is what covers the common case.
         """
         try:
-            record = json.loads(self._pid_path().read_text())
+            # atomicio.write_atomic writes UTF-8; say so on the way back
+            # in rather than inheriting the locale's codec. The record is
+            # ASCII today (a pid and a hex token) so this is not currently
+            # a bug -- it is the same asymmetry that made sync_sequence
+            # above fail on Windows, closed before it becomes one.
+            record = json.loads(self._pid_path().read_text(encoding="utf-8"))
             pid = int(record["pid"])
             token = str(record["token"])
         except (OSError, ValueError, KeyError, TypeError):

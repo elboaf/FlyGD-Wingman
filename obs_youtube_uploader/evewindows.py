@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 TITLE_PREFIX = bookmarks.ENGINE_TITLE_PREFIX
 
 
-def _enumerate_titles() -> list:
+def _enumerate_windows() -> list:
     import ctypes
     from ctypes import wintypes
 
@@ -68,13 +68,22 @@ def _enumerate_titles() -> list:
             if length:
                 buffer = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, buffer, length + 1)
-                titles.append(buffer.value)
+                titles.append((hwnd, buffer.value))
         except Exception:
             logger.exception("Skipped a window during enumeration.")
         return True
 
     user32.EnumWindows(wndenumproc(callback), 0)
     return titles
+
+
+def _enumerate_titles() -> list:
+    """Titles only, for list_eve_windows's frozen string-list contract.
+
+    Both views come from one enumeration so the preview subsystem and the
+    bookmarks checkbox can never disagree about which windows exist.
+    """
+    return [title for _hwnd, title in _enumerate_windows()]
 
 
 def list_eve_windows(enumerator=None) -> list:

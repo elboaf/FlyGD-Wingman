@@ -18,6 +18,7 @@
     <nav class="routenav" id="routenav">
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
       <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
+      <button class="navbtn" id="nav-previews" data-route="previews">Previews</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
@@ -221,6 +222,7 @@
           <button class="btn" id="eve-import">Import from an existing helper&hellip;</button></div>
       </section>
 
+
       <section class="card">
         <h2>Root</h2>
         <div class="row">
@@ -251,6 +253,28 @@
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
           <button class="btn" id="eve-reset-binds">Reset to defaults</button></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="route" id="route-previews">
+    <div class="settings">
+      <section class="card">
+        <h2>EVE client previews</h2>
+        <div class="row">
+          <span class="lab">Enable</span>
+          <!-- The .check/.box pattern is not decoration: .check input is
+               opacity:0 and the styled .box is the visible control. A bare
+               checkbox here rendered as a native white widget. -->
+          <label class="check">
+            <input type="checkbox" id="preview-enabled"><span class="box"></span>
+            Show live previews of running EVE clients
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint">Click a preview to switch to that client.
+            Drag to move it, drag the bottom-right corner to resize.
+            Positions are remembered per character.</span></div>
       </section>
     </div>
   </div>

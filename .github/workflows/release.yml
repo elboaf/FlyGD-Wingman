@@ -189,6 +189,22 @@ jobs:
       - name: Build executable
         run: python -m PyInstaller packaging/uploader.spec --noconfirm
 
+      - name: Verify the preview label font is bundled
+        # Same trap as web/ above: a `datas` entry that resolves to nothing
+        # still exits 0. chrome.py degrades to Pillow's default face and
+        # logs, so the build is green and the app runs -- with every preview
+        # label in the wrong font.
+        shell: pwsh
+        run: |
+          $font = "dist\OBSYouTubeUploader\_internal\assets\fonts\Inter-Regular.ttf"
+          # -PathType Leaf: a DIRECTORY named Inter-Regular.ttf would
+          # satisfy a bare Test-Path and Pillow cannot load one. That is
+          # not hypothetical here -- fetch_autohotkey.py exists because a
+          # datas entry once produced exactly that, a directory where a
+          # file was expected.
+          if (-not (Test-Path $font -PathType Leaf)) {
+            throw "Inter-Regular.ttf not found at $font - the assets/fonts datas entry in uploader.spec did not resolve, and preview labels will silently render in Pillow's default face"
+          }
       - name: Verify the web page is bundled
         # release.yml previously had NO post-build bundle assertion of any
         # kind - build.yml carried them all, and a release built straight from

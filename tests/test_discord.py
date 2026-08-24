@@ -1,3 +1,4 @@
+from pathlib import Path
 import io
 import logging
 
@@ -292,7 +293,7 @@ def test_network_error_is_reported_not_raised(tmp_path):
     assert not result.ok and result.message
 
 
-def test_unreadable_archive_is_reported_not_raised(tmp_path):
+def test_unreadable_archive_is_reported_not_raised(tmp_path, monkeypatch):
     """_build_multipart's read_bytes() sits outside the stat() guard above it.
 
     stat() can succeed on a file the process then cannot read (permissions
@@ -302,20 +303,23 @@ def test_unreadable_archive_is_reported_not_raised(tmp_path):
     broken and app.py's recovery message (where the archive was kept) never
     gets shown.
     """
-    import os
-
     hook, _ = discord.parse_webhook(GOOD)
     zip_path = tmp_path / "a.zip"
     zip_path.write_bytes(b"payload")
-    os.chmod(zip_path, 0)
-    try:
-        result = discord.post_archive(hook, zip_path, "fight", transport=_transport(204))
-    finally:
-        # Restore so the fixture's tmp_path cleanup can remove the file.
-        os.chmod(zip_path, 0o644)
-    # Root (and some CI/container setups) ignores file permission bits, so
-    # this would not raise PermissionError there -- assert the contract
-    # rather than the specific errno.
+
+    # The read is failed directly rather than via os.chmod(0). Permission
+    # bits do not produce this state everywhere: Windows ignores chmod for
+    # read access, and so does root -- as the previous version of this test
+    # noted, while still depending on them. Where they are ignored the file
+    # stays readable, the post succeeds, and the test asserted nothing.
+    # Failing read_bytes reproduces the actual condition under test --
+    # stat() succeeded, the read then did not -- on every platform.
+    def unreadable(self):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
+    result = discord.post_archive(hook, zip_path, "fight",
+                                  transport=_transport(204))
     assert isinstance(result, discord.PostResult)
     assert result.ok is False
 

@@ -55,6 +55,12 @@ a = Analysis(
         # the post-build assertion below, a missing script produces a green
         # build and an engine that never starts.
         (str(ROOT / "obs_youtube_uploader" / "engine"), "engine"),
+        # Pillow loads this by path at render time, so modulegraph never
+        # sees it -- same class of miss as web/ above, and the same silent
+        # outcome: chrome.py logs a warning and falls back to Pillow's
+        # bitmap default, so every preview label ships in the wrong face
+        # with no failure anywhere in the build.
+        (str(ROOT / "obs_youtube_uploader" / "assets" / "fonts"), "assets/fonts"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at

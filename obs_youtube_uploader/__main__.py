@@ -280,6 +280,50 @@ def start_engine_if_enabled(engine, section) -> None:
         engine.sync_sequence()
 
 
+def build_preview_host(state):
+    """The EVE preview host, or None where it cannot run.
+
+    Windows-only, and constructed even when the feature is disabled: it
+    starts no thread until Api.start_previews_if_enabled() or the settings
+    toggle asks it to. Returning None off Windows keeps every call site in
+    api.py a plain no-op rather than a platform check.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        from .preview import layout as preview_layout
+        from .preview.host import PreviewHost
+        from .preview.store import LayoutStore
+
+        store = LayoutStore(
+            save_settings=settings_mod.save,
+            read_settings=lambda: state.settings)
+        section = state.settings.get("preview", {})
+
+        def on_layout_changed(stable_key, rect, locked):
+            # Nameless clients (character select) have no stable identity,
+            # so persisting a position against them would hand it to
+            # whichever client next sits at that screen.
+            if stable_key.startswith("hwnd:"):
+                return
+            store.record(stable_key, preview_layout.Entry(rect, locked))
+
+        return PreviewHost(
+            on_layout_changed=on_layout_changed,
+            saved_layouts=preview_layout.deserialize(section.get("layouts")),
+            size=(section.get("width", 320), section.get("height", 210)),
+            # A bound method, never a lambda wrapping one: a name resolved
+            # lazily inside a lambda is not checked when this function
+            # runs, and tests/test_preview_wiring.py records what that cost
+            # last time.
+            flush_layouts=store.flush)
+    except Exception:
+        # Previews are secondary to the upload workflow. A failure to
+        # construct them must not stop Wingman launching.
+        logger.exception("Preview subsystem unavailable")
+        return None
+
+
 def shutdown_engine(engine) -> None:
     """Stop the engine on the way out, whatever else has gone wrong.
 
@@ -335,7 +379,7 @@ def main() -> int:
     reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
-    api = api_mod.Api(state)
+    api = api_mod.Api(state, preview_host=build_preview_host(state))
 
     w = None
     scheduler = None
@@ -358,6 +402,11 @@ def main() -> int:
 
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()
+
+    # Before the window, not after: window_mod.run() below blocks until the
+    # window is destroyed, so anything started after it never runs until
+    # the app is already quitting. No-op unless the user enabled previews.
+    api.start_previews_if_enabled()
 
     window = window_mod.create(api)
 
@@ -413,6 +462,10 @@ def main() -> int:
     if scheduler is not None:
         scheduler.stop()
     shutdown_engine(engine)
+    # Last, and unconditional: a preview thread that outlives the window
+    # still owns HWNDs, and Wingman leaves the tray but stays in Task
+    # Manager.
+    api.shutdown_previews()
     return 0
 
 
