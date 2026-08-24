@@ -157,3 +157,29 @@ def test_main_tears_previews_down():
 
     src = inspect.getsource(main_mod.main)
     assert "shutdown_previews()" in src
+
+
+def test_the_preview_card_lives_in_settings_not_bookmarks():
+    """It was first added to the Bookmarks route, between 'EVE bookmark
+    hotkeys' and 'Root' -- so it both sat under the wrong feature and
+    split the bookmarks flow in half. Previews are unrelated to the
+    AutoHotkey engine; Discord is the precedent for an optional,
+    EVE-adjacent integration living in Settings.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    lines = (root / "obs_youtube_uploader" / "web"
+             / "index.html").read_text(encoding="utf-8").splitlines()
+
+    starts = {}
+    for i, line in enumerate(lines):
+        m = re.search(r'id="route-(\w+)"', line)
+        if m:
+            starts[m.group(1)] = i
+    card = next(i for i, line in enumerate(lines)
+                if "EVE client previews" in line)
+    ordered = sorted(starts.items(), key=lambda kv: kv[1])
+    owner = [name for name, at in ordered if at < card][-1]
+    assert owner == "settings", f"the preview card is in route-{owner}"
