@@ -251,14 +251,24 @@ case-insensitively keeping the **maximum** level, with the first spelling
 winning. **Any diagnostic rejects the whole file** — there is no
 partial-success mode.
 
-**Three Python-specific traps, none of which exist in the C#.** The source
+**Four Python-specific traps, none of which exist in the C#.** The source
 uses `int.TryParse(token, NumberStyles.None)`, which rejects signs,
 whitespace, and separators. Python's `int()` accepts all three — `int("+1")`,
-`int(" 1 ")`, and `int("1_0")` all succeed. And `str.isdigit()` returns `True`
-for Unicode digits, so `"٥".isdigit()` passes. A naive port therefore
-silently accepts `Navigation +5`, `Navigation 1_0`, and `Navigation ٥`. The
-level parse guards with `token.isascii() and token.isdigit()` before `int()`,
-and the tests state each trap in their docstrings.
+`int(" 1 ")`, and `int("1_0")` all succeed.
+
+The fourth was found while writing the tests for the first three, and is the
+one a careful reviewer would still miss: **`int()` accepts Unicode digits
+directly.** `int("٥")` returns `5`. It is not merely that `"٥".isdigit()`
+passes and lets a wider value through to `int()` — `int()` itself never
+objected. Screening with `str.isdigit()` alone therefore fixes nothing here,
+because both halves of the obvious guard have the same blind spot.
+
+A naive port silently accepts `Navigation +5`, `Navigation 1_0`, and
+`Navigation ٥`, reinterpreting each as a level rather than reporting the typo
+the user wants told about. The level parse guards with
+`token.isascii() and token.isdigit()` before `int()` — `isascii()` is what
+makes `isdigit()` mean "ASCII 0-9" and nothing wider — and the tests state
+each trap in their docstrings.
 
 ## Skill id resolution
 
@@ -723,7 +733,7 @@ the real bugs live:
 
 | Module | What the tests pin |
 |---|---|
-| `plans.py` | The grammar, every cap, and the three Python parse traps by name |
+| `plans.py` | The grammar, every cap, and the four Python parse traps by name |
 | `evaluator.py` | The full precedence table, `Locked` above `Training`, ETA as max, `Unscored` on no snapshot |
 | `jwt.py` | RS256 against fixed vectors; `alg:none` and a non-RSA `kid` rejected; the `aud` conjunction |
 | `state.py` | Tolerant normalisation, per-entry drops, corruption preservation |
