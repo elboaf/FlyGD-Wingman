@@ -203,21 +203,31 @@ def test_copy_atomic_gives_up_after_the_attempt_budget(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["dst.dat", "src.dat"]
 
 
-@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"),
-                    reason="descriptor count needs /proc")
-def test_copy_atomic_does_not_leak_a_descriptor_when_the_source_fails(tmp_path):
+def test_copy_atomic_closes_the_temp_descriptor_when_the_source_fails(tmp_path):
     """`with A, B` enters A first, so wrapping the temp fd second would leak
     it whenever the source cannot be opened -- unlink removes the name, not
-    the descriptor."""
+    the descriptor. Asserted by fstat rather than by counting /proc/self/fd,
+    which drifts by a few descriptors during a full-suite run and cannot
+    tell ambient noise from a leak."""
     target = tmp_path / "dst.dat"
     target.write_bytes(b"original")
-    missing = tmp_path / "absent.dat"
+    handles = []
+    real_mkstemp = atomicio.tempfile.mkstemp
 
-    def open_fds():
-        return len(os.listdir("/proc/self/fd"))
+    def record(*args, **kwargs):
+        handle, name = real_mkstemp(*args, **kwargs)
+        handles.append(handle)
+        return handle, name
 
-    before = open_fds()
-    for _ in range(20):
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(atomicio.tempfile, "mkstemp", record)
+    try:
         with pytest.raises(OSError):
-            atomicio.copy_atomic(missing, target)
-    assert open_fds() <= before + 1
+            atomicio.copy_atomic(tmp_path / "absent.dat", target)
+    finally:
+        monkey.undo()
+
+    assert len(handles) == 1
+    # EBADF: the descriptor copy_atomic was handed is no longer open.
+    with pytest.raises(OSError):
+        os.fstat(handles[0])
