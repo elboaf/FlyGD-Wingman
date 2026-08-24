@@ -32,6 +32,7 @@ from pathlib import Path
 from .. import (bookmarks, combatlog, discord, durations, evewindows,
                 library, obsconfig, paths, settings as settings_mod, stitch,
                 uploader)
+from ..preview import gestures as preview_gestures
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -1221,7 +1222,12 @@ class Api:
         """
         if self._preview_host is None:
             return
-        if self._state.settings.get("preview", {}).get("enabled"):
+        section = self._state.settings.get("preview", {})
+        # Pushed before start(): the first registration pass runs inside
+        # start(), and a table applied only after it would leave every
+        # binding unregistered until the next explicit save.
+        self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+        if section.get("enabled"):
             self._preview_host.start()
 
     def set_preview_enabled(self, enabled: bool) -> None:
@@ -1277,6 +1283,117 @@ class Api:
             self._preview_host.stop()
         except Exception:
             logger.exception("Preview host did not stop cleanly")
+
+    def capture_preview_bind(self, parts) -> dict:
+        return preview_gestures.from_capture(
+            parts if isinstance(parts, dict) else {})
+
+    def parse_preview_bind(self, text) -> dict:
+        parsed = preview_gestures.parse(text if isinstance(text, str) else "")
+        if parsed is None:
+            return {"gesture": "", "error": "unparseable"}
+        return {"gesture": preview_gestures.display(parsed), "error": None}
+
+    def set_preview_binds(self, section) -> bool:
+        """Replace the whole binding table, persist it, and push it down.
+
+        Returns False on a chord that will not parse rather than silently
+        dropping it: the page needs to tell a rejected entry from a saved
+        one, and WM.send resolves to null on a bridge failure, so a bare
+        None would be indistinguishable from a broken call.
+        """
+        if not isinstance(section, dict):
+            return False
+        table = {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+        characters = section.get("characters")
+        if isinstance(characters, dict):
+            for name, text in characters.items():
+                if not isinstance(name, str) or name.startswith("hwnd:"):
+                    return False
+                if not text:
+                    continue      # cleared, not invalid
+                parsed = preview_gestures.parse(text)
+                if parsed is None:
+                    return False
+                table["characters"][name] = preview_gestures.display(parsed)
+        for key in ("cycle_next", "cycle_prev"):
+            text = section.get(key)
+            if not text:
+                continue
+            parsed = preview_gestures.parse(text)
+            if parsed is None:
+                return False
+            table[key] = preview_gestures.display(parsed)
+
+        try:
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["hotkeys"] = table
+        except OSError:
+            logger.exception("Could not persist preview hotkeys")
+            return False
+
+        if self._preview_host is not None:
+            self._preview_host.set_hotkeys(table)
+        return True
+
+    def get_preview_hotkey_state(self) -> dict:
+        """Everything the bind list needs, in one read.
+
+        A read, not a push, and that is the point: previews start before the
+        webview exists (__main__.py:406-411), so a registration conflict
+        found at launch is pushed into a window that is not there yet and
+        _push swallows it. The page asks for this on load.
+        """
+        section = self._state.settings.get("preview", {})
+        host = self._preview_host
+        return {
+            "enabled": bool(section.get("enabled")),
+            "hotkeys": dict(section.get("hotkeys") or {}),
+            "roster": list(section.get("seen") or []),
+            "characters": host.characters() if host is not None else [],
+            "registration": host.hotkey_status() if host is not None else {},
+            "bookmark_chords": self._bookmark_chords(),
+        }
+
+    def _bookmark_chords(self) -> dict:
+        """Bookmark chords, split by whether they are registered right now.
+
+        A preview chord is global; a bookmark chord is an AHK hotkey scoped
+        with #HotIf WinActive. Where they collide the preview wins WHILE EVE
+        IS FOCUSED, silently taking a key from the feature that bind was
+        written for -- and Windows reports nothing, because AHK's scoped
+        hotkey is not a RegisterHotKey registration to collide with. Only
+        Wingman can catch this, by reading both of its own sections.
+
+        Split rather than filtered, because the collision does not stop
+        existing when bookmarks are off -- it goes latent, and enabling them
+        later resurrects it with nothing on screen to explain why that bind
+        stopped working. "active" warns; "latent" only marks.
+
+        Compared in display form. The two features store different notation
+        on purpose (see preview/gestures.py), but bookmarks.parse_ahk
+        renders "^q" as "Ctrl+Q" using the same modifier order and key names
+        gestures.display uses, so the display string is the common ground.
+        """
+        eve = self._state.settings.get("eve_bookmarks") or {}
+        chords = set()
+        for value in (eve.get("keybinds") or {}).values():
+            if not value:
+                continue
+            rendered = bookmarks.parse_ahk(value).get("display")
+            if rendered:
+                chords.add(rendered)
+        live = bool(eve.get("enabled")) and any(eve.get("windows", {}).values())
+        return {"active": sorted(chords) if live else [],
+                "latent": [] if live else sorted(chords)}
+
+    def push_preview_hotkeys(self, status=None) -> None:
+        """Announce a change to a page that is already up. Never the only
+        path -- see get_preview_hotkey_state."""
+        payload = self.get_preview_hotkey_state()
+        if status is not None:
+            payload["registration"] = status
+        self._push("onPreviewHotkeys", payload)
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.

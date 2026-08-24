@@ -11,12 +11,16 @@ class FakeHost:
     def __init__(self):
         self.started = self.stopped = 0
         self.flushed = 0
+        self.hotkeys = None
 
     def start(self):
         self.started += 1
 
     def stop(self, timeout=5.0):
         self.stopped += 1
+
+    def set_hotkeys(self, table):
+        self.hotkeys = table
 
     @property
     def is_running(self):

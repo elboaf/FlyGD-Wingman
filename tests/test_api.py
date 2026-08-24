@@ -509,3 +509,130 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     api._drain_probes(generation)  # a tick with nothing waiting
 
     assert saves == [1, 2], "one save per tick that applied results, none for an empty tick"
+
+
+class _FakeHost:
+    """Records what the bridge asked for, in place of a real PreviewHost."""
+
+    def __init__(self):
+        self.hotkeys = None
+        self.status = {}
+        self.chars = []
+        self.started = False
+
+    def set_hotkeys(self, table):
+        self.hotkeys = table
+
+    def hotkey_status(self):
+        return dict(self.status)
+
+    def characters(self):
+        return list(self.chars)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.started = False
+
+
+def test_capture_preview_bind_returns_a_canonical_gesture(tmp_path):
+    api = make_api(tmp_path)
+
+    result = api.capture_preview_bind({"ctrl": True, "alt": True, "code": "F1"})
+
+    assert result == {"gesture": "Ctrl+Alt+F1", "error": None}
+
+
+def test_parse_preview_bind_reports_a_rejected_chord(tmp_path):
+    api = make_api(tmp_path)
+
+    assert api.parse_preview_bind("F1")["error"] == "unparseable"
+    assert api.parse_preview_bind("Ctrl+F1")["gesture"] == "Ctrl+F1"
+
+
+def test_set_preview_binds_persists_and_pushes_to_the_host(tmp_path):
+    fake_host = _FakeHost()
+    api = make_api(tmp_path, preview_host=fake_host)
+
+    ok = api.set_preview_binds({"characters": {"Alice": "ctrl+f1"},
+                                "cycle_next": "", "cycle_prev": ""})
+
+    assert ok is True
+    stored = api._state.settings["preview"]["hotkeys"]["characters"]
+    assert stored == {"Alice": "Ctrl+F1"}          # canonicalised
+    assert fake_host.hotkeys["characters"] == {"Alice": "Ctrl+F1"}
+
+
+def test_set_preview_binds_rejects_an_unparseable_chord(tmp_path):
+    fake_host = _FakeHost()
+    api = make_api(tmp_path, preview_host=fake_host)
+    # A real settings document always has this section (settings.DEFAULTS);
+    # make_state's minimal fixture does not, so seed it to prove a rejected
+    # chord leaves the existing table untouched rather than KeyError-ing.
+    api._state.settings["preview"] = {"hotkeys": {"characters": {},
+                                                  "cycle_next": "",
+                                                  "cycle_prev": ""}}
+
+    assert api.set_preview_binds({"characters": {"Alice": "nonsense"}}) is False
+    assert api._state.settings["preview"]["hotkeys"]["characters"] == {}
+
+
+def test_hotkey_state_reports_registration_and_live_characters(tmp_path):
+    fake_host = _FakeHost()
+    fake_host.status = {"Ctrl+F1": False}
+    fake_host.chars = ["Alice"]
+    api = make_api(tmp_path, preview_host=fake_host)
+
+    state = api.get_preview_hotkey_state()
+
+    assert state["registration"] == {"Ctrl+F1": False}
+    assert state["characters"] == ["Alice"]
+
+
+def test_hotkey_state_is_readable_with_no_host(tmp_path):
+    """Off Windows the host is None and every call site must stay a plain
+    no-op rather than a platform check."""
+    api = make_api(tmp_path)
+
+    state = api.get_preview_hotkey_state()
+
+    assert state["characters"] == []
+    assert state["registration"] == {}
+
+
+def test_bookmark_chords_are_active_only_when_they_are_registered(tmp_path):
+    """A bookmark bind is registered only for enabled window titles under an
+    enabled feature. Warning about chords that are not registered anywhere
+    would cry wolf -- but the collision goes latent rather than away, so it
+    is still reported, just not as a warning."""
+    fake_host = _FakeHost()
+    api = make_api(tmp_path, preview_host=fake_host)
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": True, "keybinds": {"GrabSig": "^q"},
+        "windows": {"EVE - A": True}}
+
+    chords = api.get_preview_hotkey_state()["bookmark_chords"]
+    assert chords == {"active": ["Ctrl+Q"], "latent": []}
+
+    api._state.settings["eve_bookmarks"]["enabled"] = False
+    chords = api.get_preview_hotkey_state()["bookmark_chords"]
+    assert chords == {"active": [], "latent": ["Ctrl+Q"]}
+
+    api._state.settings["eve_bookmarks"]["enabled"] = True
+    api._state.settings["eve_bookmarks"]["windows"] = {"EVE - A": False}
+    chords = api.get_preview_hotkey_state()["bookmark_chords"]
+    assert chords == {"active": [], "latent": ["Ctrl+Q"]}
+
+
+def test_bookmark_chords_are_rendered_in_gesture_display_form(tmp_path):
+    """The two features store different notation on purpose, so the clash
+    check needs a common form or it silently never matches."""
+    fake_host = _FakeHost()
+    api = make_api(tmp_path, preview_host=fake_host)
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": True, "windows": {"EVE - A": True},
+        "keybinds": {"GrabSig": "^+s", "FinH": "^y"}}
+
+    assert api.get_preview_hotkey_state()["bookmark_chords"]["active"] == [
+        "Ctrl+Shift+S", "Ctrl+Y"]
