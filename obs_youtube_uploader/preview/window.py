@@ -332,12 +332,18 @@ class PreviewWindow:
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
             self._start = _cursor_pos(self._libs)
-            self._mode = ("resize"
-                          if (msg == win32.WM_LBUTTONDOWN
-                              and geometry.hit_resize_handle(
-                                  geometry.Rect(0, 0, self.rect.w,
-                                                self.rect.h), *pt))
-                          else "drag")
+            if (msg == win32.WM_LBUTTONDOWN
+                    and geometry.hit_resize_handle(
+                        geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt)):
+                self._mode = "resize"
+            elif msg == win32.WM_RBUTTONDOWN:
+                # Tracked separately from a left drag: right-drag is the
+                # override that moves a LOCKED preview. Collapsing both
+                # into one "drag" mode made the lock suppress it too, so
+                # the override documented alongside it did nothing.
+                self._mode = "right_drag"
+            else:
+                self._mode = "drag"
             self._libs.user32.SetCapture(self.hwnd)
             if PERF:
                 self._perf = {"n": 0, "handler": 0.0, "gap": 0.0,
@@ -347,6 +353,9 @@ class PreviewWindow:
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
             if self.locked and self._mode == "drag":
+                # Left drag only. A lock stops accidental movement; the
+                # right-drag override is how a locked preview is moved
+                # deliberately.
                 return 0
             if PERF:
                 t0 = time.perf_counter()
@@ -385,6 +394,8 @@ class PreviewWindow:
                 self._perf = None
             mode, self._mode = self._mode, None
             if mode == "drag" and msg == win32.WM_LBUTTONUP:
+                # Only a left click activates. A right-drag release falls
+                # through to reporting the new rect.
                 action, _ = drag_result(self._start, _cursor_pos(self._libs),
                                         self._start_rect, self.locked)
                 if action == "activate":

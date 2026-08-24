@@ -44,12 +44,30 @@ def test_stop_is_idempotent(monkeypatch):
 
 def test_start_twice_does_not_spawn_two_threads(monkeypatch):
     """Enable clicked twice must not leave an orphan pump owning HWNDs
-    that nothing will ever tear down."""
+    that nothing will ever tear down.
+
+    The fake worker blocks rather than returning immediately: a worker
+    that has already exited would let an implementation which permits a
+    later restart pass this by accident, making the result depend on
+    thread scheduling rather than on the guard.
+    """
+    import threading
+
     started = []
+    running = threading.Event()
+    release = threading.Event()
+
+    def fake_run():
+        started.append(1)
+        running.set()
+        release.wait(5)
+
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(h, "_run", lambda: started.append(1))
+    monkeypatch.setattr(h, "_run", fake_run)
     h.start()
+    running.wait(5)          # the first worker is definitely still alive
     h.start()
+    release.set()
     h.stop()
     assert len(started) == 1
 

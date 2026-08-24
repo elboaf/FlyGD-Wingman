@@ -175,3 +175,74 @@ def test_dragging_back_to_the_origin_restores_the_original_rect():
     moved = window.drag_target(start, (900, 700), R)
     assert moved != R
     assert window.drag_target(start, start, R) == R
+
+
+class _FakeLibs:
+    """Just enough Win32 for _on_message, with the cursor under our control."""
+
+    def __init__(self, cursor=(0, 0)):
+        self.cursor = cursor
+        outer = self
+
+        class User32:
+            def SetCapture(self, h):
+                return h
+
+            def ReleaseCapture(self):
+                return True
+
+            def SetWindowPos(self, *a):
+                return True
+
+            def GetCursorPos(self, ptr):
+                ptr._obj.x, ptr._obj.y = outer.cursor
+                return True
+
+            def PeekMessageW(self, *a):
+                return False        # nothing queued behind this event
+
+        self.user32 = User32()
+
+
+def _window_for_gestures(locked):
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot",
+                            "hwnd": 1})()
+    libs = _FakeLibs()
+    w = window.PreviewWindow(libs, client, Rect(100, 100, 320, 210),
+                             lambda c: None, lambda *a: None, lambda: [],
+                             lambda: Rect(0, 0, 1920, 1080), locked=locked)
+    w.hwnd = 1
+    w.redraw = lambda force=False: None
+    return w, libs
+
+
+def test_a_locked_preview_ignores_a_left_drag():
+    """That is what the lock is for: a carefully placed layout should
+    survive a stray drag."""
+    w, libs = _window_for_gestures(locked=True)
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (400, 300)
+    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    assert w.rect == Rect(100, 100, 320, 210)
+
+
+def test_a_locked_preview_still_moves_on_a_right_drag():
+    """The documented override: a lock stops accidental movement, not
+    deliberate movement. Both buttons shared one 'drag' mode, so the lock
+    suppressed the override too and it silently did nothing."""
+    w, libs = _window_for_gestures(locked=True)
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
+    libs.cursor = (250, 260)
+    w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
+    assert w.rect == Rect(150, 160, 320, 210)
+
+
+def test_an_unlocked_left_drag_still_moves():
+    w, libs = _window_for_gestures(locked=False)
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (250, 260)
+    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    assert w.rect == Rect(150, 160, 320, 210)
