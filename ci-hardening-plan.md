@@ -728,7 +728,7 @@ Then refresh the lockfile so the pin is real: `uvx uv lock` — and confirm `pyw
 
 - [ ] **Step 2: See the damage before touching anything**
 
-Run: `uv run ruff check --statistics .`
+Run: `uv run --extra dev ruff check --statistics .`
 
 Expected: 219 findings, the largest groups being `I001` (30), `UP017` (25), `F401` (22), `SIM105` (20), and `BLE001` (15). You will also see a warning about the malformed `# noqa` in `eveskills/controller.py`.
 
@@ -736,7 +736,7 @@ If you get a materially different count, check which ruff you invoked. `uvx ruff
 
 - [ ] **Step 3: Apply the safe automatic fixes**
 
-Run: `uv run ruff check --fix .`
+Run: `uv run --extra dev ruff check --fix .`
 
 Expected: about 111 findings resolved. Do **not** pass `--unsafe-fixes`; the 40 fixes behind that flag change behaviour and each needs an individual decision.
 
@@ -765,7 +765,7 @@ Kept separate from the hand-written fixes so those stay reviewable."
 
 - [ ] **Step 6: Fix the remaining findings by hand**
 
-Run: `uv run ruff check --output-format concise .` and work the list. The categories and their fixes:
+Run: `uv run --extra dev ruff check --output-format concise .` and work the list. The categories and their fixes:
 
 **`F821` at `obs_youtube_uploader/ui/window.py:158`** — not a live bug. The signature is `def create(api) -> "webview.Window"`; the annotation is a string and is never evaluated, and `webview` is imported lazily inside the function for documented reasons. Make the intent explicit:
 
@@ -811,7 +811,7 @@ Where a naive local time is genuinely intended — a filename stamp a user reads
 
 - [ ] **Step 7: Verify clean and green**
 
-Run: `uv run ruff check .`
+Run: `uv run --extra dev ruff check .`
 Expected: `All checks passed!`
 
 Run: `python -m pytest tests/ -q`
@@ -833,7 +833,7 @@ In `.github/workflows/ci.yml`, append to the `checks` job's steps. Use the pinne
         # coin flip.
         run: |
           uv sync --locked --extra dev
-          uv run ruff check --output-format github
+          uv run --extra dev ruff check --output-format github
 ```
 
 `--output-format github` makes findings appear as inline annotations on the pull request rather than only in the log.
@@ -918,7 +918,7 @@ line short and the formatter leaves it alone permanently."
 
 - [ ] **Step 4: Run the formatter**
 
-Run: `uv run ruff format .`
+Run: `uv run --extra dev ruff format .`
 Expected: `149 files reformatted, 27 files left unchanged` (approximately — Steps 2–3 may shift this slightly).
 
 - [ ] **Step 5: Verify nothing broke**
@@ -928,7 +928,7 @@ Expected: `1839 passed, 6 skipped`
 
 That the suite is unchanged is the whole safety argument for a 149-file mechanical rewrite. Anything else, stop.
 
-Run: `uv run ruff check .`
+Run: `uv run --extra dev ruff check .`
 Expected: `All checks passed!` — the formatter must not have reintroduced lint findings.
 
 - [ ] **Step 6: Commit the format pass alone, touching nothing else**
@@ -999,7 +999,7 @@ In `.github/workflows/ci.yml`, add to the `checks` job after the `Lint` step. Sa
 
 ```yaml
       - name: Format
-        run: uv run ruff format --check --diff
+        run: uv run --extra dev ruff format --check --diff
 ```
 
 `--diff` prints what differs, so a failure tells the contributor exactly what to run rather than only that something is wrong.
@@ -1397,9 +1397,9 @@ Tell the maintainer explicitly that `docs/branch-protection.md` needs applying b
 | What | How | Expected |
 |------|-----|----------|
 | Suite unchanged throughout | `python -m pytest tests/ -q` | `1839 passed, 6 skipped` |
-| Lint clean | `uv run ruff check .` | `All checks passed!` |
-| Format clean | `uv run ruff format --check .` | `176 files already formatted` |
-| Ruff is the pinned version | `uv run ruff --version` | `ruff 0.16.4` |
+| Lint clean | `uv run --extra dev ruff check .` | `All checks passed!` |
+| Format clean | `uv run --extra dev ruff format --check .` | `176 files already formatted` |
+| Ruff is the pinned version | `uv run --extra dev ruff --version` | `ruff 0.16.4` |
 | Lockfile agrees | `uvx uv lock --check` | up to date |
 | Workflows parse | the `yaml.safe_load` loop in Task 6 Step 8 | four `ok` lines |
 | Composite action uses the synced interpreter | `grep -nE '^\s+(python\|pyinstaller)\b\|shell: python' .github/actions/build-installer/action.yml` | no output |
