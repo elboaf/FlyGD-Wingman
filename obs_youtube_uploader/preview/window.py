@@ -156,6 +156,25 @@ def _dispatch(hwnd, msg, wparam, lparam):
     return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
 
+def drag_target(start_screen, cur_screen, start_rect):
+    """Where the rect should be, from ABSOLUTE cursor positions.
+
+    Both points are screen coordinates, and the anchor is the rect as it
+    was at button-down. That combination is what makes this stable.
+
+    The bug this replaces: WM_MOUSEMOVE's lParam is in CLIENT coordinates
+    of the window's CURRENT position, and it was being converted to screen
+    coordinates using the position at button-down. Once the window moved,
+    the two disagreed by exactly the accumulated delta, so the target
+    overshot, the window moved back, that generated another WM_MOUSEMOVE,
+    and it oscillated -- visibly vibrating, and continuing to vibrate with
+    the cursor completely still as long as the button was held.
+    """
+    return start_rect._replace(
+        x=start_rect.x + (cur_screen[0] - start_screen[0]),
+        y=start_rect.y + (cur_screen[1] - start_screen[1]))
+
+
 def coalesce_moves(peek, hwnd, lparam):
     """Return the newest queued mouse position, discarding the rest.
 
@@ -180,6 +199,14 @@ def coalesce_moves(peek, hwnd, lparam):
                win32.PM_REMOVE):
         lparam = msg.lParam
     return lparam
+
+
+def _cursor_pos(libs):
+    """Absolute cursor position. Immune to the window moving under it."""
+    import ctypes
+    pt = win32.POINT()
+    libs.user32.GetCursorPos(ctypes.byref(pt))
+    return (pt.x, pt.y)
 
 
 def _lparam_point(lparam):
@@ -298,7 +325,10 @@ class PreviewWindow:
     def _on_message(self, msg, wparam, lparam):
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
             pt = _lparam_point(lparam)
-            self._start, self._start_rect = pt, self.rect
+            # Client coords are only safe HERE: the window has not moved
+            # yet, so they still describe the point that was clicked.
+            self._start_rect = self.rect
+            self._start = _cursor_pos(self._libs)
             self._mode = ("resize"
                           if (msg == win32.WM_LBUTTONDOWN
                               and geometry.hit_resize_handle(
@@ -320,20 +350,15 @@ class PreviewWindow:
                 p = self._perf
                 p["gap"] = max(p["gap"], t0 - p["last"])
                 p["n"] += 1
-            lparam = coalesce_moves(self._libs.user32.PeekMessageW,
-                                    self.hwnd, lparam)
-            pt = _lparam_point(lparam)
-            # Client coords move with the window, so compare against the
-            # rect captured at button-down rather than the live one.
-            cur = (self._start_rect.x + pt[0], self._start_rect.y + pt[1])
-            start = (self._start_rect.x + self._start[0],
-                     self._start_rect.y + self._start[1])
+            coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)
+            # GetCursorPos, not lParam: lParam is client-relative and the
+            # window is moving under the cursor, which is what made this
+            # oscillate. Absolute coordinates cannot feed back.
+            cur = _cursor_pos(self._libs)
             if self._mode == "resize":
-                self.move(resize_result(start, cur, self._start_rect))
+                self.move(resize_result(self._start, cur, self._start_rect))
             else:
-                moved = self._start_rect._replace(
-                    x=self._start_rect.x + (cur[0] - start[0]),
-                    y=self._start_rect.y + (cur[1] - start[1]))
+                moved = drag_target(self._start, cur, self._start_rect)
                 self.move(geometry.snap(moved, self._neighbours(),
                                         self._screen()))
             if PERF:
@@ -356,10 +381,9 @@ class PreviewWindow:
                     p["gap"] * 1000)
                 self._perf = None
             mode, self._mode = self._mode, None
-            pt = _lparam_point(lparam)
             if mode == "drag" and msg == win32.WM_LBUTTONUP:
-                action, _ = drag_result(self._start, pt, self._start_rect,
-                                        self.locked)
+                action, _ = drag_result(self._start, _cursor_pos(self._libs),
+                                        self._start_rect, self.locked)
                 if action == "activate":
                     activate(self._libs, self.client.hwnd)
                     self._on_activate(self.client)

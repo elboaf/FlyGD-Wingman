@@ -142,3 +142,36 @@ def test_coalesce_moves_returns_the_original_when_the_queue_is_empty():
     """The common case at the start of a slow drag: nothing queued behind
     this event, so the position it carried is the one to use."""
     assert window.coalesce_moves(lambda *a: False, 1, 42) == 42
+
+
+def test_a_stationary_cursor_does_not_move_the_rect():
+    """The vibration bug, as a test.
+
+    Holding the button with the cursor completely still must produce the
+    same rect every time. It did not: lParam is client-relative to the
+    window's CURRENT position, and it was converted to screen coordinates
+    using the position at button-down. Once the window moved, the target
+    overshot, the window moved back, that generated another WM_MOUSEMOVE,
+    and it oscillated -- visibly vibrating with the mouse held still.
+    """
+    start_cursor = (500, 400)
+    for _ in range(10):
+        out = window.drag_target(start_cursor, start_cursor, R)
+        assert out == R
+
+
+def test_the_target_is_independent_of_where_the_window_has_moved_to():
+    """Absolute coordinates cannot feed back: the answer depends only on
+    how far the CURSOR moved, never on where the window ended up."""
+    a = window.drag_target((500, 400), (560, 430), Rect(100, 100, 320, 210))
+    b = window.drag_target((500, 400), (560, 430), Rect(100, 100, 320, 210))
+    assert a == b == Rect(160, 130, 320, 210)
+
+
+def test_dragging_back_to_the_origin_restores_the_original_rect():
+    """A round trip must land exactly where it started -- no drift
+    accumulating across a long drag."""
+    start = (500, 400)
+    moved = window.drag_target(start, (900, 700), R)
+    assert moved != R
+    assert window.drag_target(start, start, R) == R
