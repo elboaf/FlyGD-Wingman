@@ -1,9 +1,9 @@
 import os
-import socket
 import stat
 import sys
 
 import pytest
+
 from obs_youtube_uploader import uploader
 
 
@@ -27,7 +27,7 @@ def test_transient_http_errors_retry(status):
 
 
 @pytest.mark.parametrize("exc", [
-    socket.timeout("slow"),
+    TimeoutError("slow"),
     ConnectionResetError("reset"),
     OSError("network down"),
 ])

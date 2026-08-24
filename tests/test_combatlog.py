@@ -6,7 +6,7 @@ import pytest
 
 from obs_youtube_uploader import combatlog
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 # Real logs are CRLF. A \n-only fixture would not catch a parser that leaves
 # a trailing \r on the character name.

@@ -1,7 +1,9 @@
 """The bridge is tested headless through FakeWindow, as every other Api
 method is (tests/fakes.py)."""
 import json
+
 import pytest
+
 from obs_youtube_uploader import bookmarks, hotkeys, settings
 from tests.fakes import FakeWindow
 

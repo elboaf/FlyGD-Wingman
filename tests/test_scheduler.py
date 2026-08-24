@@ -13,8 +13,6 @@ assertions timing-dependent, which is the one property they must not have.
 """
 import threading
 
-import pytest
-
 from obs_youtube_uploader.ui.scheduler import Scheduler
 
 

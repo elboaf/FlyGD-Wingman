@@ -1,7 +1,6 @@
 """resolve_binary() falls back to PATH, which is right for ffmpeg and wrong
 here: a user with AutoHotkey v2 installed would have their v2 interpreter
 handed a v1 script and fail with parse errors that look like our bug."""
-from pathlib import Path
 from obs_youtube_uploader import paths
 
 

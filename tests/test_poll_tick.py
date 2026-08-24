@@ -7,10 +7,10 @@ the one-shot failure notification -- have tests.
 """
 from pathlib import Path
 
-import pytest
-
 from obs_youtube_uploader.__main__ import (
-    FAILURE_NOTIFY_THRESHOLD, PollState, poll_tick,
+    FAILURE_NOTIFY_THRESHOLD,
+    PollState,
+    poll_tick,
 )
 
 

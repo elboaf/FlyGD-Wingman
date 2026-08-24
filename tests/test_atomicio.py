@@ -3,7 +3,9 @@ reader observing a half-written file, and every one of these files is polled
 by another process on a 2s or 10s timer."""
 import os
 from pathlib import Path
+
 import pytest
+
 from obs_youtube_uploader import atomicio
 
 

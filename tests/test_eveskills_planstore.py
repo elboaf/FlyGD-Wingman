@@ -9,7 +9,6 @@ import pytest
 
 from obs_youtube_uploader.eveskills import planstore
 
-
 # ---------------------------------------------------------------------------
 # Cycle A -- name validation
 # ---------------------------------------------------------------------------
@@ -130,7 +129,7 @@ class _NamedProxy:
 
     def __init__(self, name, backing=None):
         self.name = name
-        self.stem = name[:-len(".txt")] if name.endswith(".txt") else name
+        self.stem = name.removesuffix(".txt")
         self._backing = backing
 
     def is_file(self):

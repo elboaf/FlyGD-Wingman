@@ -1,7 +1,7 @@
 """Archive naming, integrity, pruning and restore. All on tmp_path."""
 import os
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,7 +9,7 @@ from obs_youtube_uploader.evesettings import backup
 
 
 def at(second=0):
-    return datetime(2026, 8, 24, 12, 34, second, tzinfo=timezone.utc)
+    return datetime(2026, 8, 24, 12, 34, second, tzinfo=UTC)
 
 
 def profile_with(tmp_path, name="settings_Default",
@@ -261,8 +261,7 @@ def test_restore_rejects_an_archive_with_a_path_bearing_entry(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     store.mkdir(parents=True)
-    hostile = store / "20260824-123456-000-manual-profile-{}-Default.zip".format(
-        backup.source_key(profile))
+    hostile = store / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
                          '"source": "%s"}' % profile.as_posix())
@@ -276,8 +275,7 @@ def test_restore_rejects_an_unexpected_member(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     store.mkdir(parents=True)
-    hostile = store / "20260824-123456-000-manual-profile-{}-Default.zip".format(
-        backup.source_key(profile))
+    hostile = store / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
                          '"source": "%s"}' % profile.as_posix())
@@ -296,8 +294,7 @@ def test_restore_rejects_a_file_archive_carrying_a_passenger_member(tmp_path):
     store = tmp_path / "backups"
     store.mkdir(parents=True)
     source = profile / "core_char_98123456.dat"
-    hostile = store / "20260824-123456-000-manual-character-{}-core_char_98123456.zip".format(
-        backup.source_key(profile))
+    hostile = store / f"20260824-123456-000-manual-character-{backup.source_key(profile)}-core_char_98123456.zip"
     with zipfile.ZipFile(hostile, "w") as archive:
         archive.writestr(backup.MANIFEST_NAME, '{"kind": "character", '
                          '"source": "%s"}' % source.as_posix())

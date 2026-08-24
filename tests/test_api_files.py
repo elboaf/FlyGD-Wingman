@@ -8,9 +8,7 @@ The combat-log tests used to live here, beside the button that ran them.
 They moved to test_api_upload.py when that button merged into Upload:
 posting logs is now the second half of an upload, not an action of its own.
 """
-import pytest
 
-from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 

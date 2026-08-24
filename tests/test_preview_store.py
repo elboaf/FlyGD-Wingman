@@ -5,10 +5,10 @@ upload worker thread, deliberately. This store is the merge boundary."""
 import contextlib
 import copy
 
-from obs_youtube_uploader.preview.store import LayoutStore
-from obs_youtube_uploader.preview.layout import Entry
-from obs_youtube_uploader.preview.geometry import Rect
 from obs_youtube_uploader.preview import layout
+from obs_youtube_uploader.preview.geometry import Rect
+from obs_youtube_uploader.preview.layout import Entry
+from obs_youtube_uploader.preview.store import LayoutStore
 
 
 class FakeTimer:

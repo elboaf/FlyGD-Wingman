@@ -1,6 +1,5 @@
 """Gesture parsing. Pure, so this is where the real coverage lives -- the
 Win32 half cannot be exercised in CI at all."""
-import pytest
 
 from obs_youtube_uploader.preview import gestures
 

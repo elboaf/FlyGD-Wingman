@@ -6,8 +6,6 @@ and main() both constructs it and tears it down.
 """
 import inspect
 
-import pytest
-
 from obs_youtube_uploader import __main__ as main_mod
 
 

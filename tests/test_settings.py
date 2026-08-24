@@ -1,5 +1,7 @@
 import json
+
 import pytest
+
 from obs_youtube_uploader import bookmarks, settings
 
 
@@ -195,10 +197,9 @@ def test_update_rolls_back_and_does_not_write_on_failure(tmp_path):
     path = tmp_path / "settings.json"
     data = settings._fresh_defaults()
     settings.save(data, path)
-    with pytest.raises(RuntimeError):
-        with settings.update(data, path) as doc:
-            doc["privacy"] = "public"
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), settings.update(data, path) as doc:
+        doc["privacy"] = "public"
+        raise RuntimeError("boom")
     assert data["privacy"] == settings.DEFAULTS["privacy"]
     assert json.loads(path.read_text())["privacy"] == settings.DEFAULTS["privacy"]
 
@@ -208,10 +209,9 @@ def test_update_rollback_restores_nested_sections(tmp_path):
     exactly where preview state lives."""
     path = tmp_path / "settings.json"
     data = settings._fresh_defaults()
-    with pytest.raises(RuntimeError):
-        with settings.update(data, path) as doc:
-            doc["preview"]["opacity"] = 40
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), settings.update(data, path) as doc:
+        doc["preview"]["opacity"] = 40
+        raise RuntimeError("boom")
     assert data["preview"]["opacity"] == settings.DEFAULTS["preview"]["opacity"]
 
 
@@ -325,8 +325,7 @@ def test_update_releases_the_lock_when_the_body_raises(tmp_path):
     path = tmp_path / "settings.json"
     data = settings._fresh_defaults()
 
-    with pytest.raises(ValueError):
-        with settings.update(data, path):
-            raise ValueError("nope")
+    with pytest.raises(ValueError), settings.update(data, path):
+        raise ValueError("nope")
 
     assert not settings._SAVE_LOCK.locked()

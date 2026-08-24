@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def parse_header(path: Path) -> LogHeader | None:
     listener: str | None = None
     started: datetime.datetime | None = None
     try:
-        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             for _ in range(_HEADER_LINES):
                 line = fh.readline()
                 if not line:

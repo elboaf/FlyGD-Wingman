@@ -7,8 +7,6 @@ only thing asserting them was a widget.
 import datetime
 import threading
 
-import pytest
-
 from obs_youtube_uploader import combatlog, discord, uploader
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
@@ -395,7 +393,7 @@ def combined_api(tmp_path, monkeypatch, settings=None, dropped=0):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    stamp = datetime.datetime(2026, 8, 21, 19, 0, tzinfo=datetime.timezone.utc)
+    stamp = datetime.datetime(2026, 8, 21, 19, 0, tzinfo=datetime.UTC)
     monkeypatch.setattr(api_mod.combatlog, "select_logs",
                         lambda d, s, e: combatlog.Selection(
                             logs=[combatlog.SelectedLog(

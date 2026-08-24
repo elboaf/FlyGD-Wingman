@@ -2,6 +2,7 @@
 with no UI left to disable it. Recovery is the backstop -- but it kills a
 process, so identity has to be right."""
 import json
+
 from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
 

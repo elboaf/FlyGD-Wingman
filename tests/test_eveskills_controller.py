@@ -4,10 +4,8 @@ Every test here is headless. No network (the ESI client is a fake), no
 sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
-import json
 import threading
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -20,7 +18,7 @@ from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
 
-UTC = timezone.utc
+UTC = UTC
 T0 = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
 
 

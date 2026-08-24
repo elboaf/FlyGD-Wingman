@@ -1,4 +1,5 @@
 import pytest
+
 from obs_youtube_uploader import bookmarks
 
 

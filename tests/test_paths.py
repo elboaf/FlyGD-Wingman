@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from obs_youtube_uploader import paths
 
 

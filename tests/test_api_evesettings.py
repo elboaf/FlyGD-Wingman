@@ -1,6 +1,5 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
 import os
-import threading
 
 import pytest
 

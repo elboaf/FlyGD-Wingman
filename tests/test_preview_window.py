@@ -94,7 +94,7 @@ class _RecordingWindow(window.PreviewWindow):
         client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot",
                                 "hwnd": 1})()
         super().__init__(FakeLibs(), client, rect, lambda c: None,
-                         lambda *a: None, lambda: [], lambda: rect)
+                         lambda *a: None, list, lambda: rect)
         self.hwnd = 1
         self.renders = 0
 
@@ -125,7 +125,6 @@ def test_coalesce_moves_keeps_only_the_newest_position():
     320/s against a 1.8ms handler). Processing every one builds a backlog
     and the window lags the cursor -- which is what the stutter is. Only
     the newest position can be correct."""
-    from ctypes import wintypes
 
     queued = [111, 222, 333]
 
@@ -209,7 +208,7 @@ def _window_for_gestures(locked):
                             "hwnd": 1})()
     libs = _FakeLibs()
     w = window.PreviewWindow(libs, client, Rect(100, 100, 320, 210),
-                             lambda c: None, lambda *a: None, lambda: [],
+                             lambda c: None, lambda *a: None, list,
                              lambda: Rect(0, 0, 1920, 1080), locked=locked)
     w.hwnd = 1
     w.redraw = lambda force=False: None

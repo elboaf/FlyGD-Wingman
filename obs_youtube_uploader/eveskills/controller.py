@@ -27,7 +27,7 @@ import os
 import sys
 import threading
 import webbrowser
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import application, evaluator, planstore, skillids, tokens
@@ -130,7 +130,7 @@ def _parse_date(value):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _clamp_position(value) -> int:
@@ -162,7 +162,7 @@ def _parse_queue(data):
 
 def _utcnow() -> datetime:
     """Injectable in tests; production reads the real clock exactly here."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _iso(value) -> str:

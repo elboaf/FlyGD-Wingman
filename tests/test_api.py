@@ -15,7 +15,6 @@ import pytest
 from obs_youtube_uploader import durations
 from obs_youtube_uploader.ui.api import Api, AppState
 from obs_youtube_uploader.ui.rows import RowSnapshot
-from obs_youtube_uploader.ui.scheduler import Scheduler
 from tests.test_scheduler import FakeClock
 
 

@@ -14,7 +14,6 @@ takes.
 """
 import io
 import json
-import socket
 import urllib.error
 import urllib.request
 from email.message import Message
@@ -418,7 +417,7 @@ def test_network_errors_retry_on_their_own_ladder():
     server-suggested wait from, so the ladder is fixed and short."""
     sleep = FakeSleep()
     client = _client([urllib.error.URLError("no route"),
-                      socket.timeout("timed out"),
+                      TimeoutError("timed out"),
                       _Response(200, b"{}")], sleep)
     assert client.get("/v6/characters/1/skills/").ok is True
     assert sleep.delays == [pytest.approx(0.5), pytest.approx(1.0)]

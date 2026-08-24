@@ -5,8 +5,6 @@ UpdateLayeredWindow call is thin enough to leave to the smoke checklist.
 """
 import ctypes
 
-from PIL import Image
-
 from . import win32
 
 

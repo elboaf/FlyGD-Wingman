@@ -128,7 +128,7 @@ def _message_box(title: str, body: str) -> None:
     caller's decision does not depend on the dialog appearing.
     """
     if sys.platform != "win32":
-        return None
+        return
     import ctypes
 
     MB_OK = 0x0
@@ -137,7 +137,7 @@ def _message_box(title: str, body: str) -> None:
     MB_TOPMOST = 0x40000
     ctypes.windll.user32.MessageBoxW(
         None, body, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST)
-    return None
+    return
 
 
 def require_webview2(version=webview2_version, alert=_message_box) -> bool:

@@ -92,7 +92,7 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
         except Exception:  # noqa: BLE001 - a body we cannot read is not a verdict
             body = ""
         return classify(exc.code, body)
-    except Exception:  # noqa: BLE001 - reported as transient, never raised
+    except Exception:
         # Logged because TRANSIENT means "retry next pass", and a caller
         # bug -- a non-serialisable id, a malformed URL -- retries forever
         # while every row shows its fallback label. Before these two

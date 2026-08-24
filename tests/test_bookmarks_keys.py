@@ -2,6 +2,7 @@
 (webview-replatform-design.md:545). These tests are what stands in for the
 browser tests we deliberately do not have."""
 import pytest
+
 from obs_youtube_uploader import bookmarks
 
 NONE = {"ctrl": False, "alt": False, "shift": False, "meta": False}

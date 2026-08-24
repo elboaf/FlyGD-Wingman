@@ -21,7 +21,7 @@ import os
 import stat as stat_module
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import atomicio
@@ -127,7 +127,7 @@ def _iso(value) -> str:
     shape for a field whether or not it is set."""
     if value is None:
         return ""
-    return value.astimezone(timezone.utc).isoformat()
+    return value.astimezone(UTC).isoformat()
 
 
 def _parse_utc(raw):
@@ -146,8 +146,8 @@ def _parse_utc(raw):
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _coerce_int(raw):

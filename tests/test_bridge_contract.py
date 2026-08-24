@@ -41,7 +41,7 @@ API = (Path(__file__).resolve().parent.parent / "obs_youtube_uploader"
 def allowlist() -> list:
     """The names in web/app.js's WM.HANDLERS array literal."""
     source = (WEB / "app.js").read_text(encoding="utf-8")
-    match = re.search(r"WM\.HANDLERS\s*=\s*\[(.*?)\]", source, re.S)
+    match = re.search(r"WM\.HANDLERS\s*=\s*\[(.*?)\]", source, re.DOTALL)
     assert match, "WM.HANDLERS array literal not found in web/app.js"
     return re.findall(r"'([^']+)'", match.group(1))
 

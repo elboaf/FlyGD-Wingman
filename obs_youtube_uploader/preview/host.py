@@ -14,7 +14,7 @@ import ctypes
 import logging
 import threading
 
-from . import cycle, discovery, gestures, geometry, layout, win32
+from . import cycle, discovery, geometry, gestures, layout, win32
 from . import window as window_mod
 from .window import PreviewWindow
 

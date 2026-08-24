@@ -318,6 +318,7 @@ def needs_reauth(creds) -> bool:
 def run_oauth_flow():
     """Interactive consent via the loopback redirect. Returns Credentials."""
     from google_auth_oauthlib.flow import InstalledAppFlow
+
     from .credentials import CLIENT_CONFIG
     flow = InstalledAppFlow.from_client_config(CLIENT_CONFIG, SCOPES)
     return flow.run_local_server(port=0)

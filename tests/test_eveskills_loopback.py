@@ -672,11 +672,10 @@ def test_a_persistent_bind_conflict_still_fails_with_a_clear_message():
     holder.bind(("127.0.0.1", port))
     holder.listen(1)
     try:
-        with pytest.raises(OSError) as excinfo:
-            with loopback.LoopbackListener(
-                host="127.0.0.1", port=port, path=PATH
-            ):
-                pass
+        with pytest.raises(OSError) as excinfo, loopback.LoopbackListener(
+            host="127.0.0.1", port=port, path=PATH
+        ):
+            pass
         assert str(port) in str(excinfo.value)
     finally:
         holder.close()

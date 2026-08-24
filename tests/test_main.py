@@ -2,10 +2,12 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from obs_youtube_uploader import paths, settings
 from obs_youtube_uploader import __main__ as main_mod
+from obs_youtube_uploader import paths, settings
 from obs_youtube_uploader.__main__ import (
-    configure_logging, resolve_recording_dir, set_dpi_awareness,
+    configure_logging,
+    resolve_recording_dir,
+    set_dpi_awareness,
 )
 
 

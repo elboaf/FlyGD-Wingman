@@ -19,7 +19,9 @@ engine is verified":
 The manual smoke checklist is the backstop for all of these.
 """
 import re
+
 import pytest
+
 from obs_youtube_uploader import paths
 
 

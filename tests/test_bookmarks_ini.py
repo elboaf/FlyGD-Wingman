@@ -2,6 +2,7 @@
 reads it. These tests pin the exact bytes because the consumer is an AHK
 script we cannot test."""
 import pytest
+
 from obs_youtube_uploader import bookmarks, settings
 
 

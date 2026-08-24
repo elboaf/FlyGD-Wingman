@@ -9,7 +9,6 @@ read-only, and the only POST is the unauthenticated universe/ids lookup.
 """
 import json
 import re
-import socket
 import time
 import unicodedata
 import urllib.error
@@ -68,8 +67,7 @@ def validate_path(path: str) -> str:
     body = path[1:]
     # Exactly one optional trailing slash: ESI's own routes carry it
     # ("/v3/universe/ids/"), but a second one is an empty segment.
-    if body.endswith("/"):
-        body = body[:-1]
+    body = body.removesuffix("/")
     if not body:
         raise ValueError("ESI path must name at least one segment.")
     for segment in body.split("/"):
@@ -180,7 +178,7 @@ def _sanitize(text) -> str:
         if ch in "\r\n\t" or unicodedata.category(ch) != "Cc"
     )[:_SANITIZE_MAX_CHARS]
     cleaned = filtered.replace("\r", " ").replace("\n", " ").strip()
-    return cleaned if cleaned else "Remote service returned an unreadable error."
+    return cleaned or "Remote service returned an unreadable error."
 
 
 def _extract_remote_error(text: str, token) -> str:
@@ -366,7 +364,7 @@ class EsiClient:
                         self._sleep(self._backoff(exc.headers, attempt))
                     continue
                 return EsiResponse(exc.code, None, text, "", method, path)
-            except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            except (TimeoutError, urllib.error.URLError, OSError) as exc:
                 # No response, so no headers to read a suggested wait from.
                 # The ladder is fixed and short: a refresh is sequential, so
                 # every second spent here delays every character behind it.

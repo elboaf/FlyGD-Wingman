@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import discord, hotkeys, obsconfig, paths, settings as settings_mod, stitch, watcher
-from .ui import api as api_mod, preflight, window as window_mod
+from . import discord, hotkeys, obsconfig, paths, stitch, watcher
+from . import settings as settings_mod
+from .ui import api as api_mod
+from .ui import preflight
+from .ui import window as window_mod
 from .ui.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)

@@ -30,9 +30,19 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import (bookmarks, combatlog, discord, durations, evewindows,
-                library, obsconfig, paths, settings as settings_mod, stitch,
-                uploader)
+from .. import (
+    bookmarks,
+    combatlog,
+    discord,
+    durations,
+    evewindows,
+    library,
+    obsconfig,
+    paths,
+    stitch,
+    uploader,
+)
+from .. import settings as settings_mod
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
@@ -948,10 +958,10 @@ class Api:
         infos = [i for _, i in pairs]
         start_utc = min(
             datetime.datetime.fromtimestamp(i.mtime - i.duration,
-                                            datetime.timezone.utc)
+                                            datetime.UTC)
             for i in infos)
         end_utc = max(
-            datetime.datetime.fromtimestamp(i.mtime, datetime.timezone.utc)
+            datetime.datetime.fromtimestamp(i.mtime, datetime.UTC)
             for i in infos)
 
         self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc)
@@ -1821,7 +1831,7 @@ class Api:
         try:
             from ..preview import discovery
             return bool(discovery.list_clients())
-        except Exception:  # noqa: BLE001 - a pill, never a failure
+        except Exception:
             logger.debug("Could not check for a running EVE client",
                          exc_info=True)
             return False
@@ -1849,7 +1859,7 @@ class Api:
                 if value != self._eve_running:
                     self._eve_running = value
                     self._push("onEveSettingsRunning", {"running": value})
-            except Exception:  # noqa: BLE001 - a pill, never a failure
+            except Exception:
                 logger.debug("EVE client probe failed", exc_info=True)
             finally:
                 self._eve_probe.release()
@@ -1861,7 +1871,7 @@ class Api:
             return
         try:
             self._spawn(target=worker, daemon=True).start()
-        except Exception:  # noqa: BLE001 - the pill simply stays stale
+        except Exception:
             # Only the worker releases, and a worker that never started
             # never will -- that would wedge the probe for the process's
             # lifetime and freeze the pill on whatever it last said.
@@ -1953,7 +1963,7 @@ class Api:
                        if c.file_id.isdigit()]
                 if self._eve_names.resolve_missing(ids):
                     self._push("onEveSettingsNames", {})
-            except Exception:  # noqa: BLE001 - names are cosmetic
+            except Exception:
                 logger.warning("EVE character name lookup failed",
                                exc_info=True)
 
@@ -1971,7 +1981,7 @@ class Api:
             return False
         try:
             self._spawn(target=worker, args=args, daemon=True).start()
-        except Exception:  # noqa: BLE001 - reported, never raised
+        except Exception:
             # Only the worker releases the lock, and a worker that never
             # started never will: without this the feature is dead until
             # the app restarts.
@@ -2034,7 +2044,7 @@ class Api:
                     "text": f"Copied to {len(report.succeeded)} file(s).",
                     "kind": "FG"})
                 ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings copy failed")
             self._alert("error", "Copy failed", str(error))
         finally:
@@ -2067,7 +2077,7 @@ class Api:
             self._push("onStatus", {"text": f"Backed up to {made.name}.",
                                     "kind": "FG"})
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings backup failed")
             self._alert("error", "Backup failed", str(error))
         finally:
@@ -2094,7 +2104,7 @@ class Api:
             self._push("onStatus", {"text": f"Restored into {written.name}.",
                                     "kind": "FG"})
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings restore failed")
             self._alert("error", "Restore failed", str(error))
         finally:
@@ -2115,7 +2125,7 @@ class Api:
             evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
             self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings backup delete failed")
             self._alert("error", "Delete failed", str(error))
         finally:

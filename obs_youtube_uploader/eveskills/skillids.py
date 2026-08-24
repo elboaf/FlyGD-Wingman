@@ -17,8 +17,8 @@ import os
 import stat as stat_module
 import threading
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 
 from .. import atomicio
 

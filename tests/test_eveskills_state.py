@@ -12,8 +12,7 @@ import json
 import os
 import stat
 import sys
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
@@ -36,7 +35,7 @@ def test_an_error_over_existing_data_is_stale():
     error, which is what makes the badge meaningful."""
     character = state.Character(
         character_id=90000001,
-        fetched_utc=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        fetched_utc=datetime(2026, 8, 24, tzinfo=UTC),
         error="ESI timed out")
     assert character.stale is True
 
@@ -107,13 +106,13 @@ def test_round_trips_a_full_character():
             character_name="Aiga Otsolen",
             owner_hash="abc123",
             scopes=("esi-skills.read_skills.v1",),
-            authenticated_utc=datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc),
-            fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=timezone.utc),
+            authenticated_utc=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+            fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
             active_levels={3300: 5},
             trained_levels={3300: 5, 3301: 4},
             queue=(QueueEntry(3301, 5,
-                              datetime(2026, 8, 24, tzinfo=timezone.utc),
-                              datetime(2026, 8, 26, tzinfo=timezone.utc), 0),),
+                              datetime(2026, 8, 24, tzinfo=UTC),
+                              datetime(2026, 8, 26, tzinfo=UTC), 0),),
             error="",
             needs_reauth=False,
             refresh_token_blob="QUJD",
@@ -271,7 +270,7 @@ def test_a_naive_timestamp_is_read_as_utc():
     raw = {"characters": [{"character_id": 1,
                            "fetched_utc": "2026-08-24T10:30:00"}]}
     fetched = state.from_dict(raw).characters[0].fetched_utc
-    assert fetched == datetime(2026, 8, 24, 10, 30, tzinfo=timezone.utc)
+    assert fetched == datetime(2026, 8, 24, 10, 30, tzinfo=UTC)
 
 
 def test_selected_plan_name_beyond_120_chars_is_cleared():

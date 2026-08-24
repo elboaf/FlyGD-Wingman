@@ -1,6 +1,5 @@
 """Copy one settings file onto many. Backup and copy are both injected, so
 every failure path is reachable without a real filesystem fault."""
-import os
 
 import pytest
 

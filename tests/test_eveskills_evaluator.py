@@ -5,14 +5,12 @@ reads one of these strings, and TriffView has no automated coverage of
 it at all. That is the one posture this port deliberately does not
 inherit.
 """
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from obs_youtube_uploader.eveskills import evaluator as ev
 from obs_youtube_uploader.eveskills.plans import Requirement
 
-T0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
 
 def entry(skill_id, finished_level, position, finish=None):

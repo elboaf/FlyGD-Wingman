@@ -299,7 +299,7 @@ def _read_request(connection, deadline: float, cancelled: threading.Event) -> by
         connection.settimeout(min(remaining, _ACCEPT_POLL_S))
         try:
             chunk = connection.recv(4096)
-        except (socket.timeout, TimeoutError):
+        except TimeoutError:
             continue
         if not chunk:
             break
@@ -417,7 +417,7 @@ class LoopbackListener:
             self._socket.settimeout(min(remaining, _ACCEPT_POLL_S))
             try:
                 connection, _ = self._socket.accept()
-            except (socket.timeout, TimeoutError):
+            except TimeoutError:
                 continue
             except OSError:
                 if self._cancelled.is_set():

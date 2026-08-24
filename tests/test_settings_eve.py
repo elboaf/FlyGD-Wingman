@@ -2,7 +2,9 @@
 load() has to be defensive about them in a way a title string never needed.
 """
 import json
+
 import pytest
+
 from obs_youtube_uploader import bookmarks, settings
 
 

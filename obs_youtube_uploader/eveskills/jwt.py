@@ -15,9 +15,9 @@ import threading
 import unicodedata
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from cryptography.exceptions import InvalidSignature
@@ -196,7 +196,7 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
     if (isinstance(expiry, bool) or not isinstance(expiry, (int, float))
             or not math.isfinite(expiry)):
         raise JwtError("EVE SSO access token had no usable expiry.")
-    moment = now or datetime.now(timezone.utc)
+    moment = now or datetime.now(UTC)
     if expiry + skew_s <= moment.timestamp():
         raise JwtError("EVE SSO access token has expired.")
 
@@ -312,7 +312,7 @@ def _default_transport(request, timeout=None):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _rsa_signing_key(entry: object):

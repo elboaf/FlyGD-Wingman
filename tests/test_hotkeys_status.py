@@ -2,7 +2,9 @@
 would be acted on. Liveness is the authority; the file only supplies values
 once liveness is established."""
 import json
+
 import pytest
+
 from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
 

@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives import hashes
@@ -308,7 +308,7 @@ def test_expiry_allows_two_minutes_of_skew(keypair, keys):
     `now` is injected rather than slept for, so this asserts the boundary
     exactly instead of approximately.
     """
-    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
     expiry = int(moment.timestamp()) - 60          # expired a minute ago
     assert validate(sign(keypair, claims(exp=expiry)), keys, now=moment)
     stale = int(moment.timestamp()) - 121          # past the 120s allowance
@@ -352,7 +352,7 @@ def test_nbf_allows_two_minutes_of_skew(keypair, keys):
     this file, none of which set it) must keep validating; only a PRESENT
     nbf beyond the skew is a rejection.
     """
-    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
     almost_valid = int(moment.timestamp()) + 60          # a minute from now
     assert validate(sign(keypair, claims(nbf=almost_valid)), keys, now=moment)
     not_yet = int(moment.timestamp()) + 121              # past the 120s allowance
@@ -554,7 +554,7 @@ def metadata(**overrides):
 
 class FakeClock:
     def __init__(self, start=None):
-        self.moment = start or datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+        self.moment = start or datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
     def __call__(self):
         return self.moment

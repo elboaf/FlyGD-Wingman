@@ -4,10 +4,8 @@ Same rationale as tests/test_app_upload_copy.py: the dialog itself has no
 test harness, so every string it shows is decided in a module-level function
 that can be tested without standing one up.
 """
-import pytest
 
 from obs_youtube_uploader.ui import copy as copy_mod
-
 
 # --- webhook_status --------------------------------------------------------
 

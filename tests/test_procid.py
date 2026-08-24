@@ -2,6 +2,7 @@
 return to keep the PID record for another try. A taskkill that exits
 non-zero without raising must not be reported as a successful kill."""
 from types import SimpleNamespace
+
 from obs_youtube_uploader import procid
 
 

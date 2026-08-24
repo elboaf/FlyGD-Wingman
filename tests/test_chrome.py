@@ -16,7 +16,6 @@ import pytest
 
 from obs_youtube_uploader.ui import chrome
 
-
 # 1000x600 at (100, 100). Deliberately not square and not at the origin, so
 # a transposed or origin-relative bug cannot pass by coincidence.
 RECT = (100, 100, 1100, 700)

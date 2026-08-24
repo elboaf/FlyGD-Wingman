@@ -1,9 +1,10 @@
 """The tooltip text decision. The widget machinery is untested by design."""
+from pathlib import Path
+
 import pytest
 
 from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
-from pathlib import Path
 
 
 def test_unreadable_duration_explains_itself():

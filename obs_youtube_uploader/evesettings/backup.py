@@ -17,7 +17,7 @@ import shutil
 import uuid
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import atomicio
@@ -126,7 +126,7 @@ def _write_archive(claimed: Path, members, manifest: dict) -> None:
 
 
 def _stamp(now) -> str:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return now.strftime("%Y%m%d-%H%M%S")
 
 
@@ -157,8 +157,7 @@ def create_profile_backup(backup_dir, profile, *, origin: str,
     members = sorted(child for child in profile.iterdir()
                      if tree.file_kind(child))
     label = profile.name
-    if label.startswith("settings_"):
-        label = label[len("settings_"):]
+    label = label.removeprefix("settings_")
     claimed = _claim(Path(backup_dir), _stamp(now), origin, "profile",
                      source_key(profile), _sanitize(label))
     _write_archive(claimed, members, {
