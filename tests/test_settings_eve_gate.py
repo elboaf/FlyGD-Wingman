@@ -144,3 +144,28 @@ def test_the_page_gates_both_destinations_and_both_sections():
     block = app.split("WM.apply_eve_gate")[1]
     assert "WM.route('main')" in block
     assert "WM.section('general')" in block
+
+
+def test_the_toggle_repaints_the_chrome_itself():
+    """Found by smoke test: the value persisted and the tabs stayed put
+    until the next launch.
+
+    Applying the gate hung off the `wm:settings` push -- but the per-field
+    endpoints deliberately do NOT push, because re-sending the whole
+    payload is what used to rewrite the field still being edited. So
+    nothing told the page to repaint.
+
+    This is the general hazard of immediate save: an endpoint whose effect
+    reaches outside its own control has to apply that effect locally,
+    because there is no longer a whole-document push to ride on. The gate
+    is currently the only such control.
+    """
+    import pathlib
+
+    web = (pathlib.Path(__file__).resolve().parents[1]
+           / "obs_youtube_uploader" / "web")
+    js = (web / "settings.js").read_text(encoding="utf-8")
+
+    handler = js.split("set_show_eve_tools")[1].split("});")[0]
+    assert "apply_eve_gate" in handler, (
+        "the toggle writes the setting but never repaints the nav or rail")

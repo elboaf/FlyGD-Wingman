@@ -49,7 +49,7 @@
   // only when Python REFUSED a value -- never on a failed write, where the
   // setting really did take effect for this session and snapping the
   // control back would misreport it.
-  function commit(slot, args, revert) {
+  function commit(slot, args, revert, onOk) {
     if (!hydrated) { return; }
     WM.send.apply(null, args).then(function (res) {
       // WM.send resolves to null on any bridge failure rather than
@@ -74,6 +74,7 @@
         return;
       }
       say(slot, '');
+      if (onOk) { onOk(); }
     });
   }
 
@@ -146,9 +147,14 @@
   // rather than exceptional.
   WM.el('show-eve-tools').addEventListener('change', function () {
     var box = WM.el('show-eve-tools');
-    commit('msg-general', ['set_show_eve_tools', box.checked], function () {
-      box.checked = !box.checked;
-    });
+    commit('msg-general', ['set_show_eve_tools', box.checked],
+           function () { box.checked = !box.checked; },
+           // Applied HERE, not left to the wm:settings push: the per-field
+           // endpoints deliberately do not push, because re-sending the
+           // whole payload is what used to rewrite the field still being
+           // edited. Without this the value was written and nothing
+           // repainted until the next launch -- the tabs stayed put.
+           function () { WM.apply_eve_gate(box.checked); });
   });
 
   // Discrete controls commit on change. There is nothing to mistype, the
