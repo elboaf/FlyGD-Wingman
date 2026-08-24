@@ -44,6 +44,7 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONDOWN = 0x0204
 WM_RBUTTONUP = 0x0205
 WM_HOTKEY = 0x0312
+PM_REMOVE = 0x0001
 WM_APP = 0x8000
 
 # Host commands, marshalled in from other threads.
@@ -207,6 +208,8 @@ def bind() -> Libs:
         # --- message pump
         (user32, "GetMessageW", ctypes.c_int,
          [ctypes.c_void_p, HWND, UINT, UINT]),
+        (user32, "PeekMessageW", BOOL,
+         [ctypes.c_void_p, HWND, UINT, UINT, UINT]),
         (user32, "TranslateMessage", BOOL, [ctypes.c_void_p]),
         (user32, "DispatchMessageW", LRESULT, [ctypes.c_void_p]),
         (user32, "PostMessageW", BOOL, [HWND, UINT, WPARAM, LPARAM]),

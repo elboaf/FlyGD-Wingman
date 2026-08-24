@@ -4,11 +4,26 @@ The gesture arithmetic at the top is pure and tested in CI. Everything
 below it touches HWNDs and therefore may only run on the preview thread.
 """
 import logging
+import os
+import time
 
 from . import chrome, geometry, layered, win32
 from .thumbnail import Thumbnail
 
 logger = logging.getLogger(__name__)
+
+# Opt-in drag diagnostics. Off by default and free when off: one bool
+# check per mouse-move. Set WINGMAN_PREVIEW_PERF=1 to have each drag log
+# how many moves it processed, how long the handler took, and -- the part
+# that matters -- the largest gap BETWEEN events, which is what a stutter
+# actually is.
+# .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
+# trailing space, so an exact match silently disables this for anyone
+# who sets it the obvious way.
+# .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
+# trailing space, so an exact match silently disables this for anyone
+# who sets it the obvious way.
+PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 
 MIN_SIZE = (120, 90)
 BORDER = 5
@@ -141,6 +156,32 @@ def _dispatch(hwnd, msg, wparam, lparam):
     return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
 
+def coalesce_moves(peek, hwnd, lparam):
+    """Return the newest queued mouse position, discarding the rest.
+
+    A drag delivers WM_MOUSEMOVE far faster than a preview can be moved:
+    measured at 320/s against a ~1.8ms handler, which is 58% of the thread
+    for one window -- and a 1000Hz mouse would bury it. The cost is
+    SetWindowPos blocking while DWM recomposites several topmost layered
+    windows with live thumbnails.
+
+    Processing every event just builds a backlog and makes the window lag
+    the cursor, which is what the stutter is. Only the newest position can
+    possibly be correct, so drop the intermediate ones: the window tracks
+    the cursor and the thread stops saturating.
+
+    *peek* is PeekMessageW, injected so this is testable off Windows.
+    """
+    from ctypes import byref
+    from ctypes import wintypes as _wt
+
+    msg = _wt.MSG()
+    while peek(byref(msg), hwnd, win32.WM_MOUSEMOVE, win32.WM_MOUSEMOVE,
+               win32.PM_REMOVE):
+        lparam = msg.lParam
+    return lparam
+
+
 def _lparam_point(lparam):
     """Client coords packed into lParam. Signed: a drag above or left of
     the window gives negative values, and reading them unsigned makes the
@@ -166,6 +207,7 @@ class PreviewWindow:
         self.rect = rect
         self.locked = False
         self.selected = False
+        self._perf = None
         # Last key rendered; None forces the first draw.
         self._chrome_cache_key = None
         self._on_activate = on_activate
@@ -264,11 +306,22 @@ class PreviewWindow:
                                                 self.rect.h), *pt))
                           else "drag")
             self._libs.user32.SetCapture(self.hwnd)
+            if PERF:
+                self._perf = {"n": 0, "handler": 0.0, "gap": 0.0,
+                              "last": time.perf_counter(),
+                              "start": time.perf_counter()}
             return 0
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
             if self.locked and self._mode == "drag":
                 return 0
+            if PERF:
+                t0 = time.perf_counter()
+                p = self._perf
+                p["gap"] = max(p["gap"], t0 - p["last"])
+                p["n"] += 1
+            lparam = coalesce_moves(self._libs.user32.PeekMessageW,
+                                    self.hwnd, lparam)
             pt = _lparam_point(lparam)
             # Client coords move with the window, so compare against the
             # rect captured at button-down rather than the live one.
@@ -283,10 +336,25 @@ class PreviewWindow:
                     y=self._start_rect.y + (cur[1] - start[1]))
                 self.move(geometry.snap(moved, self._neighbours(),
                                         self._screen()))
+            if PERF:
+                now = time.perf_counter()
+                self._perf["handler"] += now - t0
+                self._perf["last"] = now
             return 0
 
         if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP) and self._mode:
             self._libs.user32.ReleaseCapture()
+            if PERF and getattr(self, "_perf", None):
+                p = self._perf
+                wall = time.perf_counter() - p["start"]
+                n = max(1, p["n"])
+                logger.info(
+                    "drag perf: %d moves in %.0fms (%.0f/s) | handler "
+                    "%.3fms avg, %.1f%% of wall | worst gap between events "
+                    "%.1fms", p["n"], wall * 1000, n / max(wall, 1e-6),
+                    p["handler"] * 1000 / n, 100 * p["handler"] / max(wall, 1e-6),
+                    p["gap"] * 1000)
+                self._perf = None
             mode, self._mode = self._mode, None
             pt = _lparam_point(lparam)
             if mode == "drag" and msg == win32.WM_LBUTTONUP:

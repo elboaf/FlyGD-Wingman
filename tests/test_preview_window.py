@@ -118,3 +118,27 @@ def test_a_resize_does_re_render():
     w = _RecordingWindow(Rect(100, 100, 320, 210))
     w.move(Rect(100, 100, 400, 260))
     assert w.renders == 1
+
+
+def test_coalesce_moves_keeps_only_the_newest_position():
+    """A drag delivers moves faster than a preview can be moved (measured:
+    320/s against a 1.8ms handler). Processing every one builds a backlog
+    and the window lags the cursor -- which is what the stutter is. Only
+    the newest position can be correct."""
+    from ctypes import wintypes
+
+    queued = [111, 222, 333]
+
+    def fake_peek(msg_ptr, hwnd, lo, hi, flags):
+        if not queued:
+            return False
+        msg_ptr._obj.lParam = queued.pop(0)
+        return True
+
+    assert window.coalesce_moves(fake_peek, 1, 999) == 333
+
+
+def test_coalesce_moves_returns_the_original_when_the_queue_is_empty():
+    """The common case at the start of a slow drag: nothing queued behind
+    this event, so the position it carried is the one to use."""
+    assert window.coalesce_moves(lambda *a: False, 1, 42) == 42
