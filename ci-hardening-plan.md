@@ -601,9 +601,11 @@ gh -R elboaf/FlyGD-Wingman run view --log | grep -E 'SKIPPED|passed|skipped' | t
 | `test_eveskills_dpapi.py:30`, `:38` | `skipif(sys.platform == "win32")` | Linux only |
 | `test_evesettings_tree.py:121` | `skipif(os.name == "nt")` | Linux only |
 
-So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and exactly **three tests skip** (`dpapi:30`, `dpapi:38`, `evesettings_tree:121`). Any Windows-only test still skipping means the matrix is not doing its job.
+So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and the totals reconcile — Windows `passed + skipped` must equal Linux `passed + skipped`, because the same tests are collected on both.
 
-Note that `test_preview_host.py:145` will now **execute** rather than skip. Its reason string — "needs a real message pump and window station" — describes what it requires, not a prediction that a runner lacks it. If it fails on GitHub's Windows runner because the service context provides no window station, that is a real finding: report it and decide whether to narrow the marker, rather than silently widening the skip.
+**Measured on a real run (32784568339):** Linux `1839 passed, 6 skipped`; Windows `1831 passed, 14 skipped`. Both total 1845, so nothing was lost. Windows skips 14, not 3 — the extra eleven are all legitimately POSIX-only: `chmod`-based unreadable-store tests (Windows does not honour mode 000), POSIX symlink semantics, owner-only permission bits, case-distinct filenames, and the several `*_off_windows` no-op guards. Do not treat 14 as a failure; check the *names*, not the count, and confirm no `test_preview_win32.py`, `test_preview_host.py`, or `test_eveskills_dpapi.py::test_*_on_windows` entry appears among them.
+
+Note that `test_preview_host.py:145` **ran and passed** on the GitHub Windows runner, which settles an open question from the design doc: the service-context runner does provide a real message pump and window station.
 
 - [ ] **Step 7: Switch the `test` jobs in `release.yml` and `build.yml` to Windows**
 
