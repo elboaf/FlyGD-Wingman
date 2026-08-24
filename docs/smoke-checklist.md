@@ -1064,6 +1064,36 @@ against a placeholder id; only these items are blocked on the registration.
       live browser**, not just in reasoning: with `?dev=1` loaded, run each
       from devtools and confirm the roster and progress indicator update
       as their names imply.
+- [ ] **`Reload plans` and `Open plans folder` both actually work.** Drop a
+      new `.txt` plan file into the plans folder, click `Reload plans`, and
+      confirm it appears in the rail with the right requirement count.
+      Then click `Open plans folder` and confirm the OS shell opens the
+      correct directory. This second check is in the same failure family
+      as the WebView2 items above it: `os.startfile` cannot be exercised in
+      CI at all, so nothing but a human clicking the button proves the
+      folder that opens is the one plans actually load from.
+- [ ] **Selecting a different plan actually re-targets everything.** With
+      two plans present, select the plan that is not already selected.
+      Expected: the roster regroups against the new plan's requirements,
+      the ready ratio in the rail updates for the new plan, and — if a row
+      was already expanded — its requirement list re-fetches and shows the
+      **newly selected plan's** requirements, not the previous plan's. This
+      last part is the one to watch closely: a stale in-flight fetch
+      resolving after the switch and rendering under the wrong plan is a
+      silent bug — the row looks populated and correct, but every
+      requirement on it belongs to the plan you left.
+- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
+      both exactly right.** Launch with `?dev=1` (it seeds one character
+      per bucket) and confirm the groups appear top to bottom in this
+      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
+      `Unscored`, then the catch-all bucket last. Within `Missing`, with
+      more than one character in it, confirm the character with the
+      **fewest** missing requirements sorts first. Nothing under `tests/`
+      exercises this grouping or ordering at all — it lives entirely in
+      `skills.js` — so this item is the only thing standing between a
+      regression here and a release. A silent reorder or a resorted
+      `Missing` group would not error or throw; it would just be wrong,
+      and nothing else in this checklist or the suite would catch it.
 
 ### Frozen build
 
