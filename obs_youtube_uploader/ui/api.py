@@ -76,6 +76,21 @@ def _open_file_dialog_kind():
     return webview.FileDialog.OPEN
 
 
+def _empty_skills_state() -> dict:
+    """The state payload when there is no controller at all.
+
+    Same keys as the real one so skills.js has exactly one renderer. A
+    payload that drops fields when the subsystem is absent means every
+    access in the page needs a guard, and the one that gets forgotten
+    throws inside a click handler with no console attached.
+    """
+    return {"auth_configured": False, "auth_in_progress": False,
+            "refresh_in_flight": False, "selected_plan_name": "",
+            "plans": [], "characters": [], "plan_issues": [],
+            "warnings": ["The EVE skills subsystem is unavailable."],
+            "plans_updated_utc": ""}
+
+
 def _close_media(media) -> None:
     """Release the file handle a MediaFileUpload holds, best effort.
 
@@ -158,7 +173,7 @@ class Api:
                  rows=None, durations_file=None,
                  drain_interval_s=PROBE_DRAIN_S,
                  spawn=threading.Thread, probe=library.probe,
-                 timer=threading.Timer, preview_host=None):
+                 timer=threading.Timer, preview_host=None, skills=None):
         self._state = state
         self._window = None          # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
@@ -172,6 +187,12 @@ class Api:
         # None off Windows and in most tests: the preview subsystem is
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
+
+        # None off the happy path -- when the subsystem failed to build, and
+        # in most tests. Every call site below tolerates its absence and
+        # returns a safe value, which is what lets the page render the route
+        # without probing for a capability first.
+        self._skills = skills
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -1514,3 +1535,79 @@ class Api:
         would be misleading for these.
         """
         self._alert("info", "Bookmarks", str(body))
+
+    # ---- EVE skills ---
+
+    def skills_state(self) -> dict:
+        """Everything the Skills route renders, in one call."""
+        if self._skills is None:
+            return _empty_skills_state()
+        return self._skills.state_payload()
+
+    def skills_character_detail(self, character_id, plan_name) -> dict:
+        if self._skills is None:
+            return {"ok": False, "message": "The EVE skills subsystem is "
+                    "unavailable.", "character_id": 0, "plan_name": "",
+                    "readiness": "Unknown", "estimated_finish_utc": "",
+                    "queue_timing_unknown": False, "requirements": []}
+        return self._skills.character_detail(character_id, plan_name)
+
+    def skills_add_character(self) -> bool:
+        """Start an interactive EVE sign-in. Returns before it finishes.
+
+        True even with no controller, and even though nothing happened.
+        `WM.send` resolves to null on a bridge failure and the page cannot
+        otherwise tell the two apart -- the comment on set_preview_enabled
+        above records that returning None from a no-op WAS the bug, and that
+        it cost a checkbox that reverted on every successful toggle.
+        """
+        if self._skills is not None:
+            self._skills.authenticate()
+        return True
+
+    def skills_cancel_auth(self) -> bool:
+        if self._skills is not None:
+            self._skills.cancel_auth()
+        return True
+
+    def skills_forget_character(self, character_id) -> bool:
+        """False is meaningful here: nothing was forgotten."""
+        if self._skills is None:
+            return False
+        return self._skills.forget(character_id)
+
+    def skills_refresh(self) -> bool:
+        if self._skills is not None:
+            self._skills.refresh_characters()
+        return True
+
+    def skills_reload_plans(self) -> bool:
+        if self._skills is not None:
+            self._skills.reload_plans()
+        return True
+
+    def skills_open_plans_folder(self) -> bool:
+        if self._skills is not None:
+            self._skills.open_plans_folder()
+        return True
+
+    def skills_select_plan(self, plan_name) -> bool:
+        if self._skills is None:
+            return True
+        return self._skills.select_plan(plan_name)
+
+    def shutdown_skills(self) -> None:
+        """Tear the subsystem down on the way out. main() only.
+
+        Not a façade -- the page never calls it, exactly as it never calls
+        shutdown_previews(). Runs on every exit path, so like
+        shutdown_engine() it must never be the thing that raises: a live
+        loopback socket on the fixed redirect port would make the NEXT
+        launch's sign-in fail to bind, and there is no fallback port.
+        """
+        if self._skills is None:
+            return
+        try:
+            self._skills.shutdown()
+        except Exception:
+            logger.exception("EVE skills subsystem did not stop cleanly")
