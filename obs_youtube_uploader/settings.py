@@ -193,9 +193,9 @@ def validated_eve(raw) -> dict:
     # known ids, so a key from a hand-edited file cannot reach the INI.
 
     # home_zero, preface_return and return_preface used to be read here.
-    # Naming is fixed now (bookmarks.HOME_ZERO and friends). Dropping the
-    # reads is the whole of the removal: `section` starts from
-    # _eve_defaults() and only the keys handled explicitly are copied
+    # Naming is fixed in the engine now, with no INI setting behind it at
+    # all. Dropping the reads is the whole of the removal: `section` starts
+    # from _eve_defaults() and only the keys handled explicitly are copied
     # across, so the leftovers in an older settings.json go nowhere and are
     # gone from the file after the next save.
 

@@ -86,13 +86,45 @@ def test_protean_mode_is_gone(lowered):
     assert "formatproteanclipandpaste" not in lowered
 
 
-def test_restored_settings_are_read_from_the_ini(source):
-    """Cut in the first port and restored. HomeZeroIs0 in particular must be
-    READ, not hardcoded: the engine's compiled default is the opposite of
-    Wingman's, so a dropped IniRead silently renumbers every home bookmark."""
-    for name in ("HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
-        assert re.search(r"IniRead,\s*" + name + r"\s*,", source,
-                         re.IGNORECASE), name
+def test_the_engine_reads_only_keybinds_and_enabled(source):
+    """The re-vendored engine has no [Settings] at all.
+
+    HomeZeroIs0, PrefaceReturn and ReturnPreface were restored during the
+    fork and are gone again with it: the helper author's script never had
+    them, and Wingman had frozen all three off, so the branches they gated
+    could not fire. What matters now is the inverse of the old assertion --
+    the engine must not grow a read of config Wingman no longer writes,
+    because an IniRead default would then decide behaviour nobody chose.
+    That is exactly how the compiled HomeZeroIs0 default came to renumber
+    home bookmarks.
+    """
+    sections = set(re.findall(r"IniRead,\s*\w+\s*,\s*%IniFile%\s*,\s*(\w+)",
+                              source, re.IGNORECASE))
+    assert sections == {"Keybinds", "Enabled"}, sections
+
+
+def test_home_hole_resumption_is_reachable(source):
+    """The bug this file exists to prevent recurring.
+
+    ZeroMode is the bulk-renumber state Set Root enters when every selected
+    bookmark has a single-character prefix -- the home holes. The forked
+    engine carried ZeroMode, CountValidBookmarkLines and AllPrefixesSingle
+    as *dead code*: the variable was assigned False in six places and True
+    in none, and neither helper was ever called. Set Root therefore read
+    the character "1" as the root and restarted numbering at 1 instead of
+    resuming past the used slots.
+
+    Nothing caught it, because every assertion here was about the presence
+    of names rather than about their being reachable. Hence this one.
+    """
+    assert re.search(r"ZeroMode\s*:=\s*True", source), \
+        "ZeroMode is never entered -- home-hole resumption is dead code"
+    for helper in ("CountValidBookmarkLines", "AllPrefixesSingle"):
+        calls = re.findall(helper + r"\s*\(", source)
+        definitions = re.findall(r"^" + helper + r"\s*\(", source,
+                                 re.MULTILINE)
+        assert len(calls) > len(definitions), \
+            f"{helper} is defined but never called"
 
 
 def test_copy_and_paste_are_gone(source):
@@ -158,17 +190,29 @@ def test_every_bind_is_registered_inside_the_window_loop(source):
     assert "GrabSig" in inside
 
 
-def test_set_root_rechecks_the_active_window(source):
-    """Registered per-window now, so this should never fail -- but
-    RefreshHotkeys runs on a timer, and between a window being disabled and
-    the refresh that tears its binds down the hotkey is still live. Without
-    the guard that press runs the whole copy/parse flow: Send ^c into
-    whatever is focused, and the root state reset on the way."""
-    body = source.split("DoSemi:", 1)[1][:1200]
-    assert "IsEveWindow" in body
-    assert re.search(r"WinGetTitle\s*,\s*ActiveTitle\s*,\s*A", body,
-                     re.IGNORECASE)
-    assert re.search(r"if\s*\(!IsEveWindow\)", body)
+def test_set_root_is_scoped_by_registration_alone(source):
+    """DoSemi's own window re-check is gone, deliberately.
+
+    The fork carried an IsEveWindow guard inside the handler. It was kept
+    for one narrow case: RefreshHotkeys runs on a 10s timer, so between a
+    window being unticked and the refresh that tears its binds down, the
+    bind is still live, and a press in that gap resets the root state in a
+    window the user just disabled. The maintainer's call is to track the
+    helper author's script exactly rather than carry the extra branch, so
+    the per-window registration above is now the only thing scoping Set
+    Root -- which makes test_every_bind_is_registered_inside_the_window_loop
+    load-bearing for it, not merely tidy.
+
+    Asserted positively so this cannot pass vacuously: Set Root must still
+    be registered, and only inside the window loop.
+    """
+    loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
+                     re.IGNORECASE | re.DOTALL)
+    assert loop, "per-window registration loop not found"
+    assert 'RegisterBind("SetRoot"' in loop.group(0)
+    outside = source.replace(loop.group(0), "")
+    assert 'RegisterBind("SetRoot"' not in outside
+    assert "DoSemi" in source
 
 
 def test_root_mode_is_published(lowered):

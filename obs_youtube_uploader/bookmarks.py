@@ -223,22 +223,16 @@ def parse_ahk(text: str) -> dict:
 
 _CRLF = "\r\n"
 
-# Bookmark naming is fixed. It was user-editable in the standalone GUI and
-# in Wingman's first port; the three controls were removed as noise.
+# Bookmark naming is fixed, and there are no naming knobs left anywhere:
+# not in the UI, not in settings.json, and not in the INI. The re-vendored
+# engine has no [Settings] section at all -- it numbers home holes from .1
+# and never prefaces the return bookmark -- so anything written here would
+# be config nothing reads. A key that looks like it controls behaviour but
+# does not is exactly what cost a debugging session once already.
 #
-# The values are the helper author's own: their script numbers home holes
-# from .1 and does not preface the return bookmark at all. Wingman had been
-# prefacing with "!" -- a default inherited from a later revision of the
-# standalone script, not a decision anyone made -- so this follows the
-# author rather than the accident.
-#
-# RETURN_PREFACE is dead while PREFACE_RETURN is False. It is still defined,
-# and still written, so the pair cannot drift: leaving the character out of
-# the INI would let the engine's IniRead default ("!") stand, and anything
-# that ever flipped the flag would silently start prefacing again.
-HOME_ZERO = False
-PREFACE_RETURN = False
-RETURN_PREFACE = "!"
+# The one place a preface character is still named is the legacy importer
+# below, and only to tell someone migrating from the standalone tool that
+# the preface they had is gone. That is a migration note, not a setting.
 
 
 def generate_ini(section: dict) -> str:
@@ -256,18 +250,6 @@ def generate_ini(section: dict) -> str:
     for bid in BIND_IDS:
         value = binds.get(bid) or ""
         lines.append(f"{bid}={sanitise(value)}")
-
-    # Still written on every pass, even though these no longer vary: a
-    # missing key makes IniRead fall back to the engine's compiled-in
-    # default (111unified.ahk:114-117). HomeZeroIs0 is the one that
-    # matters -- its compiled default is 1 and Wingman's numbering is the
-    # opposite, so dropping the block would renumber every home bookmark
-    # instead of leaving the naming exactly where it was.
-    lines.append("")
-    lines.append("[Settings]")
-    lines.append(f"HomeZeroIs0={1 if HOME_ZERO else 0}")
-    lines.append(f"PrefaceReturn={1 if PREFACE_RETURN else 0}")
-    lines.append(f"ReturnPreface={sanitise(RETURN_PREFACE)}")
 
     lines.append("")
     lines.append("[Enabled]")
@@ -292,10 +274,12 @@ def sanitise(value: str) -> str:
     return "".join(ch for ch in str(value) if ch not in "\r\n").strip()
 
 
-# The engine matches window titles against ^EVE -  (111unified.ahk:248), so
-# anything else is dead weight in the generated file. Filtering on that here
-# is also what closes the INI-injection vectors sanitise() does not: the
-# title is written as a KEY, and Windows parses a line starting with "[" as a
+# Only "EVE - " titles reach the generated file. This used to be described
+# as the engine's own constraint, quoting DoSemi's `ActiveTitle ~= "^EVE - "`
+# guard -- that guard is gone with the re-vendor, so the engine now scopes
+# binds purely by the titles it is handed. The filter stays because the
+# reasons below are Wingman's own, and are the load-bearing ones: the title
+# is written as an INI KEY, and Windows parses a line starting with "[" as a
 # section header and one starting with ";" as a comment, while an embedded
 # "=" moves the key/value split and makes the entry unmatchable. A title that
 # starts with "EVE - " can do none of those.
@@ -382,8 +366,9 @@ def import_legacy_ini(text: str) -> dict:
             # carries no information the user can act on.
             continue
         if not is_engine_window_title(clean):
-            # The engine only ever matches ^EVE -  (111unified.ahk:248), so
-            # generate_ini would drop this silently on the next write.
+            # generate_ini writes only "EVE - " titles (see
+            # ENGINE_TITLE_PREFIX), so this would be dropped silently on
+            # the next write.
             discarded_windows.append(clean)
             continue
         section["windows"][clean] = value.strip() == "1"
@@ -417,8 +402,10 @@ def import_legacy_ini(text: str) -> dict:
             "home holes from .1, so they will come out one higher than you "
             "are used to.")
     preface_on = legacy_settings.get("PrefaceReturn", "1").strip() != "0"
-    preface = sanitise(legacy_settings.get("ReturnPreface", RETURN_PREFACE))
-    if preface_on and not PREFACE_RETURN:
+    # "!" is the standalone script's own compiled default, used when the
+    # legacy file omits the key -- not a Wingman value. Wingman has none.
+    preface = sanitise(legacy_settings.get("ReturnPreface", "!"))
+    if preface_on:
         # The character is quoted back rather than assumed: the legacy file
         # carries whatever the user chose, and "your ! is gone" is no help
         # to someone who had set it to something else.

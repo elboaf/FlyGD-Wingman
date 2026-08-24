@@ -80,11 +80,13 @@ def test_a_settings_file_from_before_the_naming_removal_is_cleaned_up(tmp_path):
     assert "Paste" not in section["keybinds"]
     for key in ("home_zero", "preface_return", "return_preface"):
         assert key not in section
-    # And the INI the engine actually reads is unmoved by any of it.
+    # And the INI the engine actually reads carries none of it: there is no
+    # [Settings] section left for a stale key to reach.
     text = bookmarks.generate_ini(section)
-    assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=0" in text
-    assert "ReturnPreface=!\r\n" in text
+    assert "[Settings]" not in text
+    assert "@" not in text
+    for key in ("HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
+        assert key not in text, key
 
 
 @pytest.mark.parametrize("bad", [7, None, [], {"x": 1}])

@@ -1,11 +1,31 @@
 ; ============================================================
 ; eve_bookmarks.ahk - EVE Bookmark Helper (Flygd/ABH)
+;
+; Vendored from the helper author's own script (docs/reference/), with
+; Wingman's integration layer applied on top and the standalone tool's
+; self-configuration removed. The behaviour below is deliberately the
+; author's -- when they ship a new revision, re-vendor it and re-apply the
+; same layer rather than porting changes across by hand. The previous
+; approach (forking an older revision and maintaining it here) is what let
+; Set Root's home-hole resumption silently diverge.
+;
+; Removed from the author's script, all of it self-configuration Wingman
+; owns instead: SaveAllSettings, SaveWindowSettings (both still called
+; GuiControlGet after the GUI was stripped, so both were broken), the 20
+; IniWrite calls, ExitScript, ReloadScript, and KBDisplay (a GUI-only
+; formatter with no remaining caller).
+;
+; Added: the /token handshake, the status file, the command file, and
+; failure-recording bind registration. Each is marked WINGMAN below.
 ; ============================================================
 #Persistent
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
 ; raise a prompt for a user who no longer has a GUI to answer it in.
 #SingleInstance Force
+SetStoreCapsLockMode, Off
+GroupAdd, EVEWindows, EVE -
 
+; --- WINGMAN: /token handshake ------------------------------------
 ; Wingman passes /token <value> at spawn and records the same value beside
 ; the PID. Orphan recovery matches on it before terminating anything, so
 ; the interpreter running someone else's script is never killed.
@@ -35,25 +55,14 @@ EpochNow() {
     return diff
 }
 
-SetStoreCapsLockMode, Off
-GroupAdd, EVEWindows, EVE -
-
-; Pin the encoding: the app reads this file with encoding="utf-8", and sig
-; is three characters taken straight from the clipboard, so a non-ASCII
+; Pin the encoding: the app reads the status file with encoding="utf-8", and
+; sig is three characters taken straight from the clipboard, so a non-ASCII
 ; signature would otherwise decode differently on each side and show as a
-; permanent "stale" readout. UTF-8-RAW is UTF-8 without a BOM -- a BOM
-; would make json.loads fail on the first character. Set here, in the
-; auto-execute section, so it becomes the default for every later-launched
-; thread (including the RefreshStatusTab timer) rather than just this one.
+; permanent "stale" readout. UTF-8-RAW is UTF-8 without a BOM -- a BOM would
+; make json.loads fail on the first character. Set here, in the auto-execute
+; section, so it becomes the default for every later-launched thread
+; (including the RefreshStatusTab timer) rather than just this one.
 FileEncoding, UTF-8-RAW
-
-; --- Settings (overwritten by LoadAllSettings when the INI exists) ---
-; Seeded with the standalone script's own compiled-in defaults
-; (111unified.ahk:32-34). Wingman always writes all three, so these only
-; apply when the INI is missing entirely.
-HomeZeroIs0 := 1
-PrefaceReturn := 1
-ReturnPreface := "!"
 
 ; --- Root tracking ---
 RootKey := ""
@@ -95,9 +104,10 @@ KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
 ; Maps hotkey string -> label, so we can disable by exact label
 HotkeyLabelMap := {}
 
-; Window titles whose hotkey variants were registered on the last pass.
-; Required for teardown: a variant registered under IfWinActive <title> can
-; only be disabled from inside that same criterion.
+; --- WINGMAN: registration and command bookkeeping ----------------
+; Every window title we currently hold registrations against. A
+; window-scoped hotkey can only be disabled from inside the same criterion
+; it was registered in, so the teardown in RefreshHotkeys needs this list.
 RegisteredWindows := []
 FailedBinds := ""
 
@@ -127,24 +137,24 @@ NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
 
-; Adopt whatever sequence is already on disk, so a command left by a
-; previous session is not replayed on this one's first tick.
+; WINGMAN: adopt whatever sequence is already on disk, so a command left by
+; a previous session is not replayed on this one's first tick.
 IniRead, StartSeq, eve_command.ini, Command, Seq, 0
 ConsumedSeq := StartSeq + 0
 
 Return
 
 LoadAllSettings:
-; Wingman owns creating and writing eve_bookmark_helper.ini; the engine must
-; only ever read it, never create or rewrite it.
+; WINGMAN: Wingman owns creating and writing eve_bookmark_helper.ini; the
+; engine must only ever read it. The author's script calls SaveAllSettings
+; here instead, which would make the engine a second writer to config that
+; settings.json is the source of truth for.
 IfNotExist, %IniFile%
     Return
 
-; Load settings. Wingman writes all three on every pass, so the defaults
-; here are only reached if it somehow wrote a partial file.
-IniRead, HomeZeroIs0,   %IniFile%, Settings, HomeZeroIs0, 1
-IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
-IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
+; Load window enabled settings
+IniRead, EnabledSection, %IniFile%, Enabled
+; No need to store globally, will be read in RefreshHotkeys
 
 ; Load keybindings
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
@@ -167,6 +177,11 @@ IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
 Return
 
+; ============================================================
+; WINGMAN: status file
+; ============================================================
+; Written to a temp name and moved over the target: Wingman polls this at
+; ~1Hz and must never read a half-written file.
 RefreshStatusTab:
 GoSub, ReadCommand
 if (RootModeActive) {
@@ -182,8 +197,6 @@ if (RootModeActive) {
 }
 SigText := LastSigId
 
-; Written to a temp name and moved over the target: Wingman polls this at
-; ~1Hz and must never read a half-written file.
 StatusBody := "{"
     . """sig"":""" . JsonEsc(SigText) . ""","
     . """root"":""" . JsonEsc(RootText) . ""","
@@ -229,6 +242,9 @@ JsonList(csv) {
     return out
 }
 
+; ============================================================
+; WINGMAN: command file
+; ============================================================
 ReadCommand:
 IfNotExist, eve_command.ini
     Return
@@ -250,244 +266,58 @@ else if (CmdName = "set_root")
 }
 Return
 
-; ============================================================
-; INTELLIGENT PARSER: Extracts Chain ID, Class, and Sig ID from any format
-; ============================================================
-ParseBookmark(input) {
-    global
-    
-    ; Step 1: Strip preface (leading non-alphanumeric characters)
-    CleanInput := input
-    Loop
-    {
-        FirstChar := SubStr(CleanInput, 1, 1)
-        if (FirstChar = "" || FirstChar ~= "[A-Za-z0-9]")
-            break
-        CleanInput := SubStr(CleanInput, 2)
-    }
-    
-    ; Step 2: Extract all alphanumeric tokens
-    Tokens := []
-    CurrentToken := ""
-    Loop, Parse, CleanInput
-    {
-        char := A_LoopField
-        if (char ~= "[A-Za-z0-9]") {
-            CurrentToken .= char
-        } else {
-            if (CurrentToken != "") {
-                Tokens.Push(CurrentToken)
-                CurrentToken := ""
-            }
-        }
-    }
-    if (CurrentToken != "")
-        Tokens.Push(CurrentToken)
-    
-    ; Step 3: Identify Sig ID (exactly 3 letters)
-    SigId := ""
-    SigIndex := -1
-    For index, token in Tokens
-    {
-        if (StrLen(token) = 3 && token ~= "^[A-Za-z]+$") {
-            ; Found a 3-letter token - this is our sig
-            SigId := token
-            SigIndex := index
-            break
-        }
-    }
-    
-    ; Step 4: Identify Class (token that matches class patterns)
-    Class := ""
-    ClassIndex := -1
-    ClassPattern := "^(1|2|3|4|5|6|13|c1|c2|c3|c4|c5|c6|c13|h|hs|l|ls|n|ns|t|d)$"
-    
-    For index, token in Tokens
-    {
-        ; Convert to lowercase for comparison
-        StringLower, tokenLower, token
-        if (tokenLower ~= ClassPattern) {
-            ; Don't match if this is the sig
-            if (index != SigIndex) {
-                Class := tokenLower
-                ClassIndex := index
-                break
-            }
-        }
-    }
-    
-    ; Step 5: Chain ID is always the first token
-    Chain := ""
-    if (Tokens.Length() > 0) {
-        Chain := Tokens[1]
-    }
-    
-    ; Return results
-    return {chain: Chain, class: Class, sig: SigId, tokens: Tokens}
-}
-
-; ============================================================
-; FIND COMMON CHAIN: Finds the longest common prefix across all first tokens
-; ============================================================
-FindCommonChain(firstTokens) {
-    if (firstTokens.Length() = 0)
-        return ""
-    
-    if (firstTokens.Length() = 1)
-        return firstTokens[1]
-    
-    ; Start with the shortest token
-    Shortest := firstTokens[1]
-    For index, token in firstTokens
-    {
-        if (StrLen(token) < StrLen(Shortest))
-            Shortest := token
-    }
-    
-    ; Try to find a chain by progressively stripping characters from the shortest token
-    ; Start with the full shortest token, then strip from the end
-    Chain := Shortest
-    Loop
-    {
-        ; Check if all tokens start with this chain
-        AllMatch := True
-        For index, token in firstTokens
-        {
-            if (SubStr(token, 1, StrLen(Chain)) != Chain) {
-                AllMatch := False
-                break
-            }
-        }
-        
-        if (AllMatch)
-            return Chain
-        
-        ; If we've stripped down to nothing, return the shortest token
-        if (StrLen(Chain) <= 1) {
-            ; If all tokens start with the same single character, use that
-            FirstChar := SubStr(Shortest, 1, 1)
-            AllMatch := True
-            For index, token in firstTokens
-            {
-                if (SubStr(token, 1, 1) != FirstChar) {
-                    AllMatch := False
-                    break
-                }
-            }
-            if (AllMatch)
-                return FirstChar
-            return Shortest
-        }
-        
-        ; Strip the last character and try again
-        Chain := SubStr(Chain, 1, StrLen(Chain) - 1)
-    }
-    
-    return Shortest
-}
-
-; ============================================================
-; PARSE BOOKMARK WITH SUFFIX: Gets chain, suffix, class, sig from a single line
-; ============================================================
-ParseBookmarkWithSuffix(input, detectedChain) {
-    global
-    
-    ; First, get the basic parse
-    Parsed := ParseBookmark(input)
-    Chain := detectedChain
-    Class := Parsed.class
-    Sig := Parsed.sig
-    
-    ; If no chain, return empty
-    if (Chain = "")
-        return {chain: "", suffix: "", class: Class, sig: Sig}
-    
-    ; Extract the first token
-    CleanInput := input
-    Loop
-    {
-        FirstChar := SubStr(CleanInput, 1, 1)
-        if (FirstChar = "" || FirstChar ~= "[A-Za-z0-9]")
-            break
-        CleanInput := SubStr(CleanInput, 2)
-    }
-    
-    ; Get the first alphanumeric token
-    FirstToken := ""
-    Loop, Parse, CleanInput
-    {
-        char := A_LoopField
-        if (char ~= "[A-Za-z0-9]") {
-            FirstToken .= char
-        } else {
-            if (FirstToken != "")
-                break
-        }
-    }
-    if (FirstToken = "")
-        FirstToken := Chain
-    
-    ; Extract the suffix
-    Suffix := ""
-    if (FirstToken != Chain && SubStr(FirstToken, 1, StrLen(Chain)) = Chain) {
-        Suffix := SubStr(FirstToken, StrLen(Chain) + 1)
-    }
-    
-    return {chain: Chain, suffix: Suffix, class: Class, sig: Sig, firstToken: FirstToken}
-}
-
+; Set Root driven from Wingman's UI rather than from a selection in EVE.
+; The argument is a bare system key, so it is taken as the root directly --
+; there is no clipboard to scan and therefore no used-slot information;
+; numbering starts fresh, exactly as it does for a root typed into the
+; standalone tool.
 SetManualRoot:
 ManualRoot := Trim(ManualRoot)
 if (ManualRoot = "") {
     GoSub, ClearRoot
     Return
 }
-
-; Parse the input intelligently
-Parsed := ParseBookmark(ManualRoot)
-RootKey := Parsed.chain
-
-if (RootKey != "") {
-    RootModeActive := True
-    ZeroMode := False
-    ReadyToIncrement := False
-    RootJustFired := False
-    LastFinisherWasAlpha := False
-    UsedNums := {}
-    UsedAlphas := {}
-    NextNum := 1
-    NextAlpha := 1
-    LastUsedNum := ""
-    LastUsedAlpha := ""
-    
-    ; Build display root
-    DisplayRoot := RootKey
-    ; The Protean branch that sat here (111unified.ahk:604-606) stays
-    ; removed; this one is independent of it and was cut by mistake.
-    if (PrefaceReturn) {
-        DisplayRoot := ReturnPreface . DisplayRoot
-    }
-
-    Clipboard := DisplayRoot
-    GoSub, ShowRootTooltip
-    Return
-}
-
+; Reduce whatever was typed to a system key exactly the way DoSemi reduces
+; a selected bookmark: the first field, then everything before the "-" that
+; separates the key from the sig. The route offers a free-text box, so
+; pasting a whole bookmark name into it is the obvious thing to do, and
+; taking that whole would set a root no finisher could ever match. The old
+; engine got this for free from ParseBookmark, which the author's script
+; does not have.
+ManualRoot := GetFirstField(ManualRoot)
+HyphenPos := InStr(ManualRoot, "-")
+if (HyphenPos >= 2)
+    ManualRoot := SubStr(ManualRoot, 1, HyphenPos - 1)
+RootKey              := ManualRoot
+StringUpper, RootKey, RootKey
+RootModeActive       := True
+ZeroMode             := False
+ReadyToIncrement     := False
+RootJustFired        := False
+LastFinisherWasAlpha := False
+UsedNums             := {}
+UsedAlphas           := {}
+NextNum              := 1
+NextAlpha            := 1
+LastUsedNum          := ""
+LastUsedAlpha        := ""
+Clipboard := RootKey
 GoSub, ShowRootTooltip
 Return
 
 ClearRoot:
-RootKey          := ""
-RootModeActive   := True
-ZeroMode         := False
-ReadyToIncrement := False
-RootJustFired    := False
-UsedNums         := {}
-UsedAlphas       := {}
-NextNum          := 1
-NextAlpha        := 1
-LastUsedNum      := ""
-LastUsedAlpha    := ""
+RootKey              := ""
+RootModeActive       := True
+ZeroMode             := False
+ReadyToIncrement     := False
+RootJustFired        := False
+LastFinisherWasAlpha := False
+UsedNums             := {}
+UsedAlphas           := {}
+NextNum              := 1
+NextAlpha            := 1
+LastUsedNum          := ""
+LastUsedAlpha        := ""
 ToolTip, Root cleared - now in Home/Zero mode
 SetTimer, RemoveTooltip, -1500
 GoSub, ShowRootTooltip
@@ -513,15 +343,18 @@ ToolTip
 Return
 
 RefreshHotkeys:
-GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
+; WINGMAN: hot reload. The author's script reads only [Enabled] here; the
+; keybinds themselves are re-read too, because Wingman rewrites the whole
+; INI whenever the user saves the Bookmarks route and there is no other
+; moment at which a changed bind would be picked up.
+GoSub, LoadAllSettings
 
-; Disable anything registered in the global context. Nothing is registered
-; there any more, so on a normal pass this loop finds nothing -- it is kept
-; because it is the cheap half of the teardown bug fixed below: a bind added
-; outside the window loop in future would otherwise survive every refresh,
-; and UseErrorLevel makes a miss free. It must stay ahead of the
-; window-scoped teardown -- the two are different registrations and each is
-; only reachable from the context it was made in.
+; Step 1: disable anything registered in the global context. Nothing is
+; registered there, so on a normal pass this finds nothing -- it is kept
+; because it is the cheap half of the teardown below, and UseErrorLevel
+; makes a miss free. It must stay ahead of the window-scoped teardown: the
+; two are different registrations and each is only reachable from the
+; context it was made in.
 Hotkey, IfWinActive
 For hk, lbl in HotkeyLabelMap
 {
@@ -529,10 +362,11 @@ For hk, lbl in HotkeyLabelMap
         Hotkey, %hk%, Off, UseErrorLevel
 }
 
-; Disable the window-scoped variants IN THEIR OWN CONTEXT. Turning them off
-; from the global context above does nothing at all -- that is the bug this
-; loop exists to fix. Without it, changing a bind or disabling a window
-; leaves the previous hotkey live.
+; WINGMAN: disable the window-scoped variants IN THEIR OWN CONTEXT.
+; Turning them off from the global context above does nothing at all.
+; Without this, changing a bind or disabling a window leaves the previous
+; hotkey live -- the author's script has no equivalent because its GUI
+; reloaded the whole script rather than refreshing in place.
 For idx, OldTitle in RegisteredWindows
 {
     Hotkey, IfWinActive, %OldTitle%
@@ -546,10 +380,10 @@ Hotkey, IfWinActive
 RegisteredWindows := []
 FailedBinds := ""
 
-; Read all enabled windows
+; Step 2: Read all enabled windows
 IniRead, EnabledSection, %IniFile%, Enabled
 
-; Build the new label map (only non-empty bindings)
+; Step 3: Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
@@ -588,11 +422,10 @@ if (KB_FinS != "")
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
-; Register every bind against each enabled window. RefreshHotkeys Step 4
-; (111unified.ahk:763-771) kept Copy, Paste and Set Root out of this loop so
-; they fired in every application. Copy and Paste are gone, and Set Root is
-; in the loop now: a hotkey that reformats the clipboard and resets the root
-; state has no business firing in a browser or a chat window.
+; Step 4: Register window-specific hotkeys for enabled windows.
+; WINGMAN: every registration goes through RegisterBind rather than a bare
+; Hotkey ... On UseErrorLevel, so a bind Windows refuses is reported to the
+; UI instead of failing silently.
 Loop, Parse, EnabledSection, `n, `r
 {
     Line := Trim(A_LoopField)
@@ -612,8 +445,6 @@ Loop, Parse, EnabledSection, `n, `r
         RegisterBind("FormatEnf",    KB_FormatEnf,    "DoE")
         RegisterBind("ConvertScout", KB_ConvertScout, "DoConvertScout")
         RegisterBind("FinH",  KB_FinH,  "DoY")
-        RegisterBind("FinL",  KB_FinL,  "DoP")
-        RegisterBind("FinN",  KB_FinN,  "DoDot")
         RegisterBind("Fin13", KB_Fin13, "DoO")
         RegisterBind("Fin1",  KB_Fin1,  "Do1")
         RegisterBind("Fin2",  KB_Fin2,  "Do2")
@@ -623,18 +454,20 @@ Loop, Parse, EnabledSection, `n, `r
         RegisterBind("Fin6",  KB_Fin6,  "Do6")
         RegisterBind("FinETag",  KB_FinETag,  "DoQuote")
         RegisterBind("FinSlash", KB_FinSlash, "DoComma")
+        RegisterBind("FinN", KB_FinN, "DoDot")
+        RegisterBind("FinL", KB_FinL, "DoP")
         RegisterBind("FinS", KB_FinS, "DoS")
         RegisterBind("FinC", KB_FinC, "DoC")
     }
 }
 
-; Reset the hotkey context
+; Step 5: Reset the hotkey context
 Hotkey, IfWinActive
 Return
 
-; Every Hotkey ... On UseErrorLevel in the original discarded its result,
-; so a bind Windows refused -- one already claimed by another application --
-; failed silently and the key simply did nothing.
+; WINGMAN: every Hotkey ... On UseErrorLevel in the author's script
+; discards its result, so a bind Windows refuses -- one already claimed by
+; another application -- fails silently and the key simply does nothing.
 RegisterBind(id, key, label) {
     global FailedBinds
     if (key = "")
@@ -667,54 +500,37 @@ FireRootFinisher(finChar, isAlpha) {
     global RootKey, RootJustFired, LastSigId, LastFinisherWasAlpha
     global UsedNums, UsedAlphas, NextNum, NextAlpha
     global ReadyToIncrement, LastUsedNum, LastUsedAlpha
-    ; Must be declared: an undeclared name inside a function is LOCAL in
-    ; AHK v1, so this would read as empty, the home branch would never fire
-    ; and the setting would silently do nothing.
-    global HomeZeroIs0
 
     if (isAlpha) {
         if (ReadyToIncrement) {
+            ; Use next available and mark as used
             SysKey := BuildSystemKey(RootKey, NextAlpha, True)
             UsedAlphas[NextAlpha] := True
             LastUsedAlpha := NextAlpha
             FindNextAlpha()
         } else {
+            ; Correct-in-place: reuse last used alpha
             if (LastUsedAlpha = "")
                 LastUsedAlpha := NextAlpha
             SysKey := BuildSystemKey(RootKey, LastUsedAlpha, True)
         }
     } else {
         if (ReadyToIncrement) {
-            ; The HomeZeroIs0 option, restored. It is NOT tied to the
-            ; removed Protean mode -- the original condition never
-            ; mentioned CurrentMode (111unified.ahk:870,886,893).
-            if (RootKey = "" && HomeZeroIs0) {
-                Num := NextNum - 1
-            } else {
-                Num := NextNum
-            }
+            ; Use next available and mark as used
+            SysKey := BuildSystemKey(RootKey, NextNum, False)
             UsedNums[NextNum] := True
             LastUsedNum := NextNum
             FindNextNum()
         } else {
-            ; Preserve the original structure exactly. The home-mode first
-            ; correction is .0, which the original produced by seeding
-            ; LastUsedNum with 1 and subtracting below -- NOT by seeding it
-            ; with NextNum, which diverges as soon as NextNum > 1.
-            if (LastUsedNum = "") {
-                LastUsedNum := (RootKey = "" && HomeZeroIs0) ? 1 : NextNum
-            }
-            Num := (RootKey = "" && HomeZeroIs0) ? LastUsedNum - 1 : LastUsedNum
+            ; Correct-in-place: reuse last used number
+            if (LastUsedNum = "")
+                LastUsedNum := NextNum
+            SysKey := BuildSystemKey(RootKey, LastUsedNum, False)
         }
-        SysKey := BuildSystemKey(RootKey, Num, False)
     }
 
-    ; Flygd/Thera: ROOT-SIGID TYPE (hyphen-separated, all uppercase)
-    SigClean := LTrim(LastSigId, "-")
-    StringUpper, finType, finChar
-    StringUpper, SigClean, SigClean
-    Result := SysKey . "-" . SigClean . " " . finType
-
+    Result := SysKey . LastSigId . " " . finChar
+    StringUpper, Result, Result
     Clipboard := Result
     ClipWait, 2
 
@@ -792,171 +608,114 @@ Sleep 100
 ClipWait, 2
 ClipSaved := Clipboard
 ClipTrim := SubStr(ClipSaved, 1, 3)
-
-StringUpper, ClipTrim, ClipTrim
 Clipboard := "-" . ClipTrim . " "
 LastSigId := "-" . ClipTrim
-
 ReadyToIncrement := True
 RootJustFired := False
 Return
 
-; ============================================================
-; SET ROOT: Normal copy/parse/set root flow with resume.
-;
-; Registered per-window now, so the guard below should never fail. It is
-; kept because registration and this check read the [Enabled] list at
-; different moments: RefreshHotkeys runs on a timer, so between a window
-; being disabled and the refresh that tears its binds down, the hotkey is
-; still live. Without the guard that press would run the whole copy/parse
-; flow -- Send ^c into whatever is focused, and the root state reset on the
-; way. Falling back to typing the current root matches the original, which
-; tests only the window and never CurrentMode (111unified.ahk:1024-1043).
-; ============================================================
 DoSemi:
-; FIRST: are we in an enabled EVE window?
-IsEveWindow := False
-WinGetTitle, ActiveTitle, A
-if (ActiveTitle ~= "^EVE - ") {
-    IniRead, WindowEnabled, %IniFile%, Enabled, %ActiveTitle%, 0
-    if (WindowEnabled = 1)
-        IsEveWindow := True
-}
-
-; If NOT in an EVE window, just send the current root and exit.
-if (!IsEveWindow) {
-    if (RootKey != "") {
-        Sleep 100
-        Send %RootKey%
-    }
-    Return
-}
-
-; Reset everything
-RootKey := ""
-RootJustFired := False
-LastFinisherWasAlpha := False
-RootModeActive := False
-ZeroMode := False
-ReadyToIncrement := False
-UsedNums := {}
-UsedAlphas := {}
-NextNum := 1
-NextAlpha := 1
-LastUsedNum := ""
-LastUsedAlpha := ""
-
-; Copy selected text
 Clipboard := ""
 Send ^c
 Sleep 100
 ClipWait, 2, 1
 ClipSaved := Clipboard
-
+RootKey              := ""
+RootJustFired        := False
+LastFinisherWasAlpha := False
+RootModeActive       := False
+ZeroMode             := False
+ReadyToIncrement     := False
+UsedNums             := {}
+UsedAlphas           := {}
+NextNum              := 1
+NextAlpha            := 1
+LastUsedNum          := ""
+LastUsedAlpha        := ""
 if (ClipSaved = "") {
-    ; Home mode - no text selected
     RootModeActive := True
-    RootKey := ""
-    Clipboard := ""
     GoSub, ShowRootTooltip
     Return
 }
-
-; ============================================================
-; Process each line to extract first tokens and find common chain
-; ============================================================
-Lines := StrSplit(ClipSaved, "`n")
-FirstTokens := []
-
-; First pass: collect all first tokens
-For lineIndex, Line in Lines
-{
-    Line := Trim(Line)
-    if (Line = "")
-        continue
-    
-    ; Strip preface and get first token
-    CleanLine := Line
-    Loop
-    {
-        FirstChar := SubStr(CleanLine, 1, 1)
-        if (FirstChar = "" || FirstChar ~= "[A-Za-z0-9]")
-            break
-        CleanLine := SubStr(CleanLine, 2)
-    }
-    
-    FirstToken := ""
-    Loop, Parse, CleanLine
-    {
-        char := A_LoopField
-        if (char ~= "[A-Za-z0-9]") {
-            FirstToken .= char
-        } else {
-            if (FirstToken != "")
-                break
-        }
-    }
-    if (FirstToken != "")
-        FirstTokens.Push(FirstToken)
-}
-
-; Find the common chain across all first tokens
-DetectedChain := FindCommonChain(FirstTokens)
-
-; Second pass: process each line with the detected chain
-For lineIndex, Line in Lines
-{
-    Line := Trim(Line)
-    if (Line = "")
-        continue
-    
-    ; Parse with the detected chain
-    Parsed := ParseBookmarkWithSuffix(Line, DetectedChain)
-    Suffix := Parsed.suffix
-    
-    ; Track suffixes
-    if (Suffix != "") {
-        ; Determine if suffix is numeric or alphabetic
-        if (Suffix ~= "^\d+$") {
-            ; Numeric suffix - add to UsedNums
-            UsedNums[Suffix + 0] := True
-        } else if (Suffix ~= "^[A-Za-z]$") {
-            ; Alphabetic suffix - convert to index and add to UsedAlphas
-            StringUpper, SuffixUpper, Suffix
-            AlphaIndex := Asc(SuffixUpper) - 64  ; A=1, B=2, etc.
-            if (AlphaIndex >= 1 && AlphaIndex <= 26) {
-                UsedAlphas[AlphaIndex] := True
-            }
-        }
-    }
-}
-
-; If we found a chain, set it as the root
-if (DetectedChain != "") {
-    RootKey := DetectedChain
+ValidCount := CountValidBookmarkLines(ClipSaved)
+if (ValidCount > 1 && AllPrefixesSingle(ClipSaved)) {
+    RootKey        := ""
     RootModeActive := True
-    ZeroMode := False
-    
-    ; Find next available numeric and alpha
-    FindNextNum()
-    FindNextAlpha()
-    
-    ; Build display root (bookmark format)
-    DisplayRoot := RootKey
-    ; The Protean branch that sat here (111unified.ahk:604-606) stays
-    ; removed; this one is independent of it and was cut by mistake.
-    if (PrefaceReturn) {
-        DisplayRoot := ReturnPreface . DisplayRoot
+    ZeroMode       := True
+} else {
+    Loop, Parse, ClipSaved, `n, `r
+    {
+        Line := Trim(A_LoopField)
+        if (Line = "")
+            continue
+        FirstField := GetFirstField(Line)
+        if (FirstField = "")
+            continue
+        StringUpper, FirstField, FirstField
+        if (FirstField ~= "^[A-Z0-9]+$" && StrLen(FirstField) <= 10) {
+            RootKey        := FirstField
+            RootModeActive := True
+            ZeroMode       := False
+            Break
+        }
+        HyphenPos := InStr(FirstField, "-")
+        if (HyphenPos < 2)
+            continue
+        Prefix      := SubStr(FirstField, 1, HyphenPos - 1)
+        AfterHyphen := SubStr(FirstField, HyphenPos + 1)
+        if (AfterHyphen ~= "^[A-Z]{3}") {
+            RootKey        := Prefix
+            RootModeActive := True
+            ZeroMode       := False
+            Break
+        }
     }
-
-    ; Put bookmark format in clipboard for EVE return bookmark
-    Clipboard := DisplayRoot
-    ClipWait, 2
-    
+}
+if (!RootModeActive) {
+    HyphenPos := InStr(ClipSaved, "-")
+    if (HyphenPos > 1) {
+        RootKey        := SubStr(ClipSaved, 1, HyphenPos - 1)
+        StringUpper, RootKey, RootKey
+        RootModeActive := True
+        ZeroMode       := False
+        Clipboard      := RootKey
+    }
     GoSub, ShowRootTooltip
     Return
 }
-
+Loop, Parse, ClipSaved, `n, `r
+{
+    Line := Trim(A_LoopField)
+    if (Line = "")
+        continue
+    FirstField := GetFirstField(Line)
+    if (FirstField = "")
+        continue
+    HyphenPos := InStr(FirstField, "-")
+    if (HyphenPos < 2)
+        continue
+    Prefix := SubStr(FirstField, 1, HyphenPos - 1)
+    StringUpper, Prefix, Prefix
+    if (ZeroMode) {
+        if (Prefix ~= "^\d$")
+            UsedNums[Prefix + 0] := True
+        else if (Prefix ~= "^[A-Z]$")
+            UsedAlphas[Asc(Prefix) - 64] := True
+    } else {
+        if (SubStr(Prefix, 1, StrLen(RootKey)) != RootKey)
+            continue
+        KeySuffix := SubStr(Prefix, StrLen(RootKey) + 1)
+        if (KeySuffix = "")
+            continue
+        if (KeySuffix ~= "^\d+$")
+            UsedNums[KeySuffix + 0] := True
+        else if (KeySuffix ~= "^[A-Z]$")
+            UsedAlphas[Asc(KeySuffix) - 64] := True
+    }
+}
+FindNextNum()
+FindNextAlpha()
+Clipboard := RootKey
 GoSub, ShowRootTooltip
 Return
 
@@ -990,11 +749,15 @@ Loop, Parse, InputText, `n, `r
     ; Check if this is an EvE-Scout bookmark
     if (InStr(Line, "EvE-Scout") || InStr(Line, "EVE-Scout")) {
         ; Extract the signature ID (format like XXX-### or similar)
+        ; Look for pattern: letters/hyphen/numbers at the start of the line
         SigId := ""
         
+        ; Try to match pattern: any characters until first space or tab
+        ; But specifically, look for something like "FSV-922"
         FirstSpace := InStr(Line, " ")
         FirstTab := InStr(Line, "`t")
         
+        ; Find the earliest delimiter
         DelimPos := 0
         if (FirstSpace > 0)
             DelimPos := FirstSpace
@@ -1004,9 +767,17 @@ Loop, Parse, InputText, `n, `r
         if (DelimPos > 0) {
             SigId := Trim(SubStr(Line, 1, DelimPos - 1))
         } else {
+            ; No delimiter found, use whole line but try to extract first word
+            ; Split by any whitespace
             SigId := RegExMatch(Line, "^\S+", Match) ? Match : Line
         }
         
+        ; Additional cleanup: if SigId contains parentheses or extra text, try to extract just the first token
+        ; Sometimes the bookmark might have format like "FSV-922" - keep only alphanumeric + hyphen
+        ; But don't over-clean - the signature ID should be something like "FSV-922"
+        
+        ; Build the probe scanner formatted line
+        ; Format: SIGID<TAB>Cosmic Signature<TAB>Wormhole<TAB>Unstable Wormhole<TAB>100.0%<TAB>98 km
         if (SigId != "") {
             OutputLines .= SigId . "`tCosmic Signature`tWormhole`tUnstable Wormhole`t100.0%`t98 km`n"
             ConvertedCount++
@@ -1014,6 +785,7 @@ Loop, Parse, InputText, `n, `r
     }
 }
 
+; Remove trailing newline
 OutputLines := RegExReplace(OutputLines, "`n$")
 
 if (OutputLines = "") {
@@ -1022,6 +794,7 @@ if (OutputLines = "") {
     Return
 }
 
+; Replace clipboard with converted content
 Clipboard := OutputLines
 ToolTip, Converted %ConvertedCount% EvE-Scout bookmarks to probe format
 SetTimer, RemoveTooltip, -2000
@@ -1035,21 +808,22 @@ NewFFlag := 0
 NewC := 0
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
-GoSub, FormatFlygdClipAndPaste
+GoSub, FormatClipAndPaste
 Return
 
 DoY:
 if (RootModeActive) {
-    FireRootFinisher("H", True)
+    FinChar := GetKeyState("CapsLock", "T") ? "h" : "H"
+    FireRootFinisher(FinChar, True)
 } else {
     GoSub, ReadField
     StringUpper, ClipUpper, ClipRaw
-    NewSuffix := "H"
+    NewSuffix := GetKeyState("CapsLock", "T") ? "h" : "H"
     NewE := 0
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1064,37 +838,39 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
 DoP:
 if (RootModeActive) {
-    FireRootFinisher("L", True)
+    FinChar := GetKeyState("CapsLock", "T") ? "l" : "L"
+    FireRootFinisher(FinChar, True)
 } else {
     GoSub, ReadField
     StringUpper, ClipUpper, ClipRaw
-    NewSuffix := "L"
+    NewSuffix := GetKeyState("CapsLock", "T") ? "l" : "L"
     NewE := 0
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
 DoDot:
 if (RootModeActive) {
-    FireRootFinisher("N", True)
+    FinChar := GetKeyState("CapsLock", "T") ? "n" : "N"
+    FireRootFinisher(FinChar, True)
 } else {
     GoSub, ReadField
     StringUpper, ClipUpper, ClipRaw
-    NewSuffix := "N"
+    NewSuffix := GetKeyState("CapsLock", "T") ? "n" : "N"
     NewE := 0
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1106,7 +882,7 @@ NewE := 0
 NewSlash := 0
 NewFFlag := 1
 NewC := 0
-GoSub, FormatFlygdClipAndPaste
+GoSub, FormatClipAndPaste
 Return
 
 DoC:
@@ -1117,7 +893,7 @@ NewE := 0
 NewSlash := 0
 NewFFlag := 0
 NewC := 1
-GoSub, FormatFlygdClipAndPaste
+GoSub, FormatClipAndPaste
 Return
 
 Do1:
@@ -1131,7 +907,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1146,7 +922,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1161,7 +937,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1176,7 +952,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1191,7 +967,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1206,7 +982,7 @@ if (RootModeActive) {
     NewSlash := 0
     NewFFlag := 0
     NewC := 0
-    GoSub, FormatFlygdClipAndPaste
+    GoSub, FormatClipAndPaste
 }
 Return
 
@@ -1218,7 +994,7 @@ NewE := 1
 NewSlash := 0
 NewFFlag := 0
 NewC := 0
-GoSub, FormatFlygdClipAndPaste
+GoSub, FormatClipAndPaste
 Return
 
 DoComma:
@@ -1229,7 +1005,7 @@ NewE := 0
 NewSlash := 1
 NewFFlag := 0
 NewC := 0
-GoSub, FormatFlygdClipAndPaste
+GoSub, FormatClipAndPaste
 Return
 
 ReadField:
@@ -1241,14 +1017,9 @@ ClipWait, 2
 ClipRaw := Clipboard
 Return
 
-; ============================================================
-; FLYGD/THERA MODE: Parse hyphen-based bookmarks
-; Format: ROOT-SIGID TYPE [tags...]
-; Example: 3-EPA C5 e /
-; ============================================================
-FormatFlygdClipAndPaste:
+FormatClipAndPaste:
+global NewFFlag, NewC
 Raw := ClipUpper
-
 DashPos := InStr(Raw, "-")
 if (DashPos > 0) {
     Prefix := SubStr(Raw, 1, DashPos - 1)
@@ -1284,31 +1055,30 @@ if (DashPos > 0) {
     NewC      := 0
     Return
 }
-
 RestAfterSys := RegExReplace(RestAfterSys, "^\s+", "")
 ExistingE      := 0
 ExistingSlash  := 0
 ExistingF      := 0
 ExistingC      := 0
 ExistingSuffix := ""
-
 Tokens := StrSplit(RestAfterSys, " ")
 Loop % Tokens.MaxIndex()
 {
     t := Tokens[A_Index]
     if (t = "13" || (StrLen(t) = 1 && (t >= "1" && t <= "6" || t = "H" || t = "L" || t = "N" || t = "T" || t = "D")))
         ExistingSuffix := t
-    else if (t = "e")
+    else if (t = "e" || t = "E")
         ExistingE := 1
     else if (t = "/")
         ExistingSlash := 1
     else if (t = "f" || t = "S")
         ExistingF := 1
-    else if (t = "c")
+    else if (t = "c" || t = "C")
         ExistingC := 1
 }
 
 ; Apply mutual exclusivity rules
+; / and c are mutually exclusive (if setting one, clear the other)
 if (NewSlash) {
     NewC := 0
 }
@@ -1318,11 +1088,10 @@ if (NewC) {
 
 FinalSuffix := (NewSuffix != "") ? NewSuffix : ExistingSuffix
 
-; Nothing conflicts with the frig tag now that the medium-hole tag is
-; gone, so it is a plain OR rather than the three-way preference the pair
-; needed.
+; f has no conflicts since M was removed
 FinalF := (ExistingF || NewFFlag)
 
+; / and c are mutually exclusive
 if (NewSlash) {
     FinalSlash := 1
     FinalC := 0
@@ -1339,6 +1108,7 @@ if (NewSlash) {
     }
 }
 
+; e can stack with anything, no mutual exclusivity needed
 FinalE := (ExistingE || NewE)
 
 Result := Base
@@ -1352,12 +1122,10 @@ if (FinalF)
     Result .= " f"
 if (FinalC)
     Result .= " c"
-
 Clipboard := Result
 ClipWait, 2
 Sleep 50
 Send ^v
-
 NewSuffix := ""
 NewE      := 0
 NewSlash  := 0
