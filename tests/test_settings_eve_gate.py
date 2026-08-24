@@ -169,3 +169,26 @@ def test_the_toggle_repaints_the_chrome_itself():
     handler = js.split("set_show_eve_tools")[1].split("});")[0]
     assert "apply_eve_gate" in handler, (
         "the toggle writes the setting but never repaints the nav or rail")
+
+
+def test_hiding_cuts_every_route_into_a_hidden_screen():
+    """Found by smoke test: untick the tools while standing on Skills, then
+    leave Settings -- and the gear puts you back on Skills, with the nav
+    hidden and no way out.
+
+    The toggle lives in Settings, so current_route is 'settings' when it
+    fires and the current-route check never matches. `last_destination` is
+    what the gear returns to, and it still pointed at Skills.
+
+    The rule this encodes: hiding a screen means cutting EVERY route into
+    it, not just the one the user is standing on.
+    """
+    import pathlib
+
+    web = (pathlib.Path(__file__).resolve().parents[1]
+           / "obs_youtube_uploader" / "web")
+    app = (web / "app.js").read_text(encoding="utf-8")
+
+    block = app.split("WM.apply_eve_gate")[1].split("document.addEventListener")[0]
+    assert "WM.last_destination" in block, (
+        "the gear can still return to a hidden destination")

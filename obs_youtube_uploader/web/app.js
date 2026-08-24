@@ -190,10 +190,19 @@
     // One destination left is not a choice, so the whole bar goes. This
     // also hands its width back to the drag region.
     WM.el('routenav').classList.toggle('single', !WM.eve_shown);
-    // Hiding the route or section you are ON would leave a dead screen
-    // with no way back, so leave it first.
+    // Hiding a screen you can still reach would strand you on it, so every
+    // route into one has to be cut -- not just the one you are standing on.
+    //
+    // last_destination is the one that bites. The toggle lives in Settings,
+    // so current_route is 'settings' when it fires and the check below
+    // never matches: you untick from Skills, press the gear to leave, and
+    // the gear returns you to Skills -- with the nav now hidden and no way
+    // out. Found by smoke test, exactly the case the first version missed.
     if (!WM.eve_shown) {
       if (WM.EVE_ROUTES.indexOf(WM.current_route) !== -1) { WM.route('main'); }
+      if (WM.EVE_ROUTES.indexOf(WM.last_destination) !== -1) {
+        WM.last_destination = 'main';
+      }
       if (WM.EVE_SECTIONS.indexOf(WM.current_section) !== -1) {
         WM.section('general');
       }
