@@ -37,6 +37,8 @@
     WM.el('es-root').textContent = payload.root || 'No folder selected';
     WM.el('es-eve-state').textContent =
       payload.eve_running ? 'EVE running' : 'EVE closed';
+    WM.el('es-eve-state').className =
+      'pill ' + (payload.eve_running ? 'warn' : 'idle');
 
     var warning = WM.el('es-warning');
     // "Couldn't read" and "nothing there" are different answers, and only
@@ -124,6 +126,7 @@
 
   function button(text, handler) {
     var el = document.createElement('button');
+    el.className = 'btn';
     el.textContent = text;
     el.disabled = busy;
     el.addEventListener('click', handler);

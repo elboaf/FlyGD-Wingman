@@ -561,6 +561,11 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    is, so forty characters scroll inside the card. */
 #es-targets, #es-backups { max-height: 38vh; }
 
+/* Accented, unlike a plain .hint: "couldn't read that folder" is a warning
+   rather than an error (the root may simply not exist yet), following
+   #eve-bind-warning's precedent below. */
+#es-warning { color: var(--warn); }
+
 /* Accented, unlike a plain .hint: this warns that two actions share a key
    and AutoHotkey will silently let one win. It shares .bindbtn.clash's
    colour so the sentence and the rows it names read as one warning. */
