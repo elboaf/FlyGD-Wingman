@@ -81,10 +81,15 @@ def activate(libs, hwnd) -> bool:
 
     ok = libs.user32.GetForegroundWindow() == hwnd
     if not ok:
-        # The most likely field complaint is "clicking a preview does
-        # nothing". Without this line there is nothing to go on.
-        logger.debug("Activation of 0x%x did not take; foreground is 0x%x",
-                     hwnd, libs.user32.GetForegroundWindow() or 0)
+        # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
+        # so a debug line here is invisible in the only log a user will
+        # ever send us -- for the single most likely field complaint,
+        # "clicking a preview does nothing". It cannot spam either: this
+        # fires once per click, and only when the click failed.
+        logger.info("Activation of 0x%x did not take; foreground is 0x%x. "
+                    "Windows refuses a foreground change from a process "
+                    "that has not received recent user input.",
+                    hwnd, libs.user32.GetForegroundWindow() or 0)
     return ok
 
 

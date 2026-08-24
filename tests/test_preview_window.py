@@ -49,3 +49,32 @@ def test_resize_grows_from_the_top_left_anchor():
     out = window.resize_result((100, 100), (150, 130), R, min_size=(80, 60))
     assert (out.x, out.y) == (R.x, R.y)
     assert (out.w, out.h) == (R.w + 50, R.h + 30)
+
+
+def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
+    """__main__.py:64 sets the root logger to INFO. A DEBUG line about a
+    failed activation is therefore invisible in the only log a user will
+    ever send -- which defeats the point of logging it at all."""
+    class FakeUser32:
+        def IsIconic(self, h):
+            return False
+
+        def GetForegroundWindow(self):
+            return 999           # never becomes the target
+
+        def GetWindowThreadProcessId(self, h, p):
+            return 0
+
+        def AttachThreadInput(self, a, b, c):
+            return False
+
+        def SetForegroundWindow(self, h):
+            return True
+
+    class FakeLibs:
+        user32 = FakeUser32()
+        kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: 1})()
+
+    with caplog.at_level("INFO"):
+        assert window.activate(FakeLibs(), 123) is False
+    assert any("Activation of" in r.message for r in caplog.records)
