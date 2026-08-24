@@ -225,7 +225,7 @@ jobs:
             throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the released app will open a blank window and exit 0"
           }
           Get-ChildItem -Recurse $web
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js",
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "skills.js", "firstrun.js",
                                "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }

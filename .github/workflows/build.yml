@@ -253,10 +253,15 @@ jobs:
           }
           Get-ChildItem -Recurse $web
           # Every file the page loads by name. index.html is the entry point;
-          # a missing style.css or any of the four scripts renders an
-          # unstyled or inert page rather than failing. Settings is a ROUTE
-          # inside index.html, so there is no second document to check.
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js",
+          # a missing style.css or any of the scripts renders an unstyled or
+          # inert page rather than failing. Settings is a ROUTE inside
+          # index.html, so there is no second document to check.
+          #
+          # Deliberately no count: this said "the four scripts" while
+          # listing five, because the number is not checked against
+          # anything and nobody updates it when a file is added. The array
+          # below is the list; the comment says what the list is for.
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "skills.js", "firstrun.js",
                                "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
