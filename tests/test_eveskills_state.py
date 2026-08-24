@@ -495,3 +495,27 @@ def test_the_document_is_owner_only_on_posix(tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "eve_skills.json.bak").stat().st_mode) \
         == 0o600
+
+
+def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
+    """The chmod in save() that aligns .bak to the primary's mode is gated
+    on `bak.exists()`, not on this call being the one that copied it --
+    so it must fire on _recover_from_backup()'s write-back too, where
+    save() never takes its own copy branch (`path` does not exist at that
+    point; _preserve_corrupt just moved it aside) but a laxer-permission
+    .bak from before this package ever touched it can still be sitting
+    there. Without this, the roster (character names, ids, scopes, the
+    full snapshot -- DPAPI protects only the token blob) would be
+    readable from an 0644 .bak sitting right beside a hardened 0600
+    primary."""
+    target = tmp_path / "eve_skills.json"
+    bak = tmp_path / "eve_skills.json.bak"
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    os.chmod(bak, 0o644)
+
+    target.write_text("{ not json", encoding="utf-8")
+    loaded, warnings = state.load(target)
+
+    assert loaded.selected_plan_name == "Good"
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
