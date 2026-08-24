@@ -803,6 +803,14 @@ pytest — the engine is AutoHotkey.
       the parser mistook the single character for the root. `ZeroMode` was
       dead code in the script the port was made from; the re-vendored
       engine wires it up.
+- [ ] **Grab Sig no longer uppercases what it captured.** The fork ran
+      `StringUpper` over the three characters; the author's script does not,
+      and the re-vendor follows the author. Finisher-generated names are
+      unaffected (`FireRootFinisher` uppercases the whole result), so this
+      shows only in the status bar's sig readout and in what Grab Sig puts
+      on the clipboard for you to paste by hand. EVE displays signature IDs
+      uppercase already, so in practice there should be nothing to see —
+      check the sig readout looks right, and say so if it does not.
 - [ ] **KNOWN BEHAVIOUR CHANGE — chained systems no longer resume from a
       selection of numbered bookmarks.** Select `J2148111-ABC`,
       `J2148112-DEF`, `J214811A-GHI` and press Set Root.
