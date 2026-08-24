@@ -206,9 +206,13 @@ def test_update_rollback_restores_nested_sections(tmp_path):
     assert data["preview"]["opacity"] == settings.DEFAULTS["preview"]["opacity"]
 
 
-def test_concurrent_updates_do_not_lose_each_other(tmp_path):
-    """The race this whole task exists for: one writer's read-modify-write
-    interleaving with another's and reverting it."""
+def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
+    """Smoke coverage: concurrent writers interleave without corrupting the
+    document or losing a key WITHIN this shape. It is NOT a regression guard
+    for the lost-update race -- both threads share one dict and write
+    disjoint keys, so it passes against an unlocked update() too (verified).
+    The race needs a writer that serialises a SNAPSHOT read earlier, which
+    arrives when ui/api.py is converted."""
     import threading
 
     path = tmp_path / "settings.json"
