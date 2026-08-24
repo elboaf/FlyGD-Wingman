@@ -34,6 +34,19 @@
   function render(payload) {
     if (!payload) return;
     STATE = payload;
+    // Every cached detail was computed from the PREVIOUS onSkills payload's
+    // character/plan data. A fresh payload means a character's skills,
+    // training queue, or requirement scoring may have just changed --
+    // periodic refresh, a completed re-authentication, a forgotten and
+    // re-added character reusing an id -- and a stale cached detail would
+    // keep showing what just changed. Mirrors selectPlan's own
+    // invalidation further down this file: drop pendingDetail too, so an
+    // in-flight reply describing the OLD data lands in requestDetail's
+    // mismatch branch and is discarded rather than rendered, and
+    // re-request detail for every row still expanded so an open row does
+    // not simply go blank.
+    details = {};
+    pendingDetail = {};
     // Progress lines describe a refresh in flight. onSkills is pushed on
     // BOTH the success and failure paths of every mutation, so the end of
     // a refresh always arrives here -- which is what stops "Refreshed 3 of
@@ -44,6 +57,9 @@
     renderNotices();
     renderIssues();
     renderRoster();
+    Object.keys(expanded).forEach(function (id) {
+      requestDetail(parseInt(id, 10));
+    });
   }
 
   WM.handle('onSkills', render);
@@ -58,7 +74,15 @@
     // the largest payload in the app.
     if (asked) return;
     asked = true;
-    WM.send('skills_state').then(render);
+    WM.send('skills_state').then(function (payload) {
+      // A null/undefined reply means the request itself failed rather
+      // than answering with an empty state -- render() already no-ops on
+      // that, but leaving `asked` set would make every later route entry
+      // believe the initial ask already happened and skip retrying it
+      // forever, stranding the page with no state at all.
+      if (!payload) asked = false;
+      render(payload);
+    });
   });
 
   // ---- left rail ------------------------------------------------------
@@ -266,6 +290,14 @@
    * refresh failed. A roster driven by enumerating known groups would
    * strand exactly the characters most likely to need repair -- the ones
    * that just failed to authenticate.
+   *
+   * The same guard applies one level up, in renderRoster: a populated
+   * roster with a broken or empty plans folder must still call
+   * buildRoster and render every character's row. Returning early to show
+   * only the "no plans" hint -- as this used to do -- silently applies
+   * the same lockout from a different angle: every character reads as
+   * Unscored (there is nothing to score against), which is not a reason
+   * to withhold the one place that state can be fixed from.
    */
   function buildRoster(chars) {
     var buckets = {};
@@ -371,23 +403,26 @@
         'No characters yet. Add one from the actions on the left.';
       return;
     }
-    if (!plans().length) {
-      empty.hidden = false;
-      empty.textContent = 'No local plans yet. Drop a .txt plan in the '
-        + 'plans folder, then reload.';
-      return;
-    }
 
     var rows = matching();
-    if (!rows.length) {
+    // The plans-empty and no-match hints are shown BESIDE the roster, never
+    // instead of it -- see THE LOCKOUT GUARD above buildRoster. A missing
+    // or empty plans folder changes what every character's readiness IS
+    // (Unscored, most likely), it does not change whether that character
+    // gets a row: the row is still the only surface for forgetting it or
+    // re-authenticating it, and a character stuck at Unscored because the
+    // plans folder is empty needs that surface just as much as any other.
+    var hint = '';
+    if (!plans().length) {
+      hint = 'No local plans yet. Drop a .txt plan in the plans folder, '
+        + 'then reload.';
+    } else if (!rows.length) {
       // The clear action is already visible (it is shown whenever a filter
       // is active), so this line does not repeat it as a button.
-      empty.hidden = false;
-      empty.textContent = 'No characters match “'
-        + filterText.trim() + '”.';
-      return;
+      hint = 'No characters match “' + filterText.trim() + '”.';
     }
-    empty.hidden = true;
+    empty.hidden = !hint;
+    empty.textContent = hint;
 
     buildRoster(rows).forEach(function (group) {
       host.appendChild(groupNode(group));
