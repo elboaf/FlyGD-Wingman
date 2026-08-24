@@ -166,6 +166,16 @@ def test_an_unresolved_name_reports_no_levels():
     assert analysis.active_level is None and analysis.trained_level is None
 
 
+def test_a_known_but_untrained_skill_reports_zero_not_none():
+    """The source looks these up with TryGetValue, which defaults absent
+    entries to 0 rather than null: a resolved skill the character has
+    simply never trained is level 0, a different fact from the name never
+    resolving to an id at all (which is the None case above)."""
+    got = evaluate(NAV3)
+    analysis = got.requirements[0]
+    assert (analysis.active_level, analysis.trained_level) == (0, 0)
+
+
 def test_all_active_is_ready():
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
     got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},

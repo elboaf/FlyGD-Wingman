@@ -160,15 +160,19 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
                 active_level=None, trained_level=None, state=UNKNOWN,
                 queued_finish_utc=None, queue_timing_unknown=False))
             continue
-        active = active_levels.get(skill_id)
-        trained = trained_levels.get(skill_id)
+        # Defaults to 0, not None, matching the source's TryGetValue: a
+        # resolved skill the character has simply never trained is level
+        # 0, which is a different fact from the name never resolving to
+        # an id at all (that case reports None above, and only there).
+        active = active_levels.get(skill_id, 0)
+        trained = trained_levels.get(skill_id, 0)
         chosen = None
         # First match wins, in exactly this order. Active before trained
         # because a skill that is usable is usable; trained before queued
         # because owning it beats being on the way to owning it.
-        if active is not None and active >= req.level:
+        if active >= req.level:
             state = ACTIVE
-        elif trained is not None and trained >= req.level:
+        elif trained >= req.level:
             state = TRAINED_INACTIVE
         else:
             chosen = lowest_sufficient_entry(queue, skill_id, req.level)
