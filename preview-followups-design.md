@@ -17,13 +17,21 @@ a window placement nobody asked for.
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | `preview/store.py` onto `settings.update()` | **Deferred.** See below. |
+| 1 | `preview/store.py` onto `settings.update()` | **Deferred — and it shipped elsewhere.** See below. |
 | 2 | Autouse fixture isolating application state in tests | In |
 | 3 | `_save` cannot distinguish "nothing ran" from "nothing read" | In |
 | 4 | Restore-on-launch toggle reports success on a failed write | In |
 | 5 | Enabling the toggle mid-session moves running clients | In |
 
 ### Why item 1 is deferred
+
+> **Resolved while this branch was being implemented.** `#26 Preview hotkeys`
+> merged the hotkeys branch to `main`, carrying `34cf48e Fix client-layout
+> persistence silently no-op'd by the merge`. `preview/store.py` now writes
+> inside `settings.update()`, and `settings.update()` itself is the
+> context-manager form. Item 1 is **done**, by the branch this section
+> predicted would do it. The reasoning below is kept as the record of why
+> this slice did not race it.
 
 It is already implemented, on an unmerged branch, in a shape incompatible
 with the one main would give it.
@@ -201,6 +209,18 @@ the same fact, as the save button four lines away in the same card.
 - The message carries the real news: it will not survive a restart.
 
 ### The skip-guard makes `persisted` a lie unless it is tracked
+
+> **Overtaken by `#26`.** The tracked flag described below is **not
+> implemented**, and the plan does not build it. `settings.update()` is now a
+> context manager that *restores the live dict when the block raises*, so a
+> failed write no longer leaves memory holding the wanted value. The guard
+> sees a real change on the next call and retries by itself. The flag would
+> defend against a state the code can no longer reach.
+>
+> What survives is the requirement, not the mechanism: a failed write must
+> still be retried rather than skipped. The plan pins that with a test that
+> exercises the real `update()` and fakes only the disk write, so the
+> behaviour stays covered whichever layer provides it.
 
 The method skips the write when the stored value already equals the wanted
 one (`ui/api.py:1319`), for the reason `set_preview_enabled` documents at
