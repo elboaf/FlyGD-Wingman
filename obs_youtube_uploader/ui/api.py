@@ -1774,6 +1774,8 @@ class Api:
             return {"path": str(record.path), "id": record.file_id,
                     "name": name}
 
+        listed, backups_unreadable = \
+            evesettings_backup.enumerate_backups(store)
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
@@ -1788,9 +1790,15 @@ class Api:
                          for p in found.profiles],
             "characters": [describe(c) for c in found.characters],
             "accounts": [describe(a) for a in found.accounts],
+            # Reported separately from an empty list for the same reason
+            # `unreadable` is: "we could not read your backups" and "you
+            # have no backups yet" are different answers, and telling a
+            # user the second when the first is true invites them to
+            # overwrite settings they believe are unprotected.
+            "backups_unreadable": backups_unreadable,
             "backups": [{"path": str(b.path), "created": b.created,
                          "origin": b.origin, "kind": b.kind, "stem": b.stem}
-                        for b in evesettings_backup.enumerate_backups(store)],
+                        for b in listed],
         }
 
     def _eve_client_running(self) -> bool:

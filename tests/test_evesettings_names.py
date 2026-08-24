@@ -188,3 +188,27 @@ def test_fetch_batch_posts_the_ids_as_json():
     assert outcome == names.RESOLVED and resolved == {1: "Pilot"}
     assert seen["body"] == [1]
     assert "universe/names" in seen["url"]
+
+
+def test_a_non_serialisable_id_degrades_instead_of_raising(tmp_path):
+    """json.dumps used to sit outside the try, so this raised.
+
+    Every other failure in this module returns TRANSIENT, because names
+    are cosmetic and the tool is fully usable offline. resolve() filters
+    to positive ints before calling here, so nothing reaches it today --
+    which is exactly why the contract must not depend on that filter.
+    """
+    def unreachable(*_args, **_kwargs):  # pragma: no cover - never called
+        raise AssertionError("the request was built, so the id serialised")
+
+    assert names.fetch_batch([object()], transport=unreachable) == (
+        names.TRANSIENT, {})
+
+
+def test_an_unbuildable_request_degrades_instead_of_raising(monkeypatch):
+    """The other statement that used to sit outside the try."""
+    def explode(*_args, **_kwargs):
+        raise ValueError("unknown url type")
+
+    monkeypatch.setattr(names.urllib.request, "Request", explode)
+    assert names.fetch_batch([98123456]) == (names.TRANSIENT, {})

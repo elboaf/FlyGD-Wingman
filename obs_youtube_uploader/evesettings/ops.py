@@ -4,6 +4,7 @@ The loop never aborts. TriffView throws on the first failure, leaving an
 unknown mix of copied and uncopied targets and discarding the count it
 computed; library.delete's (deleted, failures) shape is the one followed here.
 """
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,12 +63,21 @@ def copy_to_targets(source, targets, *, root, backup,
     if source_kind is None:
         raise ValueError("Only EVE settings files can be copied.")
 
+    # Both halves of "is this the same file?" use os.path.normcase, so they
+    # cannot disagree. They did: dedup keyed on str().casefold() while
+    # exclusion used Path equality. On Windows those agree by accident,
+    # because WindowsPath.__eq__ normalises case itself -- but on POSIX
+    # casefold() collapses settings_Alt/ and settings_alt/, two genuinely
+    # distinct profiles, and one of them was silently dropped from the
+    # target list. normcase is the identity on POSIX and lowercases (and
+    # normalises separators) on Windows: the platform's own answer.
+    source_key = os.path.normcase(str(source))
     chosen = []
     seen = set()
     for candidate in targets:
         candidate = Path(candidate)
-        key = str(candidate).casefold()
-        if key in seen or candidate == source:
+        key = os.path.normcase(str(candidate))
+        if key in seen or key == source_key:
             continue
         seen.add(key)
         chosen.append(candidate)

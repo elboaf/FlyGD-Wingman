@@ -108,6 +108,18 @@
   function renderBackups() {
     var host = WM.el('es-backups');
     host.innerHTML = '';
+    // An empty list means one of two things and only Python knows which.
+    // Saying "No backups yet" about a store we were denied would invite an
+    // overwrite the user believes is protected.
+    if (state.backups_unreadable || !(state.backups || []).length) {
+      var note = document.createElement('p');
+      note.className = 'hint';
+      note.textContent = state.backups_unreadable
+        ? "Couldn't read the backups folder. Check it is still readable."
+        : 'No backups yet.';
+      host.appendChild(note);
+      if (state.backups_unreadable) return;
+    }
     (state.backups || []).forEach(function (item) {
       var line = document.createElement('div');
       line.className = 'row';

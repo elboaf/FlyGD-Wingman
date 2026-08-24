@@ -1,5 +1,7 @@
 """Copy one settings file onto many. Backup and copy are both injected, so
 every failure path is reachable without a real filesystem fault."""
+import os
+
 import pytest
 
 from obs_youtube_uploader.evesettings import ops
@@ -146,3 +148,53 @@ def test_a_source_outside_the_root_raises(tmp_path):
         ops.copy_to_targets(source, [target], root=root,
                             backup=lambda _p: None)
     assert target.read_bytes() == b"target"
+
+
+@pytest.mark.skipif(os.path.normcase("A") != "A",
+                    reason="normcase folds case here, so these two paths "
+                           "genuinely are the same file")
+def test_case_distinct_targets_are_not_collapsed(tmp_path):
+    """settings_Alt and settings_alt are two profiles on a case-sensitive
+    filesystem, each with its own core_char_2.dat.
+
+    Dedup used str().casefold(), which treats them as one and silently
+    drops the second from the target list -- a target the user selected,
+    reported neither as copied nor as failed. Exclusion meanwhile used
+    Path equality, which does not fold. The two halves disagreed about
+    what "the same file" means; both now ask os.path.normcase.
+    """
+    source = make(tmp_path, "core_char_1.dat", b"source")
+    upper = tmp_path / "settings_Alt"
+    lower = tmp_path / "settings_alt"
+    upper.mkdir()
+    lower.mkdir()
+    targets = [make(upper, "core_char_2.dat", b"upper"),
+               make(lower, "core_char_2.dat", b"lower")]
+    report = ops.copy_to_targets(source, targets, root=tmp_path,
+                                 backup=lambda _p: None)
+    assert len(report.succeeded) == 2 and report.failed == []
+    assert all(t.read_bytes() == b"source" for t in targets)
+
+
+def test_the_source_is_excluded_on_the_same_terms_dedup_uses(tmp_path):
+    """Whatever comparison collapses duplicates must also recognise the
+    source, or a file is excluded by one half and admitted by the other."""
+    source = make(tmp_path, "core_char_1.dat", b"source")
+    other = make(tmp_path, "core_char_2.dat")
+    report = ops.copy_to_targets(
+        source, [source, str(source), other, str(other)],
+        root=tmp_path, backup=lambda _p: None)
+    assert [o.path for o in report.outcomes] == [other]
+
+
+def test_copies_onto_a_target_that_does_not_exist_yet(tmp_path):
+    """The `if target.exists()` false branch: a first copy has nothing to
+    back up, so backup must not be called and the copy must still happen."""
+    source = make(tmp_path, "core_char_1.dat", b"source")
+    target = tmp_path / "core_char_2.dat"
+    backed_up = []
+    report = ops.copy_to_targets(source, [target], root=tmp_path,
+                                 backup=backed_up.append)
+    assert backed_up == []
+    assert [o.path for o in report.succeeded] == [target]
+    assert target.read_bytes() == b"source"

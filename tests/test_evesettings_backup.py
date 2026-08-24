@@ -1,4 +1,5 @@
 """Archive naming, integrity, pruning and restore. All on tmp_path."""
+import os
 import zipfile
 from datetime import datetime, timezone
 
@@ -66,7 +67,7 @@ def test_two_backups_in_the_same_second_both_survive(tmp_path):
     second = backup.create_file_backup(store, source, origin="auto", now=at())
     assert first != second
     assert first.exists() and second.exists()
-    assert len(backup.enumerate_backups(store)) == 2
+    assert len(backup.enumerate_backups(store)[0]) == 2
 
 
 def test_a_failed_build_leaves_nothing_listable(tmp_path):
@@ -85,7 +86,7 @@ def test_a_failed_build_leaves_nothing_listable(tmp_path):
             backup.create_file_backup(store, source, origin="auto", now=at())
     finally:
         monkey.undo()
-    assert backup.enumerate_backups(store) == []
+    assert backup.enumerate_backups(store) == ([], False)
     assert list(store.iterdir()) == []
 
 
@@ -98,7 +99,7 @@ def test_an_abandoned_claim_is_not_listable(tmp_path):
     claimed = backup._claim(store, "20260824-120000", "auto", "character",
                             "aabbccdd", "core_char_1")
     assert claimed.exists() and claimed.stat().st_size == 0
-    assert backup.enumerate_backups(store) == []
+    assert backup.enumerate_backups(store) == ([], False)
 
 
 def test_backup_contains_the_file_and_a_manifest(tmp_path):
@@ -131,7 +132,7 @@ def test_prune_keeps_the_newest_auto_backups(tmp_path):
         backup.create_file_backup(store, source, origin="auto", now=at(second))
     removed = backup.prune(store, keep=2)
     assert len(removed) == 3
-    assert len(backup.enumerate_backups(store)) == 2
+    assert len(backup.enumerate_backups(store)[0]) == 2
 
 
 def test_prune_never_touches_manual_backups(tmp_path):
@@ -142,7 +143,7 @@ def test_prune_never_touches_manual_backups(tmp_path):
         backup.create_file_backup(store, source, origin="manual",
                                   now=at(second))
     assert backup.prune(store, keep=1) == []
-    assert len(backup.enumerate_backups(store)) == 4
+    assert len(backup.enumerate_backups(store)[0]) == 4
 
 
 def test_prune_does_not_cross_profiles_for_the_same_character(tmp_path):
@@ -157,7 +158,7 @@ def test_prune_does_not_cross_profiles_for_the_same_character(tmp_path):
     backup.create_file_backup(store, alt / "core_char_98123456.dat",
                               origin="auto", now=at(9))
     backup.prune(store, keep=1)
-    remaining = backup.enumerate_backups(store)
+    remaining, _ = backup.enumerate_backups(store)
     assert len(remaining) == 2
     assert {info.src for info in remaining} == {
         backup.source_key(default), backup.source_key(alt)}
@@ -185,7 +186,7 @@ def test_restore_failure_during_extraction_leaves_the_profile_untouched(
     made = backup.create_profile_backup(store, profile, origin="manual",
                                         now=at())
     before = {p.name: p.read_bytes() for p in profile.iterdir()}
-    backups_before = set(backup.enumerate_backups(store))
+    backups_before = set(backup.enumerate_backups(store)[0])
 
     def explode(*args, **kwargs):
         raise OSError("disk full")
@@ -203,7 +204,7 @@ def test_restore_failure_during_extraction_leaves_the_profile_untouched(
     # No auto-backup was taken either: the failure is in extraction, which
     # now happens before the pre-restore backup, so nothing was even
     # attempted against the live profile.
-    assert set(backup.enumerate_backups(store)) == backups_before
+    assert set(backup.enumerate_backups(store)[0]) == backups_before
 
 
 def test_restore_failure_in_the_auto_backup_leaves_the_profile_untouched(
@@ -250,7 +251,7 @@ def test_profile_restore_backs_up_before_deleting(tmp_path):
     made = backup.create_profile_backup(store, profile, origin="manual",
                                         now=at())
     backup.restore(store, made, tmp_path / "root", now=at(5))
-    autos = [i for i in backup.enumerate_backups(store) if i.origin == "auto"]
+    autos = [i for i in backup.enumerate_backups(store)[0] if i.origin == "auto"]
     assert len(autos) == 1
 
 
@@ -322,7 +323,7 @@ def test_delete_removes_one_archive(tmp_path):
     made = backup.create_file_backup(
         store, profile / "core_char_98123456.dat", origin="manual", now=at())
     backup.delete(store, made)
-    assert backup.enumerate_backups(store) == []
+    assert backup.enumerate_backups(store) == ([], False)
 
 
 def test_delete_refuses_a_path_outside_the_backup_folder(tmp_path):
@@ -333,3 +334,65 @@ def test_delete_refuses_a_path_outside_the_backup_folder(tmp_path):
     with pytest.raises(ValueError):
         backup.delete(store, outsider)
     assert outsider.exists()
+
+
+def test_an_unreadable_store_is_reported_not_read_as_empty(tmp_path):
+    """The conflation tree._scan was written to avoid, on the backup side.
+
+    A store that denied us and a store that has never been written are
+    different answers. Collapsing both into [] tells a user "no backups
+    yet" about a directory that is full of them -- and this feature's
+    whole promise is that every overwrite is backed up first.
+    """
+    store = tmp_path / "backups"
+    store.mkdir()
+    (store / "20260824-120000-000-auto-character-aabbccdd-x.zip").write_bytes(
+        b"not empty")
+    store.chmod(0o000)
+    try:
+        try:
+            os.scandir(str(store)).close()
+        except PermissionError:
+            pass
+        else:  # pragma: no cover - root, or a filesystem without modes
+            pytest.skip("this user can read a mode-000 directory")
+        assert backup.enumerate_backups(store) == ([], True)
+    finally:
+        store.chmod(0o700)
+
+
+def test_a_missing_store_is_empty_but_not_unreadable(tmp_path):
+    """The other half of the same distinction: never written is not denied."""
+    assert backup.enumerate_backups(tmp_path / "nope") == ([], False)
+
+
+def test_pruning_an_unreadable_store_deletes_nothing(tmp_path):
+    store = tmp_path / "backups"
+    store.mkdir()
+    store.chmod(0o000)
+    try:
+        try:
+            os.scandir(str(store)).close()
+        except PermissionError:
+            pass
+        else:  # pragma: no cover - root, or a filesystem without modes
+            pytest.skip("this user can read a mode-000 directory")
+        assert backup.prune(store, 1) == []
+    finally:
+        store.chmod(0o700)
+
+
+def test_every_declared_kind_and_origin_round_trips_through_the_name():
+    """_KINDS and _ORIGINS are the source of truth for the filename grammar.
+
+    They used to be spelled a second time inside _NAME_RE, where adding a
+    kind to one and not the other would write names that parse_name then
+    refuses to read -- a backup on disk, invisible to listing, pruning and
+    restore. This asserts the two cannot drift apart again.
+    """
+    for kind in backup._KINDS:
+        for origin in backup._ORIGINS:
+            name = f"20260824-120000-000-{origin}-{kind}-aabbccdd-stem.zip"
+            info = backup.parse_name(name)
+            assert info is not None, name
+            assert info.kind == kind and info.origin == origin

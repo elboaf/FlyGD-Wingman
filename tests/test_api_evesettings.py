@@ -1,9 +1,10 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
+import os
 import threading
 
 import pytest
 
-from obs_youtube_uploader import settings
+from obs_youtube_uploader import paths, settings
 from obs_youtube_uploader.ui import api as api_mod
 from tests.fakes import FakeWindow
 
@@ -268,3 +269,33 @@ def test_a_failed_mutation_still_pushes_a_completion(tmp_path, monkeypatch):
     api.eve_settings_backup("", "profile")
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
     assert len(done) == 1 and '"ok": false' in done[0]
+
+
+def test_state_reports_an_unreadable_backup_store(tmp_path, monkeypatch):
+    """"Couldn't read your backups" and "you have none yet" are different
+    answers, and only one of them means something is wrong. Telling a user
+    the second when the first is true invites an overwrite they believe is
+    protected."""
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    store = paths.eve_settings_backup_dir()
+    store.mkdir(parents=True, exist_ok=True)
+    store.chmod(0o000)
+    try:
+        try:
+            os.scandir(str(store)).close()
+        except PermissionError:
+            pass
+        else:  # pragma: no cover - root, or a filesystem without modes
+            pytest.skip("this user can read a mode-000 directory")
+        state = api.eve_settings_state()
+        assert state["backups_unreadable"] is True and state["backups"] == []
+    finally:
+        store.chmod(0o700)
+
+
+def test_state_does_not_call_a_readable_empty_store_unreadable(tmp_path,
+                                                               monkeypatch):
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    assert api.eve_settings_state()["backups_unreadable"] is False
