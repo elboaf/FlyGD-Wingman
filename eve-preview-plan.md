@@ -35,7 +35,7 @@ The design's DPI strategy is unverified and everything downstream assumes it. Th
 - Create (throwaway): `C:\dev\_probe\probe_thread_dpi.py`
 - Modify: `eve-preview-design.md` — record the result in the Risks section
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 ```python
 """THROWAWAY. Does thread-local PMv2 hold while the process stays System-aware?"""
@@ -71,22 +71,22 @@ print(f"thread awareness: {result['awareness']} (2 == per-monitor)")
 print("VERDICT:", "OK" if result["awareness"] == 2 else "THREAD-LOCAL DPI DOES NOT HOLD")
 ```
 
-- [ ] **Step 2: Run it on Windows**
+- [x] **Step 2: Run it on Windows**
 
 Run: `C:\dev\flygd-wingman\.venv\Scripts\python.exe C:\dev\_probe\probe_thread_dpi.py`
 Expected: `VERDICT: OK`
 
-- [ ] **Step 3: Extend the probe to check thumbnail rects**
+- [x] **Step 3: Extend the probe to check thumbnail rects**
 
 Add to the thread, after setting PMv2: create a layered `WS_POPUP` window, register a DWM thumbnail of any visible window, and set `rcDestination` to a known rect. Screenshot and confirm the thumbnail lands where the rect says — not offset or scaled. This is the half that thread-local awareness could plausibly break.
 
-- [ ] **Step 4: Record the outcome in the design**
+- [x] **Step 4: Record the outcome in the design**
 
 If `VERDICT: OK` and rects land correctly, replace risk item 1 in `eve-preview-design.md` with the measured result and the Windows build tested.
 
 **If the verdict is not OK: STOP and escalate.** The fallback stated in the design is to keep the preview thread System-aware and accept TriffView-equivalent mixed-DPI behaviour — **not** to change the process-wide setting. That is a design change and needs review before any further task starts.
 
-- [ ] **Step 5: Commit the design update**
+- [x] **Step 5: Commit the design update**
 
 ```bash
 git add eve-preview-design.md
@@ -105,7 +105,7 @@ git commit -m "docs: record thread-local DPI probe result"
 **Interfaces:**
 - Produces: the `obs_youtube_uploader.preview` package that every later task imports.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Every importable subpackage must be listed in pyproject's `packages`.
@@ -133,12 +133,12 @@ def test_every_subpackage_is_declared():
     assert on_disk <= declared, f"undeclared packages: {sorted(on_disk - declared)}"
 ```
 
-- [ ] **Step 2: Run it — it must pass first, proving the guard is honest**
+- [x] **Step 2: Run it — it must pass first, proving the guard is honest**
 
 Run: `python -m pytest tests/test_packaging_completeness.py -v`
 Expected: PASS (only `obs_youtube_uploader` and `.ui` exist so far)
 
-- [ ] **Step 3: Create the package, and watch the guard fail**
+- [x] **Step 3: Create the package, and watch the guard fail**
 
 ```bash
 mkdir -p obs_youtube_uploader/preview
@@ -149,7 +149,7 @@ python -m pytest tests/test_packaging_completeness.py -v
 
 Expected: FAIL with `undeclared packages: ['obs_youtube_uploader.preview']`
 
-- [ ] **Step 4: Declare the package**
+- [x] **Step 4: Declare the package**
 
 In `pyproject.toml`, change line 49 to:
 
@@ -161,12 +161,12 @@ packages = [
 ]
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `python -m pytest tests/test_packaging_completeness.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pyproject.toml obs_youtube_uploader/preview/__init__.py tests/test_packaging_completeness.py
@@ -191,7 +191,7 @@ Pure integer arithmetic. No Windows, no framework, runs in CI.
   - `hit_resize_handle(rect: Rect, px: int, py: int, handle: int = 16) -> bool`
   - `thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Pure geometry: no Windows, no Pillow, runs in CI on Linux."""
@@ -267,12 +267,12 @@ def test_thumbnail_rect_never_goes_negative(w, h):
     assert t.w >= 0 and t.h >= 0
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_geometry.py -v`
 Expected: FAIL with `ModuleNotFoundError: obs_youtube_uploader.preview.geometry`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 """Preview geometry. Pure integer arithmetic -- no Windows, no Pillow.
@@ -356,12 +356,12 @@ def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
                 max(0, rect.h - border - border - label_h))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_geometry.py -v`
 Expected: PASS (11 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/geometry.py tests/test_preview_geometry.py
@@ -385,7 +385,7 @@ Replaces TriffView's GDI+ layer. Pure: takes numbers, returns an image.
 - Consumes: `geometry.Rect`
 - Produces: `render(size, label, *, border_color, border=5, label_h=30, selected=False) -> PIL.Image.Image` (mode `RGBA`)
 
-- [ ] **Step 1: Bundle a TTF**
+- [x] **Step 1: Bundle a TTF**
 
 `web/fonts/` holds `.woff2`, which Pillow cannot load. Download the Inter **TTF** matching the bundled `InterVariable.woff2` release, place it at `obs_youtube_uploader/assets/fonts/Inter-Regular.ttf`, and add to `THIRD-PARTY-NOTICES.md` under a new `## Inter (font)` section naming the SIL Open Font License and the release URL. `web/fonts/Inter-LICENSE.txt` already carries the licence text.
 
@@ -408,7 +408,7 @@ produces a green build. Add:
 and extend the post-build assertion in `build.yml`/`release.yml` to check the
 collected font exists, exactly as it already checks the engine and `web/`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 """Chrome rendering is pure: numbers in, RGBA image out.
@@ -467,12 +467,12 @@ def test_degenerate_size_does_not_raise():
     chrome.render((4, 4), "P", border_color=CYAN)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_chrome.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 ```python
 """Preview chrome, rendered with Pillow.
@@ -543,12 +543,12 @@ def render(size, label, *, border_color, border=5, label_h=30,
     return img
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_chrome.py -v`
 Expected: PASS (7 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/chrome.py obs_youtube_uploader/assets/fonts/ \
@@ -572,7 +572,7 @@ git commit -m "feat(preview): Pillow-rendered chrome, bundled Inter TTF"
   - `serialize(entries: dict[str, Entry]) -> dict`
   - `deserialize(raw) -> dict[str, Entry]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Layout persistence, pure. Mirrors settings.py's posture: a malformed
@@ -612,12 +612,12 @@ def test_non_positive_sizes_are_rejected():
     assert layout.deserialize({"P": {"x": 1, "y": 2, "w": 0, "h": 4}}) == {}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_layout.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 """Preview layout persistence.
@@ -668,12 +668,12 @@ def deserialize(raw) -> dict:
     return out
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_layout.py -v`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/layout.py tests/test_preview_layout.py
@@ -692,7 +692,7 @@ git commit -m "feat(preview): layout serialisation with forgiving validation"
 - Produces: `_enumerate_windows() -> list[tuple[int, str]]` — `(hwnd, title)` for every visible titled window.
 - Unchanged: `list_eve_windows(enumerator=None) -> list[str]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_enumerate_titles_is_derived_from_the_handle_enumerator(monkeypatch):
@@ -714,12 +714,12 @@ def test_list_eve_windows_still_returns_plain_sorted_titles(monkeypatch):
     assert evewindows.list_eve_windows() == ["EVE - A", "EVE - B"]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_evewindows.py -v`
 Expected: FAIL — `_enumerate_windows` does not exist
 
-- [ ] **Step 3: Refactor — rename the collector, add a titles wrapper**
+- [x] **Step 3: Refactor — rename the collector, add a titles wrapper**
 
 In `evewindows.py`, rename `_enumerate_titles` to `_enumerate_windows` and change its `callback` to append `(hwnd, buffer.value)` instead of `buffer.value`. Keep every `argtypes`/`restype` declaration and the broad `except` in the callback exactly as they are — the comments at `evewindows.py:36-44` and `:59-63` explain why both are load-bearing.
 
@@ -731,12 +731,12 @@ def _enumerate_titles() -> list:
     return [title for _hwnd, title in _enumerate_windows()]
 ```
 
-- [ ] **Step 4: Run the whole file's tests**
+- [x] **Step 4: Run the whole file's tests**
 
 Run: `python -m pytest tests/test_evewindows.py -v`
 Expected: PASS — the new cases and every pre-existing one
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/evewindows.py tests/test_evewindows.py
@@ -757,7 +757,7 @@ git commit -m "refactor(evewindows): expose handles, keep the title API frozen"
   - `Client(NamedTuple)` with `hwnd: int`, `title: str`, `pid: int`, `character: str | None`, `stable_key: str`
   - `list_clients(*, enumerator=None, pids=None, image_name=None) -> list[Client]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Client discovery. Every collaborator is injected so identity and
@@ -832,12 +832,12 @@ def test_enumerator_failure_is_survivable():
     assert _list(enumerator=boom) == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_discovery.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 """Discover running EVE clients, with a stable identity per client.
@@ -910,7 +910,7 @@ def list_clients(*, enumerator=None, pids=None, image_name=None) -> list:
     return out
 ```
 
-- [ ] **Step 4: Add the Windows-side resolvers**
+- [x] **Step 4: Add the Windows-side resolvers**
 
 Append to the same module. `procid.describe()` is **not** usable here: it spawns PowerShell per PID with a ten-second timeout (`procid.py:21-37`), justified in its own docstring as "one call on one code path". At a 700ms sweep across 20 clients that is catastrophic.
 
@@ -978,12 +978,12 @@ def flush_image_cache_periodically() -> None:
         _IMAGE_CACHE.clear()
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_discovery.py -v`
 Expected: PASS (7 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/discovery.py tests/test_preview_discovery.py
@@ -1001,7 +1001,7 @@ git commit -m "feat(preview): client discovery with process-name filtering"
 **Interfaces:**
 - Produces: structs (`RECT`, `POINT`, `SIZE`, `BLENDFUNCTION`, `BITMAPINFO`, `DWM_THUMBNAIL_PROPERTIES`, `WNDCLASSW`, `MSG`), constants (`WS_POPUP`, `WS_EX_*`, `WM_*`, `ULW_ALPHA`, `DWM_TNP_*`), and `bind() -> Libs` returning declared `user32`/`gdi32`/`dwmapi`/`kernel32` handles.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The declaration guard.
@@ -1065,13 +1065,13 @@ def test_every_used_function_is_declared():
     assert not missing, "\n".join(missing)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 On Windows: `.venv\Scripts\python.exe -m pytest tests/test_preview_win32.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 On Linux the test **skips on platform**, and the import at module scope still has to succeed — which is the global constraint that every module imports cleanly off Windows. Declare structs and constants at import time; touch DLLs only inside `bind()`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `win32.py` declaring every struct and constant listed in the Interfaces block, and a `bind()` returning a `Libs` NamedTuple of `user32, gdi32, dwmapi, kernel32` with `argtypes`/`restype` set on every function in `REQUIRED`. Use the declarations proven in the design probes verbatim, in particular:
 
@@ -1092,12 +1092,12 @@ gdi32.CreateDIBSection.restype = wintypes.HBITMAP
 
 Keep a module-level `_KEEPALIVE = []` for `WNDPROC` objects, with the comment from `ui/chrome.py:117-121`: a ctypes callback collected while Windows still holds its address takes the process down at the next message.
 
-- [ ] **Step 4: Run the test on Windows to verify it passes**
+- [x] **Step 4: Run the test on Windows to verify it passes**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_preview_win32.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/win32.py tests/test_preview_win32.py
@@ -1118,7 +1118,7 @@ git commit -m "feat(preview): win32 declarations with a completeness guard"
   - `to_premultiplied_bgra(img) -> bytes` (**pure — CI-tested**)
   - `push(libs, hwnd, img, x, y) -> bool` (Windows)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """The premultiply step is pure and gets real tests; the ULW call is a
@@ -1157,12 +1157,12 @@ def test_length_is_four_bytes_per_pixel():
     assert len(layered.to_premultiplied_bgra(img)) == 7 * 5 * 4
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_layered.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement the pure half**
+- [x] **Step 3: Implement the pure half**
 
 ```python
 """Push a Pillow image onto a layered window.
@@ -1187,7 +1187,7 @@ def to_premultiplied_bgra(img: Image.Image) -> bytes:
     return img.tobytes("raw", "BGRa")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_layered.py -v`
 Expected: PASS (4 tests)
@@ -1219,7 +1219,7 @@ def to_premultiplied_bgra(img: Image.Image) -> bytes:
 Prefer the encoder while it passes: this loop runs per pixel in Python, roughly
 67k iterations per repaint at 320x210, and a drag repaints continuously.
 
-- [ ] **Step 5: Add the Windows push**
+- [x] **Step 5: Add the Windows push**
 
 ```python
 def push(libs, hwnd, img, x, y) -> bool:
@@ -1260,7 +1260,7 @@ def push(libs, hwnd, img, x, y) -> bool:
         libs.user32.ReleaseDC(None, screen_dc)
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/layered.py tests/test_preview_layered.py
@@ -1279,7 +1279,7 @@ git commit -m "feat(preview): layered-window blit with premultiplied BGRA"
 - Consumes: `win32.bind`, `geometry.Rect`
 - Produces: `Thumbnail` class with `register(libs, dest_hwnd, src_hwnd) -> Thumbnail | None`, `update(rect, opacity=255, visible=True)`, `close()`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Lifecycle only -- the DWM calls are faked. What matters here is that a
@@ -1335,12 +1335,12 @@ def test_update_after_close_is_a_no_op():
     assert dwm.updates == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_thumbnail.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 """One DWM thumbnail: register, position, release."""
@@ -1393,12 +1393,12 @@ class Thumbnail:
         self._handle = None
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_thumbnail.py -v`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/thumbnail.py tests/test_preview_thumbnail.py
@@ -1417,7 +1417,7 @@ git commit -m "feat(preview): DWM thumbnail lifecycle wrapper"
 - Consumes: `win32`, `geometry`, `chrome`, `layered`, `thumbnail`
 - Produces: `PreviewWindow` with `create(libs, client, rect, on_activate)`, `move(rect)`, `set_label(text)`, `redraw()`, `close()`; and the pure helper `drag_result(start, current, rect, locked, drag_min) -> tuple[str, Rect]`
 
-- [ ] **Step 1: Write the failing tests for the pure gesture helper**
+- [x] **Step 1: Write the failing tests for the pure gesture helper**
 
 ```python
 """Only the gesture arithmetic is tested here -- window creation needs a
@@ -1459,12 +1459,12 @@ def test_a_locked_preview_never_moves_but_still_activates():
     assert action == "activate" and rect == R
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_window.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement the pure helper**
+- [x] **Step 3: Implement the pure helper**
 
 ```python
 def drag_result(start, current, rect, locked: bool, drag_min: int):
@@ -1480,12 +1480,12 @@ def drag_result(start, current, rect, locked: bool, drag_min: int):
     return "move", rect._replace(x=rect.x + dx, y=rect.y + dy)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_window.py -v`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Implement `PreviewWindow`**
+- [x] **Step 5: Implement `PreviewWindow`**
 
 Add the Windows half in the same module.
 
@@ -1522,7 +1522,7 @@ preview-to-preview snapping silently does nothing.
 **`close()`** closes the thumbnail **before** `DestroyWindow` — the thumbnail's
 destination is this window.
 
-- [ ] **Step 6: Implement the focus sequence**
+- [x] **Step 6: Implement the focus sequence**
 
 Click-to-focus is the feature, and `SetForegroundWindow` alone does not work:
 Windows refuses it from a process that does not own the foreground. The
@@ -1569,7 +1569,7 @@ Log at debug when it returns False — a client that refuses to come forward is
 the single most likely field complaint, and without this line there is nothing
 to go on.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/window.py tests/test_preview_window.py
@@ -1588,7 +1588,7 @@ git commit -m "feat(preview): per-client layered preview window"
 - Consumes: `discovery`, `window`, `win32`, `geometry`, `layout`
 - Produces: `PreviewHost(on_layout_changed)` with `start()`, `stop(timeout=5.0)`, `is_running` property, and the pure helper `reconcile(current, desired) -> tuple[list, list, list]` returning `(added, removed, kept)` stable keys.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Reconciliation and lifecycle. The pump itself is smoke-tested.
@@ -1628,12 +1628,12 @@ def test_stop_is_idempotent(monkeypatch):
     assert not h.is_running
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_host.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement `reconcile` and the lifecycle shell**
+- [x] **Step 3: Implement `reconcile` and the lifecycle shell**
 
 ```python
 def reconcile(current: set, desired: set):
@@ -1695,12 +1695,12 @@ Then the joiner logs if the thread does not exit inside `timeout` — a `stop()`
 `stop()` must also `flush()` the layout store (Task 13) *before* destroying
 windows, or the last drag before quitting is lost to the debounce.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_host.py -v`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/host.py tests/test_preview_host.py
@@ -1721,7 +1721,7 @@ git commit -m "feat(preview): host thread, pump, and ordered teardown"
 - Consumes: `layout.serialize`, `layout.deserialize`
 - Produces: `LayoutStore(save_settings, read_settings, debounce_s=1.0, timer=threading.Timer)` with `record(stable_key, entry)` and `flush()`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """The preview thread must never call settings.save(): it rewrites the
@@ -1817,12 +1817,12 @@ def test_reads_settings_at_write_time_not_at_construction():
     assert saves[0]["channel_title"] == "changed by another thread"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_store.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement `store.py`**
+- [x] **Step 3: Implement `store.py`**
 
 `LayoutStore` accumulates pending entries and restarts its debounce timer on each
 `record()`. On fire it must **merge, not replace**:
@@ -1850,7 +1850,7 @@ shutdown, before destroying windows.
 `record()` is safe to call from the preview thread. Serialization is the
 **lock's** job, not the calling thread's: see Step 4.
 
-- [ ] **Step 4: Add the settings schema, and serialize `save()`**
+- [x] **Step 4: Add the settings schema, and serialize `save()`**
 
 Three changes in `settings.py`, all required together:
 
@@ -1900,7 +1900,7 @@ Then `validated_preview(raw)` following `validated_eve`'s shape
 and pass `layouts` through `layout.deserialize` then `serialize` so a corrupt
 entry is dropped at load rather than at draw time.
 
-- [ ] **Step 5: Write and run the settings tests**
+- [x] **Step 5: Write and run the settings tests**
 
 Mirror `tests/test_settings_eve.py`'s cases: a whole section of the wrong type
 falls back, an out-of-range opacity clamps, an unknown key is dropped. Add one
@@ -1920,7 +1920,7 @@ def test_each_caller_gets_its_own_preview_section():
 Run: `python -m pytest tests/test_preview_store.py tests/test_settings_preview.py tests/test_settings.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/store.py obs_youtube_uploader/settings.py \
@@ -1938,7 +1938,7 @@ git commit -m "feat(preview): debounced layout persistence, serialised saves"
 - Modify: `obs_youtube_uploader/web/settings.js`, `obs_youtube_uploader/web/index.html`
 - Test: `tests/test_preview_wiring.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Wiring, with the host faked. What must hold: the subsystem is lazy,
@@ -2000,12 +2000,12 @@ def test_shutdown_stops_the_host_even_when_enabled(tmp_path):
     assert host.stopped == 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_preview_wiring.py -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implement the wiring**
+- [x] **Step 3: Implement the wiring**
 
 Add a `preview_host=None` keyword to `Api.__init__`, and `set_preview_enabled(bool)`
 to `ui/api.py`, persisting through the normal settings path and starting/stopping
@@ -2021,12 +2021,12 @@ extraction is needed. It does mean the import breaks if anyone ever runs pytest
 from inside `tests/`, so if that becomes a habit, move `make_api`/`make_state`
 into a `tests/conftest.py` then.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_preview_wiring.py -v`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `python -m pytest -q`
 Expected: **`869 passed`, zero failures**, plus the tests added by this plan.
@@ -2040,7 +2040,7 @@ stale measurement taken in a different checkout, where the bookmarks work was
 still untracked and unfinished before it merged as `70c1655`. Following it
 would have masked real regressions.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/__main__.py obs_youtube_uploader/ui/api.py \
@@ -2057,7 +2057,7 @@ The Windows half is deliberately thin and untested by CI. This is what stands in
 **Files:**
 - Modify: `docs/smoke-checklist.md` — append a `## EVE client previews` section
 
-- [ ] **Step 1: Write the checklist**
+- [x] **Step 1: Write the checklist**
 
 The repo has one smoke-check document, not several. Append a section alongside
 the existing `## EVE bookmark hotkeys` block (`docs/smoke-checklist.md:773-850`)
@@ -2076,9 +2076,9 @@ failure looks like. Cover at minimum:
 10. Two monitors at different scales → previews land correctly on both (this is Task 1's DPI work paying off, and the one item most likely to fail).
 11. Check the log for `SetThreadDpiAwarenessContext` result, DWM registration failures, and thread death.
 
-- [ ] **Step 2: Run it on Windows and record the results**
+- [x] **Step 2: Run it on Windows and record the results**
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/smoke-checklist.md
@@ -2121,3 +2121,48 @@ and the fix is a lock rather than a thread rule; the bundled font must reach
 `uploader.spec`'s `datas` or the frozen build silently falls back; and
 `_fresh_defaults` must rebuild the nested `preview` section or every caller
 shares one mutable dict.
+
+---
+
+## Execution notes
+
+All fifteen tasks executed. Suite: **956 passed, 2 skipped** on Linux.
+On Windows, 2 pre-existing failures remain, both confirmed against the
+untouched checkout and neither caused by this work — `test_discord.py`'s
+`chmod` test (Windows ignores the permission change) and
+`test_hotkeys_commands.py`'s BOM test (`write_text` without an encoding
+picks cp1252, which cannot encode `\ufeff`). CI never saw either because
+it runs `ubuntu-latest`.
+
+Deviations from the plan as written, and why:
+
+- **Task 8**: `ctypes.wintypes` and `Structure` definitions *do* work on
+  Linux; `WINFUNCTYPE`, `WinDLL` and `windll` do not. So structs and
+  constants stayed module-level as planned, and only the callback types
+  and `bind()` became lazy.
+- **Task 11**: added `resize_result` and signed `_lparam_point` decoding,
+  neither in the plan. Unsigned lParam decoding sends a preview to the far
+  edge of the desktop the moment a drag goes above or left of its origin.
+- **Task 13**: `save()` became a lock wrapper around `_save_locked` rather
+  than growing a `with` inside the existing body.
+- **Task 14**: the JS bridge helpers are `WM.send`/`WM.handle`, not the
+  `WM.api`/`WM.on`/`WM.toast` the plan guessed. `set_preview_enabled`
+  returns `True` because `WM.send` resolves to `null` on failure and
+  cannot otherwise tell that from a method returning `None`.
+- **Post-plan fix**: placement and snapping used a hardcoded
+  `Rect(0, 0, 1920, 1080)`. The real virtual desktop on the dev machine is
+  `Rect(x=-2560, y=0, w=8960, h=1746)`. Replaced with the four
+  `SM_*VIRTUALSCREEN` metrics behind a pure, testable helper.
+
+One test carries a known limit worth remembering:
+`test_build_preview_host_body_is_exercised` only catches names resolved
+**eagerly**. It went green against a real bug (`lambda data:
+settings.save(data)` — wrong module alias) because a lambda body is not
+executed at build time. Callbacks constructed there should be bound
+method references, not lambdas wrapping them.
+
+Not yet done, and the only thing standing between this and a usable
+feature: **nobody has run it**. The smoke checklist in
+`docs/smoke-checklist.md` has never been executed, so no preview has been
+seen on screen from this code — only from the throwaway probes. The
+multi-monitor item is the one most likely to fail.
