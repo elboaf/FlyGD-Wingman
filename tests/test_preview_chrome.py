@@ -14,19 +14,36 @@ def test_border_is_drawn_in_the_requested_colour():
     assert img.getpixel((319, 209)) == CYAN
 
 
-def test_interior_below_the_label_is_transparent_for_the_thumbnail():
-    """The DWM thumbnail composites over this area. Leaving it opaque is
-    harmless today but hides mistakes if the thumbnail fails to register --
-    a transparent hole makes that failure visible instead of silent."""
+def test_every_pixel_is_opaque_so_the_window_is_clickable():
+    """A layered window hit-tests against its ALPHA CHANNEL: any pixel at
+    alpha 0 passes the click through to whatever is behind it.
+
+    An earlier version left the interior transparent, reasoning that the
+    DWM thumbnail composites over it anyway. It does -- visually. But the
+    thumbnail contributes nothing to the window's alpha, so the preview
+    looked right and was click-through everywhere except its 5px border
+    and label band, and clicks landed in the browser behind it.
+    """
     img = chrome.render((320, 210), "Pilot", border_color=CYAN)
-    assert img.getpixel((160, 120))[3] == 0
+    alphas = {px[3] for px in img.get_flattened_data()}
+    assert 0 not in alphas, "transparent pixels are click-through"
+
+
+def test_a_degenerate_size_is_still_fully_opaque():
+    """Resize passes through tiny sizes; a transparent frame there would
+    briefly make the preview unclickable mid-drag."""
+    img = chrome.render((6, 6), "P", border_color=CYAN)
+    assert 0 not in {px[3] for px in img.get_flattened_data()}
 
 
 def test_label_band_is_opaque_and_the_right_height():
     img = chrome.render((320, 210), "Pilot", border_color=CYAN,
                         border=5, label_h=30)
-    assert img.getpixel((160, 6))[3] > 200      # inside the band
-    assert img.getpixel((160, 40))[3] == 0      # below it
+    assert img.getpixel((160, 6))[3] > 200        # inside the band
+    # Below the band is the thumbnail area: opaque (see the hit-testing
+    # test above) but a different colour from the band.
+    assert img.getpixel((160, 40))[3] == 255
+    assert img.getpixel((160, 40))[:3] != img.getpixel((160, 6))[:3]
 
 
 def test_label_text_is_actually_drawn():
@@ -39,7 +56,11 @@ def test_long_labels_do_not_overflow_the_band():
     """A 40-character character name must not paint over the thumbnail."""
     img = chrome.render((320, 210), "X" * 60, border_color=CYAN,
                         border=5, label_h=30)
-    assert img.getpixel((160, 40))[3] == 0
+    band = chrome.render((320, 210), "", border_color=CYAN,
+                         border=5, label_h=30)
+    # Below the band must be untouched interior, identical to the
+    # unlabelled render.
+    assert img.getpixel((160, 40)) == band.getpixel((160, 40))
 
 
 def test_selected_draws_a_thicker_border():

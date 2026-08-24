@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Regular.ttf"
 LABEL_BG = (10, 14, 20, 235)
 LABEL_FG = (235, 240, 245, 255)
+# Opaque, and that is load-bearing rather than cosmetic. A layered window
+# hit-tests against its own alpha channel: every pixel at alpha 0 passes
+# mouse input through to whatever is behind it. An earlier version left
+# the interior fully transparent -- so the thumbnail was visible (DWM
+# composites it OVER the window and contributes nothing to its alpha) but
+# clicks went to the window behind, and only the border and label band
+# were clickable. The thumbnail covers this fill completely; it exists to
+# make the tile solid to the mouse.
+INTERIOR_BG = (8, 10, 14, 255)
 
 
 @lru_cache(maxsize=8)
@@ -48,9 +57,17 @@ def _ellipsize(draw, text, font, max_w):
 
 def render(size, label, *, border_color, border=5, label_h=30,
            selected=False, font_size=17):
-    """Render one preview's chrome. Interior is left transparent."""
+    """Render one preview's chrome, fully opaque.
+
+    Opacity is not a look: a layered window is hit-tested against its
+    alpha channel, so any transparent pixel is click-through. The whole
+    tile has to be solid for the preview to receive a click at all.
+    Per-preview translucency, when it lands, belongs in
+    SetLayeredWindowAttributes or the thumbnail's own opacity -- both of
+    which dim the window without punching holes in its hit region.
+    """
     w, h = max(1, size[0]), max(1, size[1])
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    img = Image.new("RGBA", (w, h), INTERIOR_BG)
     d = ImageDraw.Draw(img)
 
     width = border * 2 if selected else border
