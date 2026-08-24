@@ -95,35 +95,45 @@ def test_restored_settings_are_read_from_the_ini(source):
                          re.IGNORECASE), name
 
 
-def test_copy_and_paste_binds_are_read_and_handled(source):
+def test_copy_and_paste_are_gone(source):
+    """Their handlers were Send ^c and Send ^v (111unified.ahk:988-995).
+    Reinstating them spends a system-wide keyboard hook reproducing what
+    Windows already does, which is why they were cut."""
     lowered = source.lower()
-    assert "kb_copy" in lowered
-    assert "kb_paste" in lowered
-    assert re.search(r"^DoCopy:", source, re.MULTILINE)
-    assert re.search(r"^DoPaste:", source, re.MULTILINE)
+    assert "kb_copy" not in lowered
+    assert "kb_paste" not in lowered
+    assert not re.search(r"^DoCopy:", source, re.MULTILINE)
+    assert not re.search(r"^DoPaste:", source, re.MULTILINE)
 
 
-def test_the_three_global_binds_are_registered_outside_the_window_loop(source):
-    """RefreshHotkeys Step 4 (111unified.ahk:763-771). The per-window loop
-    is bounded by its own closing brace, so a global RegisterBind cannot be
-    inside it -- and registering SetRoot in both places would make the
-    second call fail and land in FailedBinds."""
+def test_every_bind_is_registered_inside_the_window_loop(source):
+    """Nothing is global any more. RefreshHotkeys Step 4
+    (111unified.ahk:763-771) kept three binds outside the per-window loop;
+    Set Root was the last one left, and a hotkey that rewrites the
+    clipboard and resets the root state must not fire in a browser.
+
+    The loop is bounded by its own closing brace, so a RegisterBind outside
+    it cannot match `body` -- which is exactly what this asserts.
+    """
     loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
                      re.IGNORECASE | re.DOTALL)
     assert loop, "per-window registration loop not found"
     body = loop.group(0)
-    for bid in ("Copy", "Paste", "SetRoot"):
-        assert re.search(r'RegisterBind\("' + bid + r'"', source), bid
-        assert not re.search(r'RegisterBind\("' + bid + r'"', body), \
-            f"{bid} is registered per-window as well as globally"
-    # And the eighteen window-scoped ones must still be in there.
-    assert re.search(r'RegisterBind\("GrabSig"', body)
+    calls = re.findall(r'RegisterBind\("(\w+)"', source)
+    inside = re.findall(r'RegisterBind\("(\w+)"', body)
+    assert calls, "no registrations at all"
+    assert sorted(calls) == sorted(inside), \
+        f"registered outside the window loop: {set(calls) - set(inside)}"
+    assert "SetRoot" in inside
+    assert "GrabSig" in inside
 
 
 def test_set_root_rechecks_the_active_window(source):
-    """It is registered globally, so it can fire anywhere. Without the
-    guard, a press inside another application runs the whole copy/parse
-    flow there -- Send ^c into a chat window and the root state reset."""
+    """Registered per-window now, so this should never fail -- but
+    RefreshHotkeys runs on a timer, and between a window being disabled and
+    the refresh that tears its binds down the hotkey is still live. Without
+    the guard that press runs the whole copy/parse flow: Send ^c into
+    whatever is focused, and the root state reset on the way."""
     body = source.split("DoSemi:", 1)[1][:1200]
     assert "IsEveWindow" in body
     assert re.search(r"WinGetTitle\s*,\s*ActiveTitle\s*,\s*A", body,

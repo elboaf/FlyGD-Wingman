@@ -780,38 +780,36 @@ pytest — the engine is AutoHotkey.
 - [ ] With the feature off, the status bar shows no EVE segment
 - [ ] Enabling starts the engine; the status bar segment appears
 - [ ] Hotkeys fire in an enabled EVE window and do nothing in an unenabled one
-- [ ] **The eighteen window-scoped binds do nothing when a non-EVE window is
-      focused.** Registration happens inside a function called while an
-      `IfWinActive` criterion is active; if that criterion does not carry into
-      the function, they register globally and fire everywhere. Nothing in the
+- [ ] **All nineteen binds do nothing when a non-EVE window is focused.**
+      Registration happens inside a function called while an `IfWinActive`
+      criterion is active; if that criterion does not carry into the
+      function, they register globally and fire everywhere. Nothing in the
       repository can test this; confirm it by hand.
-- [ ] **Copy, Paste and Set Root DO fire outside EVE** — they are registered
-      with no window restriction (Step 4), matching the standalone script.
-      Marked "everywhere" in the route; the other rows read "in EVE".
-- [ ] **Set Root pressed outside an EVE window types the current root and
-      nothing else.** It re-checks the active window for itself. Without that
-      guard a global press runs the whole copy/parse flow in whatever app is
-      focused — `Send ^c` into a chat window, and the root state reset.
-- [ ] Rebinding Copy or Paste stops the old key firing **outside** EVE too —
-      global and window-scoped variants are torn down separately
+- [ ] **Set Root does nothing outside an EVE window.** It used to be
+      registered with no window restriction (Step 4) and is now inside the
+      per-window loop like everything else. Nothing in the route says
+      "everywhere" any more.
+- [ ] **Set Root still re-checks the active window.** The guard is
+      unreachable on a settled configuration, so it cannot be confirmed
+      from the outside — check by reading `DoSemi`. It covers the window
+      between a window being disabled and the ~10s refresh that tears its
+      binds down, where a press would otherwise run the whole copy/parse
+      flow in whatever is focused: `Send ^c` into a chat window, and the
+      root state reset.
+- [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
+      Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
       direct test of the teardown repair, and the bug that shipped for years
 - [ ] Disabling a window stops its hotkeys firing, within ~10s
 - [ ] Every finisher produces the correct Flygd/ABH name (Protean removal)
-- [ ] **"First home hole is .0" unticked ⇒ home bookmarks start at `.1`;
-      ticked ⇒ `.0`.** Restored as a setting after the port hardcoded it.
-      `HomeZeroIs0` is read inside a *function*, and an undeclared name is
-      local in AHK v1 — if the `global` declaration is lost the setting reads
-      as empty and silently stops working, with no error anywhere.
-- [ ] **"Preface the return bookmark" prefixes the return bookmark with the
-      preface character**, and unticking it stops that. Independent of the
-      removed Protean mode.
-- [ ] Changing the preface character takes effect within ~10s
-- [ ] **Clearing the preface field entirely gives NO preface**, not a
-      `!`. Wingman writes `ReturnPreface=` with an empty value, and the
-      engine's `IniRead` for it carries a `!` default; whether AHK treats
-      an empty value as present-and-empty or as absent decides this, and
-      nothing off-Windows can settle it.
+- [ ] **There is no Bookmark naming card in the route** — home holes, the
+      return-bookmark toggle and the preface field are all gone
+- [ ] **Home bookmarks start at `.1`.** Fixed now, but still written into
+      the INI rather than left to the engine, whose compiled default is the
+      opposite. `HomeZeroIs0` is read inside a *function*, and an undeclared
+      name is local in AHK v1 — if the `global` declaration is lost it reads
+      as empty and the numbering silently changes, with no error anywhere.
+- [ ] **Return bookmarks are prefaced with `!`**, unconditionally
 - [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
       tracks Set Root / Clear Root
 - [ ] Deliberately binding two actions to one key shows the collision warning

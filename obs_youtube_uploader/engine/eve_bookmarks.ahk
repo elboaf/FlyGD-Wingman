@@ -54,8 +54,6 @@ FileEncoding, UTF-8-RAW
 HomeZeroIs0 := 1
 PrefaceReturn := 1
 ReturnPreface := "!"
-KB_Copy := ""
-KB_Paste := ""
 
 ; --- Root tracking ---
 RootKey := ""
@@ -150,8 +148,6 @@ IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
 IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
 
 ; Load keybindings
-IniRead, KB_Copy,        %IniFile%, Keybinds, Copy,      
-IniRead, KB_Paste,       %IniFile%, Keybinds, Paste,     
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
 IniRead, KB_SetRoot,     %IniFile%, Keybinds, SetRoot,   
 IniRead, KB_FormatEnf,   %IniFile%, Keybinds, FormatEnf, 
@@ -521,11 +517,13 @@ Return
 RefreshHotkeys:
 GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
 
-; Disable the global-context variants: Copy, Paste and Set Root are
-; registered without a window restriction below, so this loop has real work
-; to do. It must stay ahead of the window-scoped teardown that follows --
-; the two are different registrations and each is only reachable from the
-; context it was made in.
+; Disable anything registered in the global context. Nothing is registered
+; there any more, so on a normal pass this loop finds nothing -- it is kept
+; because it is the cheap half of the teardown bug fixed below: a bind added
+; outside the window loop in future would otherwise survive every refresh,
+; and UseErrorLevel makes a miss free. It must stay ahead of the
+; window-scoped teardown -- the two are different registrations and each is
+; only reachable from the context it was made in.
 Hotkey, IfWinActive
 For hk, lbl in HotkeyLabelMap
 {
@@ -555,10 +553,6 @@ IniRead, EnabledSection, %IniFile%, Enabled
 
 ; Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
-if (KB_Copy != "")
-    HotkeyLabelMap[KB_Copy]      := "DoCopy"
-if (KB_Paste != "")
-    HotkeyLabelMap[KB_Paste]     := "DoPaste"
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
 if (KB_SetRoot != "")
@@ -598,18 +592,11 @@ if (KB_FinS != "")
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
-; Register the GLOBAL binds -- no window restriction, matching
-; RefreshHotkeys Step 4 (111unified.ahk:763-771). These three fire in every
-; application; DoSemi re-checks the active window for itself, and DoCopy
-; and DoPaste are deliberately usable anywhere.
-Hotkey, IfWinActive
-RegisterBind("Copy",    KB_Copy,    "DoCopy")
-RegisterBind("Paste",   KB_Paste,   "DoPaste")
-RegisterBind("SetRoot", KB_SetRoot, "DoSemi")
-
-; Register window-specific hotkeys for enabled windows. Nothing is global
-; any more -- Set Root moved here too, since its global scope only existed
-; to support the removed dual-use naming mode.
+; Register every bind against each enabled window. RefreshHotkeys Step 4
+; (111unified.ahk:763-771) kept Copy, Paste and Set Root out of this loop so
+; they fired in every application. Copy and Paste are gone, and Set Root is
+; in the loop now: a hotkey that reformats the clipboard and resets the root
+; state has no business firing in a browser or a chat window.
 Loop, Parse, EnabledSection, `n, `r
 {
     Line := Trim(A_LoopField)
@@ -624,10 +611,8 @@ Loop, Parse, EnabledSection, `n, `r
     if (Val = "1") {
         Hotkey, IfWinActive, %WinTitle%
         RegisteredWindows.Push(WinTitle)
-        ; SetRoot is NOT here: it is registered globally above, and
-        ; registering it per-window as well would make the second call
-        ; fail and land in FailedBinds.
         RegisterBind("GrabSig",      KB_GrabSig,      "DoQ")
+        RegisterBind("SetRoot",      KB_SetRoot,      "DoSemi")
         RegisterBind("FormatEnf",    KB_FormatEnf,    "DoE")
         RegisterBind("ConvertScout", KB_ConvertScout, "DoConvertScout")
         RegisterBind("FinH",  KB_FinH,  "DoY")
@@ -806,16 +791,6 @@ AllPrefixesSingle(clip) {
     return foundAny
 }
 
-; Registered globally: these exist to be usable outside EVE as well as in
-; it (111unified.ahk:988-995).
-DoCopy:
-Send ^c
-Return
-
-DoPaste:
-Send ^v
-Return
-
 DoQ:
 Send ^c
 Sleep 100
@@ -834,14 +809,14 @@ Return
 ; ============================================================
 ; SET ROOT: Normal copy/parse/set root flow with resume.
 ;
-; Registered GLOBALLY (RefreshHotkeys Step 4), so it can fire in any
-; application and MUST re-check where it is. Outside an enabled EVE window
-; it types the current root and stops -- that branch is not Protean-
-; specific despite an earlier reading of it: the original tests only the
-; window, never CurrentMode (111unified.ahk:1024-1043). Without this guard a
-; global press inside another application would run the whole copy/parse
-; flow there: Send ^c into someone's chat window, and the root state reset
-; on the way.
+; Registered per-window now, so the guard below should never fail. It is
+; kept because registration and this check read the [Enabled] list at
+; different moments: RefreshHotkeys runs on a timer, so between a window
+; being disabled and the refresh that tears its binds down, the hotkey is
+; still live. Without the guard that press would run the whole copy/parse
+; flow -- Send ^c into whatever is focused, and the root state reset on the
+; way. Falling back to typing the current root matches the original, which
+; tests only the window and never CurrentMode (111unified.ahk:1024-1043).
 ; ============================================================
 DoSemi:
 ; FIRST: are we in an enabled EVE window?

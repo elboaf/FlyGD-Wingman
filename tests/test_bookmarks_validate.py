@@ -2,22 +2,24 @@ import pytest
 from obs_youtube_uploader import bookmarks
 
 
-def test_there_are_twenty_one_binds():
-    """All 21 the standalone script had. Copy and Paste were cut in the
-    first port and restored: the handlers are two lines each
-    (111unified.ahk:988-995) and the corp uses them."""
-    assert len(bookmarks.BIND_IDS) == 21
-    assert "Copy" in bookmarks.BIND_IDS
-    assert "Paste" in bookmarks.BIND_IDS
-    assert len(set(bookmarks.BIND_IDS)) == 21
+def test_there_are_nineteen_binds():
+    """19 of the standalone script's 21. Copy and Paste are gone: their
+    handlers were Send ^c and Send ^v (111unified.ahk:988-995), so they
+    spent a global keyboard hook on what Windows already does."""
+    assert len(bookmarks.BIND_IDS) == 19
+    assert "Copy" not in bookmarks.BIND_IDS
+    assert "Paste" not in bookmarks.BIND_IDS
+    assert len(set(bookmarks.BIND_IDS)) == 19
 
 
-def test_copy_paste_and_setroot_are_the_global_binds():
-    """RefreshHotkeys Step 4 (111unified.ahk:763-771) registers exactly
-    these three outside the per-window loop. They fire in every
-    application, which is the one thing about them a user must be told."""
-    assert bookmarks.GLOBAL_BIND_IDS == {"Copy", "Paste", "SetRoot"}
-    assert bookmarks.GLOBAL_BIND_IDS < set(bookmarks.BIND_IDS)
+def test_no_bind_is_advertised_as_global():
+    """GLOBAL_BIND_IDS is gone along with the route's per-row scope marker.
+    Every bind is registered inside the per-window loop now, so a set of
+    exceptions reintroduced here would be describing something the engine
+    no longer does -- and the route would start telling users a hotkey
+    fires everywhere when it does not."""
+    assert not hasattr(bookmarks, "GLOBAL_BIND_IDS")
+    assert "SetRoot" in bookmarks.BIND_IDS
 
 
 def test_recommended_binds_cover_every_id_without_colliding():

@@ -79,11 +79,13 @@ def to_ahk(parts: dict) -> dict:
 
 
 # Order is display order in the Bookmarks route, matching the order the
-# standalone GUI built its rows in (111unified.ahk:285-305): the two
-# clipboard conveniences, then actions, then class finishers, then tag
-# finishers.
+# standalone GUI built its rows in (111unified.ahk:285-305): actions, then
+# class finishers, then tag finishers.
+#
+# The two clipboard conveniences the standalone script led with are gone.
+# Copy and Paste only ever sent ^c and ^v (111unified.ahk:988-995), so they
+# spent a global keyboard hook reproducing what Windows already does.
 BIND_IDS = (
-    "Copy", "Paste",
     "GrabSig", "SetRoot", "FormatEnf", "ConvertScout",
     "FinH", "FinL", "FinN", "Fin13",
     "Fin1", "Fin2", "Fin3", "Fin4", "Fin5", "Fin6",
@@ -92,8 +94,6 @@ BIND_IDS = (
 
 # Human labels for the route. Kept beside the ids so the two cannot drift.
 BIND_LABELS = {
-    "Copy": "Copy",
-    "Paste": "Paste",
     "GrabSig": "Grab Sig ID",
     "SetRoot": "Set Root",
     "FormatEnf": "Format Enforcer",
@@ -120,14 +120,6 @@ BIND_LABELS = {
 DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "")
                  for bid in BIND_IDS}
 
-# Registered with no window restriction, matching RefreshHotkeys Step 4
-# (111unified.ahk:763-771), where Copy, Paste and Set Root are deliberately
-# registered outside the per-window loop that Step 5 uses for the other
-# eighteen. These fire in every application, not just an enabled EVE
-# client, which is a property the route has to show the user: the
-# standalone GUI left it discoverable only by reading the script.
-GLOBAL_BIND_IDS = frozenset({"Copy", "Paste", "SetRoot"})
-
 # The set the corp actually runs, offered behind the route's "Reset
 # defaults" button (the standalone GUI's :319 button, which the port
 # dropped). Not DEFAULT_BINDS: applied on request, never silently, so a
@@ -136,7 +128,6 @@ GLOBAL_BIND_IDS = frozenset({"Copy", "Paste", "SetRoot"})
 # ConvertScout stays at the script's compiled default rather than the ^s
 # the shipped INI carries -- maintainer's call.
 RECOMMENDED_BINDS = {
-    "Copy": "^j", "Paste": "^k",
     "GrabSig": "^q", "SetRoot": "^;", "FormatEnf": "^e",
     "ConvertScout": "^+s",
     "FinH": "^y", "FinL": "^p", "FinN": "^.", "Fin13": "^o",
@@ -233,10 +224,16 @@ def parse_ahk(text: str) -> dict:
 
 _CRLF = "\r\n"
 
-# The return preface is a marker character, not a string. Capped because it
-# is free text from the user that lands in a file the engine parses and then
-# prepends to every return bookmark.
-PREFACE_MAX = 8
+# Bookmark naming is fixed. It was user-editable in the standalone GUI and
+# in Wingman's first port; the three controls were removed as noise, so the
+# values are frozen at what a default Wingman install already produced --
+# nobody who left them alone sees their bookmarks change.
+#
+# Frozen, not deleted: generate_ini still writes them, because the engine's
+# own compiled-in defaults differ (see there).
+HOME_ZERO = False
+PREFACE_RETURN = True
+RETURN_PREFACE = "!"
 
 
 def generate_ini(section: dict) -> str:
@@ -255,18 +252,17 @@ def generate_ini(section: dict) -> str:
         value = binds.get(bid) or ""
         lines.append(f"{bid}={sanitise(value)}")
 
-    # Every setting is written on every pass for the same reason every bind
-    # is: a missing key makes IniRead fall back to the engine's compiled-in
-    # default (111unified.ahk:114-117), which would resurrect a value the
-    # user deliberately changed. HomeZeroIs0 is the one that matters --
-    # its compiled default is 1, and Wingman's is the opposite.
+    # Still written on every pass, even though these no longer vary: a
+    # missing key makes IniRead fall back to the engine's compiled-in
+    # default (111unified.ahk:114-117). HomeZeroIs0 is the one that
+    # matters -- its compiled default is 1 and Wingman's numbering is the
+    # opposite, so dropping the block would renumber every home bookmark
+    # instead of leaving the naming exactly where it was.
     lines.append("")
     lines.append("[Settings]")
-    lines.append(f"HomeZeroIs0={1 if section.get('home_zero') else 0}")
-    lines.append(
-        f"PrefaceReturn={1 if section.get('preface_return') else 0}")
-    lines.append(
-        f"ReturnPreface={sanitise(section.get('return_preface') or '')}")
+    lines.append(f"HomeZeroIs0={1 if HOME_ZERO else 0}")
+    lines.append(f"PrefaceReturn={1 if PREFACE_RETURN else 0}")
+    lines.append(f"ReturnPreface={sanitise(RETURN_PREFACE)}")
 
     lines.append("")
     lines.append("[Enabled]")
@@ -369,18 +365,7 @@ def import_legacy_ini(text: str) -> dict:
 
     section = {"enabled": False,
                "keybinds": dict(DEFAULT_BINDS),
-               "windows": {},
-               # Seeded from the SCRIPT's compiled-in defaults, not
-               # Wingman's, and overwritten below by whatever the file
-               # actually says. The distinction matters for HomeZeroIs0: a
-               # legacy file that omits it was being numbered from .0
-               # (111unified.ahk:32), so importing it as Wingman's own
-               # default of .1 would silently renumber the user -- which is
-               # the exact thing importing their settings is meant to
-               # prevent.
-               "home_zero": True,
-               "preface_return": True,
-               "return_preface": "!"}
+               "windows": {}}
     for bid in BIND_IDS:
         if bid in legacy_binds:
             section["keybinds"][bid] = sanitise(legacy_binds[bid])
@@ -398,23 +383,45 @@ def import_legacy_ini(text: str) -> dict:
             continue
         section["windows"][clean] = value.strip() == "1"
 
-    if "HomeZeroIs0" in legacy_settings:
-        section["home_zero"] = legacy_settings["HomeZeroIs0"].strip() == "1"
-    if "PrefaceReturn" in legacy_settings:
-        section["preface_return"] = \
-            legacy_settings["PrefaceReturn"].strip() == "1"
-    if "ReturnPreface" in legacy_settings:
-        section["return_preface"] = sanitise(
-            legacy_settings["ReturnPreface"])[:PREFACE_MAX]
-
     # Nothing is reported as discarded for Mode: the engine implements
     # Flygd/ABH, so Mode=2 is preserved behaviour and saying otherwise
     # would alarm a user who lost nothing. Mode=1 is a real loss and gets a
     # note below that says what actually changes for them.
     discarded = [f"{title} (window, not an EVE client window)"
                  for title in discarded_windows]
+    # The loop above is over BIND_IDS, so a legacy Copy or Paste bind is
+    # dropped by construction. Silently, unless it is named here -- and a
+    # user who had bound them will otherwise just find two dead keys.
+    discarded += [f"{bid} (hotkey, no longer part of Wingman)"
+                  for bid in ("Copy", "Paste")
+                  if sanitise(legacy_binds.get(bid, ""))]
 
     notes = []
+
+    # Bookmark naming used to be imported along with everything else. It is
+    # fixed now, so instead of carrying a value across, the mismatch has to
+    # be described -- these change how every bookmark comes out, and the
+    # user has no control left to put them back.
+    #
+    # Absence means the script's own compiled default, not Wingman's
+    # (111unified.ahk:32,114-117), which is why each read defaults to "1"
+    # rather than to what Wingman does.
+    if legacy_settings.get("HomeZeroIs0", "1").strip() != "0":
+        notes.append(
+            "Your first home hole was numbered .0. Wingman always numbers "
+            "home holes from .1, so they will come out one higher than you "
+            "are used to.")
+    preface_on = legacy_settings.get("PrefaceReturn", "1").strip() != "0"
+    preface = sanitise(legacy_settings.get("ReturnPreface", RETURN_PREFACE))
+    if not preface_on:
+        notes.append(
+            "Your return bookmarks were not prefaced. Wingman always "
+            f"prefaces them with {RETURN_PREFACE}.")
+    elif preface != RETURN_PREFACE:
+        notes.append(
+            f"Your return bookmarks were prefaced with {preface}. Wingman "
+            f"always uses {RETURN_PREFACE}.")
+
     # Protean/v21 is the one behaviour the engine cannot reproduce, so a
     # user who was running it needs telling in their own terms rather than
     # being left to notice their bookmarks come out differently.

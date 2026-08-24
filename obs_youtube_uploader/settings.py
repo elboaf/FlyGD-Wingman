@@ -11,20 +11,13 @@ from . import bookmarks, paths
 
 def _eve_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global."""
-    # Off by default: Copy, Paste and Set Root register with no window
-    # restriction (111unified.ahk:763-771), so enabling this really does
-    # install hotkeys that fire outside EVE. An upgrading user has to ask
-    # for that rather than be given it.
+    # Off by default. Every bind is now scoped to an enabled EVE window,
+    # but enabling this still starts a process that installs a system-wide
+    # keyboard hook, which an upgrading user has to ask for rather than be
+    # given.
     return {"enabled": False,
             "keybinds": dict(bookmarks.DEFAULT_BINDS),
-            "windows": {},
-            # The standalone script's compiled-in default is the opposite
-            # (HomeZeroIs0 := 1, 111unified.ahk:32). Wingman starts a fresh
-            # install at .1 by maintainer decision; an imported INI carries
-            # its own value across, so nobody upgrading is renumbered.
-            "home_zero": False,
-            "preface_return": True,
-            "return_preface": "!"}
+            "windows": {}}
 
 
 DEFAULTS = {
@@ -86,20 +79,12 @@ def validated_eve(raw) -> dict:
     # Ids not in BIND_IDS are dropped by construction: the loop is over the
     # known ids, so a key from a hand-edited file cannot reach the INI.
 
-    # isinstance rather than `is True`: these two have different defaults,
-    # so absence has to leave the default standing rather than resolve to
-    # False. Unlike `enabled` there is no hook to start, so a garbage value
-    # falling back to the default is the whole of the risk.
-    for flag in ("home_zero", "preface_return"):
-        if isinstance(raw.get(flag), bool):
-            section[flag] = raw[flag]
-
-    preface = raw.get("return_preface")
-    if isinstance(preface, str):
-        # Sanitised and capped here rather than only at generate_ini: this
-        # is the boundary a hand-edited settings file crosses.
-        section["return_preface"] = \
-            bookmarks.sanitise(preface)[:bookmarks.PREFACE_MAX]
+    # home_zero, preface_return and return_preface used to be read here.
+    # Naming is fixed now (bookmarks.HOME_ZERO and friends). Dropping the
+    # reads is the whole of the removal: `section` starts from
+    # _eve_defaults() and only the keys handled explicitly are copied
+    # across, so the leftovers in an older settings.json go nowhere and are
+    # gone from the file after the next save.
 
     windows = raw.get("windows")
     if isinstance(windows, dict):

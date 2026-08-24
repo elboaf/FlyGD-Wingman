@@ -78,18 +78,26 @@ def test_mode_is_gone_but_the_other_settings_are_written():
     assert "ReturnPreface=!" in text
 
 
-def test_home_zero_is_written_as_one_when_set():
-    text = bookmarks.generate_ini(section(home_zero=True))
-    assert "HomeZeroIs0=1" in text
-
-
-def test_return_preface_cannot_break_out_of_its_line():
-    """Free text from the user landing in a file the engine parses. Line
-    breaks are stripped, so an injected "Mode=1" stays part of the value
-    rather than becoming an entry of its own."""
-    text = bookmarks.generate_ini(section(return_preface="!\r\nMode=1"))
-    assert "ReturnPreface=!Mode=1\r\n" in text
+def test_naming_is_fixed_and_ignores_whatever_the_section_says():
+    """The three controls are gone, so a stale settings.json -- or a
+    hand-edited one -- must not be able to steer naming any more. Written
+    from the module constants, never from the section."""
+    text = bookmarks.generate_ini(section(home_zero=True,
+                                          preface_return=False,
+                                          return_preface="@\r\nMode=1"))
+    assert "HomeZeroIs0=0" in text
+    assert "PrefaceReturn=1" in text
+    assert "ReturnPreface=!\r\n" in text
     assert "\r\nMode=1\r\n" not in text
+
+
+def test_the_written_values_are_the_constants():
+    """Belt and braces on the pair above: if the constants themselves are
+    ever changed, this is the test that says so out loud rather than
+    letting the INI quietly disagree with what the module documents."""
+    assert bookmarks.HOME_ZERO is False
+    assert bookmarks.PREFACE_RETURN is True
+    assert bookmarks.RETURN_PREFACE == "!"
 
 
 @pytest.mark.parametrize("title", [
