@@ -1199,6 +1199,7 @@ class Api:
         self._push("onEveStatus", {
             "state": status.state, "sig": status.sig, "root": status.root,
             "next_num": status.next_num, "next_alpha": status.next_alpha,
+            "root_mode": status.root_mode,
             "failed_binds": status.failed_binds,
             # A failed start is otherwise invisible: this is the one
             # actionable thing the user can be told ("the engine is
@@ -1294,6 +1295,10 @@ class Api:
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
             "order": list(bookmarks.BIND_IDS),
+            # Which binds fire outside EVE. The standalone GUI left this
+            # discoverable only by reading RefreshHotkeys; the route shows
+            # it per row.
+            "globals": sorted(bookmarks.GLOBAL_BIND_IDS),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
             # Human labels for the bound keys. Computed here rather than in
@@ -1305,6 +1310,7 @@ class Api:
                          if value},
             "engine": {
                 "state": status.state if status else "off",
+                "root_mode": status.root_mode if status else "",
                 # Surfaces a failed start straight away. Without this the
                 # toggle reads "on" while nothing is running, and the reason
                 # never reaches the user at all.
@@ -1318,10 +1324,17 @@ class Api:
 
         The payload arrives from the page and lands in a file that registers
         keyboard hooks, so it is re-validated here rather than trusted.
+
+        The returned payload carries a `saved` flag. Both failure paths
+        below return the same shape as success, so without it a caller
+        cannot tell a completed write from a refused one -- which is how
+        import came to report "Import complete" over a settings file it had
+        failed to write. The page ignores the key; only callers that make a
+        success claim of their own need it.
         """
         if not isinstance(section, dict):
             logger.error("Refusing a non-dict bookmarks payload")
-            return self.get_bookmarks()
+            return {**self.get_bookmarks(), "saved": False}
 
         merged = dict(self._state.settings)
         merged["eve_bookmarks"] = settings_mod.validated_eve(section)
@@ -1333,7 +1346,7 @@ class Api:
             # letting the exception escape.
             self._alert("error", "Could not save settings",
                         f"Bookmark settings were not saved: {exc}")
-            return self.get_bookmarks()
+            return {**self.get_bookmarks(), "saved": False}
 
         self._state.settings = settings_mod.load()
         clean = self._state.settings["eve_bookmarks"]
@@ -1346,10 +1359,22 @@ class Api:
                 engine.sync_sequence()
             elif not clean["enabled"] and engine.is_running():
                 engine.stop()
-        return self.get_bookmarks()
+        return {**self.get_bookmarks(), "saved": True}
 
     def capture_bind(self, parts) -> dict:
         return bookmarks.to_ahk(parts if isinstance(parts, dict) else {})
+
+    def reset_binds(self) -> dict:
+        """Apply the recommended set, overwriting every bind.
+
+        The standalone GUI's Reset Defaults button (111unified.ahk:319),
+        which the port dropped. Overwrite rather than fill-blanks: a reset
+        whose effect depends on hidden state is not a reset, and the user
+        reaches this through a confirmation in the page.
+        """
+        section = dict(self._state.settings["eve_bookmarks"])
+        section["keybinds"] = dict(bookmarks.RECOMMENDED_BINDS)
+        return self.save_bookmarks(section)
 
     def parse_bind(self, text) -> dict:
         return bookmarks.parse_ahk(text if isinstance(text, str) else "")
@@ -1372,23 +1397,40 @@ class Api:
         if not chosen:
             return {"ok": False, "discarded": [], "notes": []}
         try:
-            # utf-8-sig, not utf-8: the legacy file is routinely hand-edited
-            # in Notepad, which prepends a BOM. import_legacy_ini strips one
-            # too, but handling it at the I/O boundary as well means the
-            # parser never sees it -- and a BOM reaching the parser silently
-            # discarded the whole first section, which is every keybind.
-            text = Path(chosen[0]).read_text(encoding="utf-8-sig",
-                                             errors="replace")
+            # Read as BYTES and sniff the BOM. AutoHotkey's IniWrite emits
+            # UTF-16 LE on a Unicode build, which is what the real file in
+            # the wild actually is; decoding that as UTF-8 leaves a NUL
+            # after every character, so every section header failed the
+            # parser's "]" test and the whole file imported as nothing --
+            # which was then saved over the user's real settings while the
+            # dialog reported success.
+            raw = Path(chosen[0]).read_bytes()
         except OSError as exc:
             return {"ok": False, "discarded": [],
                     "notes": [f"Could not read that file: {exc}"]}
 
-        result = bookmarks.import_legacy_ini(text)
+        result = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
+        if not result["parsed"]:
+            # No sections at all. Indistinguishable from an empty config by
+            # content, so it is treated as the failure it almost certainly
+            # is: saving here would wipe the settings the import exists to
+            # preserve.
+            return {"ok": False, "discarded": [], "notes": [
+                "That file does not look like a bookmark helper INI - no "
+                "settings were found in it, so nothing was changed."]}
         # Import never enables the engine: reading someone's old settings is
         # not consent to start a keyboard hook.
         result["section"]["enabled"] = \
             self._state.settings["eve_bookmarks"]["enabled"]
-        self.save_bookmarks(result["section"])
+        if not self.save_bookmarks(result["section"])["saved"]:
+            # Deliberately no note: save_bookmarks has already raised its own
+            # "Could not save settings" dialog naming the reason, and the
+            # page only alerts on a failure that carries one. Returning a
+            # second message here would put two dialogs on screen for one
+            # failure -- and returning ok=True would put a contradictory
+            # "Import complete" beside the error, which is the bug this
+            # flag exists to close.
+            return {"ok": False, "discarded": [], "notes": []}
         return {"ok": True, "discarded": result["discarded"],
                 "notes": result["notes"]}
 

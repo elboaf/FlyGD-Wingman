@@ -32,9 +32,32 @@
     if (!payload) return;
     state = payload;
     WM.el('eve-enabled').checked = !!payload.settings.enabled;
+    WM.el('eve-home-zero').checked = !!payload.settings.home_zero;
+    WM.el('eve-preface-return').checked = !!payload.settings.preface_return;
+    // Not overwritten while the user is mid-edit: every keystroke saves,
+    // and re-rendering from the round-tripped value would move the caret
+    // to the end on each one.
+    var preface = WM.el('eve-return-preface');
+    if (document.activeElement !== preface) {
+      preface.value = payload.settings.return_preface || '';
+    }
     renderEngineState();
+    renderRootMode();
     renderWindows();
     renderBinds();
+  }
+
+  // The standalone GUI's Root Mode readout (111unified.ahk:208,214). Driven by
+  // the engine's own root_mode field rather than inferred from the root
+  // string, which exists to be read by a human.
+  function renderRootMode(mode) {
+    var el = WM.el('eve-root-mode');
+    if (!el) return;
+    if (mode === undefined) {
+      mode = (state && state.engine && state.engine.root_mode) || '';
+    }
+    el.textContent = { home: 'Home/Zero', active: 'Active' }[mode]
+      || 'Not set';
   }
 
   // Immediate feedback after a save. The live status push (a later task)
@@ -124,6 +147,15 @@
     state.order.forEach(function (id) {
       var row = WM.make('div', 'row');
       row.appendChild(WM.make('span', 'lab', state.labels[id]));
+
+      // Copy, Paste and Set Root register with no window restriction
+      // (111unified.ahk:763-771), so they fire in every application. The
+      // standalone GUI left that discoverable only by reading the script.
+      if ((state.globals || []).indexOf(id) !== -1) {
+        row.appendChild(WM.make('span', 'scope', 'everywhere'));
+      } else {
+        row.appendChild(WM.make('span', 'scope dim', 'in EVE'));
+      }
 
       var button = WM.make('button', 'bindbtn',
                            state.displays[id] || 'Not set');
@@ -245,6 +277,48 @@
     send(next);
   });
 
+  function saveFlag(id, key) {
+    WM.el(id).addEventListener('change', function () {
+      if (!state) {
+        // Same guard the Enable checkbox needs: this listener is live on
+        // static markup before the first get_bookmarks resolves, and a
+        // click in that gap would throw. Assigning .checked from script
+        // does not re-dispatch `change`.
+        WM.el(id).checked = !WM.el(id).checked;
+        return;
+      }
+      var next = JSON.parse(JSON.stringify(state.settings));
+      next[key] = WM.el(id).checked;
+      send(next);
+    });
+  }
+  saveFlag('eve-home-zero', 'home_zero');
+  saveFlag('eve-preface-return', 'preface_return');
+
+  WM.el('eve-return-preface').addEventListener('change', function () {
+    if (!state) return;
+    var next = JSON.parse(JSON.stringify(state.settings));
+    next.return_preface = WM.el('eve-return-preface').value;
+    send(next);
+  });
+
+  WM.el('eve-refresh-windows').addEventListener('click', function () {
+    // The window list changes when clients open and close. Route entry
+    // refreshes it too, but that is no help to someone already on the page
+    // when a client launches.
+    WM.send('get_bookmarks').then(render);
+  });
+
+  WM.el('eve-reset-binds').addEventListener('click', function () {
+    // Overwrites all 21, so it is confirmed. window.confirm is what the
+    // rest of the page uses for a destructive action.
+    if (!window.confirm(
+        'Replace all 21 keybinds with the recommended defaults?')) {
+      return;
+    }
+    WM.send('reset_binds').then(render);
+  });
+
   // `eve_command` returns a bool rather than pushing a status: false means
   // the engine did not accept it (not running, or a previous command is
   // still in flight), and without this the button would look like it did
@@ -323,6 +397,10 @@
     warn.title = failed.length
       ? failed.length + ' hotkey(s) failed to register — see Bookmarks'
       : '';
+
+    // Values are only trustworthy while running, for the same reason the
+    // sig and root readouts above are blanked.
+    renderRootMode(live ? (payload.root_mode || '') : '');
 
     var label = { stopped: 'Stopped', stale: 'Not responding',
                   running: 'Running' }[payload.state] || '';

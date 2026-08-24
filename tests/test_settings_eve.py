@@ -55,10 +55,9 @@ def test_bad_enabled_falls_back_to_off(tmp_path, bad):
 def test_unknown_bind_ids_are_dropped_and_missing_ones_defaulted(tmp_path):
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"eve_bookmarks": {
-        "keybinds": {"FinH": "^h", "Copy": "^c", "Nonsense": "^x"}}}))
+        "keybinds": {"FinH": "^h", "Nonsense": "^x"}}}))
     binds = settings.load(path)["eve_bookmarks"]["keybinds"]
     assert binds["FinH"] == "^h"
-    assert "Copy" not in binds
     assert "Nonsense" not in binds
     assert binds["ConvertScout"] == "^+s"
     assert set(binds) == set(bookmarks.BIND_IDS)

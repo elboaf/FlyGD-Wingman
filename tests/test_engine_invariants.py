@@ -86,14 +86,54 @@ def test_protean_mode_is_gone(lowered):
     assert "formatproteanclipandpaste" not in lowered
 
 
-def test_removed_settings_are_gone(lowered):
-    for name in ("homezeroIs0", "PrefaceReturn", "ReturnPreface"):
-        assert name.lower() not in lowered, name
+def test_restored_settings_are_read_from_the_ini(source):
+    """Cut in the first port and restored. HomeZeroIs0 in particular must be
+    READ, not hardcoded: the engine's compiled default is the opposite of
+    Wingman's, so a dropped IniRead silently renumbers every home bookmark."""
+    for name in ("HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
+        assert re.search(r"IniRead,\s*" + name + r"\s*,", source,
+                         re.IGNORECASE), name
 
 
-def test_copy_and_paste_binds_are_gone(lowered):
-    assert "kb_copy" not in lowered
-    assert "kb_paste" not in lowered
+def test_copy_and_paste_binds_are_read_and_handled(source):
+    lowered = source.lower()
+    assert "kb_copy" in lowered
+    assert "kb_paste" in lowered
+    assert re.search(r"^DoCopy:", source, re.MULTILINE)
+    assert re.search(r"^DoPaste:", source, re.MULTILINE)
+
+
+def test_the_three_global_binds_are_registered_outside_the_window_loop(source):
+    """RefreshHotkeys Step 4 (111unified.ahk:763-771). The per-window loop
+    is bounded by its own closing brace, so a global RegisterBind cannot be
+    inside it -- and registering SetRoot in both places would make the
+    second call fail and land in FailedBinds."""
+    loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
+                     re.IGNORECASE | re.DOTALL)
+    assert loop, "per-window registration loop not found"
+    body = loop.group(0)
+    for bid in ("Copy", "Paste", "SetRoot"):
+        assert re.search(r'RegisterBind\("' + bid + r'"', source), bid
+        assert not re.search(r'RegisterBind\("' + bid + r'"', body), \
+            f"{bid} is registered per-window as well as globally"
+    # And the eighteen window-scoped ones must still be in there.
+    assert re.search(r'RegisterBind\("GrabSig"', body)
+
+
+def test_set_root_rechecks_the_active_window(source):
+    """It is registered globally, so it can fire anywhere. Without the
+    guard, a press inside another application runs the whole copy/parse
+    flow there -- Send ^c into a chat window and the root state reset."""
+    body = source.split("DoSemi:", 1)[1][:1200]
+    assert "IsEveWindow" in body
+    assert re.search(r"WinGetTitle\s*,\s*ActiveTitle\s*,\s*A", body,
+                     re.IGNORECASE)
+    assert re.search(r"if\s*\(!IsEveWindow\)", body)
+
+
+def test_root_mode_is_published(lowered):
+    """The UI must not have to infer it from root == "(home)"."""
+    assert "root_mode" in lowered
 
 
 def test_every_registration_records_failures(source):
@@ -129,3 +169,26 @@ def test_status_is_published_atomically(lowered):
     assert "eve_status.json.tmp" in lowered
     assert re.search(r"filemove,\s*eve_status\.json\.tmp,\s*eve_status\.json,\s*1",
                       lowered)
+
+
+def test_settings_used_inside_functions_are_declared_global(source):
+    """AHK v1 makes an undeclared name inside a function LOCAL. HomeZeroIs0
+    is read in FireRootFinisher, so without the declaration it reads as
+    empty, the home branch never fires, and the setting silently does
+    nothing -- a failure with no error and no log line.
+
+    Only settings read inside a function need this. The return-preface pair
+    is used from DoSemi and SetManualRoot, which are labels running in
+    global scope, so they are deliberately not checked here.
+    """
+    body = re.search(r"FireRootFinisher\([^)]*\)\s*\{(.*?)\n\}",
+                     source, re.DOTALL)
+    assert body, "FireRootFinisher not found"
+    text = body.group(1)
+    if "HomeZeroIs0" in text:
+        declarations = re.findall(r"^\s*global\s+([^\n;]+)", text,
+                                  re.MULTILINE)
+        declared = {name.strip()
+                    for line in declarations for name in line.split(",")}
+        assert "HomeZeroIs0" in declared, \
+            "FireRootFinisher reads HomeZeroIs0 without declaring it global"

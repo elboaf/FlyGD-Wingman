@@ -2,12 +2,14 @@
 reads it. These tests pin the exact bytes because the consumer is an AHK
 script we cannot test."""
 import pytest
-from obs_youtube_uploader import bookmarks
+from obs_youtube_uploader import bookmarks, settings
 
 
 def section(**over):
-    base = {"enabled": True, "keybinds": dict(bookmarks.DEFAULT_BINDS),
-            "windows": {}}
+    # Built from the real validator rather than a literal, so the fixture
+    # cannot drift from the schema generate_ini is actually handed.
+    base = settings.validated_eve({})
+    base["enabled"] = True
     base.update(over)
     return base
 
@@ -61,12 +63,33 @@ def test_newline_in_a_window_title_cannot_forge_a_line():
     assert "EVE - BadFinH=1" in lines
 
 
-def test_no_mode_or_preface_settings():
-    """Protean/v21, HomeZeroIs0 and the return preface are gone; the engine
-    hardcodes their surviving behaviour."""
+def test_mode_is_gone_but_the_other_settings_are_written():
+    """Protean/v21 is the only setting the engine no longer has. The other
+    three are written on EVERY pass: a missing key makes IniRead fall back
+    to the engine's compiled-in default (111unified.ahk:114-117), and for
+    HomeZeroIs0 that default is the opposite of Wingman's."""
     text = bookmarks.generate_ini(section())
-    for gone in ("Mode", "HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
-        assert gone not in text
+    assert "Mode=" not in text
+    assert "[Settings]" in text
+    # section() carries the shipped defaults, so this is the case where a
+    # "write only what differs" optimisation would drop the lines entirely.
+    assert "HomeZeroIs0=0" in text
+    assert "PrefaceReturn=1" in text
+    assert "ReturnPreface=!" in text
+
+
+def test_home_zero_is_written_as_one_when_set():
+    text = bookmarks.generate_ini(section(home_zero=True))
+    assert "HomeZeroIs0=1" in text
+
+
+def test_return_preface_cannot_break_out_of_its_line():
+    """Free text from the user landing in a file the engine parses. Line
+    breaks are stripped, so an injected "Mode=1" stays part of the value
+    rather than becoming an entry of its own."""
+    text = bookmarks.generate_ini(section(return_preface="!\r\nMode=1"))
+    assert "ReturnPreface=!Mode=1\r\n" in text
+    assert "\r\nMode=1\r\n" not in text
 
 
 @pytest.mark.parametrize("title", [

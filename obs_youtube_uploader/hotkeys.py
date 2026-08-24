@@ -55,6 +55,11 @@ class EngineStatus:
     root: str | None = None
     next_num: str | None = None
     next_alpha: str | None = None
+    # "" | "home" | "active". The standalone GUI's Root Mode readout
+    # (111unified.ahk:208,214). Absent from an older engine's status file, and
+    # its absence must NOT force the whole status to stale -- an engine
+    # binary that predates this field is degraded, not broken.
+    root_mode: str = ""
     failed_binds: list = field(default_factory=list)
     consumed_seq: int = 0
     last_error: str | None = None
@@ -318,6 +323,7 @@ class HotkeyEngine:
             root=_text(raw.get("root")),
             next_num=_text(raw.get("next_num")),
             next_alpha=_text(raw.get("next_alpha")),
+            root_mode=_text(raw.get("root_mode")) or "",
             failed_binds=[str(b) for b in failed],
             consumed_seq=consumed_seq,
         )

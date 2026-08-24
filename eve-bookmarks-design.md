@@ -21,41 +21,56 @@ to "general EVE assistant", confirmed with the maintainer.
 
 ### Scope reductions taken on maintainer feedback
 
-The absorbed feature is deliberately narrower than the standalone script:
+> **Superseded.** Most of the cuts below were reverted; see
+> `eve-bookmarks-fidelity-plan.md`. The intent is exact AHK behaviour behind
+> Wingman's GUI, and three of these reductions rested on readings of the
+> script that the code does not support. They are kept here, struck through,
+> because the reasoning that was *wrong* is the part worth not repeating.
+
+The absorbed feature is narrower than the standalone script in exactly one
+respect:
 
 - **Protean/v21 mode is dropped.** The engine supports one naming scheme
   (Flygd/ABH). Every `CurrentMode = 1` branch is removed from the vendored
   script, which is a substantial deletion — the mode is threaded through the
-  finishers, the parser, and the status text.
-- **The `HomeZeroIs0` *option* is dropped, but its behaviour must be pinned
-  deliberately — it is not Protean-specific.** Its GUI label reads "First
-  home hole is 0 (v21/null static mode)" (`:230`), which makes it look like a
-  Protean concern, and an earlier draft of this document dropped it on that
-  basis. That was wrong. `FireRootFinisher` reads it with no reference to
-  `CurrentMode` at all: the condition is `(RootKey = "" && HomeZeroIs0)`
-  (`:870`, `:886`, `:893`), so it governs whether **home-mode** bookmarks are
-  numbered from 0 or from 1 under *both* naming schemes.
+  finishers, the parser, and the status text. **This one stands.**
 
-  Deleting the flag and letting whichever branch happens to survive take over
-  would silently renumber every home bookmark. The engine therefore hardcodes
-  the current shipped default — `HomeZeroIs0 := 1` (`:32`), i.e. home mode
-  starts at `.0` — so behaviour is unchanged for everyone who never altered
-  the checkbox. Anyone who *had* turned it off gets a behaviour change, which
-  is why import reports it explicitly rather than discarding it silently.
-- **`PrefaceReturn` and `ReturnPreface` are dropped.** The corp does not use
-  a return preface character.
-- **The Copy and Paste binds are dropped.** They are personal Dvorak
-  conveniences, not part of the shared workflow.
-- **Set Root becomes window-scoped like everything else.** Its global
+Reverted, with what the original reasoning got wrong:
+
+- ~~**The `HomeZeroIs0` option is dropped**, its behaviour hardcoded to the
+  shipped default.~~ **Restored as a setting.** The analysis here was right
+  that it is not Protean-specific; the mistake was concluding that a
+  hardcoded value was therefore safe. It is not: the compiled default is `.0`
+  and Wingman's is now `.1`, so hardcoding either one renumbers somebody.
+  Note for anyone touching this — `FireRootFinisher` is a *function*, and an
+  undeclared name is local in AHK v1, so the `global HomeZeroIs0` declaration
+  is load-bearing: without it the setting silently reads as empty.
+- ~~**`PrefaceReturn` and `ReturnPreface` are dropped.** The corp does not
+  use a return preface character.~~ **Restored.** The premise was false in
+  two ways: it ships *enabled* (`IniRead ..., PrefaceReturn, 1`, `:116`) with
+  preface `!`, so everyone on defaults uses it; and it is consumed at `:607`
+  and `:1162` with no reference to `CurrentMode`, so grouping it with the
+  Protean removal was a misreading. One maintainer having it off is not the
+  corp not using it.
+- ~~**The Copy and Paste binds are dropped.** Personal Dvorak conveniences.~~
+  **Restored.** The handlers are two lines each (`:988-995`). The real
+  content of this cut was never the handlers but their *scope* — see below.
+- ~~**Set Root becomes window-scoped like everything else.** Its global
   registration existed solely so that, outside an enabled EVE window, it
   could paste a raw root number with the preface stripped — a Protean
-  dual-use that disappears with Protean mode.
+  dual-use that disappears with Protean mode.~~ **Restored to global.** The
+  out-of-window branch is `Send %RootKey%` guarded only by the window check
+  (`:1024-1043`); it never consults `CurrentMode`. It types the current root
+  into whatever application is focused, which is a live part of the workflow
+  (set root in EVE, paste it into Discord or Pathfinder).
 
-The consequence worth stating plainly: **no binding is registered globally
-any more.** Every one of the 19 requires an active, enabled EVE window. That
-removes an entire class of risk — a bind shadowing a shortcut in an unrelated
-application — and removes the need for the UI to distinguish bind scopes at
-all.
+The consequence worth stating plainly, corrected: **three of the 21 binds are
+registered globally** — Copy, Paste and Set Root, exactly as `RefreshHotkeys`
+Step 4 does (`:763-771`). They fire in every application. That is a real risk
+— a bind shadowing a shortcut elsewhere — accepted deliberately for fidelity,
+and mitigated by making the scope visible per row in the UI, which the
+standalone GUI never did. `DoSemi` re-checks the active window itself, so a
+global press outside EVE cannot run the copy/parse flow in the wrong place.
 
 ## Repository evidence that shaped this
 

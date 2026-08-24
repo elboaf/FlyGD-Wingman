@@ -780,23 +780,57 @@ pytest — the engine is AutoHotkey.
 - [ ] With the feature off, the status bar shows no EVE segment
 - [ ] Enabling starts the engine; the status bar segment appears
 - [ ] Hotkeys fire in an enabled EVE window and do nothing in an unenabled one
-- [ ] **A bound key does nothing when a non-EVE window is focused** — no bind is
-      global any more, and registration happens inside a function called while
-      an `IfWinActive` criterion is active. If that criterion does not carry
-      into the function, every bind registers globally and fires everywhere.
-      Nothing in the repository can test this; confirm it by hand.
+- [ ] **The eighteen window-scoped binds do nothing when a non-EVE window is
+      focused.** Registration happens inside a function called while an
+      `IfWinActive` criterion is active; if that criterion does not carry into
+      the function, they register globally and fire everywhere. Nothing in the
+      repository can test this; confirm it by hand.
+- [ ] **Copy, Paste and Set Root DO fire outside EVE** — they are registered
+      with no window restriction (Step 4), matching the standalone script.
+      Marked "everywhere" in the route; the other rows read "in EVE".
+- [ ] **Set Root pressed outside an EVE window types the current root and
+      nothing else.** It re-checks the active window for itself. Without that
+      guard a global press runs the whole copy/parse flow in whatever app is
+      focused — `Send ^c` into a chat window, and the root state reset.
+- [ ] Rebinding Copy or Paste stops the old key firing **outside** EVE too —
+      global and window-scoped variants are torn down separately
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
       direct test of the teardown repair, and the bug that shipped for years
 - [ ] Disabling a window stops its hotkeys firing, within ~10s
 - [ ] Every finisher produces the correct Flygd/ABH name (Protean removal)
-- [ ] Home-mode bookmarks number from `.0`
+- [ ] **"First home hole is .0" unticked ⇒ home bookmarks start at `.1`;
+      ticked ⇒ `.0`.** Restored as a setting after the port hardcoded it.
+      `HomeZeroIs0` is read inside a *function*, and an undeclared name is
+      local in AHK v1 — if the `global` declaration is lost the setting reads
+      as empty and silently stops working, with no error anywhere.
+- [ ] **"Preface the return bookmark" prefixes the return bookmark with the
+      preface character**, and unticking it stops that. Independent of the
+      removed Protean mode.
+- [ ] Changing the preface character takes effect within ~10s
+- [ ] **Clearing the preface field entirely gives NO preface**, not a
+      `!`. Wingman writes `ReturnPreface=` with an empty value, and the
+      engine's `IniRead` for it carries a `!` default; whether AHK treats
+      an empty value as present-and-empty or as absent decides this, and
+      nothing off-Windows can settle it.
+- [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
+      tracks Set Root / Clear Root
 - [ ] Deliberately binding two actions to one key shows the collision warning
 - [ ] Binding a key another application owns shows a registration failure,
       not a silently dead key
 - [ ] Set Root and Clear Root from the route change the status bar values
 - [ ] A second action taken immediately is not lost
-- [ ] Importing an existing `eve_bookmark_helper.ini` reproduces that setup
-      and reports what it discarded
+- [ ] **Importing a REAL `eve_bookmark_helper.ini` reproduces that setup.**
+      AutoHotkey writes it as UTF-16 LE; reading it as UTF-8 parsed nothing
+      and saved that nothing over the user's settings while reporting
+      success. Use a file written by the standalone script, not one retyped
+      in an editor — retyping it changes the encoding and hides the bug.
+- [ ] Importing a file that is not a helper INI refuses and leaves the
+      existing keybinds untouched
+- [ ] Importing a config with `Mode=1` says Protean naming is not supported;
+      one with `Mode=2` says nothing about it
+- [ ] **Reset to defaults** replaces all 21 binds after confirmation
+- [ ] **Refresh** on the EVE windows card picks up a client launched while
+      the route was already open
 - [ ] Config changes apply within 10s without losing root or used slots
 - [ ] No console window flashes when the engine starts
 - [ ] Killing Wingman via Task Manager leaves the engine running; restarting

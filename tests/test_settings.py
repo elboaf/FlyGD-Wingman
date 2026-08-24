@@ -17,6 +17,13 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
             "keybinds": bookmarks.DEFAULT_BINDS,
             "windows": {},
+            # False, unlike the standalone script's compiled-in
+            # HomeZeroIs0 := 1 (111unified.ahk:32): a fresh Wingman install
+            # numbers home holes from .1 by maintainer decision. An
+            # imported INI still carries its own value across.
+            "home_zero": False,
+            "preface_return": True,
+            "return_preface": "!",
         },
     }
 

@@ -584,6 +584,19 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
 
+/* Scope marker. Copy, Paste and Set Root register with no window
+   restriction (111unified.ahk:763-771) and fire in every application; the
+   other eighteen only fire in an enabled EVE client. The standalone GUI
+   left this discoverable only by reading the script, so it is spelled out
+   per row -- .dim for the ordinary case so the exceptions are what catch
+   the eye, not the eighteen rows that behave as expected. */
+.scope {
+  flex: none; font-size: var(--fs-muted); color: var(--brand);
+  border: 1px solid currentColor; border-radius: var(--radius-sm);
+  padding: 1px 6px; white-space: nowrap;
+}
+.scope.dim { color: var(--text-faint); border-color: #2a2e37; }
+
 .linkbtn {
   background: none; border: 0; color: var(--text-faint);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;

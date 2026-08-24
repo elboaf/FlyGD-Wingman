@@ -47,6 +47,16 @@ GroupAdd, EVEWindows, EVE -
 ; thread (including the RefreshStatusTab timer) rather than just this one.
 FileEncoding, UTF-8-RAW
 
+; --- Settings (overwritten by LoadAllSettings when the INI exists) ---
+; Seeded with the standalone script's own compiled-in defaults
+; (111unified.ahk:32-34). Wingman always writes all three, so these only
+; apply when the INI is missing entirely.
+HomeZeroIs0 := 1
+PrefaceReturn := 1
+ReturnPreface := "!"
+KB_Copy := ""
+KB_Paste := ""
+
 ; --- Root tracking ---
 RootKey := ""
 RootJustFired := False
@@ -133,7 +143,15 @@ LoadAllSettings:
 IfNotExist, %IniFile%
     Return
 
+; Load settings. Wingman writes all three on every pass, so the defaults
+; here are only reached if it somehow wrote a partial file.
+IniRead, HomeZeroIs0,   %IniFile%, Settings, HomeZeroIs0, 1
+IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
+IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
+
 ; Load keybindings
+IniRead, KB_Copy,        %IniFile%, Keybinds, Copy,      
+IniRead, KB_Paste,       %IniFile%, Keybinds, Paste,     
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
 IniRead, KB_SetRoot,     %IniFile%, Keybinds, SetRoot,   
 IniRead, KB_FormatEnf,   %IniFile%, Keybinds, FormatEnf, 
@@ -161,8 +179,12 @@ if (RootModeActive) {
     RootText     := RootKey = "" ? "(home)" : RootKey
     NextNumText  := BuildSystemKey(RootKey, NextNum,   False)
     NextAlphaText := BuildSystemKey(RootKey, NextAlpha, True)
+    ; Published as its own field rather than left for the UI to infer from
+    ; RootText = "(home)": that string exists to be read by a human and is
+    ; free to change without anyone thinking about a parser.
+    RootModeText := RootKey = "" ? "home" : "active"
 } else {
-    RootText := "", NextNumText := "", NextAlphaText := ""
+    RootText := "", NextNumText := "", NextAlphaText := "", RootModeText := ""
 }
 SigText := LastSigId
 
@@ -173,6 +195,7 @@ StatusBody := "{"
     . """root"":""" . JsonEsc(RootText) . ""","
     . """next_num"":""" . JsonEsc(NextNumText) . ""","
     . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
+    . """root_mode"":""" . JsonEsc(RootModeText) . ""","
     . """failed_binds"":[" . JsonList(FailedBinds) . "],"
     . """seq"":" . (ConsumedSeq + 0) . ","
     . """written"":" . EpochNow()
@@ -445,6 +468,11 @@ if (RootKey != "") {
     
     ; Build display root
     DisplayRoot := RootKey
+    ; The Protean branch that sat here (111unified.ahk:604-606) stays
+    ; removed; this one is independent of it and was cut by mistake.
+    if (PrefaceReturn) {
+        DisplayRoot := ReturnPreface . DisplayRoot
+    }
 
     Clipboard := DisplayRoot
     GoSub, ShowRootTooltip
@@ -493,10 +521,11 @@ Return
 RefreshHotkeys:
 GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
 
-; Disable the global-context variants. Permanently dead now: nothing is ever
-; registered globally any more (see the comment below), so this loop never
-; has a live global binding to turn off. Left in place as documentation
-; rather than removed.
+; Disable the global-context variants: Copy, Paste and Set Root are
+; registered without a window restriction below, so this loop has real work
+; to do. It must stay ahead of the window-scoped teardown that follows --
+; the two are different registrations and each is only reachable from the
+; context it was made in.
 Hotkey, IfWinActive
 For hk, lbl in HotkeyLabelMap
 {
@@ -526,6 +555,10 @@ IniRead, EnabledSection, %IniFile%, Enabled
 
 ; Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
+if (KB_Copy != "")
+    HotkeyLabelMap[KB_Copy]      := "DoCopy"
+if (KB_Paste != "")
+    HotkeyLabelMap[KB_Paste]     := "DoPaste"
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
 if (KB_SetRoot != "")
@@ -565,6 +598,15 @@ if (KB_FinS != "")
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
+; Register the GLOBAL binds -- no window restriction, matching
+; RefreshHotkeys Step 4 (111unified.ahk:763-771). These three fire in every
+; application; DoSemi re-checks the active window for itself, and DoCopy
+; and DoPaste are deliberately usable anywhere.
+Hotkey, IfWinActive
+RegisterBind("Copy",    KB_Copy,    "DoCopy")
+RegisterBind("Paste",   KB_Paste,   "DoPaste")
+RegisterBind("SetRoot", KB_SetRoot, "DoSemi")
+
 ; Register window-specific hotkeys for enabled windows. Nothing is global
 ; any more -- Set Root moved here too, since its global scope only existed
 ; to support the removed dual-use naming mode.
@@ -582,8 +624,10 @@ Loop, Parse, EnabledSection, `n, `r
     if (Val = "1") {
         Hotkey, IfWinActive, %WinTitle%
         RegisteredWindows.Push(WinTitle)
+        ; SetRoot is NOT here: it is registered globally above, and
+        ; registering it per-window as well would make the second call
+        ; fail and land in FailedBinds.
         RegisterBind("GrabSig",      KB_GrabSig,      "DoQ")
-        RegisterBind("SetRoot",      KB_SetRoot,      "DoSemi")
         RegisterBind("FormatEnf",    KB_FormatEnf,    "DoE")
         RegisterBind("ConvertScout", KB_ConvertScout, "DoConvertScout")
         RegisterBind("FinH",  KB_FinH,  "DoY")
@@ -643,6 +687,10 @@ FireRootFinisher(finChar, isAlpha) {
     global RootKey, RootJustFired, LastSigId, LastFinisherWasAlpha
     global UsedNums, UsedAlphas, NextNum, NextAlpha
     global ReadyToIncrement, LastUsedNum, LastUsedAlpha
+    ; Must be declared: an undeclared name inside a function is LOCAL in
+    ; AHK v1, so this would read as empty, the home branch would never fire
+    ; and the setting would silently do nothing.
+    global HomeZeroIs0
 
     if (isAlpha) {
         if (ReadyToIncrement) {
@@ -657,11 +705,10 @@ FireRootFinisher(finChar, isAlpha) {
         }
     } else {
         if (ReadyToIncrement) {
-            ; Home mode numbers from .0. This was the HomeZeroIs0 option,
-            ; whose default was on (:32); it is now fixed behaviour. It is
-            ; NOT tied to the removed Protean mode -- the original condition
-            ; never mentioned CurrentMode.
-            if (RootKey = "") {
+            ; The HomeZeroIs0 option, restored. It is NOT tied to the
+            ; removed Protean mode -- the original condition never
+            ; mentioned CurrentMode (111unified.ahk:870,886,893).
+            if (RootKey = "" && HomeZeroIs0) {
                 Num := NextNum - 1
             } else {
                 Num := NextNum
@@ -675,9 +722,9 @@ FireRootFinisher(finChar, isAlpha) {
             ; LastUsedNum with 1 and subtracting below -- NOT by seeding it
             ; with NextNum, which diverges as soon as NextNum > 1.
             if (LastUsedNum = "") {
-                LastUsedNum := (RootKey = "") ? 1 : NextNum
+                LastUsedNum := (RootKey = "" && HomeZeroIs0) ? 1 : NextNum
             }
-            Num := (RootKey = "") ? LastUsedNum - 1 : LastUsedNum
+            Num := (RootKey = "" && HomeZeroIs0) ? LastUsedNum - 1 : LastUsedNum
         }
         SysKey := BuildSystemKey(RootKey, Num, False)
     }
@@ -759,6 +806,16 @@ AllPrefixesSingle(clip) {
     return foundAny
 }
 
+; Registered globally: these exist to be usable outside EVE as well as in
+; it (111unified.ahk:988-995).
+DoCopy:
+Send ^c
+Return
+
+DoPaste:
+Send ^v
+Return
+
 DoQ:
 Send ^c
 Sleep 100
@@ -776,11 +833,35 @@ Return
 
 ; ============================================================
 ; SET ROOT: Normal copy/parse/set root flow with resume.
-; The bind is now window-scoped (registered under IfWinActive per enabled
-; EVE window), so this can only fire inside an enabled EVE window -- the
-; dual-use "not in an EVE window" branch it used to need is gone.
+;
+; Registered GLOBALLY (RefreshHotkeys Step 4), so it can fire in any
+; application and MUST re-check where it is. Outside an enabled EVE window
+; it types the current root and stops -- that branch is not Protean-
+; specific despite an earlier reading of it: the original tests only the
+; window, never CurrentMode (111unified.ahk:1024-1043). Without this guard a
+; global press inside another application would run the whole copy/parse
+; flow there: Send ^c into someone's chat window, and the root state reset
+; on the way.
 ; ============================================================
 DoSemi:
+; FIRST: are we in an enabled EVE window?
+IsEveWindow := False
+WinGetTitle, ActiveTitle, A
+if (ActiveTitle ~= "^EVE - ") {
+    IniRead, WindowEnabled, %IniFile%, Enabled, %ActiveTitle%, 0
+    if (WindowEnabled = 1)
+        IsEveWindow := True
+}
+
+; If NOT in an EVE window, just send the current root and exit.
+if (!IsEveWindow) {
+    if (RootKey != "") {
+        Sleep 100
+        Send %RootKey%
+    }
+    Return
+}
+
 ; Reset everything
 RootKey := ""
 RootJustFired := False
@@ -892,6 +973,11 @@ if (DetectedChain != "") {
     
     ; Build display root (bookmark format)
     DisplayRoot := RootKey
+    ; The Protean branch that sat here (111unified.ahk:604-606) stays
+    ; removed; this one is independent of it and was cut by mistake.
+    if (PrefaceReturn) {
+        DisplayRoot := ReturnPreface . DisplayRoot
+    }
 
     ; Put bookmark format in clipboard for EVE return bookmark
     Clipboard := DisplayRoot

@@ -154,8 +154,56 @@ def test_import_applies_and_reports(api, tmp_path, monkeypatch):
     api._window.dialog_result = (str(legacy),)
     got = api.import_bookmarks()
     assert got["ok"] is True
-    assert api.get_bookmarks()["settings"]["keybinds"]["FinH"] == "y"
-    assert any("Copy" in d for d in got["discarded"])
+    binds = api.get_bookmarks()["settings"]["keybinds"]
+    assert binds["FinH"] == "y"
+    assert binds["Copy"] == "^c"
+    assert got["discarded"] == []
+
+
+def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
+        api, tmp_path, monkeypatch):
+    """AutoHotkey's IniWrite emits UTF-16 LE on a Unicode build, which is
+    what the file in the wild actually is. Read as UTF-8 it parsed as
+    nothing, and that nothing was then saved over the user's settings while
+    the dialog said "Import complete"."""
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
+    legacy = tmp_path / "eve_bookmark_helper.ini"
+    legacy.write_bytes(
+        "\ufeff[Keybinds]\r\nFinH=y\r\nCopy=^j\r\n"
+        "[Enabled]\r\nEVE - Pilot=1\r\n".encode("utf-16-le"))
+    api._window.dialog_result = (str(legacy),)
+    assert api.import_bookmarks()["ok"] is True
+    section = api.get_bookmarks()["settings"]
+    assert section["keybinds"]["FinH"] == "y"
+    assert section["keybinds"]["Copy"] == "^j"
+    assert section["windows"] == {"EVE - Pilot": True}
+
+
+def test_an_unparseable_file_does_not_wipe_the_existing_settings(
+        api, tmp_path, monkeypatch):
+    """The failure mode the encoding bug actually caused: nothing parsed,
+    and the empty result was saved over real settings."""
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
+    api.save_bookmarks({**api.get_bookmarks()["settings"],
+                        "keybinds": {"FinH": "^h"}})
+    junk = tmp_path / "junk.ini"
+    junk.write_bytes(b"\x00\x01 not an ini at all")
+    api._window.dialog_result = (str(junk),)
+    got = api.import_bookmarks()
+    assert got["ok"] is False
+    assert got["notes"], "a refusal must say why"
+    assert api.get_bookmarks()["settings"]["keybinds"]["FinH"] == "^h"
+
+
+def test_reset_binds_overwrites_every_bind(api):
+    """The standalone GUI's Reset Defaults button. Overwrite, not
+    fill-blanks: a reset whose effect depends on hidden state is not one."""
+    api.save_bookmarks({**api.get_bookmarks()["settings"],
+                        "keybinds": {"FinH": "^h", "GrabSig": "^g"}})
+    binds = api.reset_binds()["settings"]["keybinds"]
+    assert binds == bookmarks.RECOMMENDED_BINDS
 
 
 def test_import_cancelled_changes_nothing(api, monkeypatch):
@@ -181,3 +229,37 @@ def test_a_failed_start_does_not_crash_the_save(api):
     api._state.engine.start = lambda: False
     section = dict(api.get_bookmarks()["settings"], enabled=True)
     assert api.save_bookmarks(section)["settings"]["enabled"] is True
+
+
+def test_import_does_not_claim_success_when_the_save_fails(
+        api, tmp_path, monkeypatch):
+    """save_bookmarks returns the same shape whether it wrote or refused, so
+    import used to report "Import complete" beside the error dialog naming
+    the failure. The `saved` flag is what lets it tell the two apart."""
+    from obs_youtube_uploader.ui import api as api_mod
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
+    legacy = tmp_path / "eve_bookmark_helper.ini"
+    legacy.write_text("[Keybinds]\r\nFinH=y\r\n")
+    api._window.dialog_result = (str(legacy),)
+
+    def boom(*a, **kw):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+
+    got = api.import_bookmarks()
+    assert got["ok"] is False
+    # No note of its own: save_bookmarks already alerted with the reason,
+    # and a second message would mean two dialogs for one failure.
+    assert got["notes"] == []
+
+
+def test_save_bookmarks_reports_whether_it_actually_wrote(api, monkeypatch):
+    from obs_youtube_uploader.ui import api as api_mod
+    section = api.get_bookmarks()["settings"]
+    assert api.save_bookmarks(section)["saved"] is True
+    assert api.save_bookmarks("not a dict")["saved"] is False
+
+    def boom(*a, **kw):
+        raise OSError("nope")
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    assert api.save_bookmarks(section)["saved"] is False

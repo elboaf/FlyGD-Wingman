@@ -78,10 +78,12 @@ def to_ahk(parts: dict) -> dict:
     }
 
 
-# Order is display order in the Bookmarks route, grouped the way the
-# standalone GUI grouped them (111unified.ahk:285-305): actions, then
-# class finishers, then tag finishers.
+# Order is display order in the Bookmarks route, matching the order the
+# standalone GUI built its rows in (111unified.ahk:285-305): the two
+# clipboard conveniences, then actions, then class finishers, then tag
+# finishers.
 BIND_IDS = (
+    "Copy", "Paste",
     "GrabSig", "SetRoot", "FormatEnf", "ConvertScout",
     "FinH", "FinL", "FinN", "Fin13",
     "Fin1", "Fin2", "Fin3", "Fin4", "Fin5", "Fin6",
@@ -90,6 +92,8 @@ BIND_IDS = (
 
 # Human labels for the route. Kept beside the ids so the two cannot drift.
 BIND_LABELS = {
+    "Copy": "Copy",
+    "Paste": "Paste",
     "GrabSig": "Grab Sig ID",
     "SetRoot": "Set Root",
     "FormatEnf": "Format Enforcer",
@@ -108,11 +112,39 @@ BIND_LABELS = {
     "FinC": "C Tag (critical)",
 }
 
-# Only ConvertScout ships bound (111unified.ahk:57,140). The other
-# eighteen are blank on purpose: no default global bind means no surprise
-# collision on first run.
+# Only ConvertScout ships bound, which is exactly what the standalone
+# script did: its compiled-in IniRead defaults (111unified.ahk:120-140) and
+# its own Reset Defaults handler (:655-676) leave every other bind blank.
+# Fidelity is the reason, not caution -- RECOMMENDED_BINDS below is how a
+# new user gets a working set without one being imposed on them.
 DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "")
                  for bid in BIND_IDS}
+
+# Registered with no window restriction, matching RefreshHotkeys Step 4
+# (111unified.ahk:763-771), where Copy, Paste and Set Root are deliberately
+# registered outside the per-window loop that Step 5 uses for the other
+# eighteen. These fire in every application, not just an enabled EVE
+# client, which is a property the route has to show the user: the
+# standalone GUI left it discoverable only by reading the script.
+GLOBAL_BIND_IDS = frozenset({"Copy", "Paste", "SetRoot"})
+
+# The set the corp actually runs, offered behind the route's "Reset
+# defaults" button (the standalone GUI's :319 button, which the port
+# dropped). Not DEFAULT_BINDS: applied on request, never silently, so a
+# bind the user deliberately cleared cannot come back on its own.
+#
+# ConvertScout stays at the script's compiled default rather than the ^s
+# the shipped INI carries -- maintainer's call.
+RECOMMENDED_BINDS = {
+    "Copy": "^j", "Paste": "^k",
+    "GrabSig": "^q", "SetRoot": "^;", "FormatEnf": "^e",
+    "ConvertScout": "^+s",
+    "FinH": "^y", "FinL": "^p", "FinN": "^.", "Fin13": "^o",
+    "Fin1": "^1", "Fin2": "^2", "Fin3": "^3",
+    "Fin4": "^4", "Fin5": "^5", "Fin6": "^6",
+    "FinETag": "^'", "FinSlash": "^,",
+    "FinM": "^u", "FinS": "^i", "FinC": "^x",
+}
 
 _SYMBOL_TO_KEY = {sym: key for key, sym, _ in _MODIFIERS}
 
@@ -201,6 +233,11 @@ def parse_ahk(text: str) -> dict:
 
 _CRLF = "\r\n"
 
+# The return preface is a marker character, not a string. Capped because it
+# is free text from the user that lands in a file the engine parses and then
+# prepends to every return bookmark.
+PREFACE_MAX = 8
+
 
 def generate_ini(section: dict) -> str:
     """Render the engine's INI from a validated eve_bookmarks section.
@@ -217,6 +254,19 @@ def generate_ini(section: dict) -> str:
     for bid in BIND_IDS:
         value = binds.get(bid) or ""
         lines.append(f"{bid}={sanitise(value)}")
+
+    # Every setting is written on every pass for the same reason every bind
+    # is: a missing key makes IniRead fall back to the engine's compiled-in
+    # default (111unified.ahk:114-117), which would resurrect a value the
+    # user deliberately changed. HomeZeroIs0 is the one that matters --
+    # its compiled default is 1, and Wingman's is the opposite.
+    lines.append("")
+    lines.append("[Settings]")
+    lines.append(f"HomeZeroIs0={1 if section.get('home_zero') else 0}")
+    lines.append(
+        f"PrefaceReturn={1 if section.get('preface_return') else 0}")
+    lines.append(
+        f"ReturnPreface={sanitise(section.get('return_preface') or '')}")
 
     lines.append("")
     lines.append("[Enabled]")
@@ -259,16 +309,29 @@ def is_engine_window_title(title: str) -> bool:
     return title.startswith(ENGINE_TITLE_PREFIX) and "=" not in title
 
 
-# Settings the standalone script carried that the engine no longer has.
-# Named individually so import can tell the user what it dropped.
-_REMOVED_SETTINGS = ("Mode", "PrefaceReturn", "ReturnPreface")
-_REMOVED_BINDS = ("Copy", "Paste")
+def decode_ini_bytes(data: bytes) -> str:
+    """Decode a legacy helper INI, whichever encoding it was saved in.
+
+    AutoHotkey's IniWrite produces UTF-16 LE with a BOM on a Unicode build,
+    which is what the shipped file actually is -- decoding that as UTF-8
+    leaves a NUL after every character, so every section header fails
+    _parse_ini's "]" test and the whole file imports as nothing. Notepad
+    round-trips add a UTF-8 BOM instead, and a hand-written file may have no
+    BOM at all. Sniffing the BOM covers all three; UTF-8 with replacement is
+    the fallback, because a file we cannot decode should still surface
+    whatever ASCII it holds rather than failing outright.
+    """
+    if data.startswith(b"\xff\xfe"):
+        return data.decode("utf-16-le", errors="replace")
+    if data.startswith(b"\xfe\xff"):
+        return data.decode("utf-16-be", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
 
 
 def _parse_ini(text: str) -> dict:
     """Minimal INI reader. configparser is not used: the legacy file has
     section keys (window titles) containing '=' and characters configparser
-    mangles, and we only need two flat sections."""
+    mangles, and we only need three flat sections."""
     out: dict[str, dict[str, str]] = {}
     current = None
     # A UTF-8 BOM survives .strip() and would make the first section header
@@ -306,7 +369,18 @@ def import_legacy_ini(text: str) -> dict:
 
     section = {"enabled": False,
                "keybinds": dict(DEFAULT_BINDS),
-               "windows": {}}
+               "windows": {},
+               # Seeded from the SCRIPT's compiled-in defaults, not
+               # Wingman's, and overwritten below by whatever the file
+               # actually says. The distinction matters for HomeZeroIs0: a
+               # legacy file that omits it was being numbered from .0
+               # (111unified.ahk:32), so importing it as Wingman's own
+               # default of .1 would silently renumber the user -- which is
+               # the exact thing importing their settings is meant to
+               # prevent.
+               "home_zero": True,
+               "preface_return": True,
+               "return_preface": "!"}
     for bid in BIND_IDS:
         if bid in legacy_binds:
             section["keybinds"][bid] = sanitise(legacy_binds[bid])
@@ -324,20 +398,33 @@ def import_legacy_ini(text: str) -> dict:
             continue
         section["windows"][clean] = value.strip() == "1"
 
-    discarded = [f"{name} (setting)" for name in _REMOVED_SETTINGS
-                 if legacy_settings.get(name)]
-    discarded += [f"{name} (keybind)" for name in _REMOVED_BINDS
-                  if legacy_binds.get(name)]
-    discarded += [f"{title} (window, not an EVE client window)"
-                  for title in discarded_windows]
+    if "HomeZeroIs0" in legacy_settings:
+        section["home_zero"] = legacy_settings["HomeZeroIs0"].strip() == "1"
+    if "PrefaceReturn" in legacy_settings:
+        section["preface_return"] = \
+            legacy_settings["PrefaceReturn"].strip() == "1"
+    if "ReturnPreface" in legacy_settings:
+        section["return_preface"] = sanitise(
+            legacy_settings["ReturnPreface"])[:PREFACE_MAX]
+
+    # Nothing is reported as discarded for Mode: the engine implements
+    # Flygd/ABH, so Mode=2 is preserved behaviour and saying otherwise
+    # would alarm a user who lost nothing. Mode=1 is a real loss and gets a
+    # note below that says what actually changes for them.
+    discarded = [f"{title} (window, not an EVE client window)"
+                 for title in discarded_windows]
 
     notes = []
-    # HomeZeroIs0 defaults to 1 (111unified.ahk:32) and the engine now
-    # hardcodes that. Only a user who turned it OFF sees a change: it is not
-    # tied to any naming mode (111unified.ahk:870,886,893), so this must be
-    # described as a renumbering, not as "no longer applies".
-    if legacy_settings.get("HomeZeroIs0", "1").strip() == "0":
+    # Protean/v21 is the one behaviour the engine cannot reproduce, so a
+    # user who was running it needs telling in their own terms rather than
+    # being left to notice their bookmarks come out differently.
+    if legacy_settings.get("Mode", "").strip() == "1":
         notes.append(
-            "Your home-mode bookmarks used to start at .1; they will now "
-            "start at .0. That option no longer exists.")
-    return {"section": section, "discarded": discarded, "notes": notes}
+            "You were using Protean/v21 naming. Wingman only supports the "
+            "Flygd/ABH scheme, so your bookmarks will be formatted "
+            "differently.")
+    # A file that yielded no sections at all did not parse -- an empty
+    # config is indistinguishable from a wrong encoding here, and the
+    # caller must not save this section over the user's real settings.
+    return {"section": section, "discarded": discarded, "notes": notes,
+            "parsed": bool(parsed)}

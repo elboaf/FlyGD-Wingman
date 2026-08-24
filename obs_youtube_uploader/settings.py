@@ -8,6 +8,25 @@ from pathlib import Path
 
 from . import bookmarks, paths
 
+
+def _eve_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Off by default: Copy, Paste and Set Root register with no window
+    # restriction (111unified.ahk:763-771), so enabling this really does
+    # install hotkeys that fire outside EVE. An upgrading user has to ask
+    # for that rather than be given it.
+    return {"enabled": False,
+            "keybinds": dict(bookmarks.DEFAULT_BINDS),
+            "windows": {},
+            # The standalone script's compiled-in default is the opposite
+            # (HomeZeroIs0 := 1, 111unified.ahk:32). Wingman starts a fresh
+            # install at .1 by maintainer decision; an imported INI carries
+            # its own value across, so nobody upgrading is renumbered.
+            "home_zero": False,
+            "preface_return": True,
+            "return_preface": "!"}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -31,24 +50,15 @@ DEFAULTS = {
     # this whole section travels as one value; load() rebuilds the inner
     # dicts rather than copying them, because dict(DEFAULTS) below is
     # shallow and would otherwise hand callers the module globals.
-    "eve_bookmarks": {
-        # Off by default: enabling installs a global keyboard hook, so an
-        # upgrading user has to ask for it rather than be given it.
-        "enabled": False,
-        "keybinds": dict(bookmarks.DEFAULT_BINDS),
-        "windows": {},
-    },
+    #
+    # Built by _eve_defaults() rather than restated here: load() returns
+    # that function's output, and tests compare load() against DEFAULTS, so
+    # two literals would have to be kept in step by hand.
+    "eve_bookmarks": _eve_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
 _VALID_NOTIFY = {"toast", "popup"}
-
-
-def _eve_defaults() -> dict:
-    """Fresh nested structure every call. Never return the module global."""
-    return {"enabled": False,
-            "keybinds": dict(bookmarks.DEFAULT_BINDS),
-            "windows": {}}
 
 
 def _fresh_defaults() -> dict:
@@ -74,8 +84,22 @@ def validated_eve(raw) -> dict:
             if isinstance(value, str):
                 section["keybinds"][bid] = value.strip()
     # Ids not in BIND_IDS are dropped by construction: the loop is over the
-    # known ids, so a stale "Copy" from a pre-integration file cannot
-    # survive into the generated INI.
+    # known ids, so a key from a hand-edited file cannot reach the INI.
+
+    # isinstance rather than `is True`: these two have different defaults,
+    # so absence has to leave the default standing rather than resolve to
+    # False. Unlike `enabled` there is no hook to start, so a garbage value
+    # falling back to the default is the whole of the risk.
+    for flag in ("home_zero", "preface_return"):
+        if isinstance(raw.get(flag), bool):
+            section[flag] = raw[flag]
+
+    preface = raw.get("return_preface")
+    if isinstance(preface, str):
+        # Sanitised and capped here rather than only at generate_ini: this
+        # is the boundary a hand-edited settings file crosses.
+        section["return_preface"] = \
+            bookmarks.sanitise(preface)[:bookmarks.PREFACE_MAX]
 
     windows = raw.get("windows")
     if isinstance(windows, dict):
