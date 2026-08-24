@@ -10,10 +10,13 @@ invalid-ids would blacklist every character the user has. The two are
 separated by response shape, not wording, so CCP can reword the message.
 """
 import json
+import logging
 import urllib.error
 import urllib.request
 
 from .. import __version__ as _version
+
+logger = logging.getLogger(__name__)
 
 ESI_URL = ("https://esi.evetech.net/latest/universe/names/"
            "?datasource=tranquility")
@@ -66,13 +69,20 @@ def classify(status: int, body: str) -> tuple[str, dict]:
 
 def fetch_batch(ids, *, transport=urllib.request.urlopen,
                 timeout: float = _TIMEOUT_SECONDS) -> tuple[str, dict]:
-    payload = json.dumps(list(ids)).encode("utf-8")
-    request = urllib.request.Request(
-        ESI_URL, data=payload,
-        headers={"Content-type": "application/json",
-                 "User-agent": _USER_AGENT},
-        method="POST")
+    # Building the request sits INSIDE the try with the send. Everything
+    # else here degrades -- names are cosmetic and every failure returns
+    # TRANSIENT -- and json.dumps on a non-serialisable id, or Request()
+    # on a malformed URL, would be the one path that raises instead,
+    # taking down the caller for a decoration. resolve() filters to
+    # positive ints first, so nothing reaches this today; the contract
+    # should not rest on a caller upstream continuing to be careful.
     try:
+        payload = json.dumps(list(ids)).encode("utf-8")
+        request = urllib.request.Request(
+            ESI_URL, data=payload,
+            headers={"Content-type": "application/json",
+                     "User-agent": _USER_AGENT},
+            method="POST")
         with transport(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             body = response.read().decode("utf-8", "replace")
@@ -83,6 +93,14 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
             body = ""
         return classify(exc.code, body)
     except Exception:  # noqa: BLE001 - reported as transient, never raised
+        # Logged because TRANSIENT means "retry next pass", and a caller
+        # bug -- a non-serialisable id, a malformed URL -- retries forever
+        # while every row shows its fallback label. Before these two
+        # statements moved inside the try, such a bug escaped to
+        # eve_settings_resolve_names, which logs it. Debug, not warning:
+        # an offline machine takes this arm on every pass and that is not
+        # a fault.
+        logger.debug("ESI name batch could not be sent", exc_info=True)
         return TRANSIENT, {}
     return classify(status, body)
 

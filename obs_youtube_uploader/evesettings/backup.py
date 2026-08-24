@@ -27,10 +27,15 @@ MANIFEST_NAME = "wingman-eve-settings-backup.json"
 
 _ORIGINS = ("auto", "manual")
 _KINDS = ("character", "account", "profile")
+# The alternations are BUILT from the tuples rather than spelled again
+# beside them. Two copies of the same list is how a kind gets added to one
+# and not the other, and the failure is silent: create_*_backup would write
+# a name that parse_name then refuses to read, so the backup exists on disk
+# and is invisible to listing, pruning and restore.
 _NAME_RE = re.compile(
     r"^(?P<date>\d{8})-(?P<time>\d{6})-(?P<seq>\d{3})"
-    r"-(?P<origin>auto|manual)"
-    r"-(?P<kind>character|account|profile)"
+    rf"-(?P<origin>{'|'.join(_ORIGINS)})"
+    rf"-(?P<kind>{'|'.join(_KINDS)})"
     r"-(?P<src>[0-9a-f]{8})"
     r"-(?P<stem>.+)$")
 _MAX_SEQ = 1000
@@ -165,13 +170,29 @@ def create_profile_backup(backup_dir, profile, *, origin: str,
     return claimed
 
 
-def enumerate_backups(backup_dir) -> list:
+def enumerate_backups(backup_dir) -> tuple[list, bool]:
+    """The backups on disk, plus whether the directory could not be read.
+
+    The flag exists for the same reason tree._scan carries one: a store
+    that has never been written and a store that denied us are different
+    answers, and only one of them means something is wrong. Collapsing
+    both into an empty list would tell the user "no backups yet" about a
+    directory that is full of them -- and this design's own principle is
+    that enumeration failures are reported, not swallowed into emptiness.
+
+    Note that `except (FileNotFoundError, OSError)` could not have made
+    this distinction even if the caller had wanted it: FileNotFoundError
+    IS an OSError, so the first arm was never reached separately.
+    """
     backup_dir = Path(backup_dir)
-    found = []
+    found: list = []
     try:
         entries = list(os.scandir(str(backup_dir)))
-    except (FileNotFoundError, OSError):
-        return found
+    except FileNotFoundError:
+        # Never written to yet. Genuinely "no backups".
+        return found, False
+    except OSError:
+        return found, True
     for entry in entries:
         if not entry.is_file():
             continue
@@ -191,13 +212,17 @@ def enumerate_backups(backup_dir) -> list:
         found.append(BackupInfo(Path(entry.path), info.created, info.seq,
                                 info.origin, info.kind, info.src, info.stem))
     found.sort(key=lambda i: (i.created, i.seq), reverse=True)
-    return found
+    return found, False
 
 
 def prune(backup_dir, keep: int) -> list:
     """Drop all but the newest *keep* auto-backups per (kind, src, stem)."""
     groups: dict = {}
-    for info in enumerate_backups(backup_dir):
+    # An unreadable store prunes nothing, which is what the empty list it
+    # comes back with already achieves: there is nothing to reason about
+    # and deleting on a guess is the one outcome that cannot be undone.
+    listed, _unreadable = enumerate_backups(backup_dir)
+    for info in listed:
         if info.origin != "auto":
             continue
         groups.setdefault(info.group, []).append(info)

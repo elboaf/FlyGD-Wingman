@@ -65,14 +65,27 @@ Three lanes. The middle one is forced, not chosen.
 |---|---|---|
 | Bridge thread | `eve_settings_state()` | `scandir` over a few dozen files answers inline. |
 | Worker thread | every mutation | `_confirm()` blocks the calling thread until the page answers, and the answer arrives on the bridge thread. Confirming inline deadlocks. |
+| Background thread | The running-client probe | `discovery.list_clients()` enumerates windows and resolves PIDs to executables, which is not "scandir over a few dozen files". It drives an advisory pill, so state returns the last known answer and the probe pushes `onEveSettingsRunning` only when the value changes. |
 | Background thread | ESI name resolution | Fired when the route is first opened, never at launch: the tray app starts hidden and must not make a network call nobody asked for. |
 
 The worker-thread rule is the same one `delete_selected` already follows, and
-for the same reason it documents at `ui/api.py:377-389`.
+for the same reason it documents at `ui/api.py:431`.
+
+**The selection is a mutation too.** `root` is an input to every containment
+check, so repointing it while a restore or a copy is in flight would have that
+operation validate against a different root than the one in effect when the
+user approved it. Picking a root and choosing a server/settings-set therefore
+take the same lock, non-blocking, and are refused when it is held. Non-blocking
+is not merely policy here: those two run on the bridge thread, and a worker
+holding the lock is parked in `_eve_confirm()` waiting for an answer the page
+delivers over the bridge. Blocking would stop the bridge carrying that answer.
+Not a true deadlock — `_eve_confirm` is bounded by `EVE_CONFIRM_TIMEOUT_S` and
+reads a missing answer as "no", so the worker unwinds and releases — but the
+price is a UI frozen for up to five minutes, which is not meaningfully better.
 
 **One mutation at a time.** A per-mutation worker says nothing about how many
-may exist at once, and `_confirm()` parks each one independently
-(`ui/api.py:262-286`) — so two operations approved moments apart can interleave
+may exist at once, and `_eve_confirm()` parks each one independently
+(`ui/api.py:304`, bounded at `ui/api.py:1889`) — so two operations approved moments apart can interleave
 over the same files and produce a partial backup or a half-applied restore.
 Every mutation therefore takes a single module-level mutation lock, acquired
 *before* the confirmation prompt and held until the operation finishes. A
@@ -143,6 +156,16 @@ delete or an overwrite outside it, and junctions in particular are something a
 user can create by accident with `mklink /J` while reorganising an EVE install.
 Resolving both sides before comparing is what makes the prefix test mean what
 it says.
+
+**Discovery is bounded.** Every child directory of the root costs a `scandir`
+apiece to probe for `settings_*` children, on the bridge thread. That is
+nothing for `%LOCALAPPDATA%\CCP\EVE`, which holds a handful; it is hundreds
+of directory reads for a mis-picked root like `C:\Users\me`. A root with more
+than `MAX_ROOT_CHILDREN` (64) directory children is refused as too wide to be
+an EVE folder and says so, rather than probed slowly or truncated silently --
+the same posture `unreadable` takes. The probe itself is lazy and capped too:
+it returns on the first `settings_*` it sees and stops after
+`MAX_PROBE_ENTRIES`.
 
 **Enumeration failures are reported, not swallowed into emptiness.** TriffView
 wraps every enumeration in a helper that returns empty on any exception, which
@@ -286,7 +309,7 @@ fails containment and says so rather than restoring somewhere unexpected.
 
 A failure at step 3 is recorded and **the loop continues**. The result is a
 report of per-target outcomes, in the shape `library.delete` established:
-what succeeded, what failed, and why (`ui/api.py:405-411`).
+what succeeded, what failed, and why (`ui/api.py:453-467`).
 
 This is a deliberate divergence. TriffView throws on the first failure,
 leaving an unknown mix of copied and uncopied targets, and discards the count
@@ -336,10 +359,15 @@ every other feature in the app.
 `_SAVE_LOCK` serializes the final projection and write (`settings.py:180-189`);
 it does not make the surrounding read-modify-write atomic, and callers that
 build a payload from a stale copy before acquiring it can silently revert
-another writer's key (`ui/api.py:1055-1066` constructs `cfg` from
-`self._state.settings` and then saves it). Since `save()` projects the complete
-document from `DEFAULTS`, a lost key is not a corrupt file — it is a setting
-that quietly reverts, which is far harder to notice.
+another writer's key. Since `save()` projects the complete document from
+`DEFAULTS`, a lost key is not a corrupt file — it is a setting that quietly
+reverts, which is far harder to notice.
+
+`save_settings` and `set_recording_dir` on the uploader's own path had exactly
+that shape, deliberately left alone when this feature shipped so as not to
+widen it. Both now go through `settings.update()`, which calls `read` inside
+`_SAVE_LOCK`; **every** writer of the settings document now does, so the
+window is closed rather than merely avoided by the newest code.
 
 The pattern to follow already exists: `preview/store.py:56-68` re-reads the
 live settings, merges its own section into that, and saves the result. This

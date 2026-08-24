@@ -258,13 +258,19 @@
   }, true);
 
   // Python volunteers this when registration or the client set changes.
-  window.onPreviewHotkeys = function (payload) {
+  //
+  // Through WM.handle, not a direct window assignment: app.js installs a
+  // stub for every name in WM.HANDLERS so a push arriving before this
+  // module loads is logged instead of silently vanishing, and assigning
+  // straight to window skipped that. tests/test_bridge_contract.py holds
+  // the two lists together.
+  WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
     state = payload;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
     requestRender();
-  };
+  });
 
   // Refreshed on route entry rather than polled, same reasoning as
   // bookmarks.js: the live/known character set changes when EVE clients

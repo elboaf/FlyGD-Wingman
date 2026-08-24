@@ -35,24 +35,46 @@
     if (!payload) return;
     state = payload;
     WM.el('es-root').textContent = payload.root || 'No folder selected';
-    WM.el('es-eve-state').textContent =
-      payload.eve_running ? 'EVE running' : 'EVE closed';
-    WM.el('es-eve-state').className =
-      'pill ' + (payload.eve_running ? 'warn' : 'idle');
+    paintPill(payload.eve_running);
 
     var warning = WM.el('es-warning');
-    // "Couldn't read" and "nothing there" are different answers, and only
-    // one of them means the folder is wrong.
-    warning.hidden = !payload.unreadable;
-    warning.textContent = payload.unreadable
-      ? "Couldn't read that folder. Check it still exists and is readable."
-      : '';
+    // "Couldn't read", "too wide to be an EVE folder" and "nothing there"
+    // are three different answers, and each asks the user for something
+    // different. Python decides which; this only picks the sentence.
+    warning.hidden = !(payload.unreadable || payload.too_broad);
+    if (payload.too_broad) {
+      warning.textContent =
+        'That folder was too large to search fully, so this list may be '
+        + 'incomplete. Pick the EVE folder itself, usually '
+        + (payload.default_root || '%LOCALAPPDATA%\\CCP\\EVE') + '.';
+    } else if (payload.unreadable) {
+      warning.textContent =
+        "Couldn't read that folder. Check it still exists and is readable.";
+    } else {
+      warning.textContent = '';
+    }
 
     fill('es-server', payload.servers, payload.server);
     fill('es-profile', payload.profiles, payload.profile);
     renderSource();
     renderTargets();
     renderBackups();
+  }
+
+  // Three states, not two. null means the probe has not answered yet, and
+  // rendering that as "EVE closed" would be a reassuring guess about the
+  // only warning shown before a copy -- the probe runs off the bridge
+  // thread precisely because its first pass is slow.
+  function paintPill(running) {
+    var pill = WM.el('es-eve-state');
+    if (!pill) return;
+    if (running === null || running === undefined) {
+      pill.textContent = 'Checking for EVE\u2026';
+      pill.className = 'pill idle';
+      return;
+    }
+    pill.textContent = running ? 'EVE running' : 'EVE closed';
+    pill.className = 'pill ' + (running ? 'warn' : 'idle');
   }
 
   function fill(id, items, current) {
@@ -108,6 +130,18 @@
   function renderBackups() {
     var host = WM.el('es-backups');
     host.innerHTML = '';
+    // An empty list means one of two things and only Python knows which.
+    // Saying "No backups yet" about a store we were denied would invite an
+    // overwrite the user believes is protected.
+    if (state.backups_unreadable || !(state.backups || []).length) {
+      var note = document.createElement('p');
+      note.className = 'hint';
+      note.textContent = state.backups_unreadable
+        ? "Couldn't read the backups folder. Check it is still readable."
+        : 'No backups yet.';
+      host.appendChild(note);
+      if (state.backups_unreadable) return;
+    }
     (state.backups || []).forEach(function (item) {
       var line = document.createElement('div');
       line.className = 'row';
@@ -233,6 +267,15 @@
   }
 
   WM.handle('onEveSettingsNames', function () { refresh(); });
+
+  // The running-client probe answers after the state that triggered it was
+  // already returned, so the pill is repainted in place. Only the pill: a
+  // full refresh would rebuild the target checklist under the user's
+  // cursor for an advisory badge nothing is blocked on.
+  WM.handle('onEveSettingsRunning', function (payload) {
+    if (state) state.eve_running = payload.running;
+    paintPill(payload.running);
+  });
 
   // The completion signal for every mutation. It replaces a setTimeout that
   // fired 250ms into a copy the worker had barely started, and it is what

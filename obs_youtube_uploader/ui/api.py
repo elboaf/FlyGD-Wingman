@@ -19,6 +19,7 @@ is no UI thread to marshal onto.
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
 """
+import contextlib
 import datetime
 import json
 import logging
@@ -193,6 +194,21 @@ class Api:
         self._eve_mutation = threading.Lock()
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
+        # Last known answer for the advisory "EVE running" pill, or None
+        # for "nobody has looked yet". None rather than False because the
+        # pill is the ONLY warning before a copy, and False is the
+        # reassuring guess: the probe is off the bridge thread precisely
+        # because its first, uncached pass is slow, so a fabricated
+        # "EVE closed" would be on screen for exactly as long as it takes
+        # to be wrong about. The page renders the third state as
+        # "Checking...". Read on the bridge thread, written by the probe;
+        # a plain assignment, so no lock is needed for coherence.
+        self._eve_running = None
+        # One probe at a time. eve_settings_state() fires one on every
+        # call -- route open, and after every mutation -- so two easily
+        # overlap, and a slow probe finishing after a fast one would
+        # otherwise publish the OLDER observation and leave it cached.
+        self._eve_probe = threading.Lock()
 
         # None off Windows and in most tests, like _preview_host above.
         # Deliberately NOT gated on preview.enabled: this moves the EVE
@@ -1754,13 +1770,22 @@ class Api:
     # ----- EVE Settings ---------------------------------------------------
 
     def _eve_section(self) -> dict:
+        # validated_eve_settings, not the private _eve_settings_defaults:
+        # it is the public surface for this section, and it already returns
+        # a fresh dict per call rather than the module global. Reaching
+        # across a module boundary for a private name is how a caller ends
+        # up depending on something the owning module is free to rename.
         return self._state.settings.setdefault(
-            "eve_settings", settings_mod._eve_settings_defaults())
+            "eve_settings", settings_mod.validated_eve_settings({}))
 
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
         thread: scandir over a few dozen files, and listing backups is one
-        listdir with no archive opened."""
+        listdir with no archive opened.
+
+        The one thing here that is NOT that -- the running-client probe --
+        runs on a background thread and is read from cache below."""
+        self._eve_refresh_running()
         section = self._eve_section()
         root = section.get("root")
         found = evesettings_tree.discover(root, section.get("server"),
@@ -1774,13 +1799,22 @@ class Api:
             return {"path": str(record.path), "id": record.file_id,
                     "name": name}
 
+        listed, backups_unreadable = \
+            evesettings_backup.enumerate_backups(store)
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
             "server": str(found.server) if found.server else "",
             "profile": str(found.profile) if found.profile else "",
             "unreadable": found.unreadable,
-            "eve_running": self._eve_client_running(),
+            # Refused for being too wide to be an EVE folder, rather than
+            # probed slowly. Distinct from `unreadable` because the user
+            # action differs: this one means "pick a narrower folder".
+            "too_broad": found.too_broad,
+            # The LAST KNOWN answer, never a fresh probe. See
+            # _eve_refresh_running: this method is costed as scandir over
+            # a few dozen files and must stay that.
+            "eve_running": self._eve_running,
             "servers": [{"path": str(s.path), "name": s.name}
                         for s in found.servers],
             "profiles": [{"path": str(p.path), "name": p.name,
@@ -1788,9 +1822,15 @@ class Api:
                          for p in found.profiles],
             "characters": [describe(c) for c in found.characters],
             "accounts": [describe(a) for a in found.accounts],
+            # Reported separately from an empty list for the same reason
+            # `unreadable` is: "we could not read your backups" and "you
+            # have no backups yet" are different answers, and telling a
+            # user the second when the first is true invites them to
+            # overwrite settings they believe are unprotected.
+            "backups_unreadable": backups_unreadable,
             "backups": [{"path": str(b.path), "created": b.created,
                          "origin": b.origin, "kind": b.kind, "stem": b.stem}
-                        for b in evesettings_backup.enumerate_backups(store)],
+                        for b in listed],
         }
 
     def _eve_client_running(self) -> bool:
@@ -1805,24 +1845,115 @@ class Api:
                          exc_info=True)
             return False
 
+    def _eve_refresh_running(self) -> None:
+        """Re-probe for a running client, off the bridge thread.
+
+        eve_settings_state() is costed in the design as "scandir over a
+        few dozen files", and list_clients() is not that: it enumerates
+        every top-level window and resolves PIDs to executables. It caches
+        per PID, so it is cheap in steady state, but the first call after
+        a client starts or stops is not -- and it was being paid inline on
+        the thread the whole UI answers on.
+
+        It only drives an advisory pill, so a slightly stale answer costs
+        nothing: state returns the last known value immediately and this
+        pushes when the value actually CHANGES, which is the only moment
+        the page has anything to redraw. Same push channel the name
+        resolver uses, and for the same reason -- request/response cannot
+        express an answer that arrives after the response did.
+        """
+        def worker() -> None:
+            try:
+                value = self._eve_client_running()
+                if value != self._eve_running:
+                    self._eve_running = value
+                    self._push("onEveSettingsRunning", {"running": value})
+            except Exception:  # noqa: BLE001 - a pill, never a failure
+                logger.debug("EVE client probe failed", exc_info=True)
+            finally:
+                self._eve_probe.release()
+
+        # Single-flight. Skipping is safe because the caller re-reads the
+        # cached value either way, and the probe already in flight will
+        # publish a fresher answer than this one could.
+        if not self._eve_probe.acquire(blocking=False):
+            return
+        try:
+            self._spawn(target=worker, daemon=True).start()
+        except Exception:  # noqa: BLE001 - the pill simply stays stale
+            # Only the worker releases, and a worker that never started
+            # never will -- that would wedge the probe for the process's
+            # lifetime and freeze the pill on whatever it last said.
+            self._eve_probe.release()
+            logger.debug("Could not start the EVE client probe",
+                         exc_info=True)
+        except BaseException:
+            self._eve_probe.release()
+            raise
+
+    @contextlib.contextmanager
+    def _eve_hold(self):
+        """The mutation lock, for work that runs ON the bridge thread.
+
+        Yields True when the lock was taken and False when it was already
+        held; the caller declines in that case, exactly as _eve_begin
+        does. `root` is an input to every containment check, so changing
+        it while a restore or a copy is in flight would have that
+        operation validate against a different root than the one in effect
+        when it was approved -- and _eve_begin's stated policy is that EVE
+        Settings mutations are refused rather than interleaved.
+
+        Non-blocking, and not merely to match that policy. A worker
+        holding the lock is parked in _eve_confirm() waiting for an answer
+        the page delivers over the bridge, so blocking here would stop the
+        bridge from carrying that answer. It is not a true deadlock --
+        _eve_confirm is bounded by EVE_CONFIRM_TIMEOUT_S and reads a
+        missing answer as "no", so the worker unwinds and releases -- but
+        the price of blocking is a UI frozen for up to five minutes, which
+        is not meaningfully better than one.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            self._alert("warning", "EVE Settings busy",
+                        "Another EVE Settings operation is still running. "
+                        "Wait for it to finish, then try again.")
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            self._eve_mutation.release()
+
     def eve_settings_pick_root(self) -> str:
-        section = self._eve_section()
-        start = str(section.get("root") or evesettings_tree.default_root())
-        chosen = self._window.create_file_dialog(_folder_dialog_kind(),
-                                                 directory=start)
-        if not chosen:
-            return ""
-        picked = str(chosen[0])
-        # Selection is cleared, not carried: the old server and profile
-        # belong to a tree that is no longer the one on screen.
-        settings_mod.update_section(self._state.settings, "eve_settings", {
-            "root": picked, "server": None, "profile": None})
-        return picked
+        # The lock is held across the dialog too, so a mutation cannot
+        # start while the user is choosing. The alternative -- lock only
+        # the write -- lets the user pick a folder and then discards it,
+        # which is a worse answer to the same race.
+        with self._eve_hold() as held:
+            if not held:
+                return ""
+            section = self._eve_section()
+            start = str(section.get("root")
+                        or evesettings_tree.default_root())
+            chosen = self._window.create_file_dialog(_folder_dialog_kind(),
+                                                     directory=start)
+            if not chosen:
+                return ""
+            picked = str(chosen[0])
+            # Selection is cleared, not carried: the old server and profile
+            # belong to a tree that is no longer the one on screen.
+            settings_mod.update_section(self._state.settings, "eve_settings",
+                                        {"root": picked, "server": None,
+                                         "profile": None})
+            return picked
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
-        settings_mod.update_section(self._state.settings, "eve_settings", {
-            "server": server or None, "profile": profile or None})
-        return True
+        with self._eve_hold() as held:
+            if not held:
+                return False
+            settings_mod.update_section(self._state.settings, "eve_settings",
+                                        {"server": server or None,
+                                         "profile": profile or None})
+            return True
 
     def eve_settings_resolve_names(self) -> None:
         """Resolve on a background thread, then tell the page to refetch.
