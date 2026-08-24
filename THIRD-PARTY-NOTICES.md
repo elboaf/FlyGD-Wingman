@@ -21,6 +21,30 @@ Licence: GNU General Public License v2 or later
 Source: https://github.com/AutoHotkey/AutoHotkey/releases/tag/v1.1.37.02
 Licence text: `AutoHotkey-COPYING.txt`, installed beside the application.
 
+## Fonts
+
+Both are SIL Open Font License 1.1, which is not GPL and imposes no
+condition on the application that displays them. Listed because they are
+redistributed in the installed tree, which is what triggers the OFL's own
+attribution requirement.
+
+### Inter
+
+Version: 4.0
+Licence: SIL Open Font License 1.1
+Source: https://github.com/rsms/inter
+Licence text: `web/fonts/Inter-LICENSE.txt`.
+Files: `web/fonts/InterVariable.woff2` (the page) and
+`assets/fonts/Inter-Regular.ttf` (preview labels -- Pillow cannot load
+woff2, so the same family ships twice in two formats).
+
+### JetBrains Mono
+
+Licence: SIL Open Font License 1.1
+Source: https://github.com/JetBrains/JetBrainsMono
+Licence text: `web/fonts/JetBrainsMono-OFL.txt`.
+Files: `web/fonts/JetBrainsMono-Regular.woff2`.
+
 ## Written offer
 
 For either program, we will provide the complete corresponding source code
