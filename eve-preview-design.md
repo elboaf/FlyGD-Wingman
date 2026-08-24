@@ -84,7 +84,9 @@ must be wired in alongside them.
 
 `stop()` is idempotent, safe to call when never started, and ordered:
 
-1. Unregister hotkeys (`UnregisterHotKey`) — before the windows they target die.
+1. Unregister hotkeys (`UnregisterHotKey`) — before the windows they target
+   die. **Not yet implemented**: nothing registers a hotkey, so there is
+   nothing to leak, but this step belongs first when item 7 lands.
 2. Unhook the WinEvent hook (`UnhookWinEvent`).
 3. Unregister every DWM thumbnail (`DwmUnregisterThumbnail`).
 4. Destroy every preview window (`DestroyWindow`), on the preview thread.
@@ -394,32 +396,111 @@ status is pushed to the page.
 
 ## Scope
 
-**First slice** — the daily-use core:
+### Shipped (first slice)
+
+Merged in #22. Verified by hand on Windows against six running clients, not
+just by the suite.
 
 1. Discovery of running clients with stable identity.
 2. One layered preview window per client, Pillow chrome, DWM thumbnail.
 3. Click-to-focus, including the `AttachThreadInput` foreground sequence.
 4. Drag to move, resize handle, snapping.
 5. Layout persistence across restarts.
-6. Enable/disable from the Wingman UI.
+6. Enable/disable from the Previews tab.
 
-**Deferred, in rough priority order:**
+### Deferred, in rough priority order
 
-7. Per-character and cycle-group hotkeys, including `gestures.py` and
-   `cycle.py`. These are deferred *whole* — writing them unwired in the first
-   slice would be speculative, since their only consumers are deferred too.
-8. Custom labels, label placement and colours.
-9. Alert flashing driven by EVE log watching.
-10. Minimize-inactive-on-switch, hide-active-preview.
-11. EVE client window layout save/restore.
-12. Multiple named profiles.
-13. EVE-O / EVE-X preview profile import.
+**7. Per-character and cycle-group hotkeys** — `gestures.py` and `cycle.py`.
+Deferred *whole*: writing them unwired would have been speculative, since
+their only consumers were deferred too. This is what makes previews fast to
+multibox with rather than just pleasant to look at, and both modules are pure
+logic that tests on Linux. `win32.bind()` already declares
+`RegisterHotKey`/`UnregisterHotKey` (`win32.py:235-236`), and `WM_HOTKEY`
+arrives on the preview thread's queue — which is the reason that thread owns
+a real pump at all.
+
+One thing to fix while doing it: the Lifecycle section above lists
+"unregister hotkeys" as step 1 of teardown, and `PreviewHost._teardown` has
+no such step. That is harmless today, because nothing registers a hotkey to
+leak, but the order matters when they exist — hotkeys must be released
+before the window they are registered against is destroyed.
+
+**8. Label customisation** — text override, placement (top/bottom/centre),
+font size, colours. `chrome.render` already takes the label; everything else
+is new settings and UI. The Previews tab is one checkbox today and this is
+what fills it.
+
+**9. Alert flashing from EVE log watching** — attack, warp scramble, decloak,
+fleet invite, convo request, system change, with per-alert colour, flash
+thickness, sound, and NPC filtering. The largest remaining chunk.
+`gamelogs_dir` is already a setting and the combat-log export already reads
+that folder, so the watching half is partly precedented.
+
+Note on implementation: do **not** re-render the Pillow bitmap at flash
+frequency. `redraw()` is keyed and a flash would defeat the key, putting a
+~67k-pixel push back on a timer — the cost that made dragging stutter. Pulse
+`SetLayeredWindowAttributes` alpha, or pre-render a small ring of frames.
+
+**10. Switching behaviour** — minimize-inactive-on-switch (with a
+never-minimize list), hide-active-preview, hide-all-on-lost-focus,
+always-maximize-on-activate, middle-click to minimize a client.
+
+**11. EVE client window layout save/restore** — `GetWindowPlacement` /
+`MoveWindow` over the clients themselves, with optional restore on launch.
+Distinct from preview layouts, which are already persisted.
+
+**12. Multiple named profiles.** The settings schema was deliberately shaped
+so this can be added without migrating anyone: today's values are a single
+implicit profile.
+
+**13. EVE-O / EVE-X preview profile import.** Lowest priority, and the
+largest pure-parsing job.
+
+### Smaller gaps, not in the numbered order
+
+- **Preview opacity is dead config.** `settings.preview.opacity` is stored,
+  validated and clamped to 20-255, and read by nothing. When it is wired up
+  it **must** go through `SetLayeredWindowAttributes` or the thumbnail's own
+  opacity. Putting it in the Pillow bitmap's alpha would reintroduce the
+  click-through bug in a subtler, harder-to-spot form: a layered window is
+  hit-tested against its alpha channel, so a translucent preview would pass
+  a share of its clicks to whatever is behind it.
+- **Lock previews has no UI.** The plumbing is complete — `layout.Entry`
+  carries `locked`, it survives a restart, right-drag overrides it — but
+  nothing can set it. It is one checkbox away from working.
+- **Border thickness, border colours, active-preview highlight.**
+  `chrome.render` takes `border`, `border_color` and `selected`; all three
+  are currently passed constants from `window.py`.
+- **`PreviewWindow.selected` is never set.** `chrome.render` draws a thicker
+  border for it and the cache key includes it, but no caller assigns it.
+  Pairs naturally with 10.
 
 **Explicitly excluded**: anything that reads EVE process memory, injects input
 into a client, performs OCR, or automates gameplay. Previews are DWM
 compositions of windows the OS already exposes; focus switching uses documented
 window-activation APIs. This boundary matches TriffView's own stated position
 and should not be quietly crossed.
+
+## Verification still outstanding
+
+The suite cannot tell you a preview appeared on screen, so most of this
+feature's real assurance comes from `docs/smoke-checklist.md`. Most of that
+list has been walked; these items have not been exercised by anyone:
+
+- Closing one client mid-session — its preview should disappear within ~1s
+  while the others keep rendering and do not jump.
+- Closing every client — no previews, no crash, the app still responsive.
+- Starting a client while Wingman runs — a preview appears, at its saved
+  position if that character had one.
+- A never-previewed character logging in alongside placed ones — it should
+  get a free slot rather than landing on top of an existing preview.
+- The frozen build rendering labels in Inter. The font is a `datas` entry and
+  PyInstaller exits 0 when one resolves to nothing; there is now a post-build
+  assertion, but nobody has looked at the packaged app.
+
+One review pass is also unconfirmed: three CodeRabbit rounds ran against the
+branch and the fix for the third round's finding never got a fourth pass,
+because the free CLI limit was reached. Nothing is known to be outstanding.
 
 ## Risks and open questions
 
