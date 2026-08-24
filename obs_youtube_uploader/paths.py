@@ -37,6 +37,16 @@ def durations_file() -> Path:
     return state_dir() / "durations.json"
 
 
+def eve_settings_backup_dir() -> Path:
+    """Where EVE settings backups live.
+
+    Beside settings.json and the token, never inside the EVE tree: that
+    directory belongs to CCP, and writing archives into it risks confusing
+    the launcher and losing every backup to a reinstall.
+    """
+    return state_dir() / "eve-settings-backups"
+
+
 def eve_skills_file() -> Path:
     """Roster, snapshots, skill queue, ETags, and DPAPI-wrapped tokens.
 
@@ -143,17 +153,6 @@ def engine_ini_file() -> Path:
 def engine_status_file() -> Path:
     """Runtime state the engine publishes. Wingman never writes this."""
     return state_dir() / "eve_status.json"
-
-
-def engine_command_file() -> Path:
-    """Operations Wingman publishes. The engine never writes this.
-
-    INI rather than JSON, unlike the status file, because the direction of
-    travel decides the format: AHK reads INI natively via IniRead and has no
-    JSON parser, while it only ever *writes* the status file, which string
-    concatenation handles fine. Each side does its easy direction.
-    """
-    return state_dir() / "eve_command.ini"
 
 
 def engine_pid_file() -> Path:

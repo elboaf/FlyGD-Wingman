@@ -33,22 +33,8 @@
     state = payload;
     WM.el('eve-enabled').checked = !!payload.settings.enabled;
     renderEngineState();
-    renderRootMode();
     renderWindows();
     renderBinds();
-  }
-
-  // The standalone GUI's Root Mode readout (111unified.ahk:208,214). Driven by
-  // the engine's own root_mode field rather than inferred from the root
-  // string, which exists to be read by a human.
-  function renderRootMode(mode) {
-    var el = WM.el('eve-root-mode');
-    if (!el) return;
-    if (mode === undefined) {
-      mode = (state && state.engine && state.engine.root_mode) || '';
-    }
-    el.textContent = { home: 'Home/Zero', active: 'Active' }[mode]
-      || 'Not set';
   }
 
   // Immediate feedback after a save. The live status push (a later task)
@@ -276,32 +262,6 @@
     WM.send('reset_binds').then(render);
   });
 
-  // `eve_command` returns a bool rather than pushing a status: false means
-  // the engine did not accept it (not running, or a previous command is
-  // still in flight), and without this the button would look like it did
-  // something when nothing happened.
-  WM.el('eve-set-root').addEventListener('click', function () {
-    var value = WM.el('eve-root-input').value.trim();
-    if (!value) return;
-    WM.send('eve_command', 'set_root', value).then(function (ok) {
-      if (!ok) {
-        WM.send('alert_bookmarks',
-                'The engine did not accept that. It may not be running, or '
-                + 'a previous command is still being processed.');
-      }
-    });
-  });
-
-  WM.el('eve-clear-root').addEventListener('click', function () {
-    WM.send('eve_command', 'clear_root').then(function (ok) {
-      if (!ok) {
-        WM.send('alert_bookmarks',
-                'The engine did not accept that. It may not be running, or '
-                + 'a previous command is still being processed.');
-      }
-    });
-  });
-
   WM.el('eve-import').addEventListener('click', function () {
     WM.send('import_bookmarks').then(function (result) {
       if (!result) return;
@@ -355,10 +315,6 @@
       ? failed.length + ' hotkey(s) failed to register — see Bookmarks'
       : '';
 
-    // Values are only trustworthy while running, for the same reason the
-    // sig and root readouts above are blanked.
-    renderRootMode(live ? (payload.root_mode || '') : '');
-
     var label = { stopped: 'Stopped', stale: 'Not responding',
                   running: 'Running' }[payload.state] || '';
     var stateEl = WM.el('eve-engine-state');
@@ -380,6 +336,16 @@
     // when clients open and close, which is not something worth a timer.
     if (event.detail === 'bookmarks') {
       WM.send('get_bookmarks').then(render);
+      return;
     }
+    // Leaving this route must disarm an in-progress capture. Both this
+    // file and previews.js now install their own document-level keydown
+    // listener; stopPropagation() only stops OTHER listeners further
+    // along the same dispatch, not a sibling listener already attached to
+    // the same document node, so an armed capture left running here would
+    // still consume the next keystroke typed on the OTHER route -- for
+    // example writing a chord meant for a preview bind into this bind
+    // instead, off-screen and silently persisted.
+    endCapture();
   });
 }());

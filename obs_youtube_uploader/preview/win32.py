@@ -50,6 +50,7 @@ WM_APP = 0x8000
 # Host commands, marshalled in from other threads.
 WM_APP_SHUTDOWN = WM_APP + 1
 WM_APP_SWEEP_NOW = WM_APP + 2
+WM_APP_REBIND = WM_APP + 3
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02
@@ -131,6 +132,14 @@ class DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
 
 RECT = wintypes.RECT
 
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD)]
+
+
 # Every ctypes callback object ever handed to Windows, kept alive forever.
 # A callback collected while Windows still holds its address takes the
 # process down at the next message, and the crash lands nowhere near the
@@ -151,6 +160,12 @@ def winevent_proc_type():
     return ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD,
                               wintypes.HWND, wintypes.LONG, wintypes.LONG,
                               wintypes.DWORD, wintypes.DWORD)
+
+
+@lru_cache(maxsize=1)
+def monitor_enum_proc_type():
+    return ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                              ctypes.POINTER(wintypes.RECT), LPARAM)
 
 
 class Libs(NamedTuple):
@@ -174,6 +189,7 @@ def bind() -> Libs:
 
     WNDPROC = wndproc_type()
     WINEVENTPROC = winevent_proc_type()
+    MONITORENUMPROC = monitor_enum_proc_type()
     HDC, HWND, HANDLE = wintypes.HDC, wintypes.HWND, wintypes.HANDLE
     UINT, DWORD, BOOL = wintypes.UINT, wintypes.DWORD, wintypes.BOOL
 
@@ -194,6 +210,13 @@ def bind() -> Libs:
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
         (user32, "GetSystemMetrics", ctypes.c_int, [ctypes.c_int]),
+        # Monitor geometry. GetSystemMetrics(SM_*VIRTUALSCREEN) gives only
+        # the bounding rectangle; these two give the actual displays, which
+        # is what placement has to be clamped against.
+        (user32, "EnumDisplayMonitors", BOOL,
+         [HDC, ctypes.POINTER(wintypes.RECT), MONITORENUMPROC, LPARAM]),
+        (user32, "GetMonitorInfoW", BOOL,
+         [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]),
         (user32, "InvalidateRect", BOOL,
          [HWND, ctypes.POINTER(wintypes.RECT), BOOL]),
         # --- layered rendering

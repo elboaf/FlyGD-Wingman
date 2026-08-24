@@ -40,11 +40,6 @@ _MISSING = ("The bookmark engine is missing from this installation. "
 # (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
 _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
 
-# The only operations the channel carries. Adding to this list should be a
-# deliberate decision: the channel exists because two GUI buttons had no
-# other route, not as a general RPC mechanism.
-COMMANDS = frozenset({"set_root", "clear_root"})
-
 
 @dataclass
 class EngineStatus:
@@ -55,13 +50,7 @@ class EngineStatus:
     root: str | None = None
     next_num: str | None = None
     next_alpha: str | None = None
-    # "" | "home" | "active". The standalone GUI's Root Mode readout
-    # (111unified.ahk:208,214). Absent from an older engine's status file, and
-    # its absence must NOT force the whole status to stale -- an engine
-    # binary that predates this field is degraded, not broken.
-    root_mode: str = ""
     failed_binds: list = field(default_factory=list)
-    consumed_seq: int = 0
     last_error: str | None = None
 
 
@@ -98,7 +87,6 @@ class HotkeyEngine:
         self._token_factory = token_factory
         self._proc = None
         self._token = None
-        self._seq = 0
         self.last_error: str | None = None
 
     # -- config ------------------------------------------------------
@@ -110,91 +98,6 @@ class HotkeyEngine:
         """
         atomicio.write_atomic(self._ini_path(),
                               bookmarks.generate_ini(section))
-
-    # -- commands ------------------------------------------------------
-    def sync_sequence(self) -> None:
-        """Adopt the sequence already on disk.
-
-        Called after start(). Without it a restarted Wingman would resume
-        from zero while a higher-numbered command file remained, and every
-        command would be ignored as already-consumed until the counter
-        caught up.
-        """
-        self._seq = 0
-        try:
-            # decode_ini_bytes, not read_text(): the engine is AutoHotkey
-            # and IniWrite produces UTF-16 LE with a BOM on a Unicode
-            # build (bookmarks.decode_ini_bytes documents the three
-            # encodings this file turns up in). read_text() has no
-            # encoding, so it used the locale default -- UTF-8 on Linux,
-            # where a BOM decodes to U+FEFF and the lstrip below removes
-            # it, but cp1252 on Windows, where the same bytes decode to
-            # "ï»¿", nothing is stripped, the first line reads
-            # "ï»¿[Command]" and no section ever matches. Wingman only
-            # ships on Windows, so this was broken wherever it actually
-            # runs: after a restart the engine resumed from zero and
-            # ignored every command until the counter caught up, exactly
-            # as the docstring above warns.
-            raw = self._command_path().read_bytes()
-            text = bookmarks.decode_ini_bytes(raw).lstrip("﻿")
-            in_command = False
-            for line in text.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("[") and stripped.endswith("]"):
-                    in_command = stripped[1:-1].strip().lower() == "command"
-                    continue
-                if not in_command:
-                    continue
-                key, _, value = stripped.partition("=")
-                if key.strip() == "Seq":
-                    # Clamped: a negative sequence would make
-                    # `consumed >= self._seq` true for every command and
-                    # defeat the unconsumed-command guard outright.
-                    self._seq = max(0, int(value.strip()))
-                    return
-        except (OSError, ValueError):
-            self._seq = 0
-
-    def pending_command(self, now: float | None = None) -> int | None:
-        """The sequence awaiting acknowledgement, or None."""
-        if not self._seq:
-            return None
-        consumed = self.status(enabled=True, now=now).consumed_seq
-        return None if consumed >= self._seq else self._seq
-
-    def send_command(self, name: str, argument: str = "",
-                     now: float | None = None) -> bool:
-        """Publish one operation for the engine to execute.
-
-        Refuses while a previous command is unacknowledged: the file holds
-        one slot and the engine polls every 2s, so overwriting would
-        silently discard the earlier action.
-        """
-        if name not in COMMANDS:
-            logger.error("Refusing unknown engine command %r", name)
-            return False
-        if not self.is_running():
-            return False
-        if self.pending_command(now=now) is not None:
-            return False
-
-        next_seq = self._seq + 1
-        # INI, and sanitised: the argument is free text the user typed and
-        # a newline in it would otherwise add a key to the section.
-        body = ("[Command]\r\n"
-                f"Seq={next_seq}\r\n"
-                f"Name={name}\r\n"
-                f"Argument={bookmarks.sanitise(argument)}\r\n")
-        try:
-            atomicio.write_atomic(self._command_path(), body)
-        except OSError:
-            # Advancing the counter without a file on disk would leave
-            # pending_command() waiting forever on a command nothing can
-            # acknowledge, refusing every later command for the session.
-            logger.exception("Could not publish engine command %r", name)
-            return False
-        self._seq = next_seq
-        return True
 
     # -- lifecycle ---------------------------------------------------
     def start(self) -> bool:
@@ -291,12 +194,6 @@ class HotkeyEngine:
         The status file outlives the process that wrote it. Reading values
         from it without first establishing that the engine is alive is how
         a dead root system gets displayed as the current one.
-
-        consumed_seq is 0 in every state but "running". That can only make a
-        command look still-pending, never falsely acknowledged, so it fails
-        in the safe direction: the effect is that the action buttons stay
-        disabled through a stale window, which is correct anyway, since a
-        command to a non-responding engine should not be sent.
         """
         if not enabled:
             return EngineStatus(state="off")
@@ -322,24 +219,13 @@ class HotkeyEngine:
             logger.warning("Engine status has a malformed failed_binds.")
             return EngineStatus(state="stale")
 
-        try:
-            # As deliberately guarded as failed_binds above: a non-numeric
-            # seq (string, list, dict) would otherwise raise out of status()
-            # into pending_command, _push_eve_status, and get_bookmarks.
-            consumed_seq = int(raw.get("seq") or 0)
-        except (TypeError, ValueError):
-            logger.warning("Engine status has a malformed seq.")
-            return EngineStatus(state="stale")
-
         return EngineStatus(
             state="running",
             sig=_text(raw.get("sig")),
             root=_text(raw.get("root")),
             next_num=_text(raw.get("next_num")),
             next_alpha=_text(raw.get("next_alpha")),
-            root_mode=_text(raw.get("root_mode")) or "",
             failed_binds=[str(b) for b in failed],
-            consumed_seq=consumed_seq,
         )
 
     def recover_orphan(self) -> bool:
@@ -363,8 +249,9 @@ class HotkeyEngine:
             # atomicio.write_atomic writes UTF-8; say so on the way back
             # in rather than inheriting the locale's codec. The record is
             # ASCII today (a pid and a hex token) so this is not currently
-            # a bug -- it is the same asymmetry that made sync_sequence
-            # above fail on Windows, closed before it becomes one.
+            # a bug -- it is the asymmetry that once made the command
+            # channel's sequence adoption fail on Windows, closed here
+            # before it becomes one.
             record = json.loads(self._pid_path().read_text(encoding="utf-8"))
             pid = int(record["pid"])
             token = str(record["token"])
@@ -415,9 +302,6 @@ class HotkeyEngine:
 
     def _status_path(self) -> Path:
         return self._state_dir / paths.engine_status_file().name
-
-    def _command_path(self) -> Path:
-        return self._state_dir / paths.engine_command_file().name
 
     def _clear_pid_record(self) -> None:
         try:

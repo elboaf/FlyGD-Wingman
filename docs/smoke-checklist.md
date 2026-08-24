@@ -785,17 +785,49 @@ pytest — the engine is AutoHotkey.
       criterion is active; if that criterion does not carry into the
       function, they register globally and fire everywhere. Nothing in the
       repository can test this; confirm it by hand.
-- [ ] **Set Root does nothing outside an EVE window.** It used to be
-      registered with no window restriction (Step 4) and is now inside the
-      per-window loop like everything else. Nothing in the route says
-      "everywhere" any more.
-- [ ] **Set Root still re-checks the active window.** The guard is
-      unreachable on a settled configuration, so it cannot be confirmed
-      from the outside — check by reading `DoSemi`. It covers the window
-      between a window being disabled and the ~10s refresh that tears its
-      binds down, where a press would otherwise run the whole copy/parse
-      flow in whatever is focused: `Send ^c` into a chat window, and the
-      root state reset.
+- [ ] **Set Root does nothing outside an EVE window.** It is registered
+      inside the per-window loop like everything else, and that registration
+      is now the *only* thing scoping it — `DoSemi`'s own `IsEveWindow`
+      re-check was dropped to track the helper author's script exactly. The
+      one gap that guard covered is still real and cannot be tested from
+      the repository: between un-ticking a window and the ~10s refresh that
+      tears its binds down, a press in that window resets the root state.
+      Confirm the normal case by hand; the gap is accepted.
+- [ ] **THE ONE THIS RELEASE IS ABOUT — Set Root resumes numbering for home
+      holes.** Make several home bookmarks whose first field is a single
+      character plus a sig, e.g. `1-ABC`, `2-DEF`, `A-GHI`. Select all of
+      them and press Set Root.
+      Expected: root reads **Home/Zero**, and the next values are **3** and
+      **B** — it resumes past the used slots.
+      The bug: root read `1` and the next values were `11` / `1A`, because
+      the parser mistook the single character for the root. `ZeroMode` was
+      dead code in the script the port was made from; the re-vendored
+      engine wires it up.
+- [ ] **Grab Sig no longer uppercases what it captured.** The fork ran
+      `StringUpper` over the three characters; the author's script does not,
+      and the re-vendor follows the author. Finisher-generated names are
+      unaffected (`FireRootFinisher` uppercases the whole result), so this
+      shows only in the status bar's sig readout and in what Grab Sig puts
+      on the clipboard for you to paste by hand. EVE displays signature IDs
+      uppercase already, so in practice there should be nothing to see —
+      check the sig readout looks right, and say so if it does not.
+- [ ] **Set Root on an ENTIRE bookmark list fills gaps.** This is the
+      "Entire bookmark list" row of `docs/bookmarks_reference.md`. Select
+      the whole list of a scanned system — **including the system's own
+      return bookmark**, the one whose prefix is the bare root — and press
+      Set Root. With `1-ABC`, `12-GHI`, `13-MNO` (11 expired), expected:
+      root `1`, next `11` — it refills the gap rather than continuing at 14.
+      Including the return bookmark is what makes this work: DoSemi takes
+      the first parseable line's prefix as the root, and EVE's alphabetical
+      sort puts `1-ABC` ahead of `11-DEF` because "-" sorts before digits.
+      Select only the numbered bookmarks and the root comes out `11` with
+      no gap filling — that is the author's design, not a defect.
+- [ ] **Set Root on a SINGLE bookmark starts fresh numbering.** The "Single
+      bookmark" row of the reference. Select `1-ABC` alone: root `1`, next
+      `11` / `1A`, and the root on the clipboard.
+- [ ] **Set Root with NOTHING selected gives Home/Zero and touches nothing.**
+      The "Nothing" row: fresh numbering at 1/A, and nothing moved to the
+      clipboard.
 - [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
       Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
@@ -805,6 +837,14 @@ pytest — the engine is AutoHotkey.
 - [ ] **Tags are written lowercase: `e`, `/`, `f`, `c`.** The class
       finishers (`H`/`L`/`N`/`13`/`C1`-`C6`) are a different code path and
       stay uppercase
+- [ ] **CapsLock lowercases the class finishers ONLY outside root mode.**
+      New with the re-vendor: `DoY`/`DoP`/`DoDot` pick `h`/`l`/`n` when
+      CapsLock is on. In root mode — the default state, and where you will
+      be for every other item here — `FireRootFinisher` runs
+      `StringUpper` over the whole result before pasting, so you will see
+      `H`/`L`/`N` regardless. Seeing uppercase in root mode is correct, not
+      a failure. The lowercase path is reachable only after a Set Root that
+      found nothing parseable.
 - [ ] **There is no medium-hole tag** — no `M` row in Keybinds, and no key
       writes an ` M`
 - [ ] **The frig tag writes `f`, not `S`.** Same bind and INI key (`FinS`),
@@ -813,21 +853,23 @@ pytest — the engine is AutoHotkey.
       it with ` f`** rather than leaving both on the line
 - [ ] **There is no Bookmark naming card in the route** — home holes, the
       return-bookmark toggle and the preface field are all gone
-- [ ] **Home bookmarks start at `.1`.** Fixed now, but still written into
-      the INI rather than left to the engine, whose compiled default is the
-      opposite. `HomeZeroIs0` is read inside a *function*, and an undeclared
-      name is local in AHK v1 — if the `global` declaration is lost it reads
-      as empty and the numbering silently changes, with no error anywhere.
-- [ ] **Return bookmarks are NOT prefaced** — no `!`, matching the helper
-      author's own script. Wingman writes `PrefaceReturn=0`; the engine's
-      compiled default is `1`, so this is one the INI has to say out loud
-- [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
-      tracks Set Root / Clear Root
+- [ ] **The generated INI has no `[Settings]` section at all.** Open
+      `%LOCALAPPDATA%\OBSYouTubeUploader\eve_bookmark_helper.ini`: it should
+      contain `[Keybinds]` and `[Enabled]` and nothing else. The engine has
+      no naming settings left to read, so writing them would be config that
+      nothing consumes.
+- [ ] **Home bookmarks start at `.1`** — now a property of the engine
+      itself rather than of a value Wingman writes
+- [ ] **Return bookmarks are NOT prefaced** — no `!`. There is no preface
+      anywhere any more: not in the UI, not in settings.json, not in the
+      INI, and not in the engine
+- [ ] **There is no Root card on the route.** Root mode, the Set root box
+      and the Clear button are gone. The status bar's ROOT / NEXT readouts
+      are the only root display, and they still update as you use the
+      hotkeys — check they do.
 - [ ] Deliberately binding two actions to one key shows the collision warning
 - [ ] Binding a key another application owns shows a registration failure,
       not a silently dead key
-- [ ] Set Root and Clear Root from the route change the status bar values
-- [ ] A second action taken immediately is not lost
 - [ ] **Importing a REAL `eve_bookmark_helper.ini` reproduces that setup.**
       AutoHotkey writes it as UTF-16 LE; reading it as UTF-8 parsed nothing
       and saved that nothing over the user's settings while reporting
@@ -893,6 +935,21 @@ Enable previews in Settings before starting.
 - [ ] Log in a character that has never been previewed while others are
       already placed: it gets a free slot rather than landing on top of an
       existing preview.
+- [ ] **Monitors whose tops do not line up** (e.g. a 4K panel spanning
+      y 0..2160 beside a 1440p one starting at y 291): a never-previewed
+      character gets a preview that is **on a display**, not in the gap
+      above the shorter monitor. This found a real bug — the virtual
+      desktop is the bounding RECTANGLE of all monitors, not their union,
+      so the space above a shorter monitor is inside it and on no screen.
+      A preview deposited there is invisible AND un-draggable, so it can
+      never acquire the saved position that would rescue it: every new
+      character would be lost permanently. Passes on a single monitor, and
+      on any arrangement with aligned tops, whether or not the code is
+      correct — so it has to be checked on staggered monitors specifically.
+- [ ] Unplug a monitor that holds a saved preview position, then restart
+      Wingman. That preview comes back **on a remaining display**, not at
+      its saved coordinates in empty space. Same clamp as the item above,
+      reached by the other route.
 - [ ] Disable previews in Settings. Every preview vanishes and the
       `wingman-preview` thread exits — check Task Manager shows no extra
       thread and the log has no "did not exit within" warning.
@@ -907,9 +964,168 @@ Enable previews in Settings before starting.
 - [ ] Check the log for one line reporting the DPI override result, and no
       repeated warnings during an idle minute — the 700ms sweep must be
       silent when nothing changes.
+
+      The DPI line is `logger.debug`, so it is invisible at the default
+      level. Start with `WINGMAN_LOG_LEVEL=DEBUG` to see it:
+
+          Preview thread DPI override accepted: True
+
+      Expect exactly one, at thread start. That variable also reveals the
+      other preview diagnostics that INFO discards — whether `WM_HOTKEY`
+      reached the host window, why a placement read failed, and the
+      registration push that is swallowed at launch because previews start
+      before the webview exists. Anything in this file that says "check
+      the log" for a preview-thread detail needs it.
+
+      From WSL, environment variables do not reach a Windows process
+      unless exported: `WSLENV=WINGMAN_LOG_LEVEL WINGMAN_LOG_LEVEL=DEBUG`.
+      Without `WSLENV` the app starts normally and logs nothing extra,
+      which looks exactly like the feature not working.
 - [ ] Frozen build only: run the packaged app and confirm labels still
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
+
+### Reopen previews where you last put them
+
+The checkbox on the previews card. It governs where a preview OPENS, at
+launch and mid-session alike — a preview is created whenever its client
+appears, so an item that only restarts the app tests half of it.
+
+- [ ] On (the default): drag two previews somewhere deliberate, restart
+      Wingman. Both come back exactly where they were.
+- [ ] On: with Wingman already running, start a third client. Its preview
+      appears at that character's saved position, not on the stack.
+- [ ] Off: quit that client and start it again. Its preview opens in the
+      default stack, ignoring the saved rect.
+- [ ] Off: drag a preview, switch the checkbox back on, restart. The drag
+      you made while it was off is where the preview returns — positions
+      are recorded whatever the setting says.
+- [ ] **Multiple monitors with staggered tops**, either setting: start a
+      character that has never had a preview. It lands fully on a display,
+      not in the dead zone above one. The clamp runs on both paths, and an
+      arrangement with aligned tops hides a failure here completely.
+- [ ] Make `settings.json` read-only and toggle the checkbox. The hint
+      below it says the choice will not survive a restart. The box stays
+      where you put it — the setting really did change for this session.
+- [ ] Nothing at any point moves or resizes an EVE client. The log has no
+      line about placing or restoring a client window.
+
+## EVE preview hotkeys
+
+- [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
+  Bind any chord and press it. If nothing happens while the log shows a
+  successful registration, `HWND_MESSAGE` is not receiving the message and
+  registration must move to `hWnd=NULL` with dispatch in the pump loop —
+  see risk 4 in `eve-preview-hotkeys-design.md`.
+- [ ] A per-character chord switches to that client from another application
+  (try it from a browser, not just from Wingman).
+- [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**
+  With the Previews tab open and a hotkey row showing "Press a key…", start
+  or close an EVE client (which pushes new state from Python). Expected: the
+  row stays armed and visibly capturing, typing fills in normally, and a
+  pressed chord binds correctly. The original bug left the row armed but
+  invisible, eating keystrokes and binding them silently.
+- [ ] Cycle forward and back walk every running client in name order and wrap.
+  **Try it with a browser focused, not just with an EVE client focused** —
+  these are different branches of `_on_hotkey`: with an EVE client focused,
+  cycling anchors on that client; with a browser (or anything else) focused,
+  it falls back to the last-cycled target. The browser case is the one a
+  multiboxer actually uses, so it must be checked, not just the EVE-focused
+  case.
+- [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
+  three seconds; the client must not flicker through repeated activations.
+- [ ] **A chord another application already owns is visible on the Previews
+  tab**, not only in the log. Bind something a running app claims, restart
+  Wingman, and check the tab BEFORE touching anything — this is the startup
+  case where the push has no window to reach.
+- [ ] Switching previews off releases the chords: they do nothing, and the
+  application that owns them gets them back. Switching previews on reclaims
+  them.
+- [ ] **With previews off, the Previews tab reads as off, not as live.** Open
+  the tab while previews are switched off. Expected: the banner above the
+  list says previews are off, and every chord renders as neither registered
+  nor refused — a dashed outline, with a tooltip saying it is not
+  registered right now. No chord may render as an ordinary, live binding.
+
+  Rows are **not** dimmed while previews are off. Dimming means "this
+  character is logged off", and it only says that by contrast with an
+  undimmed row; with the host stopped Python sends no character list at
+  all, so dimming every row made the tab indistinguishable from one where
+  everybody really had logged out. That was reported as "I don't see
+  anything that indicates they are online".
+
+  Confirm independently rather than trusting the tab: from a separate
+  probe process, `RegisterHotKey` must succeed for each of those chords.
+  The original bug served the host's last snapshot after teardown; the
+  2026-08-24 regression was the page reading an absent registration entry
+  as a successful one. Both made the tab claim chords Windows did not hold.
+- [ ] **A chord bound to a `Win+` combination never fires.** Windows owns a
+  large share of `Win+`key and those chords cannot be taken by
+  `RegisterHotKey`. Bind one (e.g. `Win+F1`) and press it: it must appear on
+  the Previews tab as refused (same treatment as any other chord another
+  application already owns), not as a chord that looks registered and
+  silently never fires.
+- [ ] **The character list updates when the Previews tab is opened.** While
+  viewing another tab, start an EVE client. Switch to Previews. Expected: the
+  new character appears in the list immediately without needing a restart or
+  settings save.
+- [ ] A binding made for a character survives a restart while that character
+  is logged off, and still appears in the list.
+- [ ] **Hotkey captures are tab-isolated.** Arm a bookmark hotkey on the
+  Bookmarks tab, switch to Previews, arm a preview hotkey, press a chord.
+  Expected: only the preview binding is written. Check the Bookmarks tab
+  afterwards: the bookmark hotkey unchanged. The original bug wrote to both,
+  leaving an off-screen binding the user never saw.
+- [ ] With EVE bookmarks enabled and a window enabled, binding a preview chord
+  that matches a bookmark bind shows the collision warning. With bookmarks
+  disabled, it does not warn.
+- [ ] **Dimmed rows are visibly less prominent than normal.** Find an offline
+  character. Then create a latent collision: configure a preview chord that
+  matches a bookmark chord, then disable EVE bookmarks (or un-tick every window
+  in the Bookmarks tab's enabled-window list) so the collision is not active.
+  Expected: both the offline character and the latent-collision row read
+  noticeably quieter than normal rows, not more prominent. A visual regression
+  here reverses the hierarchy.
+- [ ] Quitting Wingman with chords bound leaves them released: the owning
+  application gets them back without a reboot.
+## EVE Settings
+
+The suite cannot exercise Windows file locking or a real `os.replace` retry,
+so these are the checks that matter and only a Windows machine can run them.
+
+- [ ] Choose the EVE folder. Servers and settings sets populate; characters
+      show names within a second or two of the route opening.
+- [ ] Pull the network cable and reopen the route — characters render as
+      `Character <id>`, nothing errors.
+- [ ] Point the folder picker at a `settings_*` directory. The root heals
+      upward and the tree still populates.
+- [ ] Create a junction inside the EVE settings folder pointing outside it
+      (`mklink /J <root>\junction C:\SomewhereElse`), then try to select it as
+      a settings set. It must be refused as outside the configured folder --
+      containment resolves symlinks and junctions, and this is the one path
+      Linux CI cannot exercise.
+- [ ] Copy one character onto three others with EVE closed. All three
+      update; three auto-backups appear.
+- [ ] Copy with EVE running. It fails with "The file is in use. Close EVE
+      and retry", and every target is left intact.
+- [ ] Restore the pre-copy backup for one character. The original settings
+      come back.
+- [ ] Back up a settings set, delete a `.dat` from it, restore. The deleted
+      file returns.
+- [ ] Add a file to a settings set that was not in its backup, then restore.
+      It is removed, and the pre-restore auto-backup contains it.
+- [ ] Restore with EVE running. Like a copy, it must fail rather than write
+      -- restore stages every file and publishes with the same replace-with-
+      retry, so a live client blocks it. The settings set must be left
+      exactly as it was: nothing deleted, no `.tmp` files behind.
+- [ ] Delete a settings set entirely, then restore its backup. The folder is
+      recreated and the files come back.
+- [ ] Start a copy and immediately try a second one. The second is refused
+      with "EVE Settings busy" rather than interleaving.
+- [ ] With `auto_keep` at its default, copy the same character eleven times.
+      Ten auto-backups remain; the manual ones are untouched.
+- [ ] Check the packaged build: the EVE Settings route appears and the
+      folder picker opens.
 
 ## EVE skill plan readiness
 

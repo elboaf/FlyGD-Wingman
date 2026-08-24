@@ -230,3 +230,57 @@
     box.checked = !!(s.preview && s.preview.enabled);
   });
 }());
+
+// ---- Where a preview opens -----------------------------------------------
+// Separate from the previews block above, and not part of collect()/
+// save_settings either: this key is written by its own bridge method so a
+// write that fails can be reported rather than silently lost.
+//
+// This replaces the card that used to move the GAME windows. EVE reads a
+// resize as a resolution change and rewrites its own configuration, so
+// Wingman no longer touches a client's rect at all -- only the preview's.
+(function () {
+  var box = WM.el('restore-preview-positions');
+  var status = WM.el('restore-preview-positions-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    // WM.send resolves to null on any bridge failure rather than
+    // rejecting (app.js:38-43). A dict is always truthy, so null is
+    // still the only thing that reverts the box -- and a failed write
+    // is no longer mistaken for one.
+    WM.send('set_restore_preview_positions', wanted).then(function (res) {
+      if (!res) { box.checked = !wanted; return; }
+      if (!res.persisted) {
+        // The setting really did change for this session, so the box
+        // stays where the user put it. What it cannot do is survive a
+        // restart, and saying nothing is how they find that out the
+        // hard way.
+        say('Reopening previews in place is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      } else {
+        // The checkbox itself is the success feedback. Restoring the
+        // hint (rather than confirming) clears a prior failure message
+        // without adding noise on every successful toggle.
+        say('');
+      }
+    });
+  });
+
+  // panel.js owns onSettings and re-dispatches it, so listen on the same
+  // custom event the blocks above use rather than claiming a handler that
+  // already has an owner.
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    // Absent means on: an upgrading user's file predates the key, and
+    // showing the box unchecked would misreport what will happen.
+    box.checked = !(s.preview
+      && s.preview.restore_preview_positions === false);
+  });
+}());

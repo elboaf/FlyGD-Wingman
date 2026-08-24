@@ -215,3 +215,36 @@ def test_placement_never_goes_negative_on_a_small_screen():
     """A negative x on Windows is legal and puts the title bar off the left
     edge -- on a frameless window that means no way to drag it back."""
     assert window_mod._placement(1600, 1200, metrics=lambda: (1280, 720)) == (0, 0)
+
+
+def test_placement_is_in_logical_units_on_a_scaled_primary():
+    """pywebview takes x/y in the SAME logical units as width/height and
+    applies the DPI scale itself (winforms.py), but GetSystemMetrics
+    reports PHYSICAL pixels under PROCESS_SYSTEM_DPI_AWARE. Centring
+    against the physical number hands pywebview a coordinate it then
+    doubles.
+
+    Observed on a 3840x2160 primary at 200%: the window was placed at
+    x=2800 on a screen 3840 wide and hung 1014px off the right edge, half
+    of it on the next monitor. Invisible at 100%, where the two units are
+    the same number."""
+    x, y = window_mod._placement(1040, 680, metrics=lambda: (3840, 2160),
+                                 scale=lambda: 2.0)
+    assert (x, y) == (440, 200)
+    # What pywebview will actually use, once it applies the scale back.
+    assert (x * 2, y * 2) == (880, 400)
+
+
+def test_placement_at_100_percent_is_unchanged():
+    """The scaled path must not move the window for the majority of users
+    who run at 100%."""
+    assert window_mod._placement(1000, 600, metrics=lambda: (1920, 1080),
+                                 scale=lambda: 1.0) == (460, 240)
+
+
+def test_placement_survives_a_scale_of_zero():
+    """GetDpiForSystem returning 0 is a documented failure mode, and
+    dividing by it would take the window down at startup."""
+    assert window_mod._placement(1000, 600, metrics=lambda: (1920, 1080),
+                                 scale=lambda: 0.0) == (460, 240)
+

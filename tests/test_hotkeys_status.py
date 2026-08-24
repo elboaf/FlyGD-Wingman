@@ -109,20 +109,6 @@ def test_display_values_are_coerced_for_a_label(tmp_path, bad, expected):
     assert eng.status(enabled=True, now=1001.0).root == expected
 
 
-@pytest.mark.parametrize("bad", ["nope", [1], {"a": 1}])
-def test_a_malformed_seq_is_stale_not_a_crash(tmp_path, bad):
-    """int(raw.get("seq") or 0) is otherwise unguarded, and this field
-    otherwise reaches pending_command, _push_eve_status, and get_bookmarks
-    -- a bad type here must not raise out of status()."""
-    write_status(tmp_path, seq=bad)
-    eng = engine(tmp_path, FakeSpawner())
-    eng.apply(section())
-    eng.start()
-    got = eng.status(enabled=True, now=1001.0)
-    assert got.state == "stale"
-    assert got.root is None
-
-
 def test_a_status_written_in_the_future_is_not_stale(tmp_path):
     """A backwards clock step makes the difference negative. Reporting stale
     there would blank a live engine's readout for no reason."""

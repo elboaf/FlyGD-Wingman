@@ -126,7 +126,7 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(api, monk
     def boom(cfg, path=None):
         raise OSError("disk full")
 
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     section = dict(before, keybinds=dict(bookmarks.DEFAULT_BINDS, FinH="^h"))
     got = api.save_bookmarks(section)
@@ -139,11 +139,6 @@ def test_capture_and_parse_delegate_to_bookmarks(api):
     assert api.capture_bind({"ctrl": True, "alt": False, "shift": True,
                              "meta": False, "code": "KeyS"})["ahk"] == "^+s"
     assert api.parse_bind("+^s")["ahk"] == "^+s"
-
-
-def test_eve_command_is_forwarded(api):
-    api.eve_command("set_root", "J1234")
-    assert api._state.engine.commands == [("set_root", "J1234")]
 
 
 def test_import_applies_and_reports(api, tmp_path, monkeypatch):
@@ -246,7 +241,7 @@ def test_import_does_not_claim_success_when_the_save_fails(
 
     def boom(*a, **kw):
         raise OSError("read-only file system")
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     got = api.import_bookmarks()
     assert got["ok"] is False
@@ -263,5 +258,5 @@ def test_save_bookmarks_reports_whether_it_actually_wrote(api, monkeypatch):
 
     def boom(*a, **kw):
         raise OSError("nope")
-    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
     assert api.save_bookmarks(section)["saved"] is False

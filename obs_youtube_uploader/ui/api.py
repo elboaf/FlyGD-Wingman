@@ -19,6 +19,7 @@ is no UI thread to marshal onto.
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
 """
+import contextlib
 import datetime
 import json
 import logging
@@ -32,6 +33,11 @@ from pathlib import Path
 from .. import (bookmarks, combatlog, discord, durations, evewindows,
                 library, obsconfig, paths, settings as settings_mod, stitch,
                 uploader)
+from ..evesettings import backup as evesettings_backup
+from ..evesettings import names as evesettings_names
+from ..evesettings import ops as evesettings_ops
+from ..evesettings import tree as evesettings_tree
+from ..preview import gestures as preview_gestures
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -48,6 +54,13 @@ PROBE_DRAIN_S = 0.1
 # push is idempotent from the page's side, so an early one costs nothing
 # beyond a logged drop.
 FIRST_RUN_PUSH_S = 1.5
+
+# The EVE Settings workers hold the mutation lock across their
+# confirmation prompt (by design -- a queued operation would describe state
+# that has since changed), so their wait needs a floor under it. Generous
+# for a human answering a dialog; the case it bounds is a push that never
+# reached the page, which _push swallows silently.
+EVE_CONFIRM_TIMEOUT_S = 300.0
 
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
@@ -188,6 +201,29 @@ class Api:
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
 
+        # One mutation at a time. A per-mutation worker says nothing about
+        # how many may exist at once, and _confirm() parks each one
+        # independently -- so two operations approved moments apart could
+        # otherwise interleave over the same files.
+        self._eve_mutation = threading.Lock()
+        # Process-lifetime memo. Names are cosmetic and free to re-fetch.
+        self._eve_names = evesettings_names.NameCache()
+        # Last known answer for the advisory "EVE running" pill, or None
+        # for "nobody has looked yet". None rather than False because the
+        # pill is the ONLY warning before a copy, and False is the
+        # reassuring guess: the probe is off the bridge thread precisely
+        # because its first, uncached pass is slow, so a fabricated
+        # "EVE closed" would be on screen for exactly as long as it takes
+        # to be wrong about. The page renders the third state as
+        # "Checking...". Read on the bridge thread, written by the probe;
+        # a plain assignment, so no lock is needed for coherence.
+        self._eve_running = None
+        # One probe at a time. eve_settings_state() fires one on every
+        # call -- route open, and after every mutation -- so two easily
+        # overlap, and a slow probe finishing after a fast one would
+        # otherwise publish the OLDER observation and leave it cached.
+        self._eve_probe = threading.Lock()
+
         # None off the happy path -- when the subsystem failed to build, and
         # in most tests. Every call site below tolerates its absence and
         # returns a safe value, which is what lets the page render the route
@@ -292,6 +328,15 @@ class Api:
         The Event is registered before the push, not after: `evaluate_js`
         can complete and the user can answer before this method resumes.
         """
+        return self._ask(title, body, timeout=None)
+
+    def _ask(self, title: str, body: str, *, timeout: float | None) -> bool:
+        """The body of _confirm, with the wait made optional.
+
+        `timeout=None` is _confirm's own unbounded wait, unchanged. A
+        deadline is only useful to a caller that holds something while it
+        waits -- see _eve_confirm.
+        """
         request_id = self._id_factory()
         event = threading.Event()
         entry = [event, False]
@@ -300,7 +345,10 @@ class Api:
         try:
             self._push("onDialog", {"kind": "confirm", "title": title,
                                     "body": body, "request_id": request_id})
-            event.wait()
+            if not event.wait(timeout):
+                logger.warning("No answer to %r within %ss; treating it as "
+                               "a refusal", title, timeout)
+                return False
             return bool(entry[1])
         finally:
             with self._dialog_lock:
@@ -758,10 +806,10 @@ class Api:
         if (self._state.settings.get("channel_id") == channel_id
                 and self._state.settings.get("channel_title") == channel_title):
             return
-        self._state.settings["channel_id"] = channel_id
-        self._state.settings["channel_title"] = channel_title
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["channel_id"] = channel_id
+                cfg["channel_title"] = channel_title
         except OSError:
             # A settings file that cannot be written must not fail an
             # upload that succeeded.
@@ -1073,27 +1121,29 @@ class Api:
             self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
             return False
 
-        cfg = dict(self._state.settings)
         gamelogs = str(values.get("gamelogs_dir") or "").strip()
-        cfg.update({
-            "privacy": values.get("privacy"),
-            "category": category,
-            "notify_mode": values.get("notify_mode"),
-            "recording_dir": str(rec_dir),
-            "discord_webhook": webhook_raw,
-            "gamelogs_dir": gamelogs or None,
-        })
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.update({
+                    "privacy": values.get("privacy"),
+                    "category": category,
+                    "notify_mode": values.get("notify_mode"),
+                    "recording_dir": str(rec_dir),
+                    "discord_webhook": webhook_raw,
+                    "gamelogs_dir": gamelogs or None,
+                })
         except OSError as exc:
-            # Bail out before touching in-memory state so state and disk
-            # never diverge, and say so rather than failing silently -- the
-            # page keeps the form open with the edits intact.
+            # update() restored the live dict before re-raising, so state
+            # and disk still agree -- the property the old snapshot-then-
+            # save order was written to protect.
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place before saving
+        # (privacy/category/etc coercion), so there is no longer a rebind
+        # here -- see its docstring for why replacing the object was the
+        # rebind-race bug this used to have.
         self._state.recording_dir = rec_dir
         # The watcher is the reason this method is not just a file write.
         # It holds its own directory, so persisting the setting alone would
@@ -1177,20 +1227,21 @@ class Api:
             self._alert("warning", "Invalid folder",
                         f"{folder} is not a folder.")
             return False
-        # Save from a COPY and adopt only on success, exactly as
-        # save_settings does. Mutating first and returning False on OSError
-        # would leave the app believing it has a recording folder it never
-        # persisted -- state and disk diverged, and the divergence survives
-        # until the next launch reads the file back.
-        cfg = dict(self._state.settings)
-        cfg["recording_dir"] = str(folder)
+        # Update inside settings.update(), exactly as save_settings does.
+        # Mutating first and returning False on OSError would leave the
+        # app believing it has a recording folder it never persisted --
+        # state and disk diverged, and the divergence survives until the
+        # next launch reads the file back. update()'s rollback on any
+        # exception is what protects that property now.
         try:
-            settings_mod.save(cfg)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["recording_dir"] = str(folder)
         except OSError as exc:
             self._alert("error", "Could not save settings",
                         f"Settings were not saved: {exc}")
             return False
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         self._state.recording_dir = folder
         if self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
@@ -1224,7 +1275,6 @@ class Api:
         self._push("onEveStatus", {
             "state": status.state, "sig": status.sig, "root": status.root,
             "next_num": status.next_num, "next_alpha": status.next_alpha,
-            "root_mode": status.root_mode,
             "failed_binds": status.failed_binds,
             # A failed start is otherwise invisible: this is the one
             # actionable thing the user can be told ("the engine is
@@ -1243,7 +1293,12 @@ class Api:
         """
         if self._preview_host is None:
             return
-        if self._state.settings.get("preview", {}).get("enabled"):
+        section = self._state.settings.get("preview", {})
+        # Pushed before start(): the first registration pass runs inside
+        # start(), and a table applied only after it would leave every
+        # binding unregistered until the next explicit save.
+        self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+        if section.get("enabled"):
             self._preview_host.start()
 
     def set_preview_enabled(self, enabled: bool) -> None:
@@ -1268,9 +1323,9 @@ class Api:
             # page would read a no-op toggle as a failed call and revert
             # the checkbox.
             return True
-        section["enabled"] = enabled
         try:
-            settings_mod.save(self._state.settings)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["enabled"] = enabled
         except OSError:
             # Same posture as the channel persist above: a settings file
             # that cannot be written must not block the feature itself.
@@ -1299,6 +1354,165 @@ class Api:
             self._preview_host.stop()
         except Exception:
             logger.exception("Preview host did not stop cleanly")
+
+    def capture_preview_bind(self, parts) -> dict:
+        return preview_gestures.from_capture(
+            parts if isinstance(parts, dict) else {})
+
+    def parse_preview_bind(self, text) -> dict:
+        parsed = preview_gestures.parse(text if isinstance(text, str) else "")
+        if parsed is None:
+            return {"gesture": "", "error": "unparseable"}
+        return {"gesture": preview_gestures.display(parsed), "error": None}
+
+    def set_preview_binds(self, section) -> bool:
+        """Replace the whole binding table, persist it, and push it down.
+
+        Returns False on a chord that will not parse rather than silently
+        dropping it: the page needs to tell a rejected entry from a saved
+        one, and WM.send resolves to null on a bridge failure, so a bare
+        None would be indistinguishable from a broken call.
+        """
+        if not isinstance(section, dict):
+            return False
+        table = {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+        characters = section.get("characters")
+        if isinstance(characters, dict):
+            for name, text in characters.items():
+                if not isinstance(name, str) or name.startswith("hwnd:"):
+                    return False
+                if not text:
+                    continue      # cleared, not invalid
+                parsed = preview_gestures.parse(text)
+                if parsed is None:
+                    return False
+                table["characters"][name] = preview_gestures.display(parsed)
+        for key in ("cycle_next", "cycle_prev"):
+            text = section.get(key)
+            if not text:
+                continue
+            parsed = preview_gestures.parse(text)
+            if parsed is None:
+                return False
+            table[key] = preview_gestures.display(parsed)
+
+        try:
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg.setdefault("preview", {})["hotkeys"] = table
+        except OSError:
+            logger.exception("Could not persist preview hotkeys")
+            return False
+
+        if self._preview_host is not None:
+            self._preview_host.set_hotkeys(table)
+        return True
+
+    def get_preview_hotkey_state(self) -> dict:
+        """Everything the bind list needs, in one read.
+
+        A read, not a push, and that is the point: previews start before the
+        webview exists (__main__.py:476-478), so a registration conflict
+        found at launch is pushed into a window that is not there yet and
+        _push swallows it. The page asks for this on load.
+        """
+        section = self._state.settings.get("preview", {})
+        host = self._preview_host
+        # is_running, not merely "host is not None": there is a window
+        # between stop() clearing the thread handle and _teardown running
+        # on the preview thread itself where the host object still exists
+        # but owns no chords and no windows. Gating on is_running closes
+        # it -- a stopped host reports the same empty state as no host at
+        # all, rather than serving whatever characters()/hotkey_status()
+        # last held.
+        live = host is not None and host.is_running
+        return {
+            "enabled": bool(section.get("enabled")),
+            "hotkeys": dict(section.get("hotkeys") or {}),
+            "roster": list(section.get("seen") or []),
+            "characters": host.characters() if live else [],
+            "registration": host.hotkey_status() if live else {},
+            "bookmark_chords": self._bookmark_chords(),
+        }
+
+    def _bookmark_chords(self) -> dict:
+        """Bookmark chords, split by whether they are registered right now.
+
+        A preview chord is global; a bookmark chord is an AHK hotkey scoped
+        with #HotIf WinActive. Where they collide the preview wins WHILE EVE
+        IS FOCUSED, silently taking a key from the feature that bind was
+        written for -- and Windows reports nothing, because AHK's scoped
+        hotkey is not a RegisterHotKey registration to collide with. Only
+        Wingman can catch this, by reading both of its own sections.
+
+        Split rather than filtered, because the collision does not stop
+        existing when bookmarks are off -- it goes latent, and enabling them
+        later resurrects it with nothing on screen to explain why that bind
+        stopped working. "active" warns; "latent" only marks.
+
+        Compared in display form. The two features store different notation
+        on purpose (see preview/gestures.py), but bookmarks.parse_ahk
+        renders "^q" as "Ctrl+Q" using the same modifier order and key names
+        gestures.display uses, so the display string is the common ground.
+        """
+        eve = self._state.settings.get("eve_bookmarks") or {}
+        chords = set()
+        for value in (eve.get("keybinds") or {}).values():
+            if not value:
+                continue
+            rendered = bookmarks.parse_ahk(value).get("display")
+            if rendered:
+                chords.add(rendered)
+        live = bool(eve.get("enabled")) and any(eve.get("windows", {}).values())
+        return {"active": sorted(chords) if live else [],
+                "latent": [] if live else sorted(chords)}
+
+    def push_preview_hotkeys(self, status=None) -> None:
+        """Announce a change to a page that is already up. Never the only
+        path -- see get_preview_hotkey_state."""
+        payload = self.get_preview_hotkey_state()
+        if status is not None:
+            payload["registration"] = status
+        self._push("onPreviewHotkeys", payload)
+
+    # ---- Where a preview opens ------------------------------------------
+
+    def set_restore_preview_positions(self, enabled) -> dict:
+        """Persist whether a preview opens at its saved position.
+
+        Governs ALL preview placement, not only placement at launch: a
+        preview is created whenever its client appears, which is usually
+        mid-session. PreviewHost re-reads the stored value per placement,
+        so nothing has to be pushed to it here -- and nothing should be.
+        The setting says where a preview OPENS; previews already on
+        screen stay where the user put them.
+
+        Returns a dict rather than a bare bool so a write that did not
+        land can be reported. Leaving the checkbox showing a choice the
+        next restart will discard is the failure this shape exists to
+        prevent.
+        """
+        enabled = bool(enabled)
+        section = self._state.settings.setdefault("preview", {})
+        persisted = True
+        if section.get("restore_preview_positions") != enabled:
+            try:
+                # Through settings.update, not save(): the mutation must
+                # happen inside _SAVE_LOCK or a concurrent writer is
+                # reverted. update() also restores the live dict if the
+                # block raises, so a failed write leaves the stored value
+                # as it was and the next toggle retries on its own --
+                # which is why this needs no dirty-flag of its own.
+                with settings_mod.update(self._state.settings) as doc:
+                    doc.setdefault("preview", {})[
+                        "restore_preview_positions"] = enabled
+            except OSError:
+                # Logged and reported, not raised. A settings file that
+                # cannot be written must not break the toggle -- but the
+                # page has to be able to say the choice is not saved.
+                persisted = False
+                logger.exception(
+                    "Could not persist restore_preview_positions")
+        return {"applied": True, "persisted": persisted}
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
@@ -1399,7 +1613,6 @@ class Api:
                          if value},
             "engine": {
                 "state": status.state if status else "off",
-                "root_mode": status.root_mode if status else "",
                 # Surfaces a failed start straight away. Without this the
                 # toggle reads "on" while nothing is running, and the reason
                 # never reaches the user at all.
@@ -1425,19 +1638,19 @@ class Api:
             logger.error("Refusing a non-dict bookmarks payload")
             return {**self.get_bookmarks(), "saved": False}
 
-        merged = dict(self._state.settings)
-        merged["eve_bookmarks"] = settings_mod.validated_eve(section)
         try:
-            settings_mod.save(merged)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["eve_bookmarks"] = settings_mod.validated_eve(section)
         except OSError as exc:
-            # Same contract as save_settings: bail before touching in-memory
-            # state so state and disk never diverge, and say why rather than
-            # letting the exception escape.
+            # Same contract as save_settings: update() restored the live
+            # dict before re-raising, so state and disk never diverge, and
+            # say why rather than letting the exception escape.
             self._alert("error", "Could not save settings",
                         f"Bookmark settings were not saved: {exc}")
             return {**self.get_bookmarks(), "saved": False}
 
-        self._state.settings = settings_mod.load()
+        # update() normalises self._state.settings in place; no rebind
+        # needed (see save_settings's comment above for why not).
         clean = self._state.settings["eve_bookmarks"]
 
         engine = self._state.engine
@@ -1445,7 +1658,6 @@ class Api:
             engine.apply(clean)
             if clean["enabled"] and not engine.is_running():
                 engine.start()
-                engine.sync_sequence()
             elif not clean["enabled"] and engine.is_running():
                 engine.stop()
         return {**self.get_bookmarks(), "saved": True}
@@ -1467,12 +1679,6 @@ class Api:
 
     def parse_bind(self, text) -> dict:
         return bookmarks.parse_ahk(text if isinstance(text, str) else "")
-
-    def eve_command(self, name, argument="") -> bool:
-        engine = self._state.engine
-        if engine is None:
-            return False
-        return bool(engine.send_command(str(name), str(argument or "")))
 
     def import_bookmarks(self) -> dict:
         """Import a standalone helper INI chosen by the user.
@@ -1535,6 +1741,380 @@ class Api:
         would be misleading for these.
         """
         self._alert("info", "Bookmarks", str(body))
+
+    # ----- EVE Settings ---------------------------------------------------
+
+    def _eve_section(self) -> dict:
+        # validated_eve_settings, not the private _eve_settings_defaults:
+        # it is the public surface for this section, and it already returns
+        # a fresh dict per call rather than the module global. Reaching
+        # across a module boundary for a private name is how a caller ends
+        # up depending on something the owning module is free to rename.
+        return self._state.settings.setdefault(
+            "eve_settings", settings_mod.validated_eve_settings({}))
+
+    def eve_settings_state(self) -> dict:
+        """The whole visible tree. Cheap enough to answer on the bridge
+        thread: scandir over a few dozen files, and listing backups is one
+        listdir with no archive opened.
+
+        The one thing here that is NOT that -- the running-client probe --
+        runs on a background thread and is read from cache below."""
+        self._eve_refresh_running()
+        section = self._eve_section()
+        root = section.get("root")
+        found = evesettings_tree.discover(root, section.get("server"),
+                                          section.get("profile"))
+        store = paths.eve_settings_backup_dir()
+
+        def describe(record):
+            name = (self._eve_names.label(int(record.file_id))
+                    if record.kind == "character" and record.file_id.isdigit()
+                    else f"Account {record.file_id}")
+            return {"path": str(record.path), "id": record.file_id,
+                    "name": name}
+
+        listed, backups_unreadable = \
+            evesettings_backup.enumerate_backups(store)
+        return {
+            "root": str(found.root) if found.root else "",
+            "default_root": str(evesettings_tree.default_root()),
+            "server": str(found.server) if found.server else "",
+            "profile": str(found.profile) if found.profile else "",
+            "unreadable": found.unreadable,
+            # Refused for being too wide to be an EVE folder, rather than
+            # probed slowly. Distinct from `unreadable` because the user
+            # action differs: this one means "pick a narrower folder".
+            "too_broad": found.too_broad,
+            # The LAST KNOWN answer, never a fresh probe. See
+            # _eve_refresh_running: this method is costed as scandir over
+            # a few dozen files and must stay that.
+            "eve_running": self._eve_running,
+            "servers": [{"path": str(s.path), "name": s.name}
+                        for s in found.servers],
+            "profiles": [{"path": str(p.path), "name": p.name,
+                          "file_count": p.file_count}
+                         for p in found.profiles],
+            "characters": [describe(c) for c in found.characters],
+            "accounts": [describe(a) for a in found.accounts],
+            # Reported separately from an empty list for the same reason
+            # `unreadable` is: "we could not read your backups" and "you
+            # have no backups yet" are different answers, and telling a
+            # user the second when the first is true invites them to
+            # overwrite settings they believe are unprotected.
+            "backups_unreadable": backups_unreadable,
+            "backups": [{"path": str(b.path), "created": b.created,
+                         "origin": b.origin, "kind": b.kind, "stem": b.stem}
+                        for b in listed],
+        }
+
+    def _eve_client_running(self) -> bool:
+        """Advisory only -- nothing is blocked. preview.discovery already
+        matches CLIENT_IMAGE ("exefile.exe"), handles an unopenable process
+        as "not a client", and caches per PID."""
+        try:
+            from ..preview import discovery
+            return bool(discovery.list_clients())
+        except Exception:  # noqa: BLE001 - a pill, never a failure
+            logger.debug("Could not check for a running EVE client",
+                         exc_info=True)
+            return False
+
+    def _eve_refresh_running(self) -> None:
+        """Re-probe for a running client, off the bridge thread.
+
+        eve_settings_state() is costed in the design as "scandir over a
+        few dozen files", and list_clients() is not that: it enumerates
+        every top-level window and resolves PIDs to executables. It caches
+        per PID, so it is cheap in steady state, but the first call after
+        a client starts or stops is not -- and it was being paid inline on
+        the thread the whole UI answers on.
+
+        It only drives an advisory pill, so a slightly stale answer costs
+        nothing: state returns the last known value immediately and this
+        pushes when the value actually CHANGES, which is the only moment
+        the page has anything to redraw. Same push channel the name
+        resolver uses, and for the same reason -- request/response cannot
+        express an answer that arrives after the response did.
+        """
+        def worker() -> None:
+            try:
+                value = self._eve_client_running()
+                if value != self._eve_running:
+                    self._eve_running = value
+                    self._push("onEveSettingsRunning", {"running": value})
+            except Exception:  # noqa: BLE001 - a pill, never a failure
+                logger.debug("EVE client probe failed", exc_info=True)
+            finally:
+                self._eve_probe.release()
+
+        # Single-flight. Skipping is safe because the caller re-reads the
+        # cached value either way, and the probe already in flight will
+        # publish a fresher answer than this one could.
+        if not self._eve_probe.acquire(blocking=False):
+            return
+        try:
+            self._spawn(target=worker, daemon=True).start()
+        except Exception:  # noqa: BLE001 - the pill simply stays stale
+            # Only the worker releases, and a worker that never started
+            # never will -- that would wedge the probe for the process's
+            # lifetime and freeze the pill on whatever it last said.
+            self._eve_probe.release()
+            logger.debug("Could not start the EVE client probe",
+                         exc_info=True)
+        except BaseException:
+            self._eve_probe.release()
+            raise
+
+    @contextlib.contextmanager
+    def _eve_hold(self):
+        """The mutation lock, for work that runs ON the bridge thread.
+
+        Yields True when the lock was taken and False when it was already
+        held; the caller declines in that case, exactly as _eve_begin
+        does. `root` is an input to every containment check, so changing
+        it while a restore or a copy is in flight would have that
+        operation validate against a different root than the one in effect
+        when it was approved -- and _eve_begin's stated policy is that EVE
+        Settings mutations are refused rather than interleaved.
+
+        Non-blocking, and not merely to match that policy. A worker
+        holding the lock is parked in _eve_confirm() waiting for an answer
+        the page delivers over the bridge, so blocking here would stop the
+        bridge from carrying that answer. It is not a true deadlock --
+        _eve_confirm is bounded by EVE_CONFIRM_TIMEOUT_S and reads a
+        missing answer as "no", so the worker unwinds and releases -- but
+        the price of blocking is a UI frozen for up to five minutes, which
+        is not meaningfully better than one.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            self._alert("warning", "EVE Settings busy",
+                        "Another EVE Settings operation is still running. "
+                        "Wait for it to finish, then try again.")
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_pick_root(self) -> str:
+        # The lock is held across the dialog too, so a mutation cannot
+        # start while the user is choosing. The alternative -- lock only
+        # the write -- lets the user pick a folder and then discards it,
+        # which is a worse answer to the same race.
+        with self._eve_hold() as held:
+            if not held:
+                return ""
+            section = self._eve_section()
+            start = str(section.get("root")
+                        or evesettings_tree.default_root())
+            chosen = self._window.create_file_dialog(_folder_dialog_kind(),
+                                                     directory=start)
+            if not chosen:
+                return ""
+            picked = str(chosen[0])
+            # Selection is cleared, not carried: the old server and profile
+            # belong to a tree that is no longer the one on screen.
+            settings_mod.update_section(self._state.settings, "eve_settings",
+                                        {"root": picked, "server": None,
+                                         "profile": None})
+            return picked
+
+    def eve_settings_select(self, server: str, profile: str) -> bool:
+        with self._eve_hold() as held:
+            if not held:
+                return False
+            settings_mod.update_section(self._state.settings, "eve_settings",
+                                        {"server": server or None,
+                                         "profile": profile or None})
+            return True
+
+    def eve_settings_resolve_names(self) -> None:
+        """Resolve on a background thread, then tell the page to refetch.
+
+        The one thing a request/response bridge cannot express on its own:
+        the state that triggered this was already returned, carrying
+        fallback ids. One push per pass, not per name.
+        """
+        def worker() -> None:
+            try:
+                found = evesettings_tree.discover(
+                    self._eve_section().get("root"),
+                    self._eve_section().get("server"),
+                    self._eve_section().get("profile"))
+                ids = [int(c.file_id) for c in found.characters
+                       if c.file_id.isdigit()]
+                if self._eve_names.resolve_missing(ids):
+                    self._push("onEveSettingsNames", {})
+            except Exception:  # noqa: BLE001 - names are cosmetic
+                logger.warning("EVE character name lookup failed",
+                               exc_info=True)
+
+        self._spawn(target=worker, daemon=True).start()
+
+    def _eve_begin(self, worker, args) -> bool:
+        """Claim the mutation lock and hand the work to a thread.
+
+        Refused rather than queued: a queued operation's own confirmation
+        would describe state that has since changed.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            self._alert("warning", "EVE Settings busy",
+                        "Another EVE Settings operation is still running.")
+            return False
+        try:
+            self._spawn(target=worker, args=args, daemon=True).start()
+        except Exception:  # noqa: BLE001 - reported, never raised
+            # Only the worker releases the lock, and a worker that never
+            # started never will: without this the feature is dead until
+            # the app restarts.
+            self._eve_mutation.release()
+            logger.exception("Could not start the EVE Settings worker")
+            self._alert("error", "EVE Settings",
+                        "That operation could not be started.")
+            return False
+        except BaseException:
+            self._eve_mutation.release()
+            raise
+        return True
+
+    def _eve_confirm(self, title: str, body: str) -> bool:
+        """_confirm, bounded, for the workers that hold the mutation lock.
+
+        _push swallows every evaluate_js failure, so a confirmation whose
+        push never reached the page would park the worker forever holding
+        the lock -- permanently refusing every later copy, backup, restore
+        and delete. A missing answer is read as "no".
+        """
+        return self._ask(title, body, timeout=EVE_CONFIRM_TIMEOUT_S)
+
+    def _eve_done(self, ok: bool) -> None:
+        """Tell the page the mutation finished, so it can re-enable its
+        buttons and refresh. The bridge call returned as soon as the worker
+        was spawned, so this push is the page's only completion signal."""
+        self._push("onEveSettingsDone", {"ok": bool(ok)})
+
+    def _eve_auto_backup(self, target):
+        store = paths.eve_settings_backup_dir()
+        evesettings_backup.create_file_backup(store, target, origin="auto")
+
+    def eve_settings_copy(self, source: str, targets: list) -> bool:
+        return self._eve_begin(self._eve_copy_worker,
+                               (source, [str(t) for t in targets or []]))
+
+    def _eve_copy_worker(self, source: str, targets: list) -> None:
+        ok = False
+        try:
+            if not self._eve_confirm(
+                    "Confirm Copy",
+                    f"Copy these settings onto {len(targets)} other "
+                    f"file(s)?\n\nEach one is backed up first.\n\n"
+                    "This cannot be undone except by restoring a backup."):
+                return
+            report = evesettings_ops.copy_to_targets(
+                source, targets, root=self._eve_section().get("root"),
+                backup=self._eve_auto_backup)
+            keep = int(self._eve_section().get("auto_keep", 10))
+            evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
+            if report.failed:
+                names = "\n".join(f"  • {Path(o.path).stem}: {o.reason}"
+                                  for o in report.failed)
+                self._alert("error", "Some copies did not happen",
+                            f"Copied to {len(report.succeeded)} of "
+                            f"{len(report.outcomes)}.\n\n{names}")
+            else:
+                self._push("onStatus", {
+                    "text": f"Copied to {len(report.succeeded)} file(s).",
+                    "kind": "FG"})
+                ok = True
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings copy failed")
+            self._alert("error", "Copy failed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
+
+    def eve_settings_backup(self, path: str, kind: str) -> bool:
+        return self._eve_begin(self._eve_backup_worker, (path, kind))
+
+    def _eve_backup_worker(self, path: str, kind: str) -> None:
+        ok = False
+        try:
+            # Decided here, not in the page: an empty path is what Path()
+            # resolves to the app's own working directory, which
+            # create_profile_backup would happily walk and report as a
+            # successful backup of nothing.
+            if not path:
+                raise ValueError("Choose a settings set to back up first.")
+            resolved = evesettings_tree.require_under(
+                self._eve_section().get("root"), path)
+            if not resolved.exists():
+                raise ValueError("That no longer exists.")
+            store = paths.eve_settings_backup_dir()
+            if kind == "profile":
+                made = evesettings_backup.create_profile_backup(
+                    store, path, origin="manual")
+            else:
+                made = evesettings_backup.create_file_backup(
+                    store, path, origin="manual")
+            self._push("onStatus", {"text": f"Backed up to {made.name}.",
+                                    "kind": "FG"})
+            ok = True
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings backup failed")
+            self._alert("error", "Backup failed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
+
+    def eve_settings_restore(self, archive: str) -> bool:
+        return self._eve_begin(self._eve_restore_worker, (archive,))
+
+    def _eve_restore_worker(self, archive: str) -> None:
+        ok = False
+        try:
+            if not self._eve_confirm(
+                    "Confirm Restore",
+                    "Restore this backup?\n\nThe current settings are backed "
+                    "up first. For a whole settings set, any file not in the "
+                    "backup is removed."):
+                return
+            store = paths.eve_settings_backup_dir()
+            root = self._eve_section().get("root")
+            written = evesettings_backup.restore(store, archive, root)
+            keep = int(self._eve_section().get("auto_keep", 10))
+            evesettings_backup.prune(store, keep)
+            self._push("onStatus", {"text": f"Restored into {written.name}.",
+                                    "kind": "FG"})
+            ok = True
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings restore failed")
+            self._alert("error", "Restore failed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
+
+    def eve_settings_delete_backup(self, archive: str) -> bool:
+        return self._eve_begin(self._eve_delete_backup_worker, (archive,))
+
+    def _eve_delete_backup_worker(self, archive: str) -> None:
+        ok = False
+        try:
+            if not self._eve_confirm(
+                    "Confirm Delete",
+                    f"Permanently delete {Path(archive).name}?\n\n"
+                    "This cannot be undone."):
+                return
+            evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
+            self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
+            ok = True
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.exception("EVE settings backup delete failed")
+            self._alert("error", "Delete failed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
 
     # ---- EVE skills ---
 

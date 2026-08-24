@@ -63,43 +63,42 @@ def test_newline_in_a_window_title_cannot_forge_a_line():
     assert "EVE - BadFinH=1" in lines
 
 
-def test_mode_is_gone_but_the_other_settings_are_written():
-    """Protean/v21 is the only setting the engine no longer has. The other
-    three are written on EVERY pass: a missing key makes IniRead fall back
-    to the engine's compiled-in default (111unified.ahk:114-117), and for
-    HomeZeroIs0 that default is the opposite of Wingman's."""
+def test_no_settings_section_is_written_at_all():
+    """The re-vendored engine reads only [Keybinds] and [Enabled].
+
+    Wingman used to write HomeZeroIs0, PrefaceReturn and ReturnPreface on
+    every pass so the engine could not fall back to its own compiled
+    defaults. The engine has no such settings now -- it numbers home holes
+    from .1 and never prefaces -- so writing them would be config that
+    nothing reads. test_engine_invariants pins the other half of this: the
+    engine must not grow a read of a section Wingman no longer writes.
+    """
     text = bookmarks.generate_ini(section())
+    assert "[Settings]" not in text
     assert "Mode=" not in text
-    assert "[Settings]" in text
-    # section() carries the shipped defaults, so this is the case where a
-    # "write only what differs" optimisation would drop the lines entirely.
-    assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=0" in text
-    assert "ReturnPreface=!" in text
+    for key in ("HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
+        assert key not in text, key
+    assert text.split("\r\n\r\n")[-1].startswith("[Enabled]")
 
 
 def test_naming_is_fixed_and_ignores_whatever_the_section_says():
-    """The three controls are gone, so a stale settings.json -- or a
-    hand-edited one -- must not be able to steer naming any more. Written
-    from the module constants, never from the section."""
+    """The controls are gone, so a stale settings.json -- or a hand-edited
+    one -- must not be able to steer naming, or to smuggle a line into the
+    INI through a value that never reaches it."""
     text = bookmarks.generate_ini(section(home_zero=True,
                                           preface_return=True,
                                           return_preface="@\r\nMode=1"))
-    assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=0" in text
-    assert "ReturnPreface=!\r\n" in text
+    assert "[Settings]" not in text
+    assert "@" not in text
     assert "\r\nMode=1\r\n" not in text
 
 
-def test_the_written_values_are_the_constants():
-    """Belt and braces on the pair above: if the constants themselves are
-    ever changed, this is the test that says so out loud rather than
-    letting the INI quietly disagree with what the module documents."""
-    assert bookmarks.HOME_ZERO is False
-    assert bookmarks.PREFACE_RETURN is False
-    # Dead while the flag is False, but still written, so the engine cannot
-    # fall back to its own "!" default if the flag is ever flipped.
-    assert bookmarks.RETURN_PREFACE == "!"
+def test_no_naming_constants_survive():
+    """Belt and braces on the pair above. These names existed to be written
+    into [Settings]; leaving one defined invites a future writer to start
+    emitting it again, which the engine would then ignore in silence."""
+    for name in ("HOME_ZERO", "PREFACE_RETURN", "RETURN_PREFACE"):
+        assert not hasattr(bookmarks, name), name
 
 
 @pytest.mark.parametrize("title", [

@@ -86,13 +86,50 @@ def test_protean_mode_is_gone(lowered):
     assert "formatproteanclipandpaste" not in lowered
 
 
-def test_restored_settings_are_read_from_the_ini(source):
-    """Cut in the first port and restored. HomeZeroIs0 in particular must be
-    READ, not hardcoded: the engine's compiled default is the opposite of
-    Wingman's, so a dropped IniRead silently renumbers every home bookmark."""
-    for name in ("HomeZeroIs0", "PrefaceReturn", "ReturnPreface"):
-        assert re.search(r"IniRead,\s*" + name + r"\s*,", source,
-                         re.IGNORECASE), name
+def test_the_engine_reads_only_keybinds_and_enabled(source):
+    """The re-vendored engine has no [Settings] at all.
+
+    HomeZeroIs0, PrefaceReturn and ReturnPreface were restored during the
+    fork and are gone again with it: the helper author's script never had
+    them, and Wingman had frozen all three off, so the branches they gated
+    could not fire. What matters now is the inverse of the old assertion --
+    the engine must not grow a read of config Wingman no longer writes,
+    because an IniRead default would then decide behaviour nobody chose.
+    That is exactly how the compiled HomeZeroIs0 default came to renumber
+    home bookmarks.
+    """
+    sections = set(re.findall(r"IniRead,\s*\w+\s*,\s*%IniFile%\s*,\s*(\w+)",
+                              source, re.IGNORECASE))
+    assert sections == {"Keybinds", "Enabled"}, sections
+
+
+def test_home_hole_resumption_is_reachable(source):
+    """The bug this file exists to prevent recurring.
+
+    ZeroMode is the bulk-renumber state Set Root enters when every selected
+    bookmark has a single-character prefix -- the home holes. The forked
+    engine carried ZeroMode, CountValidBookmarkLines and AllPrefixesSingle
+    as *dead code*: the variable was assigned False in six places and True
+    in none, and neither helper was ever called. Set Root therefore read
+    the character "1" as the root and restarted numbering at 1 instead of
+    resuming past the used slots.
+
+    Nothing caught it, because every assertion here was about the presence
+    of names rather than about their being reachable. Hence this one.
+    """
+    assert re.search(r"ZeroMode\s*:=\s*True", source), \
+        "ZeroMode is never entered -- home-hole resumption is dead code"
+    # Anchored on DoSemi's body rather than on a bare call count. Comparing
+    # calls against definitions matched at column 0 would silently start
+    # passing if a future revision ever indented a definition: definitions
+    # drops to 0, calls stays 1, and 1 > 0 holds for code that is still
+    # dead -- reintroducing exactly the bug this test exists to catch.
+    body = re.search(r"^DoSemi:\n(.*?)^Return$", source,
+                     re.DOTALL | re.MULTILINE)
+    assert body, "DoSemi not found"
+    for helper in ("CountValidBookmarkLines", "AllPrefixesSingle"):
+        assert re.search(helper + r"\s*\(", body.group(1)), \
+            f"{helper} is not called from DoSemi -- it is dead code"
 
 
 def test_copy_and_paste_are_gone(source):
@@ -158,22 +195,63 @@ def test_every_bind_is_registered_inside_the_window_loop(source):
     assert "GrabSig" in inside
 
 
-def test_set_root_rechecks_the_active_window(source):
-    """Registered per-window now, so this should never fail -- but
-    RefreshHotkeys runs on a timer, and between a window being disabled and
-    the refresh that tears its binds down the hotkey is still live. Without
-    the guard that press runs the whole copy/parse flow: Send ^c into
-    whatever is focused, and the root state reset on the way."""
-    body = source.split("DoSemi:", 1)[1][:1200]
-    assert "IsEveWindow" in body
-    assert re.search(r"WinGetTitle\s*,\s*ActiveTitle\s*,\s*A", body,
-                     re.IGNORECASE)
-    assert re.search(r"if\s*\(!IsEveWindow\)", body)
+def test_set_root_is_scoped_by_registration_alone(source):
+    """DoSemi's own window re-check is gone, deliberately.
+
+    The fork carried an IsEveWindow guard inside the handler. It was kept
+    for one narrow case: RefreshHotkeys runs on a 10s timer, so between a
+    window being unticked and the refresh that tears its binds down, the
+    bind is still live, and a press in that gap resets the root state in a
+    window the user just disabled. The maintainer's call is to track the
+    helper author's script exactly rather than carry the extra branch, so
+    the per-window registration above is now the only thing scoping Set
+    Root -- which makes test_every_bind_is_registered_inside_the_window_loop
+    load-bearing for it, not merely tidy.
+
+    Asserted positively so this cannot pass vacuously: Set Root must still
+    be registered, and only inside the window loop.
+    """
+    loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
+                     re.IGNORECASE | re.DOTALL)
+    assert loop, "per-window registration loop not found"
+    assert 'RegisterBind("SetRoot"' in loop.group(0)
+    outside = source.replace(loop.group(0), "")
+    assert 'RegisterBind("SetRoot"' not in outside
+    # The removal itself, asserted rather than merely described above. The
+    # guard's name is the whole of it: IsEveWindow appears nowhere else in
+    # the engine, so its return would be caught here.
+    assert "IsEveWindow" not in source, \
+        "DoSemi's window guard is back -- it was dropped to track the " \
+        "author's script; re-adding it is a divergence, not a fix"
 
 
-def test_root_mode_is_published(lowered):
-    """The UI must not have to infer it from root == "(home)"."""
-    assert "root_mode" in lowered
+def test_nothing_sends_the_engine_commands(source, lowered):
+    """Wingman configures the engine through the INI and reads its state
+    from the status file. There is no channel in the other direction.
+
+    There used to be: eve_command.ini, ReadCommand, SetManualRoot and
+    ClearRoot existed so two buttons on the Bookmarks route could set and
+    clear the root. Both did a weaker job than the hotkey already does --
+    no selection means no used-slot information, so numbering always
+    restarted -- and neither appears in the author's documented workflow
+    (docs/bookmarks_reference.md). The buttons went, and the channel with
+    them, taking one silent failure along: ReadCommand advanced its
+    sequence before dispatching, so a malformed command file made the
+    button report success while doing nothing.
+
+    Asserted rather than merely deleted because the cost of that channel
+    was never obvious from any one file. Re-adding it should be a decision
+    someone makes on purpose, in front of this test.
+    """
+    assert "eve_command" not in lowered
+    assert "consumedseq" not in lowered
+    for label in ("ReadCommand", "SetManualRoot", "ClearRoot"):
+        assert not re.search(r"^" + label + r":", source, re.MULTILINE), label
+    # The status file is the whole of the engine -> Wingman contract. AHK
+    # escapes a quote by doubling it, so a field reads """name"": in source.
+    published = set(re.findall(r'"""(\w+)"":', source))
+    assert published == {"sig", "root", "next_num", "next_alpha",
+                         "failed_binds", "written"}, published
 
 
 def test_every_registration_records_failures(source):
@@ -211,24 +289,44 @@ def test_status_is_published_atomically(lowered):
                       lowered)
 
 
-def test_settings_used_inside_functions_are_declared_global(source):
-    """AHK v1 makes an undeclared name inside a function LOCAL. HomeZeroIs0
-    is read in FireRootFinisher, so without the declaration it reads as
-    empty, the home branch never fires, and the setting silently does
-    nothing -- a failure with no error and no log line.
+def test_globals_written_inside_functions_are_declared(source):
+    """AHK v1 makes an undeclared name inside a function LOCAL.
 
-    Only settings read inside a function need this. The return-preface pair
-    is used from DoSemi and SetManualRoot, which are labels running in
-    global scope, so they are deliberately not checked here.
+    This used to guard HomeZeroIs0 in FireRootFinisher. HomeZeroIs0 is gone
+    with the re-vendor, which left the test green and guarding nothing --
+    its whole body sat behind `if "HomeZeroIs0" in text:`. The trap it was
+    written for is still live, and now has a sharper instance: RegisterBind
+    *writes* FailedBinds, so without the declaration every registration
+    failure accumulates into a local that is discarded when the function
+    returns, the status file reports an empty failed_binds, and the UI says
+    every hotkey registered fine. That is a wrong answer, not a missing one.
+
+    Checked for every function that touches a script-level global rather
+    than for one name, so the next function to reach for one is covered
+    without anybody remembering to come back here.
     """
-    body = re.search(r"FireRootFinisher\([^)]*\)\s*\{(.*?)\n\}",
-                     source, re.DOTALL)
-    assert body, "FireRootFinisher not found"
-    text = body.group(1)
-    if "HomeZeroIs0" in text:
-        declarations = re.findall(r"^\s*global\s+([^\n;]+)", text,
+    watched = {"FailedBinds", "UsedNums", "UsedAlphas", "NextNum",
+               "NextAlpha", "RootKey", "RootModeActive", "ZeroMode",
+               "LastSigId", "ConsumedSeq", "ReadyToIncrement"}
+    functions = re.findall(r"^([A-Za-z_]\w*)\s*\([^)]*\)\s*\{(.*?)^\}",
+                           source, re.DOTALL | re.MULTILINE)
+    # `if (...) {` at column 0 matches the same shape as a definition.
+    keywords = {"if", "while", "for", "loop", "else", "return"}
+    functions = [(n, b) for n, b in functions if n.lower() not in keywords]
+    assert functions, "no functions found"
+    checked = 0
+    for name, body in functions:
+        declarations = re.findall(r"^\s*global\s+([^\n;]+)", body,
                                   re.MULTILINE)
-        declared = {name.strip()
-                    for line in declarations for name in line.split(",")}
-        assert "HomeZeroIs0" in declared, \
-            "FireRootFinisher reads HomeZeroIs0 without declaring it global"
+        declared = {n.strip()
+                    for line in declarations for n in line.split(",")}
+        for global_name in watched:
+            if not re.search(r"\b" + global_name + r"\b", body):
+                continue
+            checked += 1
+            assert global_name in declared, (
+                f"{name}() touches {global_name} without declaring it "
+                f"global -- in AHK v1 that is a local, and the write is lost")
+    # Guards against the whole loop quietly matching nothing, which is
+    # exactly how the previous version of this test died.
+    assert checked, "no function touched a watched global -- test is vacuous"

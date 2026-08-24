@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from obs_youtube_uploader import paths, settings
+from obs_youtube_uploader import __main__ as main_mod
 from obs_youtube_uploader.__main__ import (
     configure_logging, resolve_recording_dir, set_dpi_awareness,
 )
@@ -133,3 +134,70 @@ def test_set_dpi_awareness_degrades_when_shcore_is_missing(monkeypatch):
     with patch("sys.platform", "win32"):
         _fake_windll(monkeypatch, shcore=_FakeShcore(exc=OSError("no shcore.dll")))
         assert set_dpi_awareness() is None
+
+
+# --- Log level ---------------------------------------------------------------
+#
+# The Windows-only half of the preview subsystem is verified by a manual
+# checklist, so when it breaks in the field the log is the only evidence.
+# Several of its load-bearing diagnostics are logger.debug -- whether
+# WM_HOTKEY reached the message-only window, whether the thread's DPI
+# override was accepted, why a placement read failed -- and INFO discards
+# every one of them. Without a way to raise the level, a checklist item
+# that says "check the log for the DPI override result" cannot be walked
+# at all.
+
+
+def test_log_level_defaults_to_info():
+    assert main_mod._log_level() == logging.INFO
+
+
+def test_log_level_honours_the_environment(monkeypatch):
+    monkeypatch.setenv("WINGMAN_LOG_LEVEL", "DEBUG")
+    assert main_mod._log_level() == logging.DEBUG
+
+
+def test_log_level_is_case_and_space_insensitive(monkeypatch):
+    monkeypatch.setenv("WINGMAN_LOG_LEVEL", "  debug ")
+    assert main_mod._log_level() == logging.DEBUG
+
+
+def test_an_unrecognised_log_level_falls_back_to_info(monkeypatch):
+    """logging.getLevelName returns the STRING 'Level BANANAS' for an
+    unknown name rather than raising, and setLevel would then reject it.
+    A typo in an env var must not take logging down at startup."""
+    monkeypatch.setenv("WINGMAN_LOG_LEVEL", "BANANAS")
+    assert main_mod._log_level() == logging.INFO
+
+
+def test_an_empty_log_level_falls_back_to_info(monkeypatch):
+    monkeypatch.setenv("WINGMAN_LOG_LEVEL", "")
+    assert main_mod._log_level() == logging.INFO
+
+
+def test_configure_logging_applies_the_requested_level(tmp_path, monkeypatch):
+    """End to end: a debug record must actually reach the file, not merely
+    be permitted by _log_level()."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("WINGMAN_LOG_LEVEL", "DEBUG")
+    paths.ensure_dirs()
+
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    try:
+        configure_logging()
+        assert root_logger.level == logging.DEBUG
+        logging.getLogger("preview.probe").debug("dpi override accepted")
+        root_logger.handlers[-1].flush()
+        contents = (paths.log_dir() / "uploader_debug.log").read_text(
+            encoding="utf-8")
+    finally:
+        for h in list(root_logger.handlers):
+            if h not in original_handlers:
+                root_logger.removeHandler(h)
+                h.close()
+        root_logger.setLevel(original_level)
+
+    assert "dpi override accepted" in contents
+

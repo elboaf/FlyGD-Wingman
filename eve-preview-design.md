@@ -85,8 +85,7 @@ must be wired in alongside them.
 `stop()` is idempotent, safe to call when never started, and ordered:
 
 1. Unregister hotkeys (`UnregisterHotKey`) — before the windows they target
-   die. **Not yet implemented**: nothing registers a hotkey, so there is
-   nothing to leak, but this step belongs first when item 7 lands.
+   die. Implemented in #26, as the first HWND step of `_teardown`.
 2. Unhook the WinEvent hook (`UnhookWinEvent`).
 3. Unregister every DWM thumbnail (`DwmUnregisterThumbnail`).
 4. Destroy every preview window (`DestroyWindow`), on the preview thread.
@@ -408,22 +407,52 @@ just by the suite.
 5. Layout persistence across restarts.
 6. Enable/disable from the Previews tab.
 
+### Shipped (second slice)
+
+Merged in #23, and item 11 below is struck accordingly. **Not** verified by
+hand — no Win32 call in it has ever run against a real client. That is the
+difference between this slice and the first, and it is why the smoke
+checklist grew thirteen items rather than none.
+
+7. Client window placement saved and restored, keyed by character.
+8. An opt-in watcher that places each client once as it appears.
+9. `settings.update()` — atomic read-modify-write for the settings document.
+
 ### Deferred, in rough priority order
 
-**7. Per-character and cycle-group hotkeys** — `gestures.py` and `cycle.py`.
-Deferred *whole*: writing them unwired would have been speculative, since
-their only consumers were deferred too. This is what makes previews fast to
-multibox with rather than just pleasant to look at, and both modules are pure
-logic that tests on Linux. `win32.bind()` already declares
-`RegisterHotKey`/`UnregisterHotKey` (`win32.py:235-236`), and `WM_HOTKEY`
-arrives on the preview thread's queue — which is the reason that thread owns
-a real pump at all.
+~~**7. Per-character and cycle-group hotkeys**~~ — **Shipped (#26).**
+`preview/gestures.py`, `preview/cycle.py`, `preview/roster.py`, registration
+and dispatch on the preview thread, a validated `preview.hotkeys` section, four
+bridge methods, and a Hotkeys card on the Previews tab. Cycle groups were
+deliberately reduced to one implicit cycle over all running clients; the schema
+is shaped so named groups become the default group's without migrating anyone.
+Teardown's missing "unregister hotkeys" step, listed in Lifecycle above, landed
+with it.
 
-One thing to fix while doing it: the Lifecycle section above lists
-"unregister hotkeys" as step 1 of teardown, and `PreviewHost._teardown` has
-no such step. That is harmless today, because nothing registers a hotkey to
-leak, but the order matters when they exist — hotkeys must be released
-before the window they are registered against is destroyed.
+Three things it settled that the rest of this roadmap inherits:
+
+- **Registration status is readable state, not an event.** Previews start
+  two lines before the webview exists (`__main__.py`), so the first
+  registration pass has nowhere to push a failure and `_push` swallows it at
+  debug level. Anything else that discovers a user-actionable condition before
+  the page is up needs the same treatment: hold it, and let the page ask.
+- **An outward callback must never be able to kill the pump.** Both
+  `PreviewHost` callbacks are guarded, because the initial pass runs before
+  `_ready.set()` — a raise there unwinds out of `_run`, leaves `_hwnd` set,
+  and makes `stop()` block for its full timeout. Any new callback out of that
+  thread needs the same guard.
+- **A global chord silently outranks a scoped one.** Preview chords are
+  `RegisterHotKey`; bookmark chords are AutoHotkey scoped with
+  `#HotIf WinActive`. Where they collide the preview wins *while EVE is
+  focused*, and Windows reports nothing — only Wingman can detect it, by
+  comparing both sections in display form via
+  `bookmarks.parse_ahk(...)["display"]`. Any future global binding inherits
+  this.
+
+Still unverified: no Win32 call in it has ever run. Sixteen items in
+`docs/smoke-checklist.md`, of which `WM_HOTKEY` reaching a message-only window
+is the one that matters — it is documented behaviour, not measured, and if it
+fails the whole dispatch path moves to `hWnd=NULL`.
 
 **8. Label customisation** — text override, placement (top/bottom/centre),
 font size, colours. `chrome.render` already takes the label; everything else
@@ -445,9 +474,121 @@ frequency. `redraw()` is keyed and a flash would defeat the key, putting a
 never-minimize list), hide-active-preview, hide-all-on-lost-focus,
 always-maximize-on-activate, middle-click to minimize a client.
 
-**11. EVE client window layout save/restore** — `GetWindowPlacement` /
-`MoveWindow` over the clients themselves, with optional restore on launch.
-Distinct from preview layouts, which are already persisted.
+~~**11. EVE client window layout save/restore**~~ — **Shipped (#23), and it
+was the wrong feature. Removed; its checkbox was repurposed.**
+
+**This implemented something nobody asked for.** "Restore clients on launch"
+was meant to restore the PREVIEW windows to their saved size and position.
+What was built moved the GAME client windows, via
+`clientwin32.apply_placement` -> `SetWindowPlacement`.
+
+The behaviour actually wanted already exists and already works, by a
+different route: `preview/layout.py` + `preview/store.py` persist each
+preview tile's rect per character and restore it on launch with no toggle
+and no button. Verified 2026-08-24 against three running clients --
+previews returned byte-identical to their saved rects across a restart.
+
+So this feature was redundant with something that works, and carried a
+hazard that the working path does not:
+
+**Forcing a rect onto a borderless-fullscreen EVE client corrupts that
+client's display settings.** The checklist listed the fullscreen case as
+"genuinely unknown -- accepted, ignored, or a mode switch". It is a fourth
+thing nobody listed: the window accepts the rect, `GetWindowRect` confirms
+it, `apply_placement` returns true and the log says "Restored" -- while EVE
+reads the resize as a resolution change and rewrites its own configuration.
+Every signal the feature reads says success. Three characters' settings
+were destroyed discovering this, on 2026-08-24, with two of the three
+clients unusable afterwards.
+
+`restore_clients_on_launch` defaulted to False, which is the only reason
+this ever reached no users. Enabled, it did exactly the above at every
+launch, unattended.
+
+**Removed.** `preview/placement.py`, `preview/clientwin32.py`,
+`preview/clientlayout.py`, the `save_client_layout` /
+`restore_client_layout` / `start_client_layouts_if_enabled` /
+`shutdown_client_layouts` bridge methods, the `client_layouts` settings key
+and its validation, the construction in `__main__.py`, the card in
+`index.html` and `web/settings.js`, the tests, and the whole "EVE client
+window layouts" section of the smoke checklist. Nothing in the preview path
+depended on any of it -- `clientlayout.py` owned its own scheduler
+precisely so `host.py` never had to know about it.
+
+**And the Win32 surface it was the only caller of.** Deleting
+`clientwin32.py` orphaned `GetWindowPlacement`, `SetWindowPlacement`,
+`SystemParametersInfoW`, the `WINDOWPLACEMENT` struct,
+`WPF_ASYNCWINDOWPLACEMENT`, `WPF_RESTORETOMAXIMIZED`, `SPI_GETWORKAREA` and
+`SW_SHOWNORMAL`/`SW_SHOWMINIMIZED`/`SW_SHOWMAXIMIZED` in
+`preview/win32.py`. All removed: inert or not, leaving the call that
+destroyed three characters' settings bound and ready leaves it one line
+from being called again.
+
+`SetWindowPos` and `SW_SHOWNOACTIVATE` STAY -- `window.py:317` and
+`window.py:275` move and show Wingman's OWN preview windows, which is the
+feature. The rule is about EVE's windows, and no EVE window's HWND reaches
+either call.
+
+`tests/test_preview_win32.py`'s bind list is skipped off Windows, and CI is
+ubuntu, so it would never have caught a reintroduction. The guard that
+replaces it (`test_the_client_placement_win32_surface_is_not_declared`)
+asserts on `win32.py`'s source and runs everywhere.
+
+**The checkbox survived, pointed at the previews.** `restore_clients_on_launch`
+became `restore_preview_positions` and `set_restore_clients_on_launch`
+became `set_restore_preview_positions`, keeping #29's dict-with-`persisted`
+contract so a failed write is still reported rather than silently leaving
+the box lying about what survives a restart. It gates
+`PreviewHost._resolve_rect`, which was already the single place that chose
+between a saved rect and a default: on, a preview opens at its saved
+position; off, at `default_stack` placement. The monitor clamp runs on both
+paths — branching before it would reintroduce the off-screen placement #30
+had just fixed. Positions are still RECORDED while off, so switching back
+on restores what the user last had rather than nothing.
+
+It governs all placement, not only placement at launch: a preview is
+created whenever its client appears, which is usually mid-session, so the
+host re-reads the setting per placement rather than capturing it.
+
+No migration was needed, but not for the reason it first appears.
+`_save_locked` projects TOP-LEVEL keys only and copies `data["preview"]`
+wholesale, so a bare `save()` preserves both dead keys — verified. What
+drops them is `validated_preview` rebuilding the section from
+`_preview_defaults()`, which `_normalize` runs and which `load()` and
+`update()` both call. Every production writer goes through `update()`.
+
+Focus switching is NOT affected and was left alone: click-to-focus and
+the hotkeys go through `window.py`'s `SetForegroundWindow` +
+`AttachThreadInput` sequence, which only raises a window and never sets a
+rect. That is the one thing the app should be doing to a game client.
+
+What it settled that the rest of this roadmap still inherits:
+
+- **A per-batch DPI scope, not one-time init.** `threading.Timer` starts a
+  fresh thread per tick and DPI awareness is thread-local, so a context set at
+  startup is gone by the first tick. Any future off-thread Win32 work that
+  reads or writes coordinates needs the same treatment.
+- **Virtualization follows the calling thread, not the window** — and that
+  includes `GetSystemMetrics(SM_*VIRTUALSCREEN)`, which is easy to overlook
+  because it does not look like a coordinate read. The one real bug found in
+  review was exactly that: a virtual-desktop read outside the scope, compared
+  against physical rects. It is invisible on a single monitor.
+- **`settings.save()` locks only serialization.** The boundary any new writer
+  should use is `settings.update()`, which holds `_SAVE_LOCK` across the whole
+  read-modify-write. **Its signature changed in #26**: it was
+  `update(read, mutate)` when #23 shipped and is now a context manager over
+  the live document — `with settings.update(state.settings) as doc:`. The two
+  are not interchangeable and the mismatch is silent: calling the context
+  manager with two positional arguments builds a generator and discards it
+  unentered, so nothing is locked, nothing is saved, and no exception is
+  raised. That exact defect reached the #26 merge through an *injected*
+  `update_settings` callable, which matched no call-site grep. If you change
+  this signature again, grep the bare name, not the call shape.
+
+Still unverified: no Win32 call in it has ever run. Thirteen items in
+`docs/smoke-checklist.md`, of which the mixed-DPI multi-monitor check is the
+one that matters — it passes on a single monitor whether or not the code is
+correct.
 
 **12. Multiple named profiles.** The settings schema was deliberately shaped
 so this can be added without migrating anyone: today's values are a single
@@ -475,6 +616,143 @@ largest pure-parsing job.
   border for it and the cache key includes it, but no caller assigns it.
   Pairs naturally with 10.
 
+### Left behind by item 11 (#23)
+
+Named here rather than in a tracker because each one is small enough to fold
+into whichever slice next touches that file.
+
+- ~~**`preview/store.py` still writes the old way.**~~ **Done in #26.**
+  `LayoutStore` now takes a context-manager factory and does its whole
+  read-merge-write inside one transaction. Every settings writer in the
+  package went the same way, including two the retrofit found rather than
+  inherited.
+- ~~**`tests/test_api_bookmarks.py` overwrites the developer's real
+  `settings.json`.**~~ **Done — and the diagnosis was wrong.** No test in
+  that file ever leaked: its `api` fixture already redirected
+  `paths.settings_file()`, and since that patch lands on the module object it
+  covered `settings_mod.save` too. The real leak was one level up at
+  `paths.state_dir()`, reached from three places nobody had stubbed — the
+  upload worker's channel persist (15 tests in `test_api_upload.py`), the
+  probe cache writing `durations.json`, and `set_preview_enabled` (3 tests in
+  `test_preview_wiring.py`). An autouse `tests/conftest.py` redirects
+  `LOCALAPPDATA`, `state_dir()`'s only input, so every derived path moves
+  together. Pointing it at `settings_file()` as suggested here would have
+  broken `tests/test_paths.py`, which asserts on that function's real return.
+- ~~**"No named clients are running" is reported when every placement read
+  failed.**~~ **Done.** `_save` returns a `failed` count beside `saved` and
+  `persisted`, and the card reads it: nothing running and nothing readable
+  are now different messages. It also made the partial case sayable — "Saved
+  3 client positions. Could not read 2 others." — which was silent before.
+- ~~**The restore-on-launch toggle reports success on a failed persist.**~~
+  **Done.** It returns `{"applied": True, "persisted": bool}`, the save
+  button's own key in the same card. The checkbox stays where the user put it,
+  because the watcher really did change state; what the page reports is that
+  the choice will not survive a restart. No retry bookkeeping was needed —
+  `settings.update()` restores the live dict when the block raises, so the
+  next toggle sees a real change and retries on its own.
+- ~~**Enabling restore-on-launch mid-session places already-running
+  clients**~~ **Done — fixed, not left.** `start(seed_placed=True)` marks the
+  current sweep as already placed, and the toggle passes it only on a real
+  transition, so a repeat enabled call cannot consume a client that appeared
+  since. The launch path still calls bare `start()`. Fixed rather than left
+  because `restore_now()` — the Restore button four lines away in the same
+  card — already exists for the user who wants that.
+
+### Left behind by item 7 (#26)
+
+Same convention as above: small enough to fold into whichever slice next
+touches that file. Twenty-eight findings were deferred across #26's reviews;
+this is the curated subset worth carrying. The rest were lint — an unused
+import, a missing `'use strict'`, inconsistent type hints — and are not
+recorded anywhere else, deliberately.
+
+- **`cycle.ordered()` sorts case-sensitively**, so `"Bob"` precedes
+  `"alice"` in the bind list. Deterministic and stable, which is all the
+  cycle logic needs, but it is a user-visible ordering and item 8 is the
+  slice that will care.
+- **The cycle anchor and the cycle order come from different places.**
+  `_on_hotkey` searches `_clients` for the foreground window, but order comes
+  from `characters()`. Two sources for one decision; worth unifying when
+  item 10 touches switching behaviour.
+- **`preview/host.py`'s "settings.save() is lock-serialised" comment is
+  stale.** Writers go through `settings.update()` now. The conclusion it
+  draws — writing from the preview thread is safe — still holds.
+- **`settings.update()`'s rollback has a one-bytecode hole.** A
+  `BaseException` landing between `data.clear()` and `data.update(before)`
+  leaves the document empty, while the docstring promises an unconditional
+  restore. Not worth a redesign; worth a docstring caveat.
+- **Planner-dropped duplicate chords never appear in registration status**,
+  so Python cannot tell the page which of two identical bindings lost. The
+  UI detects duplicates client-side, so nothing is currently invisible.
+- ~~**`web/previews.js` has three robustness gaps**~~ — **Closed.**
+  `onPreviewHotkeys` had already moved to `WM.handle` by the time the rest
+  were addressed. A failed save now says so through `alert_bookmarks`
+  rather than repainting in silence, which had looked exactly like the
+  click never registering. And `send()` samples a `pushes` counter before
+  its bridge call, so a save resolving after a push that overtook it drops
+  its own older table instead of writing it back over the newer one.
+- ~~**With previews off, the Previews tab claims every chord is
+  registered.**~~ — **Fixed.**
+  Found by walking the checklist on 2026-08-24; this was the regression the
+  "reads as off, not as live" item exists to catch.
+
+  Python was blameless. `Api.get_preview_hotkey_state` gates on
+  `is_running` and correctly returns `characters: []` and
+  `registration: {}` once the host has stopped, exactly as its comment
+  says it does. The whole defect was in the page.
+
+  `clashes()` asked `if (state.registration[gesture] === false)`. With
+  previews off the map is empty, so the lookup was `undefined`, not
+  `false`, the refused branch never ran, and the chord rendered as an
+  ordinary button. Three states were being collapsed into two:
+
+  | Python sends | Means | Rendered as | Now renders as |
+  |---|---|---|---|
+  | `true` | registered | normal | normal |
+  | `false` | refused by Windows | warned | warned |
+  | *absent* | unknown / previews off | **normal** | dashed, "not registered right now" |
+
+  Confirmed against Windows at the time: previews off, and
+  `RegisterHotKey` succeeded for all four chords from a probe process --
+  nothing held them while the tab said otherwise.
+
+  The third state needed its own class. `.bindbtn.dim` was already taken by
+  a latent bookmark collision, and reusing it would have made the new state
+  indistinguishable from that one -- the same defect, relocated.
+
+- ~~**Dimming is the only "off" signal, and it carries no information when
+  everything dims.**~~ — **Fixed.** `state.enabled && entry.online` forced
+  every row offline when previews were off, so the whole list greyed at
+  once. A uniformly dim list is indistinguishable from "all my characters
+  happen to be logged off", and the user reported being unable to tell
+  online from offline in either state.
+
+  Note what the obvious edit would NOT have fixed: with the host stopped
+  Python sends `characters: []`, so every row is *genuinely* `online:
+  false` and simply passing `entry.online` leaves the list just as
+  uniformly grey. Rows are therefore not dimmed at all while previews are
+  off -- `null` is passed, and `makeRow` dims only on a strict `false`.
+  That is the same principle the registration fix applies: with the host
+  stopped we cannot know who is online, and "cannot know" must not render
+  as "logged off". The banner says it is off.
+
+  Together these two made the tab read as a healthy, fully-registered
+  bind list at the exact moment the preview thread was gone and Windows
+  held nothing.
+- ~~**`rows()` builds its dedup set as `{}`**~~ — **Fixed**
+  (`Object.create(null)`). A character named `constructor` or `__proto__`
+  collided with `Object.prototype` and was dropped from the list along
+  with whatever it was bound to.
+- **`roster.touch()`'s deliberate cap overshoot is now truncated at save**
+  rather than surviving to the next launch, because `update()` normalises on
+  every write. Needs more than 64 bound characters to observe.
+- **Nothing pins that the defaults are fixed points of their own
+  validators.** `validated_preview(_preview_defaults()) == _preview_defaults()`
+  and its `eve_bookmarks`/`eve_settings` twins are the invariant that makes
+  normalising on every save safe from drift. It holds; it is untested.
+- **The rebind regression test covers `save_settings` only.** A rebind
+  reintroduced in `set_recording_dir` or `save_bookmarks` would not be caught.
+
 **Explicitly excluded**: anything that reads EVE process memory, injects input
 into a client, performs OCR, or automates gameplay. Previews are DWM
 compositions of windows the OS already exposes; focus switching uses documented
@@ -497,6 +775,23 @@ list has been walked; these items have not been exercised by anyone:
 - The frozen build rendering labels in Inter. The font is a `datas` entry and
   PyInstaller exits 0 when one resolves to nothing; there is now a post-build
   assertion, but nobody has looked at the packaged app.
+
+**Every one of the thirteen client-window-layout items is also unwalked** —
+that whole section of the checklist arrived with #23 and nothing in it has
+run. Three of them carry more weight than the rest:
+
+- **Mixed-DPI multi-monitor save and restore.** It passes on a single monitor
+  whether or not the code is correct, which is precisely how a real bug — a
+  virtual-desktop read taken outside the DPI scope — survived ten reviews
+  before the whole-branch pass caught it.
+- **Borderless-fullscreen clients.** Genuinely unknown whether they accept
+  placement, ignore it, or provoke a mode switch. Many EVE users run
+  fullscreen, so "unknown" here covers a large share of the audience.
+- **Maximized restore across monitors.** `apply_placement` seeds
+  `ptMaxPosition` from the window's *current* placement, which names the
+  monitor it is on now rather than the one the saved rect puts it on. That
+  checklist item exists to decide whether the seeding is sufficient or
+  whether `ptMaxPosition` needs deriving from the saved rect's monitor.
 
 One review pass is also unconfirmed: three CodeRabbit rounds ran against the
 branch and the fix for the third round's finding never got a fourth pass,

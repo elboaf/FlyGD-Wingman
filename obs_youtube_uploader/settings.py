@@ -3,12 +3,16 @@
 Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 ``category_id``).
 """
+import contextlib
+import copy
 import json
 import threading
 from pathlib import Path
 
 from . import bookmarks, paths
+from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
+from .preview import roster as preview_roster
 
 
 def _preview_defaults() -> dict:
@@ -19,7 +23,19 @@ def _preview_defaults() -> dict:
     clients should pay none of that.
     """
     return {"enabled": False, "width": 320, "height": 210,
-            "opacity": 235, "layouts": {}}
+            "opacity": 235, "layouts": {},
+            # Flat cycle chords, not a group table. When named cycle groups
+            # land these become the default group's, so the schema grows
+            # without migrating anyone -- the same shape the parent design
+            # used to defer profiles.
+            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+            "seen": [],
+            # Where a preview OPENS: on, at the rect the user last dragged
+            # it to; off, at default_stack placement. Positions are
+            # recorded either way, so switching back on restores what they
+            # last had. On by default -- it is what shipped, and the
+            # alternative silently discards existing layouts.
+            "restore_preview_positions": True}
 
 
 def _eve_defaults() -> dict:
@@ -31,6 +47,14 @@ def _eve_defaults() -> dict:
     return {"enabled": False,
             "keybinds": dict(bookmarks.DEFAULT_BINDS),
             "windows": {}}
+
+
+def _eve_settings_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Three remembered paths and the prune depth. Everything else is derived
+    # from disk on each state build, so there is nothing to migrate and
+    # nothing that can drift out of step with reality.
+    return {"root": None, "server": None, "profile": None, "auto_keep": 10}
 
 
 DEFAULTS = {
@@ -64,6 +88,9 @@ DEFAULTS = {
     # Same reasoning as eve_bookmarks above: built by _preview_defaults()
     # so callers never share one nested dict.
     "preview": _preview_defaults(),
+    # Same reasoning as eve_bookmarks and preview above: built by
+    # _eve_settings_defaults() so callers never share one nested dict.
+    "eve_settings": _eve_settings_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -71,10 +98,11 @@ _VALID_NOTIFY = {"toast", "popup"}
 
 
 def _fresh_defaults() -> dict:
-    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    """dict(DEFAULTS) is shallow, so the nested sections are rebuilt."""
     data = dict(DEFAULTS)
     data["eve_bookmarks"] = _eve_defaults()
     data["preview"] = _preview_defaults()
+    data["eve_settings"] = _eve_settings_defaults()
     return data
 
 
@@ -86,6 +114,8 @@ def validated_preview(raw) -> dict:
         return section
     if isinstance(raw.get("enabled"), bool):
         section["enabled"] = raw["enabled"]
+    if isinstance(raw.get("restore_preview_positions"), bool):
+        section["restore_preview_positions"] = raw["restore_preview_positions"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -99,6 +129,47 @@ def validated_preview(raw) -> dict:
     # at load rather than at draw time.
     section["layouts"] = preview_layout.serialize(
         preview_layout.deserialize(raw.get("layouts")))
+
+    raw_hotkeys = raw.get("hotkeys")
+    if isinstance(raw_hotkeys, dict):
+        characters = raw_hotkeys.get("characters")
+        if isinstance(characters, dict):
+            for name, text in characters.items():
+                if not isinstance(name, str) or name.startswith("hwnd:"):
+                    continue
+                parsed = preview_gestures.parse(text)
+                if parsed is not None:
+                    # Canonical form, so "Alt+Ctrl+F2" and "Ctrl+Alt+F2"
+                    # cannot read as two different bindings to the clash
+                    # check.
+                    section["hotkeys"]["characters"][name] = \
+                        preview_gestures.display(parsed)
+        for key in ("cycle_next", "cycle_prev"):
+            parsed = preview_gestures.parse(raw_hotkeys.get(key))
+            if parsed is not None:
+                section["hotkeys"][key] = preview_gestures.display(parsed)
+
+    section["seen"] = preview_roster.deserialize(raw.get("seen"))
+    return section
+
+
+def validated_eve_settings(raw) -> dict:
+    """Same posture as validated_preview: a malformed section falls back
+    whole, and a malformed single value falls back alone."""
+    section = _eve_settings_defaults()
+    if not isinstance(raw, dict):
+        return section
+    for key in ("root", "server", "profile"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            section[key] = value
+    keep = raw.get("auto_keep")
+    # `not isinstance(keep, bool)` because bool is an int in Python, and
+    # True would silently become a keep depth of 1.
+    if isinstance(keep, int) and not isinstance(keep, bool):
+        # Clamped, not rejected: a depth of zero would delete the backup
+        # taken moments earlier, which is the one nobody can afford to lose.
+        section["auto_keep"] = max(1, min(100, keep))
     return section
 
 
@@ -121,9 +192,9 @@ def validated_eve(raw) -> dict:
     # known ids, so a key from a hand-edited file cannot reach the INI.
 
     # home_zero, preface_return and return_preface used to be read here.
-    # Naming is fixed now (bookmarks.HOME_ZERO and friends). Dropping the
-    # reads is the whole of the removal: `section` starts from
-    # _eve_defaults() and only the keys handled explicitly are copied
+    # Naming is fixed in the engine now, with no INI setting behind it at
+    # all. Dropping the reads is the whole of the removal: `section` starts
+    # from _eve_defaults() and only the keys handled explicitly are copied
     # across, so the leftovers in an older settings.json go nowhere and are
     # gone from the file after the next save.
 
@@ -134,18 +205,27 @@ def validated_eve(raw) -> dict:
     return section
 
 
-def load(path: Path | None = None) -> dict:
-    path = path or paths.settings_file()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _fresh_defaults()
-    if not isinstance(raw, dict):
-        return _fresh_defaults()
-    data = dict(DEFAULTS)
-    for key in DEFAULTS:
-        if key in raw:
-            data[key] = raw[key]
+def _normalize(data: dict) -> dict:
+    """Apply load()'s validation/coercion rules to `data` in place.
+
+    Factored out of load() so update() can run the same rules on the live
+    in-memory dict after a caller's mutation, under the same lock that
+    protects the save -- see update()'s docstring for why that matters.
+    Idempotent: load() already re-validated every field on every write
+    (the old rebind-from-disk this replaces), so running it again on
+    already-valid data is a no-op.
+
+    Tolerant of a partial `data`, the way _save_locked's DEFAULTS-projected
+    payload already is: a caller passing a dict missing one of these scalar
+    keys (tests/fakes.py builds exactly such a dict) gets that key filled
+    from DEFAULTS instead of a KeyError. setdefault, not indexing, so a key
+    that IS present is left exactly as validated below -- only an absent
+    key is touched here.
+    """
+    for key in ("privacy", "notify_mode", "category", "recording_dir",
+                "discord_webhook", "gamelogs_dir", "channel_id",
+                "channel_title"):
+        data.setdefault(key, DEFAULTS[key])
     if data["privacy"] not in _VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
     if data["notify_mode"] not in _VALID_NOTIFY:
@@ -164,9 +244,25 @@ def load(path: Path | None = None) -> dict:
     for key in ("channel_id", "channel_title"):
         if not isinstance(data[key], str):
             data[key] = ""
-    data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
-    data["preview"] = validated_preview(raw.get("preview"))
+    data["eve_bookmarks"] = validated_eve(data.get("eve_bookmarks"))
+    data["preview"] = validated_preview(data.get("preview"))
+    data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     return data
+
+
+def load(path: Path | None = None) -> dict:
+    path = path or paths.settings_file()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _fresh_defaults()
+    if not isinstance(raw, dict):
+        return _fresh_defaults()
+    data = dict(DEFAULTS)
+    for key in DEFAULTS:
+        if key in raw:
+            data[key] = raw[key]
+    return _normalize(data)
 
 
 # save() projects the COMPLETE document from DEFAULTS, so two writers
@@ -187,3 +283,85 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+@contextlib.contextmanager
+def update(data: dict, path: Path | None = None):
+    """Serialise a whole read-modify-write, not just the write.
+
+    _SAVE_LOCK alone is not enough. save() projects the COMPLETE document
+    from DEFAULTS, so a writer that reads, mutates and saves can be
+    interleaved by another doing the same and have its keys reverted --
+    silently, with no error and nothing in the log. Holding the lock across
+    the caller's mutation closes that window.
+
+    On any exception the live dict is restored to its prior contents and
+    nothing is written, so a failed save cannot leave in-memory state and
+    disk disagreeing. ui/api.py's save path depends on that property.
+
+    Deep, not shallow: preview state lives in a nested section, and a
+    shallow snapshot would leave a half-applied mutation behind.
+
+    Normalises `data` in place, under this same lock, before saving --
+    load()'s privacy/notify_mode/category/eve_bookmarks/preview coercions,
+    applied to the live dict instead of a fresh object loaded back from
+    disk. ui/api.py used to rebind `self._state.settings` to a brand-new
+    `settings_mod.load()` result after every save to pick up those
+    coercions; that rebind ran OUTSIDE any lock and swapped the dict
+    object out from under LayoutStore, which keeps its own reference to
+    the settings dict and updates it via this same update() call. A store
+    write landing on the object between the save above and the rebind
+    below was silently discarded once the rebind replaced it -- see
+    rebind-race-repro.py. Normalizing in place instead means the object
+    identity `self._state.settings` holds never changes, so a concurrent
+    holder of that reference is never left writing to an orphaned dict.
+
+    That stability is scoped to the DOCUMENT, not its nested sections:
+    _normalize reassigns data["eve_bookmarks"], data["preview"] and
+    data["eve_settings"] wholesale on every call (see validated_eve and
+    friends above), so a reference held to one of those inner dicts across
+    an update() call goes stale even though `data` itself does not. Hold
+    `data`, not `data["preview"]`, across a call.
+
+    DO NOT call save() or update() from inside an update() block. The lock
+    is not reentrant and the process will deadlock.
+    """
+    with _SAVE_LOCK:
+        before = copy.deepcopy(data)
+        try:
+            yield data
+            _normalize(data)
+            _save_locked(data, path)
+        except BaseException:
+            data.clear()
+            data.update(before)
+            raise
+
+
+def update_section(data: dict, name: str, values: dict,
+                   path: Path | None = None) -> dict:
+    """Merge *values* into one section of the live settings document.
+
+    A section-shaped wrapper over update(), not a second implementation of
+    it: the hazard and the locking rule are documented there. This exists
+    because the EVE Settings writers touch exactly one section and would
+    otherwise each repeat the same read-merge-assign callback.
+
+    Takes the LIVE settings dict rather than loading a fresh document from
+    disk. Loading a fresh one was the earlier shape, and it forced every
+    caller to rebind `AppState.settings` afterwards to see its own write --
+    a rebind that ran outside this lock and swapped the dict object out
+    from under LayoutStore, which holds its own reference and writes
+    through this same lock. A store write landing between the save and the
+    rebind was silently discarded. Mutating the live dict keeps its
+    identity stable, so no caller needs to rebind and nothing is orphaned.
+
+    The section is rebuilt rather than mutated in place for the same reason
+    update() normalises before saving: a half-merged section must never be
+    what another thread observes.
+    """
+    with update(data, path) as live:
+        section = dict(live.get(name) or {})
+        section.update(values)
+        live[name] = section
+    return data

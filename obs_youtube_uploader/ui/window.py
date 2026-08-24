@@ -83,19 +83,58 @@ def _screen_size() -> tuple[int, int]:
         return (1920, 1080)
 
 
-def _placement(width: int, height: int, metrics=_screen_size) -> tuple[int, int]:
+def _system_scale() -> float:
+    """System DPI as a scale factor, without needing a window.
+
+    Deliberately the SYSTEM DPI, not the DPI of any particular monitor:
+    the process is PROCESS_SYSTEM_DPI_AWARE, and this is the same number
+    pywebview's own _scale uses to convert the geometry it is handed.
+    `chrome._scale_for` makes the same choice for the same reason, but it
+    needs an hwnd -- and placement is computed before a window exists.
+    """
+    if sys.platform != "win32":
+        return 1.0
+    import ctypes
+    try:
+        user32 = ctypes.windll.user32
+        get_dpi = getattr(user32, "GetDpiForSystem", None)
+        if get_dpi is None:
+            return 1.0  # Predates Windows 10 1607.
+        dpi = get_dpi()
+        return (dpi / 96.0) if dpi else 1.0
+    except (AttributeError, OSError):
+        return 1.0
+
+
+def _placement(width: int, height: int, metrics=_screen_size,
+               scale=_system_scale) -> tuple[int, int]:
     """Centre the window, clamped at the top-left corner.
 
     Frameless windows get NO sensible default placement from pywebview --
     the spike's opened somewhere not visible on the primary screen -- so
     x/y are mandatory, not a nicety.
 
+    Returned in LOGICAL units, because that is what pywebview expects and
+    what WIDTH/HEIGHT are already expressed in: it applies the DPI scale
+    to the geometry it is handed. `metrics` reports PHYSICAL pixels, since
+    GetSystemMetrics is unvirtualized for the primary under
+    PROCESS_SYSTEM_DPI_AWARE, so it has to be divided down first.
+
+    Skipping that division is a bug that hides at 100%, where the two
+    units are the same number. At 200% it doubled the centred coordinate:
+    a 3840x2160 primary put the window at x=2800, hanging 1014px past the
+    right edge with half of it on the next monitor.
+
     The clamp matters more than centring does: a negative x is legal on
     Windows and would put the custom title bar off the left edge, and a
     frameless window with no reachable drag region cannot be moved back.
     """
     screen_w, screen_h = metrics()
+    factor = scale() or 1.0          # A reported DPI of 0 must not divide.
+    screen_w = int(screen_w / factor)
+    screen_h = int(screen_h / factor)
     return (max(0, (screen_w - width) // 2), max(0, (screen_h - height) // 2))
+
 
 
 def _silence_pywebview_logging() -> None:

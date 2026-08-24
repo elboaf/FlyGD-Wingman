@@ -19,6 +19,7 @@
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
       <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
       <button class="navbtn" id="nav-previews" data-route="previews">Previews</button>
+      <button class="navbtn" id="nav-evesettings" data-route="evesettings">EVE Settings</button>
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
@@ -225,21 +226,6 @@
 
 
       <section class="card">
-        <h2>Root</h2>
-        <div class="row">
-          <span class="lab">Root mode</span>
-          <span class="hint" id="eve-root-mode">Not set</span>
-        </div>
-        <div class="row">
-          <span class="lab">Set root</span>
-          <input class="field mono" id="eve-root-input" type="text"
-                 spellcheck="false" placeholder="J123456">
-          <button class="btn" id="eve-set-root">Set</button>
-          <button class="btn" id="eve-clear-root">Clear</button>
-        </div>
-      </section>
-
-      <section class="card">
         <h2>EVE windows</h2>
         <p class="hint">Hotkeys only fire while one of these windows is
           active.</p>
@@ -276,6 +262,84 @@
           <span class="hint">Click a preview to switch to that client.
             Drag to move it, drag the bottom-right corner to resize.
             Positions are remembered per character.</span></div>
+        <div class="row">
+          <span class="lab">Position</span>
+          <label class="check">
+            <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
+            Reopen previews where you last put them
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="restore-preview-positions-status">Off opens
+            each preview in a default stack instead. Positions are still
+            remembered while this is off, so turning it back on restores
+            what you last had.</span></div>
+      </section>
+
+      <section class="card">
+        <h2>Hotkeys</h2>
+        <div class="row"><span class="lab"></span>
+          <span class="hint">Chords are global: they work from any
+            application, including a browser. They are released while
+            previews are switched off.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-binds-off" style="display:none">
+            Previews are off, so every chord below is unregistered until
+            you turn them back on.</span></div>
+        <div id="preview-binds"></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-binds-empty">Start an EVE client to
+            add a character here.</span></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="route" id="route-evesettings">
+    <div class="settings">
+      <section class="card">
+        <h2>EVE Settings</h2>
+        <div class="row">
+          <span id="es-root">No folder selected</span>
+          <button id="es-pick" class="btn">Choose folder…</button>
+          <span id="es-eve-state" class="pill">EVE closed</span>
+        </div>
+        <div class="row">
+          <label for="es-server">Server</label>
+          <select id="es-server" class="field"></select>
+          <label for="es-profile">Settings set</label>
+          <select id="es-profile" class="field"></select>
+        </div>
+        <p id="es-warning" class="hint" hidden></p>
+      </section>
+
+      <section class="card">
+        <h2>Copy settings</h2>
+        <div class="row">
+          <label><input type="radio" name="es-kind" value="characters" checked> Characters</label>
+          <label><input type="radio" name="es-kind" value="accounts"> Accounts</label>
+        </div>
+        <div class="row">
+          <label for="es-source">Copy from</label>
+          <select id="es-source" class="field"></select>
+        </div>
+        <div class="row">
+          <input id="es-filter" class="field" type="search" placeholder="Filter…"
+                aria-label="Filter characters or accounts">
+          <button id="es-all" class="btn">Select all</button>
+          <button id="es-none" class="btn">Clear</button>
+        </div>
+        <div id="es-targets" class="list-scroll"></div>
+        <div class="row">
+          <button id="es-copy" class="btn acc">Copy to selected</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Backups</h2>
+        <div class="row">
+          <button id="es-backup-profile" class="btn">Back up this settings set</button>
+        </div>
+        <div id="es-backups" class="list-scroll"></div>
       </section>
     </div>
   </div>
@@ -381,6 +445,8 @@
 
   <script src="app.js"></script>
   <script src="bookmarks.js"></script>
+  <script src="previews.js"></script>
+  <script src="evesettings.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>
