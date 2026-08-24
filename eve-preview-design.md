@@ -85,8 +85,7 @@ must be wired in alongside them.
 `stop()` is idempotent, safe to call when never started, and ordered:
 
 1. Unregister hotkeys (`UnregisterHotKey`) — before the windows they target
-   die. **Not yet implemented**: nothing registers a hotkey, so there is
-   nothing to leak, but this step belongs first when item 7 lands.
+   die. Implemented in #26, as the first HWND step of `_teardown`.
 2. Unhook the WinEvent hook (`UnhookWinEvent`).
 3. Unregister every DWM thumbnail (`DwmUnregisterThumbnail`).
 4. Destroy every preview window (`DestroyWindow`), on the preview thread.
@@ -421,20 +420,39 @@ checklist grew thirteen items rather than none.
 
 ### Deferred, in rough priority order
 
-**7. Per-character and cycle-group hotkeys** — `gestures.py` and `cycle.py`.
-Deferred *whole*: writing them unwired would have been speculative, since
-their only consumers were deferred too. This is what makes previews fast to
-multibox with rather than just pleasant to look at, and both modules are pure
-logic that tests on Linux. `win32.bind()` already declares
-`RegisterHotKey`/`UnregisterHotKey` (`win32.py:235-236`), and `WM_HOTKEY`
-arrives on the preview thread's queue — which is the reason that thread owns
-a real pump at all.
+~~**7. Per-character and cycle-group hotkeys**~~ — **Shipped (#26).**
+`preview/gestures.py`, `preview/cycle.py`, `preview/roster.py`, registration
+and dispatch on the preview thread, a validated `preview.hotkeys` section, four
+bridge methods, and a Hotkeys card on the Previews tab. Cycle groups were
+deliberately reduced to one implicit cycle over all running clients; the schema
+is shaped so named groups become the default group's without migrating anyone.
+Teardown's missing "unregister hotkeys" step, listed in Lifecycle above, landed
+with it.
 
-One thing to fix while doing it: the Lifecycle section above lists
-"unregister hotkeys" as step 1 of teardown, and `PreviewHost._teardown` has
-no such step. That is harmless today, because nothing registers a hotkey to
-leak, but the order matters when they exist — hotkeys must be released
-before the window they are registered against is destroyed.
+Three things it settled that the rest of this roadmap inherits:
+
+- **Registration status is readable state, not an event.** Previews start
+  two lines before the webview exists (`__main__.py`), so the first
+  registration pass has nowhere to push a failure and `_push` swallows it at
+  debug level. Anything else that discovers a user-actionable condition before
+  the page is up needs the same treatment: hold it, and let the page ask.
+- **An outward callback must never be able to kill the pump.** Both
+  `PreviewHost` callbacks are guarded, because the initial pass runs before
+  `_ready.set()` — a raise there unwinds out of `_run`, leaves `_hwnd` set,
+  and makes `stop()` block for its full timeout. Any new callback out of that
+  thread needs the same guard.
+- **A global chord silently outranks a scoped one.** Preview chords are
+  `RegisterHotKey`; bookmark chords are AutoHotkey scoped with
+  `#HotIf WinActive`. Where they collide the preview wins *while EVE is
+  focused*, and Windows reports nothing — only Wingman can detect it, by
+  comparing both sections in display form via
+  `bookmarks.parse_ahk(...)["display"]`. Any future global binding inherits
+  this.
+
+Still unverified: no Win32 call in it has ever run. Sixteen items in
+`docs/smoke-checklist.md`, of which `WM_HOTKEY` reaching a message-only window
+is the one that matters — it is documented behaviour, not measured, and if it
+fails the whole dispatch path moves to `hWnd=NULL`.
 
 **8. Label customisation** — text override, placement (top/bottom/centre),
 font size, colours. `chrome.render` already takes the label; everything else
@@ -471,10 +489,17 @@ Three things it settled that the rest of this roadmap inherits:
   because it does not look like a coordinate read. The one real bug found in
   review was exactly that: a virtual-desktop read outside the scope, compared
   against physical rects. It is invisible on a single monitor.
-- **`settings.save()` locks only serialization.** `settings.update(read,
-  mutate)` holds `_SAVE_LOCK` across read-mutate-write and is the boundary any
-  new writer should use. `preview/store.py` still writes the old way; that
-  retrofit was deliberately left out of #23 and is listed below.
+- **`settings.save()` locks only serialization.** The boundary any new writer
+  should use is `settings.update()`, which holds `_SAVE_LOCK` across the whole
+  read-modify-write. **Its signature changed in #26**: it was
+  `update(read, mutate)` when #23 shipped and is now a context manager over
+  the live document — `with settings.update(state.settings) as doc:`. The two
+  are not interchangeable and the mismatch is silent: calling the context
+  manager with two positional arguments builds a generator and discards it
+  unentered, so nothing is locked, nothing is saved, and no exception is
+  raised. That exact defect reached the #26 merge through an *injected*
+  `update_settings` callable, which matched no call-site grep. If you change
+  this signature again, grep the bare name, not the call shape.
 
 Still unverified: no Win32 call in it has ever run. Thirteen items in
 `docs/smoke-checklist.md`, of which the mixed-DPI multi-monitor check is the
@@ -512,13 +537,11 @@ largest pure-parsing job.
 Named here rather than in a tracker because each one is small enough to fold
 into whichever slice next touches that file.
 
-- **`preview/store.py` still writes the old way.** `settings.update(read,
-  mutate)` now exists and holds `_SAVE_LOCK` across read-mutate-write;
-  `LayoutStore` still does read-then-`save()`, which leaves a window in which
-  another writer completes and is reverted. Pre-existing, and deliberately
-  not retrofitted in #23 — that would have been a behaviour change to a
-  module the slice otherwise did not touch. It is a five-line change now that
-  the helper exists.
+- ~~**`preview/store.py` still writes the old way.**~~ **Done in #26.**
+  `LayoutStore` now takes a context-manager factory and does its whole
+  read-merge-write inside one transaction. Every settings writer in the
+  package went the same way, including two the retrofit found rather than
+  inherited.
 - **`tests/test_api_bookmarks.py` overwrites the developer's real
   `settings.json`.** Two tests reach `settings_mod.save` through
   `save_bookmarks` with no stub, and nothing redirects
@@ -540,6 +563,50 @@ into whichever slice next touches that file.
   label describes; arguably surprising mid-session. Seeding `_placed` from
   the current sweep when `start()` arrives from the toggle rather than from
   launch is the shape of the fix, if it turns out to bother anyone.
+
+### Left behind by item 7 (#26)
+
+Same convention as above: small enough to fold into whichever slice next
+touches that file. Twenty-eight findings were deferred across #26's reviews;
+this is the curated subset worth carrying. The rest were lint — an unused
+import, a missing `'use strict'`, inconsistent type hints — and are not
+recorded anywhere else, deliberately.
+
+- **`cycle.ordered()` sorts case-sensitively**, so `"Bob"` precedes
+  `"alice"` in the bind list. Deterministic and stable, which is all the
+  cycle logic needs, but it is a user-visible ordering and item 8 is the
+  slice that will care.
+- **The cycle anchor and the cycle order come from different places.**
+  `_on_hotkey` searches `_clients` for the foreground window, but order comes
+  from `characters()`. Two sources for one decision; worth unifying when
+  item 10 touches switching behaviour.
+- **`preview/host.py`'s "settings.save() is lock-serialised" comment is
+  stale.** Writers go through `settings.update()` now. The conclusion it
+  draws — writing from the preview thread is safe — still holds.
+- **`settings.update()`'s rollback has a one-bytecode hole.** A
+  `BaseException` landing between `data.clear()` and `data.update(before)`
+  leaves the document empty, while the docstring promises an unconditional
+  restore. Not worth a redesign; worth a docstring caveat.
+- **Planner-dropped duplicate chords never appear in registration status**,
+  so Python cannot tell the page which of two identical bindings lost. The
+  UI detects duplicates client-side, so nothing is currently invisible.
+- **`web/previews.js` has three robustness gaps**: `onPreviewHotkeys`
+  bypasses `WM.handle`, so a throwing push surfaces only in the webview
+  console; a failed save reverts silently; and a successful `send()` can
+  clobber a push that arrived while it was in flight. Item 8 fills this tab
+  out and should fix them together.
+- **`rows()` builds its dedup set as `{}`**, so a character named
+  `constructor` or `__proto__` collides with `Object.prototype`. Absurd
+  in practice, one word to fix (`Object.create(null)`).
+- **`roster.touch()`'s deliberate cap overshoot is now truncated at save**
+  rather than surviving to the next launch, because `update()` normalises on
+  every write. Needs more than 64 bound characters to observe.
+- **Nothing pins that the defaults are fixed points of their own
+  validators.** `validated_preview(_preview_defaults()) == _preview_defaults()`
+  and its `eve_bookmarks`/`eve_settings` twins are the invariant that makes
+  normalising on every save safe from drift. It holds; it is untested.
+- **The rebind regression test covers `save_settings` only.** A rebind
+  reintroduced in `set_recording_dir` or `save_bookmarks` would not be caught.
 
 **Explicitly excluded**: anything that reads EVE process memory, injects input
 into a client, performs OCR, or automates gameplay. Previews are DWM
