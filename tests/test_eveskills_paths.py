@@ -64,3 +64,17 @@ def test_the_user_agent_carries_the_app_version_and_a_contact_url():
     from obs_youtube_uploader import __version__
     assert application.USER_AGENT.startswith(f"FlyGD-Wingman/{__version__} ")
     assert "github.com/elboaf/FlyGD-Wingman" in application.USER_AGENT
+
+
+def test_all_three_issuer_spellings_are_accepted():
+    """jwt.py compares the `iss` claim against ACCEPTED_ISSUERS by
+    equality and nothing else, so a missing spelling is not a near-miss:
+    it is a rejected token and a character that can never authenticate.
+    TriffView's own validator (EveJwtValidator.cs:12-15) accepts all
+    three -- the bare authority, the full origin, and the full origin
+    with a trailing slash, since OAuth issuers appear both ways."""
+    assert application.ACCEPTED_ISSUERS == frozenset({
+        "login.eveonline.com",
+        "https://login.eveonline.com",
+        "https://login.eveonline.com/",
+    })

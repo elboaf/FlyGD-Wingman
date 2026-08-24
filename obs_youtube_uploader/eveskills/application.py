@@ -58,12 +58,17 @@ SSO_METADATA = (
     "https://login.eveonline.com/.well-known/oauth-authorization-server")
 SSO_HOST = "login.eveonline.com"
 
-# Both spellings are accepted because CCP has issued tokens with each:
-# the bare authority historically, the full origin since the v2 flow.
-# jwt.py compares the `iss` claim against this set and nothing else.
+# All three spellings are accepted, matching TriffView's own set
+# (EveJwtValidator.cs:12-15): the bare authority, the full origin, and
+# the full origin with a trailing slash -- OAuth issuer identifiers
+# routinely appear with and without the trailing slash. jwt.py compares
+# the `iss` claim against this set by equality and nothing else, so a
+# missing spelling is not a near-miss: it is a rejected token and a
+# character that can never authenticate.
 ACCEPTED_ISSUERS = frozenset({
     "login.eveonline.com",
     "https://login.eveonline.com",
+    "https://login.eveonline.com/",
 })
 
 ESI_BASE = "https://esi.evetech.net"
