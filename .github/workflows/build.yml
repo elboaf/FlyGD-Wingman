@@ -72,6 +72,14 @@ jobs:
           # (spike Q7). Named on its own line so the failure says which one.
           python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
           if ($LASTEXITCODE -ne 0) { throw "webview.platforms.edgechromium is not importable - the hiddenimports entry in uploader.spec would resolve to nothing and the frozen app would exit 0 with no window" }
+          # Same silent-failure shape as edgechromium above, for the
+          # TriffSkills port: eveskills/ is a plain package import, not a
+          # hiddenimports entry, but a broken import here (a missing
+          # dependency, a typo surviving a rename) would otherwise surface
+          # only once the Skills route is opened in the frozen app, not
+          # here where the failure is actually actionable.
+          python -c "from obs_youtube_uploader.eveskills.controller import SkillsController; print('SkillsController importable')"
+          if ($LASTEXITCODE -ne 0) { throw "obs_youtube_uploader.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the frozen app" }
 
       - name: Inject OAuth credentials
         if: ${{ inputs.inject_credentials }}
