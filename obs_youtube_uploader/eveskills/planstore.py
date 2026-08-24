@@ -18,6 +18,15 @@ from . import plans
 MAX_PLAN_FILES = 200
 MAX_PLAN_NAME_CHARS = 120
 
+# PlanStore.cs:19's MaxPlanFileBytes, kept as its own constant rather
+# than reusing plans.MAX_CONTENT_CHARS: the two happen to be the same
+# number today but bound different things in different units -- this is
+# a byte count checked against a file's size on disk before it is read,
+# plans.MAX_CONTENT_CHARS is a character count checked against text
+# already decoded into memory. A future change to the parser's
+# character cap must not silently move this file-size gate.
+MAX_PLAN_FILE_BYTES = 512 * 1024
+
 STARTER_PLAN_NAME = "Core Ship Skills"
 
 # The nine characters Windows refuses in a filename outright. `/` and `\`
@@ -80,22 +89,41 @@ class PlanFile:
     name: str           # the (NFC-normalised) filename stem; the plan's
                          # identity everywhere else in the app
     requirements: tuple
-    diagnostics: tuple
+    diagnostics: tuple  # always () -- a plan that failed to parse never
+                         # reaches `found`; it becomes a PlanIssue instead
 
     @property
     def ok(self) -> bool:
         return not self.diagnostics
 
 
-def list_plans(plans_dir: Path):
-    """Read every *.txt in *plans_dir*. Returns (plans, warnings).
+@dataclass(frozen=True)
+class PlanIssue:
+    """One file that did not become a listed plan, and why.
 
-    Never raises. A broken plan is still listed -- it is the row that
-    carries its diagnostics into the plan-issues disclosure, and
-    dropping it would leave the user with a file on disk and no
-    explanation anywhere in the UI.
+    Mirrors PlanStore.cs:8's PlanFileIssue record as a structured type
+    rather than a formatted string: the bridge payload needs the
+    filename and message as separate fields, and recovering the
+    filename by splitting a flat string on some separator would break
+    the moment a user names a plan file containing that separator.
     """
-    warnings = []
+    file_name: str
+    message: str
+    diagnostics: tuple   # the plan's own diagnostics when the issue is a
+                         # parse failure; () for every other kind of issue
+
+
+def list_plans(plans_dir: Path):
+    """Read every *.txt in *plans_dir*. Returns (plans, issues).
+
+    Never raises. A plan that fails to parse is never listed --
+    PlanStore.cs:99-104 drops it from Plans entirely, because a broken
+    plan offered in the rail selects to zero requirements and scores
+    every character Unknown: the same silent-poisoning failure the
+    empty-plan diagnostic in plans.parse exists to prevent. Its
+    diagnostics still reach the user, carried by its PlanIssue instead.
+    """
+    issues = []
     try:
         # is_file() because glob("*.txt") matches directories too, and
         # read_text() on one raises IsADirectoryError -- which would
@@ -104,7 +132,8 @@ def list_plans(plans_dir: Path):
     except OSError as exc:
         # A deleted or permission-denied folder costs an empty roster,
         # not a crash. `Open plans folder` reports the real failure.
-        return [], [f"The plans folder could not be read: {exc}"]
+        return [], [PlanIssue(
+            "plans", f"The plans folder could not be read: {exc}", ())]
 
     # Sorted BEFORE the cap so the same 200 plans appear on every
     # reload, rather than whichever 200 the filesystem enumerated first.
@@ -112,9 +141,10 @@ def list_plans(plans_dir: Path):
     # ahead of every lowercase one and scatters related plans.
     entries.sort(key=lambda p: p.stem.casefold())
     if len(entries) > MAX_PLAN_FILES:
-        warnings.append(
-            f"Only the first {MAX_PLAN_FILES} of {len(entries)} plan files "
-            "were read.")
+        issues.append(PlanIssue(
+            "plans",
+            f"Only the first {MAX_PLAN_FILES} of {len(entries)} plan "
+            "files were read.", ()))
         entries = entries[:MAX_PLAN_FILES]
 
     found = []
@@ -132,7 +162,7 @@ def list_plans(plans_dir: Path):
         # release this app actually ships as.
         reason = validate_plan_name(path.stem)
         if reason:
-            warnings.append(f"{path.name}: {reason}")
+            issues.append(PlanIssue(path.name, reason, ()))
             continue
         # NFC-normalised, case-folded key: validate_plan_name already
         # NFC-normalises internally, but it doesn't hand the normalised
@@ -145,30 +175,34 @@ def list_plans(plans_dir: Path):
             # case or by NFC/NFD normalisation both look like distinct,
             # valid plans on their own -- it is only in relation to each
             # other that one has to lose, silently, on every reload.
-            warnings.append(
-                f"{path.name}: Plan name collides case-insensitively "
-                "with another file.")
+            issues.append(PlanIssue(
+                path.name,
+                "Plan name collides case-insensitively with another "
+                "file.", ()))
             continue
         seen_names.add(collision_key)
 
         # Bounded by SIZE before the content is ever read into memory --
         # PlanStore.cs:92-97, which checks FileInfo.Length before calling
-        # AtomicFile.ReadBoundedText. plans.MAX_CONTENT_CHARS bounds
-        # *characters already loaded*; consulting it after
-        # path.read_text() has already pulled the whole file into memory
-        # is too late to protect against a multi-gigabyte .txt dropped in
-        # the folder. Bytes and characters are not the same unit -- this
-        # is a cheap pre-filter on disk size, not a replacement for the
-        # character cap plans.parse still enforces on what it decodes.
+        # AtomicFile.ReadBoundedText. MAX_PLAN_FILE_BYTES bounds bytes on
+        # disk; consulting plans.MAX_CONTENT_CHARS (a character count)
+        # after path.read_text() has already pulled the whole file into
+        # memory is too late to protect against a multi-gigabyte .txt
+        # dropped in the folder. Bytes and characters are different
+        # units bounding different moments -- this is a cheap pre-filter
+        # on disk size, independent of the character cap plans.parse
+        # still enforces on what it decodes.
         try:
             size = path.stat().st_size
         except OSError as exc:
-            warnings.append(f"{path.name} could not be read: {exc}")
+            issues.append(PlanIssue(
+                path.name, f"Could not read plan: {exc}", ()))
             continue
-        if size > plans.MAX_CONTENT_CHARS:
-            warnings.append(
-                f"{path.name}: Plan exceeds the "
-                f"{plans.MAX_CONTENT_CHARS // 1024} KiB file limit.")
+        if size > MAX_PLAN_FILE_BYTES:
+            issues.append(PlanIssue(
+                path.name,
+                f"Plan exceeds the {MAX_PLAN_FILE_BYTES // 1024} KiB "
+                "file limit.", ()))
             continue
 
         try:
@@ -177,46 +211,65 @@ def list_plans(plans_dir: Path):
             # A .txt Notepad saved as UTF-16, or a binary file renamed.
             # One unreadable file costs its own row, not the folder --
             # the same per-entry tolerance preview/layout.py takes.
-            warnings.append(f"{path.name} could not be read: {exc}")
+            issues.append(PlanIssue(
+                path.name, f"Could not read plan: {exc}", ()))
             continue
         result = plans.parse(contents)
-        found.append(PlanFile(normalised_name, result.requirements,
-                              result.diagnostics))
-    return found, warnings
+        if not result.ok:
+            # PlanStore.cs:100-104. Excluded from `found` rather than
+            # listed-but-broken: a plan offered for selection that
+            # cannot produce a single requirement is the silent-
+            # poisoning failure plans.parse's own empty-plan diagnostic
+            # exists to prevent, just reached from a different angle.
+            issues.append(PlanIssue(
+                path.name, "Plan has invalid lines and was not loaded.",
+                result.diagnostics))
+            continue
+        found.append(PlanFile(normalised_name, result.requirements, ()))
+    return found, issues
 
 
-# Real skill names, at modest levels, and it must parse without a single
-# diagnostic: a seeded plan that complained would greet every new user
-# with a plan-issues disclosure about a file they did not write. The
-# comment header doubles as the format documentation, because this file
-# is the only instruction most users will ever read.
+# The skill list is PlanStore.cs:21-35's StarterPlanContents verbatim --
+# not re-derived, because these are the exact names known to resolve
+# through ESI's /universe/ids/ today. A plausible-looking substitute
+# risks an unresolved skill name (EVE has renamed skills before, e.g.
+# the old "Targeting" split into Target Management / Long Range
+# Targeting), and one unresolved name poisons the whole plan to Unknown
+# -- the worst possible first run for a plan we shipped ourselves. Only
+# the explanatory header comment is ours; comments are skipped by the
+# parser, so it changes nothing the C# original resolves.
 _STARTER_PLAN = """\
 # Core Ship Skills - a starter plan, safe to edit or delete.
 #
 # One skill per line: the skill name, a space, then the level as
 # I II III IV V or 1 2 3 4 5. Lines starting with # are ignored.
 #
-Spaceship Command III
-Navigation IV
-Evasive Maneuvering III
-Warp Drive Operation III
-Hull Upgrades IV
-Mechanics IV
-Shield Operation III
-Power Grid Management IV
 CPU Management IV
-Capacitor Systems Operation III
+Power Grid Management IV
 Capacitor Management III
-Targeting III
+Capacitor Systems Operation III
+Mechanics IV
+Hull Upgrades III
+Shield Operation III
+Shield Management III
+Navigation IV
+Afterburner III
+Evasive Maneuvering III
+Warp Drive Operation II
+Long Range Targeting III
+Target Management III
 """
 
 
 def seed_starter_plan(plans_dir: Path) -> bool:
-    """Write the starter plan when *plans_dir* holds no .txt at all.
+    """Write the starter plan the first time *plans_dir* is created.
 
-    Keyed on "the folder has no plans" rather than "this file is
-    missing", so a user who deletes the starter does not get it back on
-    every launch.
+    Gated on the directory's EXISTENCE (PlanStore.cs:44's
+    `if (Directory.Exists(plansDir)) return`), not on whether it
+    currently holds any .txt file: a user who deletes their last plan
+    must not get the starter back on the next launch. Keying on "is
+    currently empty" instead would make "I deleted it" and "I never had
+    one" indistinguishable, and reseed every time the folder empties out.
 
     Returns False rather than raising on any filesystem failure: a
     read-only or occupied state directory costs the starter plan, not
@@ -224,9 +277,9 @@ def seed_starter_plan(plans_dir: Path) -> bool:
     configure_logging() take with a missing resource.
     """
     try:
-        plans_dir.mkdir(parents=True, exist_ok=True)
-        if any(plans_dir.glob("*.txt")):
+        if plans_dir.is_dir():
             return False
+        plans_dir.mkdir(parents=True)
         (plans_dir / f"{STARTER_PLAN_NAME}.txt").write_text(
             _STARTER_PLAN, encoding="utf-8")
     except OSError:

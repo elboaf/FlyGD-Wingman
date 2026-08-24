@@ -7,7 +7,7 @@ at the write.
 """
 import pytest
 
-from obs_youtube_uploader.eveskills import plans, planstore
+from obs_youtube_uploader.eveskills import planstore
 
 
 # ---------------------------------------------------------------------------
@@ -117,15 +117,15 @@ def write_plan(folder, stem, body="Navigation IV\n"):
 def test_a_missing_folder_lists_nothing_without_raising(tmp_path):
     """The folder is created on first launch, but a user can delete it
     while the app is running. That costs an empty roster, not a crash."""
-    found, warnings = planstore.list_plans(tmp_path / "gone")
-    assert found == [] and warnings == []
+    found, issues = planstore.list_plans(tmp_path / "gone")
+    assert found == [] and issues == []
 
 
 def test_each_txt_file_becomes_a_plan_named_by_its_stem(tmp_path):
     write_plan(tmp_path, "Core Ship Skills")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Core Ship Skills"]
-    assert warnings == []
+    assert issues == []
 
 
 def test_the_contents_are_parsed(tmp_path):
@@ -136,16 +136,21 @@ def test_the_contents_are_parsed(tmp_path):
         ("Navigation", 4), ("Mechanics", 3)]
 
 
-def test_a_plan_with_diagnostics_is_listed_and_not_ok(tmp_path):
-    """A broken plan must still appear -- it is the row that carries the
-    diagnostics into the plan-issues disclosure. Dropping it would leave
-    the user with a file on disk and no explanation anywhere."""
+def test_a_plan_that_fails_to_parse_is_excluded_and_reported_as_an_issue(
+    tmp_path,
+):
+    """PlanStore.cs:99-104 drops a plan that fails to parse from Plans
+    entirely -- it becomes an issue only, never selectable. Listing it
+    anyway would let a user select a plan that scores every character
+    Unknown, the same silent-poisoning failure plans.parse's own
+    empty-plan diagnostic exists to prevent."""
     write_plan(tmp_path, "Broken", "Navigation nope\n")
-    found, _ = planstore.list_plans(tmp_path)
-    assert [p.name for p in found] == ["Broken"]
-    assert not found[0].ok
-    assert found[0].requirements == ()
-    assert found[0].diagnostics[0].line == 1
+    found, issues = planstore.list_plans(tmp_path)
+    assert found == []
+    assert len(issues) == 1
+    assert issues[0].file_name == "Broken.txt"
+    assert issues[0].message == "Plan has invalid lines and was not loaded."
+    assert issues[0].diagnostics[0].line == 1
 
 
 def test_non_txt_files_are_ignored(tmp_path):
@@ -162,9 +167,9 @@ def test_a_directory_named_like_a_plan_is_ignored(tmp_path):
     file the user never created."""
     (tmp_path / "Folder.txt").mkdir(parents=True)
     write_plan(tmp_path, "Real")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Real"]
-    assert warnings == []
+    assert issues == []
 
 
 def test_plans_are_sorted_case_insensitively(tmp_path):
@@ -182,9 +187,9 @@ def test_an_undecodable_file_warns_and_does_not_stop_the_others(tmp_path):
     per-entry tolerance preview/layout.py takes."""
     write_plan(tmp_path, "Good")
     (tmp_path / "Bad.txt").write_bytes(b"\xff\xfe\x00\x00Navigation")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Good"]
-    assert len(warnings) == 1 and "Bad.txt" in warnings[0]
+    assert len(issues) == 1 and issues[0].file_name == "Bad.txt"
 
 
 def test_at_most_200_files_are_read(tmp_path):
@@ -192,9 +197,9 @@ def test_at_most_200_files_are_read(tmp_path):
     rather than failing, because the plans the user can see still work."""
     for n in range(planstore.MAX_PLAN_FILES + 5):
         write_plan(tmp_path, f"Plan{n:04d}")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert len(found) == planstore.MAX_PLAN_FILES
-    assert len(warnings) == 1 and "200" in warnings[0]
+    assert len(issues) == 1 and "200" in issues[0].message
 
 
 def test_the_cap_keeps_the_first_files_in_sort_order(tmp_path):
@@ -216,11 +221,12 @@ def test_a_file_whose_stem_fails_validation_is_skipped_with_an_issue(tmp_path):
     not a file -- would be handed to the parser as an ordinary plan."""
     write_plan(tmp_path, "CON")
     write_plan(tmp_path, "Real")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Real"]
-    assert len(warnings) == 1
-    assert "CON.txt" in warnings[0]
-    assert "reserved" in warnings[0].lower()
+    assert len(issues) == 1
+    assert issues[0].file_name == "CON.txt"
+    assert "reserved" in issues[0].message.lower()
+    assert issues[0].diagnostics == ()
 
 
 def test_a_stem_with_a_windows_invalid_character_is_skipped(tmp_path):
@@ -231,9 +237,9 @@ def test_a_stem_with_a_windows_invalid_character_is_skipped(tmp_path):
     user-typed name (PlanStore.cs:81-85)."""
     write_plan(tmp_path, "Bad:Name")
     write_plan(tmp_path, "Real")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Real"]
-    assert len(warnings) == 1 and "Bad:Name.txt" in warnings[0]
+    assert len(issues) == 1 and issues[0].file_name == "Bad:Name.txt"
 
 
 # --- Mandatory correction 2: reject stems colliding case-insensitively ---
@@ -245,11 +251,12 @@ def test_a_case_differing_pair_of_stems_collides(tmp_path):
     invisibly, on every reload."""
     write_plan(tmp_path, "Rifter")
     write_plan(tmp_path, "rifter")
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Rifter"]
-    assert len(warnings) == 1
-    assert "rifter.txt" in warnings[0]
-    assert "collides case-insensitively" in warnings[0]
+    assert len(issues) == 1
+    assert issues[0].file_name == "rifter.txt"
+    assert issues[0].message == (
+        "Plan name collides case-insensitively with another file.")
 
 
 def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
@@ -263,10 +270,10 @@ def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
                                # proves nothing
     write_plan(tmp_path, nfc)
     write_plan(tmp_path, nfd)
-    found, warnings = planstore.list_plans(tmp_path)
+    found, issues = planstore.list_plans(tmp_path)
     assert len(found) == 1
-    assert len(warnings) == 1
-    assert "collides case-insensitively" in warnings[0]
+    assert len(issues) == 1
+    assert "collides case-insensitively" in issues[0].message
 
 
 # --- Mandatory correction 3: bound the read by file size before reading ---
@@ -284,12 +291,12 @@ def test_an_oversized_file_is_rejected_by_size_before_its_contents_are_read(
     structural, in the code path, not in what a unit test can observe."""
     write_plan(tmp_path, "Good")
     oversized = tmp_path / "Huge.txt"
-    oversized.write_bytes(b"x" * (plans.MAX_CONTENT_CHARS + 1))
-    found, warnings = planstore.list_plans(tmp_path)
+    oversized.write_bytes(b"x" * (planstore.MAX_PLAN_FILE_BYTES + 1))
+    found, issues = planstore.list_plans(tmp_path)
     assert [p.name for p in found] == ["Good"]
-    assert len(warnings) == 1
-    assert "Huge.txt" in warnings[0]
-    assert "512" in warnings[0]
+    assert len(issues) == 1
+    assert issues[0].file_name == "Huge.txt"
+    assert "512" in issues[0].message
 
 
 # ---------------------------------------------------------------------------
@@ -315,18 +322,31 @@ def test_the_starter_plan_parses_cleanly(tmp_path):
     plan-issues disclosure about a file they did not write."""
     folder = tmp_path / "skill_plans"
     planstore.seed_starter_plan(folder)
-    found, warnings = planstore.list_plans(folder)
-    assert warnings == []
+    found, issues = planstore.list_plans(folder)
+    assert issues == []
     assert len(found) == 1 and found[0].ok
     assert found[0].requirements
 
 
-def test_seeding_is_skipped_when_any_txt_is_present(tmp_path):
-    """Keyed on "the folder has no plans", not on "this file is
-    missing": a user who deletes the starter must not get it back on
-    every launch."""
+def test_seeding_is_skipped_when_the_folder_already_exists(tmp_path):
+    """Gated on the directory's EXISTENCE (PlanStore.cs:44), checked
+    once at creation -- not on "does it currently hold a .txt". A
+    pre-existing folder with the user's own plan in it must not also
+    get the starter dropped into it."""
     folder = tmp_path / "skill_plans"
     write_plan(folder, "My Own Plan")
+    assert planstore.seed_starter_plan(folder) is False
+    assert not (folder / "Core Ship Skills.txt").exists()
+
+
+def test_seeding_is_skipped_once_the_folder_exists_even_if_emptied(tmp_path):
+    """The divergence this corrects: gating on "the folder currently
+    holds no .txt" (rather than on its existence) would silently
+    resurrect the starter plan the moment a user deletes their last
+    plan file, making "I deleted it" indistinguishable from "I never
+    had one". PlanStore.cs:44 seeds once, at creation, and never again."""
+    folder = tmp_path / "skill_plans"
+    folder.mkdir()
     assert planstore.seed_starter_plan(folder) is False
     assert not (folder / "Core Ship Skills.txt").exists()
 
@@ -354,3 +374,4 @@ def test_the_starter_plan_name_passes_validation():
     """It is written by us and selected by name like any other, so it
     has to satisfy the same rules a user-typed name does."""
     assert planstore.validate_plan_name(planstore.STARTER_PLAN_NAME) == ""
+
