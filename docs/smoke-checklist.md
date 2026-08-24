@@ -849,3 +849,55 @@ pytest — the engine is AutoHotkey.
       respectively. Nobody has observed this; it is reasoning only
 - [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
       the application as **files**, not as directories containing a licence
+
+## EVE client previews
+
+Requires a Windows machine with at least two EVE clients running. None of
+this is covered by pytest: the window, the pump, and DWM compositing all
+need a real desktop.
+
+Enable previews in Settings before starting.
+
+- [ ] Two clients running gives two previews, each showing live video, not
+      a frozen frame. A still image means the thumbnail registered but the
+      source is minimised or occluded — check the log for
+      `DwmRegisterThumbnail failed`.
+- [ ] Each preview's label shows the character name, in Inter — not a
+      blocky bitmap face. A bitmap face means the bundled font did not
+      load; the log says so explicitly.
+- [ ] Clicking a preview brings that client to the foreground. If nothing
+      happens, the log has `Activation of 0x… did not take` at debug.
+- [ ] Dragging a preview moves it. Dragging near another preview or a
+      screen edge snaps it flush.
+- [ ] Dragging the bottom-right corner resizes it, and the video follows
+      the frame rather than staying its old size or spilling past the
+      border.
+- [ ] Dragging a preview smaller and smaller floors it instead of
+      inverting. An inverted rect makes the video vanish silently.
+- [ ] Restart Wingman: previews return to their saved positions and sizes.
+- [ ] Close one EVE client. Its preview disappears within ~1s; the others
+      keep rendering and do not flicker or jump.
+- [ ] Close every EVE client. No previews remain, nothing crashes, and
+      Wingman still responds.
+- [ ] Start a client again with Wingman still running: a preview appears
+      for it, at its saved position if that character had one.
+- [ ] Log in a character that has never been previewed while others are
+      already placed: it gets a free slot rather than landing on top of an
+      existing preview.
+- [ ] Disable previews in Settings. Every preview vanishes and the
+      `wingman-preview` thread exits — check Task Manager shows no extra
+      thread and the log has no "did not exit within" warning.
+- [ ] Re-enable: previews come back, still in their saved positions.
+- [ ] Quit Wingman with previews enabled. The process fully exits — it
+      must not linger in Task Manager after leaving the tray.
+- [ ] **Two monitors at different scale factors** (e.g. 100% and 200%):
+      previews land where dropped on both, at the right size, and dragging
+      one across the boundary does not halve or double it. This is the
+      thread-local DPI work; it is the item most likely to fail and the
+      hardest to notice on a single-monitor machine.
+- [ ] Check the log for one line reporting the DPI override result, and no
+      repeated warnings during an idle minute — the 700ms sweep must be
+      silent when nothing changes.
+- [ ] Frozen build only: run the packaged app and confirm labels still
+      render in Inter. The font is a `datas` entry, and PyInstaller exits 0
+      when one resolves to nothing.
