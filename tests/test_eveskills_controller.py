@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from obs_youtube_uploader.eveskills import esi as esi_mod
+from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
 
@@ -71,7 +73,7 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
         plans_dir=plans_dir,
         push=lambda handler, payload: pushed.append((handler, payload)),
         alert=lambda kind, title, body: alerts.append((kind, title, body)),
-        client=object(),
+        client=kwargs.pop("client", None) or object(),
         now=kwargs.pop("now", Clock()),
         **kwargs)
     return controller, pushed, alerts
@@ -266,3 +268,126 @@ def test_a_failing_opener_warns_instead_of_raising(tmp_path):
     controller.open_plans_folder()
 
     assert alerts and alerts[0][0] == "warning"
+
+
+# ----- refresh worker fakes -------------------------------------------------
+
+
+def esi_response(status, data=None, etag="", error="", path="/x/"):
+    return esi_mod.EsiResponse(status=status, data=data, error=error,
+                               etag=etag, method="GET", path=path)
+
+
+SKILLS_BODY = {"skills": [{"skill_id": 3327, "active_skill_level": 4,
+                           "trained_skill_level": 5}]}
+QUEUE_BODY = [{"skill_id": 3327, "finished_level": 5, "queue_position": 0,
+               "start_date": "2026-08-24T12:00:00Z",
+               "finish_date": "2026-08-26T12:00:00Z"}]
+
+
+class FakeEsi:
+    """Replays scripted responses per path suffix, and records every call.
+
+    Keyed on the suffix rather than the whole path so a test does not have
+    to repeat the character id. A path with no script is an assertion
+    failure, not a default -- an unexpected ESI call is exactly the bug
+    these tests exist to catch.
+    """
+
+    def __init__(self, skills=None, queue=None):
+        self.skills = list(skills or [esi_response(200, SKILLS_BODY, etag='"s1"')])
+        self.queue = list(queue or [esi_response(200, QUEUE_BODY, etag='"q1"')])
+        self.calls = []
+        self.on_get = None
+        self._hooked = False
+
+    def get(self, path, *, token=None, etag=None):
+        self.calls.append((path, token, etag))
+        if self.on_get is not None and not self._hooked:
+            self._hooked = True          # Fires once, or the test never ends.
+            self.on_get(path)
+        script = self.skills if path.endswith("/skills/") else self.queue
+        assert script, f"unscripted ESI call: {path}"
+        return script.pop(0) if len(script) > 1 else script[0]
+
+    def post(self, path, body, *, token=None):
+        raise AssertionError(f"unexpected POST {path}")
+
+
+class FakeSso:
+    """sso.refresh_token without a network.
+
+    Only the functions the controller calls are defined. OAuthError itself
+    is NOT faked: the controller's `except` clause names the real class from
+    the real module, so a fake raising anything else would pass a test the
+    production path would fail.
+    """
+
+    def __init__(self, expires_in=1200, raises=None):
+        self.expires_in = expires_in
+        self.raises = raises
+        self.refreshes = []
+
+    def refresh_token(self, token, **kwargs):
+        self.refreshes.append(token)
+        if self.raises is not None:
+            raise self.raises
+        return sso_mod.TokenSet(access_token=f"access-{len(self.refreshes)}",
+                                refresh_token=f"refresh-{len(self.refreshes)}",
+                                expires_in=self.expires_in)
+
+
+class DirectSpawn:
+    """Runs the worker inline on `.start()`, so no test waits on a thread."""
+
+    def __init__(self):
+        self.started = 0
+
+    def __call__(self, *, target, daemon=False):
+        self.started += 1
+        return SimpleNamespace(start=target)
+
+
+@pytest.fixture(autouse=True)
+def plaintext_tokens(monkeypatch):
+    """DPAPI is Windows-only, so the crypt seam is bypassed for the suite.
+
+    tokens.py's own tests cover wrap/unwrap and the undecryptable blob.
+    Here the token is a value the controller carries, and encrypting it
+    would only make the assertions unreadable.
+    """
+    from obs_youtube_uploader.eveskills import tokens as tokens_mod
+    monkeypatch.setattr(tokens_mod, "wrap", lambda token, **kw: token)
+    monkeypatch.setattr(tokens_mod, "unwrap", lambda blob, **kw: blob or None)
+
+
+def test_two_concurrent_refreshes_produce_exactly_one_worker(tmp_path):
+    """Ported from TriffSkillsController.cs:358. A second worker would send
+    two ESI calls per character for the same data, doubling the pressure on
+    the error-limit budget to compute the same answer twice -- and both
+    workers would commit into the same roster."""
+    spawn = DeferredSpawn()
+    controller, _, _ = build(tmp_path, spawn=spawn)
+
+    controller.refresh_characters()
+    controller.refresh_characters()
+
+    assert len(spawn.targets) == 1
+
+
+def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
+    """The latch drops the *worker*, never the *request*. A refresh clicked
+    while one is running must still produce fresh data -- otherwise the
+    button silently does nothing during the twenty seconds a forty-character
+    pass takes, which reads as a broken button."""
+    character = state_mod.Character(character_id=95, refresh_token_blob="blob")
+    esi = FakeEsi()
+    controller = None
+    esi.on_get = lambda path: controller.refresh_characters()  # once; see below
+    controller, _, _ = build(tmp_path, characters=[character], client=esi,
+                             sso=FakeSso(), spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    # Two passes over the one character: two skills calls, two queue calls.
+    assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
