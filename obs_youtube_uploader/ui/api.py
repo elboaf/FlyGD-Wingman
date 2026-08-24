@@ -1474,7 +1474,9 @@ class Api:
     def save_client_layout(self) -> dict:
         """Snapshot where every named client sits."""
         if self._client_layouts is None:
-            return {"saved": 0, "persisted": True}
+            # Same three keys as the manager's, so the page never has to
+            # ask which path produced the answer.
+            return {"saved": 0, "persisted": True, "failed": 0}
         return self._client_layouts.save_now()
 
     def restore_client_layout(self) -> dict:

@@ -229,7 +229,7 @@ class FakeClientLayouts:
 
     def save_now(self):
         self.saves += 1
-        return {"saved": 3, "persisted": True}
+        return {"saved": 3, "persisted": True, "failed": 0}
 
     def restore_now(self):
         self.restores += 1
@@ -271,7 +271,8 @@ def _no_disk(monkeypatch):
 def test_save_client_layout_passes_the_count_through(tmp_path):
     manager = FakeClientLayouts()
     api = make_api(tmp_path, client_layouts=manager)
-    assert api.save_client_layout() == {"saved": 3, "persisted": True}
+    assert api.save_client_layout() == {"saved": 3, "persisted": True,
+                                        "failed": 0}
     assert manager.saves == 1
 
 
@@ -291,7 +292,8 @@ def test_the_client_layout_endpoints_are_no_ops_without_a_manager(
     """
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
-    assert api.save_client_layout() == {"saved": 0, "persisted": True}
+    assert api.save_client_layout() == {"saved": 0, "persisted": True,
+                                        "failed": 0}
     assert api.restore_client_layout() == {"restored": 0, "skipped": 0}
     assert api.set_restore_clients_on_launch(True) is True
     api.shutdown_client_layouts()
@@ -426,6 +428,23 @@ def test_main_tears_the_client_layout_watcher_down():
     from obs_youtube_uploader import __main__ as main_mod
 
     assert "shutdown_client_layouts()" in inspect.getsource(main_mod.main)
+
+
+def test_the_save_button_does_not_blame_an_empty_desktop_for_a_read_failure():
+    """saved: 0 has two causes and the card used to name only one. The
+    page has no test harness, so this asserts on its source the way
+    test_the_client_window_card_lives_on_the_previews_route does."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    js = (root / "obs_youtube_uploader" / "web"
+          / "settings.js").read_text(encoding="utf-8")
+    block = js.split("save_client_layout")[1]
+    assert "res.failed" in block, "the count is returned but never read"
+    # The "nothing is running" message must sit behind a res.failed check,
+    # not fire for every saved: 0.
+    guard = block.split("No named clients are running")[0]
+    assert "res.failed" in guard.split("if (!res.saved)")[1]
 
 
 def test_the_client_window_card_lives_on_the_previews_route():

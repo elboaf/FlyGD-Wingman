@@ -104,7 +104,8 @@ def test_save_stores_every_named_client():
     h = Harness(clients=[client("Pilot One", 1), client("Pilot Two", 2)],
                 placements={1: Placement(Rect(0, 0, 800, 600)),
                             2: Placement(Rect(10, 10, 800, 600), True)})
-    assert h.manager().save_now() == {"saved": 2, "persisted": True}
+    assert h.manager().save_now() == {"saved": 2, "persisted": True,
+                                      "failed": 0}
     stored = h.doc["preview"]["client_layouts"]
     assert set(stored) == {"Pilot One", "Pilot Two"}
     assert stored["Pilot Two"]["maximized"] is True
@@ -140,7 +141,7 @@ def test_save_actually_reaches_the_settings_document_on_disk(tmp_path):
         screen=lambda: SCREEN,
         dpi_context=contextlib.nullcontext)
 
-    assert manager.save_now() == {"saved": 1, "persisted": True}
+    assert manager.save_now() == {"saved": 1, "persisted": True, "failed": 0}
 
     reloaded = settings_mod.load(path)
     assert "Pilot" in reloaded["preview"]["client_layouts"]
@@ -187,13 +188,45 @@ def test_save_reports_a_failed_write_rather_than_a_false_success():
     h = Harness(clients=[client("Pilot", 1)],
                 placements={1: Placement(Rect(0, 0, 800, 600))},
                 raise_on_save=OSError("disk full"))
-    assert h.manager().save_now() == {"saved": 1, "persisted": False}
+    assert h.manager().save_now() == {"saved": 1, "persisted": False,
+                                      "failed": 0}
 
 
 def test_save_does_not_write_when_it_found_nothing():
     h = Harness(clients=[])
-    assert h.manager().save_now() == {"saved": 0, "persisted": True}
+    assert h.manager().save_now() == {"saved": 0, "persisted": True,
+                                      "failed": 0}
     assert h.writes == 0
+
+
+def test_save_separates_nothing_running_from_nothing_readable():
+    """Both return saved: 0. Reporting "no clients are running" for the
+    second is false, and the user retries a button that cannot work."""
+    nothing_running = Harness(clients=[])
+    assert nothing_running.manager().save_now() == {
+        "saved": 0, "persisted": True, "failed": 0}
+
+    none_readable = Harness(clients=[client("Pilot One", 1),
+                                     client("Pilot Two", 2)])
+    assert none_readable.manager().save_now() == {
+        "saved": 0, "persisted": True, "failed": 2}
+
+
+def test_save_reports_the_clients_it_could_not_read():
+    """Saying "Saved 1" while silently dropping the other is how a
+    missing client position goes unnoticed until the next restart."""
+    h = Harness(clients=[client("Good", 1), client("Unreadable", 2)],
+                placements={1: Placement(Rect(0, 0, 800, 600))})
+    assert h.manager().save_now() == {
+        "saved": 1, "persisted": True, "failed": 1}
+
+
+def test_save_does_not_count_character_select_clients_as_failures():
+    """They are excluded before any read is attempted, so they are not a
+    failure to report -- reporting them would send the user hunting for
+    a problem that does not exist."""
+    h = Harness(clients=[client("hwnd:0xdead", 1)])
+    assert h.manager().save_now()["failed"] == 0
 
 
 # ---- restore ------------------------------------------------------------

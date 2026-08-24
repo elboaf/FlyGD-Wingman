@@ -267,7 +267,19 @@
         return;
       }
       if (!res.saved) {
-        say('No named clients are running. Nothing to save.');
+        // `failed` is what separates "nothing was running" from "every
+        // running client refused to be read". Only the log could tell
+        // them apart before (clientlayout.py:96).
+        say(res.failed
+            ? 'Could not read the position of any running client.'
+            : 'No named clients are running. Nothing to save.');
+        return;
+      }
+      if (res.failed) {
+        say('Saved ' + plural(res.saved, 'client position.',
+                              'client positions.')
+            + ' Could not read ' + plural(res.failed, 'other.',
+                                          'others.'));
         return;
       }
       say('Saved ' + plural(res.saved, 'client position.',
