@@ -79,7 +79,13 @@ def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
 
 
 def virtual_desktop(metrics) -> Rect:
-    """Union of every monitor, from four GetSystemMetrics values.
+    """Bounding rectangle of every monitor, from four GetSystemMetrics values.
+
+    This is NOT the union of the monitors. SM_*VIRTUALSCREEN describes the
+    smallest rectangle containing them all, so any arrangement that is not
+    flush-aligned leaves dead zones inside it that belong to no display.
+    Placement must therefore be clamped with `clamp_to_monitors`; treating
+    this rect as safe space is what put previews off-screen.
 
     Pure so the negative-origin case is testable: a monitor to the left of
     or above the primary makes x or y negative, and code that assumes a
@@ -90,3 +96,86 @@ def virtual_desktop(metrics) -> Rect:
     at the boundary.
     """
     return Rect(metrics(76), metrics(77), metrics(78), metrics(79))
+
+
+def stack_monitor(monitors: list, screen: Rect) -> Rect:
+    """The display `default_stack` should build down.
+
+    The default stack has always run down the right-hand edge. Handing it
+    the virtual desktop makes that the right edge of the BOUNDING BOX,
+    whose top belongs to whichever monitor happens to reach highest --
+    usually not the one the stack is actually descending. Rows then start
+    above the target display, and the first one lands in dead space.
+
+    Clamping alone cannot repair that. A clamped row 0 is pulled down onto
+    row 1, and row 1 itself keeps a partial overhang: it overlaps the
+    monitor enough to escape the clamp while its label band, which is the
+    top ~35px, stays in the dead zone.
+
+    Choosing the rightmost display and stacking inside it fixes both at
+    the source, and keeps the x-coordinate the stack already used -- the
+    rightmost monitor's right edge is the bounding box's right edge.
+
+    Falls back to *screen* when enumeration gave nothing, which reproduces
+    the previous behaviour rather than inventing a new one.
+    """
+    if not monitors:
+        return screen
+    # Tie broken by the topmost, so a stacked pair of right-edge monitors
+    # is deterministic rather than dependent on enumeration order.
+    return max(monitors, key=lambda m: (m.right, -m.y))
+
+
+def _intersects(rect: Rect, monitor: Rect) -> bool:
+    return not (rect.right <= monitor.x or rect.x >= monitor.right
+                or rect.bottom <= monitor.y or rect.y >= monitor.bottom)
+
+
+def clamp_to_monitors(rect: Rect, monitors: list) -> Rect:
+    """Pull *rect* onto the nearest monitor if it is on none of them.
+
+    `virtual_desktop` is a bounding rectangle, not the union of the
+    monitors inside it. Whenever monitors are not flush-aligned -- a 4K
+    primary spanning y 0..2160 beside a 1440p panel starting at y 291, say
+    -- the difference is dead zone: coordinates that are inside the
+    bounding box and on no display at all.
+
+    A preview placed there is not merely misplaced, it is unrecoverable.
+    It renders to nothing, so the user cannot find it, and it cannot be
+    dragged, so it can never acquire the saved position that would rescue
+    it on the next launch.
+
+    It is the FIRST preview of a column that lands there -- `default_stack`
+    anchors row 0 at `screen.y + EDGE_MARGIN`, which is the top of the
+    bounding box rather than the top of any monitor. Later rows clear the
+    dead zone on their own. That makes this the common case rather than a
+    rare one: the first preview placed when none are saved yet.
+
+    The same clamp covers a saved layout whose monitor has since been
+    unplugged, which fails identically and for the same reason.
+
+    Monitors are passed in rather than read here so this stays pure: the
+    Win32 enumeration belongs at the boundary, and the dead-zone case is
+    only testable off-Windows if the arrangement is an argument.
+    """
+    if not monitors or any(_intersects(rect, m) for m in monitors):
+        return rect
+
+    def distance(m: Rect) -> int:
+        # Distance between the RECTS, not between their centres. Centre
+        # distance is wrong in a way that only shows on mixed sizes: a
+        # small monitor's centre sits close to its own edges, so a distant
+        # small display can beat an immediately adjacent large one. A rect
+        # 10px off the side of a 4K primary would be thrown onto a 1024x768
+        # corner panel 1132px away. Zero for a monitor that contains it.
+        dx = max(m.x - rect.right, rect.x - m.right, 0)
+        dy = max(m.y - rect.bottom, rect.y - m.bottom, 0)
+        return dx * dx + dy * dy
+
+    target = min(monitors, key=distance)
+    # max(...) on the upper bound keeps a preview larger than the monitor
+    # pinned to the monitor's origin. Without it the upper bound goes
+    # negative, and the rect ends up hanging off the origin side instead.
+    x = min(max(rect.x, target.x), max(target.x, target.right - rect.w))
+    y = min(max(rect.y, target.y), max(target.y, target.bottom - rect.h))
+    return Rect(x, y, rect.w, rect.h)

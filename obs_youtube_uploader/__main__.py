@@ -1,5 +1,6 @@
 """Entry point: single-instance tray application."""
 import logging
+import os
 import sys
 import threading
 from dataclasses import dataclass
@@ -21,6 +22,36 @@ FAILURE_NOTIFY_THRESHOLD = 5  # ~15s of consecutive poll failures at POLL_SECOND
 # start(), and exit 0, which is a silent no-op for the user and a false
 # success for anything watching the process.
 EXIT_NO_WEBVIEW2 = 2
+
+
+def _log_level() -> int:
+    """Root log level, overridable with WINGMAN_LOG_LEVEL.
+
+    INFO is right for normal running. It is wrong when the preview
+    subsystem misbehaves in the field: that half is Windows-only, verified
+    by a manual checklist rather than by pytest, so the log is the only
+    evidence anyone has. Several of its load-bearing diagnostics are
+    logger.debug -- whether WM_HOTKEY reached the message-only window,
+    whether the thread's DPI override was accepted, why a placement read
+    failed -- and INFO discards all of them. One checklist item asks the
+    reader to "check the log for the DPI override result", which was not
+    possible to do at all before this existed.
+
+    An unrecognised name falls back to INFO rather than raising:
+    logging.getLevelName returns the string "Level BANANAS" for an unknown
+    name instead of failing, and handing that to setLevel would take
+    logging down at startup over a typo in an environment variable.
+
+    Raising this to DEBUG is safe with respect to secrets: the redaction
+    filter is attached to the HANDLER below, so library records that only
+    appear at DEBUG pass through it too. pywebview's own DEBUG chatter is
+    silenced separately in ui/window.py.
+    """
+    raw = os.environ.get("WINGMAN_LOG_LEVEL", "").strip().upper()
+    if not raw:
+        return logging.INFO
+    level = logging.getLevelName(raw)
+    return level if isinstance(level, int) else logging.INFO
 
 
 def configure_logging() -> None:
@@ -61,7 +92,7 @@ def configure_logging() -> None:
         handler.addFilter(discord.RedactingFilter(_current_webhook))
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
+        root_logger.setLevel(_log_level())
     except OSError:
         pass  # Logging is best-effort; must never block startup.
 
