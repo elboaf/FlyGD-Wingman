@@ -41,6 +41,25 @@ When the author ships a new revision, replace this file and re-apply the
 integration layer marked `WINGMAN` in the engine, rather than porting
 changes across by hand. Hand-porting is how the last divergence happened.
 
+### The one deliberate behaviour divergence
+
+`DoQ` (Grab Sig ID) is the single handler whose behaviour is **not** the
+author's. His version sends `^c` onto whatever the clipboard already holds
+and ignores `ClipWait`'s `ErrorLevel`, so a copy that does not land reads
+the previous contents — and `ClipWait` returns at once rather than stalling,
+because the clipboard is not empty. Since `DoSemi` ends with
+`Clipboard := RootKey`, straight after a Set Root that stale content is the
+root, and a failed Grab Sig turns root `J214811` into sig `-J21`, which then
+goes into real bookmarks with nothing reporting a problem.
+
+Wingman's version clears first and checks `ErrorLevel`, which is the
+clear-then-check shape the author already uses in `DoConvertScout`. Keep it
+across a re-vendor. It is worth offering back upstream — it is a bug in his
+script, not a Wingman-specific need, and the fix is his own pattern.
+
+Pinned by `test_no_clipboard_read_can_pick_up_stale_data` and
+`test_grab_sig_reports_a_failed_copy`.
+
 ## See also
 
 `docs/bookmarks_reference.md` is the helper author's usage documentation —

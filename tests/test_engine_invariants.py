@@ -330,3 +330,65 @@ def test_globals_written_inside_functions_are_declared(source):
     # Guards against the whole loop quietly matching nothing, which is
     # exactly how the previous version of this test died.
     assert checked, "no function touched a watched global -- test is vacuous"
+
+
+def _label_body(source, label):
+    match = re.search(r"^" + label + r":\n(.*?)^Return$", source,
+                      re.DOTALL | re.MULTILINE)
+    assert match, f"{label} not found"
+    return match.group(1)
+
+
+# Every handler that copies a selection out of EVE in order to read it.
+_CLIPBOARD_READERS = ("DoQ", "DoSemi", "DoConvertScout", "ReadField")
+
+
+def test_no_clipboard_read_can_pick_up_stale_data(source):
+    """A handler must clear the clipboard before its own `Send ^c`.
+
+    Without the clear, a copy that does not land -- focus not where the user
+    thought, EVE dropping the synthetic keystroke, another process holding
+    the clipboard lock -- leaves the PREVIOUS contents in place. `ClipWait`
+    then returns immediately and successfully, because the clipboard is not
+    empty, so there is not even the two-second stall that would hint at
+    trouble, and the handler reads whatever was already there.
+
+    That was live in DoQ, and it was the worst instance available: DoSemi
+    ends with `Clipboard := RootKey`, so straight after a Set Root the
+    clipboard holds the root. A failed Grab Sig took its first three
+    characters as the signature -- root J214811 becoming sig "-J21" -- and
+    FireRootFinisher then baked that into real bookmarks, with the status
+    bar showing it like any ordinary signature. A confident wrong answer
+    with no tell anywhere.
+
+    Clearing first converts every one of those failures into an empty read,
+    which each handler already treats as "nothing was selected".
+    """
+    for label in _CLIPBOARD_READERS:
+        body = _label_body(source, label)
+        assert "Send ^c" in body, label
+        before = body[:body.index("Send ^c")]
+        assert re.search(r"Clipboard\s*:=\s*\"\"", before), (
+            f"{label} sends ^c without first clearing the clipboard, so a "
+            f"failed copy silently reads whatever was already there")
+
+
+def test_grab_sig_reports_a_failed_copy(source):
+    """DoQ must check ClipWait's ErrorLevel, not just read what it finds.
+
+    Clearing the clipboard (above) turns a failed copy into an empty read,
+    which stops the wrong-signature bug -- but on its own it would make a
+    failed Grab Sig indistinguishable from a successful one, since the next
+    finisher would simply paste a bookmark with no sig at all and say
+    nothing about why.
+
+    Checked here and not for the other readers because DoQ is the one whose
+    result is carried forward into later actions. DoSemi's failure is
+    visible in the tooltip and the status bar, and ReadField's is a paste
+    that does nothing; the author's script leaves both unchecked and this
+    does not change that. DoConvertScout already reports its own.
+    """
+    body = _label_body(source, "DoQ")
+    assert re.search(r"if\s*\(ErrorLevel\)", body), \
+        "DoQ ignores ClipWait's ErrorLevel, so a failed copy is silent"
+    assert "ToolTip" in body, "DoQ has no way to tell the user the copy failed"
