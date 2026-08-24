@@ -494,3 +494,139 @@ def test_cached_skill_data_survives_a_failure(tmp_path):
     controller, _, _ = run_refresh(tmp_path, esi)
 
     assert controller._state.characters[0].active_levels == {3327: 3}
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_definitive_failure_needs_reauth_and_deletes_the_token(tmp_path, status):
+    """403, and 401 that survives one retry, are definitive: the grant is
+    gone or no longer carries the scope, and only a fresh consent screen
+    fixes either. Keeping the token would retry a dead grant on every
+    refresh forever."""
+    esi = FakeEsi(skills=[esi_response(status, error="denied")])
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is True
+    assert ch.refresh_token_blob == ""
+    assert ch.error == (
+        "EVE rejected the stored authorisation. Re-authenticate this character.")
+    assert ch.active_levels == {3327: 3}, "last-good data still stays visible"
+
+
+def test_a_transient_failure_does_not_ask_for_re_authentication(tmp_path):
+    """A 5xx is ESI having a bad minute. Showing a re-authenticate banner
+    for it would send the user through a consent screen that fixes nothing
+    and costs them their cached snapshot.
+
+    The 503 is from the ESI call, not the SSO one -- the token refresh
+    itself still succeeds, and EVE still rotates the refresh token on that
+    success (TriffSkillsAuthentication.cs:170 does the same unconditional
+    rotation whenever the new token is non-blank). So the blob legitimately
+    becomes the new one; what must NOT happen is needs_reauth or a deleted
+    token, which only a definitive failure causes.
+    """
+    esi = FakeEsi(skills=[esi_response(503, error="busy")])
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is False
+    assert ch.refresh_token_blob == "refresh-1"
+
+
+def test_a_definitive_oauth_error_is_definitive_here_too(tmp_path):
+    """invalid_grant means the refresh token is revoked or already used.
+    OAuthError.definitive is the classification; this asserts the controller
+    honours it rather than inventing a second one."""
+    esi = FakeEsi()
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()], client=esi,
+        sso=FakeSso(raises=sso_mod.OAuthError(400, "invalid_grant", "revoked")),
+        spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    assert esi.calls == [], "no ESI call is worth making without a token"
+
+
+def test_a_transient_oauth_error_keeps_the_token(tmp_path):
+    """An SSO 503 is not a revoked grant. Deleting the token here would cost
+    the user a re-authentication for CCP's downtime."""
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()], client=FakeEsi(),
+        sso=FakeSso(raises=sso_mod.OAuthError(503, "server_error", "down")),
+        spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is False and ch.refresh_token_blob == "blob"
+
+
+def test_a_cached_token_is_reused_across_both_calls(tmp_path):
+    """Two ESI calls per character must not mean two token refreshes. At
+    forty characters that is forty wasted SSO round trips per click."""
+    sso = FakeSso()
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    assert len(sso.refreshes) == 1
+
+
+def test_a_401_forces_exactly_one_refresh_and_one_retry(tmp_path):
+    """The stampede fix. A forced refresh only actually refreshes when the
+    cached token is still the one ESI rejected -- so callers queued behind
+    the first find a token that no longer matches and reuse it, and one
+    stale token produces one refresh rather than N."""
+    sso = FakeSso()
+    esi = FakeEsi(skills=[esi_response(401, error="expired"),
+                          esi_response(200, SKILLS_BODY, etag='"s1"')])
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=esi, sso=sso, spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    skills_calls = [c for c in esi.calls if c[0].endswith("/skills/")]
+    assert len(skills_calls) == 2                     # One 401, one retry.
+    assert skills_calls[0][1] != skills_calls[1][1]   # A different token.
+    # Two refreshes total: the initial mint, and the one the 401 forced.
+    # The queue call that follows reuses the second and adds none.
+    assert len(sso.refreshes) == 2
+
+
+def test_an_expiring_token_is_refreshed_before_it_is_used(tmp_path):
+    """A token that is valid when checked and expired when it lands is a
+    401 the user pays a retry for. The margin covers the round trip."""
+    sso = FakeSso(expires_in=10)      # Inside TOKEN_EXPIRY_MARGIN_S.
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    assert len(sso.refreshes) == 2, "the second call must not reuse it"
+
+
+def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
+    """MANDATORY CORRECTION 1. EVE sometimes omits the refresh token on a
+    refresh response, meaning the previous one is still valid. sso.py
+    reports that as refresh_token="" -- faithful to EveSso.cs, which does
+    not distinguish "omitted" from "empty" at that layer either -- and
+    tokens.wrap("") returns "", the no-token sentinel. Writing that straight
+    into refresh_token_blob would silently erase a valid stored credential;
+    the character then fails definitively on the NEXT refresh with nothing
+    explaining why."""
+
+    class OmittingSso:
+        def __init__(self):
+            self.refreshes = []
+
+        def refresh_token(self, token, **kwargs):
+            self.refreshes.append(token)
+            return sso_mod.TokenSet(access_token="access-1",
+                                    refresh_token="", expires_in=1200)
+
+    sso = OmittingSso()
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    assert len(sso.refreshes) == 1
+    assert controller._state.characters[0].refresh_token_blob == "blob"
