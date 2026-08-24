@@ -200,4 +200,4 @@ def test_copy_atomic_gives_up_after_the_attempt_budget(tmp_path):
     finally:
         monkey.undo()
     assert target.read_bytes() == b"original"
-    assert [p.name for p in tmp_path.iterdir()] == ["dst.dat", "src.dat"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dst.dat", "src.dat"]
