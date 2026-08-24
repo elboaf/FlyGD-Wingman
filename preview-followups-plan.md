@@ -16,7 +16,7 @@
 - **Do not change** `Api.set_preview_enabled`. It has Task 4's shape and is deliberately out of scope.
 - **Do not** implement item 1 (`preview/store.py` onto `settings.update()`). It is deferred; see the design's "Why item 1 is deferred".
 - **Do not** widen `evewindows.list_eve_windows()`.
-- No Win32 calls in tests. CI is `ubuntu-latest` only (`.github/workflows/ci.yml:11`); nothing Win32 executes there.
+- No Win32 calls in tests. CI is `ubuntu-latest` only (`.github/workflows/ci.yml:10`); nothing Win32 executes there.
 - No formatter or linter is configured. Match the surrounding file's style: 4-space indent, comments wrapped near 72 columns, code near 79.
 - Comments explain **intent and tradeoffs**, never restate the code. This repo's existing comments are the standard to match.
 - Baseline before any task: **1070 passed, 4 skipped**.
@@ -49,15 +49,33 @@ Item 2. Independent of every other task. Land it first so later runs are already
 
 **Background the implementer needs:** `paths.state_dir()` (`obs_youtube_uploader/paths.py:14-20`) reads `LOCALAPPDATA` and falls back to `~/.local/share/OBSYouTubeUploader`. Every other path in `paths.py` derives from it. Today the suite writes two real files into whichever of those applies on the developer's machine.
 
+The leak was bisected file-by-file and then test-by-test. Three independent
+mechanisms produce it, and **none** of them is `save_bookmarks` — every test
+in `tests/test_api_bookmarks.py` already redirects `paths.settings_file()`
+through its `api` fixture (`:49-59`) and leaks nothing:
+
+| Where | Count | Mechanism |
+|-------|-------|-----------|
+| `tests/test_api_upload.py` | 15 tests | the upload worker persisting the channel title (`ui/api.py:748-750`) |
+| `tests/test_api_upload.py` | 1 of those | the probe cache writing `durations.json` |
+| `tests/test_preview_wiring.py` | 3 tests | `set_preview_enabled` (`ui/api.py:1259`) |
+
+That spread is the argument for a fixture rather than three more stubs.
+
 Do **not** monkeypatch `paths.settings_file()`. `tests/test_paths.py:16-19` sets `LOCALAPPDATA` itself and then asserts on that function's real return value; patching it breaks that test. Redirecting the environment variable instead lets the test's own `setenv` win, because it runs inside the test body.
 
 - [ ] **Step 1: Reproduce the leak**
 
 ```bash
 rm -rf /tmp/canary-before
+mkdir -p /tmp/canary-before
 LOCALAPPDATA=/tmp/canary-before python -m pytest -q
 find /tmp/canary-before -type f
 ```
+
+`mkdir -p` after the `rm -rf` matters: once the fixture works the directory
+is never created, and `find` on a missing path errors instead of printing
+nothing — which reads as a failure when it is the result you want.
 
 Expected: `1070 passed, 4 skipped`, and `find` lists exactly two files:
 
@@ -76,9 +94,13 @@ Create `tests/conftest.py`:
 """Suite-wide isolation of the application's state directory.
 
 Two files used to land in the developer's real state directory on every
-run -- settings.json through api.save_bookmarks, durations.json through
-the probe cache. Per-test stubs closed the instances anyone happened to
-notice; this closes the class.
+run. Not through save_bookmarks -- test_api_bookmarks.py already
+redirects settings_file() in its api fixture -- but through three other
+paths nobody had stubbed: the upload worker persisting the channel title
+(api.py:748-750, 15 tests in test_api_upload.py), the probe cache
+writing durations.json, and set_preview_enabled (api.py:1259, 3 tests in
+test_preview_wiring.py). Per-test stubs closed the instances someone
+noticed; this closes the class.
 
 LOCALAPPDATA rather than paths.settings_file(): state_dir() reads that
 one variable (paths.py:14-20) and every other path derives from it, so
@@ -103,6 +125,7 @@ def _isolate_state_dir(tmp_path, monkeypatch):
 
 ```bash
 rm -rf /tmp/canary-after
+mkdir -p /tmp/canary-after
 LOCALAPPDATA=/tmp/canary-after python -m pytest -q
 find /tmp/canary-after -type f
 ```
@@ -293,9 +316,45 @@ python -m pytest tests/test_preview_wiring.py -v -k client_layout
 
 Expected: PASS.
 
-- [ ] **Step 9: Make the card tell the truth**
+- [ ] **Step 9: Write the failing card test**
 
-There is no JS test runner in this repo, so this step is verified by reading and by the smoke checklist, not by pytest.
+There is no JS test runner in this repo, and no plan to add one. The
+established substitute is to assert on the frontend's **source text** from
+pytest — `tests/test_preview_wiring.py:415-427` already reads `index.html`
+and asserts the card's element ids are in the previews route, and
+`tests/test_settingsui_copy.py` exists for the same reason ("the dialog
+itself has no test harness"). This pins the specific regression: the false
+message becoming reachable again.
+
+Append to `tests/test_preview_wiring.py`:
+
+```python
+def test_the_save_button_does_not_blame_an_empty_desktop_for_a_read_failure():
+    """saved: 0 has two causes and the card used to name only one. The
+    page has no test harness, so this asserts on its source the way
+    test_the_client_window_card_lives_on_the_previews_route does."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    js = (root / "obs_youtube_uploader" / "web"
+          / "settings.js").read_text(encoding="utf-8")
+    block = js.split("save_client_layout")[1]
+    assert "res.failed" in block, "the count is returned but never read"
+    # The "nothing is running" message must sit behind a res.failed check,
+    # not fire for every saved: 0.
+    guard = block.split("No named clients are running")[0]
+    assert "res.failed" in guard.split("if (!res.saved)")[1]
+```
+
+- [ ] **Step 10: Run it to verify it fails**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k empty_desktop
+```
+
+Expected: FAIL — `settings.js` does not mention `res.failed` yet.
+
+- [ ] **Step 11: Make the card tell the truth**
 
 In `obs_youtube_uploader/web/settings.js`, replace the `save.addEventListener` block (`:260-276`):
 
@@ -331,15 +390,15 @@ In `obs_youtube_uploader/web/settings.js`, replace the `save.addEventListener` b
   });
 ```
 
-- [ ] **Step 10: Run the full suite**
+- [ ] **Step 12: Run the full suite**
 
 ```bash
 python -m pytest -q
 ```
 
-Expected: `1073 passed, 4 skipped` (three tests added).
+Expected: `1074 passed, 4 skipped` (four tests added).
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/clientlayout.py \
@@ -545,7 +604,42 @@ python -m pytest tests/test_preview_wiring.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Update the card**
+- [ ] **Step 6: Write the failing card test**
+
+Same rationale as Task 2 Step 9 — source assertions stand in for a JS test
+runner this repo does not have. Two things are worth pinning here: that the
+unpersisted case is said at all, and that it does **not** revert the box,
+since the watcher really did change state.
+
+Append to `tests/test_preview_wiring.py`:
+
+```python
+def test_the_restore_toggle_says_when_the_choice_will_not_survive():
+    """A silent failed write is how the user finds out at their next
+    restart. Reverting the box would be the opposite lie -- the watcher
+    is running -- so only a bridge failure may revert it."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    js = (root / "obs_youtube_uploader" / "web"
+          / "settings.js").read_text(encoding="utf-8")
+    block = (js.split("set_restore_clients_on_launch")[1]
+               .split("save.addEventListener")[0])
+    assert "res.persisted" in block, "the flag is returned but never read"
+    assert "will not survive a restart" in block
+    # The revert is reachable only from the bridge-failure guard.
+    assert "if (!res)" in block.split("box.checked = !wanted")[0]
+```
+
+- [ ] **Step 7: Run it to verify it fails**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k will_not_survive
+```
+
+Expected: FAIL — the handler still takes a bare `ok` and reads no `persisted`.
+
+- [ ] **Step 8: Update the card**
 
 Replace the `box.addEventListener` block in `obs_youtube_uploader/web/settings.js:251-258`:
 
@@ -570,15 +664,15 @@ Replace the `box.addEventListener` block in `obs_youtube_uploader/web/settings.j
   });
 ```
 
-- [ ] **Step 7: Run the full suite**
+- [ ] **Step 9: Run the full suite**
 
 ```bash
 python -m pytest -q
 ```
 
-Expected: `1076 passed, 4 skipped`.
+Expected: `1078 passed, 4 skipped`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add obs_youtube_uploader/ui/api.py \
@@ -784,17 +878,18 @@ Expected: PASS.
 python -m pytest -q
 ```
 
-Expected: `1081 passed, 4 skipped`.
+Expected: `1083 passed, 4 skipped`.
 
 - [ ] **Step 10: Confirm the suite still writes nothing real**
 
 ```bash
 rm -rf /tmp/canary-final
+mkdir -p /tmp/canary-final
 LOCALAPPDATA=/tmp/canary-final python -m pytest -q
 find /tmp/canary-final -type f
 ```
 
-Expected: `1081 passed, 4 skipped`, and `find` prints nothing.
+Expected: `1083 passed, 4 skipped`, and `find` prints nothing.
 
 - [ ] **Step 11: Commit**
 
@@ -841,4 +936,6 @@ git commit -m "docs: record what this branch closed, and correct one entry"
 
 **Sequencing.** Task 4 before Task 5 is the one hard dependency, stated in both. Tasks 1 and 2 are independent of everything.
 
-**Expected counts.** 1070 → 1073 (Task 2) → 1076 (Task 4) → 1081 (Task 5). Skips stay at 4 throughout; no task adds a `skipif`.
+**Expected counts.** 1070 → 1074 (Task 2: three manager tests plus one card-source test) → 1078 (Task 4: three wiring tests plus one card-source test) → 1083 (Task 5: three manager tests plus two wiring tests). Skips stay at 4 throughout; no task adds a `skipif`.
+
+**Frontend verification.** Neither JS change is behaviourally tested — there is no JS runner here and this plan does not add one. Both are pinned by source assertions instead (Task 2 Step 9, Task 4 Step 6), following `tests/test_preview_wiring.py:415-427`. That catches the regression that matters — a message becoming reachable when it should not be — but it cannot catch a typo in the message text or a runtime error in the handler. `docs/smoke-checklist.md` remains the only check for those.
