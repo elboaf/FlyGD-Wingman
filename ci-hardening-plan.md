@@ -14,7 +14,7 @@
 
 - **Python 3.11** everywhere. `requires-python = ">=3.11"`. Do not add other versions to any matrix — this app ships one frozen interpreter, so testing others tests something nobody runs.
 - **`pywebview==6.2.1` stays exactly pinned.** `pyproject.toml` documents why. Do not relax it, do not let a lockfile refresh move it.
-- **Never print secret values.** The existing credential verification prints only shapes and lengths. Preserve that property in anything you move or rewrite.
+- **Do not widen what the credential check prints.** It currently prints lengths plus `client_id[-30:]` and `client_secret[:7]` (`build.yml`'s `Verify the injected credentials are well-formed`). That is mostly constant material — the ID's trailing `.apps.googleusercontent.com` is 27 of those 30 characters, and `GOCSPX-` is the secret's fixed prefix — so the real exposure is about three characters of client ID. Preserve exactly that, and never print a fuller value when moving the step.
 - **Do not run `ruff format` before Task 5.** Tasks 1–4 must stay reviewable; a reformat mixed into them would bury the real change.
 - **`packages = [...]` in `pyproject.toml` is explicit on purpose.** A missing subpackage installs cleanly and fails at import time inside the frozen build. Never replace it with auto-discovery.
 - **The `AppId` in `packaging/installer.iss` must not change.** It is what makes the rename upgrade in place instead of installing a second copy.
@@ -50,7 +50,7 @@ The hole this closes: `ci.yml` triggers on `push: branches: ["**"]` and `pull_re
 
 Run: `sed -n '/^jobs:/,/steps:/p' .github/workflows/release.yml`
 
-Expected: `jobs:`, then `build:` with `runs-on: windows-latest` and a `permissions: contents: write` block. Note the workflow-level `permissions: {}` above it — the new `test` job inherits that read-only default, which is correct, so do not give it a `permissions` block.
+Expected: `jobs:`, then `build:` with `runs-on: windows-latest` and a `permissions: contents: write` block. Note the workflow-level `permissions: {}` above it — that grants the job token **no** permissions at all, not a read-only default. The new `test` job needs none (`actions/checkout` on a public repo works without a token scope), so give it no `permissions` block and let it inherit the empty set. If checkout ever fails there for want of a scope, add `permissions: {contents: read}` to that job alone rather than loosening the workflow-level default.
 
 - [ ] **Step 2: Add the `test` job to `release.yml`**
 
@@ -62,11 +62,15 @@ Insert immediately after the `jobs:` line, *before* `build:`:
   # neither, so `git tag v3.2.2 && git push --tags` built an installer and
   # published a release without a single test having run.
   #
-  # windows-latest rather than ubuntu: this is the platform being shipped,
-  # and tests/test_preview_win32.py and tests/test_eveskills_dpapi.py only
-  # execute here.
+  # ubuntu-latest for now, DELIBERATELY, even though this ships a Windows
+  # app. The suite has never run on Windows and is not yet green there;
+  # putting windows-latest here would red both workflows immediately and
+  # block Task 2 from proving the composite action. Task 3 fixes Windows
+  # compatibility and then switches this job over. Closing the
+  # zero-tests-on-release hole is worth having a platform-imperfect gate
+  # in the meantime.
   test:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -106,7 +110,9 @@ Insert after `jobs:`, before `build:`:
 
 ```yaml
   test:
-    runs-on: windows-latest
+    # ubuntu-latest deliberately; see the note in release.yml. Task 3
+    # switches both over once the suite is green on Windows.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -152,9 +158,18 @@ neither, so release.yml built an installer and published a GitHub
 release having run zero tests. build.yml did not run them either.
 
 Both now have a test job that build depends on, so Publish is
-unreachable on red. windows-latest because that is the platform being
-shipped and tests/test_preview_win32.py only executes there."
+unreachable on red.
+
+The job runs on ubuntu for now, deliberately, even though this ships a
+Windows app: the suite has never run on Windows and is not green there
+yet. A windows-latest job here would red both workflows immediately.
+Closing the zero-tests-on-release hole is worth having a
+platform-imperfect gate until the Windows work lands and switches it."
 ```
+
+- [ ] **Step 8: Add the follow-up note so the ubuntu choice is not forgotten**
+
+The `ubuntu-latest` above is a deliberate temporary state, and a temporary state with no reminder becomes permanent. Task 3 Step 7 switches it. Confirm that task exists and says so before moving on — if you are executing tasks out of order, this is the dependency to respect.
 
 ---
 
@@ -360,7 +375,7 @@ git add .github/actions/build-installer/action.yml .github/workflows/build.yml .
 git commit -m "Extract the shared Windows build chain into a composite action
 
 build.yml and release.yml carried ~500 duplicated lines and had already
-drifted: build.yml had nine Verify steps to release.yml's eight, and
+drifted: build.yml had eight Verify steps to release.yml's seven, and
 'Verify the app icon is bundled' existed only in build.yml. The workflow
 producing throwaway artifacts was stricter than the one that ships.
 release.yml's copy of the credential injection had also lost the comment
@@ -573,9 +588,30 @@ Read the Windows leg's skip list:
 gh -R elboaf/FlyGD-Wingman run view --log | grep -E 'SKIPPED|passed|skipped' | tail -20
 ```
 
-Expected: the three `tests/test_preview_win32.py` symbol-binding tests and the two `tests/test_eveskills_dpapi.py` tests now **run** rather than skip. `tests/test_preview_host.py:145` may still skip — it needs a real message pump and window station, and GitHub's Windows runners execute in a service context. That one skipping is acceptable; the other five skipping means the matrix is not doing its job.
+**The skip set on Windows is different from the skip set on Linux, and it is not smaller.** Markers point both ways:
 
-- [ ] **Step 7: Squash the WIP commit and write the real message**
+| Test | Marker | Runs on |
+|------|--------|---------|
+| `test_preview_win32.py` (3 tests) | `skipif(sys.platform != "win32")` | Windows only |
+| `test_preview_host.py:145` | `skipif(sys.platform != "win32")` | Windows only |
+| `test_eveskills_dpapi.py:44`, `:51` | `skipif(sys.platform != "win32")` | Windows only |
+| `test_eveskills_dpapi.py:30`, `:38` | `skipif(sys.platform == "win32")` | Linux only |
+| `test_evesettings_tree.py:121` | `skipif(os.name == "nt")` | Linux only |
+
+So the acceptance criterion is: on the Windows leg, **the six Windows-only tests all run**, and exactly **three tests skip** (`dpapi:30`, `dpapi:38`, `evesettings_tree:121`). Any Windows-only test still skipping means the matrix is not doing its job.
+
+Note that `test_preview_host.py:145` will now **execute** rather than skip. Its reason string — "needs a real message pump and window station" — describes what it requires, not a prediction that a runner lacks it. If it fails on GitHub's Windows runner because the service context provides no window station, that is a real finding: report it and decide whether to narrow the marker, rather than silently widening the skip.
+
+- [ ] **Step 7: Switch the `test` jobs in `release.yml` and `build.yml` to Windows**
+
+Task 1 deliberately left those on `ubuntu-latest` because Windows was not green. It is now. Change `runs-on: ubuntu-latest` to `runs-on: windows-latest` in the `test` job of **both** files, and update the comment Task 1 left there to say the switch has happened.
+
+This is the step that makes the release gate test the platform it ships to. Do not skip it — Task 1's comment is written on the assumption that this step exists.
+
+Run: `grep -A1 '^  test:' .github/workflows/release.yml .github/workflows/build.yml`
+Expected: `runs-on: windows-latest` under both.
+
+- [ ] **Step 8: Squash the WIP commit and write the real message**
 
 ```bash
 git reset --soft "$(git merge-base HEAD origin/main)"
@@ -589,6 +625,10 @@ machine. Among them, test_preview_win32.py asserts that every
 user32/gdi32/dwmapi symbol the app binds actually resolves, which is
 exactly the check for a typo that would only fail on a user's machine.
 It was dead code.
+
+Task 1's test jobs in release.yml and build.yml were deliberately left
+on ubuntu until the suite was green here; this switches both to Windows,
+so the release gate now tests the platform being shipped.
 
 Also splits the version-consistency and WebView2-predicate checks into
 their own ubuntu-only job. They are text assertions over files and there
@@ -606,9 +646,11 @@ translation, and file-handle lifetime. The Linux run is unchanged at
 
 ### Task 4: Adopt `ruff check`
 
-Nothing lints anything today: no ruff, black, flake8, mypy, pre-commit, or `.editorconfig`, across 16,160 lines of application Python and 21,590 lines of tests. Ruff's selected rules find 178 issues, 108 auto-fixable — a low density for a never-linted codebase, reflecting real care. The tree already contains fourteen `# noqa: BLE001` comments with explanations attached, so the convention exists.
+Nothing lints anything today: no ruff, black, flake8, mypy, pre-commit, or `.editorconfig`, across 16,160 lines of application Python and 21,590 lines of tests. With the rule selection below, ruff 0.16.4 finds 219 issues, 111 auto-fixable. The tree already contains fourteen `# noqa: BLE001` comments with explanations attached, so the convention exists.
 
 Ruff also reports a **malformed `# noqa` directive at `obs_youtube_uploader/eveskills/controller.py:204`** — it is not valid syntax, so it currently suppresses nothing while looking like it does. Fixing that is part of this task.
+
+**Ruff is pinned, and the version matters.** Rule sets and fix behaviour change between releases, so an unpinned ruff gives every contributor a different finding count and makes the numbers in this plan unreproducible. All counts here are ruff **0.16.4**. Do not run `uvx ruff@latest` — use the pinned version added in Step 1.
 
 **Files:**
 - Modify: `pyproject.toml` (add `[tool.ruff]`)
@@ -649,10 +691,18 @@ select = [
     "S110",   # try-except-pass
     "S112",   # try-except-continue
 ]
+ignore = [
+    # The formatter owns line length. Selecting "E" pulls in E501, which
+    # flags 84 lines here -- and `ruff format` CANNOT fix them, because it
+    # will not split a long string or a comment. Leaving E501 enabled makes
+    # the lint gate unsatisfiable without hand-rewrapping 84 sites for no
+    # benefit the formatter does not already provide.
+    "E501",
+]
 # Not selected, deliberately:
 #   D    -- the docstrings here are unusually good and carry real
 #           reasoning. A formal style gate would produce noise, not signal.
-#   ANN  -- annotating 11k lines is its own project.
+#   ANN  -- annotating 16k lines is its own project.
 #   PL, C901 -- complexity thresholds would flag ui/api.py without
 #           telling anyone something they do not already know.
 #
@@ -667,17 +717,28 @@ select = [
 "tests/*" = ["S110", "S112"]
 ```
 
+Also pin ruff as a dev dependency in the same file, so the version is one thing rather than whatever each contributor's `uvx` resolves:
+
+```toml
+[project.optional-dependencies]
+dev = ["pytest", "ruff==0.16.4"]
+```
+
+Then refresh the lockfile so the pin is real: `uvx uv lock` — and confirm `pywebview` is still exactly `6.2.1` in the diff before continuing.
+
 - [ ] **Step 2: See the damage before touching anything**
 
-Run: `uvx ruff check --statistics .`
+Run: `uv run ruff check --statistics .`
 
-Expected: roughly 178 findings, the largest groups being `I001` (30), `UP017` (25), `F401` (22), and `BLE001` (15). You will also see a warning about the malformed `# noqa` in `eveskills/controller.py`.
+Expected: 219 findings, the largest groups being `I001` (30), `UP017` (25), `F401` (22), `SIM105` (20), and `BLE001` (15). You will also see a warning about the malformed `# noqa` in `eveskills/controller.py`.
+
+If you get a materially different count, check which ruff you invoked. `uvx ruff@latest` is not the pinned version and will not reproduce these numbers.
 
 - [ ] **Step 3: Apply the safe automatic fixes**
 
-Run: `uvx ruff check --fix .`
+Run: `uv run ruff check --fix .`
 
-Expected: about 108 findings resolved. Do **not** pass `--unsafe-fixes`; the 27 fixes behind that flag change behaviour and each needs an individual decision.
+Expected: about 111 findings resolved. Do **not** pass `--unsafe-fixes`; the 40 fixes behind that flag change behaviour and each needs an individual decision.
 
 - [ ] **Step 4: Confirm the auto-fixes broke nothing**
 
@@ -704,7 +765,7 @@ Kept separate from the hand-written fixes so those stay reviewable."
 
 - [ ] **Step 6: Fix the remaining findings by hand**
 
-Run: `uvx ruff check --output-format concise .` and work the list. The categories and their fixes:
+Run: `uv run ruff check --output-format concise .` and work the list. The categories and their fixes:
 
 **`F821` at `obs_youtube_uploader/ui/window.py:158`** — not a live bug. The signature is `def create(api) -> "webview.Window"`; the annotation is a string and is never evaluated, and `webview` is imported lazily inside the function for documented reasons. Make the intent explicit:
 
@@ -750,7 +811,7 @@ Where a naive local time is genuinely intended — a filename stamp a user reads
 
 - [ ] **Step 7: Verify clean and green**
 
-Run: `uvx ruff check .`
+Run: `uv run ruff check .`
 Expected: `All checks passed!`
 
 Run: `python -m pytest tests/ -q`
@@ -758,13 +819,21 @@ Expected: `1839 passed, 6 skipped`
 
 - [ ] **Step 8: Add the lint step to CI**
 
-In `.github/workflows/ci.yml`, append to the `checks` job's steps:
+In `.github/workflows/ci.yml`, append to the `checks` job's steps. Use the pinned ruff from the dev extra rather than `ruff-action`'s bundled copy, so CI and local runs cannot disagree about what is a finding:
 
 ```yaml
-      - name: Lint
-        uses: astral-sh/ruff-action@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          args: check --output-format github
+          enable-cache: true
+      - name: Lint
+        # The pinned ruff from [project.optional-dependencies] dev, not
+        # ruff-action's own copy: a version skew between CI and a
+        # contributor's machine turns "lint is green locally" into a
+        # coin flip.
+        run: |
+          uv sync --locked --extra dev
+          uv run ruff check --output-format github
 ```
 
 `--output-format github` makes findings appear as inline annotations on the pull request rather than only in the log.
@@ -849,7 +918,7 @@ line short and the formatter leaves it alone permanently."
 
 - [ ] **Step 4: Run the formatter**
 
-Run: `uvx ruff format .`
+Run: `uv run ruff format .`
 Expected: `149 files reformatted, 27 files left unchanged` (approximately — Steps 2–3 may shift this slightly).
 
 - [ ] **Step 5: Verify nothing broke**
@@ -859,7 +928,7 @@ Expected: `1839 passed, 6 skipped`
 
 That the suite is unchanged is the whole safety argument for a 149-file mechanical rewrite. Anything else, stop.
 
-Run: `uvx ruff check .`
+Run: `uv run ruff check .`
 Expected: `All checks passed!` — the formatter must not have reintroduced lint findings.
 
 - [ ] **Step 6: Commit the format pass alone, touching nothing else**
@@ -882,17 +951,31 @@ but formatting."
 
 - [ ] **Step 7: Record the SHA so `git blame` stays useful**
 
+**Read this before running it: the SHA you record must be the one that ends up on `main`.**
+
+A squash merge rewrites the format commit into a brand-new SHA, and the entry you write here then points at a commit that exists nowhere in `main`'s history. `git blame` ignores it silently — no error, no warning — and every one of the 149 files is attributed to the reformat anyway. A rebase merge rewrites the SHA too.
+
+Two ways to get this right; pick one and be deliberate:
+
+**A — merge commit (simplest).** Merge this PR with a true merge commit, not squash and not rebase. The format commit's SHA survives, so recording it now works:
+
 ```bash
 FORMAT_SHA=$(git rev-parse HEAD)
 printf '# Mechanical reformats. Configure once with:\n#   git config blame.ignoreRevsFile .git-blame-ignore-revs\n\n# Adopt ruff format across the tree (149 of 176 files, no behaviour change)\n%s\n' "$FORMAT_SHA" > .git-blame-ignore-revs
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+**B — squash or rebase merge.** Write the file with a placeholder now, merge, then push one follow-up commit to `main` replacing it with the post-merge SHA read from `git log`. This is two steps and easy to forget, which is why A is preferred.
+
+Whichever you choose, say so explicitly in the PR description. A reviewer clicking the default merge button is exactly how this breaks.
+
 - [ ] **Step 8: Verify blame actually skips it**
 
 Run: `git blame -L 1,5 obs_youtube_uploader/uploader.py | cut -c1-40`
 
 Expected: the commits shown are the ones that wrote those lines, **not** the format commit. If the format SHA appears, the config or the file is wrong.
+
+**Re-run this same check after the PR merges.** Passing locally proves only that the pre-merge SHA is correct; it says nothing about whether the SHA survived the merge. This is the check that catches a squash.
 
 - [ ] **Step 9: Document the config in the README**
 
@@ -912,13 +995,11 @@ cannot be committed.
 
 - [ ] **Step 10: Add the format check to CI**
 
-In `.github/workflows/ci.yml`, add to the `checks` job after the `Lint` step:
+In `.github/workflows/ci.yml`, add to the `checks` job after the `Lint` step. Same pinned ruff, same reason:
 
 ```yaml
       - name: Format
-        uses: astral-sh/ruff-action@v3
-        with:
-          args: format --check --diff
+        run: uv run ruff format --check --diff
 ```
 
 `--diff` prints what differs, so a failure tells the contributor exactly what to run rather than only that something is wrong.
@@ -991,7 +1072,28 @@ Apply the identical three-step replacement from Step 3 to the `test` job Task 1 
 
 - [ ] **Step 5: Switch the composite action's install step**
 
-In `.github/actions/build-installer/action.yml`, replace the `Install dependencies` step's body. Preserve the existing `$LASTEXITCODE` checking — its comment records that a failed install previously produced a green step and a frozen app with no pystray in it:
+**This is the step most likely to be got wrong.** `uv sync` installs into a
+`.venv`, which a bare `python` — the one `actions/setup-python` put on `PATH` —
+does not see. Every subsequent command in the action that runs Python must go
+through `uv run`, or it will execute against an interpreter with none of the
+app's dependencies installed. That failure does not stop the build: the import
+checks fail confusingly, or PyInstaller freezes an application missing its
+dependencies. `build.yml`'s own comments record that exact outcome happening
+once before.
+
+In `.github/actions/build-installer/action.yml`, add the uv installation as a
+new step immediately before `Install dependencies`:
+
+```yaml
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+```
+
+Then replace the `Install dependencies` step's body. Preserve the existing
+`$LASTEXITCODE` checking — its comment records that a failed install previously
+produced a green step and a frozen app with no pystray in it:
 
 ```yaml
     - name: Install dependencies
@@ -1004,17 +1106,42 @@ In `.github/actions/build-installer/action.yml`, replace the `Install dependenci
         # launch. Check every exit code explicitly.
         uv sync --locked
         if ($LASTEXITCODE -ne 0) { throw "uv sync failed - the app's dependencies are missing" }
-        uv pip install "pyinstaller>=6,<7"
+        # PyInstaller goes INTO the synced environment, not alongside it.
+        # `uv pip install` without --active would target a different prefix.
+        uv pip install --python .venv "pyinstaller>=6,<7"
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
 ```
 
-Add the uv installation as a new step immediately before it:
+- [ ] **Step 5b: Route every remaining Python invocation through `uv run`**
+
+This is the other half of Step 5 and must not be skipped. Rewrite each of these
+steps in the composite action:
+
+- `Verify the app's dependencies are importable` — every `python -c "..."` becomes `uv run python -c "..."`.
+- `Verify the injected credentials are well-formed` — this uses `shell: python`, which runs the *runner's* interpreter and imports `obs_youtube_uploader.credentials`. Change it to `shell: pwsh` invoking `uv run python - <<'PY' ... PY`, or move the script to a file and call `uv run python packaging/verify_credentials.py`. Preserve every check it performs.
+- `Build executable` — `pyinstaller ...` becomes `uv run pyinstaller ...`.
+
+Find any you missed:
+
+```bash
+grep -nE '^\s+(python|pyinstaller)\b|shell: python' .github/actions/build-installer/action.yml
+```
+
+Expected: no output. Every hit is a command about to run against the wrong interpreter.
+
+- [ ] **Step 5c: Prove the interpreter is the synced one**
+
+Add a step to the composite action immediately after `Install dependencies`:
 
 ```yaml
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
-      with:
-        enable-cache: true
+    - name: Verify uv run reaches the synced environment
+      # Guards the whole class of bug in Step 5b: if any later step drops the
+      # `uv run` prefix it silently uses the setup-python interpreter, which
+      # has none of the app's dependencies. Fail here, where it is obvious.
+      shell: pwsh
+      run: |
+        uv run python -c "import sys, pystray, webview; print(sys.executable)"
+        if ($LASTEXITCODE -ne 0) { throw "uv run cannot import the app's dependencies - the sync did not take" }
 ```
 
 - [ ] **Step 6: Verify no `pip install` survives anywhere**
@@ -1143,7 +1270,7 @@ If `uv` is rejected, fall back to `package-ecosystem: "pip"`, which covers the P
 Dependabot maintains these with a readable version comment, so pinning costs nothing ongoing. Collect the current SHAs:
 
 ```bash
-for spec in actions/checkout@v4 actions/setup-python@v5 actions/upload-artifact@v4 astral-sh/setup-uv@v5 astral-sh/ruff-action@v3 softprops/action-gh-release@v2; do
+for spec in actions/checkout@v4 actions/setup-python@v5 actions/upload-artifact@v4 astral-sh/setup-uv@v5 softprops/action-gh-release@v2; do
   repo="${spec%@*}"; ref="${spec#*@}"
   sha=$(gh api "repos/$repo/commits/$ref" --jq .sha)
   echo "$repo@$sha # $ref"
@@ -1270,12 +1397,15 @@ Tell the maintainer explicitly that `docs/branch-protection.md` needs applying b
 | What | How | Expected |
 |------|-----|----------|
 | Suite unchanged throughout | `python -m pytest tests/ -q` | `1839 passed, 6 skipped` |
-| Lint clean | `uvx ruff check .` | `All checks passed!` |
-| Format clean | `uvx ruff format --check .` | `176 files already formatted` |
+| Lint clean | `uv run ruff check .` | `All checks passed!` |
+| Format clean | `uv run ruff format --check .` | `176 files already formatted` |
+| Ruff is the pinned version | `uv run ruff --version` | `ruff 0.16.4` |
 | Lockfile agrees | `uvx uv lock --check` | up to date |
 | Workflows parse | the `yaml.safe_load` loop in Task 6 Step 8 | four `ok` lines |
+| Composite action uses the synced interpreter | `grep -nE '^\s+(python\|pyinstaller)\b\|shell: python' .github/actions/build-installer/action.yml` | no output |
 | Windows chain works | `gh -R elboaf/FlyGD-Wingman workflow run build.yml` | green, installer artifact |
-| Win32 symbol tests execute | Windows leg's skip list | only `test_preview_host.py:145` skips |
+| Win32 tests execute | Windows leg's skip list | six Windows-only tests run; exactly three skip |
+| Blame ignores the reformat | `git blame` after merge, not just before | format SHA absent |
 
 Tasks 1, 2, 6, and 7 change CI itself and cannot be fully verified without pushing. `build.yml` is `workflow_dispatch` and exists to exercise the Windows chain without publishing — use it as the proving ground before `release.yml` depends on anything.
 

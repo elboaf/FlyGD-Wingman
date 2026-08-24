@@ -93,10 +93,14 @@ tempfile handling and `open()` calls without an explicit encoding. That
 cleanup lands in the same change, so the job arrives green and blocking
 rather than as a non-blocking check that stays non-blocking forever.
 
-`test_preview_host.py:145` may continue to skip. GitHub's Windows runners
-execute in a service context and whether a real window station is
-available is an empirical question. The three symbol-binding tests need no
-window and will run regardless; those are the valuable ones.
+Note that the skip set on Windows is different, not smaller: three tests
+skip there (`test_eveskills_dpapi.py:30` and `:38`, which cover the
+non-Windows fallback, and `test_evesettings_tree.py:121`, which asserts
+POSIX symlink semantics). `test_preview_host.py:145` will **execute**
+rather than skip — its stated need for a real message pump and window
+station describes a requirement, not a prediction that the runner lacks
+one. Whether GitHub's service-context runners satisfy it is an open
+question this change answers empirically.
 
 ## 4. Nothing lints anything
 
@@ -104,11 +108,16 @@ No ruff, black, flake8, mypy, pre-commit, or `.editorconfig`. 16,160 lines
 of application Python, 21,590 lines of tests, and 4,410 lines of web assets
 with no automated checking. `ui/api.py` alone is over 2,000 lines.
 
-The selected rules find 178 issues, 108 of them auto-fixable. That is a low
-density for a never-linted codebase, and the tree already contains fourteen
-`# noqa: BLE001` comments with real explanations attached — someone has run
-ruff here before and reasoned about its output. Adoption is much cheaper
-than a cold start.
+With the rule selection below, ruff **0.16.4** finds 219 issues, 111 of
+them auto-fixable. The version is stated because it matters: rule sets and
+fix behaviour move between releases, so ruff is pinned as a dev dependency
+rather than invoked as `ruff@latest`. An unpinned linter gives every
+contributor a different answer and makes any number recorded here a
+fiction.
+
+The tree already contains fourteen `# noqa: BLE001` comments with real
+explanations attached — someone has run ruff here before and reasoned
+about its output. Adoption is much cheaper than a cold start.
 
 Ruff also reports a malformed `# noqa` directive in
 `eveskills/controller.py` that is not valid syntax, and therefore suppresses
@@ -118,7 +127,13 @@ nothing while appearing to.
 with rules selected against what is actually present:
 
 - **Enable and auto-fix:** `I`, `F`, `E`, `W`, `UP`, `SIM`, `RET`, `PIE`,
-  `FURB`, `RUF`. The large majority of the 178 findings.
+  `FURB`, `RUF`. The large majority of the 219 findings.
+- **Enabled by `E` but ignored:** `E501`, line-too-long. Selecting `E`
+  pulls it in and it flags 84 lines — and `ruff format` cannot fix a single
+  one, because it will not split a long string or a comment. Leaving it on
+  would make the lint gate unsatisfiable without hand-rewrapping 84 sites
+  for a benefit the formatter already provides. The formatter owns line
+  length; the linter should not also have an opinion about it.
 - **Enable, convention already exists:** `BLE001`. Thirteen unsuppressed
   sites, ten already carrying explained `noqa`s. Each new suppression gets
   a reason comment, matching the existing house style rather than
@@ -158,11 +173,20 @@ correctly. The fix for those two is to move the comment above the
 statement, after which the line is short and the formatter leaves it alone
 permanently.
 
-Two commits, kept separate: the mechanical `ruff format` pass, then the
-hand fixes. The format commit's SHA is recorded in a new
-`.git-blame-ignore-revs` file, with `blame.ignoreRevsFile` documented in
-the README, so a whole-tree mechanical reformat does not bury authorship
-of every line in the project.
+Three commits, in this order: the `ruff check` fixes (automatic, then
+hand-written) land first so they stay reviewable, then the over-length
+trailing comments move above their statements, and only then the
+mechanical `ruff format` pass. Format runs last because a reformat mixed
+into a lint diff makes both unreadable, and because moving those comments
+first stops the formatter parenthesising the values under them.
+
+The format commit's SHA is recorded in a new `.git-blame-ignore-revs`
+file, with `blame.ignoreRevsFile` documented in the README, so a
+whole-tree mechanical reformat does not bury authorship of every line in
+the project. That SHA only survives a true merge commit — a squash or
+rebase merge rewrites it and silently makes the entry inert, so the
+merge strategy for that pull request is a deliberate choice, not a
+default.
 
 One cleanup commit, then `ruff check` and `ruff format --check` join the
 ubuntu CI job.
