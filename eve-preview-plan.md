@@ -14,7 +14,7 @@
 
 Every task's requirements implicitly include this section.
 
-- **LICENCE GATE — read before writing any code.** Wingman is MIT on this branch (`LICENSE:1-13`). The GPL-3.0-only relicense is prepared on `worktree-gpl3-relicense` but **unmerged and not yet effective**. Until it merges, **no TriffView-derived code may be written or committed**: not a module, not a translated function, not a P/Invoke block copied and renamed. Tasks marked **[GPL-GATED]** must not start before the merge. Unmarked tasks are independent work and may proceed.
+- **Licence: Wingman is GPL-3.0-only on this branch**, which is what makes deriving from TriffView (GPL-3.0-only) lawful. The relicense is part of this change, not a prerequisite to it — `LICENSE`, `README.md`, `THIRD-PARTY-NOTICES.md`, and `pyproject.toml`'s `license` field all carry it, and it ships in the same PR. Keep TriffView attributions in the modules that derive from it: the GPL requires the derivation be visible, and it is also just accurate.
 - **The process DPI mode is frozen.** `__main__.set_dpi_awareness()` selects `PROCESS_SYSTEM_DPI_AWARE` deliberately (`__main__.py:99-114`), and `ui/chrome.py:177-186` depends on that choice. **Never modify it.** The preview thread sets its own awareness thread-locally.
 - **`evewindows.list_eve_windows()`'s signature is frozen.** It returns `list[str]` of sorted, de-duplicated titles (`evewindows.py:80-89`) and `ui/api.py:1288-1303` passes that straight to the page. Do not change its return type.
 - **Every ctypes function gets `argtypes` and `restype` declared before use.** Undeclared, ctypes marshals pointer-sized values as 32-bit ints; the failure is a truncated handle or a late `OverflowError` inside a callback, not a clean error. This is documented at `evewindows.py:36-44` and `ui/chrome.py:123-131`, and was hit twice during design probing.
@@ -1269,7 +1269,7 @@ git commit -m "feat(preview): layered-window blit with premultiplied BGRA"
 
 ---
 
-### Task 10: `thumbnail.py` — DWM thumbnail lifecycle **[GPL-GATED]**
+### Task 10: `thumbnail.py` — DWM thumbnail lifecycle
 
 **Files:**
 - Create: `obs_youtube_uploader/preview/thumbnail.py`
@@ -1407,7 +1407,7 @@ git commit -m "feat(preview): DWM thumbnail lifecycle wrapper"
 
 ---
 
-### Task 11: `window.py` — one preview window **[GPL-GATED]**
+### Task 11: `window.py` — one preview window
 
 **Files:**
 - Create: `obs_youtube_uploader/preview/window.py`
@@ -1578,7 +1578,7 @@ git commit -m "feat(preview): per-client layered preview window"
 
 ---
 
-### Task 12: `host.py` — the thread, the pump, the lifecycle **[GPL-GATED]**
+### Task 12: `host.py` — the thread, the pump, the lifecycle
 
 **Files:**
 - Create: `obs_youtube_uploader/preview/host.py`
@@ -1709,7 +1709,7 @@ git commit -m "feat(preview): host thread, pump, and ordered teardown"
 
 ---
 
-### Task 13: Settings integration, single-writer **[GPL-GATED]**
+### Task 13: Settings integration, single-writer
 
 **Files:**
 - Modify: `obs_youtube_uploader/settings.py` — `DEFAULTS`, `_preview_defaults()`, `_fresh_defaults()` (`settings.py:64-68`), `validated_preview()`, and a module-level save lock
@@ -1930,7 +1930,7 @@ git commit -m "feat(preview): debounced layout persistence, serialised saves"
 
 ---
 
-### Task 14: Wire into the app — enable, disable, shut down **[GPL-GATED]**
+### Task 14: Wire into the app — enable, disable, shut down
 
 **Files:**
 - Modify: `obs_youtube_uploader/__main__.py:410-416` (shutdown)
@@ -2096,13 +2096,21 @@ git commit -m "docs: preview subsystem smoke checks"
 **Type consistency.** `Rect` is defined once in `geometry.py` and used unchanged by `layout`, `window`, `thumbnail`, and `host`. `Client.stable_key` is the identity used by `layout.Entry` keys, `host.reconcile`, and `store.record`. `Thumbnail.close()` and `PreviewHost.stop()` are the two idempotent teardown methods; neither is spelled `dispose` anywhere.
 
 **Known gap.** Task 11's window body and Task 12's sweep are specified as
-message-by-message tables and ordered sequences rather than complete listings,
-and both are GPL-gated: writing the full port before the relicense merges is the
-one thing the licence gate forbids. The focus sequence in Task 11 Step 6 and the
+message-by-message tables and ordered sequences rather than complete listings.
+That is a judgement, not an omission: both are long, mechanical Win32 bodies
+where a listing written now would be wrong on contact with a real desktop, and
+the constraints that actually matter — message routing, ordering, which thread
+owns what — are pinned exactly. The focus sequence in Task 11 Step 6 and the
 merge in Task 13 Step 3 *are* given as code, because both are places where a
-plausible-looking implementation is silently wrong — a leaked `AttachThreadInput`
-welds two input queues together, and a wholesale layout replace deletes saved
-positions the user cannot recover.
+plausible-looking implementation is silently wrong: a leaked
+`AttachThreadInput` welds two input queues together, and a wholesale layout
+replace deletes saved positions the user cannot recover.
+
+**Sequencing.** Every task is startable — the licence gate that previously
+held tasks 10-15 is gone, since the relicense lands in this same change. Task 1
+(the DPI probe) still comes first: it is the one result that can invalidate the
+architecture, and finding that out after tasks 8-12 are written is the expensive
+order.
 
 **Revision note.** This plan was revised after an independent review found eight
 defects, four blocking. The corrections worth carrying forward: the suite is

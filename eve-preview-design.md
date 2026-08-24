@@ -11,19 +11,19 @@ and layouts that persist across restarts.
 The capability exists today in TriffView (GPL-3.0-only, C#/.NET). This is a
 port into Wingman, not a rewrite of TriffView.
 
-**This design is blocked on a licence change that has not happened.** On this
-branch Wingman is still MIT (`LICENSE:1-13`, `README.md:319-324`). A relicense
-to GPL-3.0-only is prepared on `worktree-gpl3-relicense` but is unmerged and
-not yet effective: elboaf holds the copyright line and has to agree before it
-is published.
+**Wingman is GPL-3.0-only as of this branch**, which is what makes deriving
+from TriffView lawful. The relicense rides along in the same change: `LICENSE`
+carries the GPL-3.0 text, `README.md` and `THIRD-PARTY-NOTICES.md` state it,
+and `pyproject.toml` declares `license = "GPL-3.0-only"`.
 
-Until that merge lands, **no TriffView-derived code may be written or
-committed** — not a module, not a translated function, not a P/Invoke block
-copied and renamed. Deriving GPL-3.0-only code into an MIT project is the one
-mistake here that cannot be fixed by a later commit. Implementation of any step
-that ports TriffView logic is gated on the relicense; the pure-geometry and
-Pillow-rendering work described below is only exempt to the extent it is
-written independently.
+`GPL-3.0-only` rather than `-or-later` because TriffView's own grant is v3-only
+(its `README.md:103`); an "or later" claim could not survive the combination.
+
+Two consequences worth stating plainly, since they outlive this design:
+everything Wingman published up to and including 3.1.1 remains MIT and can
+still be forked as such — the relicense binds forward, not backward. And the
+GPL now runs both ways: preview fixes made here can go back to TriffView,
+which was previously blocked in that direction too.
 
 ## What was verified, and how
 
