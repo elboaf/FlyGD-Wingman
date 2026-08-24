@@ -1,0 +1,844 @@
+# Preview follow-ups implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Land four of the five follow-ups `eve-preview-design.md` records under "Left behind by item 11 (#23)": isolate application state in tests, and make the EVE client-layout card stop reporting successes it did not achieve.
+
+**Architecture:** Four independent changes to existing modules. No new production module; one new test file (`tests/conftest.py`). Items 4 and 5 both edit `Api.set_restore_clients_on_launch` and share one local, so Task 4 must land before Task 5.
+
+**Tech Stack:** Python 3.11, pytest, monkeypatch. Vanilla ES5-style browser JS (no build step, no framework, no JS test runner).
+
+**Spec:** `preview-followups-design.md`
+
+## Global Constraints
+
+- **Do not open** `obs_youtube_uploader/preview/host.py`, `preview/window.py`, or `preview/chrome.py`. Roadmap items 7-10 own them.
+- **Do not change** `Api.set_preview_enabled`. It has Task 4's shape and is deliberately out of scope.
+- **Do not** implement item 1 (`preview/store.py` onto `settings.update()`). It is deferred; see the design's "Why item 1 is deferred".
+- **Do not** widen `evewindows.list_eve_windows()`.
+- No Win32 calls in tests. CI is `ubuntu-latest` only (`.github/workflows/ci.yml:11`); nothing Win32 executes there.
+- No formatter or linter is configured. Match the surrounding file's style: 4-space indent, comments wrapped near 72 columns, code near 79.
+- Comments explain **intent and tradeoffs**, never restate the code. This repo's existing comments are the standard to match.
+- Baseline before any task: **1070 passed, 4 skipped**.
+
+---
+
+## File structure
+
+| File | Change | Task |
+|------|--------|------|
+| `tests/conftest.py` | Create — autouse state-dir isolation | 1 |
+| `obs_youtube_uploader/preview/clientlayout.py` | `_save` counts unreadable clients; `start()` gains `seed_placed` | 2, 5 |
+| `obs_youtube_uploader/ui/api.py` | `save_client_layout` shape; `set_restore_clients_on_launch` returns a dict and tracks persistence; passes `seed_placed` | 2, 4, 5 |
+| `obs_youtube_uploader/web/settings.js` | Card reports the `failed` count and the unpersisted toggle | 2, 4 |
+| `tests/test_preview_clientlayout.py` | Extend `Harness`-based tests | 2, 5 |
+| `tests/test_preview_wiring.py` | Extend `FakeClientLayouts` and `_no_disk` tests | 2, 4, 5 |
+
+---
+
+## Task 1: Isolate application state in the test suite
+
+Item 2. Independent of every other task. Land it first so later runs are already isolated.
+
+**Files:**
+- Create: `tests/conftest.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: an autouse fixture. No symbol other tasks import.
+
+**Background the implementer needs:** `paths.state_dir()` (`obs_youtube_uploader/paths.py:14-20`) reads `LOCALAPPDATA` and falls back to `~/.local/share/OBSYouTubeUploader`. Every other path in `paths.py` derives from it. Today the suite writes two real files into whichever of those applies on the developer's machine.
+
+Do **not** monkeypatch `paths.settings_file()`. `tests/test_paths.py:16-19` sets `LOCALAPPDATA` itself and then asserts on that function's real return value; patching it breaks that test. Redirecting the environment variable instead lets the test's own `setenv` win, because it runs inside the test body.
+
+- [ ] **Step 1: Reproduce the leak**
+
+```bash
+rm -rf /tmp/canary-before
+LOCALAPPDATA=/tmp/canary-before python -m pytest -q
+find /tmp/canary-before -type f
+```
+
+Expected: `1070 passed, 4 skipped`, and `find` lists exactly two files:
+
+```
+/tmp/canary-before/OBSYouTubeUploader/settings.json
+/tmp/canary-before/OBSYouTubeUploader/durations.json
+```
+
+If `find` prints nothing, stop — the leak is already fixed and this task needs re-scoping before you write anything.
+
+- [ ] **Step 2: Create the fixture**
+
+Create `tests/conftest.py`:
+
+```python
+"""Suite-wide isolation of the application's state directory.
+
+Two files used to land in the developer's real state directory on every
+run -- settings.json through api.save_bookmarks, durations.json through
+the probe cache. Per-test stubs closed the instances anyone happened to
+notice; this closes the class.
+
+LOCALAPPDATA rather than paths.settings_file(): state_dir() reads that
+one variable (paths.py:14-20) and every other path derives from it, so
+redirecting it moves settings, durations, token, seen, logs and tmp
+together. Patching settings_file() would also break test_paths.py:16-19,
+which sets this same variable and then asserts on the real function.
+"""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_state_dir(tmp_path, monkeypatch):
+    """Point paths.state_dir() at this test's tmp_path.
+
+    Autouse and unreferenced by design: a test that has to remember to
+    ask for isolation is a test that will forget.
+    """
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+```
+
+- [ ] **Step 3: Verify the leak is closed and nothing broke**
+
+```bash
+rm -rf /tmp/canary-after
+LOCALAPPDATA=/tmp/canary-after python -m pytest -q
+find /tmp/canary-after -type f
+```
+
+Expected: `1070 passed, 4 skipped`, and `find` prints **nothing**.
+
+- [ ] **Step 4: Verify test_paths still exercises the real function**
+
+```bash
+python -m pytest tests/test_paths.py -v
+```
+
+Expected: all pass. This is the test that would have broken under the fix the design entry originally proposed; it passing is the point of the check.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/conftest.py
+git commit -m "test: stop the suite writing to the real state directory
+
+Every run wrote settings.json and durations.json into the developer's
+LOCALAPPDATA. Redirect state_dir()'s one input rather than patching
+settings_file(), which test_paths.py asserts on directly."
+```
+
+---
+
+## Task 2: `_save` distinguishes "nothing ran" from "nothing read"
+
+Item 3. Depends on nothing; Task 1 first only for hygiene.
+
+**Files:**
+- Modify: `obs_youtube_uploader/preview/clientlayout.py:89-103`
+- Modify: `obs_youtube_uploader/ui/api.py:1299-1303`
+- Modify: `obs_youtube_uploader/web/settings.js:260-276`
+- Test: `tests/test_preview_clientlayout.py`, `tests/test_preview_wiring.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `ClientLayoutManager._save()` and therefore `save_now()` return `{"saved": int, "persisted": bool, "failed": int}`. `Api.save_client_layout()` returns the same three keys on every path. Task 4 and Task 5 do not touch this shape.
+
+**Background:** `_save` returns `saved: 0` both when no named client was running and when every named client's `read_placement` returned `None`. The page then says "No named clients are running", which is false in the second case. `failed` counts the clients that already produce the warning at `clientlayout.py:96`. Clients at character select are filtered out by `_named()` before the read, so they are never counted as failures.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to the `# ---- save` section of `tests/test_preview_clientlayout.py`, after `test_save_does_not_write_when_it_found_nothing`:
+
+```python
+def test_save_separates_nothing_running_from_nothing_readable():
+    """Both return saved: 0. Reporting "no clients are running" for the
+    second is false, and the user retries a button that cannot work."""
+    nothing_running = Harness(clients=[])
+    assert nothing_running.manager().save_now() == {
+        "saved": 0, "persisted": True, "failed": 0}
+
+    none_readable = Harness(clients=[client("Pilot One", 1),
+                                     client("Pilot Two", 2)])
+    assert none_readable.manager().save_now() == {
+        "saved": 0, "persisted": True, "failed": 2}
+
+
+def test_save_reports_the_clients_it_could_not_read():
+    """Saying "Saved 1" while silently dropping the other is how a
+    missing client position goes unnoticed until the next restart."""
+    h = Harness(clients=[client("Good", 1), client("Unreadable", 2)],
+                placements={1: Placement(Rect(0, 0, 800, 600))})
+    assert h.manager().save_now() == {
+        "saved": 1, "persisted": True, "failed": 1}
+
+
+def test_save_does_not_count_character_select_clients_as_failures():
+    """They are excluded before any read is attempted, so they are not a
+    failure to report -- reporting them would send the user hunting for
+    a problem that does not exist."""
+    h = Harness(clients=[client("hwnd:0xdead", 1)])
+    assert h.manager().save_now()["failed"] == 0
+```
+
+Update the three existing assertions in that file that compare the whole dict:
+
+```python
+# test_save_stores_every_named_client
+    assert h.manager().save_now() == {"saved": 2, "persisted": True,
+                                      "failed": 0}
+
+# test_save_reports_a_failed_write_rather_than_a_false_success
+    assert h.manager().save_now() == {"saved": 1, "persisted": False,
+                                      "failed": 0}
+
+# test_save_does_not_write_when_it_found_nothing
+    assert h.manager().save_now() == {"saved": 0, "persisted": True,
+                                      "failed": 0}
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+```bash
+python -m pytest tests/test_preview_clientlayout.py -v -k save
+```
+
+Expected: FAIL. The new tests fail on a missing `failed` key; the three updated ones fail on the dict comparison.
+
+- [ ] **Step 3: Implement**
+
+Replace `_save` in `obs_youtube_uploader/preview/clientlayout.py:89-103`:
+
+```python
+    def _save(self) -> dict:
+        found = {}
+        failed = 0
+        with self._dpi_context():
+            origin = self._work_area_origin()
+            for key, c in self._named().items():
+                p = self._read_placement(c.hwnd, origin)
+                if p is None:
+                    logger.warning("Could not read placement for %s", key)
+                    # Counted, not just logged: saved: 0 alone cannot tell
+                    # the page whether nothing was running or nothing could
+                    # be read, and those need different messages.
+                    failed += 1
+                    continue
+                found[key] = p
+        if not found:
+            return {"saved": 0, "persisted": True, "failed": failed}
+        persisted = self._persist(found)
+        logger.info("Saved %d client window positions", len(found))
+        return {"saved": len(found), "persisted": persisted,
+                "failed": failed}
+```
+
+- [ ] **Step 4: Run them to verify they pass**
+
+```bash
+python -m pytest tests/test_preview_clientlayout.py -v -k save
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Write the failing wiring test**
+
+In `tests/test_preview_wiring.py`, update `FakeClientLayouts.save_now` so the fake returns the real shape:
+
+```python
+    def save_now(self):
+        self.saves += 1
+        return {"saved": 3, "persisted": True, "failed": 0}
+```
+
+Update the two assertions that compare the whole dict:
+
+```python
+# test_save_client_layout_passes_the_count_through
+    assert api.save_client_layout() == {"saved": 3, "persisted": True,
+                                        "failed": 0}
+
+# test_the_client_layout_endpoints_are_no_ops_without_a_manager
+    assert api.save_client_layout() == {"saved": 0, "persisted": True,
+                                        "failed": 0}
+```
+
+- [ ] **Step 6: Run it to verify it fails**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k client_layout
+```
+
+Expected: FAIL on `test_the_client_layout_endpoints_are_no_ops_without_a_manager` — the no-manager path still returns two keys.
+
+- [ ] **Step 7: Implement the Api passthrough**
+
+In `obs_youtube_uploader/ui/api.py`, change the early return in `save_client_layout`:
+
+```python
+    def save_client_layout(self) -> dict:
+        """Snapshot where every named client sits."""
+        if self._client_layouts is None:
+            # Same three keys as the manager's, so the page never has to
+            # ask which path produced the answer.
+            return {"saved": 0, "persisted": True, "failed": 0}
+        return self._client_layouts.save_now()
+```
+
+- [ ] **Step 8: Run it to verify it passes**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k client_layout
+```
+
+Expected: PASS.
+
+- [ ] **Step 9: Make the card tell the truth**
+
+There is no JS test runner in this repo, so this step is verified by reading and by the smoke checklist, not by pytest.
+
+In `obs_youtube_uploader/web/settings.js`, replace the `save.addEventListener` block (`:260-276`):
+
+```javascript
+  save.addEventListener('click', function () {
+    WM.send('save_client_layout').then(function (res) {
+      if (!res) { say('Could not save client positions.'); return; }
+      if (!res.persisted) {
+        // Saying "Saved N" after the write failed is a lie the user
+        // discovers at their next restart.
+        say('Could not write client positions to settings.');
+        return;
+      }
+      if (!res.saved) {
+        // `failed` is what separates "nothing was running" from "every
+        // running client refused to be read". Only the log could tell
+        // them apart before (clientlayout.py:96).
+        say(res.failed
+            ? 'Could not read the position of any running client.'
+            : 'No named clients are running. Nothing to save.');
+        return;
+      }
+      if (res.failed) {
+        say('Saved ' + plural(res.saved, 'client position.',
+                              'client positions.')
+            + ' Could not read ' + plural(res.failed, 'other.',
+                                          'others.'));
+        return;
+      }
+      say('Saved ' + plural(res.saved, 'client position.',
+                            'client positions.'));
+    });
+  });
+```
+
+- [ ] **Step 10: Run the full suite**
+
+```bash
+python -m pytest -q
+```
+
+Expected: `1073 passed, 4 skipped` (three tests added).
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add obs_youtube_uploader/preview/clientlayout.py \
+        obs_youtube_uploader/ui/api.py \
+        obs_youtube_uploader/web/settings.js \
+        tests/test_preview_clientlayout.py \
+        tests/test_preview_wiring.py
+git commit -m "preview: report the client positions that could not be read
+
+_save returned saved: 0 both when nothing was running and when every
+placement read failed, and the card claimed the first. A failed count
+separates them, and also surfaces the partial case that used to be
+silent."
+```
+
+---
+
+## Task 3: Bookkeeping — none
+
+Deliberately empty so the numbering matches the design's item numbers. Item 1 is deferred; there is no Task 3.
+
+---
+
+## Task 4: The toggle reports a failed write
+
+Item 4. Must land before Task 5 — Task 5 reuses the `wanted_change` local this task introduces.
+
+**Files:**
+- Modify: `obs_youtube_uploader/ui/api.py:156-190` (add one attribute), `:1310-1340`
+- Modify: `obs_youtube_uploader/web/settings.js:251-258`
+- Test: `tests/test_preview_wiring.py`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: `Api.set_restore_clients_on_launch(enabled)` returns `{"applied": True, "persisted": bool}` — was `True`. Introduces the local `wanted_change: bool`, which Task 5 passes to `start()`, and the attribute `Api._restore_launch_persisted: bool`.
+
+**Background the implementer needs, in full:**
+
+`settings.update` mutates the live document **before** the write can fail (`obs_youtube_uploader/settings.py:213-216`):
+
+```python
+    with _SAVE_LOCK:
+        data = read()
+        mutate(data)
+        _save_locked(data, path)      # <- this is what raises
+```
+
+`ui/api.py:1319` skips the write when the stored value already equals the wanted one. After a failed write, memory reads as the wanted value while disk holds the old one, so that guard would skip — and report success — forever. The fix is to make the guard consult the *write's* outcome as well as the value.
+
+Returning `False` instead is **wrong here**, and there is a test that says so: `tests/test_preview_wiring.py:305-311` pins "an unwritable settings file does not block the watcher — the feature still works". The watcher genuinely starts, so unchecking the box would be a different lie. `{"applied": True, "persisted": bool}` is the save button's own shape, four lines away in the same card.
+
+A dict is always truthy, so the page's existing bridge-failure guard still works: `WM.send` resolves to `null` on a bridge error (`web/app.js:38-43`), and only `null` reverts the box.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/test_preview_wiring.py`, update the three existing assertions that expect `is True`:
+
+```python
+# test_the_client_layout_endpoints_are_no_ops_without_a_manager
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": True}
+
+# test_enabling_restore_on_launch_starts_the_watcher
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": True}
+
+# test_an_unwritable_settings_file_does_not_block_the_watcher
+    assert api.set_restore_clients_on_launch(True) == {
+        "applied": True, "persisted": False}
+```
+
+Then append these three tests to the same file:
+
+```python
+def test_a_failed_persist_is_reported_rather_than_claimed_as_success(
+        tmp_path, monkeypatch):
+    """The checkbox stays checked -- the watcher really is running -- but
+    the page has to be able to say the choice is gone at restart."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_read, _mutate, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True)["persisted"] is False
+
+
+def test_a_failed_persist_is_retried_rather_than_skipped(
+        tmp_path, monkeypatch):
+    """THE bug the tracked flag exists for. settings.update mutates the
+    document before the write can fail (settings.py:213-216), so memory
+    already reads as the wanted value. A guard that consults only the
+    value would skip the retry and report success over a stale file --
+    and never write it."""
+    from obs_youtube_uploader.ui import api as api_mod
+    calls = []
+
+    def flaky(read, mutate, path=None):
+        calls.append(1)
+        doc = read()
+        mutate(doc)
+        if len(calls) == 1:
+            raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", flaky)
+    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api._state.settings["preview"] = {}
+
+    assert api.set_restore_clients_on_launch(True)["persisted"] is False
+    # Same value again: the document says True, the disk does not.
+    assert api.set_restore_clients_on_launch(True)["persisted"] is True
+    assert len(calls) == 2
+
+
+def test_an_unchanged_value_still_does_not_rewrite_the_document(
+        tmp_path, monkeypatch):
+    """settings.save projects every key, so a no-op toggle rewriting the
+    whole file is a real cost. The retry above must not cost this."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, client_layouts=FakeClientLayouts())
+    api._state.settings["preview"] = {}
+    api.set_restore_clients_on_launch(True)
+    api.set_restore_clients_on_launch(True)
+    assert len(writes) == 1
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k restore_on_launch
+python -m pytest tests/test_preview_wiring.py -v -k persist
+```
+
+Expected: FAIL. The `is True` replacements fail on the bare-`True` return; the retry test fails with `len(calls) == 1`.
+
+- [ ] **Step 3: Add the tracking attribute**
+
+In `obs_youtube_uploader/ui/api.py`, immediately after the `self._client_layouts = client_layouts` assignment in `__init__` (`:181`):
+
+```python
+        # False once a write of restore_clients_on_launch has failed, so
+        # the next call retries instead of skipping on a value that only
+        # memory believes. See set_restore_clients_on_launch.
+        self._restore_launch_persisted = True
+```
+
+- [ ] **Step 4: Implement the method**
+
+Replace `set_restore_clients_on_launch` (`obs_youtube_uploader/ui/api.py:1310-1340`):
+
+```python
+    def set_restore_clients_on_launch(self, enabled) -> dict:
+        """Toggle the watcher and persist the choice.
+
+        Returns the save button's shape -- the same `persisted` key, in
+        the same card -- so one failed write reads one way wherever it
+        happens. Not a bare bool: the watcher starts whether or not the
+        write lands, so reverting the checkbox would trade one lie for
+        another. The page keeps the box and says what will not survive.
+        """
+        enabled = bool(enabled)
+        section = self._state.settings.setdefault("preview", {})
+        wanted_change = section.get("restore_clients_on_launch") != enabled
+        # `or not persisted` is what makes a failed write self-heal.
+        # settings.update mutates the document before the write can fail
+        # (settings.py:213-216), so after one failure memory reads as the
+        # wanted value while the disk holds the old one. Consulting the
+        # value alone would skip every retry and report success forever.
+        if wanted_change or not self._restore_launch_persisted:
+            def mutate(doc):
+                doc.setdefault("preview", {})[
+                    "restore_clients_on_launch"] = enabled
+            try:
+                # Through settings.update, not save(): the read must
+                # happen inside _SAVE_LOCK or a concurrent writer is
+                # reverted.
+                settings_mod.update(lambda: self._state.settings, mutate)
+                self._restore_launch_persisted = True
+            except OSError:
+                # Logged and reported, not raised. A settings file that
+                # cannot be written must not block the watcher -- but the
+                # page has to be able to say the choice is not saved.
+                self._restore_launch_persisted = False
+                logger.exception(
+                    "Could not persist the client-restore setting")
+        if self._client_layouts is not None:
+            if enabled:
+                self._client_layouts.start()
+            else:
+                self._client_layouts.stop()
+        return {"applied": True,
+                "persisted": self._restore_launch_persisted}
+```
+
+- [ ] **Step 5: Run them to verify they pass**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Update the card**
+
+Replace the `box.addEventListener` block in `obs_youtube_uploader/web/settings.js:251-258`:
+
+```javascript
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    // WM.send resolves to null on any bridge failure rather than
+    // rejecting (app.js:38-43). A dict is always truthy, so null is
+    // still the only thing that reverts the box -- and a failed write
+    // is no longer mistaken for one.
+    WM.send('set_restore_clients_on_launch', wanted).then(function (res) {
+      if (!res) { box.checked = !wanted; return; }
+      if (!res.persisted) {
+        // The watcher really did change state, so the box stays where
+        // the user put it. What it cannot do is survive a restart, and
+        // saying nothing is how they find that out the hard way.
+        say('Restore-on-launch is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      }
+    });
+  });
+```
+
+- [ ] **Step 7: Run the full suite**
+
+```bash
+python -m pytest -q
+```
+
+Expected: `1076 passed, 4 skipped`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add obs_youtube_uploader/ui/api.py \
+        obs_youtube_uploader/web/settings.js \
+        tests/test_preview_wiring.py
+git commit -m "preview: report a restore-on-launch write that did not land
+
+The toggle swallowed OSError and returned truthy, so the choice was
+gone at the next restart with nothing said. Report it through the save
+button's persisted key, and track it so the skip-guard retries rather
+than reporting success over a document only memory believes."
+```
+
+---
+
+## Task 5: Enabling the toggle mid-session leaves running clients alone
+
+Item 5. Requires Task 4 — it passes the `wanted_change` local that task introduces.
+
+**Files:**
+- Modify: `obs_youtube_uploader/preview/clientlayout.py:73-74`
+- Modify: `obs_youtube_uploader/ui/api.py:1337` (inside the method Task 4 rewrote)
+- Test: `tests/test_preview_clientlayout.py`, `tests/test_preview_wiring.py`
+
+**Interfaces:**
+- Consumes: `wanted_change` from Task 4's `set_restore_clients_on_launch`.
+- Produces: `ClientLayoutManager.start(seed_placed: bool = False) -> None`. `Api.start_client_layouts_if_enabled` keeps calling `start()` with no argument.
+
+**Background:** `_placed` starts empty, so the first `_tick` two seconds after `start()` treats every running client as fresh and places it. At launch that is the point. From the toggle it yanks windows the user positioned by hand — and `restore_now()` (`clientlayout.py:63-71`), wired to the Restore button in the same card, already exists for the user who *wants* that.
+
+Seed on the **transition**, not on the call. `start()` runs on every enabled call, and seeding unconditionally would add clients that appeared *since* the toggle to `_placed`, suppressing the restore they were owed. `Scheduler.start` is idempotent (`ui/scheduler.py:32-37`), but that only prevents a second timer; it does nothing about a side effect in front of it.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/test_preview_clientlayout.py`, give `_watched` a seed parameter:
+
+```python
+def _watched(h, seed_placed=False):
+    timers = []
+
+    def timer(interval, fn):
+        t = FakeTimer(interval, fn)
+        timers.append(t)
+        return t
+
+    m = h.manager(timer=timer)
+    m.start(seed_placed=seed_placed)
+    return m, timers
+```
+
+Append to the watcher section:
+
+```python
+def test_seeding_leaves_already_running_clients_where_they_are():
+    """Enabling the toggle mid-session used to move every running client
+    two seconds later. "Restore on launch" describes clients that launch,
+    and the Restore button is right there for the user who wants the
+    other thing."""
+    h = Harness(clients=[client("Pilot One", 1), client("Pilot Two", 2)],
+                saved={"Pilot One": entry(100, 200, 800, 600),
+                       "Pilot Two": entry(300, 400, 800, 600)})
+    _m, timers = _watched(h, seed_placed=True)
+    _tick(timers)
+    assert h.applied == []
+
+
+def test_seeding_still_places_a_client_that_appears_afterwards():
+    """The watcher's actual job. Only the set running at the moment of
+    the toggle is exempt."""
+    h = Harness(clients=[client("Already Up", 1)],
+                saved={"Already Up": entry(100, 200, 800, 600),
+                       "Latecomer": entry(300, 400, 800, 600)})
+    _m, timers = _watched(h, seed_placed=True)
+    _tick(timers)
+    h.clients = [client("Already Up", 1), client("Latecomer", 2)]
+    _tick(timers)
+    assert [hwnd for hwnd, _p in h.applied] == [2]
+
+
+def test_the_launch_path_still_places_everything_running():
+    """Unseeded start() must not change: at launch, placing what is
+    already running is the whole point of the feature."""
+    h = Harness(clients=[client("Pilot", 1)],
+                saved={"Pilot": entry(100, 200, 800, 600)})
+    _m, timers = _watched(h)
+    _tick(timers)
+    assert len(h.applied) == 1
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+```bash
+python -m pytest tests/test_preview_clientlayout.py -v -k "seeding or launch_path"
+```
+
+Expected: FAIL with `TypeError: start() got an unexpected keyword argument 'seed_placed'`.
+
+- [ ] **Step 3: Implement `start`**
+
+Replace `start` in `obs_youtube_uploader/preview/clientlayout.py:73-74`:
+
+```python
+    def start(self, seed_placed: bool = False) -> None:
+        """Arm the watcher.
+
+        `seed_placed` marks everything currently running as already
+        placed, so the first tick moves nothing. That is what the toggle
+        wants: the label describes clients that LAUNCH, and yanking a
+        window the user positioned by hand is the failure place-once
+        exists to prevent, arriving through a side door. restore_now()
+        stays the way to re-place on demand.
+
+        The launch path leaves it False -- there, placing what is already
+        running is the feature.
+        """
+        if seed_placed:
+            with self._lock:
+                self._placed |= set(self._named())
+        self._scheduler.start()
+```
+
+- [ ] **Step 4: Run them to verify they pass**
+
+```bash
+python -m pytest tests/test_preview_clientlayout.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Write the failing wiring test**
+
+In `tests/test_preview_wiring.py`, record the argument on the fake:
+
+```python
+    def start(self, seed_placed=False):
+        self.started += 1
+        self.seeded = seed_placed
+```
+
+Add `self.seeded = None` to `FakeClientLayouts.__init__` beside `self.started = 0`, then append:
+
+```python
+def test_the_toggle_seeds_only_on_a_real_transition(tmp_path, monkeypatch):
+    """A repeat enabled call must not seed: a client that appeared since
+    the toggle would be marked placed without ever being placed, and the
+    restore it was owed would never happen."""
+    _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+
+    api.set_restore_clients_on_launch(True)
+    assert manager.seeded is True
+
+    api.set_restore_clients_on_launch(True)
+    assert manager.seeded is False
+
+
+def test_the_launch_path_does_not_seed(tmp_path):
+    """Placing what is already running is what launch is for."""
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api.start_client_layouts_if_enabled()
+    assert manager.seeded is False
+```
+
+- [ ] **Step 6: Run it to verify it fails**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v -k "seeds or launch_path"
+```
+
+Expected: FAIL — `test_the_toggle_seeds_only_on_a_real_transition` sees `seeded is False` on the first call, because `Api` still calls `start()` with no argument.
+
+- [ ] **Step 7: Pass the transition through**
+
+In `obs_youtube_uploader/ui/api.py`, inside `set_restore_clients_on_launch`, change the start call:
+
+```python
+        if self._client_layouts is not None:
+            if enabled:
+                # Seed on the transition, not on the call. start() runs on
+                # every enabled call, and seeding an unchanged one would
+                # mark a client that appeared since the toggle as placed
+                # without ever placing it.
+                self._client_layouts.start(seed_placed=wanted_change)
+            else:
+                self._client_layouts.stop()
+```
+
+- [ ] **Step 8: Run it to verify it passes**
+
+```bash
+python -m pytest tests/test_preview_wiring.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 9: Run the full suite**
+
+```bash
+python -m pytest -q
+```
+
+Expected: `1081 passed, 4 skipped`.
+
+- [ ] **Step 10: Confirm the suite still writes nothing real**
+
+```bash
+rm -rf /tmp/canary-final
+LOCALAPPDATA=/tmp/canary-final python -m pytest -q
+find /tmp/canary-final -type f
+```
+
+Expected: `1081 passed, 4 skipped`, and `find` prints nothing.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add obs_youtube_uploader/preview/clientlayout.py \
+        obs_youtube_uploader/ui/api.py \
+        tests/test_preview_clientlayout.py \
+        tests/test_preview_wiring.py
+git commit -m "preview: enabling restore-on-launch stops moving running clients
+
+The label describes clients that launch, and the Restore button already
+exists for re-placing one on demand. Seed the place-once record from the
+current sweep on the toggle's transition -- not on every enabled call,
+which would consume a client that appeared since."
+```
+
+---
+
+## Task 6: Update the roadmap
+
+**Files:**
+- Modify: `eve-preview-design.md:510-542`
+
+- [ ] **Step 1: Mark the four items done and correct the stale entry**
+
+In the "Left behind by item 11 (#23)" subsection, strike the four items this branch shipped the way the file's own convention does elsewhere (`~~text~~` followed by the resolution — see `eve-preview-design.md:590` for the established form), and leave `preview/store.py` standing as the one open item, with a pointer to `worktree-preview-hotkeys`.
+
+The `tests/test_api_bookmarks.py` entry also needs correcting rather than merely striking: its stated mechanism was wrong. Every test in that file already redirects `paths.settings_file()` through its `api` fixture; the real leak was `paths.state_dir()`, and it took `durations.json` with it.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add eve-preview-design.md
+git commit -m "docs: record what this branch closed, and correct one entry"
+```
+
+---
+
+## Self-review
+
+**Spec coverage.** Design item 2 → Task 1. Item 3 → Task 2 (Python, Api, JS). Item 4 → Task 4, including the tracked-flag subsection and the retry test the design calls out as "needs a test or it comes back". Item 5 → Task 5, including the transition-seeding fix and its no-op-call test. Item 1 → deliberately absent, with Task 3 left empty so the numbering cannot be misread as an omission. The design's Testing section lists twelve behaviours; every one has a test in Task 2, 4, or 5.
+
+**Type consistency.** `failed` is an `int` in Task 2 and never referenced again. `wanted_change` is a `bool` produced in Task 4 and consumed in Task 5 Step 7. `_restore_launch_persisted` is written in Task 4 only. `start(seed_placed=...)` uses the same keyword in `clientlayout.py`, the `Api` call site, `FakeClientLayouts`, and `_watched`.
+
+**Sequencing.** Task 4 before Task 5 is the one hard dependency, stated in both. Tasks 1 and 2 are independent of everything.
+
+**Expected counts.** 1070 → 1073 (Task 2) → 1076 (Task 4) → 1081 (Task 5). Skips stay at 4 throughout; no task adds a `skipif`.
