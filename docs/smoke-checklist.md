@@ -922,6 +922,23 @@ Enable previews in Settings before starting.
 - [ ] Check the log for one line reporting the DPI override result, and no
       repeated warnings during an idle minute — the 700ms sweep must be
       silent when nothing changes.
+
+      The DPI line is `logger.debug`, so it is invisible at the default
+      level. Start with `WINGMAN_LOG_LEVEL=DEBUG` to see it:
+
+          Preview thread DPI override accepted: True
+
+      Expect exactly one, at thread start. That variable also reveals the
+      other preview diagnostics that INFO discards — whether `WM_HOTKEY`
+      reached the host window, why a placement read failed, and the
+      registration push that is swallowed at launch because previews start
+      before the webview exists. Anything in this file that says "check
+      the log" for a preview-thread detail needs it.
+
+      From WSL, environment variables do not reach a Windows process
+      unless exported: `WSLENV=WINGMAN_LOG_LEVEL WINGMAN_LOG_LEVEL=DEBUG`.
+      Without `WSLENV` the app starts normally and logs nothing extra,
+      which looks exactly like the feature not working.
 - [ ] Frozen build only: run the packaged app and confirm labels still
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
