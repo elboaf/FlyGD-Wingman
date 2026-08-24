@@ -937,6 +937,12 @@ so these are the checks that matter and only a Windows machine can run them.
       file returns.
 - [ ] Add a file to a settings set that was not in its backup, then restore.
       It is removed, and the pre-restore auto-backup contains it.
+- [ ] Restore with EVE running. Like a copy, it must fail rather than write
+      -- restore stages every file and publishes with the same replace-with-
+      retry, so a live client blocks it. The settings set must be left
+      exactly as it was: nothing deleted, no `.tmp` files behind.
+- [ ] Delete a settings set entirely, then restore its backup. The folder is
+      recreated and the files come back.
 - [ ] Start a copy and immediately try a second one. The second is refused
       with "EVE Settings busy" rather than interleaving.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
