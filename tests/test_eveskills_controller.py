@@ -630,3 +630,65 @@ def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
 
     assert len(sso.refreshes) == 1
     assert controller._state.characters[0].refresh_token_blob == "blob"
+
+
+@pytest.mark.skip(reason="controller.forget() lands in Task 14; "
+                  "un-skip once it exists.")
+def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
+    """Auth, refresh, forget and plan selection can all be in flight at
+    once. A forget completing during a refresh would be silently undone by
+    the refresh's save -- the character reappears, with data, and the only
+    way to remove it is to click forget again and hope."""
+    esi = FakeEsi()
+    controller = None
+
+    def forget_during_the_fetch(path):
+        controller.forget(95)
+
+    esi.on_get = forget_during_the_fetch
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=esi, sso=FakeSso(), spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    assert controller.state_payload()["characters"] == []
+
+
+def test_progress_is_pushed_once_per_character(tmp_path):
+    """A forty-character pass is eighty sequential requests. Without a
+    per-character push the window looks hung for the duration."""
+    characters = [with_snapshot(character_id=1, character_name="A"),
+                  with_snapshot(character_id=2, character_name="B")]
+    controller, pushed, _ = build(tmp_path, characters=characters,
+                                  client=FakeEsi(), sso=FakeSso(),
+                                  spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
+    assert [(p["completed"], p["total"]) for p in progress] == [(1, 2), (2, 2)]
+    assert [p["character_name"] for p in progress] == ["A", "B"]
+    assert all(p["error"] == "" for p in progress)
+
+
+def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
+    """One unresolved name poisons a whole plan's readiness to Unknown for
+    every character, so resolution has to happen somewhere -- and refresh is
+    the only place with both a worker thread and an ESI client."""
+    resolved = []
+
+    def fake_resolve(cache, names, client, **kwargs):
+        resolved.append(sorted(names))
+        cache.merge({name: 3327 for name in names})
+        return {}
+
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=FakeEsi(), sso=FakeSso(),
+                             spawn=DirectSpawn(),
+                             plans={"Interceptor": "Navigation V\n"})
+    controller._resolve = fake_resolve
+
+    controller.refresh_characters()
+
+    assert resolved == [["Navigation"]]
+    assert controller._cache.get("navigation") == 3327
