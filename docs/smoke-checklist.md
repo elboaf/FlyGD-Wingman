@@ -927,6 +927,12 @@ Enable previews in Settings before starting.
   pressed chord binds correctly. The original bug left the row armed but
   invisible, eating keystrokes and binding them silently.
 - [ ] Cycle forward and back walk every running client in name order and wrap.
+  **Try it with a browser focused, not just with an EVE client focused** —
+  these are different branches of `_on_hotkey`: with an EVE client focused,
+  cycling anchors on that client; with a browser (or anything else) focused,
+  it falls back to the last-cycled target. The browser case is the one a
+  multiboxer actually uses, so it must be checked, not just the EVE-focused
+  case.
 - [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
   three seconds; the client must not flicker through repeated activations.
 - [ ] **A chord another application already owns is visible on the Previews
@@ -936,6 +942,18 @@ Enable previews in Settings before starting.
 - [ ] Switching previews off releases the chords: they do nothing, and the
   application that owns them gets them back. Switching previews on reclaims
   them.
+- [ ] **With previews off, the Previews tab reads as off, not as live.** Open
+  the tab while previews are switched off. Expected: every character reads
+  as offline (dimmed) even one that is actually running, and no binding
+  claims to be registered. The original bug served the host's last snapshot
+  after teardown, so the tab showed characters online and chords registered
+  when the thread that owned them was gone and Windows held none of them.
+- [ ] **A chord bound to a `Win+` combination never fires.** Windows owns a
+  large share of `Win+`key and those chords cannot be taken by
+  `RegisterHotKey`. Bind one (e.g. `Win+F1`) and press it: it must appear on
+  the Previews tab as refused (same treatment as any other chord another
+  application already owns), not as a chord that looks registered and
+  silently never fires.
 - [ ] **The character list updates when the Previews tab is opened.** While
   viewing another tab, start an EVE client. Switch to Previews. Expected: the
   new character appears in the list immediately without needing a restart or
