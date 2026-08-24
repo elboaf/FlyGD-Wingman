@@ -800,7 +800,7 @@ def test_a_changed_owner_hash_forces_reauth(tmp_path):
 
     ch = controller._state.characters[0]
     assert ch.needs_reauth is True and ch.refresh_token_blob == ""
-    assert ch.error == "Character ownership changed; cached skill data was cleared."
+    assert ch.error == "Character ownership changed. Re-authenticate this character."
     assert esi.calls == []
 
 

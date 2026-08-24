@@ -54,6 +54,14 @@ MSG_NO_TOKEN = "No stored authorisation. Re-authenticate this character."
 MSG_TOKEN_UNREADABLE = (
     "The stored authorisation could not be decrypted. Re-authenticate this character.")
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
+MSG_OWNER_CHANGE_DETECTED = "Character ownership changed. Re-authenticate this character."
+# NOT used by the refresh path above -- that path only detects a change and
+# demands re-auth, it never clears anything, so this wording would be a lie
+# there. This belongs to the commit/auth path (TriffSkillsAuthentication.cs
+# :286-291, "CommitAuthentication"), which is where ActiveLevels,
+# TrainedLevels, Queue, and FetchedUtc actually get cleared -- Task 14's,
+# not this one's. Reserved here rather than invented a second time so that
+# implementation has one place to find the exact wording.
 MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared."
 
 # An access token is refreshed when it expires within this many seconds. The
@@ -674,7 +682,12 @@ class SkillsController:
                 # `definitive` is the OAuth error's own classification --
                 # invalid_grant, identity_mismatch, owner_changed. Everything
                 # else is transient and must not delete the stored token.
-                message = (MSG_OWNER_CHANGED if exc.code == "owner_changed" else
+                # owner_changed gets its own wording rather than MSG_REAUTH's
+                # generic one, and NOT MSG_OWNER_CHANGED -- this path only
+                # detects the change and demands re-auth, it never clears
+                # anything, so a message claiming clearing would be a lie
+                # here. See MSG_OWNER_CHANGE_DETECTED's own comment.
+                message = (MSG_OWNER_CHANGE_DETECTED if exc.code == "owner_changed" else
                           MSG_REAUTH if exc.definitive else
                           f"EVE SSO refused the token refresh: {exc}")
                 return None, message, exc.definitive
