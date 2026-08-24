@@ -910,3 +910,49 @@ Enable previews in Settings before starting.
 - [ ] Frozen build only: run the packaged app and confirm labels still
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
+
+## EVE preview hotkeys
+
+- [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
+  Bind any chord and press it. If nothing happens while the log shows a
+  successful registration, `HWND_MESSAGE` is not receiving the message and
+  registration must move to `hWnd=NULL` with dispatch in the pump loop —
+  see risk 4 in `eve-preview-hotkeys-design.md`.
+- [ ] A per-character chord switches to that client from another application
+  (try it from a browser, not just from Wingman).
+- [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**
+  With the Previews tab open and a hotkey row showing "Press a key…", start
+  or close an EVE client (which pushes new state from Python). Expected: the
+  row stays armed and visibly capturing, typing fills in normally, and a
+  pressed chord binds correctly. The original bug left the row armed but
+  invisible, eating keystrokes and binding them silently.
+- [ ] Cycle forward and back walk every running client in name order and wrap.
+- [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
+  three seconds; the client must not flicker through repeated activations.
+- [ ] **A chord another application already owns is visible on the Previews
+  tab**, not only in the log. Bind something a running app claims, restart
+  Wingman, and check the tab BEFORE touching anything — this is the startup
+  case where the push has no window to reach.
+- [ ] Switching previews off releases the chords: they do nothing, and the
+  application that owns them gets them back. Switching previews on reclaims
+  them.
+- [ ] **The character list updates when the Previews tab is opened.** While
+  viewing another tab, start an EVE client. Switch to Previews. Expected: the
+  new character appears in the list immediately without needing a restart or
+  settings save.
+- [ ] A binding made for a character survives a restart while that character
+  is logged off, and still appears in the list.
+- [ ] **Hotkey captures are tab-isolated.** Arm a bookmark hotkey on the
+  Bookmarks tab, switch to Previews, arm a preview hotkey, press a chord.
+  Expected: only the preview binding is written. Check the Bookmarks tab
+  afterwards: the bookmark hotkey unchanged. The original bug wrote to both,
+  leaving an off-screen binding the user never saw.
+- [ ] With EVE bookmarks enabled and a window enabled, binding a preview chord
+  that matches a bookmark bind shows the collision warning. With bookmarks
+  disabled, it does not warn.
+- [ ] **Dimmed rows are visibly less prominent than normal.** Find an offline
+  character and an active collision with a configured-but-inactive bookmark
+  bind. Expected: both read noticeably quieter than normal rows, not more
+  prominent. A visual regression here reverses the hierarchy.
+- [ ] Quitting Wingman with chords bound leaves them released: the owning
+  application gets them back without a reboot.
