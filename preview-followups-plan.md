@@ -937,39 +937,64 @@ which would consume a client that appeared since."
 Re-read the subsection before editing and work from what is on disk, not from
 the line numbers below.
 
-- [ ] **Step 1: Record all five items as closed**
+- [ ] **Step 1: Close the four items this branch fixed**
 
-All five are now resolved, not four. Strike each the way the file's own
-convention does elsewhere (`~~text~~` followed by the resolution — see the
-"Risks and open questions" list for the established form):
+`#27` already struck the `preview/store.py` bullet as **Done in #26**. **Leave
+that bullet alone.** Four remain, and the `~~strike~~ **resolution.**` form
+`#27` used is the convention to match. Do not touch the
+"Left behind by item 7 (#26)" section below it.
 
-- **`preview/store.py`** — shipped in `#26`, not by this branch. `store.py`
-  now writes inside `settings.update()`. Say so and credit `#26`; this branch
-  deferred it deliberately and the deferral held.
-- **`tests/test_api_bookmarks.py` overwrites the real `settings.json`** — the
-  entry's *mechanism* was wrong and needs correcting, not merely striking.
-  Every test in that file already redirected `paths.settings_file()` through
-  its `api` fixture and leaked nothing. The real leak was `paths.state_dir()`,
-  reached from three other places: the upload worker's channel persist (15
-  tests in `test_api_upload.py`), the probe cache writing `durations.json`,
-  and `set_preview_enabled` (3 tests in `test_preview_wiring.py`). Closed by
-  `tests/conftest.py`.
-- **"No named clients are running" when every read failed** — closed by the
-  `failed` count.
-- **The toggle reports success on a failed persist** — closed by the
-  `{"applied", "persisted"}` return.
-- **Enabling mid-session places running clients** — closed by
-  `start(seed_placed=...)`, seeded on the transition only.
+Replace the `tests/test_api_bookmarks.py` bullet entirely — its diagnosis was
+wrong, so striking it without correcting it would preserve a false claim:
+
+```markdown
+- ~~**`tests/test_api_bookmarks.py` overwrites the developer's real
+  `settings.json`.**~~ **Done — and the diagnosis was wrong.** No test in
+  that file ever leaked: its `api` fixture already redirected
+  `paths.settings_file()`, and since that patch lands on the module object it
+  covered `settings_mod.save` too. The real leak was one level up at
+  `paths.state_dir()`, reached from three places nobody had stubbed — the
+  upload worker's channel persist (15 tests in `test_api_upload.py`), the
+  probe cache writing `durations.json`, and `set_preview_enabled` (3 tests in
+  `test_preview_wiring.py`). An autouse `tests/conftest.py` redirects
+  `LOCALAPPDATA`, `state_dir()`'s only input, so every derived path moves
+  together. Pointing it at `settings_file()` as suggested here would have
+  broken `tests/test_paths.py`, which asserts on that function's real return.
+```
+
+Then strike the remaining three:
+
+```markdown
+- ~~**"No named clients are running" is reported when every placement read
+  failed.**~~ **Done.** `_save` returns a `failed` count beside `saved` and
+  `persisted`, and the card reads it: nothing running and nothing readable
+  are now different messages. It also made the partial case sayable — "Saved
+  3 client positions. Could not read 2 others." — which was silent before.
+- ~~**The restore-on-launch toggle reports success on a failed persist.**~~
+  **Done.** It returns `{"applied": True, "persisted": bool}`, the save
+  button's own key in the same card. The checkbox stays where the user put it,
+  because the watcher really did change state; what the page reports is that
+  the choice will not survive a restart. No retry bookkeeping was needed —
+  `settings.update()` restores the live dict when the block raises, so the
+  next toggle sees a real change and retries on its own.
+- ~~**Enabling restore-on-launch mid-session places already-running
+  clients**~~ **Done — fixed, not left.** `start(seed_placed=True)` marks the
+  current sweep as already placed, and the toggle passes it only on a real
+  transition, so a repeat enabled call cannot consume a client that appeared
+  since. The launch path still calls bare `start()`. Fixed rather than left
+  because `restore_now()` — the Restore button four lines away in the same
+  card — already exists for the user who wants that.
+```
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add eve-preview-design.md
-git commit -m "docs: close the five items #23 left behind
+git commit -m "docs: close the four items this branch fixed
 
-Four were fixed on this branch. store.py was not: it shipped in #26,
-which is where the deferral said it belonged. The bookmarks entry's
-stated mechanism was also wrong and is corrected rather than struck."
+store.py was already struck by #27, which is where it belonged. The
+bookmarks entry is replaced rather than struck: no test in that file ever
+leaked, and naming it kept sending readers to the wrong module."
 ```
 
 ---
