@@ -124,11 +124,41 @@ with rules selected against what is actually present:
   codebase are unusually good and a formal style gate would produce noise,
   not signal.
 
-`ruff format` is deliberately excluded. Formatting here is consistent and
-hand-tuned, particularly the long explanatory comment blocks. A format
-pass would produce a large diff that buries real changes for no gain.
+`ruff format` is adopted, at the default line length of 88.
 
-One cleanup commit, then `ruff check` joins the ubuntu CI job.
+The width is not arbitrary: only fifteen lines in the entire codebase
+currently exceed 88 characters and the longest is 104, so the code is
+already written to roughly this shape. Raising the limit to 100 produces a
+smaller diff (3,335 lines rather than 4,276) but rejoins deliberately
+wrapped user-facing message strings into 97-character lines, which is a
+worse result than the churn it saves.
+
+The cost is real and worth stating plainly: 108 of 116 files are
+reformatted. Ruff does **not** reflow docstrings or comment prose, so the
+long explanatory blocks throughout this codebase survive untouched — what
+changes is code style, chiefly hand-aligned call continuations becoming
+one-argument-per-line.
+
+One pattern does get worse. A long *trailing* comment can push a short
+statement past the limit, and the formatter responds by parenthesising the
+value:
+
+    CHUNK_SIZE = (
+        4 * 1024 * 1024
+    )  # Consumed by app._upload_one when building MediaFileUpload.
+
+This can only occur at the fifteen over-length sites. The fix is to move
+the comment above the statement, after which the line is short and the
+formatter leaves it alone permanently.
+
+Two commits, kept separate: the mechanical `ruff format` pass, then the
+hand fixes. The format commit's SHA is recorded in a new
+`.git-blame-ignore-revs` file, with `blame.ignoreRevsFile` documented in
+the README, so a whole-tree mechanical reformat does not bury authorship
+of every line in the project.
+
+One cleanup commit, then `ruff check` and `ruff format --check` join the
+ubuntu CI job.
 
 **Note on `F821`.** Ruff reports an undefined name `webview` at
 `ui/window.py:158`. This is **not** a live bug: the signature is
@@ -209,7 +239,7 @@ Each step is independently landable and independently revertable.
    code, so nothing here can be blamed on test churn.
 2. **Windows matrix + compatibility fixes.** Isolated, so a red first
    Windows run blocks nothing else.
-3. **Ruff configuration + cleanup commit + CI step.**
+3. **Ruff configuration, format pass, cleanup commit, and CI step.**
 4. **Lockfile enforcement + concurrency group.**
 5. **Dependabot + SHA-pinned actions**, plus a written branch-protection
    checklist covering the required status checks, which must include the
@@ -222,8 +252,9 @@ without pushing. `build.yml` is `workflow_dispatch` and exists precisely
 to exercise the Windows chain without publishing, so it is the proving
 ground for the composite action before `release.yml` depends on it.
 
-Step 3 is verified locally: `ruff check` clean, and the full suite still
-at 1,320 passing.
+Step 3 is verified locally: `ruff check` and `ruff format --check` clean,
+and the full suite still at 1,320 passing. That the suite still passes is
+the whole safety argument for a 108-file mechanical reformat.
 
 The manual smoke checklist is unaffected by all of this and remains the
 only verification the UI gets.
