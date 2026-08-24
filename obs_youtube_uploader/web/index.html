@@ -11,8 +11,14 @@
     <div class="pywebview-drag-region">
       <span class="mark">&#9654;</span>
       <span class="name">WINGMAN</span>
-      <span class="sub" id="route-label">Uploader</span>
     </div>
+    <!-- Sibling of the drag region, never a child: style.css:100-102 says
+         only that element drags and buttons must stay clickable. A
+         clickable child of it yields dead buttons or an immovable window. -->
+    <nav class="routenav" id="routenav">
+      <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
+      <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
+    </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
     <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
@@ -195,6 +201,83 @@
     </div>
   </div>
 
+  <div class="route" id="route-bookmarks">
+    <div class="settings">
+      <section class="card">
+        <h2>EVE bookmark hotkeys</h2>
+        <div class="row">
+          <span class="lab">Enable</span>
+          <!-- The .check/.box pattern is not decoration: .check input is
+               opacity:0 and the styled .box is the visible control. A bare
+               checkbox here rendered as a native white widget. -->
+          <label class="check">
+            <input type="checkbox" id="eve-enabled"><span class="box"></span>
+            Register hotkeys in EVE
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="eve-engine-state">Not running</span></div>
+        <div class="row"><span class="lab"></span>
+          <button class="btn" id="eve-import">Import from an existing helper&hellip;</button></div>
+      </section>
+
+      <section class="card">
+        <h2>Root</h2>
+        <div class="row">
+          <span class="lab">Root mode</span>
+          <span class="hint" id="eve-root-mode">Not set</span>
+        </div>
+        <div class="row">
+          <span class="lab">Set root</span>
+          <input class="field mono" id="eve-root-input" type="text"
+                 spellcheck="false" placeholder="J123456">
+          <button class="btn" id="eve-set-root">Set</button>
+          <button class="btn" id="eve-clear-root">Clear</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Bookmark naming</h2>
+        <div class="row">
+          <span class="lab">Home holes</span>
+          <label class="check">
+            <input type="checkbox" id="eve-home-zero"><span class="box"></span>
+            First home hole is .0
+          </label>
+        </div>
+        <div class="row">
+          <span class="lab">Return bookmark</span>
+          <label class="check">
+            <input type="checkbox" id="eve-preface-return"><span class="box"></span>
+            Preface the return bookmark
+          </label>
+        </div>
+        <div class="row">
+          <span class="lab">Preface</span>
+          <input class="field mono" id="eve-return-preface" type="text"
+                 spellcheck="false" maxlength="8" placeholder="!">
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>EVE windows</h2>
+        <p class="hint">Most hotkeys only fire while one of these windows is
+          active. Copy, Paste and Set Root work everywhere.</p>
+        <div class="row"><span class="lab"></span>
+          <button class="btn" id="eve-refresh-windows">Refresh</button></div>
+        <div id="eve-windows"></div>
+      </section>
+
+      <section class="card">
+        <h2>Keybinds</h2>
+        <p class="hint" id="eve-bind-warning" hidden></p>
+        <div id="eve-binds"></div>
+        <div class="row"><span class="lab"></span>
+          <button class="btn" id="eve-reset-binds">Reset to defaults</button></div>
+      </section>
+    </div>
+  </div>
+
   <div class="route" id="route-firstrun">
     <div class="firstrun">
       <h1>Choose your recording folder</h1>
@@ -220,6 +303,12 @@
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
+      <span class="evestat" id="evestat" hidden>
+        <span class="evelabel">SIG</span><span id="eve-sig">—</span>
+        <span class="evelabel">ROOT</span><span id="eve-root">—</span>
+        <span class="evelabel">NEXT</span><span id="eve-next">—</span>
+        <span class="evewarn" id="eve-warn" hidden>⚠</span>
+      </span>
       <span id="status" class="FG">Ready</span>
       <div class="track" id="track"><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
@@ -242,6 +331,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="bookmarks.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>

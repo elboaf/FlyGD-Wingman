@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import discord, obsconfig, paths, settings as settings_mod, stitch, watcher
+from . import discord, hotkeys, obsconfig, paths, settings as settings_mod, stitch, watcher
 from .ui import api as api_mod, preflight, window as window_mod
 from .ui.scheduler import Scheduler
 
@@ -200,6 +200,12 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
     would be lost along with the exception.
     """
     try:
+        api._push_eve_status()
+    except Exception:
+        # Its own guard: a status-push failure must not count against the
+        # recording watcher's failure counter or skip poll_once.
+        logger.exception("Engine status push failed.")
+    try:
         ready = w.poll_once()
         uploading = api._busy()
         if ready:
@@ -240,6 +246,54 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
             notify(icon, "The recording watcher is having trouble — check the log")
 
 
+def reclaim_orphaned_engine(engine) -> None:
+    """Terminate an engine left behind by a crashed session.
+
+    Runs at startup regardless of whether the feature is enabled, and that
+    is the whole point. stop() clears the pid record even when it could not
+    confirm the process died, and recover_orphan() otherwise runs only from
+    start(), which runs only when enabled. So a hung engine would survive
+    indefinitely the moment a user turned the feature off: a global keyboard
+    hook, with nothing left in the application able to reclaim it and no UI
+    that mentions it. Each of those choices is defensible on its own; the
+    hole is in their combination.
+
+    Never raises: a failure to reclaim must not stop the app starting.
+    """
+    if engine is None:
+        return
+    try:
+        engine.recover_orphan()
+    except Exception:
+        logger.exception("Orphan reclamation failed; continuing startup.")
+
+
+def start_engine_if_enabled(engine, section) -> None:
+    """Start the hotkey engine only when the user has turned it on.
+
+    Opt-in is the whole point: enabling installs a global keyboard hook, and
+    an upgrading user must not acquire one by upgrading.
+    """
+    if engine is None or not section.get("enabled"):
+        return
+    if engine.start():
+        engine.sync_sequence()
+
+
+def shutdown_engine(engine) -> None:
+    """Stop the engine on the way out, whatever else has gone wrong.
+
+    An engine that outlives Wingman keeps a keyboard hook alive with nothing
+    left to disable it, so this must never be the thing that raises.
+    """
+    if engine is None:
+        return
+    try:
+        engine.stop()
+    except Exception:
+        logger.exception("Engine did not stop cleanly")
+
+
 def main() -> int:
     set_dpi_awareness()
     handle = acquire_single_instance()
@@ -271,6 +325,16 @@ def main() -> int:
         ffmpeg_bin=paths.resolve_binary("ffmpeg"),
         ffprobe_bin=paths.resolve_binary("ffprobe"),
     )
+    engine = hotkeys.HotkeyEngine(paths.engine_exe(), paths.engine_script(),
+                                  paths.state_dir())
+    state.engine = engine
+    engine.apply(state.settings["eve_bookmarks"])
+    # Unconditional, and before the enabled check: an engine orphaned by a
+    # crashed session must be reclaimed even if the user has since turned
+    # the feature off, or nothing ever will.
+    reclaim_orphaned_engine(engine)
+    start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
+
     api = api_mod.Api(state)
 
     w = None
@@ -348,6 +412,7 @@ def main() -> int:
     icon.stop()
     if scheduler is not None:
         scheduler.stop()
+    shutdown_engine(engine)
     return 0
 
 

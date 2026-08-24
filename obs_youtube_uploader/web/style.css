@@ -109,10 +109,6 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   box-shadow: 0 0 12px rgba(230, 50, 45, .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
-.sub {
-  color: var(--text-faint); font-size: var(--fs-muted);
-  letter-spacing: .12em; text-transform: uppercase;
-}
 .winbtn {
   width: 44px; height: 32px; border: 0; background: transparent;
   color: var(--text-faint); font-size: 13px; cursor: pointer;
@@ -122,6 +118,24 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .winbtn.close:hover { background: #d9291c; color: #fff; }
 .winbtn.gear { font-size: 15px; }
 .winbtn.gear.active { background: #22252c; color: var(--brand); }
+
+/* Peer destinations, visually distinct from the window actions on the
+   right. Every pixel here is drag surface given up, so this stays tight;
+   past about four destinations the 44px bar needs rethinking. */
+.routenav { display: flex; gap: 2px; align-items: center; flex: none; }
+/* Required, not decorative: .routenav sets display, and an author rule
+   beats the UA stylesheet's [hidden] { display: none } because author
+   origin outranks UA origin. Without this, setting .hidden during first
+   run leaves the nav visible and the user can navigate away from a screen
+   that is not dismissable. Same reason .ctxmenu[hidden] exists below. */
+.routenav[hidden] { display: none; }
+.navbtn {
+  background: none; border: 0; color: var(--text-faint);
+  font: inherit; font-size: 12px; letter-spacing: .04em;
+  padding: 5px 10px; border-radius: 5px; cursor: pointer;
+}
+.navbtn:hover { color: var(--text); background: #22252c; }
+.navbtn.active { color: var(--text); background: #22252c; }
 
 /* ---- routes ----------------------------------------------------------
    Settings is a ROUTE in this window, not a second OS window. */
@@ -462,6 +476,24 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font-variant-numeric: tabular-nums;
 }
 
+/* Second segment in the status bar. Yields to upload progress at narrow
+   widths: an upload in flight is the more urgent of the two. */
+.evestat { display: flex; gap: 6px; align-items: baseline; flex: 0 1 auto;
+           min-width: 0; overflow: hidden; white-space: nowrap; }
+.evelabel { color: var(--text-dim); font-size: 10px; letter-spacing: .08em; }
+/* Same token #status.WARNING uses, so the two severities read alike. */
+.evewarn { color: var(--warn); }
+.evestat.degraded { opacity: .5; }
+/* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
+   specificity, so the display:flex above would keep this visible for every
+   user who never turns the feature on. Same fix as .routenav[hidden]. */
+.evestat[hidden] { display: none; }
+/* NOT dead code, despite MIN_WIDTH being 840 (ui/window.py:44). That is a
+   PHYSICAL-pixel floor: the app is system-DPI-aware (ui/chrome.py:180), so
+   the CSS viewport is 840/scale -- 672px at 125%, 560px at 150%. This rule
+   fires at any scaling above 100%, which is most Windows laptops. */
+@media (max-width: 720px) { .evestat { display: none; } }
+
 /* ====================== modal dialog layer ==========================
    Modals are native Tk message boxes today, called from workers. They
    become in-page modals; `confirm` is the only request/response pair in an
@@ -507,6 +539,70 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* ====================== settings route ==============================
    A route in this window, not a second OS window. */
 #route-settings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* ====================== bookmarks route =============================
+   Reuses the settings route's card markup, so it needs the same column
+   direction and scroll safeguard: this route will hold nineteen keybind
+   rows and will exceed the window height. Without overflow-y the lower
+   binds clip with no scrollbar and become unreachable. */
+#route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* Accented, unlike a plain .hint: this warns that two actions share a key
+   and AutoHotkey will silently let one win. It shares .bindbtn.clash's
+   colour so the sentence and the rows it names read as one warning. */
+#eve-bind-warning { color: var(--err); }
+
+/* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
+   "Finisher: C13 (shattered)"), not short field labels like the rest of
+   this route's cards -- the shared `.settings .row > .lab` column below
+   is a fixed 118px right-aligned width tuned for "Privacy" and
+   "Category" and would wrap these onto several right-ragged lines. This
+   override gives the label the row's remaining width instead. */
+#eve-binds .row > .lab {
+  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+}
+
+/* Bind rows. .bindbtn shows the current combination and is the capture
+   target; .linkbtn is the secondary Clear / Type… affordance. Both follow
+   button.btn and .winbtn rather than introducing new colour literals. */
+.bindbtn {
+  min-width: 150px; text-align: left;
+  background: #1c1f26; border: 1px solid #2a2e37;
+  border-radius: var(--radius-sm); padding: 6px 10px;
+  font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text); cursor: pointer; flex: none;
+}
+.bindbtn:hover { background: #242832; }
+
+/* Capturing: the label already changes to "Press a key…", but without a
+   visual state the row does not read as waiting for input. */
+.bindbtn.capturing {
+  border-color: var(--brand); color: var(--brand); background: #22252c;
+}
+
+/* Two actions bound to the same key: AutoHotkey silently lets one win, so
+   the warning above the list names them and this marks which rows. */
+.bindbtn.clash { border-color: var(--err); color: var(--err); }
+
+/* Scope marker. Copy, Paste and Set Root register with no window
+   restriction (111unified.ahk:763-771) and fire in every application; the
+   other eighteen only fire in an enabled EVE client. The standalone GUI
+   left this discoverable only by reading the script, so it is spelled out
+   per row -- .dim for the ordinary case so the exceptions are what catch
+   the eye, not the eighteen rows that behave as expected. */
+.scope {
+  flex: none; font-size: var(--fs-muted); color: var(--brand);
+  border: 1px solid currentColor; border-radius: var(--radius-sm);
+  padding: 1px 6px; white-space: nowrap;
+}
+.scope.dim { color: var(--text-faint); border-color: #2a2e37; }
+
+.linkbtn {
+  background: none; border: 0; color: var(--text-faint);
+  font: inherit; font-size: var(--fs-muted); cursor: pointer;
+  padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
+}
+.linkbtn:hover { color: var(--text); background: #22252c; }
 
 .settings {
   display: flex; flex-direction: column; gap: 12px;

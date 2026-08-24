@@ -48,7 +48,8 @@
   // one visible owner.
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
-                 'onAuthState', 'onDialog', 'onFirstRun'];
+                 'onAuthState', 'onDialog', 'onFirstRun',
+                 'onBookmarks', 'onEveStatus'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -88,17 +89,25 @@
   // is pure client state; Python is not told which route is showing.
   WM.route = function (name) {
     var routes = { main: 'route-main', settings: 'route-settings',
-                   firstrun: 'route-firstrun' };
-    var labels = { main: 'Uploader', settings: 'Settings',
-                   firstrun: 'Setup' };
+                   firstrun: 'route-firstrun',
+                   bookmarks: 'route-bookmarks' };
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
-    WM.el('route-label').textContent = labels[name] || 'Uploader';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.navbtn'), function (btn) {
+        btn.classList.toggle('active', btn.dataset.route === name);
+      });
     WM.el('btn-settings').classList.toggle('active', name === 'settings');
-    // First run is not dismissable: the app cannot watch a folder it does
-    // not have, so the gear is hidden rather than merely inert.
+    // First run is not dismissable, so neither the gear nor the
+    // destinations are offered: there is nowhere else to go yet.
     WM.el('btn-settings').hidden = (name === 'firstrun');
+    WM.el('routenav').hidden = (name === 'firstrun');
+    // The gear returns to wherever you were: Settings is a window-level
+    // action layered on top of a peer destination, not a peer itself.
+    if (name === 'main' || name === 'bookmarks') {
+      WM.last_destination = name;
+    }
     WM.current_route = name;
     document.dispatchEvent(new CustomEvent('wm:route', { detail: name }));
   };
@@ -113,8 +122,15 @@
   // Settings moves out of the bottom-left corner to the title bar, where a
   // window-level action belongs.
   WM.el('btn-settings').addEventListener('click', function () {
-    WM.route(WM.current_route === 'settings' ? 'main' : 'settings');
+    WM.route(WM.current_route === 'settings'
+             ? (WM.last_destination || 'main') : 'settings');
   });
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.navbtn'), function (btn) {
+      btn.addEventListener('click', function () {
+        WM.route(btn.dataset.route);
+      });
+    });
 
   // ---- startup ------------------------------------------------------
   ready.then(function () {

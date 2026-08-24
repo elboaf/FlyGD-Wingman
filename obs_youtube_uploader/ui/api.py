@@ -29,8 +29,9 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import (combatlog, discord, durations, library, obsconfig, paths,
-                settings as settings_mod, stitch, uploader)
+from .. import (bookmarks, combatlog, discord, durations, evewindows,
+                library, obsconfig, paths, settings as settings_mod, stitch,
+                uploader)
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -61,6 +62,18 @@ def _folder_dialog_kind():
     """
     import webview
     return webview.FileDialog.FOLDER
+
+
+def _open_file_dialog_kind():
+    """pywebview's open-file-dialog constant, imported at call time.
+
+    Same seam as _folder_dialog_kind above, for the same two reasons: the
+    tests run on a box with no webview installed, and the constant has
+    moved once already. Importing webview inline at the call site instead
+    is what broke the import tests -- there was no seam left to patch.
+    """
+    import webview
+    return webview.FileDialog.OPEN
 
 
 def _close_media(media) -> None:
@@ -131,6 +144,10 @@ class AppState:
     settings: dict
     ffmpeg_bin: str | None = None
     ffprobe_bin: str | None = None
+    # None until ui.window.create() wires up the HotkeyEngine. Every bridge
+    # method that touches it must handle that -- e.g. by no-op'ing rather
+    # than crashing the bridge thread on an AttributeError.
+    engine: object | None = None
 
 
 class Api:
@@ -1167,6 +1184,29 @@ class Api:
                 for state, (message, label, enabled)
                 in copy_mod.AUTH_STATES.items()}
 
+    def _push_eve_status(self) -> None:
+        """Publish engine status to the page.
+
+        Pushed regardless of which route is showing: the status bar is
+        global chrome, and app.js deliberately never tells Python which
+        route is active.
+        """
+        engine = self._state.engine
+        if engine is None:
+            return
+        enabled = self._state.settings["eve_bookmarks"]["enabled"]
+        status = engine.status(enabled=enabled)
+        self._push("onEveStatus", {
+            "state": status.state, "sig": status.sig, "root": status.root,
+            "next_num": status.next_num, "next_alpha": status.next_alpha,
+            "root_mode": status.root_mode,
+            "failed_binds": status.failed_binds,
+            # A failed start is otherwise invisible: this is the one
+            # actionable thing the user can be told ("the engine is
+            # missing, reinstall").
+            "last_error": status.last_error,
+        })
+
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
 
@@ -1242,3 +1282,167 @@ class Api:
             self._push_auth("disconnected")
             return
         self._push_auth("connected")
+
+    # ---- EVE bookmarks ------------------------------------------------
+
+    def get_bookmarks(self) -> dict:
+        """Everything the Bookmarks route renders, in one call."""
+        section = self._state.settings["eve_bookmarks"]
+        engine = self._state.engine
+        status = (engine.status(enabled=section["enabled"])
+                  if engine is not None else None)
+        return {
+            "settings": section,
+            "labels": bookmarks.BIND_LABELS,
+            "order": list(bookmarks.BIND_IDS),
+            # Which binds fire outside EVE. The standalone GUI left this
+            # discoverable only by reading RefreshHotkeys; the route shows
+            # it per row.
+            "globals": sorted(bookmarks.GLOBAL_BIND_IDS),
+            "windows": evewindows.list_eve_windows(),
+            "collisions": bookmarks.collisions(section["keybinds"]),
+            # Human labels for the bound keys. Computed here rather than in
+            # the page, which is the entire reason to_ahk returns a display
+            # string: the page holds no mapping table and cannot drift from
+            # this one. Without this the UI would show raw "^+s".
+            "displays": {bid: bookmarks.parse_ahk(value)["display"]
+                         for bid, value in section["keybinds"].items()
+                         if value},
+            "engine": {
+                "state": status.state if status else "off",
+                "root_mode": status.root_mode if status else "",
+                # Surfaces a failed start straight away. Without this the
+                # toggle reads "on" while nothing is running, and the reason
+                # never reaches the user at all.
+                "last_error": status.last_error if status else None,
+            },
+        }
+
+    def save_bookmarks(self, section) -> dict:
+        """Persist the section, regenerate the INI, and match the engine to
+        the enabled flag.
+
+        The payload arrives from the page and lands in a file that registers
+        keyboard hooks, so it is re-validated here rather than trusted.
+
+        The returned payload carries a `saved` flag. Both failure paths
+        below return the same shape as success, so without it a caller
+        cannot tell a completed write from a refused one -- which is how
+        import came to report "Import complete" over a settings file it had
+        failed to write. The page ignores the key; only callers that make a
+        success claim of their own need it.
+        """
+        if not isinstance(section, dict):
+            logger.error("Refusing a non-dict bookmarks payload")
+            return {**self.get_bookmarks(), "saved": False}
+
+        merged = dict(self._state.settings)
+        merged["eve_bookmarks"] = settings_mod.validated_eve(section)
+        try:
+            settings_mod.save(merged)
+        except OSError as exc:
+            # Same contract as save_settings: bail before touching in-memory
+            # state so state and disk never diverge, and say why rather than
+            # letting the exception escape.
+            self._alert("error", "Could not save settings",
+                        f"Bookmark settings were not saved: {exc}")
+            return {**self.get_bookmarks(), "saved": False}
+
+        self._state.settings = settings_mod.load()
+        clean = self._state.settings["eve_bookmarks"]
+
+        engine = self._state.engine
+        if engine is not None:
+            engine.apply(clean)
+            if clean["enabled"] and not engine.is_running():
+                engine.start()
+                engine.sync_sequence()
+            elif not clean["enabled"] and engine.is_running():
+                engine.stop()
+        return {**self.get_bookmarks(), "saved": True}
+
+    def capture_bind(self, parts) -> dict:
+        return bookmarks.to_ahk(parts if isinstance(parts, dict) else {})
+
+    def reset_binds(self) -> dict:
+        """Apply the recommended set, overwriting every bind.
+
+        The standalone GUI's Reset Defaults button (111unified.ahk:319),
+        which the port dropped. Overwrite rather than fill-blanks: a reset
+        whose effect depends on hidden state is not a reset, and the user
+        reaches this through a confirmation in the page.
+        """
+        section = dict(self._state.settings["eve_bookmarks"])
+        section["keybinds"] = dict(bookmarks.RECOMMENDED_BINDS)
+        return self.save_bookmarks(section)
+
+    def parse_bind(self, text) -> dict:
+        return bookmarks.parse_ahk(text if isinstance(text, str) else "")
+
+    def eve_command(self, name, argument="") -> bool:
+        engine = self._state.engine
+        if engine is None:
+            return False
+        return bool(engine.send_command(str(name), str(argument or "")))
+
+    def import_bookmarks(self) -> dict:
+        """Import a standalone helper INI chosen by the user.
+
+        The standalone script wrote its INI relative to its working
+        directory, so there is no path worth probing -- the user points at
+        it.
+        """
+        chosen = self._window.create_file_dialog(
+            _open_file_dialog_kind(), directory="")
+        if not chosen:
+            return {"ok": False, "discarded": [], "notes": []}
+        try:
+            # Read as BYTES and sniff the BOM. AutoHotkey's IniWrite emits
+            # UTF-16 LE on a Unicode build, which is what the real file in
+            # the wild actually is; decoding that as UTF-8 leaves a NUL
+            # after every character, so every section header failed the
+            # parser's "]" test and the whole file imported as nothing --
+            # which was then saved over the user's real settings while the
+            # dialog reported success.
+            raw = Path(chosen[0]).read_bytes()
+        except OSError as exc:
+            return {"ok": False, "discarded": [],
+                    "notes": [f"Could not read that file: {exc}"]}
+
+        result = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
+        if not result["parsed"]:
+            # No sections at all. Indistinguishable from an empty config by
+            # content, so it is treated as the failure it almost certainly
+            # is: saving here would wipe the settings the import exists to
+            # preserve.
+            return {"ok": False, "discarded": [], "notes": [
+                "That file does not look like a bookmark helper INI - no "
+                "settings were found in it, so nothing was changed."]}
+        # Import never enables the engine: reading someone's old settings is
+        # not consent to start a keyboard hook.
+        result["section"]["enabled"] = \
+            self._state.settings["eve_bookmarks"]["enabled"]
+        if not self.save_bookmarks(result["section"])["saved"]:
+            # Deliberately no note: save_bookmarks has already raised its own
+            # "Could not save settings" dialog naming the reason, and the
+            # page only alerts on a failure that carries one. Returning a
+            # second message here would put two dialogs on screen for one
+            # failure -- and returning ok=True would put a contradictory
+            # "Import complete" beside the error, which is the bug this
+            # flag exists to close.
+            return {"ok": False, "discarded": [], "notes": []}
+        return {"ok": True, "discarded": result["discarded"],
+                "notes": result["notes"]}
+
+    def alert_import(self, body: str) -> None:
+        """Report what an import changed. Uses the existing dialog layer."""
+        self._alert("info", "Import complete", str(body))
+
+    def alert_bookmarks(self, body: str) -> None:
+        """Generic Bookmarks-route alert for anything that is not an import
+        summary -- a rejected typed hotkey, a refused engine command, or a
+        failed import's reason. `alert_import` keeps its own "Import
+        complete" title for a completed (if partial) import; that title
+        would be misleading for these.
+        """
+        self._alert("info", "Bookmarks", str(body))

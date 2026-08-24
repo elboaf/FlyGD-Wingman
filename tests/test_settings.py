@@ -1,6 +1,6 @@
 import json
 import pytest
-from obs_youtube_uploader import settings
+from obs_youtube_uploader import bookmarks, settings
 
 
 def test_defaults_are_the_documented_values():
@@ -13,6 +13,18 @@ def test_defaults_are_the_documented_values():
         "gamelogs_dir": None,
         "channel_id": "",
         "channel_title": "",
+        "eve_bookmarks": {
+            "enabled": False,
+            "keybinds": bookmarks.DEFAULT_BINDS,
+            "windows": {},
+            # False, unlike the standalone script's compiled-in
+            # HomeZeroIs0 := 1 (111unified.ahk:32): a fresh Wingman install
+            # numbers home holes from .1 by maintainer decision. An
+            # imported INI still carries its own value across.
+            "home_zero": False,
+            "preface_return": True,
+            "return_preface": "!",
+        },
     }
 
 

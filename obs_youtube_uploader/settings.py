@@ -6,7 +6,26 @@ Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 import json
 from pathlib import Path
 
-from . import paths
+from . import bookmarks, paths
+
+
+def _eve_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Off by default: Copy, Paste and Set Root register with no window
+    # restriction (111unified.ahk:763-771), so enabling this really does
+    # install hotkeys that fire outside EVE. An upgrading user has to ask
+    # for that rather than be given it.
+    return {"enabled": False,
+            "keybinds": dict(bookmarks.DEFAULT_BINDS),
+            "windows": {},
+            # The standalone script's compiled-in default is the opposite
+            # (HomeZeroIs0 := 1, 111unified.ahk:32). Wingman starts a fresh
+            # install at .1 by maintainer decision; an imported INI carries
+            # its own value across, so nobody upgrading is renumbered.
+            "home_zero": False,
+            "preface_return": True,
+            "return_preface": "!"}
+
 
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
@@ -27,21 +46,77 @@ DEFAULTS = {
     # compared so a changed destination can be called out.
     "channel_id": "",
     "channel_title": "",
+    # Nested, unlike every other key. save() projects onto DEFAULTS keys, so
+    # this whole section travels as one value; load() rebuilds the inner
+    # dicts rather than copying them, because dict(DEFAULTS) below is
+    # shallow and would otherwise hand callers the module globals.
+    #
+    # Built by _eve_defaults() rather than restated here: load() returns
+    # that function's output, and tests compare load() against DEFAULTS, so
+    # two literals would have to be kept in step by hand.
+    "eve_bookmarks": _eve_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
 _VALID_NOTIFY = {"toast", "popup"}
 
 
+def _fresh_defaults() -> dict:
+    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    data = dict(DEFAULTS)
+    data["eve_bookmarks"] = _eve_defaults()
+    return data
+
+
+def validated_eve(raw) -> dict:
+    section = _eve_defaults()
+    if not isinstance(raw, dict):
+        return section
+
+    # `is True` rather than truthiness: a stray 1 or "yes" from a
+    # hand-edited file must not start a keyboard hook.
+    section["enabled"] = raw.get("enabled") is True
+
+    binds = raw.get("keybinds")
+    if isinstance(binds, dict):
+        for bid in bookmarks.BIND_IDS:
+            value = binds.get(bid)
+            if isinstance(value, str):
+                section["keybinds"][bid] = value.strip()
+    # Ids not in BIND_IDS are dropped by construction: the loop is over the
+    # known ids, so a key from a hand-edited file cannot reach the INI.
+
+    # isinstance rather than `is True`: these two have different defaults,
+    # so absence has to leave the default standing rather than resolve to
+    # False. Unlike `enabled` there is no hook to start, so a garbage value
+    # falling back to the default is the whole of the risk.
+    for flag in ("home_zero", "preface_return"):
+        if isinstance(raw.get(flag), bool):
+            section[flag] = raw[flag]
+
+    preface = raw.get("return_preface")
+    if isinstance(preface, str):
+        # Sanitised and capped here rather than only at generate_ini: this
+        # is the boundary a hand-edited settings file crosses.
+        section["return_preface"] = \
+            bookmarks.sanitise(preface)[:bookmarks.PREFACE_MAX]
+
+    windows = raw.get("windows")
+    if isinstance(windows, dict):
+        section["windows"] = {k: bool(v) for k, v in windows.items()
+                              if isinstance(k, str)}
+    return section
+
+
 def load(path: Path | None = None) -> dict:
     path = path or paths.settings_file()
-    data = dict(DEFAULTS)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return data
+        return _fresh_defaults()
     if not isinstance(raw, dict):
-        return data
+        return _fresh_defaults()
+    data = dict(DEFAULTS)
     for key in DEFAULTS:
         if key in raw:
             data[key] = raw[key]
@@ -63,6 +138,7 @@ def load(path: Path | None = None) -> dict:
     for key in ("channel_id", "channel_title"):
         if not isinstance(data[key], str):
             data[key] = ""
+    data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
     return data
 
 
