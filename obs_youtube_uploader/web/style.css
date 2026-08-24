@@ -177,6 +177,14 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
+/* Required, not decorative -- the same trap .routenav[hidden] and
+   .evestat[hidden] already carry a note about. An author rule beats the UA
+   stylesheet's [hidden] { display: none } regardless of specificity, so
+   .row's display:flex above kept #eve-blockers-row rendered even when
+   bookmarks.js set hidden on it: an empty flex row holding 10px of margin
+   under the Enable control, on every install with nothing to warn about.
+   Found by tests/test_page_conventions.py. */
+.row[hidden] { display: none; }
 
 input.field, textarea.field, select.field, span.field {
   flex: 1; min-width: 0; background: var(--field);
