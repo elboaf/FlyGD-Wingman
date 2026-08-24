@@ -206,7 +206,14 @@ def list_plans(plans_dir: Path):
             continue
 
         try:
-            contents = path.read_text(encoding="utf-8")
+            # utf-8-sig, not utf-8: Notepad writes a BOM by default, and a
+            # plain utf-8 decode leaves it as a literal U+FEFF prefixed onto
+            # the first line -- which plans.parse then sees as leading junk
+            # on whatever that first line is (a comment marker, a skill
+            # name), silently corrupting just that one line rather than
+            # raising. utf-8-sig strips the BOM when present and is a
+            # no-op on files that never had one.
+            contents = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
             # A .txt Notepad saved as UTF-16, or a binary file renamed.
             # One unreadable file costs its own row, not the folder --

@@ -192,6 +192,30 @@ def test_an_undecodable_file_warns_and_does_not_stop_the_others(tmp_path):
     assert len(issues) == 1 and issues[0].file_name == "Bad.txt"
 
 
+def test_a_bom_before_a_comment_line_does_not_corrupt_it(tmp_path):
+    """Notepad writes a UTF-8 BOM by default. A plain utf-8 decode leaves
+    it as a literal U+FEFF glued onto the first line -- here a comment
+    marker, which would then no longer be recognised as one."""
+    (tmp_path / "Commented.txt").write_bytes(
+        "# a note\nNavigation IV\n".encode("utf-8-sig"))
+    found, issues = planstore.list_plans(tmp_path)
+    assert issues == []
+    assert [(r.skill_name, r.level) for r in found[0].requirements] == [
+        ("Navigation", 4)]
+
+
+def test_a_bom_before_the_first_skill_name_does_not_corrupt_it(tmp_path):
+    """Same BOM hazard, but landing directly on a skill name rather than
+    a comment -- the more common case, since most plans have no leading
+    comment line at all."""
+    (tmp_path / "Rifter.txt").write_bytes(
+        "Navigation IV\nMechanics III\n".encode("utf-8-sig"))
+    found, issues = planstore.list_plans(tmp_path)
+    assert issues == []
+    assert [(r.skill_name, r.level) for r in found[0].requirements] == [
+        ("Navigation", 4), ("Mechanics", 3)]
+
+
 def test_at_most_200_files_are_read(tmp_path):
     """The cap bounds the work one `Reload plans` click can do. It warns
     rather than failing, because the plans the user can see still work."""
