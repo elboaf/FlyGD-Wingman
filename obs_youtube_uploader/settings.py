@@ -4,9 +4,22 @@ Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 ``category_id``).
 """
 import json
+import threading
 from pathlib import Path
 
 from . import bookmarks, paths
+from .preview import layout as preview_layout
+
+
+def _preview_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global.
+
+    Off by default, like eve_bookmarks: enabling it starts a thread, a
+    700ms sweep, and a foreground hook. A user who never previews EVE
+    clients should pay none of that.
+    """
+    return {"enabled": False, "width": 320, "height": 210,
+            "opacity": 235, "layouts": {}}
 
 
 def _eve_defaults() -> dict:
@@ -55,6 +68,9 @@ DEFAULTS = {
     # that function's output, and tests compare load() against DEFAULTS, so
     # two literals would have to be kept in step by hand.
     "eve_bookmarks": _eve_defaults(),
+    # Same reasoning as eve_bookmarks above: built by _preview_defaults()
+    # so callers never share one nested dict.
+    "preview": _preview_defaults(),
 }
 
 _VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -65,7 +81,32 @@ def _fresh_defaults() -> dict:
     """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
     data = dict(DEFAULTS)
     data["eve_bookmarks"] = _eve_defaults()
+    data["preview"] = _preview_defaults()
     return data
+
+
+def validated_preview(raw) -> dict:
+    """Same posture as validated_eve: a malformed section falls back
+    whole, a malformed layout entry drops alone."""
+    section = _preview_defaults()
+    if not isinstance(raw, dict):
+        return section
+    if isinstance(raw.get("enabled"), bool):
+        section["enabled"] = raw["enabled"]
+    for key, floor in (("width", 120), ("height", 90)):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            section[key] = max(floor, value)
+    opacity = raw.get("opacity")
+    if isinstance(opacity, int) and not isinstance(opacity, bool):
+        # Clamped, not rejected: a fully transparent preview is
+        # indistinguishable from a broken one.
+        section["opacity"] = max(20, min(255, opacity))
+    # Round-tripped through the layout model so a corrupt entry is dropped
+    # at load rather than at draw time.
+    section["layouts"] = preview_layout.serialize(
+        preview_layout.deserialize(raw.get("layouts")))
+    return section
 
 
 def validated_eve(raw) -> dict:
@@ -139,10 +180,24 @@ def load(path: Path | None = None) -> dict:
         if not isinstance(data[key], str):
             data[key] = ""
     data["eve_bookmarks"] = validated_eve(raw.get("eve_bookmarks"))
+    data["preview"] = validated_preview(raw.get("preview"))
     return data
 
 
+# save() projects the COMPLETE document from DEFAULTS, so two writers
+# interleaving lose one side's keys entirely -- not a corrupt file, a
+# silently reverted setting. Two writers already exist without previews:
+# ui/api.py persists the channel from an upload worker thread, on purpose
+# (see its docstring). The preview layout store makes three.
+_SAVE_LOCK = threading.Lock()
+
+
 def save(data: dict, path: Path | None = None) -> None:
+    with _SAVE_LOCK:
+        _save_locked(data, path)
+
+
+def _save_locked(data: dict, path: Path | None = None) -> None:
     path = path or paths.settings_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}

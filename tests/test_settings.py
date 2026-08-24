@@ -25,6 +25,16 @@ def test_defaults_are_the_documented_values():
             "preface_return": True,
             "return_preface": "!",
         },
+        "preview": {
+            # Off by default for the same reason eve_bookmarks is:
+            # enabling it starts a thread, a 700ms discovery sweep and a
+            # foreground hook, none of which a non-EVE user should pay.
+            "enabled": False,
+            "width": 320,
+            "height": 210,
+            "opacity": 235,
+            "layouts": {},
+        },
     }
 
 
