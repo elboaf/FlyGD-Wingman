@@ -20,7 +20,9 @@
   ['delete_selected', 'start_upload', 'retry',
    'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
-   'set_recording_dir'
+   'set_recording_dir',
+   'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
+   'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
 
   // NOT one of the generic stubs above. settings.js guards on `!ok`, so the
@@ -30,6 +32,130 @@
   api.save_settings = function (values) {
     console.log('DEV api.save_settings(', values, ')');
     return Promise.resolve(true);
+  };
+
+  // NOT generic stubs, for the same reason save_settings above is not: the
+  // page guards on `!ok`, and the real bridge returns True even for a
+  // no-op. A null here would make plan switching and forget dead in the
+  // browser while working under Python.
+  api.skills_select_plan = function (name) {
+    console.log('DEV api.skills_select_plan(', name, ')');
+    skills.selected_plan_name = name;
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  api.skills_forget_character = function (id) {
+    console.log('DEV api.skills_forget_character(', id, ')');
+    skills.characters = skills.characters.filter(function (ch) {
+      return ch.character_id !== id;
+    });
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  api.skills_state = function () {
+    console.log('DEV api.skills_state()');
+    return Promise.resolve(skills);
+  };
+
+  api.skills_character_detail = function (id, plan) {
+    console.log('DEV api.skills_character_detail(', id, plan, ')');
+    return Promise.resolve({
+      ok: true, message: '', character_id: id, plan_name: plan,
+      readiness: 'Missing', estimated_finish_utc: '',
+      queue_timing_unknown: false,
+      requirements: [
+        { skill_name: 'Amarr Cruiser', required_level: 5, active_level: 4,
+          trained_level: 4, state: 'Missing', queued_finish_utc: '',
+          queue_timing_unknown: false },
+        { skill_name: 'Heavy Assault Cruisers', required_level: 1,
+          active_level: 0, trained_level: 1, state: 'TrainedInactive',
+          queued_finish_utc: '', queue_timing_unknown: false },
+        { skill_name: 'Energy Grid Upgrades', required_level: 4,
+          active_level: 3, trained_level: 3, state: 'Queued',
+          queued_finish_utc: '2026-08-27T04:00:00+00:00',
+          queue_timing_unknown: false }
+      ]
+    });
+  };
+
+  // One character per readiness group, plus a deliberately unrecognised
+  // one so the roster's catch-all bucket is visible in the browser. The
+  // Unscored row is the common case, not padding: every character is
+  // Unscored between authorisation and its first refresh.
+  var skills = {
+    auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
+    selected_plan_name: 'Ishtar',
+    plans: [
+      { name: 'Ishtar', requirement_count: 14, ready_count: 1 },
+      { name: 'Loki', requirement_count: 22, ready_count: 0 }
+    ],
+    characters: [
+      { character_id: 1, character_name: 'Aiga Otsolen',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Ready',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 14, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 0, unknown_count: 0 },
+      { character_id: 2, character_name: 'Zuelo Parvi',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        estimated_finish_utc: '2026-08-26T12:00:00+00:00',
+        queue_timing_unknown: false,
+        active_count: 12, trained_inactive_count: 0, queued_count: 2,
+        missing_count: 0, unknown_count: 0 },
+      { character_id: 3, character_name: 'Kaska Rin',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        estimated_finish_utc: '', queue_timing_unknown: true,
+        active_count: 13, trained_inactive_count: 0, queued_count: 1,
+        missing_count: 0, unknown_count: 0 },
+      { character_id: 4, character_name: 'Delen Vok',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Locked',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 11, trained_inactive_count: 3, queued_count: 0,
+        missing_count: 0, unknown_count: 0 },
+      { character_id: 5, character_name: 'Gustav Oswaldo',
+        fetched_utc: '2026-08-23T20:00:00+00:00',
+        error: 'ESI returned 503', needs_reauth: false, stale: true,
+        readiness: 'Missing', estimated_finish_utc: '',
+        queue_timing_unknown: false,
+        active_count: 8, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 6, unknown_count: 0 },
+      { character_id: 6, character_name: 'Nera Tal',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 12, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 2, unknown_count: 0 },
+      { character_id: 7, character_name: 'Orin Kesh',
+        fetched_utc: '2026-08-24T08:00:00+00:00', error: '',
+        needs_reauth: false, stale: false, readiness: 'Unknown',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 13, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 0, unknown_count: 1 },
+      { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
+        error: 'The refresh token was rejected', needs_reauth: true,
+        stale: false, readiness: 'Unscored', estimated_finish_utc: '',
+        queue_timing_unknown: false,
+        active_count: 0, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 0, unknown_count: 0 },
+      { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
+        error: '', needs_reauth: false, stale: false,
+        readiness: 'Ascendant', estimated_finish_utc: '',
+        queue_timing_unknown: false,
+        active_count: 0, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 0, unknown_count: 0 }
+    ],
+    plan_issues: [
+      { file_name: 'Broken.txt', message: 'The file was rejected.',
+        diagnostics: [{ line: 4, message: 'Missing a level' },
+                      { line: 0, message: 'No requirements were parsed' }] }
+    ],
+    warnings: [],
+    plans_updated_utc: '2026-08-24T08:00:00+00:00'
   };
 
   api.pick_folder = function (which) {
@@ -166,6 +292,24 @@
     },
     settings: function (patch, statusLine) {
       window.onSettings(settingsPayload(patch, statusLine));
+    },
+    skillsProgress: function (completed, total) {
+      window.onSkillsProgress({ character_id: 2, character_name: 'Zuelo Parvi',
+                                completed: completed, total: total, error: '' });
+    },
+    skillsAuth: function (busy) {
+      skills.auth_in_progress = !!busy;
+      window.onSkills(skills);
+    },
+    skillsRefreshing: function (busy) {
+      skills.refresh_in_flight = !!busy;
+      window.onSkills(skills);
+    },
+    skillsEmpty: function () {
+      skills.characters = [];
+      skills.plans = [];
+      skills.selected_plan_name = '';
+      window.onSkills(skills);
     }
   };
 

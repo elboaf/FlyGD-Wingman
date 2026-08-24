@@ -51,7 +51,8 @@
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
                  'onEveSettingsNames',
-                 'onEveSettingsRunning', 'onEveSettingsDone'];
+                 'onEveSettingsRunning', 'onEveSettingsDone',
+                 'onSkills', 'onSkillsProgress'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -94,7 +95,8 @@
                    firstrun: 'route-firstrun',
                    bookmarks: 'route-bookmarks',
                    previews: 'route-previews',
-                   evesettings: 'route-evesettings' };
+                   evesettings: 'route-evesettings',
+                   skills: 'route-skills' };
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
@@ -110,7 +112,7 @@
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
     if (name === 'main' || name === 'bookmarks' || name === 'previews'
-        || name === 'evesettings') {
+        || name === 'evesettings' || name === 'skills') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;

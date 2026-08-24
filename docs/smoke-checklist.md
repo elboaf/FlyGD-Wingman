@@ -1137,3 +1137,201 @@ so these are the checks that matter and only a Windows machine can run them.
       Ten auto-backups remain; the manual ones are untouched.
 - [ ] Check the packaged build: the EVE Settings route appears and the
       folder picker opens.
+
+## EVE skill plan readiness
+
+Requires a Windows machine, a real EVE account, and a registered EVE
+application. Most of this subsystem IS covered by pytest — the parser, the
+evaluator, the JWT verifier, the loopback parser, the ESI client, the state
+normaliser and the skill-id cache all run headless on Linux in CI. What
+follows is only what the suite structurally cannot reach: a live third-party
+authorisation server, a browser, a Windows-only crypto API, and a frozen
+bundle.
+
+**Register the EVE application first.** Until someone creates it at
+developers.eveonline.com, sets the redirect URI to
+`http://127.0.0.1:51779/callback/`, requests the two read-only scopes, and
+puts the client id in `obs_youtube_uploader/eveskills/application.py`, none
+of the SSO items below can run at all — `Add character` is disabled and says
+so. Every module below the auth stack is testable with stubs before that
+happens, which is why the rest of the feature can be built and merged
+against a placeholder id; only these items are blocked on the registration.
+
+### The SSO round trip
+
+- [ ] **LOAD-BEARING: a real authorisation completes against CCP.** Click
+      `Add character`. Expected: the default browser opens EVE's own login
+      page, the consent screen names exactly the two scopes
+      (`esi-skills.read_skills.v1` and `esi-skills.read_skillqueue.v1`) and
+      no others, and after approving, **the browser tab shows Wingman's own
+      completion page** rather than a connection error or a raw JSON blob.
+      The character appears in the roster as `Unscored`. Nothing in the
+      suite can reach login.eveonline.com, so this is the only proof the
+      PKCE challenge, the state comparison, the loopback listener and the
+      code exchange all agree with the live server.
+- [ ] **The window stays responsive for the whole five minutes.** Start an
+      authorisation and do not complete it. Drag the window, switch routes,
+      scroll the recording list. If any of that freezes, the loopback wait
+      is running on the bridge thread rather than a worker.
+- [ ] **Cancel sign-in actually cancels.** Start an authorisation, click
+      `Cancel sign-in`, then complete the login in the browser anyway. No
+      character is added, and starting a second authorisation works — a
+      listener that did not release port 51779 makes the second attempt
+      fail to bind.
+- [ ] **A second authorisation while one is in flight is refused, not
+      queued.** Two would fight over the fixed port.
+
+### DPAPI, on Windows only
+
+- [ ] **LOAD-BEARING: the refresh token survives a restart.** Add a
+      character, quit Wingman fully (tray Quit, not just closing the
+      window), relaunch, and click `Refresh characters`. It refreshes
+      without asking you to sign in again. This is the DPAPI round trip:
+      `dpapi.py` is the one module CI never executes, because it is
+      `CryptProtectData` and CI is Linux.
+- [ ] **A token another user cannot read costs one character, not the
+      file.** Open `%LOCALAPPDATA%\OBSYouTubeUploader\eve_skills.json`,
+      corrupt one character's `refresh_token_blob` (change a few base64
+      characters), and relaunch. Expected: that character shows
+      `needs_reauth` with a re-authenticate banner; **every other character
+      is untouched and still refreshes.** This is what keeping the roster
+      metadata in plaintext beside the wrapped token buys.
+
+### A live refresh
+
+- [ ] **An account with more than one character refreshes all of them.**
+      Add at least three, click `Refresh characters`, and watch the notices
+      strip count `Refreshed 1 of 3`, `2 of 3`, `3 of 3` as it goes. A
+      counter that jumps straight to the total means progress is being
+      pushed after the loop rather than per character.
+- [ ] **A failure isolates.** Disconnect the network mid-refresh. Expected:
+      the characters already fetched keep their data and show no error; the
+      rest carry a per-character error and a `Stale` badge if they had
+      previous data. Nothing shows a `Stale` badge that never fetched
+      successfully.
+- [ ] **Last-good data survives.** Reconnect, refresh again, and confirm the
+      errors clear and the badges disappear.
+- [ ] **The readiness verdict matches the game.** Pick one character and one
+      plan and check three requirements against the in-game skill sheet: one
+      it has active, one it is training, one it lacks. The evaluator's
+      precedence is unit-tested; that the *inputs* are the right ESI fields
+      is not.
+
+### Forget and re-add
+
+- [ ] **Forget is one write and it sticks.** Expand a character, use
+      `Forget character`, confirm. The row disappears. Quit and relaunch:
+      it is still gone, and no orphaned token remains — grep the state file
+      for its character id and find nothing.
+- [ ] **A forgotten character can be added back.** Re-authorise the same
+      character. It returns as a single row, `Unscored`, not a duplicate.
+- [ ] **Forget during a refresh stays forgotten.** Start a refresh over
+      several characters and forget one while it is in flight. It must not
+      reappear when the refresh commits.
+
+### Corruption recovery
+
+- [ ] **A truncated state file recovers from `.bak`.** With at least two
+      characters authorised and at least two refreshes done (so a `.bak`
+      exists), quit Wingman, truncate `eve_skills.json` to a few bytes, and
+      relaunch. Expected: the roster comes back from
+      `eve_skills.json.bak`, a warning appears in the notices strip, the
+      damaged file is preserved as `eve_skills.json.corrupt-<timestamp>`,
+      and **the characters still refresh** — meaning the wrapped tokens came
+      back with them. If they all need re-authenticating, the backup tier
+      is not covering the tokens and the whole reason it exists is missing.
+- [ ] **A corrupt skill-id cache costs a re-resolve, not a failure.** Delete
+      `eve_skills_cache.json` and refresh. It rebuilds from ESI; readiness
+      is unchanged afterwards.
+
+### The Skills page itself
+
+- [ ] **The two-pane layout renders sanely** on first open. The rail on the
+      left, the roster on the right, no overlap, no horizontal scrollbar at
+      the default window size.
+- [ ] **No `unknown bridge handler` throws in the console.** Open devtools,
+      click the Skills nav button, and watch the console while the page
+      loads and while every button on it is clicked once. A throw here
+      means a JS call names a handler the Python `Api` does not expose —
+      `WM.handle`'s try/catch keeps that from crashing the page, but it
+      should never fire at all in a build that matches its own bridge.
+- [ ] **The counts line and plan ratios render as described.** With at
+      least one character and one plan, confirm the header counts line
+      (e.g. how many characters, how many ready) and that a plan shows its
+      requirement ratio as `met/total` (e.g. `1/9`, `0/9`) rather than a
+      percentage or raw list.
+- [ ] **The plan-issues disclosure opens and closes.** A character not
+      fully ready for a plan shows a collapsed `<details>` listing the
+      missing requirements; expanding it does not shift the rest of the
+      row list, and collapsing it again restores the original height.
+- [ ] **Visual layout at the `min_size` floor of 840×625** — 626px beside
+      the 214px rail — including text overflow and ellipsis on long
+      character and plan names, and no horizontal overflow at that size.
+- [ ] **Typing in the filter box narrows the roster live**, and the
+      `Clear filter` action appears only while a filter is active and
+      removes it when clicked.
+- [ ] **Expanding a row shows the right pieces together:** the `Stale`
+      badge (if any), a re-authenticate banner placed above the
+      requirements list (not interleaved with them), and the outstanding
+      requirements list with any already-Active skills absent from it.
+- [ ] **The two-step Forget cannot be triggered by one mis-click.** First
+      click arms the control (it changes to a confirm state); a second,
+      separate click is required to actually forget the character;
+      clicking anywhere else first disarms it without forgetting anyone.
+- [ ] **`?dev=1` with the catch-all bucket renders, including the
+      unrecognised readiness value.** Launch with `?dev=1` appended to the
+      URL. `dev.js`'s character id 9 has readiness `'Ascendant'`,
+      deliberately a value the UI does not recognise. **This character MUST
+      still render a row with a working Forget control** rather than being
+      silently dropped or breaking the rest of the list — that is the
+      lockout guard: an unrecognised readiness value from a future API
+      change must degrade to an unstyled bucket, not vanish the row a user
+      needs in order to remove a broken character.
+- [ ] **`DEV.skillsAuth(true)` and `DEV.skillsProgress(3, 9)` behave in a
+      live browser**, not just in reasoning: with `?dev=1` loaded, run each
+      from devtools and confirm the roster and progress indicator update
+      as their names imply.
+- [ ] **`Reload plans` and `Open plans folder` both actually work.** Drop a
+      new `.txt` plan file into the plans folder, click `Reload plans`, and
+      confirm it appears in the rail with the right requirement count.
+      Then click `Open plans folder` and confirm the OS shell opens the
+      correct directory. This second check is in the same failure family
+      as the WebView2 items above it: `os.startfile` cannot be exercised in
+      CI at all, so nothing but a human clicking the button proves the
+      folder that opens is the one plans actually load from.
+- [ ] **Selecting a different plan actually re-targets everything.** With
+      two plans present, select the plan that is not already selected.
+      Expected: the roster regroups against the new plan's requirements,
+      the ready ratio in the rail updates for the new plan, and — if a row
+      was already expanded — its requirement list re-fetches and shows the
+      **newly selected plan's** requirements, not the previous plan's. This
+      last part is the one to watch closely: a stale in-flight fetch
+      resolving after the switch and rendering under the wrong plan is a
+      silent bug — the row looks populated and correct, but every
+      requirement on it belongs to the plan you left.
+- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
+      both exactly right.** Launch with `?dev=1` (it seeds one character
+      per bucket) and confirm the groups appear top to bottom in this
+      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
+      `Unscored`, then the catch-all bucket last. Within `Missing`, with
+      more than one character in it, confirm the character with the
+      **fewest** missing requirements sorts first. Nothing under `tests/`
+      exercises this grouping or ordering at all — it lives entirely in
+      `skills.js` — so this item is the only thing standing between a
+      regression here and a release. A silent reorder or a resorted
+      `Missing` group would not error or throw; it would just be wrong,
+      and nothing else in this checklist or the suite would catch it.
+
+### Frozen build
+
+- [ ] **LOAD-BEARING: the installed build serves `skills.js`.** Install the
+      built artifact, launch it, and click Skills. The rail renders, the
+      buttons respond, and the roster fills. CI asserts the file exists at
+      `_internal\web\skills.js`; only launching proves the page fetched and
+      executed it. A route whose static markup renders and whose every
+      control is inert is exactly what a missing script looks like —
+      PyInstaller exits 0 when a `datas` entry resolves to nothing, and
+      pywebview reports no error for a script that 404s.
+- [ ] **The frozen build reaches only CCP.** With previews and the uploader
+      idle, the only hosts this feature contacts are `login.eveonline.com`
+      and `esi.evetech.net`.

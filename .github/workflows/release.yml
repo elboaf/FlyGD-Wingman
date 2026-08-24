@@ -74,6 +74,12 @@ jobs:
           # it is invisible until a user launches the release.
           python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
           if ($LASTEXITCODE -ne 0) { throw "webview.platforms.edgechromium is not importable - the hiddenimports entry in uploader.spec would resolve to nothing and the released app would exit 0 with no window" }
+          # Mirrors build.yml's own eveskills check: same silent-failure
+          # shape as edgechromium above, for the TriffSkills port. A broken
+          # import here would otherwise surface only once a released user
+          # opens the Skills route.
+          python -c "from obs_youtube_uploader.eveskills.controller import SkillsController; print('SkillsController importable')"
+          if ($LASTEXITCODE -ne 0) { throw "obs_youtube_uploader.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the released app" }
 
       - name: Inject OAuth credentials
         shell: pwsh
@@ -225,7 +231,7 @@ jobs:
             throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the released app will open a blank window and exit 0"
           }
           Get-ChildItem -Recurse $web
-          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "firstrun.js",
+          foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "skills.js", "firstrun.js",
                                "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
             $path = Join-Path $web $asset
             if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }

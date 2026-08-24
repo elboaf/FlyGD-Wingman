@@ -728,3 +728,171 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
 }
 .firstrun-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+
+/* ====================== skills route ================================
+   NOT the .settings form the previews and bookmarks routes use: a fixed
+   rail beside a scrolling roster. The rail is 214px and the main pane
+   takes the rest -- min_size is (840, 625) (ui/window.py:44-45), which
+   leaves 626 CSS pixels beside the rail at 100% scaling, and less on the
+   scaled displays .evestat's media query already accounts for. minmax(0,
+   1fr) rather than 1fr: a bare 1fr floors at min-content, and one long
+   character name would push the roster wider than the window. */
+#route-skills {
+  display: none;
+  grid-template-columns: 214px minmax(0, 1fr);
+  gap: 12px; padding: 12px; min-height: 0;
+}
+#route-skills.active { display: grid; }
+
+.skills-rail {
+  display: flex; flex-direction: column; gap: 14px; min-height: 0;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 12px;
+}
+.rail-block { display: flex; flex-direction: column; gap: 6px; }
+/* Only the plan list scrolls. Seven plans fit; the buttons below it must
+   not be pushed off the bottom by the eighth. */
+.rail-plans-block { flex: 1; min-height: 0; }
+.rail-plans { overflow-y: auto; min-height: 0; }
+.rail-head {
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: #8b93a1; font-weight: 600; margin-bottom: 6px;
+}
+.rail-count { color: var(--text-dim); font-size: var(--fs-muted); }
+.skills-rail button.btn { width: 100%; text-align: center; }
+
+.rail-plan {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; border-left: 2px solid transparent;
+  border-radius: var(--radius-sm); padding: 6px 8px;
+  color: var(--text-dim); font: inherit; font-size: var(--fs-mono);
+  cursor: pointer; text-align: left;
+}
+.rail-plan:hover { background: #22252c; color: var(--text); }
+.rail-plan.active {
+  background: #191d24; border-left-color: var(--brand); color: var(--text);
+}
+.rail-plan-name { flex: 1; min-width: 0;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-ratio {
+  flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums;
+}
+
+.skills-main {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0;
+}
+.skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
+.skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
+
+/* Collapses when empty, so the roster sits directly under the heading on
+   the common path. Author rules beat the UA stylesheet's
+   [hidden]{display:none} regardless of specificity -- same trap
+   .routenav[hidden] and .evestat[hidden] already document. */
+.skills-notices {
+  flex: none; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: #101216; border: 1px solid var(--field-border);
+}
+.skills-notices[hidden] { display: none; }
+.notice { color: var(--text-dim); font-size: var(--fs-muted); }
+
+.skills-issues {
+  flex: none; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: #101216; border: 1px solid var(--field-border);
+}
+.skills-issues[hidden] { display: none; }
+.skills-issues summary {
+  cursor: pointer; color: var(--warn); font-size: var(--fs-muted);
+}
+.issue-file { margin-top: 8px; color: var(--text); font-size: var(--fs-muted); }
+.issue-message { color: var(--text-dim); font-size: var(--fs-muted); }
+.issue-line {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  font-family: var(--mono); margin-left: 10px;
+}
+
+.skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
+.skills-filterbar .field { flex: 1; }
+
+.skills-roster { flex: 1; min-height: 0; overflow-y: auto; }
+.skills-group { margin-bottom: 12px; }
+.skills-group-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px 6px;
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.skills-group-count {
+  color: var(--text-faint); font-variant-numeric: tabular-nums;
+}
+/* The colour key. Every value is an existing token; this route introduces
+   no new colour literals. */
+.skills-key {
+  width: 8px; height: 8px; border-radius: 2px; flex: none;
+  background: currentColor;
+}
+.key-Ready { color: var(--ok); }
+.key-Training { color: #7aa2f7; }
+.key-Locked { color: var(--warn); }
+.key-Missing { color: var(--err); }
+.key-Unknown { color: var(--text-dim); }
+.key-Unscored { color: var(--text-faint); }
+/* The catch-all bucket. Brand-coloured on purpose: a readiness this page
+   has never heard of is worth looking at, not worth hiding. */
+.key-Other { color: var(--brand); }
+
+.skills-row {
+  border-bottom: 1px solid #191c22;
+  border-left: 2px solid transparent;
+}
+.skills-row.open { background: #171a20; border-left-color: #2f3540; }
+.skills-row-top {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: none; border: 0; padding: 7px 10px;
+  color: var(--text); font: inherit; font-size: var(--fs-body);
+  cursor: pointer; text-align: left;
+}
+.skills-row-top:hover { background: #171a20; }
+.chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
+.skills-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
+.status-Ready { color: var(--ok); }
+.status-Training { color: #7aa2f7; }
+.status-Locked { color: var(--warn); }
+.status-Missing { color: var(--err); }
+.badge-stale {
+  flex: none; padding: 1px 7px; border-radius: 999px;
+  background: #101216; border: 1px solid var(--warn);
+  color: var(--warn); font-size: 10px; letter-spacing: .04em;
+}
+
+.skills-detail {
+  padding: 4px 10px 12px 29px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.reauth {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: #101216; border: 1px solid var(--err);
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
+.row-error { color: var(--err); font-size: var(--fs-muted); user-select: text; }
+.row-fetched { color: var(--text-faint); font-size: var(--fs-muted); }
+
+.req-list { display: flex; flex-direction: column; gap: 3px; }
+.req { display: flex; align-items: baseline; gap: 10px; }
+.req-name { flex: 1; min-width: 0; font-size: var(--fs-muted); }
+.req-state { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
+.state-Missing { color: var(--err); }
+.state-TrainedInactive { color: var(--warn); }
+.state-Queued { color: #7aa2f7; }
+.state-Unknown { color: var(--text-faint); }
+
+.forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
+.linkbtn.danger { color: var(--err); }
+.linkbtn.danger:hover { color: #fff; background: #d9291c; }
+button.btn.danger { border-color: var(--err); color: var(--err); }
+button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }

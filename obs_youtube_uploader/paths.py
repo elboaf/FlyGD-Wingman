@@ -47,6 +47,35 @@ def eve_settings_backup_dir() -> Path:
     return state_dir() / "eve-settings-backups"
 
 
+def eve_skills_file() -> Path:
+    """Roster, snapshots, skill queue, ETags, and DPAPI-wrapped tokens.
+
+    One document holds all of it, which is what makes forgetting a
+    character a single atomic write. TriffView splits tokens into
+    Windows Credential Manager and cannot update the two together; its
+    own error strings record the cost ("Forget was rolled back because
+    state could not be saved"). A .bak sibling is kept beside this file
+    by the controller, because merging the tokens in moved the one
+    non-rebuildable thing into a file that had no backup tier.
+    """
+    return state_dir() / "eve_skills.json"
+
+
+def eve_skills_cache_file() -> Path:
+    """Skill name -> type id. Deleting it costs a re-resolve over ESI."""
+    return state_dir() / "eve_skills_cache.json"
+
+
+def skill_plans_dir() -> Path:
+    """User-owned folder of plan .txt files, plus a seeded starter.
+
+    A directory rather than a section of a state document on purpose:
+    the user edits these in Notepad, and `Open plans folder` is the
+    whole authoring workflow.
+    """
+    return state_dir() / "skill_plans"
+
+
 def log_dir() -> Path:
     return state_dir() / "logs"
 

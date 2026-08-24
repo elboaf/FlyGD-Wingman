@@ -388,6 +388,44 @@ def build_preview_host(state, api_box):
         return None
 
 
+def build_skills_controller(api):
+    """The EVE skills controller, or None where it cannot be built.
+
+    NOT Windows-gated, unlike build_preview_host: twelve of the thirteen
+    modules in the subpackage are pure or filesystem-only, and the one
+    Windows-only piece (dpapi) is reached through an injected seam inside
+    tokens.py. Gating here would make the route dead in development and
+    would take the entire Linux test surface with it.
+
+    Takes the Api rather than the AppState because `push` and `_alert` are
+    bound methods of the Api -- and it is constructed after it for the same
+    chicken-and-egg reason ui/window.py assigns `api._window` after
+    create_window().
+
+    The imports are inside the function so a broken or missing subpackage
+    costs the Skills route and nothing else; the whole body is wrapped for
+    the same reason previews are.
+    """
+    try:
+        from .eveskills.controller import SkillsController
+
+        return SkillsController(
+            state_path=paths.eve_skills_file(),
+            cache_path=paths.eve_skills_cache_file(),
+            plans_dir=paths.skill_plans_dir(),
+            # Bound methods, never lambdas wrapping them: a name resolved
+            # lazily inside a lambda is not checked when this function
+            # runs, and tests/test_preview_wiring.py records what that cost
+            # last time.
+            push=api._push,
+            alert=api._alert)
+    except Exception:
+        # Skills are secondary to the upload workflow. A failure to
+        # construct them must not stop Wingman launching.
+        logger.exception("EVE skills subsystem unavailable")
+        return None
+
+
 def shutdown_engine(engine) -> None:
     """Stop the engine on the way out, whatever else has gone wrong.
 
@@ -446,6 +484,11 @@ def main() -> int:
     api_box = {}
     api = api_mod.Api(state, preview_host=build_preview_host(state, api_box))
     api_box["api"] = api
+    # After construction, not through the constructor: the controller needs
+    # the Api's own _push and _alert. Same shape, and same reason, as
+    # ui/window.py assigning api._window after create_window(), and as the
+    # api_box hand-off directly above.
+    api._skills = build_skills_controller(api)
 
     w = None
     scheduler = None
@@ -535,8 +578,12 @@ def main() -> int:
     shutdown_engine(engine)
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
-    # Manager.
+    # Manager. A live loopback socket on the fixed redirect port would
+    # likewise make the next launch's sign-in fail to bind, and the
+    # redirect URI is registered with CCP so there is no fallback port to
+    # move to -- so both teardowns run here, unconditionally, in order.
     api.shutdown_previews()
+    api.shutdown_skills()
     return 0
 
 

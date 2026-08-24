@@ -37,6 +37,13 @@ dependencies = [
     # 6.2.1 is the version the spike ran on. Treat an upgrade as a change
     # requiring a full smoke pass, not a routine bump.
     "pywebview==6.2.1",
+    # Already installed, transitively: google-auth 2.56.3 depends on it
+    # unconditionally (uv.lock:382-387) and it is bundled into every
+    # release today. Declaring it changes no resolution -- it is here so
+    # that dropping or replacing the Google client libraries cannot
+    # silently take the EVE SSO token verifier's RS256 dependency with
+    # them. That failure would surface at authentication, not at install.
+    "cryptography",
 ]
 
 [project.urls]
@@ -66,6 +73,7 @@ packages = [
     "obs_youtube_uploader.ui",
     "obs_youtube_uploader.preview",
     "obs_youtube_uploader.evesettings",
+    "obs_youtube_uploader.eveskills",
 ]
 
 [tool.pytest.ini_options]

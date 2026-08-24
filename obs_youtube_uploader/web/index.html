@@ -20,6 +20,7 @@
       <button class="navbtn" id="nav-bookmarks" data-route="bookmarks">Bookmarks</button>
       <button class="navbtn" id="nav-previews" data-route="previews">Previews</button>
       <button class="navbtn" id="nav-evesettings" data-route="evesettings">EVE Settings</button>
+      <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
@@ -343,6 +344,53 @@
     </div>
   </div>
 
+  <!-- NOT the .settings/.card wrapper the previews and bookmarks routes
+       use: this is a two-pane workspace, not a form. The rail is fixed at
+       214px and the main pane takes the rest; see .skills in style.css. -->
+  <div class="route" id="route-skills">
+    <aside class="skills-rail">
+      <div class="rail-block">
+        <p class="rail-count" id="skills-counts">No characters yet</p>
+        <button class="btn" id="skills-add">Add character</button>
+        <button class="btn" id="skills-refresh">Refresh characters</button>
+      </div>
+      <div class="rail-block rail-plans-block">
+        <h3 class="rail-head">Plans</h3>
+        <div class="rail-plans" id="skills-plans"></div>
+      </div>
+      <div class="rail-block">
+        <button class="btn" id="skills-open-folder">Open plans folder</button>
+        <button class="btn" id="skills-reload-plans">Reload plans</button>
+      </div>
+    </aside>
+
+    <section class="skills-main">
+      <header class="skills-head">
+        <h1 id="skills-plan-name">No plan selected</h1>
+        <span class="skills-plan-count" id="skills-plan-count"></span>
+      </header>
+
+      <!-- Collapses entirely when empty rather than reserving a blank
+           strip: on the common path there is nothing to say, and an empty
+           box that never fills reads as something that failed to load. -->
+      <div class="skills-notices" id="skills-notices" hidden></div>
+
+      <details class="skills-issues" id="skills-issues" hidden>
+        <summary id="skills-issues-summary"></summary>
+        <div id="skills-issues-body"></div>
+      </details>
+
+      <div class="skills-filterbar">
+        <input class="field" id="skills-filter" type="text" spellcheck="false"
+               placeholder="Filter characters">
+        <button class="linkbtn" id="skills-filter-clear" hidden>Clear filter</button>
+      </div>
+
+      <div class="skills-roster" id="skills-roster"></div>
+      <div class="empty" id="skills-empty" hidden></div>
+    </section>
+  </div>
+
   <div class="route" id="route-firstrun">
     <div class="firstrun">
       <h1>Choose your recording folder</h1>
@@ -402,6 +450,7 @@
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>
+  <script src="skills.js"></script>
   <script src="firstrun.js"></script>
   <script src="dev.js"></script>
 </body>
