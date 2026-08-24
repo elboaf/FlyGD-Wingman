@@ -32,6 +32,7 @@ from pathlib import Path
 from . import application, evaluator, planstore, skillids, tokens
 from . import esi as esi_mod
 from . import jwt as jwt_mod
+from . import loopback as loopback_mod
 from . import sso as sso_mod
 from . import state as state_mod
 
@@ -259,6 +260,12 @@ class SkillsController:
         self._stopping = threading.Event()
         # Task 14 drives this; a real flag now so the payload does not lie.
         self._auth_in_progress = False
+        # A separate, non-re-entrant latch, acquired non-blocking. Not the
+        # state lock: this one is held for the whole five-minute browser
+        # round trip, and holding the state lock for that would block every
+        # read the page makes while a consent screen is open.
+        self._auth_latch = threading.Lock()
+        self._listener = None
         # The resolver is an attribute rather than a direct call so a test
         # can replace it without a network: skillids.resolve fans out to
         # three ESI endpoints and its own tests already cover that.
@@ -940,4 +947,162 @@ class SkillsController:
             self._save_locked()
         self._push_state(force=True)
         return True
+
+    # ----- interactive sign-in --------------------------------------------
+
+    def authenticate(self) -> None:
+        """Start an interactive EVE sign-in on a worker. Returns at once.
+
+        Called from the bridge thread, and the flow launches a browser and
+        then blocks on the loopback accept loop for up to five minutes.
+        Running that here would freeze the window for the duration.
+        """
+        if not application.is_configured():
+            self._alert("warning", "EVE sign-in is not configured",
+                        "This build has no EVE application client id compiled "
+                        "in, so it cannot ask CCP for authorisation.")
+            return
+        if not self._auth_latch.acquire(blocking=False):
+            # Non-blocking on purpose: two authorisations would fight over
+            # the same fixed loopback port, and the redirect URI is
+            # registered with CCP so there is no second port to fall back
+            # to.
+            self._alert("warning", "Sign-in already in progress",
+                        "Finish or cancel the EVE sign-in already running.")
+            return
+        with self._lock:
+            self._auth_in_progress = True
+        self._push_state(force=True)
+        self._spawn(target=self._auth_worker, daemon=True).start()
+
+    def _auth_worker(self) -> None:
+        added = False
+        try:
+            added = self._run_auth()
+        except loopback_mod.CallbackCancelled:
+            # The user pressed Cancel sign-in. Not an error, and alerting
+            # on it would make the cancel button feel like a failure.
+            logger.info("EVE sign-in cancelled")
+        except loopback_mod.CallbackTimeout:
+            self._alert("warning", "Sign-in timed out",
+                        "No response from EVE SSO within five minutes.")
+        except sso_mod.OAuthError as exc:
+            self._alert("warning", "EVE refused the sign-in", str(exc))
+        except jwt_mod.JwtError as exc:
+            # A token that does not validate is never accepted as a
+            # fallback: the whole point of validation is that a failure
+            # rejects rather than degrades.
+            self._alert("warning", "EVE returned a token we cannot trust",
+                        str(exc))
+        except Exception as exc:
+            logger.exception("EVE sign-in failed")
+            self._alert("warning", "Sign-in failed", str(exc))
+        finally:
+            with self._lock:
+                self._auth_in_progress = False
+                self._listener = None
+            self._auth_latch.release()
+            self._push_state(force=True)
+        if added:
+            # A newly authorised character is Unscored until its first
+            # refresh lands, so a successful sign-in that stopped here
+            # would look like it did nothing.
+            self.refresh_characters()
+
+    def _run_auth(self) -> bool:
+        sso = self._sso_module()
+        pkce = sso.generate_pkce()
+        factory = (self._listener_factory if self._listener_factory is not None
+                   else loopback_mod.LoopbackListener)
+        with factory(host=application.REDIRECT_HOST,
+                     port=application.REDIRECT_PORT,
+                     path=application.REDIRECT_PATH) as listener:
+            with self._lock:
+                self._listener = listener
+            # The browser launches only AFTER the bind. The reverse order
+            # is a race: the redirect can arrive before anything is
+            # listening, and the user then sees a connection-refused page
+            # while Wingman waits five minutes for a callback that already
+            # happened.
+            self._launch_browser(sso.authorize_url(pkce))
+            callback = listener.wait(pkce.state)
+
+        if callback.error:
+            self._alert("warning", "EVE refused the sign-in", callback.error)
+            return False
+
+        token_set = sso.exchange_code(callback.code, pkce.verifier)
+        validate = (self._validate_token if self._validate_token is not None
+                    else jwt_mod.validate)
+        identity = validate(token_set.access_token,
+                            client_id=application.CLIENT_ID,
+                            required_scopes=application.SCOPES,
+                            key_source=self._keys())
+        return self._upsert_identity(identity, token_set)
+
+    def _upsert_identity(self, identity, token_set) -> bool:
+        blob = tokens.wrap(token_set.refresh_token)
+        now = self._now()
+        full = False
+        with self._lock:
+            existing = self._state.find(identity.character_id)
+            ch = existing or state_mod.Character(
+                character_id=identity.character_id)
+            # Compared only when a hash was previously stored: an absent
+            # claim on an older row is missing information, not evidence
+            # of a transfer, and treating it as one would wipe a good
+            # snapshot on the first re-auth after an upgrade.
+            if existing is not None and existing.owner_hash and \
+                    existing.owner_hash != identity.owner_hash:
+                # A different account owns this character now. Its
+                # skills, queue and etags describe someone else's
+                # training, and scoring a plan against them would be
+                # confidently wrong.
+                ch.active_levels = {}
+                ch.trained_levels = {}
+                ch.queue = ()
+                ch.fetched_utc = None
+                ch.skills_etag = ""
+                ch.queue_etag = ""
+                ch.error = MSG_OWNER_CHANGED
+            else:
+                ch.error = ""
+            ch.character_name = identity.name
+            ch.owner_hash = identity.owner_hash
+            ch.scopes = tuple(sorted(identity.scopes))
+            ch.authenticated_utc = now
+            ch.needs_reauth = False
+            ch.refresh_token_blob = blob
+            try:
+                # upsert() itself raises ValueError at MAX_CHARACTERS --
+                # only for a genuinely new id; an update to an existing
+                # row always succeeds regardless of how full the roster
+                # is, since it does not grow it.
+                self._state.upsert(ch)
+            except ValueError:
+                full = True
+            else:
+                self._access_tokens[ch.character_id] = (
+                    token_set.access_token,
+                    now + timedelta(seconds=max(0, int(token_set.expires_in))))
+                self._save_locked()
+        if full:
+            # Alerted outside the lock: _alert reaches pywebview, and a slow
+            # page must not hold the state lock.
+            self._alert("warning", "Too many characters",
+                        f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
+                        "characters. Forget one before adding another.")
+            return False
+        return True
+
+    def cancel_auth(self) -> None:
+        """Unblock the listener. Safe when no sign-in is running."""
+        with self._lock:
+            listener = self._listener
+        if listener is None:
+            return
+        try:
+            listener.cancel()
+        except Exception:
+            logger.exception("Could not cancel the EVE sign-in listener")
 

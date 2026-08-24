@@ -15,6 +15,7 @@ import pytest
 from obs_youtube_uploader.eveskills import application
 from obs_youtube_uploader.eveskills import esi as esi_mod
 from obs_youtube_uploader.eveskills import jwt as jwt_mod
+from obs_youtube_uploader.eveskills import loopback as loopback_mod
 from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
@@ -965,4 +966,224 @@ def test_forget_always_pushes(tmp_path):
     controller.forget(95)
 
     assert any(handler == "onSkills" for handler, _ in pushed)
+
+
+# ----- interactive sign-in ------------------------------------------------
+
+IDENTITY = jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
+                               owner_hash="hash-1",
+                               scopes=frozenset(application.SCOPES))
+
+
+class FakeListener:
+    """loopback.LoopbackListener without a socket.
+
+    `bound` records the order events happen in relative to the browser
+    launch, which is the only thing the race-avoidance test cares about.
+    `on_wait`, when given, runs from inside `wait()` -- the same spot a
+    real cancel_auth() call would land in, from another thread, while the
+    real listener blocks on accept().
+    """
+
+    def __init__(self, events, callback=None, error_to_raise=None,
+                on_wait=None):
+        self.events = events
+        self.callback = callback
+        self.error_to_raise = error_to_raise
+        self.on_wait = on_wait
+        self.cancelled = False
+
+    def __call__(self, *, host, port, path):
+        return self
+
+    def __enter__(self):
+        self.events.append("bound")
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def wait(self, expected_state, *, timeout_s=None):
+        if self.on_wait is not None:
+            self.on_wait()
+        if self.error_to_raise is not None:
+            raise self.error_to_raise
+        return self.callback
+
+    def cancel(self):
+        self.cancelled = True
+        self.events.append("cancelled")
+
+
+class FakeAuthSso:
+    """sso.generate_pkce/authorize_url/exchange_code without a network."""
+
+    def __init__(self, token_set=None, raises=None):
+        self.token_set = token_set or sso_mod.TokenSet(
+            access_token="access-1", refresh_token="refresh-1",
+            expires_in=1200)
+        self.raises = raises
+        self.exchanged = []
+
+    def generate_pkce(self):
+        return sso_mod.Pkce(state="state-1", verifier="verifier-1",
+                            challenge="challenge-1")
+
+    def authorize_url(self, pkce):
+        return f"https://login.eveonline.com/v2/oauth/authorize?state={pkce.state}"
+
+    def exchange_code(self, code, verifier):
+        self.exchanged.append((code, verifier))
+        if self.raises is not None:
+            raise self.raises
+        return self.token_set
+
+
+def build_auth(tmp_path, monkeypatch, *, events=None, callback=None,
+               listener_error=None, on_wait=None, sso=None,
+               validate_token=None, **kwargs):
+    # Not registered at developers.eveonline.com in this checkout, so
+    # application.is_configured() is False by default -- authenticate()
+    # would refuse before ever touching the fakes below.
+    monkeypatch.setattr(application, "CLIENT_ID", "test-client-id")
+    events = events if events is not None else []
+    listener = FakeListener(events, callback=callback or
+                            loopback_mod.Callback(code="code-1", error=""),
+                            error_to_raise=listener_error, on_wait=on_wait)
+    launched = []
+    controller, pushed, alerts = build(
+        tmp_path, sso=sso or FakeAuthSso(),
+        listener_factory=listener, launch_browser=launched.append,
+        validate_token=validate_token or (lambda *a, **k: IDENTITY),
+        spawn=kwargs.pop("spawn", DirectSpawn()), **kwargs)
+    return controller, pushed, alerts, events, launched
+
+
+def test_a_successful_sign_in_adds_the_character(tmp_path, monkeypatch):
+    controller, pushed, alerts, _, _ = build_auth(tmp_path, monkeypatch)
+
+    controller.authenticate()
+
+    characters = controller.state_payload()["characters"]
+    assert [c["character_id"] for c in characters] == [95]
+    assert alerts == []
+
+
+def test_the_listener_is_bound_before_the_browser_launches(tmp_path, monkeypatch):
+    """Binding first avoids a race: a browser that reaches the redirect
+    before anything is listening shows a connection-refused page instead
+    of completing the sign-in."""
+    events = []
+    controller, _, _, events, launched = build_auth(
+        tmp_path, monkeypatch, events=events)
+
+    controller.authenticate()
+
+    assert events[0] == "bound"
+    assert launched, "the browser was never launched"
+
+
+def test_a_successful_sign_in_kicks_off_a_refresh(tmp_path, monkeypatch):
+    """A newly authorised character is Unscored until its first refresh
+    lands, so a sign-in that stopped short of one would look like it did
+    nothing."""
+    esi = FakeEsi()
+    controller, pushed, _, _, _ = build_auth(tmp_path, monkeypatch, client=esi)
+
+    controller.authenticate()
+
+    assert controller.state_payload()["characters"][0]["fetched_utc"] != ""
+
+
+def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
+    """Two authorisations would fight over the same fixed loopback port,
+    and there is no second port registered with CCP to fall back to."""
+    controller, pushed, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, spawn=DeferredSpawn())
+
+    controller.authenticate()
+    controller.authenticate()
+
+    assert any("already in progress" in title for _, title, _ in alerts)
+
+
+def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
+    """cancel_auth() reaches the listener while it is still blocked in
+    wait() -- the same spot a real accept() loop parks in for up to five
+    minutes."""
+    events = []
+    controller = None
+
+    def cancel_from_inside_wait():
+        controller.cancel_auth()
+
+    controller, _, _, events, _ = build_auth(
+        tmp_path, monkeypatch, events=events, on_wait=cancel_from_inside_wait)
+
+    controller.authenticate()
+
+    assert "cancelled" in events
+
+
+def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
+    controller, pushed, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch,
+        callback=loopback_mod.Callback(code="", error="access_denied"))
+
+    controller.authenticate()
+
+    assert controller.state_payload()["characters"] == []
+    assert any("refused" in title for _, title, _ in alerts)
+
+
+def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypatch):
+    """The same owner signing back in must not look like a transfer -- the
+    cached snapshot is still theirs."""
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY)
+
+    controller.authenticate()
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    found = reloaded.find(95)
+    assert found.active_levels == {3327: 3}
+    assert found.error == ""
+
+
+def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
+    """A different account now owns this character. Its cached skills,
+    queue and etags describe someone else's training."""
+    controller, _, _, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="old-hash")],
+        validate_token=lambda *a, **k: IDENTITY)
+
+    controller.authenticate()
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    found = reloaded.find(95)
+    assert found.active_levels == {}
+    assert found.trained_levels == {}
+    assert found.queue == ()
+    assert found.fetched_utc is None
+    assert found.skills_etag == ""
+    assert found.queue_etag == ""
+    assert found.error == ("Character ownership changed; cached skill data "
+                           "was cleared.")
+
+
+def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatch):
+    """state.SkillsState.upsert() raises at MAX_CHARACTERS for a genuinely
+    new id; the roster is left untouched rather than partially written."""
+    full_roster = [with_snapshot(character_id=n) for n in range(1, state_mod.MAX_CHARACTERS + 1)]
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=full_roster,
+        validate_token=lambda *a, **k: IDENTITY)
+
+    controller.authenticate()
+
+    assert any("Too many characters" in title for _, title, _ in alerts)
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    assert reloaded.find(IDENTITY.character_id) is None
+    assert len(reloaded.characters) == state_mod.MAX_CHARACTERS
 
