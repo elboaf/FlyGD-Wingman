@@ -212,3 +212,121 @@ def test_an_unchanged_toggle_still_reports_success(tmp_path):
     api._state.settings["preview"] = {"enabled": True}
     assert api.set_preview_enabled(True) is True
     assert host.started == 0        # still short-circuited, not restarted
+
+
+class FakeClientLayouts:
+    def __init__(self):
+        self.started = self.stopped = 0
+        self.saves = self.restores = 0
+
+    def save_now(self):
+        self.saves += 1
+        return {"saved": 3, "persisted": True}
+
+    def restore_now(self):
+        self.restores += 1
+        return {"restored": 2, "skipped": 1}
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _no_disk(monkeypatch):
+    """set_restore_clients_on_launch persists, and the real save() writes
+    to paths.settings_file() -- the user's actual file. Stub it."""
+    from obs_youtube_uploader.ui import api as api_mod
+    writes = []
+    monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
+    return writes
+
+
+def test_save_client_layout_passes_the_count_through(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    assert api.save_client_layout() == {"saved": 3, "persisted": True}
+    assert manager.saves == 1
+
+
+def test_restore_client_layout_passes_the_counts_through(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    assert api.restore_client_layout() == {"restored": 2, "skipped": 1}
+
+
+def test_the_client_layout_endpoints_are_no_ops_without_a_manager(
+        tmp_path, monkeypatch):
+    """None off Windows and in most tests, like preview_host.
+
+    _no_disk is not optional here: set_restore_clients_on_launch persists
+    even with no manager, and the real save() writes to
+    paths.settings_file() -- the developer's actual settings file.
+    """
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api.save_client_layout() == {"saved": 0, "persisted": True}
+    assert api.restore_client_layout() == {"restored": 0, "skipped": 0}
+    assert api.set_restore_clients_on_launch(True) is True
+    api.shutdown_client_layouts()
+    api.start_client_layouts_if_enabled()
+
+
+def test_enabling_restore_on_launch_starts_the_watcher(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True) is True
+    assert manager.started == 1
+    assert api._state.settings["preview"]["restore_clients_on_launch"] is True
+    assert len(writes) == 1
+
+
+def test_disabling_restore_on_launch_stops_the_watcher(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api.set_restore_clients_on_launch(False)
+    assert manager.stopped == 1
+
+
+def test_an_unwritable_settings_file_does_not_block_the_watcher(
+        tmp_path, monkeypatch):
+    """Same posture as set_preview_enabled: the feature still works."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_d):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "save", boom)
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    assert api.set_restore_clients_on_launch(True) is True
+    assert manager.started == 1
+
+
+def test_the_client_watcher_starts_on_launch_only_when_asked(tmp_path):
+    manager = FakeClientLayouts()
+    api = make_api(tmp_path, client_layouts=manager)
+    api._state.settings["preview"] = {}
+    api.start_client_layouts_if_enabled()
+    assert manager.started == 0
+
+    manager2 = FakeClientLayouts()
+    api2 = make_api(tmp_path, client_layouts=manager2)
+    api2._state.settings["preview"] = {"restore_clients_on_launch": True}
+    api2.start_client_layouts_if_enabled()
+    assert manager2.started == 1
+
+
+def test_client_layout_shutdown_never_raises(tmp_path):
+    """Runs on every exit path, like shutdown_previews."""
+    class Exploding:
+        def stop(self):
+            raise RuntimeError("nope")
+
+    make_api(tmp_path, client_layouts=Exploding()).shutdown_client_layouts()
