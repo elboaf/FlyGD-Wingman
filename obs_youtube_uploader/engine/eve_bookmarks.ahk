@@ -88,7 +88,6 @@ KB_FinETag     := ""
 KB_FinSlash    := ""
 KB_FinN        := ""
 KB_FinL        := ""
-KB_FinM        := ""
 KB_FinS        := ""
 KB_FinC        := ""
 KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
@@ -163,7 +162,6 @@ IniRead, KB_FinETag,     %IniFile%, Keybinds, FinETag,
 IniRead, KB_FinSlash,    %IniFile%, Keybinds, FinSlash,  
 IniRead, KB_FinN,        %IniFile%, Keybinds, FinN,      
 IniRead, KB_FinL,        %IniFile%, Keybinds, FinL,      
-IniRead, KB_FinM,        %IniFile%, Keybinds, FinM,      
 IniRead, KB_FinS,        %IniFile%, Keybinds, FinS,      
 IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,      
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
@@ -585,8 +583,6 @@ if (KB_FinN != "")
     HotkeyLabelMap[KB_FinN]      := "DoDot"
 if (KB_FinL != "")
     HotkeyLabelMap[KB_FinL]      := "DoP"
-if (KB_FinM != "")
-    HotkeyLabelMap[KB_FinM]      := "DoM"
 if (KB_FinS != "")
     HotkeyLabelMap[KB_FinS]      := "DoS"
 if (KB_FinC != "")
@@ -627,7 +623,6 @@ Loop, Parse, EnabledSection, `n, `r
         RegisterBind("Fin6",  KB_Fin6,  "Do6")
         RegisterBind("FinETag",  KB_FinETag,  "DoQuote")
         RegisterBind("FinSlash", KB_FinSlash, "DoComma")
-        RegisterBind("FinM", KB_FinM, "DoM")
         RegisterBind("FinS", KB_FinS, "DoS")
         RegisterBind("FinC", KB_FinC, "DoC")
     }
@@ -1036,8 +1031,7 @@ DoE:
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
@@ -1053,8 +1047,7 @@ if (RootModeActive) {
     NewSuffix := "H"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1069,8 +1062,7 @@ if (RootModeActive) {
     NewSuffix := "13"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1085,8 +1077,7 @@ if (RootModeActive) {
     NewSuffix := "L"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1101,23 +1092,10 @@ if (RootModeActive) {
     NewSuffix := "N"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
-Return
-
-DoM:
-GoSub, ReadField
-StringUpper, ClipUpper, ClipRaw
-NewSuffix := ""
-NewE := 0
-NewSlash := 0
-NewM := 1
-NewSFlag := 0
-NewC := 0
-GoSub, FormatFlygdClipAndPaste
 Return
 
 DoS:
@@ -1126,8 +1104,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 1
+NewFFlag := 1
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1138,8 +1115,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 1
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1153,8 +1129,7 @@ if (RootModeActive) {
     NewSuffix := "1"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1169,8 +1144,7 @@ if (RootModeActive) {
     NewSuffix := "2"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1185,8 +1159,7 @@ if (RootModeActive) {
     NewSuffix := "3"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1201,8 +1174,7 @@ if (RootModeActive) {
     NewSuffix := "4"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1217,8 +1189,7 @@ if (RootModeActive) {
     NewSuffix := "5"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1233,8 +1204,7 @@ if (RootModeActive) {
     NewSuffix := "6"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1246,8 +1216,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 1
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1258,8 +1227,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 1
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1276,7 +1244,7 @@ Return
 ; ============================================================
 ; FLYGD/THERA MODE: Parse hyphen-based bookmarks
 ; Format: ROOT-SIGID TYPE [tags...]
-; Example: 3-EPA C5 E /
+; Example: 3-EPA C5 e /
 ; ============================================================
 FormatFlygdClipAndPaste:
 Raw := ClipUpper
@@ -1312,8 +1280,7 @@ if (DashPos > 0) {
     NewSuffix := ""
     NewE      := 0
     NewSlash  := 0
-    NewM      := 0
-    NewSFlag  := 0
+    NewFFlag  := 0
     NewC      := 0
     Return
 }
@@ -1321,8 +1288,7 @@ if (DashPos > 0) {
 RestAfterSys := RegExReplace(RestAfterSys, "^\s+", "")
 ExistingE      := 0
 ExistingSlash  := 0
-ExistingM      := 0
-ExistingS      := 0
+ExistingF      := 0
 ExistingC      := 0
 ExistingSuffix := ""
 
@@ -1332,25 +1298,17 @@ Loop % Tokens.MaxIndex()
     t := Tokens[A_Index]
     if (t = "13" || (StrLen(t) = 1 && (t >= "1" && t <= "6" || t = "H" || t = "L" || t = "N" || t = "T" || t = "D")))
         ExistingSuffix := t
-    else if (t = "E")
+    else if (t = "e")
         ExistingE := 1
     else if (t = "/")
         ExistingSlash := 1
-    else if (t = "M")
-        ExistingM := 1
-    else if (t = "S")
-        ExistingS := 1
-    else if (t = "C")
+    else if (t = "f" || t = "S")
+        ExistingF := 1
+    else if (t = "c")
         ExistingC := 1
 }
 
 ; Apply mutual exclusivity rules
-if (NewM) {
-    NewSFlag := 0
-}
-if (NewSFlag) {
-    NewM := 0
-}
 if (NewSlash) {
     NewC := 0
 }
@@ -1360,21 +1318,10 @@ if (NewC) {
 
 FinalSuffix := (NewSuffix != "") ? NewSuffix : ExistingSuffix
 
-if (NewM) {
-    FinalM := 1
-    FinalS := 0
-} else if (NewSFlag) {
-    FinalM := 0
-    FinalS := 1
-} else {
-    if (ExistingM && ExistingS) {
-        FinalM := 0
-        FinalS := 1
-    } else {
-        FinalM := ExistingM
-        FinalS := ExistingS
-    }
-}
+; Nothing conflicts with the frig tag now that the medium-hole tag is
+; gone, so it is a plain OR rather than the three-way preference the pair
+; needed.
+FinalF := (ExistingF || NewFFlag)
 
 if (NewSlash) {
     FinalSlash := 1
@@ -1398,15 +1345,13 @@ Result := Base
 if (FinalSuffix != "")
     Result .= " " . FinalSuffix
 if (FinalE)
-    Result .= " E"
+    Result .= " e"
 if (FinalSlash)
     Result .= " /"
-if (FinalM)
-    Result .= " M"
-if (FinalS)
-    Result .= " S"
+if (FinalF)
+    Result .= " f"
 if (FinalC)
-    Result .= " C"
+    Result .= " c"
 
 Clipboard := Result
 ClipWait, 2
@@ -1416,7 +1361,6 @@ Send ^v
 NewSuffix := ""
 NewE      := 0
 NewSlash  := 0
-NewM      := 0
-NewSFlag  := 0
+NewFFlag  := 0
 NewC      := 0
 Return

@@ -106,6 +106,36 @@ def test_copy_and_paste_are_gone(source):
     assert not re.search(r"^DoPaste:", source, re.MULTILINE)
 
 
+def test_tags_are_written_in_the_helper_authors_lowercase(source):
+    """The tag letters land in the bookmark name itself, so a regression
+    here is visible to everyone in the corp and fixable only by retagging
+    by hand. Matched on the emitting lines rather than a bare substring:
+    " C" also appears in the C1-C6 class finishers, which are a different
+    code path and stay uppercase."""
+    emits = re.findall(r'Result \.=\s*"\s*(\S+)"', source)
+    assert "e" in emits and "E" not in emits
+    assert "c" in emits and "C" not in emits
+    assert "f" in emits and "S" not in emits
+    assert "/" in emits
+    assert "M" not in emits, "the medium-hole tag is gone"
+
+
+def test_a_legacy_frig_tag_is_still_read(source):
+    """S was the frig tag before the rework. Re-tagging a bookmark that
+    still carries one must not leave both an S and an f on the line, so the
+    parser has to keep recognising it. AHK's `=` is case-insensitive, so
+    only S -- a different letter, not a different case -- needs this."""
+    assert re.search(r'\(t = "f" \|\| t = "S"\)', source)
+
+
+def test_the_medium_hole_tag_is_gone(source):
+    """It was removed with the author's tag rework, along with the
+    three-way exclusivity it needed against the frig tag."""
+    lowered = source.lower()
+    for name in ("kb_finm", "newm", "existingm", "finalm", "dom:"):
+        assert name not in lowered, name
+
+
 def test_every_bind_is_registered_inside_the_window_loop(source):
     """Nothing is global any more. RefreshHotkeys Step 4
     (111unified.ahk:763-771) kept three binds outside the per-window loop;

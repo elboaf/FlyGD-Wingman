@@ -802,6 +802,15 @@ pytest — the engine is AutoHotkey.
       direct test of the teardown repair, and the bug that shipped for years
 - [ ] Disabling a window stops its hotkeys firing, within ~10s
 - [ ] Every finisher produces the correct Flygd/ABH name (Protean removal)
+- [ ] **Tags are written lowercase: `e`, `/`, `f`, `c`.** The class
+      finishers (`H`/`L`/`N`/`13`/`C1`-`C6`) are a different code path and
+      stay uppercase
+- [ ] **There is no medium-hole tag** — no `M` row in Keybinds, and no key
+      writes an ` M`
+- [ ] **The frig tag writes `f`, not `S`.** Same bind and INI key (`FinS`),
+      so an existing binding for it still works
+- [ ] **Re-tagging a bookmark that already carries a legacy ` S` replaces
+      it with ` f`** rather than leaving both on the line
 - [ ] **There is no Bookmark naming card in the route** — home holes, the
       return-bookmark toggle and the preface field are all gone
 - [ ] **Home bookmarks start at `.1`.** Fixed now, but still written into

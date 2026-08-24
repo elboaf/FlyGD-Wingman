@@ -55,6 +55,15 @@ def test_copy_and_paste_are_reported_as_dropped():
     assert any(d.startswith("Paste ") for d in got["discarded"])
 
 
+def test_a_legacy_medium_hole_bind_is_reported_as_dropped():
+    """Same construction as Copy and Paste: not in BIND_IDS, so the import
+    loop drops it, and only this line stops that being silent."""
+    got = bookmarks.import_legacy_ini(
+        "[Keybinds]\r\nFinH=y\r\nFinM=^u\r\n")
+    assert "FinM" not in got["section"]["keybinds"]
+    assert any(d.startswith("FinM ") for d in got["discarded"])
+
+
 def test_a_bind_that_was_never_set_is_not_reported_as_lost():
     """Naming Copy as discarded when the legacy file left it blank invents
     a loss, which is as misleading as hiding a real one."""

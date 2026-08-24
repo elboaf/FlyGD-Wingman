@@ -89,7 +89,7 @@ BIND_IDS = (
     "GrabSig", "SetRoot", "FormatEnf", "ConvertScout",
     "FinH", "FinL", "FinN", "Fin13",
     "Fin1", "Fin2", "Fin3", "Fin4", "Fin5", "Fin6",
-    "FinETag", "FinSlash", "FinM", "FinS", "FinC",
+    "FinETag", "FinSlash", "FinS", "FinC",
 )
 
 # Human labels for the route. Kept beside the ids so the two cannot drift.
@@ -105,11 +105,10 @@ BIND_LABELS = {
     "Fin1": "Finisher: C1", "Fin2": "Finisher: C2",
     "Fin3": "Finisher: C3", "Fin4": "Finisher: C4",
     "Fin5": "Finisher: C5", "Fin6": "Finisher: C6",
-    "FinETag": "E Tag (end of life)",
+    "FinETag": "e Tag (end of life)",
     "FinSlash": "/ Tag (half mass)",
-    "FinM": "M Tag (medium hole)",
-    "FinS": "S Tag (frig hole)",
-    "FinC": "C Tag (critical)",
+    "FinS": "f Tag (frig hole)",
+    "FinC": "c Tag (critical)",
 }
 
 # Only ConvertScout ships bound, which is exactly what the standalone
@@ -134,7 +133,7 @@ RECOMMENDED_BINDS = {
     "Fin1": "^1", "Fin2": "^2", "Fin3": "^3",
     "Fin4": "^4", "Fin5": "^5", "Fin6": "^6",
     "FinETag": "^'", "FinSlash": "^,",
-    "FinM": "^u", "FinS": "^i", "FinC": "^x",
+    "FinS": "^i", "FinC": "^x",
 }
 
 _SYMBOL_TO_KEY = {sym: key for key, sym, _ in _MODIFIERS}
@@ -399,7 +398,7 @@ def import_legacy_ini(text: str) -> dict:
     # dropped by construction. Silently, unless it is named here -- and a
     # user who had bound them will otherwise just find two dead keys.
     discarded += [f"{bid} (hotkey, no longer part of Wingman)"
-                  for bid in ("Copy", "Paste")
+                  for bid in ("Copy", "Paste", "FinM")
                   if sanitise(legacy_binds.get(bid, ""))]
 
     notes = []
