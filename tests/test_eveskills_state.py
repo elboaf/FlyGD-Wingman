@@ -304,6 +304,55 @@ def test_load_of_a_missing_file_is_empty_and_silent(tmp_path):
     assert warnings == []
 
 
+def test_a_missing_primary_with_a_good_bak_is_recovered_not_first_launch(
+        tmp_path):
+    """This is what save()'s rotate-then-swap leaves behind if the final
+    os.replace(staging, path) fails or the process is killed between it and
+    the rotate: a *.bak* with no primary. Without the FileNotFoundError
+    branch consulting *.bak*, this is indistinguishable from first launch
+    and the whole roster -- every DPAPI-wrapped refresh token -- vanishes
+    with no warning even though a good *.bak* is sitting right there."""
+    target = tmp_path / "eve_skills.json"
+    state.save(state.SkillsState(selected_plan_name="Good"), target)
+    state.save(state.SkillsState(selected_plan_name="Newer"), target)
+    # Simulate the failed-final-rename window: primary rotated to .bak,
+    # but the new content never made it into place.
+    target.unlink()
+
+    loaded, warnings = state.load(target)
+    assert loaded.selected_plan_name == "Good"
+    assert any("was missing" in w and "recovered" in w.lower()
+               for w in warnings)
+    # And the recovery is durable: the primary exists again.
+    assert target.exists()
+
+
+def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(
+        tmp_path):
+    """A genuinely absent pair -- no primary, no backup -- is first launch
+    and must stay silent."""
+    target = tmp_path / "eve_skills.json"
+    loaded, warnings = state.load(target)
+    assert loaded.characters == []
+    assert warnings == []
+    assert not target.exists()
+
+
+def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(
+        tmp_path):
+    """The backup itself can be corrupt too. That is not first launch
+    either -- the user should be told their roster could not be recovered,
+    rather than silently handed an empty one as if nothing had ever been
+    saved."""
+    target = tmp_path / "eve_skills.json"
+    bak = tmp_path / "eve_skills.json.bak"
+    bak.write_text("{ not json", encoding="utf-8")
+
+    loaded, warnings = state.load(target)
+    assert loaded.characters == []
+    assert warnings and "could not be read" in warnings[0]
+
+
 def test_save_then_load_round_trips(tmp_path):
     target = tmp_path / "eve_skills.json"
     original = state.SkillsState(
@@ -515,7 +564,7 @@ def test_preservation_failure_does_not_overwrite_a_good_backup(
     """The Critical fix: _preserve_corrupt's own os.replace can fail (a
     concurrent handle, a permissions hiccup), leaving the corrupt content
     still sitting at *path*. If _recover_from_backup then called save()
-    anyway, save()'s first step would rotate that still-corrupt *path* into
+    anyway, save()'s second step would rotate that still-corrupt *path* into
     *backup* -- destroying the one good copy this whole recovery exists to
     protect, an instant after reading a correct roster out of it. The guard
     in _recover_from_backup must skip save() entirely in this case."""

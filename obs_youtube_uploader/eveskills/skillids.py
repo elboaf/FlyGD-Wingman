@@ -257,7 +257,22 @@ def save(cache: SkillIdCache, path: Path) -> None:
             # A backup that cannot be made must not stop the save. Losing
             # the tier is strictly better than losing the write it protects.
             pass
-    os.replace(staging, path)
+    # Bounded retry, mirroring atomicio.write_atomic's own retry on this
+    # exact rename: a Windows MoveFileExW sharing violation from a reader
+    # that does not grant FILE_SHARE_DELETE is transient, so a short wait
+    # clears it. This is defence in depth, not a substitute for load()'s
+    # own recovery above -- if every attempt here is exhausted, the primary
+    # has already been rotated into *bak* and this raises, but the next
+    # load() finds `.bak` and recovers from it instead of taking the
+    # silent first-launch branch.
+    for attempt in range(5):
+        try:
+            os.replace(staging, path)
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
     if bak.exists():
         try:
@@ -286,8 +301,17 @@ def load(path: Path) -> tuple:
     try:
         text = _read_bounded(path)
     except FileNotFoundError:
-        # First launch. Not an error, and not something to warn about.
-        return SkillIdCache(), warnings
+        # No primary. Usually first launch -- but save()'s rotate-then-swap
+        # can also leave exactly this on disk if the process dies or the
+        # final os.replace(staging, path) fails between rotating the old
+        # primary into *.bak* and installing the new one: a *.bak* with no
+        # primary. A *.bak* on disk is the one thing that tells the two
+        # apart -- first launch never has one -- so its absence is what
+        # makes this branch safe to treat as silent.
+        backup = path.with_name(path.name + ".bak")
+        if not backup.exists():
+            return SkillIdCache(), warnings
+        return _recover_missing_primary(path, backup, warnings)
     except OSError as exc:
         # A genuine access failure rather than bad content. There is
         # nothing to preserve or recover here: if the file cannot even be
@@ -310,6 +334,62 @@ def load(path: Path) -> tuple:
     if cache is None:
         return _recover_from_backup(path, warnings)
     return cache, warnings
+
+
+def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
+    """The primary is gone but `.bak` is not: rebuild from it and restore
+    the primary, then warn.
+
+    Mirrors state.py's function of the same name. It exists because
+    save()'s rotate-then-swap has no rollback: it renames the old primary
+    to `.bak` and only then renames the new content into place, and a
+    failure or a hard kill between those two renames leaves a `.bak` and a
+    `.new` staging file but no primary. Without this, the next load() would
+    take the FileNotFoundError branch, believe it is a first launch, and
+    hand back an empty cache -- discarding every name this cache holds and
+    paying for a full re-resolve (up to three rate-limited ESI requests per
+    name) even though the `.bak` sitting right beside it is intact.
+    """
+    recovered = None
+    for attempt in range(2):
+        try:
+            recovered = _cache_from_raw(json.loads(_read_bounded(backup)))
+            break
+        except ValueError:
+            # Bad backup content -- permanent, retrying reads the same
+            # bytes again.
+            break
+        except OSError:
+            # A transient sharing violation on a GOOD backup, not a missing
+            # or genuinely unreadable one -- matching _recover_from_backup's
+            # own retry for the identical reason.
+            if attempt == 0:
+                time.sleep(0.05)
+
+    if recovered is None:
+        warnings.append(
+            f"{path.name} was missing and its backup ({backup.name}) could "
+            "not be read either; skill names will be resolved again.")
+        return SkillIdCache(), warnings
+
+    # Write the recovered document back to *path* immediately. save() sees
+    # no existing primary (there isn't one) so it will not touch `.bak` --
+    # it only rotates a primary that exists -- and the directory ends up
+    # holding a real primary again, backed by the same `.bak` it came from.
+    try:
+        save(recovered, path)
+    except OSError as exc:
+        warnings.append(
+            f"{path.name} was missing; recovered it from {backup.name}, but "
+            f"the recovery could not be saved back to disk ({exc}). If the "
+            "app closes before the next successful save, this recovery "
+            "will be lost.")
+        return recovered, warnings
+
+    warnings.append(
+        f"{path.name} was missing (likely an interrupted save) and was "
+        f"recovered from its backup, {backup.name}.")
+    return recovered, warnings
 
 
 def _recover_from_backup(path: Path, warnings: list) -> tuple:
@@ -351,7 +431,7 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
         # _preserve_corrupt's own os.replace failed, so the corrupt content
         # is STILL sitting at *path*. Calling save() here regardless would
         # still see that corrupt file as the current primary and rotate it
-        # into *backup* as save()'s own first step, overwriting the good
+        # into *backup* as save()'s own second step, overwriting the good
         # backup `recovered` just came from with the corrupt content it was
         # recovering FROM. The corrupt primary on disk is by definition
         # worse than the good backup, so the safest thing is to do nothing

@@ -108,6 +108,48 @@ def test_load_of_a_missing_file_is_empty_and_silent(tmp_path):
     assert warnings == []
 
 
+def test_a_missing_primary_with_a_good_bak_is_recovered_not_first_launch(
+        tmp_path):
+    """This is what save()'s rotate-then-swap leaves behind if the final
+    os.replace(staging, path) fails or the process is killed between it and
+    the rotate: a *.bak* with no primary. Without the FileNotFoundError
+    branch consulting *.bak*, this looks identical to first launch and the
+    whole cache is discarded, costing hundreds of rate-limited ESI requests
+    to re-resolve names a good *.bak* still had."""
+    target = tmp_path / "cache.json"
+    skillids.save(skillids.SkillIdCache({"Navigation": 3449}), target)
+    skillids.save(skillids.SkillIdCache({"Navigation": 3449,
+                                          "Acceleration Control": 3452}),
+                   target)
+    target.unlink()
+
+    loaded, warnings = skillids.load(target)
+    assert loaded.get("navigation") == 3449
+    assert any("was missing" in w and "recovered" in w.lower()
+               for w in warnings)
+    assert target.exists()
+
+
+def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(
+        tmp_path):
+    target = tmp_path / "cache.json"
+    loaded, warnings = skillids.load(target)
+    assert loaded.type_ids() == {}
+    assert warnings == []
+    assert not target.exists()
+
+
+def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(
+        tmp_path):
+    target = tmp_path / "cache.json"
+    bak = tmp_path / "cache.json.bak"
+    bak.write_text("{ not json", encoding="utf-8")
+
+    loaded, warnings = skillids.load(target)
+    assert loaded.type_ids() == {}
+    assert warnings and "will be resolved again" in warnings[0]
+
+
 def test_an_entry_omitting_category_id_is_rejected(tmp_path):
     """The one deliberate divergence from the source, and the reason it is a
     test rather than only a comment.

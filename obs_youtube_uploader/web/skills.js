@@ -35,18 +35,22 @@
     if (!payload) return;
     STATE = payload;
     // Every cached detail was computed from the PREVIOUS onSkills payload's
-    // character/plan data. A fresh payload means a character's skills,
+    // character/plan data, and a fresh payload means a character's skills,
     // training queue, or requirement scoring may have just changed --
     // periodic refresh, a completed re-authentication, a forgotten and
-    // re-added character reusing an id -- and a stale cached detail would
-    // keep showing what just changed. Mirrors selectPlan's own
-    // invalidation further down this file: drop pendingDetail too, so an
-    // in-flight reply describing the OLD data lands in requestDetail's
-    // mismatch branch and is discarded rather than rendered, and
-    // re-request detail for every row still expanded so an open row does
-    // not simply go blank.
-    details = {};
-    pendingDetail = {};
+    // re-added character reusing an id. That data IS stale and must not be
+    // trusted once a refresh finishes, but onSkills is pushed once PER
+    // CHARACTER during _refresh_pass (controller.py:614), not once per
+    // refresh -- every commit stamps fetched_utc, so the payload-level
+    // dedupe never applies here. Wiping `details` on every one of those N
+    // pushes, as this used to, made every expanded row flip to "Loading
+    // requirements…" and back N times over a single refresh. Instead, keep
+    // the stale detail on screen and force a fresh request per still-open
+    // row; requestDetail's token check already drops any reply that is no
+    // longer the latest one asked for, so the row ends up showing exactly
+    // the detail for the LAST of these pushes once everything settles --
+    // it just does not go blank on the way there.
+    //
     // Progress lines describe a refresh in flight. onSkills is pushed on
     // BOTH the success and failure paths of every mutation, so the end of
     // a refresh always arrives here -- which is what stops "Refreshed 3 of
@@ -58,7 +62,7 @@
     renderIssues();
     renderRoster();
     Object.keys(expanded).forEach(function (id) {
-      requestDetail(parseInt(id, 10));
+      requestDetail(parseInt(id, 10), true);
     });
   }
 
@@ -500,15 +504,24 @@
    * prefetch. A forty-character roster asking for forty requirement lists
    * on entry would evaluate thirty-nine plans nobody opened.
    *
+   * `force` bypasses the "already have it" guard for a row that IS already
+   * expanded but whose detail is now stale (render()'s per-push
+   * re-request); a bare call from toggle() never needs it, since expanding
+   * a row that has no cached detail already falls through the guard.
+   *
    * The request id is what makes the reply safe to render. A plan switch
    * clears `details` and `pendingDetail` while a call is in flight, and
    * that reply describes the OLD plan -- rendering it would put the wrong
    * requirement list under an open row, with nothing on screen to say so.
    * A cleared or superseded entry no longer matches, so the reply is
-   * dropped.
+   * dropped. The same check is what makes `force` safe against a refresh
+   * that pushes several times in a row: only the reply to the LAST call
+   * for a given id ever matches its token, so an intermediate reply from
+   * an earlier, now-superseded push is discarded rather than briefly
+   * flashing on screen before the final one overwrites it.
    */
-  function requestDetail(id) {
-    if (details[id]) return;
+  function requestDetail(id, force) {
+    if (details[id] && !force) return;
     detailSeq += 1;
     var token = detailSeq;
     pendingDetail[id] = token;

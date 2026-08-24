@@ -632,6 +632,7 @@ def test_a_whitespace_only_code_reads_as_absent_for_the_reply_but_not_the_callba
         worker.join(5)
 
     assert callback.code == "  "
+    assert b"not accepted" in sink[0]
 
 
 # ---------------------------------------------------------------------------

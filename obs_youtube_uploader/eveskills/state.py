@@ -434,8 +434,18 @@ def load(path: Path) -> tuple:
     try:
         text = _read_bounded(path)
     except FileNotFoundError:
-        # First launch. Not an error, and not something to warn about.
-        return SkillsState(), warnings
+        # No primary. Usually first launch -- but save()'s rotate-then-swap
+        # can also leave exactly this on disk if the process dies or the
+        # final os.replace(staging, path) fails between rotating the old
+        # primary into *.bak* and installing the new one: at that instant
+        # there is a *.bak* but no primary. A *.bak* on disk is therefore
+        # the one thing that tells the two apart -- first launch never has
+        # one, so its absence is what makes this branch safe to treat as
+        # silent.
+        backup = path.with_name(path.name + ".bak")
+        if not backup.exists():
+            return SkillsState(), warnings
+        return _recover_missing_primary(path, backup, warnings)
     except UnicodeDecodeError:
         # A bad UTF-8 decode is unreadable CONTENT, not an access failure --
         # TriffSkillsState.cs:104 groups this with JsonException and its own
@@ -474,6 +484,64 @@ def load(path: Path) -> tuple:
         return from_dict(json.loads(text)), warnings
     except ValueError:
         return _recover_from_backup(path, warnings)
+
+
+def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
+    """The primary is gone but `.bak` is not: rebuild from it and restore
+    the primary, then warn.
+
+    This is a distinct case from `_recover_from_backup` -- there is no
+    corrupt primary to preserve, because there is no primary at all. It
+    exists because save()'s rotate-then-swap has no rollback: it renames
+    the old primary to `.bak` and only then renames the new content into
+    place, and a failure or a hard kill between those two renames leaves
+    the directory holding a `.bak` and a `.new` staging file but no
+    `eve_skills.json`. Without this, the next load() would take the
+    FileNotFoundError branch, believe it is a first launch, and hand back
+    an empty roster with every DPAPI-wrapped refresh token silently gone
+    from view -- while a perfectly good `.bak` sits right beside it.
+    """
+    recovered = None
+    for attempt in range(2):
+        try:
+            recovered = from_dict(json.loads(_read_bounded(backup)))
+            break
+        except ValueError:
+            # The backup's own content is bad -- permanent, retrying reads
+            # the same bytes again.
+            break
+        except OSError:
+            # A transient sharing violation on a GOOD backup, not a missing
+            # or genuinely unreadable one -- matching _recover_from_backup's
+            # own retry for the identical reason.
+            if attempt == 0:
+                time.sleep(0.05)
+
+    if recovered is None:
+        warnings.append(
+            f"{path.name} was missing and its backup ({backup.name}) could "
+            "not be read either; starting with an empty roster. Any "
+            "characters you had added will need re-authorising.")
+        return SkillsState(), warnings
+
+    # Write the recovered document back to *path* immediately. save() sees
+    # no existing primary (there isn't one) so it will not touch `.bak` --
+    # it only rotates a primary that exists -- and the directory ends up
+    # holding a real primary again, backed by the same `.bak` it came from.
+    try:
+        save(recovered, path)
+    except OSError as exc:
+        warnings.append(
+            f"{path.name} was missing; recovered it from {backup.name}, but "
+            f"the recovery could not be saved back to disk ({exc}). If the "
+            "app closes before the next successful save, this recovery "
+            "will be lost.")
+        return recovered, warnings
+
+    warnings.append(
+        f"{path.name} was missing (likely an interrupted save) and was "
+        f"recovered from its backup, {backup.name}.")
+    return recovered, warnings
 
 
 def _recover_from_backup(path: Path, warnings: list) -> tuple:
@@ -519,7 +587,7 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
         # is STILL sitting at *path* -- it was never moved aside. Calling
         # save() here regardless would still see that corrupt file as the
         # current primary and rotate it into *backup* as save()'s own
-        # first step, overwriting the good backup this very recovery just
+        # second step, overwriting the good backup this very recovery just
         # read `recovered` from with the corrupt content it was recovering
         # FROM. Write-then-rotate (below) fixes the ordering bug where a
         # write failure could destroy a good backup; it does not fix this
@@ -613,7 +681,22 @@ def save(state: SkillsState, path: Path) -> None:
             # the tier is strictly better than losing the write that the
             # tier exists to protect.
             pass
-    os.replace(staging, path)
+    # Bounded retry, mirroring atomicio.write_atomic's own retry on this
+    # exact rename: a Windows MoveFileExW sharing violation from a reader
+    # that does not grant FILE_SHARE_DELETE is transient, so a short wait
+    # clears it. This is defence in depth, not a substitute for load()'s
+    # own recovery above -- if every attempt here is exhausted, the primary
+    # has already been rotated into *bak* and this raises, but the next
+    # load() finds `.bak` and recovers from it instead of taking the
+    # silent first-launch branch.
+    for attempt in range(5):
+        try:
+            os.replace(staging, path)
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
     if bak.exists():
         try:
             # write_atomic's own temp file is always created at 0600 by
