@@ -76,3 +76,17 @@ def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
     return Rect(border, border + label_h,
                 max(0, rect.w - border * 2),
                 max(0, rect.h - border - border - label_h))
+
+
+def virtual_desktop(metrics) -> Rect:
+    """Union of every monitor, from four GetSystemMetrics values.
+
+    Pure so the negative-origin case is testable: a monitor to the left of
+    or above the primary makes x or y negative, and code that assumes a
+    (0, 0) origin places previews off-screen on exactly the multi-monitor
+    setups this feature exists for.
+
+    *metrics* is a callable taking an SM_ index, so the Win32 call stays
+    at the boundary.
+    """
+    return Rect(metrics(76), metrics(77), metrics(78), metrics(79))

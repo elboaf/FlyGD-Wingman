@@ -194,7 +194,8 @@ class PreviewHost:
                 on_activate=lambda c: None,
                 on_rect_changed=self._on_layout_changed,
                 neighbours=lambda k=key: [w.rect for k2, w
-                                          in self._windows.items() if k2 != k])
+                                          in self._windows.items() if k2 != k],
+                screen=self._screen)
             if win is not None:
                 self._windows[key] = win
 
@@ -203,7 +204,14 @@ class PreviewHost:
                         added, removed, len(self._windows))
 
     def _screen(self):
-        return geometry.Rect(0, 0, 1920, 1080)
+        """Virtual-desktop bounds, re-read each sweep.
+
+        Not cached for the process: monitors get plugged in, unplugged,
+        and rearranged while Wingman runs, and a stale origin puts new
+        previews off-screen where they cannot be dragged back.
+        """
+        libs = win32.bind()
+        return geometry.virtual_desktop(libs.user32.GetSystemMetrics)
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""

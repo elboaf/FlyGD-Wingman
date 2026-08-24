@@ -70,6 +70,16 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 # --- DPI ----------------------------------------------------------------
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 
+# --- Virtual desktop metrics -------------------------------------------
+# The union of every monitor, in physical pixels. Origin can be NEGATIVE:
+# a monitor placed left of or above the primary starts below zero, which
+# is why previews are stored in absolute virtual-desktop coordinates
+# rather than anything primary-relative.
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
 # --- Process access -----------------------------------------------------
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
@@ -182,6 +192,7 @@ def bind() -> Libs:
           UINT]),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "GetSystemMetrics", ctypes.c_int, [ctypes.c_int]),
         (user32, "InvalidateRect", BOOL,
          [HWND, ctypes.POINTER(wintypes.RECT), BOOL]),
         # --- layered rendering

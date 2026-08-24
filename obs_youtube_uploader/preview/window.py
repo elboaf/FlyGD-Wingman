@@ -155,7 +155,7 @@ class PreviewWindow:
     """
 
     def __init__(self, libs, client, rect, on_activate, on_rect_changed,
-                 neighbours):
+                 neighbours, screen):
         self._libs = libs
         self.client = client
         self.rect = rect
@@ -166,6 +166,9 @@ class PreviewWindow:
         # sibling previews. Without it snap() sees screen edges only and
         # preview-to-preview snapping silently does nothing.
         self._neighbours = neighbours
+        # Supplied, not computed here: the host re-reads it each sweep so
+        # a monitor added or rearranged mid-session is picked up.
+        self._screen = screen
         self.hwnd = None
         self._thumb = None
         self._mode = None
@@ -174,9 +177,9 @@ class PreviewWindow:
 
     @classmethod
     def create(cls, libs, client, rect, on_activate, on_rect_changed,
-               neighbours):
+               neighbours, screen):
         self = cls(libs, client, rect, on_activate, on_rect_changed,
-                   neighbours)
+                   neighbours, screen)
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
             win32.WS_EX_LAYERED | win32.WS_EX_TOOLWINDOW
@@ -266,11 +269,6 @@ class PreviewWindow:
             self._release_thumb()
             return 0
         return None
-
-    def _screen(self):
-        # Single-monitor virtual desktop is enough for snapping; the host
-        # supplies real bounds once multi-monitor layout lands.
-        return geometry.Rect(0, 0, 1920, 1080)
 
     # -- teardown --------------------------------------------------------
     def _release_thumb(self):

@@ -69,3 +69,26 @@ def test_thumbnail_rect_never_goes_negative(w, h):
     DwmUpdateThumbnailProperties an inverted rect."""
     t = g.thumbnail_rect(g.Rect(0, 0, w, h), border=5, label_h=30)
     assert t.w >= 0 and t.h >= 0
+
+
+def test_virtual_desktop_reads_the_four_metrics():
+    m = {76: 0, 77: 0, 78: 3840, 79: 1080}
+    assert g.virtual_desktop(m.get) == g.Rect(0, 0, 3840, 1080)
+
+
+def test_virtual_desktop_handles_a_negative_origin():
+    """A monitor left of or above the primary gives a negative origin.
+    Code assuming (0, 0) places previews off-screen on exactly the
+    multi-monitor setups this feature is for."""
+    m = {76: -1920, 77: -200, 78: 3840, 79: 1280}
+    d = g.virtual_desktop(m.get)
+    assert d == g.Rect(-1920, -200, 3840, 1280)
+    assert d.right == 1920 and d.bottom == 1080
+
+
+def test_default_stack_respects_a_negative_origin_screen():
+    """The first preview must land on-screen even when the virtual desktop
+    starts left of zero."""
+    screen = g.Rect(-1920, 0, 3840, 1080)
+    r = g.default_stack(0, screen, (320, 210))
+    assert screen.x <= r.x and r.right <= screen.right
