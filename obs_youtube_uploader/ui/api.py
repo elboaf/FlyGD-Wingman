@@ -1403,14 +1403,13 @@ class Api:
             logger.error("Refusing a non-dict bookmarks payload")
             return {**self.get_bookmarks(), "saved": False}
 
-        merged = dict(self._state.settings)
-        merged["eve_bookmarks"] = settings_mod.validated_eve(section)
         try:
-            settings_mod.save(merged)
+            with settings_mod.update(self._state.settings) as cfg:
+                cfg["eve_bookmarks"] = settings_mod.validated_eve(section)
         except OSError as exc:
-            # Same contract as save_settings: bail before touching in-memory
-            # state so state and disk never diverge, and say why rather than
-            # letting the exception escape.
+            # Same contract as save_settings: update() restored the live
+            # dict before re-raising, so state and disk never diverge, and
+            # say why rather than letting the exception escape.
             self._alert("error", "Could not save settings",
                         f"Bookmark settings were not saved: {exc}")
             return {**self.get_bookmarks(), "saved": False}
