@@ -10,7 +10,9 @@ import threading
 from pathlib import Path
 
 from . import bookmarks, paths
+from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
+from .preview import roster as preview_roster
 
 
 def _preview_defaults() -> dict:
@@ -21,7 +23,13 @@ def _preview_defaults() -> dict:
     clients should pay none of that.
     """
     return {"enabled": False, "width": 320, "height": 210,
-            "opacity": 235, "layouts": {}}
+            "opacity": 235, "layouts": {},
+            # Flat cycle chords, not a group table. When named cycle groups
+            # land these become the default group's, so the schema grows
+            # without migrating anyone -- the same shape the parent design
+            # used to defer profiles.
+            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+            "seen": []}
 
 
 def _eve_defaults() -> dict:
@@ -101,6 +109,27 @@ def validated_preview(raw) -> dict:
     # at load rather than at draw time.
     section["layouts"] = preview_layout.serialize(
         preview_layout.deserialize(raw.get("layouts")))
+
+    raw_hotkeys = raw.get("hotkeys")
+    if isinstance(raw_hotkeys, dict):
+        characters = raw_hotkeys.get("characters")
+        if isinstance(characters, dict):
+            for name, text in characters.items():
+                if not isinstance(name, str) or name.startswith("hwnd:"):
+                    continue
+                parsed = preview_gestures.parse(text)
+                if parsed is not None:
+                    # Canonical form, so "Alt+Ctrl+F2" and "Ctrl+Alt+F2"
+                    # cannot read as two different bindings to the clash
+                    # check.
+                    section["hotkeys"]["characters"][name] = \
+                        preview_gestures.display(parsed)
+        for key in ("cycle_next", "cycle_prev"):
+            parsed = preview_gestures.parse(raw_hotkeys.get(key))
+            if parsed is not None:
+                section["hotkeys"][key] = preview_gestures.display(parsed)
+
+    section["seen"] = preview_roster.deserialize(raw.get("seen"))
     return section
 
 

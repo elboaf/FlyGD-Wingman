@@ -27,6 +27,8 @@ def test_defaults_are_the_documented_values():
             "height": 210,
             "opacity": 235,
             "layouts": {},
+            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+            "seen": [],
         },
     }
 
@@ -236,3 +238,54 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
     written = json.loads(path.read_text())
     assert written["privacy"] == "public"
     assert written["category"] == "22"
+
+
+def test_preview_defaults_carry_an_empty_hotkey_table():
+    section = settings._preview_defaults()
+    assert section["hotkeys"] == {"characters": {}, "cycle_next": "",
+                                  "cycle_prev": ""}
+    assert section["seen"] == []
+
+
+def test_preview_defaults_are_not_shared_between_calls():
+    """The nested-dict trap the existing defaults were written to avoid."""
+    a, b = settings._preview_defaults(), settings._preview_defaults()
+    a["hotkeys"]["characters"]["Alice"] = "Ctrl+F1"
+    assert b["hotkeys"]["characters"] == {}
+
+
+def test_validated_preview_keeps_parseable_gestures():
+    section = settings.validated_preview(
+        {"hotkeys": {"characters": {"Alice": "Ctrl+F1"},
+                     "cycle_next": "Ctrl+Alt+Right", "cycle_prev": ""}})
+    assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
+    assert section["hotkeys"]["cycle_next"] == "Ctrl+Alt+Right"
+
+
+def test_validated_preview_drops_one_bad_gesture_not_the_section():
+    """Same posture as the layout entries: a hand-edited file costs one
+    binding, not the launch."""
+    section = settings.validated_preview(
+        {"enabled": True,
+         "hotkeys": {"characters": {"Alice": "Ctrl+F1", "Bravo": "nonsense",
+                                    "Carol": "F1"}}})
+    assert section["enabled"] is True
+    assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
+
+
+def test_validated_preview_canonicalises_gestures():
+    """Stored in display form so the clash check compares strings."""
+    section = settings.validated_preview(
+        {"hotkeys": {"characters": {"Alice": "alt+ctrl+f2"}}})
+    assert section["hotkeys"]["characters"]["Alice"] == "Ctrl+Alt+F2"
+
+
+def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
+    section = settings.validated_preview({"hotkeys": "nonsense"})
+    assert section["hotkeys"] == {"characters": {}, "cycle_next": "",
+                                  "cycle_prev": ""}
+
+
+def test_validated_preview_cleans_the_roster():
+    section = settings.validated_preview({"seen": ["Alice", "hwnd:0x1", 7]})
+    assert section["seen"] == ["Alice"]
