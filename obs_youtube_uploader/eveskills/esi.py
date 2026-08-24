@@ -308,7 +308,19 @@ class EsiClient:
             headers["If-None-Match"] = etag
 
         retryable_method = method == "GET" or _is_ids_route(path)
-        last_error = ""
+        # Tracks the MOST RECENT attempt's outcome, overwritten every
+        # iteration -- never accumulated -- so that at exhaustion it
+        # reflects only what the final attempt actually produced.
+        # An EsiResponse when the last attempt got a real HTTP response
+        # (even a failing one); None when it did not get a response at all
+        # (a network-level exception). EsiClient.cs's ShouldRetry makes the
+        # identical distinction (:183, `if (attempt >= MaxAttempts) return
+        # false`): on the final attempt a retryable status is never
+        # retried, and SendAsync falls through to the real last response --
+        # synthesis happens ONLY when the final attempt raised with no
+        # response to report at all.
+        last_result = None
+        last_network_error = ""
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             request = urllib.request.Request(url, data=payload,
@@ -343,7 +355,13 @@ class EsiClient:
                                        method, path)
                 text = self._error_text(exc, token)
                 if exc.code in RETRY_STATUSES and retryable_method:
-                    last_error = text
+                    # The real response, headers and all -- not just its
+                    # message -- so that if this turns out to be the LAST
+                    # attempt, exhaustion can return it unchanged instead of
+                    # replacing it with a synthetic status that discards
+                    # the very rate-limit headers _error_text just appended.
+                    last_result = EsiResponse(exc.code, None, text, "",
+                                              method, path)
                     if attempt < MAX_ATTEMPTS:
                         self._sleep(self._backoff(exc.headers, attempt))
                     continue
@@ -352,7 +370,13 @@ class EsiClient:
                 # No response, so no headers to read a suggested wait from.
                 # The ladder is fixed and short: a refresh is sequential, so
                 # every second spent here delays every character behind it.
-                last_error = _redact(f"Network error: {exc}", token)
+                #
+                # Resets last_result to None: this attempt got no response
+                # at all, so if it turns out to be the last one, exhaustion
+                # must fall back to the synthetic 503 below rather than
+                # returning a stale HTTP response from an earlier attempt.
+                last_result = None
+                last_network_error = _redact(f"Network error: {exc}", token)
                 if attempt < MAX_ATTEMPTS:
                     self._sleep(NETWORK_BACKOFF_S * attempt)
                 continue
@@ -360,14 +384,25 @@ class EsiClient:
         # Exhausted. Return rather than raise: a refresh iterates characters
         # sequentially and one exhausted character must record an error and
         # let the loop continue to the next.
-        #
-        # The 503 is SYNTHETIC -- it did not necessarily come from ESI. The
-        # upstream failure may have been any status in RETRY_STATUSES, or no
-        # response at all, and a caller reading it as an upstream outage
+        if last_result is not None:
+            # The final attempt got a real HTTP response. Return it exactly
+            # as ESI (or whatever sits in front of it) sent it -- real
+            # status, real sanitized error text, real rate-limit headers
+            # already folded in by _error_text. A caller depends on seeing
+            # the actual 429 (and its Retry-After/error-limit values) when
+            # that is what finally happened, not a 503 that never came from
+            # anywhere.
+            return last_result
+
+        # The final attempt raised with no response to report at all, so
+        # there is nothing real left to return. The 503 here is SYNTHETIC
+        # -- it did not necessarily come from ESI. The upstream failure may
+        # have been any status in RETRY_STATUSES on an earlier attempt, or
+        # no response at all, and a caller reading it as an upstream outage
         # will be wrong about the cause.
         return EsiResponse(
             503, None,
-            last_error or f"No response after {MAX_ATTEMPTS} attempts.",
+            last_network_error or f"No response after {MAX_ATTEMPTS} attempts.",
             "", method, path)
 
     @staticmethod

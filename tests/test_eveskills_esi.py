@@ -346,21 +346,70 @@ def test_a_zero_error_limit_reset_is_treated_as_absent():
     assert sleep.delays == [pytest.approx(0.650)]
 
 
-def test_exhausting_the_retries_returns_a_synthetic_503():
+def test_exhausting_http_retries_returns_the_real_last_status():
+    """EsiClient.cs's ShouldRetry (:183) returns false once the attempt
+    count reaches MaxAttempts, so on the FINAL attempt a retryable status
+    is never retried -- SendAsync falls through to the real last response.
+    Synthesis is reserved for when the final attempt raised with no
+    response at all (see test_exhausting_network_retries_returns_a_
+    synthetic_503 below); here every attempt got a real HTTP response, so
+    the real final one -- its real status and its rate-limit headers,
+    folded into the error text by AppendRateLimit -- must come back
+    unchanged. Discarding it in favour of a synthetic 503 would erase the
+    one signal (a 429/420 and its Retry-After/error-limit headers) that
+    error-limiting -- item 3 from the last review round -- exists to
+    surface, in exactly the case it was added for."""
+    headers = _headers(Retry_After=5)
+    transport = FakeTransport([
+        _http_error(500),
+        _http_error(502),
+        _http_error(429, json.dumps({"error": "error limited"}).encode(),
+                    headers=headers),
+    ])
+    client = esi.EsiClient(user_agent="A", transport=transport,
+                           sleep=FakeSleep())
+    response = client.get("/v6/characters/1/skills/")
+    assert response.status == 429
+    assert "error limited" in response.error
+    assert "Retry-After=5" in response.error
+    assert len(transport.requests) == esi.MAX_ATTEMPTS
+
+
+def test_exhausting_network_retries_returns_a_synthetic_503():
     """Returns, never raises: a refresh iterates characters sequentially,
     and one exhausted character must record an error and let the loop go on
     to the next.
 
-    The caller must NOT read this 503 as "ESI said 503" -- it is synthesised
-    here, and the upstream failure may have been any status in the retry set
-    or no response at all."""
-    transport = FakeTransport([_http_error(500)] * esi.MAX_ATTEMPTS)
+    The caller must NOT read this 503 as "ESI said 503" -- it is
+    synthesised here because the final attempt raised with no response to
+    report at all, not because ESI (or anything in front of it) ever sent
+    one."""
+    transport = FakeTransport([urllib.error.URLError("no route")] *
+                             esi.MAX_ATTEMPTS)
     client = esi.EsiClient(user_agent="A", transport=transport,
                            sleep=FakeSleep())
     response = client.get("/v6/characters/1/skills/")
     assert response.status == 503
     assert response.ok is False
     assert response.error
+    assert len(transport.requests) == esi.MAX_ATTEMPTS
+
+
+def test_http_failures_then_a_final_network_failure_still_synthesizes():
+    """The final attempt is what decides, not whatever happened earlier: two
+    real HTTP failures followed by a final attempt that never got a
+    response at all must still synthesize, because there is no real
+    response left to return -- an earlier attempt's stale HTTP response
+    would be exactly as misleading as inventing one from nothing."""
+    transport = FakeTransport([
+        _http_error(500),
+        _http_error(502),
+        urllib.error.URLError("connection reset"),
+    ])
+    client = esi.EsiClient(user_agent="A", transport=transport,
+                           sleep=FakeSleep())
+    response = client.get("/v6/characters/1/skills/")
+    assert response.status == 503
     assert len(transport.requests) == esi.MAX_ATTEMPTS
 
 
