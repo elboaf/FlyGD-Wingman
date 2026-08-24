@@ -50,7 +50,7 @@
                  'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onEveSettingsNames',
-                 'onEveSettingsDone'];
+                 'onEveSettingsRunning', 'onEveSettingsDone'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {

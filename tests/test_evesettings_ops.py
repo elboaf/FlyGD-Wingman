@@ -150,9 +150,20 @@ def test_a_source_outside_the_root_raises(tmp_path):
     assert target.read_bytes() == b"target"
 
 
-@pytest.mark.skipif(os.path.normcase("A") != "A",
-                    reason="normcase folds case here, so these two paths "
-                           "genuinely are the same file")
+def case_sensitive(tmp_path) -> bool:
+    """Does THIS filesystem distinguish settings_Alt from settings_alt?
+
+    A platform check (`os.path.normcase("A") != "A"`) is the wrong
+    question: on macOS, and on any case-insensitive volume mounted under
+    Linux, normcase is the identity so the test would run -- and then the
+    second mkdir below raises FileExistsError, erroring instead of
+    skipping. Ask the filesystem in front of us.
+    """
+    probe = tmp_path / "_CaseProbe"
+    probe.mkdir()
+    return not (tmp_path / "_caseprobe").exists()
+
+
 def test_case_distinct_targets_are_not_collapsed(tmp_path):
     """settings_Alt and settings_alt are two profiles on a case-sensitive
     filesystem, each with its own core_char_2.dat.
@@ -163,6 +174,11 @@ def test_case_distinct_targets_are_not_collapsed(tmp_path):
     Path equality, which does not fold. The two halves disagreed about
     what "the same file" means; both now ask os.path.normcase.
     """
+    probe_dir = tmp_path / "probe"
+    probe_dir.mkdir()
+    if not case_sensitive(probe_dir):
+        pytest.skip("this filesystem folds case, so these two paths "
+                    "genuinely are the same directory")
     source = make(tmp_path, "core_char_1.dat", b"source")
     upper = tmp_path / "settings_Alt"
     lower = tmp_path / "settings_alt"
@@ -176,9 +192,16 @@ def test_case_distinct_targets_are_not_collapsed(tmp_path):
     assert all(t.read_bytes() == b"source" for t in targets)
 
 
-def test_the_source_is_excluded_on_the_same_terms_dedup_uses(tmp_path):
-    """Whatever comparison collapses duplicates must also recognise the
-    source, or a file is excluded by one half and admitted by the other."""
+def test_duplicates_collapse_and_the_source_is_excluded(tmp_path):
+    """Both halves of the filter, over a list spelling each path twice.
+
+    Not a regression test, and deliberately not named as one: on POSIX
+    there is no spelling that normcase equates but Path equality does not,
+    so this passes against the pre-fix code too. It pins the behaviour the
+    filter is FOR -- the source never copied onto itself, no target
+    visited twice -- while test_case_distinct_targets_are_not_collapsed
+    above is the one that actually fails without the fix.
+    """
     source = make(tmp_path, "core_char_1.dat", b"source")
     other = make(tmp_path, "core_char_2.dat")
     report = ops.copy_to_targets(

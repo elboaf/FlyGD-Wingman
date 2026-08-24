@@ -6,6 +6,7 @@ destructive operation passes through require_under() first.
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 # EVE's own three-level layout:
 #   <root>/<server>/settings_<profile>/core_char_<id>.dat
@@ -77,10 +78,14 @@ class Tree:
     # directory is not unreadable -- conflating the two is what makes
     # TriffView say "no settings sets" when it means "denied".
     unreadable: bool = False
-    # True when the root held more than MAX_ROOT_CHILDREN directories, so
-    # its children were never probed. Reported rather than swallowed, for
-    # the same reason `unreadable` is: "that is not an EVE folder" and
-    # "there is nothing in it" are different answers.
+    # True when discovery was cut short by one of its own bounds: the
+    # root held more than MAX_ROOT_CHILDREN directories so its children
+    # were never probed, or a directory under it held more than
+    # MAX_PROBE_ENTRIES entries so the probe stopped early. Either way
+    # `servers` may be incomplete, and saying so is the point -- reported
+    # rather than swallowed, for the same reason `unreadable` is: "that is
+    # not an EVE folder" and "there is nothing in it" are different
+    # answers, and only one of them is the user's mistake.
     too_broad: bool = False
 
 
@@ -173,35 +178,70 @@ def _is_profile_dir(path) -> bool:
     return Path(path).name.startswith(_PROFILE_PREFIX)
 
 
-def _has_profiles(path) -> bool:
+class Probe(NamedTuple):
+    """What one _has_profiles look found, and how much to trust it.
+
+    A bare bool would make "no settings_* here", "I stopped counting" and
+    "I was denied" the same answer, which is the conflation this whole
+    module is written against.
+    """
+    found: bool
+    truncated: bool = False
+    denied: bool = False
+
+
+def _has_profiles(path) -> Probe:
     """Does *path* hold any settings_* child? Bounded, and short-circuits.
 
     Deliberately NOT built on _scan(): that materialises every entry with
     list() before the first test, so probing one wrong directory could
     read hundreds of thousands of names to answer a question the first
     entry might have settled.
+
+    The two failure flags exist because returning a bare False for either
+    makes a directory vanish from the server list with nothing said --
+    "the user is told there are no settings sets for a folder that plainly
+    has them", which is the defect this design names as TriffView's.
     """
     try:
         with os.scandir(str(path)) as entries:
             for seen, entry in enumerate(entries):
                 if seen >= MAX_PROBE_ENTRIES:
-                    return False
+                    return Probe(False, truncated=True)
                 try:
                     if entry.is_dir() and _is_profile_dir(entry.path):
-                        return True
+                        return Probe(True)
                 except OSError:
+                    # One unstatable entry is not a verdict on the
+                    # directory; keep looking at the rest.
                     continue
+    except FileNotFoundError:
+        return Probe(False)
     except OSError:
-        return False
-    return False
+        return Probe(False, denied=True)
+    return Probe(False)
 
 
-def _servers_in(root) -> tuple[list, bool, bool]:
+def _servers_in(root, keep=None) -> tuple[list, bool, bool]:
+    """Server directories under *root*, bounded.
+
+    `keep` is the server normalize_selection already identified, and is
+    probed even when the root is too broad to enumerate. Without that, the
+    cap CANCELS the self-healing: picking the settings folder EVE itself
+    shows you lifts the root to that folder's grandparent, and if the
+    grandparent is something wide like C:/Games the user gets an empty
+    tree and a warning about a folder they never chose -- from picking a
+    folder that visibly contains their settings. Re-picking cannot escape
+    it, because normalize_selection lifts to the same place every time.
+    """
     entries, unreadable = _scan(root)
     found = []
     # The root itself counts as a server candidate: some installs put
     # settings_* directly under it. One scandir, always affordable.
-    if _has_profiles(root):
+    probe = _has_profiles(root)
+    truncated = probe.truncated
+    unreadable = unreadable or probe.denied
+    if probe.found:
         key, display = _shard(Path(root).name)
         found.append(Server(Path(root), display, key))
 
@@ -211,14 +251,28 @@ def _servers_in(root) -> tuple[list, bool, bool]:
     # fresh scandir. Bailing here is what keeps a mis-picked root from
     # blocking the bridge thread for as long as C:/Users/me takes.
     too_broad = len(children) > MAX_ROOT_CHILDREN
+    if too_broad and keep is not None:
+        # One extra scandir, not hundreds: the selection is rescued while
+        # the cap still holds. too_broad stays True, because the rest of
+        # the list really was not enumerated and the page says so.
+        keep = Path(keep)
+        if keep.parent == Path(root) and _has_profiles(keep).found:
+            key, display = _shard(keep.name)
+            found.append(Server(keep, display, key))
     if not too_broad:
         for entry in children:
             name = Path(entry.path).name
-            if _has_profiles(entry.path) or _shard(name)[0] != name:
+            probe = _has_profiles(entry.path)
+            # A child we could not finish reading, or were denied, must
+            # not simply vanish from the dropdown: that tells the user
+            # they have no settings sets for a folder that has them.
+            truncated = truncated or probe.truncated
+            unreadable = unreadable or probe.denied
+            if probe.found or _shard(name)[0] != name:
                 key, display = _shard(name)
                 found.append(Server(Path(entry.path), display, key))
     found.sort(key=lambda s: (s.key != "tranquility", s.name.lower()))
-    return found, unreadable, too_broad
+    return found, unreadable, too_broad or truncated
 
 
 def _profiles_in(server) -> tuple[list, bool]:
@@ -266,7 +320,7 @@ def normalize_selection(root, server, profile):
     root = Path(root)
     if _is_profile_dir(root):
         return root.parent.parent, root.parent, root
-    if _has_profiles(root) and root.parent != root:
+    if _has_profiles(root).found and root.parent != root:
         # A server directory: keep it as the server, lift the root above it.
         return root.parent, root, Path(profile) if profile else None
     return (root,
@@ -279,7 +333,7 @@ def discover(root, server=None, profile=None) -> Tree:
     if root is None:
         return Tree()
     root, server, profile = normalize_selection(root, server, profile)
-    servers, unreadable, too_broad = _servers_in(root)
+    servers, unreadable, too_broad = _servers_in(root, keep=server)
     chosen_server = None
     if server is not None:
         chosen_server = next((s.path for s in servers

@@ -401,17 +401,21 @@ def test_the_running_probe_pushes_only_when_the_answer_changes(tmp_path,
     pushed = []
     api._push = lambda name, payload: pushed.append((name, payload))
 
+    # None -> False IS a change: the pill was showing "Checking...".
     api._eve_client_running = lambda: False
     api._eve_refresh_running()
-    assert pushed == [], "False was already the value on screen"
-
-    api._eve_client_running = lambda: True
-    api._eve_refresh_running()
-    assert pushed == [("onEveSettingsRunning", {"running": True})]
-    assert api._eve_running is True
+    assert pushed == [("onEveSettingsRunning", {"running": False})]
 
     api._eve_refresh_running()
     assert len(pushed) == 1, "no change, so nothing to push"
+
+    api._eve_client_running = lambda: True
+    api._eve_refresh_running()
+    assert pushed[-1] == ("onEveSettingsRunning", {"running": True})
+    assert len(pushed) == 2 and api._eve_running is True
+
+    api._eve_refresh_running()
+    assert len(pushed) == 2, "no change, so nothing to push"
 
 
 def test_a_probe_that_raises_leaves_the_pill_alone(tmp_path, monkeypatch):
@@ -426,7 +430,9 @@ def test_a_probe_that_raises_leaves_the_pill_alone(tmp_path, monkeypatch):
 
     api._eve_client_running = boom
     api._eve_refresh_running()
-    assert pushed == [] and api._eve_running is False
+    # Still None: a failed probe must not fabricate "EVE closed", which is
+    # the reassuring answer and the only warning before a copy.
+    assert pushed == [] and api._eve_running is None
 
 
 def test_state_refuses_a_root_too_wide_to_be_an_eve_folder(tmp_path,
@@ -448,3 +454,72 @@ def test_a_normal_root_is_not_reported_as_too_broad(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     assert api.eve_settings_state()["too_broad"] is False
+
+
+def test_the_pill_is_unknown_until_the_probe_answers(tmp_path, monkeypatch):
+    """False is the reassuring guess, and the pill is the ONLY warning
+    before a copy -- the copy confirmation says nothing about a running
+    client. The probe was moved off the bridge thread precisely because
+    its first, uncached pass is slow, so a fabricated "EVE closed" would
+    be on screen for exactly as long as it takes to be wrong about."""
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    # Nothing has looked yet; the probe must not be allowed to run inline.
+    api._eve_refresh_running = lambda: None
+    assert api.eve_settings_state()["eve_running"] is None
+
+
+def test_a_second_probe_is_skipped_while_one_is_in_flight(tmp_path,
+                                                          monkeypatch):
+    """eve_settings_state() fires a probe on every call -- route open and
+    after every mutation -- so two overlap easily. Without single-flight a
+    slow probe finishing after a fast one publishes the OLDER observation
+    and leaves it cached, showing "EVE closed" while EVE is running with
+    nothing to correct it."""
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    started = []
+
+    class Parked:
+        """A spawn that never runs the worker, so the lock stays held."""
+
+        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+            started.append(target)
+
+        def start(self):
+            return None
+
+    api._spawn = Parked
+    api._eve_refresh_running()
+    api._eve_refresh_running()
+    assert len(started) == 1, "a second probe was spawned over the first"
+
+
+def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path,
+                                                                monkeypatch):
+    """Only the worker releases, and a worker that never started never
+    will -- that would freeze the pill for the process's lifetime."""
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+
+    def no_thread(*args, **kwargs):
+        raise RuntimeError("can't start new thread")
+
+    api._spawn = no_thread
+    api._eve_refresh_running()
+    assert api._eve_probe.acquire(blocking=False) is True
+    api._eve_probe.release()
+
+
+def test_the_probe_releases_its_lock_even_when_it_raises(tmp_path,
+                                                         monkeypatch):
+    eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+
+    def boom():
+        raise OSError("no window station")
+
+    api._eve_client_running = boom
+    api._eve_refresh_running()
+    assert api._eve_probe.acquire(blocking=False) is True
+    api._eve_probe.release()

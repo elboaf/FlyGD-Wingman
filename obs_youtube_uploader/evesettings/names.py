@@ -10,10 +10,13 @@ invalid-ids would blacklist every character the user has. The two are
 separated by response shape, not wording, so CCP can reword the message.
 """
 import json
+import logging
 import urllib.error
 import urllib.request
 
 from .. import __version__ as _version
+
+logger = logging.getLogger(__name__)
 
 ESI_URL = ("https://esi.evetech.net/latest/universe/names/"
            "?datasource=tranquility")
@@ -90,6 +93,14 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
             body = ""
         return classify(exc.code, body)
     except Exception:  # noqa: BLE001 - reported as transient, never raised
+        # Logged because TRANSIENT means "retry next pass", and a caller
+        # bug -- a non-serialisable id, a malformed URL -- retries forever
+        # while every row shows its fallback label. Before these two
+        # statements moved inside the try, such a bug escaped to
+        # eve_settings_resolve_names, which logs it. Debug, not warning:
+        # an offline machine takes this arm on every pass and that is not
+        # a fault.
+        logger.debug("ESI name batch could not be sent", exc_info=True)
         return TRANSIENT, {}
     return classify(status, body)
 

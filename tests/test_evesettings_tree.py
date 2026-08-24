@@ -219,17 +219,69 @@ def test_has_profiles_stops_at_the_first_match(tmp_path, monkeypatch):
                 yield Entry(name)
 
     monkeypatch.setattr(tree.os, "scandir", lambda _p: FakeScan())
-    assert tree._has_profiles(server) is True
+    assert tree._has_profiles(server) == tree.Probe(True)
     assert consumed == ["settings_Default"], "it read past the first match"
 
 
-def test_a_directory_beyond_the_probe_cap_is_not_a_server(tmp_path,
-                                                          monkeypatch):
+def test_a_truncated_probe_says_so_rather_than_answering_no(tmp_path,
+                                                            monkeypatch):
+    """Returning a bare False here would make a settings set vanish from
+    the dropdown with nothing said -- telling the user they have no
+    settings sets for a folder that plainly has them, which is the defect
+    the design names as TriffView's."""
     monkeypatch.setattr(tree, "MAX_PROBE_ENTRIES", 0)
     server = tmp_path / "server"
     server.mkdir()
     (server / "settings_Default").mkdir()
-    assert tree._has_profiles(server) is False
+    assert tree._has_profiles(server) == tree.Probe(False, truncated=True)
+
+
+def test_a_truncated_child_probe_reaches_the_tree(tmp_path, monkeypatch):
+    monkeypatch.setattr(tree, "MAX_PROBE_ENTRIES", 0)
+    root = tmp_path / "eve"
+    (root / "server_tranquility" / "settings_Default").mkdir(parents=True)
+    assert tree.discover(root).too_broad is True
+
+
+def test_a_denied_probe_says_denied_rather_than_answering_no(tmp_path):
+    server = tmp_path / "server"
+    server.mkdir()
+    server.chmod(0o000)
+    try:
+        try:
+            os.scandir(str(server)).close()
+        except PermissionError:
+            pass
+        else:  # pragma: no cover - root, or a filesystem without modes
+            pytest.skip("this user can read a mode-000 directory")
+        assert tree._has_profiles(server) == tree.Probe(False, denied=True)
+    finally:
+        server.chmod(0o700)
+
+
+def test_a_denied_child_marks_the_tree_unreadable(tmp_path):
+    """An EVE install directory with restrictive ACLs must not silently
+    disappear from the server list."""
+    root = tmp_path / "eve"
+    root.mkdir()
+    locked = root / "server_locked"
+    locked.mkdir()
+    locked.chmod(0o000)
+    try:
+        try:
+            os.scandir(str(locked)).close()
+        except PermissionError:
+            pass
+        else:  # pragma: no cover - root, or a filesystem without modes
+            pytest.skip("this user can read a mode-000 directory")
+        assert tree.discover(root).unreadable is True
+    finally:
+        locked.chmod(0o700)
+
+
+def test_a_missing_directory_is_not_denied(tmp_path):
+    """The same distinction _scan draws: absent is not forbidden."""
+    assert tree._has_profiles(tmp_path / "nope") == tree.Probe(False)
 
 
 def test_default_root_uses_localappdata_when_windows_sets_it(monkeypatch):
@@ -249,3 +301,54 @@ def test_default_root_ignores_an_empty_localappdata(monkeypatch):
     relative CCP/EVE beside the working directory."""
     monkeypatch.setenv("LOCALAPPDATA", "")
     assert tree.default_root() == Path.home() / ".local/share/CCP/EVE"
+
+
+def test_the_cap_does_not_cancel_the_self_healing_root(tmp_path):
+    """Picking the folder EVE itself shows you lands on a server or
+    settings_* directory, and normalize_selection lifts the root ABOVE it.
+    If that parent is something wide -- C:/Games, C:/Users/me -- the cap
+    would refuse to probe it and the user gets an empty tree plus a
+    warning about a folder they never chose, from picking a folder that
+    visibly contains their settings. Re-picking cannot escape it, because
+    normalize_selection lifts to the same place every time.
+    """
+    games = tmp_path / "Games"
+    picked = games / "eve-tq"
+    (picked / "settings_Default").mkdir(parents=True)
+    (picked / "settings_Default" / "core_char_98123456.dat").touch()
+    for n in range(tree.MAX_ROOT_CHILDREN + 1):
+        (games / f"other{n:03d}").mkdir()
+
+    found = tree.discover(picked)
+    assert found.root == games, "normalize_selection still lifts the root"
+    # The selection is rescued...
+    assert [s.path for s in found.servers] == [picked]
+    assert found.profile == picked / "settings_Default"
+    assert [f.file_id for f in found.characters] == ["98123456"]
+    # ...and the page is still told the wider list was not enumerated.
+    assert found.too_broad is True
+
+
+def test_the_rescued_server_must_still_be_a_child_of_the_root(tmp_path):
+    """`keep` comes from a stored selection and could point anywhere; it
+    is not a way around containment."""
+    games = tmp_path / "Games"
+    games.mkdir()
+    for n in range(tree.MAX_ROOT_CHILDREN + 1):
+        (games / f"other{n:03d}").mkdir()
+    elsewhere = tmp_path / "Elsewhere" / "eve-tq"
+    (elsewhere / "settings_Default").mkdir(parents=True)
+
+    servers, _unreadable, too_broad = tree._servers_in(games, keep=elsewhere)
+    assert servers == [] and too_broad is True
+
+
+def test_a_rescued_keep_without_profiles_is_not_invented(tmp_path):
+    games = tmp_path / "Games"
+    games.mkdir()
+    empty = games / "not-eve"
+    empty.mkdir()
+    for n in range(tree.MAX_ROOT_CHILDREN + 1):
+        (games / f"other{n:03d}").mkdir()
+    servers, _unreadable, _too_broad = tree._servers_in(games, keep=empty)
+    assert servers == []

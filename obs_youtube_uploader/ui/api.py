@@ -194,10 +194,21 @@ class Api:
         self._eve_mutation = threading.Lock()
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
-        # Last known answer for the advisory "EVE running" pill. Read on
-        # the bridge thread, written by the background probe below; a
-        # plain bool assignment, so no lock is needed to keep it coherent.
-        self._eve_running = False
+        # Last known answer for the advisory "EVE running" pill, or None
+        # for "nobody has looked yet". None rather than False because the
+        # pill is the ONLY warning before a copy, and False is the
+        # reassuring guess: the probe is off the bridge thread precisely
+        # because its first, uncached pass is slow, so a fabricated
+        # "EVE closed" would be on screen for exactly as long as it takes
+        # to be wrong about. The page renders the third state as
+        # "Checking...". Read on the bridge thread, written by the probe;
+        # a plain assignment, so no lock is needed for coherence.
+        self._eve_running = None
+        # One probe at a time. eve_settings_state() fires one on every
+        # call -- route open, and after every mutation -- so two easily
+        # overlap, and a slow probe finishing after a fast one would
+        # otherwise publish the OLDER observation and leave it cached.
+        self._eve_probe = threading.Lock()
 
         # None off Windows and in most tests, like _preview_host above.
         # Deliberately NOT gated on preview.enabled: this moves the EVE
@@ -1859,12 +1870,26 @@ class Api:
                     self._push("onEveSettingsRunning", {"running": value})
             except Exception:  # noqa: BLE001 - a pill, never a failure
                 logger.debug("EVE client probe failed", exc_info=True)
+            finally:
+                self._eve_probe.release()
 
+        # Single-flight. Skipping is safe because the caller re-reads the
+        # cached value either way, and the probe already in flight will
+        # publish a fresher answer than this one could.
+        if not self._eve_probe.acquire(blocking=False):
+            return
         try:
             self._spawn(target=worker, daemon=True).start()
         except Exception:  # noqa: BLE001 - the pill simply stays stale
+            # Only the worker releases, and a worker that never started
+            # never will -- that would wedge the probe for the process's
+            # lifetime and freeze the pill on whatever it last said.
+            self._eve_probe.release()
             logger.debug("Could not start the EVE client probe",
                          exc_info=True)
+        except BaseException:
+            self._eve_probe.release()
+            raise
 
     @contextlib.contextmanager
     def _eve_hold(self):
@@ -1878,11 +1903,14 @@ class Api:
         when it was approved -- and _eve_begin's stated policy is that EVE
         Settings mutations are refused rather than interleaved.
 
-        Non-blocking, and not merely to match that policy: a worker
-        holding the lock parks in _confirm() until the page answers, and
-        that answer is delivered on the bridge thread. Blocking here would
-        deadlock the whole app -- the bridge waiting on a worker that is
-        waiting on the bridge.
+        Non-blocking, and not merely to match that policy. A worker
+        holding the lock is parked in _eve_confirm() waiting for an answer
+        the page delivers over the bridge, so blocking here would stop the
+        bridge from carrying that answer. It is not a true deadlock --
+        _eve_confirm is bounded by EVE_CONFIRM_TIMEOUT_S and reads a
+        missing answer as "no", so the worker unwinds and releases -- but
+        the price of blocking is a UI frozen for up to five minutes, which
+        is not meaningfully better than one.
         """
         if not self._eve_mutation.acquire(blocking=False):
             self._alert("warning", "EVE Settings busy",

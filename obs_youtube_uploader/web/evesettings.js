@@ -35,10 +35,7 @@
     if (!payload) return;
     state = payload;
     WM.el('es-root').textContent = payload.root || 'No folder selected';
-    WM.el('es-eve-state').textContent =
-      payload.eve_running ? 'EVE running' : 'EVE closed';
-    WM.el('es-eve-state').className =
-      'pill ' + (payload.eve_running ? 'warn' : 'idle');
+    paintPill(payload.eve_running);
 
     var warning = WM.el('es-warning');
     // "Couldn't read", "too wide to be an EVE folder" and "nothing there"
@@ -47,8 +44,8 @@
     warning.hidden = !(payload.unreadable || payload.too_broad);
     if (payload.too_broad) {
       warning.textContent =
-        'That folder has too many subfolders to be an EVE settings folder. '
-        + 'Pick the EVE folder itself, usually '
+        'That folder was too large to search fully, so this list may be '
+        + 'incomplete. Pick the EVE folder itself, usually '
         + (payload.default_root || '%LOCALAPPDATA%\\CCP\\EVE') + '.';
     } else if (payload.unreadable) {
       warning.textContent =
@@ -62,6 +59,22 @@
     renderSource();
     renderTargets();
     renderBackups();
+  }
+
+  // Three states, not two. null means the probe has not answered yet, and
+  // rendering that as "EVE closed" would be a reassuring guess about the
+  // only warning shown before a copy -- the probe runs off the bridge
+  // thread precisely because its first pass is slow.
+  function paintPill(running) {
+    var pill = WM.el('es-eve-state');
+    if (!pill) return;
+    if (running === null || running === undefined) {
+      pill.textContent = 'Checking for EVE\u2026';
+      pill.className = 'pill idle';
+      return;
+    }
+    pill.textContent = running ? 'EVE running' : 'EVE closed';
+    pill.className = 'pill ' + (running ? 'warn' : 'idle');
   }
 
   function fill(id, items, current) {
@@ -260,11 +273,8 @@
   // full refresh would rebuild the target checklist under the user's
   // cursor for an advisory badge nothing is blocked on.
   WM.handle('onEveSettingsRunning', function (payload) {
-    var pill = WM.el('es-eve-state');
-    if (!pill) return;
     if (state) state.eve_running = payload.running;
-    pill.textContent = payload.running ? 'EVE running' : 'EVE closed';
-    pill.className = 'pill ' + (payload.running ? 'warn' : 'idle');
+    paintPill(payload.running);
   });
 
   // The completion signal for every mutation. It replaces a setTimeout that
