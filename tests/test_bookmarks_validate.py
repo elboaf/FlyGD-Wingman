@@ -2,22 +2,36 @@ import pytest
 from obs_youtube_uploader import bookmarks
 
 
-def test_there_are_twenty_one_binds():
-    """All 21 the standalone script had. Copy and Paste were cut in the
-    first port and restored: the handlers are two lines each
-    (111unified.ahk:988-995) and the corp uses them."""
-    assert len(bookmarks.BIND_IDS) == 21
-    assert "Copy" in bookmarks.BIND_IDS
-    assert "Paste" in bookmarks.BIND_IDS
-    assert len(set(bookmarks.BIND_IDS)) == 21
+def test_there_are_eighteen_binds():
+    """18 of the standalone script's 21. Copy and Paste are gone -- their
+    handlers were Send ^c and Send ^v (111unified.ahk:988-995), a global
+    keyboard hook spent on what Windows already does -- and the medium-hole
+    tag went with the helper author's own tag rework."""
+    assert len(bookmarks.BIND_IDS) == 18
+    for gone in ("Copy", "Paste", "FinM"):
+        assert gone not in bookmarks.BIND_IDS
+    assert len(set(bookmarks.BIND_IDS)) == 18
 
 
-def test_copy_paste_and_setroot_are_the_global_binds():
-    """RefreshHotkeys Step 4 (111unified.ahk:763-771) registers exactly
-    these three outside the per-window loop. They fire in every
-    application, which is the one thing about them a user must be told."""
-    assert bookmarks.GLOBAL_BIND_IDS == {"Copy", "Paste", "SetRoot"}
-    assert bookmarks.GLOBAL_BIND_IDS < set(bookmarks.BIND_IDS)
+def test_the_tag_labels_name_the_character_the_engine_writes():
+    """The labels are the only place a user learns which letter lands in
+    the bookmark, so they have to move when the engine's does. FinS keeps
+    its id on purpose: only the letter changed, and renaming the id would
+    silently drop every existing binding for it."""
+    assert bookmarks.BIND_LABELS["FinETag"].startswith("e ")
+    assert bookmarks.BIND_LABELS["FinS"].startswith("f ")
+    assert bookmarks.BIND_LABELS["FinC"].startswith("c ")
+    assert "FinS" in bookmarks.BIND_IDS
+
+
+def test_no_bind_is_advertised_as_global():
+    """GLOBAL_BIND_IDS is gone along with the route's per-row scope marker.
+    Every bind is registered inside the per-window loop now, so a set of
+    exceptions reintroduced here would be describing something the engine
+    no longer does -- and the route would start telling users a hotkey
+    fires everywhere when it does not."""
+    assert not hasattr(bookmarks, "GLOBAL_BIND_IDS")
+    assert "SetRoot" in bookmarks.BIND_IDS
 
 
 def test_recommended_binds_cover_every_id_without_colliding():

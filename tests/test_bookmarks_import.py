@@ -45,40 +45,77 @@ def test_window_enablement_is_carried_over():
                                          "EVE - Alt": False}
 
 
-def test_copy_and_paste_are_carried_over():
-    """Cut in the first port, restored. A user who loses a working key
-    would only find out by pressing it and getting nothing."""
+def test_copy_and_paste_are_reported_as_dropped():
+    """The BIND_IDS loop drops them by construction. A user who had them
+    bound would otherwise find two dead keys and no explanation."""
     got = bookmarks.import_legacy_ini(LEGACY)
-    assert got["section"]["keybinds"]["Copy"] == "^c"
-    assert got["section"]["keybinds"]["Paste"] == "^v"
-    assert not any("Copy" in d for d in got["discarded"])
+    assert "Copy" not in got["section"]["keybinds"]
+    assert "Paste" not in got["section"]["keybinds"]
+    assert any(d.startswith("Copy ") for d in got["discarded"])
+    assert any(d.startswith("Paste ") for d in got["discarded"])
 
 
-def test_settings_are_carried_over():
-    got = bookmarks.import_legacy_ini(LEGACY)["section"]
-    assert got["home_zero"] is True
-    assert got["preface_return"] is True
-    assert got["return_preface"] == "!"
+def test_a_legacy_medium_hole_bind_is_reported_as_dropped():
+    """Same construction as Copy and Paste: not in BIND_IDS, so the import
+    loop drops it, and only this line stops that being silent."""
+    got = bookmarks.import_legacy_ini(
+        "[Keybinds]\r\nFinH=y\r\nFinM=^u\r\n")
+    assert "FinM" not in got["section"]["keybinds"]
+    assert any(d.startswith("FinM ") for d in got["discarded"])
 
 
-def test_absent_settings_take_the_SCRIPT_default_not_wingman_s():
-    """The whole point of importing is that nobody is renumbered. A legacy
-    file with no HomeZeroIs0 was being numbered from .0
-    (111unified.ahk:32), so it must import as .0 even though a fresh
-    Wingman install defaults to .1."""
-    got = bookmarks.import_legacy_ini("[Keybinds]\r\nFinH=y\r\n")["section"]
-    assert got["home_zero"] is True
-    assert got["preface_return"] is True
-    assert got["return_preface"] == "!"
+def test_a_bind_that_was_never_set_is_not_reported_as_lost():
+    """Naming Copy as discarded when the legacy file left it blank invents
+    a loss, which is as misleading as hiding a real one."""
+    got = bookmarks.import_legacy_ini(
+        "[Keybinds]\r\nFinH=y\r\nCopy=\r\n")
+    assert not any(d.startswith("Copy ") for d in got["discarded"])
 
 
-def test_home_zero_off_is_carried_over_rather_than_described():
-    """This used to emit a note saying the user was about to be renumbered.
-    The setting exists again, so there is nothing to warn about."""
+def test_naming_is_not_imported_it_is_described():
+    """The three naming settings have no home in the section any more, so
+    a legacy value cannot be carried across. What it CAN do is tell the
+    user how their bookmarks are about to come out differently."""
+    got = bookmarks.import_legacy_ini(LEGACY)
+    for key in ("home_zero", "preface_return", "return_preface"):
+        assert key not in got["section"]
+    assert any(".0" in n and ".1" in n for n in got["notes"])
+
+
+def test_absent_home_zero_still_warns_because_the_SCRIPT_default_is_zero():
+    """A legacy file with no HomeZeroIs0 was numbering from .0
+    (111unified.ahk:32). Reading the absence as Wingman's own default
+    would leave exactly the user who IS being renumbered untold."""
+    got = bookmarks.import_legacy_ini("[Keybinds]\r\nFinH=y\r\n")
+    assert any(".0" in n and ".1" in n for n in got["notes"])
+
+
+def test_home_zero_off_already_matches_wingman_so_nothing_is_said():
+    """HomeZeroIs0=0 is what Wingman now does unconditionally. Warning
+    here would describe a change that is not happening."""
     off = LEGACY.replace("HomeZeroIs0=1", "HomeZeroIs0=0")
     got = bookmarks.import_legacy_ini(off)
-    assert got["section"]["home_zero"] is False
     assert not any(".0" in n and ".1" in n for n in got["notes"])
+
+
+def test_losing_the_preface_is_described():
+    """LEGACY prefaces with "!". Wingman does not preface at all, so every
+    return bookmark comes out differently and the user is told."""
+    got = bookmarks.import_legacy_ini(LEGACY)
+    assert any("does not preface" in n for n in got["notes"])
+
+
+def test_the_note_quotes_the_users_own_preface_character():
+    """"Your ! is gone" is no help to someone who had set it to @."""
+    got = bookmarks.import_legacy_ini(LEGACY.replace("ReturnPreface=!",
+                                                     "ReturnPreface=@"))
+    assert any("@" in n for n in got["notes"])
+
+
+def test_prefacing_already_off_matches_wingman_so_nothing_is_said():
+    got = bookmarks.import_legacy_ini(LEGACY.replace("PrefaceReturn=1",
+                                                     "PrefaceReturn=0"))
+    assert not any("preface" in n.lower() for n in got["notes"])
 
 
 def test_protean_is_the_one_thing_still_reported():
@@ -106,12 +143,17 @@ def test_a_byte_order_mark_does_not_destroy_the_first_section():
     assert got["section"]["keybinds"]["GrabSig"] == "q"
     assert got["section"]["keybinds"]["FinH"] == "y"
     assert got["section"]["windows"] == {"EVE - Pilot": True}
-    assert got["section"]["keybinds"]["Copy"] == "^c"
+    assert any(d.startswith("Copy ") for d in got["discarded"])
 
 
 def test_a_byte_order_mark_does_not_suppress_a_setting():
-    off = "﻿" + LEGACY.replace("HomeZeroIs0=1", "HomeZeroIs0=0")
-    assert bookmarks.import_legacy_ini(off)["section"]["home_zero"] is False
+    """Asserted through a note rather than the section: [Settings] no
+    longer lands in the section at all, so a BOM eating it would be
+    invisible without something that still reads it. KEYBINDS_FIRST
+    carries HomeZeroIs0=0, which suppresses the renumbering note -- so
+    the note reappearing means [Settings] was lost."""
+    got = bookmarks.import_legacy_ini("﻿" + KEYBINDS_FIRST)
+    assert not any(".0" in n and ".1" in n for n in got["notes"])
 
 
 def test_windows_the_engine_could_never_match_are_reported():
@@ -140,7 +182,7 @@ def test_utf16_le_with_bom_is_the_real_world_case():
     raw = "﻿".encode("utf-16-le") + LEGACY.encode("utf-16-le")
     got = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
     assert got["section"]["keybinds"]["GrabSig"] == "q"
-    assert got["section"]["keybinds"]["Copy"] == "^c"
+    assert got["section"]["keybinds"]["FinH"] == "y"
     assert got["section"]["windows"] == {"EVE - Pilot": True,
                                          "EVE - Alt": False}
     assert got["parsed"] is True

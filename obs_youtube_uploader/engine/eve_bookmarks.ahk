@@ -54,8 +54,6 @@ FileEncoding, UTF-8-RAW
 HomeZeroIs0 := 1
 PrefaceReturn := 1
 ReturnPreface := "!"
-KB_Copy := ""
-KB_Paste := ""
 
 ; --- Root tracking ---
 RootKey := ""
@@ -90,7 +88,6 @@ KB_FinETag     := ""
 KB_FinSlash    := ""
 KB_FinN        := ""
 KB_FinL        := ""
-KB_FinM        := ""
 KB_FinS        := ""
 KB_FinC        := ""
 KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
@@ -150,8 +147,6 @@ IniRead, PrefaceReturn, %IniFile%, Settings, PrefaceReturn, 1
 IniRead, ReturnPreface, %IniFile%, Settings, ReturnPreface, !
 
 ; Load keybindings
-IniRead, KB_Copy,        %IniFile%, Keybinds, Copy,      
-IniRead, KB_Paste,       %IniFile%, Keybinds, Paste,     
 IniRead, KB_GrabSig,     %IniFile%, Keybinds, GrabSig,   
 IniRead, KB_SetRoot,     %IniFile%, Keybinds, SetRoot,   
 IniRead, KB_FormatEnf,   %IniFile%, Keybinds, FormatEnf, 
@@ -167,7 +162,6 @@ IniRead, KB_FinETag,     %IniFile%, Keybinds, FinETag,
 IniRead, KB_FinSlash,    %IniFile%, Keybinds, FinSlash,  
 IniRead, KB_FinN,        %IniFile%, Keybinds, FinN,      
 IniRead, KB_FinL,        %IniFile%, Keybinds, FinL,      
-IniRead, KB_FinM,        %IniFile%, Keybinds, FinM,      
 IniRead, KB_FinS,        %IniFile%, Keybinds, FinS,      
 IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,      
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
@@ -521,11 +515,13 @@ Return
 RefreshHotkeys:
 GoSub, LoadAllSettings          ; hot reload: keybinds and settings, not just [Enabled]
 
-; Disable the global-context variants: Copy, Paste and Set Root are
-; registered without a window restriction below, so this loop has real work
-; to do. It must stay ahead of the window-scoped teardown that follows --
-; the two are different registrations and each is only reachable from the
-; context it was made in.
+; Disable anything registered in the global context. Nothing is registered
+; there any more, so on a normal pass this loop finds nothing -- it is kept
+; because it is the cheap half of the teardown bug fixed below: a bind added
+; outside the window loop in future would otherwise survive every refresh,
+; and UseErrorLevel makes a miss free. It must stay ahead of the
+; window-scoped teardown -- the two are different registrations and each is
+; only reachable from the context it was made in.
 Hotkey, IfWinActive
 For hk, lbl in HotkeyLabelMap
 {
@@ -555,10 +551,6 @@ IniRead, EnabledSection, %IniFile%, Enabled
 
 ; Build the new label map (only non-empty bindings)
 HotkeyLabelMap := {}
-if (KB_Copy != "")
-    HotkeyLabelMap[KB_Copy]      := "DoCopy"
-if (KB_Paste != "")
-    HotkeyLabelMap[KB_Paste]     := "DoPaste"
 if (KB_GrabSig != "")
     HotkeyLabelMap[KB_GrabSig]   := "DoQ"
 if (KB_SetRoot != "")
@@ -591,25 +583,16 @@ if (KB_FinN != "")
     HotkeyLabelMap[KB_FinN]      := "DoDot"
 if (KB_FinL != "")
     HotkeyLabelMap[KB_FinL]      := "DoP"
-if (KB_FinM != "")
-    HotkeyLabelMap[KB_FinM]      := "DoM"
 if (KB_FinS != "")
     HotkeyLabelMap[KB_FinS]      := "DoS"
 if (KB_FinC != "")
     HotkeyLabelMap[KB_FinC]      := "DoC"
 
-; Register the GLOBAL binds -- no window restriction, matching
-; RefreshHotkeys Step 4 (111unified.ahk:763-771). These three fire in every
-; application; DoSemi re-checks the active window for itself, and DoCopy
-; and DoPaste are deliberately usable anywhere.
-Hotkey, IfWinActive
-RegisterBind("Copy",    KB_Copy,    "DoCopy")
-RegisterBind("Paste",   KB_Paste,   "DoPaste")
-RegisterBind("SetRoot", KB_SetRoot, "DoSemi")
-
-; Register window-specific hotkeys for enabled windows. Nothing is global
-; any more -- Set Root moved here too, since its global scope only existed
-; to support the removed dual-use naming mode.
+; Register every bind against each enabled window. RefreshHotkeys Step 4
+; (111unified.ahk:763-771) kept Copy, Paste and Set Root out of this loop so
+; they fired in every application. Copy and Paste are gone, and Set Root is
+; in the loop now: a hotkey that reformats the clipboard and resets the root
+; state has no business firing in a browser or a chat window.
 Loop, Parse, EnabledSection, `n, `r
 {
     Line := Trim(A_LoopField)
@@ -624,10 +607,8 @@ Loop, Parse, EnabledSection, `n, `r
     if (Val = "1") {
         Hotkey, IfWinActive, %WinTitle%
         RegisteredWindows.Push(WinTitle)
-        ; SetRoot is NOT here: it is registered globally above, and
-        ; registering it per-window as well would make the second call
-        ; fail and land in FailedBinds.
         RegisterBind("GrabSig",      KB_GrabSig,      "DoQ")
+        RegisterBind("SetRoot",      KB_SetRoot,      "DoSemi")
         RegisterBind("FormatEnf",    KB_FormatEnf,    "DoE")
         RegisterBind("ConvertScout", KB_ConvertScout, "DoConvertScout")
         RegisterBind("FinH",  KB_FinH,  "DoY")
@@ -642,7 +623,6 @@ Loop, Parse, EnabledSection, `n, `r
         RegisterBind("Fin6",  KB_Fin6,  "Do6")
         RegisterBind("FinETag",  KB_FinETag,  "DoQuote")
         RegisterBind("FinSlash", KB_FinSlash, "DoComma")
-        RegisterBind("FinM", KB_FinM, "DoM")
         RegisterBind("FinS", KB_FinS, "DoS")
         RegisterBind("FinC", KB_FinC, "DoC")
     }
@@ -806,16 +786,6 @@ AllPrefixesSingle(clip) {
     return foundAny
 }
 
-; Registered globally: these exist to be usable outside EVE as well as in
-; it (111unified.ahk:988-995).
-DoCopy:
-Send ^c
-Return
-
-DoPaste:
-Send ^v
-Return
-
 DoQ:
 Send ^c
 Sleep 100
@@ -834,14 +804,14 @@ Return
 ; ============================================================
 ; SET ROOT: Normal copy/parse/set root flow with resume.
 ;
-; Registered GLOBALLY (RefreshHotkeys Step 4), so it can fire in any
-; application and MUST re-check where it is. Outside an enabled EVE window
-; it types the current root and stops -- that branch is not Protean-
-; specific despite an earlier reading of it: the original tests only the
-; window, never CurrentMode (111unified.ahk:1024-1043). Without this guard a
-; global press inside another application would run the whole copy/parse
-; flow there: Send ^c into someone's chat window, and the root state reset
-; on the way.
+; Registered per-window now, so the guard below should never fail. It is
+; kept because registration and this check read the [Enabled] list at
+; different moments: RefreshHotkeys runs on a timer, so between a window
+; being disabled and the refresh that tears its binds down, the hotkey is
+; still live. Without the guard that press would run the whole copy/parse
+; flow -- Send ^c into whatever is focused, and the root state reset on the
+; way. Falling back to typing the current root matches the original, which
+; tests only the window and never CurrentMode (111unified.ahk:1024-1043).
 ; ============================================================
 DoSemi:
 ; FIRST: are we in an enabled EVE window?
@@ -1061,8 +1031,7 @@ DoE:
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
@@ -1078,8 +1047,7 @@ if (RootModeActive) {
     NewSuffix := "H"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1094,8 +1062,7 @@ if (RootModeActive) {
     NewSuffix := "13"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1110,8 +1077,7 @@ if (RootModeActive) {
     NewSuffix := "L"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1126,23 +1092,10 @@ if (RootModeActive) {
     NewSuffix := "N"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
-Return
-
-DoM:
-GoSub, ReadField
-StringUpper, ClipUpper, ClipRaw
-NewSuffix := ""
-NewE := 0
-NewSlash := 0
-NewM := 1
-NewSFlag := 0
-NewC := 0
-GoSub, FormatFlygdClipAndPaste
 Return
 
 DoS:
@@ -1151,8 +1104,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 1
+NewFFlag := 1
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1163,8 +1115,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 1
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1178,8 +1129,7 @@ if (RootModeActive) {
     NewSuffix := "1"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1194,8 +1144,7 @@ if (RootModeActive) {
     NewSuffix := "2"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1210,8 +1159,7 @@ if (RootModeActive) {
     NewSuffix := "3"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1226,8 +1174,7 @@ if (RootModeActive) {
     NewSuffix := "4"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1242,8 +1189,7 @@ if (RootModeActive) {
     NewSuffix := "5"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1258,8 +1204,7 @@ if (RootModeActive) {
     NewSuffix := "6"
     NewE := 0
     NewSlash := 0
-    NewM := 0
-    NewSFlag := 0
+    NewFFlag := 0
     NewC := 0
     GoSub, FormatFlygdClipAndPaste
 }
@@ -1271,8 +1216,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 1
 NewSlash := 0
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1283,8 +1227,7 @@ StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
 NewE := 0
 NewSlash := 1
-NewM := 0
-NewSFlag := 0
+NewFFlag := 0
 NewC := 0
 GoSub, FormatFlygdClipAndPaste
 Return
@@ -1301,7 +1244,7 @@ Return
 ; ============================================================
 ; FLYGD/THERA MODE: Parse hyphen-based bookmarks
 ; Format: ROOT-SIGID TYPE [tags...]
-; Example: 3-EPA C5 E /
+; Example: 3-EPA C5 e /
 ; ============================================================
 FormatFlygdClipAndPaste:
 Raw := ClipUpper
@@ -1337,8 +1280,7 @@ if (DashPos > 0) {
     NewSuffix := ""
     NewE      := 0
     NewSlash  := 0
-    NewM      := 0
-    NewSFlag  := 0
+    NewFFlag  := 0
     NewC      := 0
     Return
 }
@@ -1346,8 +1288,7 @@ if (DashPos > 0) {
 RestAfterSys := RegExReplace(RestAfterSys, "^\s+", "")
 ExistingE      := 0
 ExistingSlash  := 0
-ExistingM      := 0
-ExistingS      := 0
+ExistingF      := 0
 ExistingC      := 0
 ExistingSuffix := ""
 
@@ -1357,25 +1298,17 @@ Loop % Tokens.MaxIndex()
     t := Tokens[A_Index]
     if (t = "13" || (StrLen(t) = 1 && (t >= "1" && t <= "6" || t = "H" || t = "L" || t = "N" || t = "T" || t = "D")))
         ExistingSuffix := t
-    else if (t = "E")
+    else if (t = "e")
         ExistingE := 1
     else if (t = "/")
         ExistingSlash := 1
-    else if (t = "M")
-        ExistingM := 1
-    else if (t = "S")
-        ExistingS := 1
-    else if (t = "C")
+    else if (t = "f" || t = "S")
+        ExistingF := 1
+    else if (t = "c")
         ExistingC := 1
 }
 
 ; Apply mutual exclusivity rules
-if (NewM) {
-    NewSFlag := 0
-}
-if (NewSFlag) {
-    NewM := 0
-}
 if (NewSlash) {
     NewC := 0
 }
@@ -1385,21 +1318,10 @@ if (NewC) {
 
 FinalSuffix := (NewSuffix != "") ? NewSuffix : ExistingSuffix
 
-if (NewM) {
-    FinalM := 1
-    FinalS := 0
-} else if (NewSFlag) {
-    FinalM := 0
-    FinalS := 1
-} else {
-    if (ExistingM && ExistingS) {
-        FinalM := 0
-        FinalS := 1
-    } else {
-        FinalM := ExistingM
-        FinalS := ExistingS
-    }
-}
+; Nothing conflicts with the frig tag now that the medium-hole tag is
+; gone, so it is a plain OR rather than the three-way preference the pair
+; needed.
+FinalF := (ExistingF || NewFFlag)
 
 if (NewSlash) {
     FinalSlash := 1
@@ -1423,15 +1345,13 @@ Result := Base
 if (FinalSuffix != "")
     Result .= " " . FinalSuffix
 if (FinalE)
-    Result .= " E"
+    Result .= " e"
 if (FinalSlash)
     Result .= " /"
-if (FinalM)
-    Result .= " M"
-if (FinalS)
-    Result .= " S"
+if (FinalF)
+    Result .= " f"
 if (FinalC)
-    Result .= " C"
+    Result .= " c"
 
 Clipboard := Result
 ClipWait, 2
@@ -1441,7 +1361,6 @@ Send ^v
 NewSuffix := ""
 NewE      := 0
 NewSlash  := 0
-NewM      := 0
-NewSFlag  := 0
+NewFFlag  := 0
 NewC      := 0
 Return

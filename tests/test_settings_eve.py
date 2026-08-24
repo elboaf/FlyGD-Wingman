@@ -63,6 +63,30 @@ def test_unknown_bind_ids_are_dropped_and_missing_ones_defaulted(tmp_path):
     assert set(binds) == set(bookmarks.BIND_IDS)
 
 
+def test_a_settings_file_from_before_the_naming_removal_is_cleaned_up(tmp_path):
+    """The upgrade path. An existing install's settings.json still carries
+    the three naming keys and the two clipboard binds; both are dropped
+    rather than carried forward, so nothing keeps steering behaviour that
+    has no control left."""
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"eve_bookmarks": {
+        "keybinds": {"Copy": "^j", "Paste": "^k", "FinH": "^h"},
+        "home_zero": True,
+        "preface_return": False,
+        "return_preface": "@"}}))
+    section = settings.load(path)["eve_bookmarks"]
+    assert section["keybinds"]["FinH"] == "^h"
+    assert "Copy" not in section["keybinds"]
+    assert "Paste" not in section["keybinds"]
+    for key in ("home_zero", "preface_return", "return_preface"):
+        assert key not in section
+    # And the INI the engine actually reads is unmoved by any of it.
+    text = bookmarks.generate_ini(section)
+    assert "HomeZeroIs0=0" in text
+    assert "PrefaceReturn=0" in text
+    assert "ReturnPreface=!\r\n" in text
+
+
 @pytest.mark.parametrize("bad", [7, None, [], {"x": 1}])
 def test_non_string_bind_value_falls_back(tmp_path, bad):
     path = tmp_path / "s.json"
