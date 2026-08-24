@@ -27,6 +27,8 @@ def test_defaults_are_the_documented_values():
             "height": 210,
             "opacity": 235,
             "layouts": {},
+            "restore_clients_on_launch": False,
+            "client_layouts": {},
         },
     }
 
