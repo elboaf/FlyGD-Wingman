@@ -303,18 +303,34 @@ nothing about what a reader polling on a timer observes mid-write"
 (`atomicio.py:1-5`). It addresses torn reads across the Wingman/engine
 boundary. The hazard here is lost updates, which is a different problem.
 
-The contract is therefore **single-writer, on the UI thread**:
+**`settings.save()` is not single-writer today, and assuming it is would be a
+mistake.** `ui/api.py:722-739` writes from an upload worker thread, and says so
+deliberately: *"The settings write stays on this worker thread deliberately: it
+is a short plain-file write, and persisting here means the channel survives a
+crash before the next clean exit."* Adding the preview thread makes a third
+writer of a file that already has two.
 
-- The preview thread owns preview state in memory and is the authority on it.
-- It never touches the settings file. On change (a preview moved, resized,
-  relabelled, locked) it marshals a delta to the UI thread.
-- The UI thread applies that delta to the settings dict and calls
-  `settings.save()`, exactly as every other setting is written today.
-- Writes are debounced — a drag produces a stream of rect updates, and each
+The contract is therefore **serialized writes, each a read-modify-write of its
+own subtree**:
+
+- `settings.py` gains a module-level `threading.Lock` held across the whole of
+  `save()`. This is a correctness fix for a race that exists today, not new
+  machinery for previews — a channel-title write racing a settings-pane write
+  can already lose one of them.
+- No writer may serialize a stale snapshot. A writer mutates the live settings
+  dict and calls `save()`; it must never rebuild the document from a copy it
+  read earlier, because `save()` projects the *complete* document from
+  `DEFAULTS` (`settings.py:145-149`) and would write back whatever its snapshot
+  was missing.
+- The preview thread owns preview state in memory and is the authority on it,
+  but does not write. On change (moved, resized, relabelled, locked) it marshals
+  a delta out; the receiving side merges that delta into the live dict and
+  saves.
+- **Merges are per-key, never wholesale.** Replacing `preview.layouts` with only
+  the previews seen this session would delete the saved position of every client
+  that happened not to be running — which is most of them, most of the time.
+- Writes are debounced. A drag produces a rect update per mouse-move, and each
   one must not rewrite the file.
-
-This keeps `settings.save()` single-writer, which is the invariant it was
-written under, and requires no change to it.
 
 ## UI integration
 

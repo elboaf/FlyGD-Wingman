@@ -19,7 +19,7 @@ Every task's requirements implicitly include this section.
 - **`evewindows.list_eve_windows()`'s signature is frozen.** It returns `list[str]` of sorted, de-duplicated titles (`evewindows.py:80-89`) and `ui/api.py:1288-1303` passes that straight to the page. Do not change its return type.
 - **Every ctypes function gets `argtypes` and `restype` declared before use.** Undeclared, ctypes marshals pointer-sized values as 32-bit ints; the failure is a truncated handle or a late `OverflowError` inside a callback, not a clean error. This is documented at `evewindows.py:36-44` and `ui/chrome.py:123-131`, and was hit twice during design probing.
 - **Every HWND touch happens on the preview thread.** Violations hang rather than raise.
-- **`settings.save()` is single-writer, on the UI thread.** It rewrites the complete projected document (`settings.py:145-149`). The preview thread never calls it.
+- **`settings.save()` already has two writers and must be serialized.** It rewrites the complete projected document (`settings.py:145-149`), and `ui/api.py:722-739` writes from an upload worker thread by design. Task 13 adds a lock. No writer may save from a stale snapshot, and no writer may replace a subtree wholesale.
 - **New subpackages must be added to `packages` in `pyproject.toml:49`.** A missing entry installs cleanly and fails at import time in the frozen build only.
 - **No new runtime dependencies.** Pillow, pystray, pywebview are already present. pywebview is pinned `==6.2.1`; do not upgrade it.
 - **Every module must import cleanly on Linux**, guarding Windows calls behind `sys.platform`, following `evewindows.py:1-14`.
@@ -378,6 +378,7 @@ Replaces TriffView's GDI+ layer. Pure: takes numbers, returns an image.
 - Create: `obs_youtube_uploader/preview/chrome.py`
 - Create: `obs_youtube_uploader/assets/fonts/Inter-Regular.ttf` (bundled)
 - Modify: `THIRD-PARTY-NOTICES.md`
+- Modify: `packaging/uploader.spec:24-58` (add the font to `datas`) and its post-build assertion
 - Test: `tests/test_preview_chrome.py`
 
 **Interfaces:**
@@ -389,6 +390,23 @@ Replaces TriffView's GDI+ layer. Pure: takes numbers, returns an image.
 `web/fonts/` holds `.woff2`, which Pillow cannot load. Download the Inter **TTF** matching the bundled `InterVariable.woff2` release, place it at `obs_youtube_uploader/assets/fonts/Inter-Regular.ttf`, and add to `THIRD-PARTY-NOTICES.md` under a new `## Inter (font)` section naming the SIL Open Font License and the release URL. `web/fonts/Inter-LICENSE.txt` already carries the licence text.
 
 Bundling rather than using `C:\Windows\Fonts\segoeui.ttf` is deliberate: it makes label rendering byte-identical on Linux, which is what lets the tests below run in CI.
+
+**The font must also be added to `packaging/uploader.spec`'s `datas`.** That
+list is enumerated by hand and collects only what it names — web assets, the
+icon, the notices, the engine (`uploader.spec:24-58`). Package data is not
+picked up automatically, and the spec's own comments record why that matters:
+PyInstaller exits 0 when a `datas` entry fails to collect, so a missing font
+produces a green build. Add:
+
+```python
+        # modulegraph does not follow data files, and Pillow loads this by
+        # path at render time. Without it the frozen build renders every
+        # preview label in Pillow's bitmap default font.
+        (str(ROOT / "obs_youtube_uploader" / "assets" / "fonts"), "assets/fonts"),
+```
+
+and extend the post-build assertion in `build.yml`/`release.yml` to check the
+collected font exists, exactly as it already checks the engine and `web/`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -464,10 +482,13 @@ image. Nothing here knows about HWNDs, which is what lets the whole
 drawing layer be tested on Linux -- the reason this replaces TriffView's
 GDI+ path rather than porting it.
 """
+import logging
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
 
 FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Regular.ttf"
 LABEL_BG = (10, 14, 20, 235)
@@ -481,8 +502,15 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype(str(FONT_PATH), size)
     except OSError:
-        # A missing bundled font must degrade to an unlabelled preview,
-        # never take the subsystem down.
+        # Degrade rather than take the subsystem down -- but LOUDLY. The
+        # realistic cause is a frozen build that did not collect the font
+        # (uploader.spec's datas is enumerated by hand and PyInstaller exits
+        # 0 when an entry misses), and a silent fallback there ships
+        # unlabelled previews with nothing in the log to explain them.
+        logger.warning("Bundled font missing at %s; labels will use Pillow's "
+                       "default face. In a frozen build this means "
+                       "uploader.spec did not collect assets/fonts.",
+                       FONT_PATH)
         return ImageFont.load_default()
 
 
@@ -524,7 +552,8 @@ Expected: PASS (7 tests)
 
 ```bash
 git add obs_youtube_uploader/preview/chrome.py obs_youtube_uploader/assets/fonts/ \
-        THIRD-PARTY-NOTICES.md tests/test_preview_chrome.py
+        THIRD-PARTY-NOTICES.md packaging/uploader.spec .github/workflows/ \
+        tests/test_preview_chrome.py
 git commit -m "feat(preview): Pillow-rendered chrome, bundled Inter TTF"
 ```
 
@@ -983,20 +1012,38 @@ callback, where it is reported via sys.unraisablehook and lost. Both
 evewindows.py:36-44 and ui/chrome.py:123-131 document this; design
 probing hit it twice, on DefWindowProcW and on SelectObject. A test that
 enumerates the declarations is cheaper than finding it again.
+
+Skipped on platform, NOT via importorskip. The module imports fine on
+Linux by design (it declares types and constants at import time and only
+touches DLLs inside bind()), so importorskip would not skip -- the test
+would run and fail in CI on the bind() call.
 """
+import sys
+
 import pytest
 
-win32 = pytest.importorskip("obs_youtube_uploader.preview.win32")
+from obs_youtube_uploader.preview import win32
+
+pytestmark = pytest.mark.skipif(sys.platform != "win32",
+                                reason="binds user32/gdi32/dwmapi")
 
 # Every function the subsystem calls, by library.
 REQUIRED = {
     "user32": ["CreateWindowExW", "DestroyWindow", "DefWindowProcW",
                "RegisterClassW", "ShowWindow", "SetWindowPos",
-               "UpdateLayeredWindow", "GetMessageW", "DispatchMessageW",
-               "TranslateMessage", "PostMessageW", "PostQuitMessage",
-               "GetDC", "ReleaseDC", "SetForegroundWindow",
-               "GetForegroundWindow", "AttachThreadInput", "IsIconic",
-               "ShowWindowAsync", "GetWindowThreadProcessId"],
+               "UpdateLayeredWindow", "SetLayeredWindowAttributes",
+               "GetMessageW", "DispatchMessageW", "TranslateMessage",
+               "PostMessageW", "PostQuitMessage", "GetDC", "ReleaseDC",
+               "GetClientRect", "InvalidateRect", "LoadCursorW",
+               "SetCapture", "ReleaseCapture", "GetCursorPos",
+               "SetForegroundWindow", "GetForegroundWindow",
+               "AttachThreadInput", "IsIconic", "ShowWindowAsync",
+               "GetWindowThreadProcessId",
+               # Host thread: the hook, the hotkeys, the DPI override.
+               # Omitting these was the gap that made Task 12 unbuildable.
+               "SetWinEventHook", "UnhookWinEvent",
+               "RegisterHotKey", "UnregisterHotKey",
+               "SetThreadDpiAwarenessContext"],
     "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject",
               "DeleteObject", "DeleteDC"],
     "dwmapi": ["DwmRegisterThumbnail", "DwmUnregisterThumbnail",
@@ -1022,7 +1069,7 @@ def test_every_used_function_is_declared():
 
 On Windows: `.venv\Scripts\python.exe -m pytest tests/test_preview_win32.py -v`
 Expected: FAIL with `ModuleNotFoundError`
-On Linux the test **skips** via `importorskip` — that is correct, not a gap; the module cannot load a Windows DLL.
+On Linux the test **skips on platform**, and the import at module scope still has to succeed — which is the global constraint that every module imports cleanly off Windows. Declare structs and constants at import time; touch DLLs only inside `bind()`.
 
 - [ ] **Step 3: Write the module**
 
@@ -1145,17 +1192,32 @@ def to_premultiplied_bgra(img: Image.Image) -> bytes:
 Run: `python -m pytest tests/test_preview_layered.py -v`
 Expected: PASS (4 tests)
 
-**If `test_half_alpha_is_premultiplied` fails**, this Pillow build's `BGRa` encoder is not premultiplying. Replace the body with an explicit conversion and keep the tests unchanged:
+**Verified on Pillow 12.3.0** (the version this repo resolves): `tobytes("raw",
+"BGRa")` on RGBA `(200, 100, 50, 128)` returns `[25, 50, 100, 128]`, which is
+exactly premultiplied BGRA. The tests above pin those bytes, so a future Pillow
+that changes the encoder fails here rather than shipping glowing previews.
+
+**If `test_half_alpha_is_premultiplied` ever fails**, swap the body for this
+explicit conversion and leave the tests untouched — it produces identical bytes,
+confirmed against the same cases:
 
 ```python
-    r, g, b, a = img.split()
-    scale = a.point(lambda v: v)
-    prem = Image.merge("RGBA", (
-        Image.composite(r, r.point(lambda _: 0), scale).point(lambda v: v),
-        g, b, a))  # then reorder to BGRA
+def to_premultiplied_bgra(img: Image.Image) -> bytes:
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    raw = img.tobytes("raw", "RGBA")
+    out = bytearray(len(raw))
+    for i in range(0, len(raw), 4):
+        r, g, b, a = raw[i], raw[i + 1], raw[i + 2], raw[i + 3]
+        out[i] = b * a // 255
+        out[i + 1] = g * a // 255
+        out[i + 2] = r * a // 255
+        out[i + 3] = a
+    return bytes(out)
 ```
 
-Prefer the one-line encoder if it passes; only fall back if it does not.
+Prefer the encoder while it passes: this loop runs per pixel in Python, roughly
+67k iterations per repaint at 320x210, and a drag repaints continuously.
 
 - [ ] **Step 5: Add the Windows push**
 
@@ -1425,16 +1487,89 @@ Expected: PASS (4 tests)
 
 - [ ] **Step 5: Implement `PreviewWindow`**
 
-Add the Windows half in the same module:
+Add the Windows half in the same module.
 
-- `create()` registers the window class once per process, then
-  `CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST, ..., WS_POPUP, ...)`,
-  shows it with `SW_SHOWNOACTIVATE`, calls `redraw()`, and registers a `Thumbnail`.
-- Its `WNDPROC` handles only `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` / `WM_LBUTTONUP` (feeding `drag_result`), `WM_RBUTTONDOWN` (drag), and `WM_DESTROY`. Everything else goes to `DefWindowProcW`. Append the `WNDPROC` object to `win32._KEEPALIVE`.
-- `redraw()` calls `chrome.render(...)` then `layered.push(...)`, then `thumbnail.update(geometry.thumbnail_rect(...))`.
-- `close()` closes the thumbnail **before** `DestroyWindow` — the thumbnail's destination is this window.
+**Creation.** Register the window class once per process, then
+`CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST, ..., WS_POPUP, ...)`,
+show with `SW_SHOWNOACTIVATE`, `redraw()`, then register a `Thumbnail`. Append
+the `WNDPROC` object to `win32._KEEPALIVE`.
 
-- [ ] **Step 6: Commit**
+**Message handling.** There is no `WM_SIZING` here: the window is `WS_POPUP` with
+no frame, so Windows never negotiates a resize. Both moving and resizing are
+driven entirely by mouse messages, and which one you are doing is decided at
+button-down by `geometry.hit_resize_handle`:
+
+| Message | Action |
+|---|---|
+| `WM_LBUTTONDOWN` | `SetCapture`; record start point and current rect; set mode to `resize` if `hit_resize_handle(rect, x, y)` else `drag` |
+| `WM_MOUSEMOVE` (captured, `drag`) | new rect = start rect offset by the delta, then `geometry.snap(rect, other_rects, screen)`; `SetWindowPos` + `redraw()` |
+| `WM_MOUSEMOVE` (captured, `resize`) | new rect = start rect with `w`/`h` grown by the delta, floored at `MIN_SIZE`; `SetWindowPos` + `redraw()` |
+| `WM_LBUTTONUP` | `ReleaseCapture`; feed `drag_result`; on `"activate"` call `on_activate(client.hwnd)`; on `"move"`/resize report the final rect to the host so it can persist |
+| `WM_RBUTTONDOWN`/`UP` | same as left-button drag, but never activates — right-drag moves a locked preview |
+| `WM_DESTROY` | release the thumbnail if still held |
+
+Everything else goes to `DefWindowProcW`.
+
+**`other_rects` for snapping** is supplied by the host, which is the only thing
+that knows about sibling previews — `PreviewWindow.create()` takes a
+`neighbours: Callable[[], list[Rect]]` returning every *other* preview's rect.
+Without that callback `geometry.snap` only ever sees screen edges, and
+preview-to-preview snapping silently does nothing.
+
+**`redraw()`** calls `chrome.render(...)`, then `layered.push(...)`, then
+`thumbnail.update(geometry.thumbnail_rect(...))`.
+
+**`close()`** closes the thumbnail **before** `DestroyWindow` — the thumbnail's
+destination is this window.
+
+- [ ] **Step 6: Implement the focus sequence**
+
+Click-to-focus is the feature, and `SetForegroundWindow` alone does not work:
+Windows refuses it from a process that does not own the foreground. The
+two-stage `AttachThreadInput` dance is required.
+
+```python
+def activate(libs, hwnd) -> bool:
+    """Bring *hwnd* to the foreground. Returns whether it actually worked.
+
+    The verdict is read from GetForegroundWindow, never from
+    SetForegroundWindow's return value -- it reports that the request was
+    accepted, not that the window came forward.
+
+    Every attach MUST be balanced by a detach, including on the failure
+    path: a leaked attachment welds two threads' input queues together for
+    the life of the process, and the symptom is EVE's keyboard input
+    arriving in the wrong client.
+    """
+    if libs.user32.IsIconic(hwnd):
+        libs.user32.ShowWindowAsync(hwnd, 9)  # SW_RESTORE
+
+    current = libs.user32.GetForegroundWindow()
+    if current == hwnd:
+        return True
+
+    our_tid = libs.kernel32.GetCurrentThreadId()
+    fg_tid = libs.user32.GetWindowThreadProcessId(current, None)
+    target_tid = libs.user32.GetWindowThreadProcessId(hwnd, None)
+
+    attached = []
+    try:
+        for tid in (fg_tid, target_tid):
+            if tid and tid != our_tid and libs.user32.AttachThreadInput(our_tid, tid, True):
+                attached.append(tid)
+        libs.user32.SetForegroundWindow(hwnd)
+    finally:
+        for tid in attached:
+            libs.user32.AttachThreadInput(our_tid, tid, False)
+
+    return libs.user32.GetForegroundWindow() == hwnd
+```
+
+Log at debug when it returns False — a client that refuses to come forward is
+the single most likely field complaint, and without this line there is nothing
+to go on.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/window.py tests/test_preview_window.py
@@ -1509,19 +1644,56 @@ def reconcile(current: set, desired: set):
 `PreviewHost.start()` spawns a daemon thread running `_run()`. `_run()` must, in order:
 
 1. `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, logging the result (Task 1 verified this).
-2. Create the previews for the current sweep.
-3. Install `SetWinEventHook` for `EVENT_SYSTEM_FOREGROUND`.
-4. Run `GetMessageW` / `TranslateMessage` / `DispatchMessageW` until `WM_QUIT`.
+2. **Create the host's message-only window** (see below).
+3. Create the previews for the current sweep.
+4. Install `SetWinEventHook` for `EVENT_SYSTEM_FOREGROUND`.
+5. `SetTimer(host_hwnd, SWEEP_TIMER_ID, 700, None)` — the discovery sweep.
+6. Run `GetMessageW` / `TranslateMessage` / `DispatchMessageW` until `WM_QUIT`.
 
-`stop(timeout=5.0)` marshals a shutdown command with `PostMessageW(WM_APP_SHUTDOWN)` and joins. On the preview thread, shutdown runs in this exact order — the design's Lifecycle section:
+**The host owns a message-only window, and this is not optional.** `PostMessageW`
+needs an HWND, and there is no preview window to post to when zero clients are
+running — which is the state at startup and after the last client quits. Without
+it, `stop()` has nothing to signal and hangs until its timeout on exactly the
+paths that matter most. Create it first, before any preview:
+
+```python
+# HWND_MESSAGE parent: never visible, never in the taskbar, exists purely
+# to own this thread's timer and command queue. It outlives every preview,
+# so shutdown and the sweep always have a target.
+self._hwnd = libs.user32.CreateWindowExW(
+    0, HOST_CLASS, "wingman-preview-host", 0, 0, 0, 0, 0,
+    win32.HWND_MESSAGE, None, hinst, None)
+```
+
+**The sweep** is a `WM_TIMER` on that window, not a `threading.Timer`: it must run
+on the preview thread, because it creates and destroys HWNDs. Each tick:
+
+1. `discovery.list_clients()`, then `discovery.flush_image_cache_periodically()`.
+2. `added, removed, kept = reconcile(current_keys, desired_keys)`.
+3. For `removed`: `PreviewWindow.close()` and drop from the registry.
+4. For `added`: resolve a rect — saved layout for that `stable_key`, else
+   `geometry.default_stack(len(registry), screen, size)` — and create a window.
+5. For `kept`: nothing. Do **not** rebuild a live preview; re-registering its
+   thumbnail every 700ms is a visible flicker.
+
+`EVENT_SYSTEM_FOREGROUND` posts a message asking for an immediate sweep rather
+than sweeping inline — the hook callback arrives on an arbitrary thread, and
+touching HWNDs from it is the thread-affinity violation that hangs.
+
+`stop(timeout=5.0)` posts `WM_APP_SHUTDOWN` to the host window and joins. On the
+preview thread, shutdown runs in this exact order — the design's Lifecycle section:
 
 1. `UnregisterHotKey` (no-op in the first slice; the call site exists so Task 7-deferred hotkeys have somewhere to land).
 2. `UnhookWinEvent`.
 3. `Thumbnail.close()` for every preview.
 4. `DestroyWindow` for every preview.
-5. `PostQuitMessage(0)`.
+5. `KillTimer`, then `DestroyWindow(host_hwnd)`.
+6. `PostQuitMessage(0)`.
 
 Then the joiner logs if the thread does not exit inside `timeout` — a `stop()` that returns while the thread still owns HWNDs produces a Wingman that vanishes from the tray but lingers in Task Manager.
+
+`stop()` must also `flush()` the layout store (Task 13) *before* destroying
+windows, or the last drag before quitting is lost to the debounce.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1540,7 +1712,8 @@ git commit -m "feat(preview): host thread, pump, and ordered teardown"
 ### Task 13: Settings integration, single-writer **[GPL-GATED]**
 
 **Files:**
-- Modify: `obs_youtube_uploader/settings.py` (add `preview` to `DEFAULTS` and validation)
+- Modify: `obs_youtube_uploader/settings.py` — `DEFAULTS`, `_preview_defaults()`, `_fresh_defaults()` (`settings.py:64-68`), `validated_preview()`, and a module-level save lock
+- Modify: `tests/test_settings.py:6-28` — the exact-DEFAULTS assertion
 - Create: `obs_youtube_uploader/preview/store.py`
 - Test: `tests/test_preview_store.py`, `tests/test_settings_preview.py`
 
@@ -1606,6 +1779,42 @@ def test_flush_writes_immediately_for_shutdown():
     s.record("Pilot", Entry(Rect(1, 2, 320, 210)))
     s.flush()
     assert len(saves) == 1
+
+
+def test_layouts_for_clients_not_running_are_preserved():
+    """THE bug this store exists to avoid. You multibox thirty characters and
+    log in two. If the write replaces `layouts` with only what was seen this
+    session, the other twenty-eight lose their saved positions -- and the user
+    finds out weeks later, once, with no way to get them back."""
+    saves = []
+    stored = {"preview": {"layouts": {
+        "Absent Pilot": {"x": 7, "y": 7, "w": 320, "h": 210, "locked": False}}}}
+    timers = []
+    def timer(interval, fn):
+        t = FakeTimer(interval, fn); timers.append(t); return t
+    s = LayoutStore(save_settings=saves.append,
+                    read_settings=lambda: stored, timer=timer)
+    s.record("Present Pilot", Entry(Rect(1, 2, 320, 210)))
+    timers[-1].fire()
+    written = saves[0]["preview"]["layouts"]
+    assert set(written) == {"Absent Pilot", "Present Pilot"}
+    assert written["Absent Pilot"]["x"] == 7
+
+
+def test_reads_settings_at_write_time_not_at_construction():
+    """settings.save() projects the WHOLE document (settings.py:145-149), so
+    saving from a snapshot taken earlier writes back stale values for every
+    unrelated key -- including ones another thread changed in between."""
+    saves, live = [], {"preview": {"layouts": {}}, "channel_title": "before"}
+    timers = []
+    def timer(interval, fn):
+        t = FakeTimer(interval, fn); timers.append(t); return t
+    s = LayoutStore(save_settings=saves.append,
+                    read_settings=lambda: live, timer=timer)
+    s.record("Pilot", Entry(Rect(1, 2, 320, 210)))
+    live["channel_title"] = "changed by another thread"
+    timers[-1].fire()
+    assert saves[0]["channel_title"] == "changed by another thread"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1615,32 +1824,108 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `store.py`**
 
-`LayoutStore` accumulates entries in a dict, restarts its debounce timer on each `record()`, and on fire reads settings, replaces `settings["preview"]["layouts"]` with `layout.serialize(...)`, and calls `save_settings`. `flush()` cancels the timer and writes now. `record()` is safe to call from the preview thread; **the callbacks it is constructed with must marshal to the UI thread** — document that in the class docstring.
+`LayoutStore` accumulates pending entries and restarts its debounce timer on each
+`record()`. On fire it must **merge, not replace**:
 
-- [ ] **Step 4: Add the settings schema**
+```python
+def _write(self) -> None:
+    with self._lock:
+        pending, self._pending = dict(self._pending), {}
+    if not pending:
+        return
+    live = self._read_settings()          # read at write time, never cached
+    layouts = dict(live.setdefault("preview", {}).setdefault("layouts", {}))
+    layouts.update(layout.serialize(pending))   # per-key merge
+    live["preview"]["layouts"] = layouts
+    self._save_settings(live)
+```
 
-In `settings.py`, add to `DEFAULTS`:
+Two properties the tests above pin, both of which a wholesale replace would break:
+layouts for clients that were not running are preserved, and the document handed
+to `save()` is the live dict, not a snapshot.
+
+`flush()` cancels the timer and calls `_write()` now — the host calls it during
+shutdown, before destroying windows.
+
+`record()` is safe to call from the preview thread. Serialization is the
+**lock's** job, not the calling thread's: see Step 4.
+
+- [ ] **Step 4: Add the settings schema, and serialize `save()`**
+
+Three changes in `settings.py`, all required together:
+
+**(a) The nested default.** Add to `DEFAULTS`:
 
 ```python
 "preview": {"enabled": False, "width": 320, "height": 210,
             "opacity": 235, "layouts": {}},
 ```
 
-and a `validated_preview(raw)` following `validated_eve`'s shape (`settings.py:141`), clamping `opacity` to 20-255 and `width`/`height` to a sane floor, and passing `layouts` through `layout.deserialize` then `serialize` so a corrupt entry is dropped at load.
+and add a `_preview_defaults()` returning a fresh copy, then extend
+`_fresh_defaults()` (`settings.py:64-68`) to rebuild it:
+
+```python
+def _fresh_defaults() -> dict:
+    """dict(DEFAULTS) is shallow, so the nested section is rebuilt."""
+    data = dict(DEFAULTS)
+    data["eve_bookmarks"] = _eve_defaults()
+    data["preview"] = _preview_defaults()      # same reason
+    return data
+```
+
+Skipping this hands every caller the *same* nested dict — one window's layout
+edit would silently mutate the defaults for the whole process.
+
+**(b) `tests/test_settings.py:6-28` asserts `DEFAULTS` exactly** and will fail
+the moment the key is added. Update it in this task; it is not a follow-up.
+
+**(c) Serialize `save()`.** Add a module-level lock held across the whole
+function:
+
+```python
+_SAVE_LOCK = threading.Lock()
+
+
+def save(data: dict, path: Path | None = None) -> None:
+    # Two writers already exist without previews: ui/api.py:722-739 persists
+    # the channel from an upload worker thread, deliberately. save() projects
+    # the complete document, so an interleaved pair loses one side entirely.
+    # The preview store makes it three.
+    with _SAVE_LOCK:
+        ...existing body...
+```
+
+Then `validated_preview(raw)` following `validated_eve`'s shape
+(`settings.py:141`): clamp `opacity` to 20-255, `width`/`height` to a floor,
+and pass `layouts` through `layout.deserialize` then `serialize` so a corrupt
+entry is dropped at load rather than at draw time.
 
 - [ ] **Step 5: Write and run the settings tests**
 
-Mirror `tests/test_settings_eve.py`'s cases: a whole section of the wrong type falls back, an out-of-range opacity clamps, an unknown key is dropped.
+Mirror `tests/test_settings_eve.py`'s cases: a whole section of the wrong type
+falls back, an out-of-range opacity clamps, an unknown key is dropped. Add one
+for the shallow-copy hazard:
 
-Run: `python -m pytest tests/test_preview_store.py tests/test_settings_preview.py -v`
+```python
+def test_each_caller_gets_its_own_preview_section():
+    """dict(DEFAULTS) is shallow. Without _fresh_defaults rebuilding it,
+    two callers share one dict and one caller's layout edit rewrites the
+    other's -- including the module-level DEFAULTS itself."""
+    a, b = settings._fresh_defaults(), settings._fresh_defaults()
+    a["preview"]["layouts"]["X"] = {"x": 1, "y": 1, "w": 2, "h": 2}
+    assert b["preview"]["layouts"] == {}
+    assert settings.DEFAULTS["preview"]["layouts"] == {}
+```
+
+Run: `python -m pytest tests/test_preview_store.py tests/test_settings_preview.py tests/test_settings.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add obs_youtube_uploader/preview/store.py obs_youtube_uploader/settings.py \
-        tests/test_preview_store.py tests/test_settings_preview.py
-git commit -m "feat(preview): debounced single-writer layout persistence"
+        tests/test_preview_store.py tests/test_settings_preview.py tests/test_settings.py
+git commit -m "feat(preview): debounced layout persistence, serialised saves"
 ```
 
 ---
@@ -1657,42 +1942,59 @@ git commit -m "feat(preview): debounced single-writer layout persistence"
 
 ```python
 """Wiring, with the host faked. What must hold: the subsystem is lazy,
-and shutdown always tears it down."""
+and shutdown always tears it down.
+
+`make_api` is the existing helper at tests/test_api.py:56 -- imported, not
+redefined. It takes tmp_path positionally and forwards **kwargs to Api(),
+so the preview host arrives the same way every other collaborator does.
+"""
+from tests.test_api import make_api
+
+
 class FakeHost:
-    def __init__(self): self.started = self.stopped = 0
-    def start(self): self.started += 1
-    def stop(self, timeout=5.0): self.stopped += 1
+    def __init__(self):
+        self.started = self.stopped = 0
+
+    def start(self):
+        self.started += 1
+
+    def stop(self, timeout=5.0):
+        self.stopped += 1
 
 
-def test_disabled_at_startup_never_starts_the_thread():
+def test_disabled_at_startup_never_starts_the_thread(tmp_path):
     """A user who never touches EVE previews must not pay a thread and a
     700ms sweep for a feature they have off."""
     host = FakeHost()
-    api = make_api(settings={"preview": {"enabled": False}}, host=host)
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False}
     api.startup()
     assert host.started == 0
 
 
-def test_enabling_starts_it_and_disabling_stops_it():
+def test_enabling_starts_it_and_disabling_stops_it(tmp_path):
     host = FakeHost()
-    api = make_api(settings={"preview": {"enabled": False}}, host=host)
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False}
     api.set_preview_enabled(True)
     assert host.started == 1
     api.set_preview_enabled(False)
     assert host.stopped == 1
 
 
-def test_enabling_twice_does_not_start_two_threads():
+def test_enabling_twice_does_not_start_two_threads(tmp_path):
     host = FakeHost()
-    api = make_api(settings={"preview": {"enabled": False}}, host=host)
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False}
     api.set_preview_enabled(True)
     api.set_preview_enabled(True)
     assert host.started == 1
 
 
-def test_shutdown_stops_the_host_even_when_enabled():
+def test_shutdown_stops_the_host_even_when_enabled(tmp_path):
     host = FakeHost()
-    api = make_api(settings={"preview": {"enabled": True}}, host=host)
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
     api.startup()
     api.shutdown()
     assert host.stopped == 1
@@ -1705,7 +2007,19 @@ Expected: FAIL
 
 - [ ] **Step 3: Implement the wiring**
 
-Add `set_preview_enabled(bool)` to `ui/api.py`, persisting through the normal settings path and starting/stopping the host. Add `PreviewHost.stop()` to the shutdown sequence at `__main__.py:410-416`, alongside the scheduler and bookmark engine. Add an enable checkbox to the settings pane, following the existing bookmarks controls' markup and classes.
+Add a `preview_host=None` keyword to `Api.__init__`, and `set_preview_enabled(bool)`
+to `ui/api.py`, persisting through the normal settings path and starting/stopping
+the host. Add `PreviewHost.stop()` to the shutdown sequence at
+`__main__.py:410-416`, alongside the scheduler and bookmark engine. Add an enable
+checkbox to the settings pane, following the existing bookmarks controls' markup
+and classes.
+
+`from tests.test_api import make_api` **resolves** under this project's pytest
+invocation — verified by running it, despite there being no `tests/__init__.py`
+and no `conftest.py`; pytest puts the rootdir on `sys.path`. No fixture
+extraction is needed. It does mean the import breaks if anyone ever runs pytest
+from inside `tests/`, so if that becomes a habit, move `make_api`/`make_state`
+into a `tests/conftest.py` then.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1715,7 +2029,16 @@ Expected: PASS (4 tests)
 - [ ] **Step 5: Run the whole suite**
 
 Run: `python -m pytest -q`
-Expected: no new failures. The 107 pre-existing bookmarks-WIP failures are unrelated to this work; compare against a baseline on `bump-3.2.0` rather than assuming.
+Expected: **`869 passed`, zero failures**, plus the tests added by this plan.
+
+This baseline is measured on `bump-3.2.0`, not estimated. The suite is
+**fully green** — there are no known-failing tests to write off. Any failure
+you see is either yours or a genuine regression; do not normalize one.
+
+(An earlier draft of this plan claimed ~107 pre-existing failures. That was a
+stale measurement taken in a different checkout, where the bookmarks work was
+still untracked and unfinished before it merged as `70c1655`. Following it
+would have masked real regressions.)
 
 - [ ] **Step 6: Commit**
 
@@ -1732,11 +2055,14 @@ git commit -m "feat(preview): enable/disable from the UI, teardown on shutdown"
 The Windows half is deliberately thin and untested by CI. This is what stands in for that.
 
 **Files:**
-- Create: `docs/preview-smoke-checks.md`
+- Modify: `docs/smoke-checklist.md` — append a `## EVE client previews` section
 
 - [ ] **Step 1: Write the checklist**
 
-Follow the bookmarks engine's smoke-check document in `docs/`. Each item states what to do, what to observe, and what a failure looks like. Cover at minimum:
+The repo has one smoke-check document, not several. Append a section alongside
+the existing `## EVE bookmark hotkeys` block (`docs/smoke-checklist.md:773-850`)
+and match its style: each item states what to do, what to observe, and what a
+failure looks like. Cover at minimum:
 
 1. Two clients running → two previews appear, showing live video.
 2. Click a preview → that client comes to the foreground.
@@ -1755,7 +2081,7 @@ Follow the bookmarks engine's smoke-check document in `docs/`. Each item states 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/preview-smoke-checks.md
+git add docs/smoke-checklist.md
 git commit -m "docs: preview subsystem smoke checks"
 ```
 
@@ -1769,4 +2095,21 @@ git commit -m "docs: preview subsystem smoke checks"
 
 **Type consistency.** `Rect` is defined once in `geometry.py` and used unchanged by `layout`, `window`, `thumbnail`, and `host`. `Client.stable_key` is the identity used by `layout.Entry` keys, `host.reconcile`, and `store.record`. `Thumbnail.close()` and `PreviewHost.stop()` are the two idempotent teardown methods; neither is spelled `dispose` anywhere.
 
-**Known gap.** Task 11 Step 5 and Task 12 Step 3 describe Windows code in prose rather than complete listings. That is deliberate — both are GPL-gated, and writing the full port before the relicense merges is the one thing the licence gate forbids. The interfaces, ordering constraints, and window styles are fully specified, so the code can be written directly against them once the gate opens.
+**Known gap.** Task 11's window body and Task 12's sweep are specified as
+message-by-message tables and ordered sequences rather than complete listings,
+and both are GPL-gated: writing the full port before the relicense merges is the
+one thing the licence gate forbids. The focus sequence in Task 11 Step 6 and the
+merge in Task 13 Step 3 *are* given as code, because both are places where a
+plausible-looking implementation is silently wrong — a leaked `AttachThreadInput`
+welds two input queues together, and a wholesale layout replace deletes saved
+positions the user cannot recover.
+
+**Revision note.** This plan was revised after an independent review found eight
+defects, four blocking. The corrections worth carrying forward: the suite is
+**fully green** on this branch (869 passed — an earlier draft's "107 known
+failures" was a stale measurement from a different checkout and would have masked
+regressions); `settings.save()` already has two writers, so previews make three
+and the fix is a lock rather than a thread rule; the bundled font must reach
+`uploader.spec`'s `datas` or the frozen build silently falls back; and
+`_fresh_defaults` must rebuild the nested `preview` section or every caller
+shares one mutable dict.
