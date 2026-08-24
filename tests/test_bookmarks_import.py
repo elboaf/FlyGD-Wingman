@@ -89,21 +89,23 @@ def test_home_zero_off_already_matches_wingman_so_nothing_is_said():
     assert not any(".0" in n and ".1" in n for n in got["notes"])
 
 
-def test_a_different_return_preface_is_described():
+def test_losing_the_preface_is_described():
+    """LEGACY prefaces with "!". Wingman does not preface at all, so every
+    return bookmark comes out differently and the user is told."""
+    got = bookmarks.import_legacy_ini(LEGACY)
+    assert any("does not preface" in n for n in got["notes"])
+
+
+def test_the_note_quotes_the_users_own_preface_character():
+    """"Your ! is gone" is no help to someone who had set it to @."""
     got = bookmarks.import_legacy_ini(LEGACY.replace("ReturnPreface=!",
                                                      "ReturnPreface=@"))
     assert any("@" in n for n in got["notes"])
 
 
-def test_prefacing_turned_off_is_described():
+def test_prefacing_already_off_matches_wingman_so_nothing_is_said():
     got = bookmarks.import_legacy_ini(LEGACY.replace("PrefaceReturn=1",
                                                      "PrefaceReturn=0"))
-    assert any("not prefaced" in n for n in got["notes"])
-
-
-def test_a_matching_preface_is_not_described():
-    """LEGACY already prefaces with "!", which is what Wingman does."""
-    got = bookmarks.import_legacy_ini(LEGACY)
     assert not any("preface" in n.lower() for n in got["notes"])
 
 

@@ -74,7 +74,7 @@ def test_mode_is_gone_but_the_other_settings_are_written():
     # section() carries the shipped defaults, so this is the case where a
     # "write only what differs" optimisation would drop the lines entirely.
     assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=1" in text
+    assert "PrefaceReturn=0" in text
     assert "ReturnPreface=!" in text
 
 
@@ -83,10 +83,10 @@ def test_naming_is_fixed_and_ignores_whatever_the_section_says():
     hand-edited one -- must not be able to steer naming any more. Written
     from the module constants, never from the section."""
     text = bookmarks.generate_ini(section(home_zero=True,
-                                          preface_return=False,
+                                          preface_return=True,
                                           return_preface="@\r\nMode=1"))
     assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=1" in text
+    assert "PrefaceReturn=0" in text
     assert "ReturnPreface=!\r\n" in text
     assert "\r\nMode=1\r\n" not in text
 
@@ -96,7 +96,9 @@ def test_the_written_values_are_the_constants():
     ever changed, this is the test that says so out loud rather than
     letting the INI quietly disagree with what the module documents."""
     assert bookmarks.HOME_ZERO is False
-    assert bookmarks.PREFACE_RETURN is True
+    assert bookmarks.PREFACE_RETURN is False
+    # Dead while the flag is False, but still written, so the engine cannot
+    # fall back to its own "!" default if the flag is ever flipped.
     assert bookmarks.RETURN_PREFACE == "!"
 
 

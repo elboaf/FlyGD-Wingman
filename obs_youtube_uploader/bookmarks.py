@@ -225,14 +225,20 @@ def parse_ahk(text: str) -> dict:
 _CRLF = "\r\n"
 
 # Bookmark naming is fixed. It was user-editable in the standalone GUI and
-# in Wingman's first port; the three controls were removed as noise, so the
-# values are frozen at what a default Wingman install already produced --
-# nobody who left them alone sees their bookmarks change.
+# in Wingman's first port; the three controls were removed as noise.
 #
-# Frozen, not deleted: generate_ini still writes them, because the engine's
-# own compiled-in defaults differ (see there).
+# The values are the helper author's own: their script numbers home holes
+# from .1 and does not preface the return bookmark at all. Wingman had been
+# prefacing with "!" -- a default inherited from a later revision of the
+# standalone script, not a decision anyone made -- so this follows the
+# author rather than the accident.
+#
+# RETURN_PREFACE is dead while PREFACE_RETURN is False. It is still defined,
+# and still written, so the pair cannot drift: leaving the character out of
+# the INI would let the engine's IniRead default ("!") stand, and anything
+# that ever flipped the flag would silently start prefacing again.
 HOME_ZERO = False
-PREFACE_RETURN = True
+PREFACE_RETURN = False
 RETURN_PREFACE = "!"
 
 
@@ -413,14 +419,13 @@ def import_legacy_ini(text: str) -> dict:
             "are used to.")
     preface_on = legacy_settings.get("PrefaceReturn", "1").strip() != "0"
     preface = sanitise(legacy_settings.get("ReturnPreface", RETURN_PREFACE))
-    if not preface_on:
-        notes.append(
-            "Your return bookmarks were not prefaced. Wingman always "
-            f"prefaces them with {RETURN_PREFACE}.")
-    elif preface != RETURN_PREFACE:
+    if preface_on and not PREFACE_RETURN:
+        # The character is quoted back rather than assumed: the legacy file
+        # carries whatever the user chose, and "your ! is gone" is no help
+        # to someone who had set it to something else.
         notes.append(
             f"Your return bookmarks were prefaced with {preface}. Wingman "
-            f"always uses {RETURN_PREFACE}.")
+            "does not preface them.")
 
     # Protean/v21 is the one behaviour the engine cannot reproduce, so a
     # user who was running it needs telling in their own terms rather than

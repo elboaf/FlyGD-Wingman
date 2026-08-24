@@ -809,7 +809,9 @@ pytest — the engine is AutoHotkey.
       opposite. `HomeZeroIs0` is read inside a *function*, and an undeclared
       name is local in AHK v1 — if the `global` declaration is lost it reads
       as empty and the numbering silently changes, with no error anywhere.
-- [ ] **Return bookmarks are prefaced with `!`**, unconditionally
+- [ ] **Return bookmarks are NOT prefaced** — no `!`, matching the helper
+      author's own script. Wingman writes `PrefaceReturn=0`; the engine's
+      compiled default is `1`, so this is one the INI has to say out loud
 - [ ] **Root mode reads Home/Zero, Active, or Not set** in the Root card and
       tracks Set Root / Clear Root
 - [ ] Deliberately binding two actions to one key shows the collision warning

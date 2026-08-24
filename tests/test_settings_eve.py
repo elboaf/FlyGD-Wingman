@@ -83,7 +83,7 @@ def test_a_settings_file_from_before_the_naming_removal_is_cleaned_up(tmp_path):
     # And the INI the engine actually reads is unmoved by any of it.
     text = bookmarks.generate_ini(section)
     assert "HomeZeroIs0=0" in text
-    assert "PrefaceReturn=1" in text
+    assert "PrefaceReturn=0" in text
     assert "ReturnPreface=!\r\n" in text
 
 
