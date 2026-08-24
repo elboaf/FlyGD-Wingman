@@ -11,6 +11,9 @@
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false};
   var capturing = null;
+  // Set when a render is skipped because a capture is armed; flushed by
+  // endCapture(). See requestRender() below for why this exists.
+  var pendingRender = false;
 
   function bookmarkClash(gesture) {
     // Active: the bookmark bind is registered right now, so this chord
@@ -131,6 +134,33 @@
     capturing.button.classList.remove('capturing');
     capturing.button.textContent = capturing.previous || 'Not set';
     capturing = null;
+    // Flush whatever render() call was deferred while this capture was
+    // armed -- see requestRender(). Runs AFTER capturing is cleared, so
+    // render() below sees a clean state and does not try to redraw
+    // "Press a key…" onto a row that no longer means it.
+    if (pendingRender) { pendingRender = false; render(); }
+  }
+
+  // Every push- or fetch-driven redraw goes through this instead of
+  // calling render() directly. render() rebuilds every row from scratch,
+  // which detaches whatever button is currently armed by beginCapture();
+  // the capturing object then points at a node no longer in the page, but
+  // capturing stays non-null, so the document keydown handler below keeps
+  // intercepting and swallowing every keystroke -- for a capture the user
+  // can no longer see. bookmarks.js documents the click-triggered version
+  // of this same trap (endCapture() must not re-render mid-arm); this is
+  // the push-triggered route into it, which is why it needs its own
+  // guard: get_preview_hotkey_state/onPreviewHotkeys fire independently
+  // of anything the user clicked, most commonly exactly while someone is
+  // capturing a bind -- an EVE client opening or closing is the ordinary
+  // thing a multiboxer is doing while setting hotkeys up. Deferring (over
+  // ending the capture outright) keeps the user's in-flight keypress
+  // valid; the cost is that the row list can be briefly stale until the
+  // capture ends, which is preferable to silently cancelling whatever
+  // they were in the middle of doing every time a client toggles.
+  function requestRender() {
+    if (capturing) { pendingRender = true; return; }
+    render();
   }
 
   function render() {
@@ -162,7 +192,7 @@
         return;
       }
       state.hotkeys = next;
-      render();
+      requestRender();
     });
   }
 
@@ -188,7 +218,7 @@
       state = payload;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
-      render();
+      requestRender();
     });
   }
 
@@ -227,7 +257,7 @@
     state = payload;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
-    render();
+    requestRender();
   };
 
   // Refreshed on route entry rather than polled, same reasoning as
