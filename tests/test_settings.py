@@ -13,6 +13,12 @@ def test_defaults_are_the_documented_values():
         "gamelogs_dir": None,
         "channel_id": "",
         "channel_title": "",
+        # TRUE, unlike the two feature flags below. Those decide whether
+        # something RUNS and must be opted into; this decides only whether
+        # the EVE screens are offered, and an upgrading user's file predates
+        # it -- defaulting it off would silently remove four things they
+        # already use. First run asks instead.
+        "show_eve_tools": True,
         "eve_bookmarks": {
             "enabled": False,
             "keybinds": bookmarks.DEFAULT_BINDS,

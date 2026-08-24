@@ -1266,6 +1266,38 @@ class Api:
         """Remove the webhook: the explicit counterpart to the above."""
         return self._write_setting("discord_webhook", "")
 
+    def set_show_eve_tools(self, enabled) -> dict:
+        """Show or hide the EVE destinations and sections.
+
+        VISIBILITY ONLY. It never starts or stops anything: eve_bookmarks
+        .enabled and preview.enabled stay the sole runtime switches.
+
+        The guard is the whole design. Hiding a feature that is RUNNING
+        would conceal its off switch -- previews would keep painting and
+        eighteen global keybinds would keep firing in EVE, with no
+        reachable control to stop them. Making this a kill switch instead
+        was rejected: it would silently stop those from what reads as a
+        display preference, and re-enabling could not know which of the two
+        to restore without a third persisted value.
+
+        So it simply refuses while either is on, and says which. Turning
+        them off first is one extra step, and it is the honest order --
+        that friction is what stops this being a kill switch by accident.
+        """
+        enabled = bool(enabled)
+        if not enabled:
+            running = []
+            if self._state.settings.get("eve_bookmarks", {}).get("enabled"):
+                running.append("Bookmarks")
+            if self._state.settings.get("preview", {}).get("enabled"):
+                running.append("Previews")
+            if running:
+                return self._field_refused(
+                    "Turn off " + " and ".join(running) + " first — hiding "
+                    "them here would leave them running with no way to "
+                    "switch them off.")
+        return self._write_setting("show_eve_tools", enabled)
+
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.
 

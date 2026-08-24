@@ -167,6 +167,44 @@
       });
     });
 
+  // ---- the EVE gate ---------------------------------------------------
+  // Visibility only. Nothing here starts or stops a feature; Python's
+  // set_show_eve_tools refuses to turn the gate off while either is
+  // running, precisely so this can never hide a live feature's off switch.
+  //
+  // With both destinations hidden the nav has one entry left, so it hides
+  // altogether -- which is the single-screen app the README describes.
+  WM.EVE_ROUTES = ['evesettings', 'skills'];
+  WM.EVE_SECTIONS = ['bookmarks', 'previews'];
+
+  WM.apply_eve_gate = function (shown) {
+    WM.eve_shown = shown !== false;
+    WM.EVE_ROUTES.forEach(function (name) {
+      var btn = document.querySelector('.navbtn[data-route="' + name + '"]');
+      if (btn) { btn.hidden = !WM.eve_shown; }
+    });
+    WM.EVE_SECTIONS.forEach(function (name) {
+      var btn = document.querySelector('.rail-item[data-section="' + name + '"]');
+      if (btn) { btn.hidden = !WM.eve_shown; }
+    });
+    // One destination left is not a choice, so the whole bar goes. This
+    // also hands its width back to the drag region.
+    WM.el('routenav').classList.toggle('single', !WM.eve_shown);
+    // Hiding the route or section you are ON would leave a dead screen
+    // with no way back, so leave it first.
+    if (!WM.eve_shown) {
+      if (WM.EVE_ROUTES.indexOf(WM.current_route) !== -1) { WM.route('main'); }
+      if (WM.EVE_SECTIONS.indexOf(WM.current_section) !== -1) {
+        WM.section('general');
+      }
+    }
+  };
+
+  document.addEventListener('wm:settings', function (ev) {
+    var cfg = (ev.detail || {}).settings || {};
+    WM.apply_eve_gate(cfg.show_eve_tools !== false);
+  });
+
   // ---- title bar ----------------------------------------------------
   WM.el('btn-minimize').addEventListener('click', function () {
     WM.send('minimize');

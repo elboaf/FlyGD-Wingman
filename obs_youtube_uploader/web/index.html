@@ -117,7 +117,8 @@
          .skills-rail rather than a second rail idiom. -->
     <aside class="settings-rail" id="settings-rail">
       <h3 class="rail-head">Settings</h3>
-      <button class="rail-item active" data-section="account">Account</button>
+      <button class="rail-item active" data-section="general">General</button>
+      <button class="rail-item" data-section="account">Account</button>
       <button class="rail-item" data-section="uploads">Uploads</button>
       <button class="rail-item" data-section="notify">Notifications</button>
       <button class="rail-item" data-section="folders">Folders</button>
@@ -128,7 +129,25 @@
 
     <div class="settings-pane">
 
-    <div class="settings active" id="section-account">
+    <div class="settings active" id="section-general">
+
+      <section class="card">
+        <h2>EVE Online tools</h2>
+        <label class="check">
+          <input type="checkbox" id="show-eve-tools"><span class="box"></span>
+          Show the EVE Online tools
+        </label>
+        <p class="hint">
+          Wingman's EVE features &mdash; Profiles, Skills, bookmark keybinds
+          and client previews. Turn this off and Wingman is just the
+          OBS&nbsp;&rarr;&nbsp;YouTube uploader.
+        </p>
+        <p class="field-msg" id="msg-general" hidden></p>
+      </section>
+
+    </div>
+
+    <div class="settings" id="section-account">
 
       <section class="card">
         <h2>Google account</h2>
@@ -458,6 +477,14 @@
       </div>
       <p class="firstrun-note" id="firstrun-note">
         Detect reads the folder from OBS&rsquo;s own configuration.
+      </p>
+      <label class="check" style="margin-top:18px">
+        <input type="checkbox" id="firstrun-eve"><span class="box"></span>
+        I play EVE Online &mdash; show the EVE tools
+      </label>
+      <p class="firstrun-note">
+        Profiles, Skills, bookmark keybinds and client previews. You can
+        change this later in Settings.
       </p>
       <div class="firstrun-actions">
         <button class="btn acc" id="btn-firstrun-continue" disabled>Continue</button>

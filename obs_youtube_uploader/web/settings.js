@@ -112,6 +112,11 @@
         && document.activeElement.name !== 'notify') {
       setNotify(s.notify_mode || 'toast');
     }
+    // Absent means shown: an upgrading user's file predates the key, and
+    // hiding four things they already use would be a silent removal.
+    if (WM.el('show-eve-tools') !== document.activeElement) {
+      WM.el('show-eve-tools').checked = s.show_eve_tools !== false;
+    }
     setField('f-recdir', s.recording_dir || '');
     setField('f-gamelogs', s.gamelogs_dir || '');
     // The input holds the REAL value and the browser draws the mask, so
@@ -135,6 +140,17 @@
   }
 
   // ---- committing each field -------------------------------------------
+  // The gate. Refused rather than applied while either EVE feature is
+  // running, so the checkbox has to go back where it was and say why --
+  // this is the one control on the screen whose refusal is expected
+  // rather than exceptional.
+  WM.el('show-eve-tools').addEventListener('change', function () {
+    var box = WM.el('show-eve-tools');
+    commit('msg-general', ['set_show_eve_tools', box.checked], function () {
+      box.checked = !box.checked;
+    });
+  });
+
   // Discrete controls commit on change. There is nothing to mistype, the
   // value is one of a fixed set, and a refusal is recoverable.
   WM.el('f-privacy').addEventListener('change', function () {

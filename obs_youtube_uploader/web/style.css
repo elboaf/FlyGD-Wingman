@@ -145,6 +145,14 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 }
 .navbtn:hover { color: var(--text); background: #22252c; }
 .navbtn.active { color: var(--text); background: #22252c; }
+/* Author rule, for the same reason .routenav[hidden] carries one: .navbtn
+   sets no display, but the buttons live in a flex row and [hidden] must
+   still remove them from it. */
+.navbtn[hidden] { display: none; }
+/* One destination is not a choice. With the EVE tools hidden the only
+   entry left is Uploader, so the bar goes entirely and hands its width
+   back to the drag region -- the single-screen app the README describes. */
+.routenav.single { display: none; }
 
 /* ---- routes ----------------------------------------------------------
    Settings is a ROUTE in this window, not a second OS window. */
@@ -855,6 +863,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-dim); font: inherit; font-size: var(--fs-mono);
   cursor: pointer; text-align: left;
 }
+.rail-item[hidden] { display: none; }
 .rail-plan:hover, .rail-item:hover { background: #22252c; color: var(--text); }
 .rail-plan.active, .rail-item.active {
   background: #191d24; border-left-color: var(--brand); color: var(--text);

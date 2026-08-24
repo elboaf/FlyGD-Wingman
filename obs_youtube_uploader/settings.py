@@ -76,6 +76,18 @@ DEFAULTS = {
     # compared so a changed destination can be called out.
     "channel_id": "",
     "channel_title": "",
+    # Whether the EVE destinations and sections are offered at all. TRUE by
+    # default on purpose: an upgrading user's file predates this key, and
+    # defaulting it off would silently remove four things they already use.
+    # First run asks instead, so a fresh install of what the README calls
+    # an OBS-to-YouTube app does not open with three tabs of EVE tooling.
+    #
+    # This governs VISIBILITY ONLY. It never starts or stops anything --
+    # eve_bookmarks.enabled and preview.enabled remain the sole runtime
+    # switches, read at launch by start_engine_if_enabled and
+    # start_previews_if_enabled. See Api.set_show_eve_tools for the guard
+    # that keeps this from hiding a running feature's off switch.
+    "show_eve_tools": True,
     # Nested, unlike every other key. save() projects onto DEFAULTS keys, so
     # this whole section travels as one value; load() rebuilds the inner
     # dicts rather than copying them, because dict(DEFAULTS) below is
@@ -224,8 +236,12 @@ def _normalize(data: dict) -> dict:
     """
     for key in ("privacy", "notify_mode", "category", "recording_dir",
                 "discord_webhook", "gamelogs_dir", "channel_id",
-                "channel_title"):
+                "channel_title", "show_eve_tools"):
         data.setdefault(key, DEFAULTS[key])
+    # Coerced rather than defaulted: a hand-edited file with a string here
+    # would otherwise make every truthy string mean "shown" and the empty
+    # string mean "hidden", which is not a distinction anyone intended.
+    data["show_eve_tools"] = bool(data["show_eve_tools"])
     if data["privacy"] not in VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
     if data["notify_mode"] not in VALID_NOTIFY:
