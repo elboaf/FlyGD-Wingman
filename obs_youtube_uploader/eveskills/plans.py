@@ -75,12 +75,33 @@ def _parse_level(token: str):
 
 def parse(contents: str) -> ParseResult:
     """Parse plan text into requirements, or into diagnostics only."""
+    # Whole-file guards carry line 0, which the UI renders without a
+    # line number. They come first so a corrupt or hostile file never
+    # gets as far as materialising a multi-million entry line list.
+    if not isinstance(contents, str):
+        return ParseResult((), (Diagnostic(0, "Plan content is not text."),))
+    if len(contents) > MAX_CONTENT_CHARS:
+        return ParseResult((), (Diagnostic(
+            0, "Plan is larger than "
+               f"{MAX_CONTENT_CHARS} characters."),))
+    lines = contents.splitlines()
+    if len(lines) > MAX_LINES:
+        return ParseResult((), (Diagnostic(
+            0, f"Plan has more than {MAX_LINES} lines."),))
+
     diagnostics = []
     # Insertion-ordered and keyed on the casefolded name: the first
     # spelling wins, later duplicates only ever raise the level, and
     # dict ordering keeps the user's own grouping intact.
     ordered = {}
-    for number, raw in enumerate(contents.splitlines(), start=1):
+    for number, raw in enumerate(lines, start=1):
+        # Measured on the RAW line, before stripping. The cap bounds the
+        # work done per line, and a line padded to a megabyte of spaces
+        # is exactly the input it is there to bound.
+        if len(raw) > MAX_LINE_CHARS:
+            diagnostics.append(Diagnostic(
+                number, f"Line is longer than {MAX_LINE_CHARS} characters."))
+            continue
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -122,6 +143,13 @@ def parse(contents: str) -> ParseResult:
             # Keep the first spelling, raise the level. Two lines for one
             # skill mean the stricter one governs.
             ordered[key] = Requirement(previous.skill_name, level)
+        # Counted on distinct skills, after folding: a plan repeating one
+        # skill three thousand times is one requirement, not an overflow.
+        if len(ordered) > MAX_REQUIREMENTS:
+            diagnostics.append(Diagnostic(
+                number,
+                f"Plan has more than {MAX_REQUIREMENTS} requirements."))
+            break
     if diagnostics:
         # All or nothing. Returning the good lines beside the complaints
         # is the partial-success mode this parser refuses to have.

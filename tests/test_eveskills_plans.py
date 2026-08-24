@@ -198,3 +198,107 @@ def test_requirement_order_follows_first_appearance():
     them would scramble a plan the user grouped on purpose."""
     got = parse_one("Hull Upgrades IV\nNavigation III\nHull Upgrades V\n")
     assert [r.skill_name for r in got] == ["Hull Upgrades", "Navigation"]
+
+
+def test_content_over_512_kib_is_a_whole_file_diagnostic():
+    """The cap is checked before splitlines() so a hostile or corrupt
+    file cannot make the parser materialise a multi-megabyte list first.
+    Whole-file diagnostics carry line 0, which the UI renders without a
+    line number."""
+    result = plans.parse("A" * (plans.MAX_CONTENT_CHARS + 1))
+    assert not result.ok
+    assert result.diagnostics[0].line == 0
+    assert len(result.diagnostics) == 1
+
+
+def test_content_exactly_at_the_content_cap_is_accepted():
+    """Off-by-one on a cap is the classic way a legal file starts being
+    rejected after a refactor.
+
+    Built from many short comment lines rather than one huge line: a
+    single ~512 KiB line would independently trip the per-line cap
+    tested separately below, which would test that cap instead of this
+    one."""
+    line = "#" + "A" * 510 + "\n"     # 511-char raw line, under MAX_LINE_CHARS
+    filler = line * (plans.MAX_CONTENT_CHARS // len(line))  # len(line) == 512
+    assert len(filler) == plans.MAX_CONTENT_CHARS
+    assert plans.parse(filler).ok
+
+
+def test_more_than_5000_lines_is_a_whole_file_diagnostic():
+    result = plans.parse("Navigation I\n" * (plans.MAX_LINES + 1))
+    assert not result.ok
+    assert result.diagnostics[0].line == 0
+
+
+def test_a_line_over_512_characters_is_a_diagnostic():
+    """Measured on the RAW line, before stripping: the cap exists to
+    bound work per line, and a line padded to a megabyte of spaces is
+    exactly the input it is bounding."""
+    result = plans.parse("N" * plans.MAX_LINE_CHARS + " V\n")
+    assert not result.ok
+    assert result.diagnostics[0].line == 1
+
+
+def test_a_line_exactly_at_the_line_cap_is_accepted():
+    """Padded with LEADING whitespace, which strip() discards before the
+    name is measured: a name long enough to fill the raw-line cap on
+    its own would independently trip the 200-character name cap tested
+    separately above, and this test would stop exercising the line cap
+    at all."""
+    name = "N" * (plans.MAX_SKILL_NAME_CHARS - 1)   # 199, under the name cap
+    suffix = " V"
+    pad = plans.MAX_LINE_CHARS - len(name) - len(suffix)
+    line = " " * pad + name + suffix
+    assert len(line) == plans.MAX_LINE_CHARS
+    assert plans.parse(line).ok
+
+
+def test_more_than_2000_requirements_is_a_diagnostic():
+    text = "".join(f"Skill{n} I\n" for n in range(plans.MAX_REQUIREMENTS + 1))
+    result = plans.parse(text)
+    assert not result.ok
+    assert any("2000" in d.message for d in result.diagnostics)
+
+
+def test_exactly_2000_requirements_is_accepted():
+    text = "".join(f"Skill{n} I\n" for n in range(plans.MAX_REQUIREMENTS))
+    assert len(parse_one(text)) == plans.MAX_REQUIREMENTS
+
+
+def test_the_requirement_cap_counts_distinct_skills_not_lines():
+    """Duplicates fold before the count, so a plan that repeats one
+    skill 3000 times is one requirement, not an overflow."""
+    assert len(parse_one("Navigation I\n" * 3000)) == 1
+
+
+def test_a_skill_name_over_200_characters_is_a_diagnostic():
+    result = plans.parse("N" * (plans.MAX_SKILL_NAME_CHARS + 1) + " V\n")
+    assert not result.ok
+    assert result.diagnostics[0].line == 1
+
+
+def test_one_bad_line_rejects_every_good_line_with_it():
+    """The all-or-nothing rule, stated as its own test because it is the
+    single behaviour most likely to be "helpfully" relaxed later. A plan
+    the user believes has ten requirements must never silently evaluate
+    with nine."""
+    result = plans.parse("Navigation IV\nHull Upgrades nope\nMechanics V\n")
+    assert not result.ok
+    assert result.requirements == ()
+
+
+def test_every_bad_line_is_reported_not_just_the_first():
+    """Fixing a plan one diagnostic per save-and-reload cycle is why
+    parsing continues past the first complaint."""
+    result = plans.parse("A nope\nB 9\nC ٥\n")
+    assert [d.line for d in result.diagnostics] == [1, 2, 3]
+
+
+def test_non_text_content_is_a_whole_file_diagnostic():
+    """list_plans() reads bytes off disk and decodes them, so `contents`
+    should always be str -- but parse() is also fed from the clipboard
+    import path in a deferred slice, and returning a diagnostic beats
+    raising AttributeError into the bridge thread."""
+    result = plans.parse(None)
+    assert not result.ok and result.diagnostics[0].line == 0
