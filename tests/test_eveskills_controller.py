@@ -12,7 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from obs_youtube_uploader.eveskills import application
 from obs_youtube_uploader.eveskills import esi as esi_mod
+from obs_youtube_uploader.eveskills import jwt as jwt_mod
 from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
@@ -67,6 +69,18 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
 
     pushed = []
     alerts = []
+    sso = kwargs.pop("sso", None)
+    # Refresh tests hand in a fake SSO that mints plain, non-JWT access
+    # tokens ("access-1"). Item 3 wires a real jwt.validate call into the
+    # refresh path by default, so every one of those tests would otherwise
+    # break on a token it never asked to have validated. Fakes that know
+    # what identity they stand for (`identity_for`) supply a matching
+    # validator here; a test that wants to exercise identity/owner-hash
+    # mismatches passes its own `validate_token=` and this default steps
+    # aside for it.
+    if (sso is not None and "validate_token" not in kwargs
+            and hasattr(sso, "identity_for")):
+        kwargs["validate_token"] = sso.identity_for
     controller = SkillsController(
         state_path=tmp_path / "eve_skills.json",
         cache_path=tmp_path / "eve_skills_cache.json",
@@ -75,6 +89,7 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
         alert=lambda kind, title, body: alerts.append((kind, title, body)),
         client=kwargs.pop("client", None) or object(),
         now=kwargs.pop("now", Clock()),
+        sso=sso,
         **kwargs)
     return controller, pushed, alerts
 
@@ -323,10 +338,16 @@ class FakeSso:
     production path would fail.
     """
 
-    def __init__(self, expires_in=1200, raises=None):
+    def __init__(self, expires_in=1200, raises=None, identities=None):
         self.expires_in = expires_in
         self.raises = raises
         self.refreshes = []
+        # (character_id, owner_hash) per successful refresh, cycled by call
+        # order -- refreshes happen strictly in character order (Task 13's
+        # refresh pass is sequential), so this is enough to give a
+        # multi-character test a matching identity per call without the
+        # fake having to be told which character it is minting for.
+        self.identities = list(identities or [(95, "")])
 
     def refresh_token(self, token, **kwargs):
         self.refreshes.append(token)
@@ -335,6 +356,19 @@ class FakeSso:
         return sso_mod.TokenSet(access_token=f"access-{len(self.refreshes)}",
                                 refresh_token=f"refresh-{len(self.refreshes)}",
                                 expires_in=self.expires_in)
+
+    def identity_for(self, token, **kwargs):
+        """The default `validate_token` fake: a matching, valid identity.
+
+        `build()` wires this in automatically so existing tests that never
+        asked to exercise identity/owner-hash checks are not broken by
+        item 3's real-by-default `jwt_mod.validate` call.
+        """
+        character_id, owner_hash = self.identities[
+            (len(self.refreshes) - 1) % len(self.identities)]
+        return jwt_mod.EveIdentity(character_id=character_id, name="Test Pilot",
+                                   owner_hash=owner_hash,
+                                   scopes=frozenset(application.SCOPES))
 
 
 class DirectSpawn:
@@ -391,6 +425,36 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
 
     # Two passes over the one character: two skills calls, two queue calls.
     assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
+
+
+def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(tmp_path):
+    """Round 2 review, item 7 (Minor). The exception handler used to clear
+    `_refresh_again` and stop -- so a refresh clicked while the running pass
+    was about to fail vanished silently, unlike a refresh clicked during a
+    pass that succeeds. Ported from TriffSkillsController.cs:385, which
+    re-kicks on any exit path as long as a request is still pending, not
+    only on a clean one."""
+    character = state_mod.Character(character_id=95, refresh_token_blob="blob")
+    esi = FakeEsi()
+    controller = None
+
+    def blow_up_once(path):
+        controller.refresh_characters()   # arrives while this pass is "in flight"
+        raise RuntimeError("boom")
+
+    esi.on_get = blow_up_once
+    controller, _, _ = build(tmp_path, characters=[character], client=esi,
+                             sso=FakeSso(), spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    # The failed pass's one (raising) skills call, plus a second pass that
+    # runs to completion: the request was not dropped just because the
+    # first pass blew up instead of finishing cleanly.
+    assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
+    assert len([c for c in esi.calls if c[0].endswith("skillqueue/")]) == 1
+    assert controller._refresh_in_flight is False
+    assert controller._refresh_again is False
 
 
 def with_snapshot(**kwargs):
@@ -623,6 +687,11 @@ def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
             return sso_mod.TokenSet(access_token="access-1",
                                     refresh_token="", expires_in=1200)
 
+        def identity_for(self, token, **kwargs):
+            return jwt_mod.EveIdentity(character_id=95, name="Test Pilot",
+                                       owner_hash="",
+                                       scopes=frozenset(application.SCOPES))
+
     sso = OmittingSso()
     controller, _, _ = build(tmp_path, characters=[with_snapshot()],
                              client=FakeEsi(), sso=sso, spawn=DirectSpawn())
@@ -630,6 +699,165 @@ def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
 
     assert len(sso.refreshes) == 1
     assert controller._state.characters[0].refresh_token_blob == "blob"
+
+
+def test_a_whitespace_only_refresh_token_does_not_wipe_the_stored_one(tmp_path):
+    """MANDATORY CORRECTION 2 (round 2 review). `if token_set.refresh_token:`
+    catches "" but not "   " -- EVE has never been observed sending a
+    whitespace-only value, but IsNullOrWhiteSpace
+    (TriffSkillsAuthentication.cs:170) is the actual contract, and the same
+    reasoning as the omitted-token case above applies: bare truthiness would
+    let "   " sail through and overwrite a valid stored credential."""
+
+    class WhitespaceSso:
+        def __init__(self):
+            self.refreshes = []
+
+        def refresh_token(self, token, **kwargs):
+            self.refreshes.append(token)
+            return sso_mod.TokenSet(access_token="access-1",
+                                    refresh_token="   ", expires_in=1200)
+
+        def identity_for(self, token, **kwargs):
+            return jwt_mod.EveIdentity(character_id=95, name="Test Pilot",
+                                       owner_hash="",
+                                       scopes=frozenset(application.SCOPES))
+
+    sso = WhitespaceSso()
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
+                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    assert len(sso.refreshes) == 1
+    assert controller._state.characters[0].refresh_token_blob == "blob"
+
+
+def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path):
+    """Round 2 review, Critical item 1. The only existing save-failure test
+    covers select_plan. A rotated refresh token that fails to persist must
+    not vanish silently -- the refresh itself still succeeds (the new token
+    is correct in memory), but until the write reaches disk the NEXT launch
+    would authenticate with a stale one, and nothing on the row said so.
+
+    Calls _access_token directly rather than through refresh_characters():
+    _commit_success's own save runs moments later in the same pass and
+    would overwrite ch.error on any success, masking exactly the failure
+    this test exists to catch.
+    """
+    character = with_snapshot()
+    controller, _, _ = build(tmp_path, characters=[character], client=FakeEsi(),
+                             sso=FakeSso(), spawn=DirectSpawn())
+    controller._save_locked = lambda: False
+
+    token, error, definitive = controller._access_token(character.character_id)
+
+    assert token == "access-1", "the refresh itself still succeeded"
+    assert definitive is False
+    ch = controller._state.characters[0]
+    assert ch.refresh_token_blob == "refresh-1", "rotated correctly in memory"
+    assert ch.error == (
+        "Fresh data is in memory but was not saved for offline use.")
+
+
+def test_a_refreshed_token_for_a_different_character_forces_reauth(tmp_path):
+    """Round 2 review, Important item 3. Ground truth:
+    TriffSkillsAuthentication.cs:152-155. A token that validates fine but
+    names a different character_id than the one being refreshed must never
+    be trusted -- CCP's own session confusion, or a stale cache entry, must
+    not let one character's row start showing another's data."""
+    def wrong_identity(token, **kwargs):
+        return jwt_mod.EveIdentity(character_id=999, name="Someone Else",
+                                   owner_hash="", scopes=frozenset(application.SCOPES))
+
+    esi = FakeEsi()
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()], client=esi,
+                             sso=FakeSso(), validate_token=wrong_identity,
+                             spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    assert esi.calls == [], "no ESI call is worth making on an untrusted token"
+
+
+def test_a_changed_owner_hash_forces_reauth(tmp_path):
+    """Round 2 review, Important item 3. Ground truth:
+    TriffSkillsAuthentication.cs:156-161. Both the stored hash and the
+    refreshed token's hash are non-blank here, so a mismatch is real
+    evidence the character changed hands -- the stored grant is deleted,
+    matching every other definitive failure."""
+    def transferred_identity(token, **kwargs):
+        return jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
+                                   owner_hash="new-owner",
+                                   scopes=frozenset(application.SCOPES))
+
+    esi = FakeEsi()
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot(owner_hash="old-owner")],
+        client=esi, sso=FakeSso(), validate_token=transferred_identity,
+        spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    assert ch.error == "Character ownership changed; cached skill data was cleared."
+    assert esi.calls == []
+
+
+def test_a_blank_owner_hash_on_either_side_skips_the_comparison(tmp_path):
+    """Round 2 review, Important item 3. Ground truth:
+    TriffSkillsAuthentication.cs:156-158's guard -- the comparison only
+    runs when BOTH sides are non-blank. An older stored row with no hash
+    yet, or a token that omits the claim, is missing information, not
+    evidence of a transfer, and must not force a reauth on its own."""
+    def blank_hash_identity(token, **kwargs):
+        return jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
+                                   owner_hash="", scopes=frozenset(application.SCOPES))
+
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot(owner_hash="old-owner")],
+        client=FakeEsi(), sso=FakeSso(), validate_token=blank_hash_identity,
+        spawn=DirectSpawn())
+    controller.refresh_characters()
+
+    ch = controller._state.characters[0]
+    assert ch.needs_reauth is False
+    assert ch.error == ""
+
+
+def test_esi_calls_happen_with_the_state_lock_released(tmp_path):
+    """Round 2 review, Test item 5. THE headline contract of the refresh
+    worker: eighty sequential HTTP requests must never hold the lock every
+    other read of state needs. Pinned as a real concurrency probe rather
+    than trusted to single-threaded DirectSpawn tests -- moving
+    `self._client.get` inside `with self._lock:` would pass every other
+    test in this file, since RLock lets the SAME thread re-enter and
+    nothing single-threaded can observe that regression."""
+    controller = None
+    released = []
+
+    class LockCheckingEsi(FakeEsi):
+        def get(self, path, *, token=None, etag=None):
+            def probe():
+                held = controller._lock.acquire(blocking=False)
+                released.append(held)
+                if held:
+                    controller._lock.release()
+            thread = threading.Thread(target=probe)
+            thread.start()
+            thread.join(timeout=5)
+            return super().get(path, token=token, etag=etag)
+
+    esi = LockCheckingEsi()
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()], client=esi,
+                             sso=FakeSso(), spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    assert released, "the probe thread never ran"
+    assert all(released), (
+        "a second thread must be able to take the state lock while an ESI "
+        "call is in flight -- the lock must not be held across it")
 
 
 @pytest.mark.skip(reason="controller.forget() lands in Task 14; "
@@ -660,7 +888,8 @@ def test_progress_is_pushed_once_per_character(tmp_path):
     characters = [with_snapshot(character_id=1, character_name="A"),
                   with_snapshot(character_id=2, character_name="B")]
     controller, pushed, _ = build(tmp_path, characters=characters,
-                                  client=FakeEsi(), sso=FakeSso(),
+                                  client=FakeEsi(),
+                                  sso=FakeSso(identities=[(1, ""), (2, "")]),
                                   spawn=DirectSpawn())
 
     controller.refresh_characters()

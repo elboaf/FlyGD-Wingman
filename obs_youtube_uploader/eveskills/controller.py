@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import application, evaluator, planstore, skillids, tokens
 from . import esi as esi_mod
+from . import jwt as jwt_mod
 from . import sso as sso_mod
 from . import state as state_mod
 
@@ -239,6 +240,12 @@ class SkillsController:
         # deliberately so: an access token lives twenty minutes and writing
         # one to disk would widen what a stolen state file is worth.
         self._access_tokens: dict[int, tuple[str, datetime]] = {}
+        # One lock per character, held across _access_token's cache check
+        # and refresh so the stampede fix is a guarantee rather than an
+        # accident of today's sequential refresh order. Matches
+        # TriffSkillsAuthentication.cs:127-128's per-character SemaphoreSlim.
+        self._character_gates: dict[int, threading.Lock] = {}
+        self._character_gates_lock = threading.Lock()
         # Set on shutdown so a refresh pass stops between characters rather
         # than finishing eighty requests after the window has gone.
         self._stopping = threading.Event()
@@ -527,8 +534,21 @@ class SkillsController:
         except Exception:
             logger.exception("EVE skills refresh failed")
             with self._lock:
-                self._refresh_in_flight = False
+                # A request that arrived during the failed pass must not be
+                # dropped just because the pass blew up instead of finishing
+                # cleanly -- re-kick a fresh one, matching
+                # TriffSkillsController.cs:385's
+                # `if (!cancelled && Volatile.Read(&_refreshRequested) == 1)
+                # RefreshCharactersAsync()`. Checked against `_stopping`
+                # rather than left unconditional: re-kicking during shutdown
+                # would spawn a worker into a window that no longer exists.
+                again = self._refresh_again and not self._stopping.is_set()
                 self._refresh_again = False
+                if not again:
+                    self._refresh_in_flight = False
+            if again:
+                self._spawn(target=self._refresh_worker, daemon=True).start()
+                return
         finally:
             # Unconditional: the page's "Refreshing..." state is driven by
             # refresh_in_flight, and a pass that died without this push
@@ -550,9 +570,11 @@ class SkillsController:
                            "character_name": name,
                            "completed": index, "total": total,
                            "error": error})
-            # Not forced: an all-304 pass changes only fetched_utc, and the
-            # dedupe is what keeps a no-change refresh from rebuilding the
-            # roster once per character.
+            # Not forced: a character forgotten mid-pass makes _refresh_one
+            # return "" without touching the roster, and the dedupe is what
+            # keeps that no-op from rebuilding the page. (Every actual
+            # commit -- even an all-304 one -- stamps fetched_utc and so
+            # always changes the pushed blob; the dedupe never fires there.)
             self._push_state()
 
     def _refresh_one(self, character_id: int) -> str:
@@ -586,76 +608,153 @@ class SkillsController:
         Refreshed when absent, when it expires within TOKEN_EXPIRY_MARGIN_S,
         or when a caller forces it AND the cached token is still the one ESI
         just rejected. That last clause is the stampede fix: N concurrent
-        401s from one stale token produce exactly one refresh, because every
-        caller after the first finds a cached token that no longer matches
-        what it was handed.
+        401s from one stale token must produce exactly one refresh, and
+        `_character_gate` below is what makes that a guarantee rather than
+        an accident of today's call pattern -- held across the whole
+        cache-check-and-refresh sequence for this one character, so two
+        truly concurrent callers can never both observe the same stale
+        cache entry and both go on to refresh.
+        """
+        gate = self._character_gate(character_id)
+        with gate:
+            with self._lock:
+                ch = self._state.find(character_id)
+                if ch is None:
+                    return None, "", False
+                blob = ch.refresh_token_blob
+                owner_hash = ch.owner_hash
+                cached = self._access_tokens.get(character_id)
+
+            now = self._now()
+            if cached is not None:
+                token, expires_at = cached
+                fresh = (expires_at - now).total_seconds() > TOKEN_EXPIRY_MARGIN_S
+                if fresh and (rejected is None or token != rejected):
+                    return token, "", False
+
+            if not blob:
+                # Definitive: no amount of retrying invents a refresh token.
+                return None, MSG_NO_TOKEN, True
+            refresh = tokens.unwrap(blob)
+            if refresh is None:
+                # A DPAPI blob that will not decrypt costs this one character
+                # a re-authentication, which is exactly why only the token is
+                # wrapped and the roster metadata beside it is not.
+                return None, MSG_TOKEN_UNREADABLE, True
+
+            try:
+                token_set = self._sso_module().refresh_token(refresh)
+                # A refreshed token that validates fine but names a
+                # different character, or a different owner, must never be
+                # trusted just because the signature checks out -- CCP's own
+                # session confusion or a stolen/rotated refresh token both
+                # look exactly like this otherwise. Ground truth:
+                # TriffSkillsAuthentication.cs:152-161, folded into the same
+                # try as the refresh itself so both codes flow through the
+                # one classification below.
+                validate = (self._validate_token if self._validate_token is not None
+                           else jwt_mod.validate)
+                identity = validate(token_set.access_token,
+                                    client_id=application.CLIENT_ID,
+                                    required_scopes=application.SCOPES,
+                                    key_source=self._keys())
+                if identity.character_id != character_id:
+                    raise sso_mod.OAuthError(
+                        401, "identity_mismatch",
+                        "Refreshed token belongs to a different character.")
+                # Compared only when BOTH sides are non-blank: an absent
+                # hash on either side is missing information, not evidence
+                # of a transfer, and treating it as one would force a
+                # reauth on the first refresh after an upgrade.
+                if (owner_hash and identity.owner_hash
+                        and identity.owner_hash != owner_hash):
+                    raise sso_mod.OAuthError(
+                        401, "owner_changed", "Character ownership changed.")
+            except sso_mod.OAuthError as exc:
+                # `definitive` is the OAuth error's own classification --
+                # invalid_grant, identity_mismatch, owner_changed. Everything
+                # else is transient and must not delete the stored token.
+                message = (MSG_OWNER_CHANGED if exc.code == "owner_changed" else
+                          MSG_REAUTH if exc.definitive else
+                          f"EVE SSO refused the token refresh: {exc}")
+                return None, message, exc.definitive
+            except jwt_mod.JwtError as exc:
+                # The token EVE just minted failed to validate. Neither of
+                # the two named codes above, and not necessarily a problem
+                # with the grant itself, so this stays transient rather than
+                # deleting a refresh token that may well still work.
+                logger.warning("Refreshed token failed validation", exc_info=True)
+                return None, f"EVE SSO returned an unusable access token: {exc}", False
+            except Exception as exc:
+                # Network, DNS, TLS. Transient by definition: last-good data
+                # stays visible and the row is merely stale.
+                logger.warning("Token refresh failed", exc_info=True)
+                return None, f"Could not reach EVE SSO: {exc}", False
+
+            with self._lock:
+                ch = self._state.find(character_id)
+                if ch is None:
+                    return None, "", False
+                # EVE rotates the refresh token on every use, so the new one
+                # is stored before it is used. Losing this write means the
+                # NEXT launch cannot authenticate at all, with nothing on
+                # screen to explain why.
+                #
+                # EVE sometimes omits the refresh token on a response (it
+                # means "the previous one is still valid"), and
+                # sso.refresh_token reports that as "" rather than
+                # distinguishing "omitted" from "empty" -- it can't,
+                # EveSso.cs does not either at that layer. tokens.wrap("")
+                # returns "", the no-token sentinel, so writing it
+                # unconditionally would overwrite a valid stored credential
+                # with the empty-blob sentinel: the character looks
+                # authorised until the NEXT refresh, which then fails for
+                # good with nothing on screen explaining why. `.strip()`
+                # rather than bare truthiness so a whitespace-only value is
+                # treated the same as an omitted one, matching C#'s
+                # IsNullOrWhiteSpace. Only overwrite when EVE actually sent
+                # a new one; otherwise the previously stored blob is still
+                # correct and is left alone.
+                if token_set.refresh_token.strip():
+                    ch.refresh_token_blob = tokens.wrap(token_set.refresh_token)
+                self._access_tokens[character_id] = (
+                    token_set.access_token,
+                    now + timedelta(seconds=max(0, int(token_set.expires_in))))
+                if not self._save_locked():
+                    # The rotated token is live in memory and correct; only
+                    # the offline copy is missing. Surfaced the way
+                    # _commit_success surfaces its own save failure, rather
+                    # than swallowed -- a save that never reaches disk here
+                    # means the NEXT launch authenticates with a stale
+                    # token, and nothing on screen would otherwise explain
+                    # why.
+                    ch.error = MSG_SAVE_FAILED
+            return token_set.access_token, "", False
+
+    def _character_gate(self, character_id: int) -> threading.Lock:
+        """The per-character lock `_access_token` holds for its full body.
+
+        Built lazily per character id and never removed: a forgotten
+        character's gate is a few dozen bytes that outlives it, which is
+        cheaper than adding a second lock to guard deleting the first one.
+        """
+        with self._character_gates_lock:
+            gate = self._character_gates.get(character_id)
+            if gate is None:
+                gate = threading.Lock()
+                self._character_gates[character_id] = gate
+            return gate
+
+    def _keys(self):
+        """The JWKS source, built on first use.
+
+        Lazy because constructing it is cheap but fetching JWKS is not, and
+        a character that never needs a refresh must never pay for one.
         """
         with self._lock:
-            ch = self._state.find(character_id)
-            if ch is None:
-                return None, "", False
-            blob = ch.refresh_token_blob
-            cached = self._access_tokens.get(character_id)
-
-        now = self._now()
-        if cached is not None:
-            token, expires_at = cached
-            fresh = (expires_at - now).total_seconds() > TOKEN_EXPIRY_MARGIN_S
-            if fresh and (rejected is None or token != rejected):
-                return token, "", False
-
-        if not blob:
-            # Definitive: no amount of retrying invents a refresh token.
-            return None, MSG_NO_TOKEN, True
-        refresh = tokens.unwrap(blob)
-        if refresh is None:
-            # A DPAPI blob that will not decrypt costs this one character a
-            # re-authentication, which is exactly why only the token is
-            # wrapped and the roster metadata beside it is not.
-            return None, MSG_TOKEN_UNREADABLE, True
-
-        try:
-            token_set = self._sso_module().refresh_token(refresh)
-        except sso_mod.OAuthError as exc:
-            # `definitive` is the OAuth error's own classification --
-            # invalid_grant, identity_mismatch, owner_changed. Everything
-            # else is transient and must not delete the stored token.
-            return None, (MSG_REAUTH if exc.definitive
-                          else f"EVE SSO refused the token refresh: {exc}"), \
-                exc.definitive
-        except Exception as exc:
-            # Network, DNS, TLS. Transient by definition: last-good data
-            # stays visible and the row is merely stale.
-            logger.warning("Token refresh failed", exc_info=True)
-            return None, f"Could not reach EVE SSO: {exc}", False
-
-        with self._lock:
-            ch = self._state.find(character_id)
-            if ch is None:
-                return None, "", False
-            # EVE rotates the refresh token on every use, so the new one is
-            # stored before it is used. Losing this write means the NEXT
-            # launch cannot authenticate at all, with nothing on screen to
-            # explain why.
-            #
-            # EVE sometimes omits the refresh token on a response (it means
-            # "the previous one is still valid"), and sso.refresh_token
-            # reports that as "" rather than distinguishing "omitted" from
-            # "empty" -- it can't, EveSso.cs does not either at that layer.
-            # tokens.wrap("") returns "", the no-token sentinel, so writing
-            # it unconditionally would overwrite a valid stored credential
-            # with the empty-blob sentinel: the character looks authorised
-            # until the NEXT refresh, which then fails for good with
-            # nothing on screen explaining why. Only overwrite when EVE
-            # actually sent a new one; otherwise the previously stored blob
-            # is still correct and is left alone.
-            if token_set.refresh_token:
-                ch.refresh_token_blob = tokens.wrap(token_set.refresh_token)
-            self._access_tokens[character_id] = (
-                token_set.access_token,
-                now + timedelta(seconds=max(0, int(token_set.expires_in))))
-            self._save_locked()
-        return token_set.access_token, "", False
+            if self._key_source is None:
+                self._key_source = jwt_mod.SigningKeySource()
+            return self._key_source
 
     def _authorised_get(self, character_id: int, path: str, etag: str):
         """One authorised GET with exactly one 401 retry.
