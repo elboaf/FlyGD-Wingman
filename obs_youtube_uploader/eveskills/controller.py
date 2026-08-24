@@ -168,6 +168,20 @@ def _iso(value) -> str:
     return value.isoformat() if value is not None else ""
 
 
+def _detail_error(character_id: int, plan_name: str, message: str) -> dict:
+    """The failure shape, identical in every key to the success shape.
+
+    Same keys either way so the page has one renderer: a payload that drops
+    fields on failure means every access in skills.js needs a guard, and the
+    one that gets forgotten throws inside a click handler.
+    """
+    return {"ok": False, "message": message,
+            "character_id": character_id, "plan_name": plan_name,
+            "readiness": evaluator.READINESS_UNKNOWN,
+            "estimated_finish_utc": "", "queue_timing_unknown": False,
+            "requirements": []}
+
+
 def _default_open_folder(path: Path) -> None:
     """Open a folder in the shell. Windows only; a no-op elsewhere.
 
@@ -1105,4 +1119,61 @@ class SkillsController:
             listener.cancel()
         except Exception:
             logger.exception("Could not cancel the EVE sign-in listener")
+
+    # ----- detail -----------------------------------------------------
+
+    def character_detail(self, character_id, plan_name) -> dict:
+        """Re-evaluate one character against one plan, in full.
+
+        Computed on demand rather than carried in the roster payload:
+        forty characters times fifty requirements is two thousand rows the
+        page would receive on every push to render at most one of.
+        """
+        name = str(plan_name or "")
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            return _detail_error(0, name, "Unknown character.")
+
+        with self._lock:
+            ch = self._state.find(wanted)
+            if ch is None:
+                return _detail_error(
+                    wanted, name, "That character is no longer in the roster.")
+            plan = self._find_plan_locked(name)
+            if plan is None:
+                # Covers both "no such plan file" and "the file exists but
+                # failed to parse" -- planstore.list_plans excludes a
+                # rejected file from self._plans entirely and reports it as
+                # a PlanIssue instead, so a PlanFile reachable from
+                # _find_plan_locked is `ok` by construction. There is no
+                # second, reachable branch here for "the plan has errors".
+                return _detail_error(
+                    wanted, name, "That plan is no longer available. Reload plans.")
+            analysis = evaluator.evaluate(
+                plan.requirements, self._cache.type_ids(), ch.active_levels,
+                ch.trained_levels, ch.queue, ch.has_snapshot)
+
+        return {
+            "ok": True, "message": "",
+            "character_id": wanted, "plan_name": plan.name,
+            "readiness": analysis.readiness,
+            "estimated_finish_utc": _iso(analysis.estimated_finish_utc),
+            "queue_timing_unknown": bool(analysis.queue_timing_unknown),
+            # Active requirements are INCLUDED. The page filters them out of
+            # the expanded row, which is a display decision; filtering here
+            # would make the payload lie about what the plan requires.
+            "requirements": [
+                {"skill_name": req.skill_name,
+                 "required_level": req.required_level,
+                 # Plain ints across the bridge: the page compares these
+                 # arithmetically, and `null > 3` is quietly false in
+                 # JavaScript rather than an error.
+                 "active_level": int(req.active_level or 0),
+                 "trained_level": int(req.trained_level or 0),
+                 "state": req.state,
+                 "queued_finish_utc": _iso(req.queued_finish_utc),
+                 "queue_timing_unknown": bool(req.queue_timing_unknown)}
+                for req in analysis.requirements],
+        }
 

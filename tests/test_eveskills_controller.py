@@ -1187,3 +1187,72 @@ def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatc
     assert reloaded.find(IDENTITY.character_id) is None
     assert len(reloaded.characters) == state_mod.MAX_CHARACTERS
 
+# ----- character_detail ---------------------------------------------------
+
+
+def test_character_detail_includes_active_requirements(tmp_path):
+    """Active requirements are included in the payload; the page filters
+    the expanded row, not the controller."""
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\n"})
+    controller._cache.merge({"navigation": 3327})
+
+    detail = controller.character_detail(95, "Interceptor")
+
+    assert detail["ok"] is True
+    assert detail["requirements"][0]["skill_name"] == "Navigation"
+    assert detail["requirements"][0]["active_level"] == 3
+
+
+def test_character_detail_matches_the_plan_name_case_insensitively(tmp_path):
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\n"})
+    controller._cache.merge({"navigation": 3327})
+
+    detail = controller.character_detail(95, "iNtErCePtOr")
+
+    assert detail["ok"] is True
+    assert detail["plan_name"] == "Interceptor"
+
+
+def test_character_detail_for_a_forgotten_character_says_so(tmp_path):
+    controller, _, _ = build(tmp_path, plans={"Interceptor": "Navigation III\n"})
+
+    detail = controller.character_detail(95, "Interceptor")
+
+    assert detail["ok"] is False
+    assert detail["message"] == "That character is no longer in the roster."
+
+
+def test_character_detail_for_a_missing_plan_says_so(tmp_path):
+    """planstore.list_plans excludes any file that fails to parse from
+    self._plans entirely (it becomes a PlanIssue instead), so a PlanFile
+    reachable from _find_plan_locked is `ok` by construction -- there is no
+    reachable "the plan has errors" branch here, only "not found"."""
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()],
+        plans={"Broken": "Navigation +5\n"})
+
+    detail = controller.character_detail(95, "Broken")
+
+    assert detail["ok"] is False
+    assert detail["message"] == "That plan is no longer available. Reload plans."
+
+
+def test_character_detail_reports_levels_as_integers(tmp_path):
+    """Plain ints across the bridge: the page compares these arithmetically,
+    and `null > 3` is quietly false in JavaScript rather than an error."""
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\nSpaceship Command III\n"})
+    controller._cache.merge({"navigation": 3327})
+
+    detail = controller.character_detail(95, "Interceptor")
+
+    for req in detail["requirements"]:
+        assert isinstance(req["active_level"], int)
+        assert isinstance(req["trained_level"], int)
+
+
