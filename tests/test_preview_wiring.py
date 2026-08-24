@@ -331,3 +331,89 @@ def test_client_layout_shutdown_never_raises(tmp_path):
             raise RuntimeError("nope")
 
     make_api(tmp_path, client_layouts=Exploding()).shutdown_client_layouts()
+
+
+def test_build_client_layout_manager_returns_none_off_windows(monkeypatch):
+    """None elsewhere keeps every call site in api.py a plain no-op
+    rather than a platform check."""
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "linux")
+    assert main_mod.build_client_layout_manager(object()) is None
+
+
+def test_build_client_layout_manager_body_is_exercised(monkeypatch):
+    """The sys.platform guard means this body never runs in CI, so a
+    NameError or wrong module alias inside it would ship silently and
+    fail only on a user's Windows machine.
+
+    Same known limit as build_preview_host's twin above: this catches
+    only EAGERLY resolved names. A lambda body is not executed here, so
+    collaborators must be bound method references (clientwin32.read_
+    placement, settings_mod.update) rather than lambdas wrapping them.
+    `screen` is the one deliberate closure, and it is not called here.
+    """
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {
+        "restore_clients_on_launch": False, "client_layouts": {}}})
+    manager = main_mod.build_client_layout_manager(state)
+    assert manager is not None
+
+
+def test_build_client_layout_manager_survives_a_broken_subsystem(monkeypatch):
+    """Client layouts are secondary to the upload workflow; failing to
+    build them must not stop Wingman launching.
+
+    NOT the object() trick the preview twin uses. build_preview_host reads
+    state.settings eagerly, so object() raises there; this builder reads it
+    only inside a lambda, so object() would sail through and return a live
+    manager. Break something the builder DOES touch eagerly instead:
+    settings_mod.update is resolved when the kwargs are built.
+    """
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    monkeypatch.setattr(main_mod, "settings_mod", SimpleNamespace())
+    state = SimpleNamespace(settings={"preview": {}})
+    assert main_mod.build_client_layout_manager(state) is None
+
+
+def test_main_actually_starts_the_client_layout_watcher():
+    """The preview twin of this test exists because the method was
+    written, unit-tested, and never called -- so the feature silently did
+    nothing at launch. Only reading main() catches that."""
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    assert "start_client_layouts_if_enabled()" in inspect.getsource(
+        main_mod.main)
+
+
+def test_main_tears_the_client_layout_watcher_down():
+    import inspect
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    assert "shutdown_client_layouts()" in inspect.getsource(main_mod.main)
+
+
+def test_the_client_window_card_lives_on_the_previews_route():
+    """A second card, not more rows on the previews card: these controls
+    move the CLIENT windows and are not about previews."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    html = (root / "obs_youtube_uploader" / "web"
+            / "index.html").read_text(encoding="utf-8")
+    route = html.split('id="route-previews"')[1].split('id="route-')[0]
+    assert "EVE client windows" in route
+    assert 'id="btn-save-client-layout"' in route
+    assert 'id="btn-restore-client-layout"' in route
+    assert 'id="client-restore-on-launch"' in route
