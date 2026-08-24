@@ -9,10 +9,21 @@ click-to-focus switching, per-character and cycle hotkeys, custom labels,
 and layouts that persist across restarts.
 
 The capability exists today in TriffView (GPL-3.0-only, C#/.NET). This is a
-port into Wingman, not a rewrite of TriffView. Wingman relicensed from MIT to
-GPL-3.0-only to make that lawful; see `worktree-gpl3-relicense`. **The
-relicense is not yet effective** — elboaf holds the copyright line and has to
-agree before it is published. No TriffView-derived code may land until it is.
+port into Wingman, not a rewrite of TriffView.
+
+**This design is blocked on a licence change that has not happened.** On this
+branch Wingman is still MIT (`LICENSE:1-13`, `README.md:319-324`). A relicense
+to GPL-3.0-only is prepared on `worktree-gpl3-relicense` but is unmerged and
+not yet effective: elboaf holds the copyright line and has to agree before it
+is published.
+
+Until that merge lands, **no TriffView-derived code may be written or
+committed** — not a module, not a translated function, not a P/Invoke block
+copied and renamed. Deriving GPL-3.0-only code into an MIT project is the one
+mistake here that cannot be fixed by a later commit. Implementation of any step
+that ports TriffView logic is gated on the relicense; the pure-geometry and
+Pillow-rendering work described below is only exempt to the extent it is
+written independently.
 
 ## What was verified, and how
 
@@ -63,6 +74,30 @@ ordinary Python methods that validate the calling thread and `PostMessage` a
 command; nothing outside the module touches an HWND. A debug-mode assertion on
 `GetCurrentThreadId()` at every Win32 entry point catches violations where they
 happen instead of where they hang.
+
+### Lifecycle
+
+`PreviewHost` has an explicit start/stop contract, and both enable/disable and
+application shutdown go through it. Today's shutdown path stops only the
+scheduler and the bookmark engine (`__main__.py:410-416`); `PreviewHost.stop()`
+must be wired in alongside them.
+
+`stop()` is idempotent, safe to call when never started, and ordered:
+
+1. Unregister hotkeys (`UnregisterHotKey`) — before the windows they target die.
+2. Unhook the WinEvent hook (`UnhookWinEvent`).
+3. Unregister every DWM thumbnail (`DwmUnregisterThumbnail`).
+4. Destroy every preview window (`DestroyWindow`), on the preview thread.
+5. `PostQuitMessage` to end the pump.
+6. Join the thread with a timeout, and log if it does not exit.
+
+Steps 1-4 must run *on the preview thread*, so `stop()` from the UI thread
+marshals a shutdown command and waits. A `stop()` that returns while the thread
+still owns HWNDs leaves the process unable to exit cleanly — the failure mode
+is a Wingman that vanishes from the tray but lingers in Task Manager.
+
+Disable is the same sequence as shutdown; enable is a fresh `start()`. There is
+no half-running state where the thread is alive but previews are hidden.
 
 ## Window topology
 
@@ -128,6 +163,41 @@ Alert flashing is the one case that would re-render at ~80ms. Rather than
 re-rendering the bitmap, pulse `SetLayeredWindowAttributes` alpha or
 pre-render a small ring of flash frames. Deferred with alerts (see Scope).
 
+## DPI awareness
+
+Previews need per-monitor DPI to place rects correctly across mixed-scale
+monitors. The obvious move — make the process Per-Monitor V2 — is wrong here,
+and would break two documented decisions.
+
+`__main__.set_dpi_awareness()` deliberately selects `PROCESS_SYSTEM_DPI_AWARE`,
+and says so in its own docstring: *"PROCESS_SYSTEM_DPI_AWARE, not Per-Monitor
+V2. System-DPI-aware is correct for a single-window tray utility and avoids
+handling WM_DPICHANGED when the window is dragged between monitors of different
+scale"* (`__main__.py:99-114`). `ui/chrome.py:177-186` then builds on that
+choice, matching pywebview's own `_scale` *"including its known wrongness on a
+second monitor at another scale"*, on the reasoning that improving on it there
+would just disagree with pywebview.
+
+Changing the process-wide setting would silently invalidate both. It is not an
+option.
+
+**The preview thread instead sets its own awareness.** DPI awareness has a
+thread-local override, `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`,
+which applies to windows created on that thread and leaves the process context
+untouched. Because previews already live on a dedicated thread that owns all
+their HWNDs, this fits the architecture exactly:
+
+- the process stays `PROCESS_SYSTEM_DPI_AWARE`;
+- `__main__.py` and `ui/chrome.py` are untouched, and pywebview's window keeps
+  behaving exactly as it does today;
+- preview windows, created on the preview thread, are Per-Monitor V2 and get
+  correct physical rects on every monitor.
+
+The call is made once, first thing on the preview thread, before any window is
+created. Its return value is checked rather than assumed — the earlier probes'
+success with the process-wide call proves nothing about this path, because they
+ran standalone before `set_dpi_awareness()` existed in the process.
+
 ## Module boundaries
 
 New package `obs_youtube_uploader/preview/`. Split so the pure-logic half is
@@ -139,8 +209,8 @@ testable on Linux, matching the discipline `evewindows.py` already sets.
 | `discovery.py` | Enumerate EVE clients, parse character names, stable keys | Win32 call, pure parsing |
 | `geometry.py` | Rects, default stack placement, snapping, hit-testing | **Pure — Linux-testable** |
 | `chrome.py` | Pillow rendering of border/label/alert to RGBA | **Pure — Linux-testable** |
-| `gestures.py` | Hotkey gesture parsing (`Ctrl+Alt+F1`, `VK_`/hex) | **Pure — Linux-testable** |
-| `cycle.py` | Cycle-group index maths, per-group cursor | **Pure — Linux-testable** |
+| `gestures.py` | Hotkey gesture parsing (`Ctrl+Alt+F1`, `VK_`/hex) | **Pure — Linux-testable** *(deferred)* |
+| `cycle.py` | Cycle-group index maths, per-group cursor | **Pure — Linux-testable** *(deferred)* |
 | `layout.py` | Persistence of frame rects, labels, hotkeys | **Pure — Linux-testable** |
 | `layered.py` | DIB section + `UpdateLayeredWindow` plumbing | Windows |
 | `thumbnail.py` | `DwmRegisterThumbnail` lifecycle wrapper | Windows |
@@ -150,6 +220,15 @@ testable on Linux, matching the discipline `evewindows.py` already sets.
 `gestures.py` is named to avoid confusion with the existing top-level
 `hotkeys.py`, which supervises the AutoHotkey bookmark engine and is unrelated.
 
+**`obs_youtube_uploader.preview` must be added to `packages` in
+`pyproject.toml`.** Package discovery is explicitly enumerated there
+(`pyproject.toml:49`), and the surrounding comment states the consequence
+plainly: subpackages are not implied by their parent, and a missing entry
+"installs cleanly and fails at import time in the built artifact, not in the
+checkout where the source tree makes it work anyway"
+(`pyproject.toml:38-49`). A source checkout would pass every test while the
+frozen release crashed on launch. This is a required step, not a follow-up.
+
 Five of the eleven modules are pure Python, and `discovery.py` is pure
 apart from one enumeration call. TriffView's equivalent logic —
 geometry, snapping, cycle maths, gesture parsing, position memory — is already
@@ -158,15 +237,39 @@ framework-free integer arithmetic (`TriffViewRect.cs`, `TriffViewCycleState.cs`,
 
 ## Discovery
 
-Extends the existing `evewindows.py` rather than duplicating it. That module
-already enumerates EVE windows by title with correctly declared argtypes, and
-its docstring explains why those declarations are load-bearing.
+`evewindows.py` already enumerates EVE windows with correctly declared
+argtypes, and its docstring explains why those declarations are load-bearing.
+The temptation is to widen it. Don't.
 
-Two changes it needs: return HWNDs (it currently returns titles), and filter by
-process name so a browser tab titled `EVE - something` cannot masquerade as a
-client. TriffView filters on process `exefile` before matching the title
-(`TriffViewSubsystem.cs:4738-4790`); Wingman's `procid.py` already has the
-process-identity machinery.
+`list_eve_windows()` returns *sorted, de-duplicated title strings*
+(`evewindows.py:80-89`), and `ui/api.py:1288-1303` passes that list straight to
+the page for the bookmarks feature. Changing its return type to carry HWNDs
+would break that contract silently. **The existing signature is preserved
+unchanged.**
+
+Instead, `preview/discovery.py` owns a separate, handle-bearing interface
+returning `(hwnd, title, pid, character_name, stable_key)` records. The two
+share the low-level enumeration helper in `evewindows.py` — the argtypes
+discipline stays in one place — but not the public function. Title-only
+consumers keep the old call; the preview subsystem uses the new one.
+
+Discovery also filters by process name, so a browser tab titled
+`EVE - something` cannot masquerade as a client. TriffView filters on process
+`exefile` before matching the title (`TriffViewSubsystem.cs:4738-4790`).
+
+**This must not use `procid.describe()`.** That function shells out to
+PowerShell running `Get-CimInstance` per PID with a ten-second timeout
+(`procid.py:21-37`), and its own docstring justifies the cost as "one call on
+one code path". At a 700ms sweep across 10-30 clients it would be
+catastrophic. Discovery instead uses `QueryFullProcessImageNameW` against a
+handle from `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, with:
+
+- a `pid -> image name` cache, invalidated periodically (TriffView flushes
+  every 512 sweeps, `TriffViewSubsystem.cs:4732`);
+- explicit handling of access-denied, which is expected for processes owned by
+  another user or at higher integrity — treat as "not an EVE client" rather
+  than as an error;
+- no fallback to `procid.describe()` on failure, at any sweep rate.
 
 Sweep on a timer (TriffView uses 700ms) plus an immediate re-sweep on
 `EVENT_SYSTEM_FOREGROUND`. Identity key is the character name where available,
@@ -185,8 +288,33 @@ Persisted per preview: frame rect, label override, lock state. Persisted
 globally: preview size defaults, opacity, border colours, label placement and
 size, hotkey bindings, cycle groups.
 
-Layout writes go through `atomicio.py`, which the bookmarks work already added
-for exactly this class of problem.
+### Who may write settings
+
+The preview thread must never call `settings.save()` directly. `save()` rewrites
+the *complete projected document* from `DEFAULTS` on every call
+(`settings.py:145-149`), and `ui/api.py:139-141` replaces app state wholesale,
+so two writers racing lose each other's updates entirely — the last writer wins
+the whole file, not just its own keys.
+
+`atomicio.py` does not solve this, and the design must not claim it does. Its
+docstring is explicit that it exists so "a concurrent reader never sees it
+half-written" and that "single writer ownership settles who may write; it says
+nothing about what a reader polling on a timer observes mid-write"
+(`atomicio.py:1-5`). It addresses torn reads across the Wingman/engine
+boundary. The hazard here is lost updates, which is a different problem.
+
+The contract is therefore **single-writer, on the UI thread**:
+
+- The preview thread owns preview state in memory and is the authority on it.
+- It never touches the settings file. On change (a preview moved, resized,
+  relabelled, locked) it marshals a delta to the UI thread.
+- The UI thread applies that delta to the settings dict and calls
+  `settings.save()`, exactly as every other setting is written today.
+- Writes are debounced — a drag produces a stream of rect updates, and each
+  one must not rewrite the file.
+
+This keeps `settings.save()` single-writer, which is the invariant it was
+written under, and requires no change to it.
 
 ## UI integration
 
@@ -210,9 +338,34 @@ pay a thread or a 700ms sweep for it.
   smoke checklist. The bookmarks work established this pattern already
   (`docs/` smoke checks for the engine).
 - **Note**: `ci.yml` runs on `ubuntu-latest`; only build/release use Windows.
-  Nothing here changes that. `test_discord.py::test_unreadable_archive_is_reported_not_raised`
-  already fails on Windows (it revokes read permission via `chmod`, which
-  Windows ignores) and will need a `skipif` if the suite is ever run there.
+  Nothing here changes that.
+  `test_discord.py::test_unreadable_archive_is_reported_not_raised` already
+  fails on Windows (it revokes read permission via `chmod`, which Windows
+  ignores) and will need a `skipif` if the suite is ever run there.
+
+### Observability
+
+The Windows-only half is exercised by a manual checklist, which means when it
+breaks in the field the log is the only evidence. Wingman already has durable
+rotating logging (`__main__.py:26-64`); the preview subsystem uses it rather
+than inventing anything.
+
+Logged with context, at least once per occurrence and never in a tight loop:
+
+- discovery sweep results when the client set changes — count, and the identity
+  keys added or removed;
+- `DwmRegisterThumbnail` failure, with the `HRESULT` and the target title;
+- `SetWinEventHook` or `RegisterHotKey` failure, with which gesture failed and
+  why (a hotkey already claimed by another application is the common case, and
+  is a user-actionable condition, not a bug);
+- `SetThreadDpiAwarenessContext` result at thread start;
+- preview thread death, from the joiner's side.
+
+Two of these need a **user-visible degraded state**, not just a log line: a
+hotkey that could not be registered, and DWM composition being unavailable.
+Both are conditions the user can act on and would otherwise experience as "the
+feature silently does nothing". They surface in the UI the same way other
+status is pushed to the page.
 
 ## Scope
 
@@ -227,8 +380,9 @@ pay a thread or a 700ms sweep for it.
 
 **Deferred, in rough priority order:**
 
-7. Per-character and cycle-group hotkeys (`gestures.py`, `cycle.py` land in the
-   first slice as pure logic, unwired).
+7. Per-character and cycle-group hotkeys, including `gestures.py` and
+   `cycle.py`. These are deferred *whole* — writing them unwired in the first
+   slice would be speculative, since their only consumers are deferred too.
 8. Custom labels, label placement and colours.
 9. Alert flashing driven by EVE log watching.
 10. Minimize-inactive-on-switch, hide-active-preview.
@@ -244,15 +398,14 @@ and should not be quietly crossed.
 
 ## Risks and open questions
 
-1. **Process DPI awareness is set once, process-wide, before any window
-   exists.** The probes called `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`
-   at import, before pywebview initialised, and it returned true. In Wingman the
-   preview subsystem starts *after* the webview, by which point WinForms has
-   very likely already set process awareness — our call would fail, and if
-   WinForms chose System-aware, every rect is silently virtualized on a
-   multi-DPI setup. **Mitigation**: set PMv2 in `__main__.py` before pywebview
-   is imported, and read back the effective awareness rather than assuming.
-   **This is unverified and is the highest-risk open item.**
+1. **Thread-local DPI awareness must be verified.** See the DPI section
+   above. `SetThreadDpiAwarenessContext` is documented as Windows 10 1607+ and
+   should be checked against Wingman's supported floor, and the interaction
+   between a Per-Monitor-V2 thread and `DwmUpdateThumbnailProperties`
+   destination rects is unverified. If thread-local awareness does not hold,
+   the fallback is to keep the preview thread System-aware like the rest of the
+   process and accept TriffView-equivalent behaviour on mixed-DPI setups —
+   **not** to change the process-wide setting.
 2. **Premultiplied-alpha encoder.** `img.tobytes("raw", "BGRa")` is expected to
    produce premultiplied output; unverified. The fallback is a numpy-free
    per-pixel loop, which is too slow, or `ImageChops` arithmetic.
