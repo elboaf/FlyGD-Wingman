@@ -1,6 +1,7 @@
 """One writer per file prevents conflicting WRITES. It does nothing about a
 reader observing a half-written file, and every one of these files is polled
 by another process on a 2s or 10s timer."""
+import os
 from pathlib import Path
 import pytest
 from obs_youtube_uploader import atomicio
@@ -113,3 +114,90 @@ def test_a_permanently_locked_destination_raises_and_leaves_no_debris(tmp_path):
         atomicio.os.replace = real
     assert target.read_text() == "old"
     assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
+
+
+def test_copy_atomic_writes_bytes(tmp_path):
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"\x00\x01\x02payload")
+    target = tmp_path / "dst.dat"
+    atomicio.copy_atomic(source, target)
+    assert target.read_bytes() == b"\x00\x01\x02payload"
+
+
+def test_copy_atomic_overwrites_existing(tmp_path):
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"new")
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"old")
+    atomicio.copy_atomic(source, target)
+    assert target.read_bytes() == b"new"
+
+
+def test_copy_atomic_creates_parent_directories(tmp_path):
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"x")
+    target = tmp_path / "nested" / "deep" / "dst.dat"
+    atomicio.copy_atomic(source, target)
+    assert target.read_bytes() == b"x"
+
+
+def test_copy_atomic_leaves_target_intact_when_source_is_missing(tmp_path):
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"original")
+    with pytest.raises(OSError):
+        atomicio.copy_atomic(tmp_path / "absent.dat", target)
+    assert target.read_bytes() == b"original"
+
+
+def test_copy_atomic_leaves_no_temp_files_behind(tmp_path):
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"original")
+    with pytest.raises(OSError):
+        atomicio.copy_atomic(tmp_path / "absent.dat", target)
+    assert [p.name for p in tmp_path.iterdir()] == ["dst.dat"]
+
+
+def test_copy_atomic_retries_a_locked_destination(tmp_path):
+    """Windows raises PermissionError from os.replace when the destination
+    is held open without FILE_SHARE_DELETE. EVE holds core_*.dat open."""
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"x")
+    target = tmp_path / "dst.dat"
+    slept = []
+    calls = []
+    real_replace = os.replace
+
+    def flaky(tmp_name, dest):
+        calls.append(dest)
+        if len(calls) < 3:
+            raise PermissionError(32, "in use")
+        real_replace(tmp_name, dest)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(atomicio.os, "replace", flaky)
+    try:
+        atomicio.copy_atomic(source, target, sleep=slept.append)
+    finally:
+        monkey.undo()
+    assert target.read_bytes() == b"x"
+    assert len(calls) == 3 and len(slept) == 2
+
+
+def test_copy_atomic_gives_up_after_the_attempt_budget(tmp_path):
+    source = tmp_path / "src.dat"
+    source.write_bytes(b"x")
+    target = tmp_path / "dst.dat"
+    target.write_bytes(b"original")
+
+    def always_locked(tmp_name, dest):
+        raise PermissionError(32, "in use")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(atomicio.os, "replace", always_locked)
+    try:
+        with pytest.raises(PermissionError):
+            atomicio.copy_atomic(source, target, attempts=3, sleep=lambda _: None)
+    finally:
+        monkey.undo()
+    assert target.read_bytes() == b"original"
+    assert [p.name for p in tmp_path.iterdir()] == ["dst.dat", "src.dat"]
