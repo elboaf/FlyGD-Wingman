@@ -20,6 +20,7 @@ Datetimes are timezone-aware `datetime` objects everywhere inside the
 package. This module is the bridge boundary and the only place they become
 ISO strings.
 """
+import copy
 import json
 import logging
 import os
@@ -1008,7 +1009,20 @@ class SkillsController:
         with self._lock:
             self._auth_in_progress = True
         self._push_state(force=True)
-        self._spawn(target=self._auth_worker, daemon=True).start()
+        try:
+            self._spawn(target=self._auth_worker, daemon=True).start()
+        except Exception:
+            # _auth_worker's own finally is what normally releases the latch
+            # and clears the in-progress flag, but it never runs if starting
+            # the thread itself raises -- that window has to be closed here,
+            # or sign-in is dead until restart.
+            logger.exception("Could not start the EVE sign-in worker")
+            with self._lock:
+                self._auth_in_progress = False
+            self._auth_latch.release()
+            self._push_state(force=True)
+            self._alert("warning", "Sign-in failed",
+                        "Could not start the EVE sign-in worker.")
 
     def _auth_worker(self) -> None:
         added = False
@@ -1049,6 +1063,13 @@ class SkillsController:
         pkce = sso.generate_pkce()
         factory = (self._listener_factory if self._listener_factory is not None
                    else loopback_mod.LoopbackListener)
+        # Snapshotted before the browser opens, not at commit time: the
+        # up-to-five-minute consent window is long enough for the user to
+        # forget this very character from the roster page while it is open.
+        # TriffSkillsAuthentication.cs:38,45-48 takes the same snapshot for
+        # the same reason and refuses to commit an id that vanished from it.
+        with self._lock:
+            known_ids = frozenset(c.character_id for c in self._state.characters)
         with factory(host=application.REDIRECT_HOST,
                      port=application.REDIRECT_PORT,
                      path=application.REDIRECT_PATH) as listener:
@@ -1073,60 +1094,116 @@ class SkillsController:
                             client_id=application.CLIENT_ID,
                             required_scopes=application.SCOPES,
                             key_source=self._keys())
-        return self._upsert_identity(identity, token_set)
+        return self._upsert_identity(identity, token_set, known_ids)
 
-    def _upsert_identity(self, identity, token_set) -> bool:
+    def _upsert_identity(self, identity, token_set, known_ids=frozenset()) -> bool:
         blob = tokens.wrap(token_set.refresh_token)
         now = self._now()
         full = False
+        forgotten_mid_auth = False
+        saved = True
         with self._lock:
             existing = self._state.find(identity.character_id)
-            ch = existing or state_mod.Character(
-                character_id=identity.character_id)
-            # Compared only when a hash was previously stored: an absent
-            # claim on an older row is missing information, not evidence
-            # of a transfer, and treating it as one would wipe a good
-            # snapshot on the first re-auth after an upgrade.
-            if existing is not None and existing.owner_hash and \
-                    existing.owner_hash != identity.owner_hash:
-                # A different account owns this character now. Its
-                # skills, queue and etags describe someone else's
-                # training, and scoring a plan against them would be
-                # confidently wrong.
-                ch.active_levels = {}
-                ch.trained_levels = {}
-                ch.queue = ()
-                ch.fetched_utc = None
-                ch.skills_etag = ""
-                ch.queue_etag = ""
-                ch.error = MSG_OWNER_CHANGED
+            if existing is None and identity.character_id in known_ids:
+                # The character was on the roster when the browser opened
+                # and is gone now: forgotten while the consent screen was
+                # up. Committing here would silently resurrect it, exactly
+                # what the user asked not to happen.
+                forgotten_mid_auth = True
             else:
-                ch.error = ""
-            ch.character_name = identity.name
-            ch.owner_hash = identity.owner_hash
-            ch.scopes = tuple(sorted(identity.scopes))
-            ch.authenticated_utc = now
-            ch.needs_reauth = False
-            ch.refresh_token_blob = blob
-            try:
-                # upsert() itself raises ValueError at MAX_CHARACTERS --
-                # only for a genuinely new id; an update to an existing
-                # row always succeeds regardless of how full the roster
-                # is, since it does not grow it.
-                self._state.upsert(ch)
-            except ValueError:
-                full = True
-            else:
-                self._access_tokens[ch.character_id] = (
-                    token_set.access_token,
-                    now + timedelta(seconds=max(0, int(token_set.expires_in))))
-                self._save_locked()
+                # existing.owner_hash's comparisons never fire for a brand
+                # new character (existing is None), so the aliasing below
+                # only ever mutates a row this method itself owns.
+                previous = copy.deepcopy(existing) if existing is not None else None
+                ch = existing or state_mod.Character(
+                    character_id=identity.character_id)
+                # Compared only when BOTH sides carry a hash: an absent
+                # claim on either side is missing information, not evidence
+                # of a transfer, and treating it as one would wipe a good
+                # snapshot -- or, on the write below, permanently blank out
+                # a stored hash and disable every future check -- on the
+                # first re-auth after an upgrade. Mirrors _access_token's
+                # own comparison above.
+                if (existing is not None and existing.owner_hash
+                        and identity.owner_hash
+                        and existing.owner_hash != identity.owner_hash):
+                    # A different account owns this character now. Its
+                    # skills, queue and etags describe someone else's
+                    # training, and scoring a plan against them would be
+                    # confidently wrong.
+                    ch.active_levels = {}
+                    ch.trained_levels = {}
+                    ch.queue = ()
+                    ch.fetched_utc = None
+                    ch.skills_etag = ""
+                    ch.queue_etag = ""
+                    ch.error = MSG_OWNER_CHANGED
+                else:
+                    ch.error = ""
+                ch.character_name = identity.name
+                if identity.owner_hash:
+                    # Never blanked: once written, this hash is the only
+                    # thing standing between a real transfer and a token
+                    # that happened to omit the claim (jwt.py:234-239 -- a
+                    # blank owner_hash is normal, not a signal). Overwriting
+                    # a stored hash with a blank one would disable this
+                    # check and _access_token's forever, for this character.
+                    ch.owner_hash = identity.owner_hash
+                ch.scopes = tuple(sorted(identity.scopes))
+                ch.authenticated_utc = now
+                ch.needs_reauth = False
+                ch.refresh_token_blob = blob
+                previous_token = self._access_tokens.get(ch.character_id)
+                try:
+                    # upsert() itself raises ValueError at MAX_CHARACTERS --
+                    # only for a genuinely new id; an update to an existing
+                    # row always succeeds regardless of how full the roster
+                    # is, since it does not grow it.
+                    self._state.upsert(ch)
+                except ValueError:
+                    full = True
+                else:
+                    self._access_tokens[ch.character_id] = (
+                        token_set.access_token,
+                        now + timedelta(seconds=max(0, int(token_set.expires_in))))
+                    saved = self._save_locked()
+                    if not saved:
+                        # ch may be the SAME object as the live roster
+                        # entry (existing is ch when the character was
+                        # already present), so its fields were mutated in
+                        # place the moment they were set above, save or no
+                        # save. A failed save is rolled back by restoring
+                        # the pre-mutation snapshot -- or, for a brand new
+                        # sign-in, by removing the row this call itself
+                        # added -- rather than leaving memory and disk
+                        # diverged. Unlike _commit_success's periodic
+                        # refresh, a sign-in is a one-time event with no
+                        # later pass to self-heal it, and the divergence
+                        # here is worse: memory would hold a refresh token
+                        # EVE has already rotated away.
+                        if previous is not None:
+                            self._state.upsert(previous)
+                        else:
+                            self._state.remove(ch.character_id)
+                        if previous_token is not None:
+                            self._access_tokens[ch.character_id] = previous_token
+                        else:
+                            self._access_tokens.pop(ch.character_id, None)
+        if forgotten_mid_auth:
+            self._alert("warning", "Sign-in not completed",
+                        "The character was forgotten while reauthorization "
+                        "was in progress.")
+            return False
         if full:
             # Alerted outside the lock: _alert reaches pywebview, and a slow
             # page must not hold the state lock.
             self._alert("warning", "Too many characters",
                         f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
                         "characters. Forget one before adding another.")
+            return False
+        if not saved:
+            self._alert("warning", "Could not save the sign-in",
+                        "The sign-in was not saved and has been reverted.")
             return False
         return True
 

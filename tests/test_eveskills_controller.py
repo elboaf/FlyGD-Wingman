@@ -1024,6 +1024,14 @@ class FakeListener:
     def wait(self, expected_state, *, timeout_s=None):
         if self.on_wait is not None:
             self.on_wait()
+        # Checked AFTER on_wait(), since that is where a real cancel_auth()
+        # call lands from another thread while the real listener blocks in
+        # accept(). Ignoring this and falling through to error_to_raise or
+        # the callback -- the old behaviour -- meant a test built on top of
+        # a cancelling on_wait never actually reached the CallbackCancelled
+        # branch it was trying to exercise.
+        if self.cancelled:
+            raise loopback_mod.CallbackCancelled()
         if self.error_to_raise is not None:
             raise self.error_to_raise
         return self.callback
@@ -1204,6 +1212,157 @@ def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatc
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     assert reloaded.find(IDENTITY.character_id) is None
     assert len(reloaded.characters) == state_mod.MAX_CHARACTERS
+
+
+def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
+    """A refreshed token that omits the owner claim (jwt.py:234-239 -- a
+    normal, unremarkable thing) must not read as a different owner just
+    because a hash was stored last time, and must not blank that stored
+    hash out from under future checks."""
+    blank_identity = jwt_mod.EveIdentity(
+        character_id=95, name="Aiga Otsolen", owner_hash="",
+        scopes=frozenset(application.SCOPES))
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: blank_identity)
+
+    controller.authenticate()
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    found = reloaded.find(95)
+    assert found.active_levels == {3327: 3}
+    assert found.error == ""
+    assert found.owner_hash == "hash-1"
+    assert not any("ownership" in body.lower() for _, _, body in alerts)
+
+
+def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch):
+    controller, _, alerts, _, _ = build_auth(tmp_path, monkeypatch)
+    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+
+    result = controller.authenticate()
+
+    assert controller.state_payload()["characters"] == []
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def test_a_sign_in_save_failure_rolls_back_an_existing_character(tmp_path, monkeypatch):
+    """ch is the SAME object as the live roster row when the character
+    already exists, so its fields land on the live state immediately, save
+    or no save. A failed save must restore the pre-mutation snapshot, not
+    just skip an append."""
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY)
+    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+
+    controller.authenticate()
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    found = reloaded.find(95)
+    assert found.active_levels == {3327: 3}
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
+    """The character is on the roster when the browser opens and gone by
+    the time the callback resolves -- forgotten while the consent screen
+    was up. Committing here would silently resurrect it."""
+    controller = None
+
+    def forget_during_wait():
+        controller.forget(95)
+
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY, on_wait=forget_during_wait)
+
+    controller.authenticate()
+
+    assert controller.state_payload()["characters"] == []
+    assert any("forgotten" in body.lower() for _, _, body in alerts)
+
+
+def test_a_cancelled_sign_in_produces_no_alert(tmp_path, monkeypatch):
+    """The cancel button's entire user-facing contract: cancelling must
+    never look like a failure."""
+    controller = None
+
+    def cancel_from_inside_wait():
+        controller.cancel_auth()
+
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, on_wait=cancel_from_inside_wait)
+
+    controller.authenticate()
+
+    assert alerts == []
+    assert controller.state_payload()["characters"] == []
+
+
+def test_a_timed_out_sign_in_alerts(tmp_path, monkeypatch):
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, listener_error=loopback_mod.CallbackTimeout())
+
+    controller.authenticate()
+
+    assert any("timed out" in title.lower() for _, title, _ in alerts)
+
+
+def test_an_oauth_error_during_exchange_alerts(tmp_path, monkeypatch):
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch,
+        sso=FakeAuthSso(raises=sso_mod.OAuthError(400, "invalid_grant", "bad code")))
+
+    controller.authenticate()
+
+    assert any("refused" in title.lower() for _, title, _ in alerts)
+    assert controller.state_payload()["characters"] == []
+
+
+def test_a_jwt_error_during_validation_alerts(tmp_path, monkeypatch):
+    def raising_validate(*a, **k):
+        raise jwt_mod.JwtError("signature verification failed")
+
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, validate_token=raising_validate)
+
+    controller.authenticate()
+
+    assert any("cannot trust" in title.lower() for _, title, _ in alerts)
+    assert controller.state_payload()["characters"] == []
+
+
+def test_an_unexpected_exception_during_sign_in_alerts(tmp_path, monkeypatch):
+    def raising_validate(*a, **k):
+        raise RuntimeError("boom")
+
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, validate_token=raising_validate)
+
+    controller.authenticate()
+
+    assert any("Sign-in failed" in title for _, title, _ in alerts)
+    assert controller.state_payload()["characters"] == []
+
+
+def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
+    """Nothing runs _auth_worker's own finally if starting the thread
+    itself raises -- authenticate() has to release the latch and clear the
+    in-progress flag itself in that window, or sign-in is dead until
+    restart."""
+    class RaisingSpawn:
+        def __call__(self, target, daemon=True):
+            raise OSError("could not start thread")
+
+    controller, _, alerts, _, _ = build_auth(
+        tmp_path, monkeypatch, spawn=RaisingSpawn())
+
+    controller.authenticate()
+
+    assert any("Sign-in failed" in title for _, title, _ in alerts)
+    assert controller._auth_in_progress is False
+    assert controller._auth_latch.acquire(blocking=False)
 
 # ----- character_detail ---------------------------------------------------
 
