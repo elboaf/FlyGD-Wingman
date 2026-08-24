@@ -417,6 +417,34 @@ def test_teardown_releases_hotkeys_before_destroying_the_host_window():
     assert order == ["unregister-hotkey", "unhook", "destroy-window", "quit"]
 
 
+def test_teardown_clears_the_client_and_registration_reports():
+    """characters() and hotkey_status() are read from any thread with no
+    liveness check of their own -- ui/api.py gates on is_running instead.
+    If teardown left these populated, a stopped host would keep reporting
+    characters as online and chords as registered after the thread that
+    owned them is gone and Windows holds none of them."""
+    class _TeardownUser32(_FakeUser32):
+        def __getattr__(self, name):
+            # Anything _teardown calls beyond Register/UnregisterHotKey
+            # (UnhookWinEvent, KillTimer, DestroyWindow, PostQuitMessage) --
+            # a no-op stands in for the real Win32 call.
+            return lambda *a, **k: 0
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    libs = _FakeLibs(_TeardownUser32())
+    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
+                            "cycle_next": "", "cycle_prev": ""})
+    assert h.characters() == ["Alice"]
+    assert h.hotkey_status() == {"Ctrl+F1": True}
+
+    h._teardown(libs)
+
+    assert h.characters() == []
+    assert h.hotkey_status() == {}
+
+
 def test_hotkey_focuses_the_named_character(monkeypatch):
     activated = []
     monkeypatch.setattr(host.window_mod, "activate",

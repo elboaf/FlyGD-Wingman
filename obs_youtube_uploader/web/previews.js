@@ -165,16 +165,22 @@
 
   function render() {
     host.textContent = '';
-    host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next, true,
+
+    var off = WM.el('preview-binds-off');
+    if (off) { off.style.display = state.enabled ? 'none' : ''; }
+
+    host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next,
+                             state.enabled,
                              function (g) { setBind('cycle_next', g); }));
-    host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev, true,
+    host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev,
+                             state.enabled,
                              function (g) { setBind('cycle_prev', g); }));
 
     var list = rows();
     list.forEach(function (entry) {
       host.appendChild(makeRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],
-        entry.online,
+        state.enabled && entry.online,
         function (g) { setCharacterBind(entry.name, g); }));
     });
 

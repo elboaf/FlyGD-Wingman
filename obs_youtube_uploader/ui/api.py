@@ -1346,12 +1346,20 @@ class Api:
         """
         section = self._state.settings.get("preview", {})
         host = self._preview_host
+        # is_running, not merely "host is not None": there is a window
+        # between stop() clearing the thread handle and _teardown running
+        # on the preview thread itself where the host object still exists
+        # but owns no chords and no windows. Gating on is_running closes
+        # it -- a stopped host reports the same empty state as no host at
+        # all, rather than serving whatever characters()/hotkey_status()
+        # last held.
+        live = host is not None and host.is_running
         return {
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
             "roster": list(section.get("seen") or []),
-            "characters": host.characters() if host is not None else [],
-            "registration": host.hotkey_status() if host is not None else {},
+            "characters": host.characters() if live else [],
+            "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
         }
 

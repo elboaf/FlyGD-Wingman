@@ -434,6 +434,17 @@ class PreviewHost:
         for ident in list(self._registered):
             libs.user32.UnregisterHotKey(self._hwnd, ident)
         self._registered.clear()
+        # And the reports about them: characters()/hotkey_status() are read
+        # from any thread with no liveness check of their own (get_preview_
+        # hotkey_state gates on is_running instead, see ui/api.py). Leaving
+        # these populated after teardown would have the bind list claim
+        # every character is online and every chord registered while the
+        # thread that owned them is gone and Windows holds none of them.
+        # Replaced wholesale, not .clear()'d in place, for the same reason
+        # _sweep() and _apply_hotkeys() never mutate them in place either:
+        # a reader on another thread must never observe a half-cleared dict.
+        self._clients = {}
+        self._hotkey_status = {}
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)   # 1. hook
             self._hook = None

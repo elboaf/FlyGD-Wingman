@@ -519,6 +519,11 @@ class _FakeHost:
         self.status = {}
         self.chars = []
         self.started = False
+        # Mirrors PreviewHost.is_running. Defaults True so existing fixtures
+        # that never call start()/stop() still read as "the host is up",
+        # matching what they asserted before this field existed; a test for
+        # the stopped-host gate flips it explicitly.
+        self.is_running = True
 
     def set_hotkeys(self, table):
         self.hotkeys = table
@@ -531,9 +536,11 @@ class _FakeHost:
 
     def start(self):
         self.started = True
+        self.is_running = True
 
     def stop(self):
         self.started = False
+        self.is_running = False
 
 
 def test_capture_preview_bind_returns_a_canonical_gesture(tmp_path):
@@ -599,6 +606,29 @@ def test_hotkey_state_is_readable_with_no_host(tmp_path):
 
     assert state["characters"] == []
     assert state["registration"] == {}
+
+
+def test_hotkey_state_reports_nothing_live_once_the_host_has_stopped(tmp_path):
+    """A host that exists but is not running (previews switched off) must
+    not keep serving its last characters/registration snapshot -- that is
+    exactly the state that reads as 'previews are on and every chord is
+    registered' when neither is true. is_running, not merely `host is not
+    None`, is what closes the window between stop() and _teardown running
+    on the preview thread; both must report the same empty shape."""
+    fake_host = _FakeHost()
+    fake_host.status = {"Ctrl+F1": True}
+    fake_host.chars = ["Alice"]
+    fake_host.is_running = False
+    api = make_api(tmp_path, preview_host=fake_host)
+
+    state = api.get_preview_hotkey_state()
+
+    assert state["characters"] == []
+    assert state["registration"] == {}
+    # Still well-formed, not partial: everything else the page needs.
+    assert state["hotkeys"] == {}
+    assert state["roster"] == []
+    assert "bookmark_chords" in state
 
 
 def test_bookmark_chords_are_active_only_when_they_are_registered(tmp_path):
