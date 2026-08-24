@@ -93,8 +93,8 @@ DEFAULTS = {
     "eve_settings": _eve_settings_defaults(),
 }
 
-_VALID_PRIVACY = {"private", "unlisted", "public"}
-_VALID_NOTIFY = {"toast", "popup"}
+VALID_PRIVACY = {"private", "unlisted", "public"}
+VALID_NOTIFY = {"toast", "popup"}
 
 
 def _fresh_defaults() -> dict:
@@ -226,9 +226,9 @@ def _normalize(data: dict) -> dict:
                 "discord_webhook", "gamelogs_dir", "channel_id",
                 "channel_title"):
         data.setdefault(key, DEFAULTS[key])
-    if data["privacy"] not in _VALID_PRIVACY:
+    if data["privacy"] not in VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
-    if data["notify_mode"] not in _VALID_NOTIFY:
+    if data["notify_mode"] not in VALID_NOTIFY:
         data["notify_mode"] = DEFAULTS["notify_mode"]
     if not isinstance(data["category"], str) or not data["category"].isdigit():
         data["category"] = DEFAULTS["category"]
