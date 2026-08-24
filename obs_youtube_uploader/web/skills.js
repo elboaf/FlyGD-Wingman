@@ -10,11 +10,11 @@
  * each plan's ready_count, and the denominator is characters.length, which
  * the page already holds.
  *
- * renderRoster() is deliberately left for Task 17 to define -- expanded,
- * details, pendingDetail, and filterText exist here only as the seam it
- * builds on. Nothing in THIS task ever populates `expanded`, so the one
- * caller that would reach into it (selectPlan, below) never actually runs
- * its body.
+ * renderRoster() is a no-op stub in this task, replaced by Task 17's real
+ * implementation -- expanded, details, pendingDetail, and filterText exist
+ * here only as the seam it builds on. Nothing in THIS task ever populates
+ * `expanded`, so the one caller that would reach into it (selectPlan,
+ * below) never actually runs its body.
  */
 (function () {
   'use strict';
@@ -234,4 +234,10 @@
   }
   // Collapsed by default because <details> is: a plan file with a typo is
   // worth surfacing, not worth pushing the roster down the page.
+
+  // Replaced by Task 17, which builds the roster, its groups and the
+  // in-row expansion. A no-op rather than an undefined call so this
+  // commit renders a quiet empty pane instead of throwing a caught
+  // ReferenceError into the console on every state push.
+  function renderRoster() {}
 }());
