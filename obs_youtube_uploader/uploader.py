@@ -17,7 +17,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-CHUNK_SIZE = 4 * 1024 * 1024  # Consumed by app._upload_one when building MediaFileUpload.
+# Consumed by app._upload_one when building MediaFileUpload.
+CHUNK_SIZE = 4 * 1024 * 1024
 
 
 class Outcome(enum.Enum):

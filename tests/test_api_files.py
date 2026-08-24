@@ -23,7 +23,8 @@ def api_with(tmp_path, names=("a.mkv", "b.mkv"), watcher=None, **kw):
                                   watcher=watcher, **kw)
     api._alert = fakes.Alerts()
     api._confirm = fakes.Answers()
-    api.list_rows = lambda preselect=None: None  # Task 6's refresh; not under test here.
+    # Task 6's refresh; not under test here.
+    api.list_rows = lambda preselect=None: None
     return api, window, rows
 
 
