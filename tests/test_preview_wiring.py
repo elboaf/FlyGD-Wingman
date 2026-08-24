@@ -93,7 +93,7 @@ def test_shutdown_without_a_host_is_a_no_op(tmp_path):
 def test_build_preview_host_returns_none_off_windows(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
     monkeypatch.setattr(main_mod.sys, "platform", "linux")
-    assert main_mod.build_preview_host(object()) is None
+    assert main_mod.build_preview_host(object(), {}) is None
 
 
 def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
@@ -116,7 +116,7 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {
         "enabled": False, "width": 320, "height": 210, "layouts": {}}})
-    host = main_mod.build_preview_host(state)
+    host = main_mod.build_preview_host(state, {})
     assert host is not None
     assert not host.is_running     # constructed, never started
 
@@ -127,7 +127,7 @@ def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    assert main_mod.build_preview_host(object()) is None
+    assert main_mod.build_preview_host(object(), {}) is None
 
 
 def test_set_preview_enabled_returns_truthy_on_success(tmp_path):
