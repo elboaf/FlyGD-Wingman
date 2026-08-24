@@ -414,17 +414,41 @@ and should not be quietly crossed.
 
 ## Risks and open questions
 
-1. **Thread-local DPI awareness must be verified.** See the DPI section
-   above. `SetThreadDpiAwarenessContext` is documented as Windows 10 1607+ and
-   should be checked against Wingman's supported floor, and the interaction
-   between a Per-Monitor-V2 thread and `DwmUpdateThumbnailProperties`
-   destination rects is unverified. If thread-local awareness does not hold,
-   the fallback is to keep the preview thread System-aware like the rest of the
-   process and accept TriffView-equivalent behaviour on mixed-DPI setups —
-   **not** to change the process-wide setting.
-2. **Premultiplied-alpha encoder.** `img.tobytes("raw", "BGRa")` is expected to
-   produce premultiplied output; unverified. The fallback is a numpy-free
-   per-pixel loop, which is too slow, or `ImageChops` arithmetic.
+1. ~~**Thread-local DPI awareness must be verified.**~~ **Verified — it holds.**
+   Measured against a 192-DPI (200%) monitor in production order: process
+   `PROCESS_SYSTEM_DPI_AWARE` first, then the thread override.
+
+   | Check | Result |
+   |---|---|
+   | Preview thread context after `SetThreadDpiAwarenessContext(PMv2)` | per-monitor |
+   | Window created on the preview thread | per-monitor, `GetDpiForWindow` = 192 |
+   | Main thread context (never overridden) | **system** |
+   | Window created on the main thread | **system** |
+   | `UpdateLayeredWindow` from the PMv2 thread | succeeded |
+   | `DwmRegisterThumbnail` from the PMv2 thread | `hr=0x0` |
+   | `GetWindowRect` vs the rect asked for | exact match, unvirtualized |
+
+   The isolation is real at the level that matters: windows created on the
+   preview thread are per-monitor aware while the pywebview window's thread
+   stays system-aware, so `__main__.py` and `ui/chrome.py` need no change.
+   Thumbnail destination rects land exactly where specified — confirmed
+   visually at 200% scaling, where virtualization would have shown as a
+   doubled or halved inset.
+
+   One measurement trap, which cost a false negative on the first run:
+   `GetProcessDpiAwareness(NULL)` reports the *calling thread's* effective
+   context, not the process's. Asking it from inside the overridden thread
+   reads as a process-wide leak when nothing has leaked. Ask from an
+   untouched thread, or use `GetWindowDpiAwarenessContext` on a specific
+   window.
+
+   Still open: `SetThreadDpiAwarenessContext` is Windows 10 1607+. Confirm
+   that against Wingman's supported floor before shipping.
+2. ~~**Premultiplied-alpha encoder.**~~ **Verified on Pillow 12.3.0.**
+   `img.tobytes("raw", "BGRa")` on RGBA `(200, 100, 50, 128)` returns
+   `[25, 50, 100, 128]` — premultiplied BGRA, byte-exact. A tested per-pixel
+   fallback is carried in the plan in case a future Pillow changes the
+   encoder; the tests pin the bytes either way.
 3. **Thumbnail count.** Probes ran 2 thumbnails; TriffView users run 10-30. DWM
    cost per thumbnail is not measured. Worth a scaling probe before committing
    to the sweep interval.
