@@ -35,7 +35,9 @@ def test_licence_text_is_wanted_and_renamed():
     """license.txt is the archive member THIRD-PARTY-NOTICES.md's written
     offer depends on; OUTPUT_NAMES is what renames it to
     AutoHotkey-COPYING.txt on disk so it can't be mistaken for a licence
-    covering Wingman itself (MIT). uploader.spec's `datas` can't do that
+    covering Wingman itself (GPL-3.0-only -- and the rename matters more
+    now than it did under MIT, since both are GPL and a stray COPYING.txt
+    is far easier to mistake for ours). uploader.spec's `datas` can't do that
     rename -- its second element is a destination directory, not a
     filename -- so the rename has to happen here, and both pieces need to
     agree for the notice's promised filename to actually exist."""
