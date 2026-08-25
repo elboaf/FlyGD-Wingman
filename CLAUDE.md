@@ -138,9 +138,11 @@ Hard rules from `DESIGN.md` worth knowing before you touch a screen:
 - Ruff lint selects `BLE` (blind except) among others; every new `# noqa: BLE001`
   must state why the exception is swallowed. `E501` is off — the formatter owns
   line length (88).
-- `packaging/` and `*.md` are excluded from ruff (`force-exclude = true`); root
-  design/plan `.md` files are historical records of completed work and are not
-  reformatted.
+- `packaging/` and `*.md` are excluded from ruff (`force-exclude = true`); the
+  design/plan `.md` files under `docs/history/` are historical records of
+  completed work and are not reformatted or corrected after the fact. The repo
+  root keeps only `README.md`, `CLAUDE.md`, `PRODUCT.md`, `DESIGN.md` and
+  `THIRD-PARTY-NOTICES.md` (the last is shipped by the installer).
 - `[tool.setuptools] packages` is an explicit list — a new subpackage must be
   added by hand or it installs cleanly and fails at import in the frozen build.
 - Anything derived (counts, key lists) must be derived or asserted in a test, not

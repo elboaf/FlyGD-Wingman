@@ -1,5 +1,6 @@
 """The supervisor is Windows-only at runtime but must import and be tested
-on Linux, the same way ui/chrome.py is (window-resize-plan.md:130-140)."""
+on Linux, the same way ui/chrome.py is
+(docs/history/window-resize-plan.md:130-140)."""
 
 import subprocess
 

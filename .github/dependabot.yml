@@ -1,4 +1,5 @@
-# Useful only because uv.lock is enforced (see ci-hardening-design.md);
+# Useful only because uv.lock is enforced (see
+# docs/history/ci-hardening-design.md);
 # before that there was no pinned version for anything to bump.
 #
 # TWO THINGS ABOUT THIS FILE FAIL SILENTLY, so both are worth knowing

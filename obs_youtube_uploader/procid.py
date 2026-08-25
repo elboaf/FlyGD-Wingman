@@ -1,8 +1,9 @@
 """Identify and terminate a process by PID, on Windows.
 
 Split out of hotkeys.py for the reason ui/chrome.py is split out of
-ui/window.py (window-resize-plan.md:130-140): this is the only module that
-touches Win32, so hotkeys.py stays importable and testable on Linux.
+ui/window.py (docs/history/window-resize-plan.md:130-140): this is the only
+module that touches Win32, so hotkeys.py stays importable and testable on
+Linux.
 
 Every function is a no-op returning None/False off Windows.
 """

@@ -1412,7 +1412,7 @@ appears, so an item that only restarts the app tests half of it.
   Bind any chord and press it. If nothing happens while the log shows a
   successful registration, `HWND_MESSAGE` is not receiving the message and
   registration must move to `hWnd=NULL` with dispatch in the pump loop —
-  see risk 4 in `eve-preview-hotkeys-design.md`.
+  see risk 4 in `docs/history/eve-preview-hotkeys-design.md`.
 - [ ] A per-character chord switches to that client from another application
   (try it from a browser, not just from Wingman).
 - [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**

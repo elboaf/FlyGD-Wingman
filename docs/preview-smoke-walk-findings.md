@@ -33,7 +33,8 @@ with aligned tops hides it completely.
 
 **Severity: high. Destructive. REMOVED.** The machinery is gone; the
 checkbox was repurposed to govern where a PREVIEW opens
-(`restore_preview_positions`). See `eve-preview-design.md` item 11.
+(`restore_preview_positions`). See `docs/history/eve-preview-design.md`
+item 11.
 
 `restore_clients_on_launch` was meant to restore the **preview** windows to
 their saved size and position. What is implemented moves the **game client**
