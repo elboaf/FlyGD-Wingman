@@ -1282,6 +1282,34 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
+- [ ] **The folder card is one line on every visit after the first.** With a
+      folder already chosen, open the route. Expected: the Settings folder
+      card is a single row — `Folder`, the path, the server and profile, and
+      a `Change…` link — and the Copy settings card's target list is on
+      screen without scrolling. Press `Change…`: the folder, Server and
+      Profile controls appear. Leave the route and come back: it is one line
+      again. This is deliberate and not a bug — the collapse is what puts the
+      task on screen, so it is not remembered.
+- [ ] **A folder that is not set, or cannot be read, opens the controls
+      anyway.** Clear the folder (or point it at a directory you have no
+      access to) and reopen the route. Expected: the full controls, not a
+      summary of nothing, with the warning below them.
+- [ ] **The EVE pill survives the collapse.** Start a client with the folder
+      card collapsed. Expected: "EVE running" is showing at the right of the
+      card's heading, in the pill's own case — not upper-cased and
+      letter-spaced like the heading beside it. It is the warning for the
+      copy below; it may not only appear when the card is expanded.
+- [ ] **The settings-folder path is monospace and truncates.** Both faces of
+      the card. Expected: the same monospace face as the webhook and the
+      recordings folder, on the same label column as Server and Profile, and
+      a long root ends in an ellipsis rather than pushing `Change…` or
+      `Choose folder…` toward the right edge. Check at 150% scaling, where
+      the card is narrower than its own 620px.
+- [ ] **The Characters / Accounts switch says what it is.** Expected: the
+      word `Copy` in the label column in front of the two radios, on the
+      same column as `Copy from` below it. It was the only unlabelled
+      control on the screen, and it changes what the source dropdown, the
+      target list and the filter all mean.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
 - [ ] Point the folder picker at a `settings_*` directory. The root heals
@@ -1329,6 +1357,21 @@ so these are the checks that matter and only a Windows machine can run them.
       read from the pill.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
       Ten auto-backups remain; the manual ones are untouched.
+      **Read the note under the Backups heading while you are there**: it
+      must say ten, and it must say the newest ten *of each* thing — the
+      prune is per character, account or profile, so eleven copies onto
+      eleven different characters prune nothing. The number comes off the
+      payload, so setting `auto_keep` to 3 in `settings.json` and reopening
+      the route must change the sentence.
+- [ ] **The backup list is columns, and Delete does not look like Restore.**
+      Make several backups of different things. Expected: the dates line up
+      in a monospace column as `2026-08-24 14:03` — punctuated, not the
+      raw `20260824-140300` the filename carries — and `Restore` and
+      `Delete` sit at the same x on every row however long the name.
+      `Delete` carries the red outline Skills uses for Forget character,
+      and `Restore` does not. Every row says `automatic` or
+      `manual` in full — no bare `(auto)` on half the rows and nothing on
+      the other half.
 - [ ] Check the packaged build: the Profiles route appears and the
       folder picker opens.
 
