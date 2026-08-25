@@ -64,6 +64,7 @@ def format_upload_confirm(
     channel_title: str,
     stitch: bool,
     logs: bool,
+    discord_webhook: str,
 ) -> str:
     """The body of the confirm shown before anything is published.
 
@@ -82,6 +83,20 @@ def format_upload_confirm(
     publishes to two places, and this is the only screen a user sees
     between pressing it and the upload starting, so the Discord half has to
     be named here or it is never disclosed at all.
+
+    The RAW webhook is taken rather than a "is one configured" boolean, and
+    parsed here with the same discord.parse_webhook the upload half uses
+    (Api._post_combat_logs). That is the point: this dialog used to promise
+    a Discord post whenever the checkbox was ticked, while the post itself
+    was gated on a webhook that parses -- so on a fresh install the confirm
+    stated a cost that was never paid, and the run ended on a WARNING strip
+    reading like a recurring failure rather than an unconfigured option. A
+    boolean would leave the two predicates free to drift apart again; a
+    string cannot, because there is only one of them.
+
+    PRODUCT.md's rule is to state cost before an irreversible action. An
+    overstated cost breaks it in the direction that teaches the user to
+    stop reading the dialog.
     """
     total_size = sum(i.size for i in infos)
     total_seconds = int(sum(i.duration or 0.0 for i in infos))
@@ -104,10 +119,27 @@ def format_upload_confirm(
             ]["title"]
             titles += f' … "{last}"'
 
-    logs_line = "Logs:     combat logs posted to Discord afterwards\n" if logs else ""
+    # The same predicate _post_combat_logs runs, not a paraphrase of it:
+    # anything that parses to a hook gets posted, and nothing else does.
+    posting = bool(logs and discord.parse_webhook(discord_webhook)[0])
+
+    if not logs:
+        logs_line = ""
+    elif posting:
+        logs_line = "Logs:     combat logs posted to Discord afterwards\n"
+    else:
+        # Named rather than omitted. The checkbox is ticked and the user
+        # is looking at the summary of what they asked for, so silence
+        # here reads as agreement -- and the skip is only announced after
+        # the upload, on the status strip, where it is too late to fix.
+        logs_line = (
+            "Logs:     skipped — no Discord webhook is configured\n"
+            "          (set one in Settings)\n"
+        )
+
     final = (
         "Publishing to YouTube and posting to Discord cannot be undone from this app."
-        if logs
+        if posting
         else "Publishing to YouTube cannot be undone from this app."
     )
 
@@ -195,6 +227,76 @@ def webhook_status(raw: str) -> str:
         return "not configured"
     hook, error = discord.parse_webhook(raw)
     return discord.describe(hook) if hook else error
+
+
+# --- EVE settings profiles -------------------------------------------------
+
+# What the user ticked, per evesettings.tree.file_kind. The page offers the
+# two as a Characters / Accounts switch, so the dialog uses the same two
+# words rather than naming the files underneath them.
+_COPY_NOUNS = {"character": "character", "account": "account"}
+# A selection that is neither (or is mixed, which the page cannot currently
+# produce but the bridge does not forbid) falls back to naming the files.
+# Degraded, not wrong: it is what the dialog said for every selection
+# before it could tell the difference.
+_COPY_NOUN_FALLBACK = "settings file"
+
+
+def _copy_noun(count: int, kind: str | None) -> str:
+    """ "characters", "account", "settings files" -- the noun alone.
+
+    The count is left to the caller because the two sentences place it
+    differently ("3 other characters", "Copied to 3 characters"), but the
+    NOUN is shared deliberately: those two are a second apart on the same
+    screen, and a dialog saying "characters" followed by a strip saying
+    "file(s)" would be a worse disagreement than the one this replaced.
+    """
+    noun = _COPY_NOUNS.get(kind or "", _COPY_NOUN_FALLBACK)
+    return noun if count == 1 else f"{noun}s"
+
+
+def format_eve_copy_done(count: int, kind: str | None) -> str:
+    """The status line after a copy that wrote everything it was asked to."""
+    return f"Copied to {count} {_copy_noun(count, kind)}."
+
+
+def format_eve_copy_confirm(count: int, kind: str | None, eve_running: bool) -> str:
+    """The confirm shown before one profile's settings overwrite others.
+
+    Two things this says that its predecessor did not.
+
+    It counts what the user selected. The dialog said "3 other file(s)" at
+    someone who had just ticked three character names -- the wrong noun and
+    the "(s)" padding PRODUCT.md's tone rule rules out, in the last thing
+    shown before an irreversible write. `kind` comes from the target paths
+    (evesettings.tree.file_kind), not from a mode flag the page would have
+    to pass and keep in step.
+
+    It repeats the running-client hazard. The screen already renders a
+    warn-toned "EVE running" pill precisely because EVE rewrites its own
+    settings on exit and will overwrite whatever was copied underneath it
+    -- but the pill is advisory and easy to miss, and this dialog is modal
+    and unmissable. The warning was on the wrong one of the two.
+
+    It stays advisory here as well: nothing is blocked, because the probe
+    is best-effort (Api._eve_client_running swallows its own failures) and
+    a false positive must not be able to lock a user out of their own
+    profiles.
+    """
+    running = ""
+    if eve_running:
+        running = (
+            "EVE is running. Close every client first — EVE rewrites "
+            "its own settings when it exits, which would overwrite "
+            "what is copied now.\n\n"
+        )
+
+    return (
+        f"Copy these settings onto {count} other {_copy_noun(count, kind)}?\n\n"
+        f"Each one is backed up first.\n\n"
+        f"{running}"
+        "This cannot be undone except by restoring a backup."
+    )
 
 
 # --- list cell help --------------------------------------------------------

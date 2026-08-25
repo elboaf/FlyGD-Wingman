@@ -117,8 +117,20 @@
          .skills-rail rather than a second rail idiom. -->
     <aside class="settings-rail" id="settings-rail">
       <h3 class="rail-head">Settings</h3>
-      <button class="rail-item active" data-section="general">General</button>
-      <button class="rail-item" data-section="account">Account</button>
+      <!-- `active` marks the LANDING section, and it is the same fact as
+           app.js's WM.current_section -- which announces a section over
+           wm:section the moment the route is entered. The two disagreed:
+           markup painted General while app.js announced account, so the
+           first section that fetches on entry and is not Bookmarks or
+           Previews would have fetched for a pane nobody was looking at.
+           tests/test_page_conventions.py holds the three in step.
+
+           General is no longer it on purpose. Its entire content is one
+           checkbox for turning most of the product off, which is a
+           legitimate control and a poor first impression of the app's
+           configuration surface. -->
+      <button class="rail-item" data-section="general">General</button>
+      <button class="rail-item active" data-section="account">Account</button>
       <button class="rail-item" data-section="uploads">Uploads</button>
       <button class="rail-item" data-section="notify">Notifications</button>
       <button class="rail-item" data-section="folders">Folders</button>
@@ -129,7 +141,7 @@
 
     <div class="settings-pane">
 
-    <div class="settings active" id="section-general">
+    <div class="settings" id="section-general">
 
       <section class="card">
         <h2>EVE Online tools</h2>
@@ -147,7 +159,7 @@
 
     </div>
 
-    <div class="settings" id="section-account">
+    <div class="settings active" id="section-account">
 
       <section class="card">
         <h2>Google account</h2>

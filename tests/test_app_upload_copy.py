@@ -8,6 +8,11 @@ and dialogs they feed sit in the one layer this repo has no test harness for.
 from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
 
+# A webhook that discord.parse_webhook actually accepts. The confirm parses
+# it with the same function the upload half does, so a placeholder string
+# would silently exercise the "no webhook" branch in every test below.
+HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
+
 
 def info(name="a.mkv", size=1_000_000, duration=60.0, probed=True):
     from pathlib import Path
@@ -106,6 +111,7 @@ def test_confirm_names_channel_privacy_and_totals():
         channel_title="Zoolanders",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "Zoolanders" in body
     assert "unlisted" in body
@@ -122,6 +128,7 @@ def test_confirm_shows_the_numbering_the_batch_will_actually_get():
         channel_title="Z",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "Fight (1/3)" in body
     assert "Fight (3/3)" in body
@@ -135,6 +142,7 @@ def test_confirm_shows_the_untitled_fallback_rather_than_an_empty_quote():
         channel_title="Z",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "Untitled" in body
 
@@ -147,6 +155,7 @@ def test_confirm_for_a_stitch_describes_one_video():
         channel_title="Z",
         stitch=True,
         logs=False,
+        discord_webhook="",
     )
     assert "one video" in body
     assert "(1/2)" not in body
@@ -160,6 +169,7 @@ def test_confirm_flags_an_unknown_channel_rather_than_leaving_it_blank():
         channel_title="",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "not known yet" in body
 
@@ -172,6 +182,7 @@ def test_confirm_says_it_is_public_and_irreversible():
         channel_title="Z",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "cannot be undone" in body.lower()
 
@@ -187,6 +198,7 @@ def test_confirm_says_when_combat_logs_will_follow_the_upload():
         channel_title="Z",
         stitch=False,
         logs=True,
+        discord_webhook=HOOK,
     )
     assert "combat logs" in body.lower()
     assert "Discord" in body
@@ -203,6 +215,7 @@ def test_the_irreversibility_warning_covers_the_discord_half_too():
         channel_title="Z",
         stitch=False,
         logs=True,
+        discord_webhook=HOOK,
     )
     closing = body.rsplit("\n\n", 1)[-1]
     assert "cannot be undone" in closing
@@ -217,6 +230,61 @@ def test_confirm_stays_silent_about_logs_when_the_box_is_unchecked():
         channel_title="Z",
         stitch=False,
         logs=False,
+        discord_webhook="",
     )
     assert "combat" not in body.lower()
     assert "Discord" not in body
+
+
+def test_confirm_does_not_promise_discord_when_no_webhook_is_configured():
+    """The checkbox can be ticked on an install with no webhook, and the
+    post is gated on one that parses. The confirm used to promise the post
+    anyway, so a fresh install paid a cost it was told about and never
+    incurred -- then ended on a WARNING strip that read like a failure."""
+    body = copy_mod.format_upload_confirm(
+        [info()],
+        title="x",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        logs=True,
+        discord_webhook="",
+    )
+    assert "posted to Discord" not in body
+    assert "skipped" in body
+    # Says what to do, not just what will not happen (PRODUCT.md's tone rule).
+    assert "Settings" in body
+
+
+def test_the_irreversibility_line_drops_discord_when_nothing_will_be_posted():
+    """The closing line names whichever irreversible acts this press will
+    perform. With no webhook the Discord half is not one of them."""
+    body = copy_mod.format_upload_confirm(
+        [info()],
+        title="x",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        logs=True,
+        discord_webhook="",
+    )
+    closing = body.rsplit("\n\n", 1)[-1]
+    assert "cannot be undone" in closing
+    assert "Discord" not in closing
+
+
+def test_an_unparseable_webhook_is_treated_as_no_webhook_by_the_confirm():
+    """Api._post_combat_logs skips on anything parse_webhook refuses, so a
+    confirm that only checked for a non-empty string would promise a post
+    for a typo'd URL. The two predicates are the same call for that reason."""
+    body = copy_mod.format_upload_confirm(
+        [info()],
+        title="x",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        logs=True,
+        discord_webhook="https://example.com/nope",
+    )
+    assert "posted to Discord" not in body
+    assert "skipped" in body

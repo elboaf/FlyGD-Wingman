@@ -817,6 +817,53 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
 
+/* ---- the settings row at the window floor ----------------------------
+   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py) and the app is
+   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at 125%
+   scaling and 560px at 150%, both common laptop settings. Every rule above
+   was laid out against 840.
+
+   The arithmetic they lose at: the settings pane is
+   `viewport - 24 (route padding) - 12 (gap) - 168 (rail)`, less 32px of
+   card padding. At 560 that is 324px of row, of which the label column
+   takes 118px and three 10px gaps take 30 -- leaving roughly 30px for a
+   monospace Windows path, and about 40px for a masked webhook the user is
+   expected to verify by eye. `.field`'s `min-width: 0` guarantees it
+   shrinks rather than pushing anything out, so nothing overflows, no
+   scrollbar appears, and nothing says so.
+
+   The lever is the label column, because it is the only 118px on the row
+   that is not a control. Below the threshold it stops being a column and
+   sits above its field, handing the whole 118px and a gap back while
+   leaving every button on the field's own line.
+
+   720px rather than a second number: .evestat above already uses it as
+   this page's "anything above 100% scaling" line. It is also where the
+   arithmetic runs out -- at 672 the Folders row still leaves the path
+   about 144px, which is under half a plausible OBS output path.
+
+   This block renders on TWO screens. index.html carries class="settings"
+   on the Profiles route as well, so its folder and copy rows collapse
+   with these. That is the point of a shared column: the alternative is
+   two screens answering the same question differently. */
+@media (max-width: 720px) {
+  .settings .row { flex-wrap: wrap; }
+  /* width, not flex-basis: `.lab` is flex:none above, so a full width is
+     honoured exactly and forces the field onto the next line. */
+  .settings .row > .lab { width: 100%; text-align: left; }
+  /* An empty .lab exists only to hold the alignment -- Profiles' mode
+     switch is one, deliberately. Collapsed it would contribute a blank
+     line of line-height and nothing else. */
+  .settings .row > .lab:empty { display: none; }
+  /* Both indents are the 118px column plus its 10px gap, so with no
+     column to line up against they are a margin against nothing. The
+     .field-msg one matters most: it carries refusals, and 128px of it on
+     a 324px row leaves an explanation narrower than the control it is
+     about. */
+  .settings .sub-hint { margin-left: 0; }
+  .field-msg { margin-left: 0; }
+}
+
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
 

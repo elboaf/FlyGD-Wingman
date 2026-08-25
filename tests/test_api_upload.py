@@ -384,8 +384,11 @@ HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
 
 def test_the_confirm_names_the_discord_half_when_logs_are_requested(tmp_path):
     """One button now publishes to two places, and the confirm is the only
-    screen between pressing it and the upload starting."""
-    api, _window, _rows = api_with(tmp_path)
+    screen between pressing it and the upload starting.
+
+    A webhook is configured here on purpose: the promise is only made when
+    it will be kept, which the test below is the other half of."""
+    api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": HOOK})
     api._confirm = fakes.Answers(answer=False)
 
     api.start_upload("Fight", "d", False, True, ["r1"])
@@ -393,6 +396,27 @@ def test_the_confirm_names_the_discord_half_when_logs_are_requested(tmp_path):
 
     ((_title, body),) = api._confirm.asked
     assert "combat logs" in body.lower()
+
+
+def test_the_confirm_withdraws_the_discord_promise_on_a_fresh_install(tmp_path):
+    """The checkbox is ticked and no webhook is configured -- the state
+    every fresh install starts in.
+
+    Api reads the webhook out of live settings and hands it to the confirm,
+    which parses it with the same discord.parse_webhook _post_combat_logs
+    gates on. This is the wiring test for that: the formatter's own
+    branches are covered in tests/test_app_upload_copy.py, but nothing
+    there proves Api passes the real value rather than a default.
+    """
+    api, _window, _rows = api_with(tmp_path)
+    api._confirm = fakes.Answers(answer=False)
+
+    api.start_upload("Fight", "d", False, True, ["r1"])
+    join(api)
+
+    ((_title, body),) = api._confirm.asked
+    assert "posted to Discord" not in body
+    assert "skipped" in body
 
 
 def test_declining_the_confirm_posts_no_logs_either(monkeypatch, tmp_path):

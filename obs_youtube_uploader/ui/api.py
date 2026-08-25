@@ -24,7 +24,9 @@ import contextlib
 import datetime
 import json
 import logging
+import os
 import queue
+import sys
 import threading
 import uuid
 import webbrowser
@@ -417,8 +419,17 @@ class Api:
         That is first run, and the page is showing its own route for it; a
         push of an empty list here would replace that screen with an empty
         uploader and no explanation.
+
+        Unless the user SKIPPED first run, in which case the empty push is
+        the whole point. #list-empty starts hidden in markup and is only
+        ever unhidden by list.js's render(), which runs on this push -- so
+        without it a skipped install lands on a list with no rows, no empty
+        state and no explanation, which is precisely the inert screen
+        DESIGN.md warns reads as a broken one.
         """
         if self._state.recording_dir is None:
+            if self._state.settings.get("first_run_skipped"):
+                self._push("onRows", {"rows": []})
             return
         self._generation += 1
         generation = self._generation
@@ -551,6 +562,58 @@ class Api:
         url = self._links.get(row_id)
         if url:
             webbrowser.open(url)
+
+    def open_recording_dir(self) -> bool:
+        """Open the watched folder in the shell.
+
+        The Uploader is the screen about that folder's contents and had no
+        way to reach it: the only file affordances were double-click and a
+        context menu, and both act on the YouTube link rather than the file
+        (open_path above resolves a row to a URL, despite the name). A
+        recording that is missing, mid-write, or not what OBS was supposed
+        to produce is inspected outside Wingman, so the reflex is to open
+        the folder.
+
+        Reported on the status strip rather than through a dialog. Nothing
+        is destroyed and nothing is half-done if this fails, and a modal
+        for a button that merely did not open a window is the shape
+        _skip_logs already rejects.
+        """
+        folder = self._state.recording_dir
+        if folder is None:
+            self._push(
+                "onStatus",
+                {
+                    "text": "No recording folder is set. Choose one in Settings.",
+                    "kind": "WARNING",
+                },
+            )
+            return False
+        if not Path(folder).is_dir():
+            # The same case __main__ treats as first run at launch: a
+            # folder that was configured and has since gone. Naming it
+            # beats "an error occurred", per PRODUCT.md's tone rule.
+            self._push(
+                "onStatus",
+                {"text": f"That folder is gone: {folder}", "kind": "WARNING"},
+            )
+            return False
+        try:
+            # os.startfile exists only on Windows, so it is reached through
+            # an attribute lookup behind the platform check rather than at
+            # import -- the same posture eveskills.controller's
+            # _default_open_folder and __main__.set_dpi_awareness take. Off
+            # Windows this is a no-op: a dev box has no shell to ask.
+            if sys.platform == "win32":
+                os.startfile(str(folder))
+        except OSError:
+            logger.exception("Could not open the recording folder")
+            self._push(
+                "onStatus",
+                {"text": "That folder could not be opened.", "kind": "WARNING"},
+            )
+            return False
+        return True
 
     # ----- durations --------------------------------------------------------
 
@@ -698,6 +761,10 @@ class Api:
             self._state.settings.get("channel_title", ""),
             job.stitch,
             job.logs,
+            # Read here rather than snapshotted onto the job: the confirm
+            # has to describe the webhook _post_combat_logs will find when
+            # it runs, and Settings is reachable between the two.
+            self._state.settings.get("discord_webhook", "") or "",
         )
         if not self._confirm("Confirm Upload", body):
             return
@@ -1490,6 +1557,15 @@ class Api:
         if not folder.is_dir():
             return self._field_refused("That folder does not exist.")
 
+        # Whichever way the user got here -- the first-run screen or
+        # Settings -- naming a real folder settles the question the skip
+        # deferred, so the flag stops applying. Cleared before the two
+        # success paths below diverge, because both of them are "this
+        # folder is now the answer". Its own write, and deliberately not
+        # guarded: _write_setting is already a no-op when the value has
+        # not changed, which is the common case by far.
+        self._write_setting("first_run_skipped", False)
+
         if self._state.recording_dir == folder:
             # Already watching it. Returning before the rebind below is
             # what stops a re-commit of the same path re-baselining the
@@ -1793,9 +1869,38 @@ class Api:
         unconfigured folder is exactly the case list_rows() returns silently
         on -- so this is the one thing Python must volunteer.
         """
+        if self._state.settings.get("first_run_skipped"):
+            # Asked once and declined. A recording folder configures the
+            # UPLOADER half, and PRODUCT.md holds the two halves
+            # independent -- so someone here for previews and bookmark
+            # keybinds must not be re-gated on it every launch. The screen
+            # returns the moment they clear the flag by choosing a folder
+            # (set_folder), or if they never do, from Settings.
+            return
         timer = self._timer(FIRST_RUN_PUSH_S, lambda: self._push("onFirstRun", {}))
         timer.daemon = True
         timer.start()
+
+    def skip_first_run(self) -> dict:
+        """Dismiss the first-run screen without choosing a folder.
+
+        Persisted rather than held for the session: __main__ shows that
+        screen whenever no folder RESOLVES, so a session-only skip would be
+        re-asked on the next launch -- and it is the one screen in the app
+        with no exit.
+
+        It records the DISMISSAL, not the absence of a folder, which is why
+        it is a key of its own rather than a sentinel recording_dir. The
+        two states __main__ could not otherwise tell apart are "never
+        configured, and said so" and "configured once, folder has since
+        gone"; only the first is a skip, and the second still deserves the
+        screen.
+
+        Returns the same {applied, persisted, error} envelope every other
+        commit does, so the page can say the choice will not survive a
+        restart rather than silently pretending it will.
+        """
+        return self._write_setting("first_run_skipped", True)
 
     def _push_auth(self, state: str, message: str | None = None) -> None:
         # Read live from settings rather than snapshotted: the channel is
@@ -2096,6 +2201,12 @@ class Api:
             # user the second when the first is true invites them to
             # overwrite settings they believe are unprotected.
             "backups_unreadable": backups_unreadable,
+            # The prune depth, so the page can say how many backups are
+            # kept without typing the number into itself. Four places once
+            # carried the bookmark-keybind count and three of them drifted;
+            # this is the same shape, and DESIGN.md's "state that must not
+            # be retyped" is the rule it is avoiding.
+            "auto_keep": int(section.get("auto_keep", 10)),
             "backups": [
                 {
                     "path": str(b.path),
@@ -2316,11 +2427,23 @@ class Api:
     def _eve_copy_worker(self, source: str, targets: list) -> None:
         ok = False
         try:
+            # Derived from the targets, not passed by the page: the
+            # Characters / Accounts switch already decides which files are
+            # offered, so a mode argument on the bridge would be the same
+            # fact written twice and free to disagree. A mixed set (which
+            # the page cannot produce, but the bridge does not forbid)
+            # resolves to None and falls back to naming files.
+            kinds = {evesettings_tree.file_kind(t) for t in targets}
+            kind = next(iter(kinds)) if len(kinds) == 1 else None
+            # Probed fresh rather than read from self._eve_running. That
+            # cache exists so eve_settings_state stays cheap on the bridge
+            # thread; this is a worker, and the sentence is about what is
+            # true at the moment the user is asked to commit.
             if not self._eve_confirm(
                 "Confirm Copy",
-                f"Copy these settings onto {len(targets)} other "
-                f"file(s)?\n\nEach one is backed up first.\n\n"
-                "This cannot be undone except by restoring a backup.",
+                copy_mod.format_eve_copy_confirm(
+                    len(targets), kind, self._eve_client_running()
+                ),
             ):
                 return
             report = evesettings_ops.copy_to_targets(
@@ -2345,7 +2468,9 @@ class Api:
                 self._push(
                     "onStatus",
                     {
-                        "text": f"Copied to {len(report.succeeded)} file(s).",
+                        "text": copy_mod.format_eve_copy_done(
+                            len(report.succeeded), kind
+                        ),
                         "kind": "FG",
                     },
                 )
