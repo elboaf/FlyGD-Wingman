@@ -145,9 +145,11 @@ names the two show-state calls that ship:
 > resized, not repositioned. EVE reads a resize as a resolution change and
 > rewrites its own configuration; a test once destroyed three characters'
 > settings that way. Previews are separate windows that mirror a client.
-> Changing a client's *show state* is not the same thing and is allowed where
-> the user asked for it: `SW_RESTORE` on activation has always shipped, and
-> minimize-inactive is opt-in. Neither can alter a client's resolution.
+> Exactly two show-state calls are exempt, and no others: `SW_RESTORE` on
+> activation, already shipped, and minimize, for the opt-in
+> minimize-inactive setting. Maximize is NOT exempt — `SW_SHOWMAXIMIZED`
+> fills the window to the work area, the same geometry hazard in
+> show-state clothing.
 
 Rejected: leaving the line as-is and treating minimize as an exception. The
 line as written is already false — `window.py:78` restores a client on every
