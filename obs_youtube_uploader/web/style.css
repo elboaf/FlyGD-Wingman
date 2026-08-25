@@ -1084,30 +1084,38 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
 
-/* ---- the settings row at the window floor ----------------------------
-   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py) and the app is
-   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at 125%
-   scaling and 560px at 150%, both common laptop settings. Every rule above
-   was laid out against 840.
+/* ---- the settings row at a narrow viewport ---------------------------
+   CORRECTED. This block used to state that MIN_WIDTH was 840 PHYSICAL
+   pixels and derive a CSS floor of 840/scale -- 672px at 125% scaling,
+   560px at 150% -- and every number below was reasoned from that. It is
+   wrong. The minimum resolves in LOGICAL units, so the CSS viewport floor
+   is 840x625 at every scaling: measured at 200%, the floor capture is
+   839x621 CSS against MIN_WIDTH = 840 / MIN_HEIGHT = 625 (ui/window.py).
+   DESIGN.md and PRODUCT.md repeat the same error and are corrected
+   separately.
 
-   The arithmetic they lose at: the settings pane is
-   `viewport - 24 (route padding) - 12 (gap) - 168 (rail)`, less 32px of
-   card padding. At 560 that is 324px of row, of which the label column
-   takes 118px and three 10px gaps take 30 -- leaving roughly 30px for a
-   monospace Windows path, and about 40px for a masked webhook the user is
-   expected to verify by eye. `.field`'s `min-width: 0` guarantees it
-   shrinks rather than pushing anything out, so nothing overflows, no
-   scrollbar appears, and nothing says so.
+   The consequence for this block is that 720px sits below the floor, so
+   none of it can match in the app window. It is kept rather than deleted,
+   for three reasons:
 
-   The lever is the label column, because it is the only 118px on the row
-   that is not a control. Below the threshold it stops being a column and
-   sits above its field, handing the whole 118px and a gap back while
-   leaving every button on the field's own line.
+     - it still fires in the ?dev=1 browser harness, which is the only
+       place the page can be rendered at a width the app itself refuses;
+     - it is what makes lowering MIN_WIDTH a safe edit rather than a
+       silent one, and 840 has been revisited once per feature already;
+     - tests/test_page_conventions.py requires a max-width:720px block to
+       exist AND to restore the collapse for every id override of the
+       shared label column. That is the rule keeping #eve-binds and
+       #preview-binds from out-specifying the column and losing the
+       collapse, which is a bug that has actually shipped.
 
    720px rather than a second number: .evestat above already uses it as
-   this page's "anything above 100% scaling" line. It is also where the
-   arithmetic runs out -- at 672 the Folders row still leaves the path
-   about 144px, which is under half a plausible OBS output path.
+   this page's "anything above 100% scaling" line.
+
+   What it does when it fires: the lever is the label column, because it
+   is the only 118px on the row that is not a control. Below the threshold
+   it stops being a column and sits above its field, handing the whole
+   118px and a gap back while leaving every button on the field's own
+   line.
 
    This block renders on TWO screens. index.html carries class="settings"
    on the Profiles route as well, so its folder and copy rows collapse
