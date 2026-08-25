@@ -251,6 +251,7 @@ class PreviewWindow:
         screen,
         locked=False,
         show_labels=True,
+        opacity: int = 255,
     ):
         self._libs = libs
         self.client = client
@@ -262,6 +263,10 @@ class PreviewWindow:
         # Set once from the host at creation; Task 4 wires the live-update
         # path that lets this change on an already-open window.
         self.show_labels = show_labels
+        # A DWM thumbnail property, not a bitmap one -- see the note on
+        # _chrome_key() below. Set once at creation; Task 4 wires the
+        # live-update path that lets this change on an already-open window.
+        self.opacity = opacity
         self.selected = False
         self._perf = None
         # Last key rendered; None forces the first draw.
@@ -293,6 +298,7 @@ class PreviewWindow:
         screen,
         locked=False,
         show_labels=True,
+        opacity: int = 255,
     ):
         self = cls(
             libs,
@@ -304,6 +310,7 @@ class PreviewWindow:
             screen,
             locked,
             show_labels,
+            opacity,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -332,7 +339,8 @@ class PreviewWindow:
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
             self._thumb.update(
-                geometry.thumbnail_rect(self.rect, BORDER, self._label_h())
+                geometry.thumbnail_rect(self.rect, BORDER, self._label_h()),
+                self.opacity,
             )
         return self
 
@@ -347,6 +355,11 @@ class PreviewWindow:
         return LABEL_H if self.show_labels else 0
 
     def _chrome_key(self):
+        # opacity deliberately does NOT belong here. It is a DWM thumbnail
+        # property (Thumbnail.update's DWM_TNP_OPACITY), never a pixel in
+        # this bitmap, so including it would force a ~67k-pixel re-render
+        # on every opacity change for no visual reason -- the exact cost
+        # redraw()'s short-circuit exists to avoid.
         return (
             self.rect.w,
             self.rect.h,
@@ -408,7 +421,8 @@ class PreviewWindow:
             self.redraw()
             if self._thumb is not None:
                 self._thumb.update(
-                    geometry.thumbnail_rect(rect, BORDER, self._label_h())
+                    geometry.thumbnail_rect(rect, BORDER, self._label_h()),
+                    self.opacity,
                 )
 
     # -- input -----------------------------------------------------------

@@ -81,7 +81,7 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
 class _RecordingWindow(window.PreviewWindow):
     """PreviewWindow with the Win32 edges stubbed, to count renders."""
 
-    def __init__(self, rect):
+    def __init__(self, rect, opacity=255):
         class FakeUser32:
             def SetWindowPos(self, *a):
                 return True
@@ -100,6 +100,7 @@ class _RecordingWindow(window.PreviewWindow):
             lambda *a: None,
             list,
             lambda: rect,
+            opacity=opacity,
         )
         self.hwnd = 1
         self.renders = 0
@@ -239,14 +240,14 @@ def test_label_h_defaults_on_and_matches_todays_behaviour():
 
 
 class _FakeThumb:
-    """Records every rect passed to update(), standing in for the real
-    Thumbnail that move() would otherwise touch."""
+    """Records every (rect, opacity) passed to update(), standing in for
+    the real Thumbnail that move() would otherwise touch."""
 
     def __init__(self):
-        self.rects = []
+        self.calls = []
 
-    def update(self, rect):
-        self.rects.append(rect)
+    def update(self, rect, opacity=255):
+        self.calls.append((rect, opacity))
 
 
 def test_a_resize_updates_the_thumbnail_rect_with_the_current_label_height():
@@ -263,9 +264,60 @@ def test_a_resize_updates_the_thumbnail_rect_with_the_current_label_height():
         w._thumb = thumb
         new_rect = Rect(100, 100, 400, 260)
         w.move(new_rect)
-        assert thumb.rects == [
-            window.geometry.thumbnail_rect(new_rect, window.BORDER, expected_label_h)
+        assert thumb.calls == [
+            (
+                window.geometry.thumbnail_rect(
+                    new_rect, window.BORDER, expected_label_h
+                ),
+                255,
+            )
         ]
+
+
+def test_a_resize_passes_the_configured_opacity_to_the_thumbnail():
+    """opacity is a DWM thumbnail property, not a bitmap one -- see the
+    comment on _chrome_key(). It must reach Thumbnail.update() on every
+    resize, or every preview stays stuck at the default full opacity no
+    matter what the user configured.
+
+    Dropping `self.opacity` from the update() call at window.py's move()
+    site turned this red (the recorded call fell back to update()'s
+    opacity=255 default instead of 180) -- checked by hand while writing
+    this test, then restored."""
+    w = _RecordingWindow(Rect(100, 100, 320, 210), opacity=180)
+    thumb = _FakeThumb()
+    w._thumb = thumb
+    w.move(Rect(100, 100, 400, 260))
+    assert thumb.calls[-1][1] == 180
+
+
+def test_opacity_does_not_join_the_chrome_key():
+    """opacity never touches the Pillow bitmap -- it's a DWM thumbnail
+    property applied separately in Thumbnail.update(). Putting it in the
+    cache key would force a ~67k-pixel re-render on every opacity change,
+    which is the exact stutter redraw()'s short-circuit exists to avoid."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    dim_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        opacity=60,
+    )._chrome_key()
+    bright_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        opacity=255,
+    )._chrome_key()
+    assert dim_key == bright_key
 
 
 def test_redraw_passes_the_current_label_height_to_chrome_render(monkeypatch):
