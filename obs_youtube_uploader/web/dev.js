@@ -96,6 +96,19 @@
     return Promise.resolve(true);
   };
 
+  // NOT a generic stub, for the same reason skills_select_plan is not: the
+  // page guards on the returned text and writes it to the clipboard, so a
+  // null would make `Copy plan` look dead in the browser while working
+  // under Python. Roman numerals and a trailing newline, because that is
+  // what plans.format_lines emits -- the harness has to show the text the
+  // user would actually paste into EVE.
+  api.skills_plan_text = function (name) {
+    console.log('DEV api.skills_plan_text(', name, ')');
+    return Promise.resolve('Amarr Cruiser V\nGallente Cruiser V\n'
+                           + 'Energy Grid Upgrades IV\n'
+                           + 'Heavy Assault Cruisers I\n');
+  };
+
   api.skills_state = function () {
     console.log('DEV api.skills_state()');
     return Promise.resolve(skills);

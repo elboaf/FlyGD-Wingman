@@ -47,8 +47,46 @@ def test_the_builder_passes_bound_methods_not_lambdas(monkeypatch, tmp_path):
     api = make_api(tmp_path)
     controller = main_mod.build_skills_controller(api)
 
-    assert controller._push_cb == api._push
+    # _push_skills, not _push. It is still a bound method -- which is what
+    # this test is about -- and it is the one that adds `fetched_label` to
+    # every onSkills payload. Handing the controller the raw _push was D3's
+    # bug: the label reached the page on the first render and never again.
+    assert controller._push_cb == api._push_skills
     assert controller._alert == api._alert
+
+
+def test_every_pushed_skills_payload_carries_the_fetch_labels(monkeypatch, tmp_path):
+    """The gap D3 found, pinned from the wiring end.
+
+    `_with_fetch_labels` was applied by the skills_state METHOD alone, and
+    skills.js asks for state on FIRST ENTRY only -- after that every
+    mutation pushes. So the labelled payload was the one the user saw
+    least, and the page's fallback invented "Never fetched" for every
+    character on every render after it. Nothing caught it:
+    test_bridge_contract.py checks handler NAMES, not payload shape, and
+    nothing in this suite renders the page.
+
+    Checked through the callback the builder actually hands over, not by
+    calling _push_skills directly -- the bug was in which function was
+    passed, so a test that picks the function itself cannot see it.
+    """
+    monkeypatch.setattr(main_mod.paths, "state_dir", lambda: tmp_path)
+
+    from tests.test_api import make_api
+
+    monkey = []
+    api = make_api(tmp_path)
+    api._push = lambda handler, payload: monkey.append((handler, payload))
+
+    controller = main_mod.build_skills_controller(api)
+    controller._push_cb(
+        "onSkills", {"characters": [{"character_id": 1, "fetched_utc": ""}]}
+    )
+    controller._push_cb("onSkillsProgress", {"completed": 1, "total": 2})
+
+    assert monkey[0][1]["characters"][0]["fetched_label"] == "Never fetched"
+    # Everything else goes through untouched.
+    assert monkey[1] == ("onSkillsProgress", {"completed": 1, "total": 2})
 
 
 def test_main_builds_the_controller_and_hands_it_to_the_api():

@@ -510,10 +510,12 @@ textarea.field { resize: none; line-height: 1.5; }
                        about shape, not about behaviour.
 
    `red text, no button` is not in the vocabulary. A destructive action is
-   a .btn.danger everywhere. .linkbtn.danger survives at exactly one site
-   -- skills.js's `Forget character` -- and round 3's R3 converts it; the
-   rule is stated here so that conversion has something to convert TO, and
-   so do the two plain-.btn destructive sites named at .btn.danger below. */
+   a .btn.danger everywhere, with no exceptions left: L5 tolerated
+   .linkbtn.danger at exactly one site -- skills.js's `Forget character` --
+   and round 3's R3 converted it, so both that control and the pair of
+   rules behind it are gone. The rule was stated here first precisely so
+   the conversion had something to convert TO, as did the two plain-.btn
+   destructive sites named at .btn.danger below. */
 button.btn {
   background: var(--control); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
@@ -2305,7 +2307,14 @@ button.btn:disabled,
 .skills-main {
   display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0;
 }
+/* The `Copy plan` button (S7) is the third child and sits at the far end:
+   the heading and its requirement count are one statement and the control
+   acts on both, so it is separated from them rather than trailing the
+   count as a fourth word. align-items stays `baseline` for the two text
+   children; the button carries `align-self: center` below, because a .btn
+   baselined against an h1 hangs its border below the text. */
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
+#skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
 
 /* Collapses when empty, so the roster sits directly under the heading on
@@ -2482,15 +2491,23 @@ button.btn:disabled,
   width: var(--name-col); flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Three of these rules are DELETED, not lost: .status-Ready,
+   .status-Locked and .status-Unknown painted words the row no longer
+   says. S2 took the status column down to what the group header cannot
+   carry -- a Missing row's count and a Training row's ETA -- and every
+   other row is now a name under a heading, with the severity carried by
+   the group's own swatch (.skills-key above, which still has its full
+   ramp). Two selectors, two states, and adding a rule here again means a
+   row has started restating its group.
+
+   Unscored and the catch-all never had a rule and still do not. The class
+   is built from the raw readiness string, so both have always fallen
+   through to --text-dim: Unscored is the ABSENCE of a judgement rather
+   than a bad one (the same reason .key-Unscored is grey), and a state this
+   page has never heard of has no place on a severity ramp at all. */
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
-.status-Ready { color: var(--ok); }
 .status-Training { color: var(--training); }
-.status-Locked { color: var(--warn); }
 .status-Missing { color: var(--unmet); }
-/* New rule, not a changed one: there was no .status-Unknown at all, so the
-   row that reads `Not trained` fell through to .skills-status' --text-dim
-   while its own group key beside it was coloured. See the ramp above. */
-.status-Unknown { color: var(--unmet); }
 .badge-stale {
   flex: none; padding: 1px 7px; border-radius: 999px;
   background: var(--sunken); border: 1px solid var(--warn);
@@ -2509,6 +2526,18 @@ button.btn:disabled,
 }
 .row-error { color: var(--err); font-size: var(--fs-muted); user-select: text; }
 .row-fetched { color: var(--text-faint); font-size: var(--fs-muted); }
+/* S6's affordance. Same shape as .reauth above and deliberately NOT its
+   border: a character whose skills have never been read is an ordinary
+   state -- every character is in it between authorisation and its first
+   refresh -- and --err would say something went wrong. The neutral field
+   border is what the notices strip at the top of this pane already uses
+   for a statement of fact. */
+.row-note {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--sunken); border: 1px solid var(--field-border);
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
 
 .req-list { display: flex; flex-direction: column; gap: 3px; }
 .req { display: flex; align-items: baseline; gap: 10px; }
@@ -2573,15 +2602,10 @@ button.btn.danger { border-color: var(--danger); color: var(--danger); }
 button.btn.danger:hover:not(:disabled) {
   background: var(--danger-solid); color: var(--on-accent);
 }
-/* The last site of the retired `red text, no button` treatment: skills.js
-   builds `Forget character` as `.linkbtn danger`. Round 3's R3 converts
-   that one control to .btn.danger, and this pair dies with it -- it is
-   kept only so the control does not go faint grey in the gap between the
-   two lanes merging. Do not add a second user. */
-.linkbtn.danger { color: var(--danger); }
-.linkbtn.danger:hover:not(:disabled) {
-  color: var(--on-accent); background: var(--danger-solid);
-}
+/* `.linkbtn.danger` STOOD HERE and is deleted, not moved. It survived L5
+   for one site -- skills.js's `Forget character` -- and R3 converted that
+   control to .btn.danger, which is what this pair was kept for. There is
+   one destructive treatment and it is a button. Do not mint this again. */
 
 /* The 168px rail step that used to live here has been DELETED, not moved.
    It narrowed the rail to the Settings rail's width below 720px, to buy

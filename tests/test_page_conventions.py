@@ -474,20 +474,26 @@ def test_a_readiness_state_is_not_painted_in_the_error_colour():
     deletes the character -- in one colour, about 130 CSS px apart. The
     readiness ramp now ends in --unmet and destructive controls carry
     --danger, so no one token means all three.
+
+    The check is over every `.key-` / `.status-` / `.state-` rule there IS
+    rather than a list of names. R3's S2 deleted three of them -- the row
+    no longer restates its group, so `.status-Unknown`, `.status-Ready` and
+    `.status-Locked` paint nothing -- and a hand-kept list turns a correct
+    deletion into a failure that reads as "the classes moved". What must
+    hold is a property of the whole family, and the two rungs that were
+    actually wrong are pinned by name below.
     """
-    for cls in (
-        "key-Missing",
-        "key-Unknown",
-        "status-Missing",
-        "status-Unknown",
-        "state-Missing",
-        "state-Unknown",
-    ):
-        rule = re.search(r"\." + cls + r"\s*\{([^}]*)\}", CSS)
-        assert rule, f".{cls} is gone -- did the readiness classes move?"
-        assert "var(--err)" not in rule.group(1), (
+    painted = re.findall(r"\.((?:key|status|state)-\w+)\s*\{([^}]*)\}", CSS)
+    assert painted, "the readiness classes are gone entirely -- did they move?"
+    for cls, body in painted:
+        assert "var(--err)" not in body, (
             f".{cls} paints a readiness state in --err; it belongs on --unmet"
         )
+
+    # The two S3 named, on the two surfaces that still render them.
+    named = {cls for cls, _ in painted}
+    for cls in ("key-Missing", "key-Unknown", "state-Missing", "state-Unknown"):
+        assert cls in named, f".{cls} is gone -- did the readiness classes move?"
 
 
 def test_the_training_states_do_not_reuse_the_outbound_link_colour():
@@ -577,9 +583,10 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     `background` lets the generic rule supply `color`, and --text on the
     filled red is the failure. So only the declarations are asserted here.
 
-    The second is the vocabulary itself: `red text, no button` was retired,
-    and `.linkbtn.danger` is kept for exactly one site until R3 converts
-    `Forget character`. A second user of it re-opens S4.
+    The second is the vocabulary itself: `red text, no button` was retired.
+    L5 kept `.linkbtn.danger` alive for one site, R3 converted that site
+    (`Forget character`) and deleted the pair with it, so the rule now has
+    no exceptions -- any `linkbtn danger` in a page module re-opens S4.
     """
     danger = CSS.index("button.btn.danger:hover:not(:disabled)")
     block = CSS[danger : CSS.index("}", danger)]
@@ -601,13 +608,15 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
         for path in sorted(WEB.glob("*.js"))
         if "linkbtn danger" in _strip_js_comments(path.read_text(encoding="utf-8"))
     }
-    # A subset rather than an equality, deliberately. skills.js is the one
-    # site the treatment is tolerated at, and R3's job is to REMOVE it -- an
-    # equality would go red on the lane this rule exists to enable, with a
-    # message accusing it of adding a user when it deleted the last one.
-    # When `users` is empty, delete the `.linkbtn.danger` pair in style.css
-    # and this clause with it.
-    assert users <= {"skills.js"}, (
-        "`red text, no button` is not in the control vocabulary; the only "
-        f"site it is tolerated at is skills.js, but found: {sorted(users)}"
+    # Was `users <= {"skills.js"}` while R3 was outstanding, with a note
+    # saying to tighten it to empty once that lane converted the site. R3
+    # did, so this is that tightening -- and the CSS half is checked too,
+    # because a rule with no users is an invitation to acquire one.
+    assert not users, (
+        "`red text, no button` is not in the control vocabulary; there is "
+        f"one destructive treatment and it is .btn.danger, but found: "
+        f"{sorted(users)}"
+    )
+    assert ".linkbtn.danger {" not in CSS, (
+        "the .linkbtn.danger pair is back; R3 deleted it with its last user"
     )
