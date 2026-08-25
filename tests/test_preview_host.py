@@ -281,9 +281,44 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_SHUTDOWN,
         host.win32.WM_APP_SWEEP_NOW,
         host.win32.WM_APP_REBIND,
+        host.win32.WM_APP_ALERT,
     }
-    assert len(commands) == 3
+    assert len(commands) == 4
     assert all(c >= host.win32.WM_APP for c in commands)
+
+
+def test_raise_alert_queues_without_a_window():
+    """The service can raise before the pump exists: start() returns
+    immediately and _hwnd is created later on the preview thread
+    (host.py:139-147, :219-235). A queued alert must survive that gap
+    rather than being posted into nothing."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert len(h._pending_alerts) == 1
+
+
+def test_draining_returns_and_clears():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert len(h._drain_alerts()) == 1
+    assert h._drain_alerts() == []
+
+
+def test_raise_alert_posts_only_a_signal():
+    """PostMessageW carries integers only, so wparam/lparam must stay
+    zero and the payload must travel in the field."""
+    posted = []
+
+    class _User32:
+        def PostMessageW(self, hwnd, msg, wparam, lparam):
+            posted.append((msg, wparam, lparam))
+            return 1
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._post = lambda msg: posted.append((msg, 0, 0))
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert posted == [(host.win32.WM_APP_ALERT, 0, 0)]
 
 
 def test_plan_assigns_one_id_per_binding():

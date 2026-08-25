@@ -131,6 +131,11 @@ class PreviewHost:
         self._registered = {}  # hotkey_id -> action
         self._hotkey_status = {}  # gesture text -> registered?
         self._last_cycled = None
+        # Same shape as _desired_hotkeys above, and for the same reason:
+        # PostMessageW carries integers only, so the payload travels in a
+        # field under the lock and only the signal is posted. A list, not
+        # one slot, because two clients can be alerted between ticks.
+        self._pending_alerts = []
 
     @property
     def is_running(self) -> bool:
@@ -176,8 +181,27 @@ class PreviewHost:
 
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
+        self._post(win32.WM_APP_SWEEP_NOW)
+
+    def raise_alert(self, character: str, event: str, spec: dict) -> None:
+        """Queue an alert and nudge the pump. Safe from any thread.
+
+        The queue is filled whether or not a window exists to post to:
+        start() returns before the preview thread has created _hwnd, and
+        an alert raised in that gap would otherwise be dropped.
+        """
+        with self._lock:
+            self._pending_alerts.append((character, event, dict(spec)))
+        self._post(win32.WM_APP_ALERT)
+
+    def _post(self, msg) -> None:
         if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_SWEEP_NOW, 0, 0)
+            win32.bind().user32.PostMessageW(self._hwnd, msg, 0, 0)
+
+    def _drain_alerts(self) -> list:
+        with self._lock:
+            pending, self._pending_alerts = self._pending_alerts, []
+        return pending
 
     def set_hotkeys(self, table) -> None:
         """Replace the whole binding table. Safe from any thread.
@@ -233,6 +257,7 @@ class PreviewHost:
             self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
         )
         self._ready.set()
+        self._apply_alerts(libs, self._drain_alerts())
 
         msg = wintypes.MSG()
         while libs.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -301,6 +326,9 @@ class PreviewHost:
             with self._lock:
                 table = dict(self._desired_hotkeys)
             self._apply_hotkeys(libs, table)
+            return 0
+        if msg == win32.WM_APP_ALERT:
+            self._apply_alerts(libs, self._drain_alerts())
             return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
@@ -480,6 +508,19 @@ class PreviewHost:
             logger.debug("Preview hotkey target %r is not running", target)
             return
         window_mod.activate(libs, client.hwnd)
+
+    def _apply_alerts(self, libs, pending) -> None:
+        """No-op for now -- rendering the alert on its preview window is
+        wired up by a later task. Just keep the mailbox draining so
+        raise_alert() never backs up unbounded.
+        """
+        for character, event, spec in pending:
+            logger.debug(
+                "Alert for %s (%s, %s) received; renderer not wired yet",
+                character,
+                event,
+                spec,
+            )
 
     def _screen(self):
         """Virtual-desktop bounds, re-read each sweep.
