@@ -281,9 +281,49 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_SHUTDOWN,
         host.win32.WM_APP_SWEEP_NOW,
         host.win32.WM_APP_REBIND,
+        host.win32.WM_APP_ALERT,
     }
-    assert len(commands) == 3
+    assert len(commands) == 4
     assert all(c >= host.win32.WM_APP for c in commands)
+
+
+def test_raise_alert_queues_without_a_window():
+    """The service can raise before the pump exists: start() returns
+    immediately and _hwnd is created later on the preview thread
+    (host.py:139-147, :219-235). A queued alert must survive that gap
+    rather than being posted into nothing."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert len(h._pending_alerts) == 1
+
+
+def test_draining_returns_and_clears():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert len(h._drain_alerts()) == 1
+    assert h._drain_alerts() == []
+
+
+def test_raise_alert_posts_only_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so wparam/lparam must stay
+    zero and the payload must travel in the field -- exercised through
+    the real _post (not a stub standing in for it), so this actually
+    proves what reaches PostMessageW rather than just that raise_alert
+    delegates to whatever _post happens to be."""
+    posted = []
+
+    class _AlertUser32(_FakeUser32):
+        def PostMessageW(self, hwnd, msg, wparam, lparam):
+            posted.append((msg, wparam, lparam))
+            return 1
+
+    libs = _FakeLibs(_AlertUser32())
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    assert posted == [(host.win32.WM_APP_ALERT, 0, 0)]
 
 
 def test_plan_assigns_one_id_per_binding():
@@ -347,11 +387,14 @@ def test_cycle_actions_carry_direction():
 
 
 class _FakeUser32:
-    def __init__(self, refuse=()):
+    def __init__(self, refuse=(), foreground=0):
         self.registered = {}
         self.unregistered = []
         self.calls = []
         self._refuse = set(refuse)
+        # Read by _apply_selection when the hook has not yet recorded a
+        # foreground hwnd for this sweep (see _swept_host below).
+        self._foreground = foreground
 
     def RegisterHotKey(self, hwnd, ident, mods, vk):
         self.calls.append(("register", ident))
@@ -365,6 +408,9 @@ class _FakeUser32:
         self.unregistered.append(ident)
         self.registered.pop(ident, None)
         return 1
+
+    def GetForegroundWindow(self):
+        return self._foreground
 
 
 class _FakeLibs:
@@ -519,6 +565,51 @@ def test_teardown_clears_the_client_and_registration_reports():
 
     assert h.characters() == []
     assert h.hotkey_status() == {}
+
+
+def test_teardown_clears_pending_alerts_and_selection():
+    """_teardown clears _clients and _hotkey_status but had left
+    _pending_alerts, _selected_key, and _foreground behind. Today
+    _apply_alerts is a no-op, but the queue still grows between stop()
+    and the next reconcile (ui/api.py's set_preview_enabled(False) calls
+    host.stop() before alerts.reconcile()), and _apply_selection's
+    `if key == self._selected_key: return` would leave a fresh window
+    unselected forever across a stop/start if this were not cleared."""
+
+    class _TeardownUser32(_FakeUser32):
+        def __getattr__(self, name):
+            return lambda *a, **k: 0
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    # Queued before _hwnd exists, same as test_raise_alert_queues_without_a_
+    # window -- so _post's `if self._hwnd:` guard skips the real Win32 call
+    # this fake libs object does not need to answer for.
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    h._hwnd = 0x99
+    h._selected_key = "Alice"
+    h._foreground = 0x1234
+    libs = _FakeLibs(_TeardownUser32())
+
+    h._teardown(libs)
+
+    assert h._pending_alerts == []
+    assert h._selected_key is None
+    assert h._foreground == 0
+
+
+def test_raise_alert_drops_oldest_beyond_the_cap():
+    """The queue is drained every ~80ms in normal operation (WM_APP_ALERT
+    fires _apply_alerts on the pump), so anything beyond a handful means
+    nothing is draining -- previews disabled, or the host window not yet
+    created. An hour of accumulated alerts must not all replay once the
+    pump comes back; only the most recent ones should."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    for i in range(host.PENDING_ALERTS_MAX + 5):
+        h.raise_alert(str(i), "combat", {})
+    assert len(h._pending_alerts) == host.PENDING_ALERTS_MAX
+    # Oldest dropped, newest kept.
+    kept = [character for character, _event, _spec in h._pending_alerts]
+    assert kept == [str(i) for i in range(5, host.PENDING_ALERTS_MAX + 5)]
 
 
 def test_hotkey_focuses_the_named_character(monkeypatch):
@@ -885,3 +976,105 @@ def test_positions_are_recorded_even_while_restoring_is_off():
     h._layout_changed("Isiga", rect, False)
     assert recorded == [("Isiga", rect, False)]
     assert h._saved["Isiga"].rect == rect
+
+
+# --- selection follows the real foreground window ---------------------------
+
+
+def _swept_host(monkeypatch, keys, foreground):
+    """A host swept once, with *keys* as the running clients and
+    *foreground* as the real foreground hwnd -- following the _sweep fake
+    set used throughout this file. Each client gets its own hwnd
+    (0x1000, 0x2000, ...) so *foreground* can select any one of them.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient(key, hwnd=0x1000 * (i + 1)) for i, key in enumerate(keys)],
+    )
+    libs = _FakeLibs(_FakeUser32(foreground=foreground))
+    h._sweep(libs)
+    return h
+
+
+def test_the_foreground_client_becomes_the_selected_preview(monkeypatch):
+    h = _swept_host(monkeypatch, ["Alice", "Bravo"], foreground=0x1000)
+    assert h._selected_key == "Alice"
+
+
+def test_a_foreground_window_that_is_not_a_client_selects_nothing(monkeypatch):
+    """Deliberately not "the last EVE client used". A sticky highlight
+    could not be told apart from an alert on that same client, and
+    acknowledgement would clear alerts the user never saw."""
+    h = _swept_host(monkeypatch, ["Alice"], foreground=0xDEAD)
+    assert h._selected_key is None
+
+
+def test_a_stale_selection_clears_once_the_client_loses_the_foreground(monkeypatch):
+    """The from-cold case above cannot tell "correctly clears" from "never
+    had anything to clear": a buggy _apply_selection that only assigns
+    self._selected_key when a client IS found -- i.e. never clears it, the
+    sticky behaviour rejected above -- would also leave _selected_key at its
+    initial None and pass that test. This one actually exercises the clear:
+    select Alice, then move the real foreground off any client, and check
+    the selection follows it back to None.
+
+    This matters beyond cosmetics: a later task clears a persistent alert
+    when its client becomes selected. Sticky selection would mean the
+    client you last used stays "selected" while you are in a browser, and
+    its alert would clear itself without you ever seeing it.
+    """
+    h = _swept_host(monkeypatch, ["Alice"], foreground=0x1000)
+    assert h._selected_key == "Alice"
+    h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
+    assert h._selected_key is None
+
+
+def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
+    """A preview whose window failed to create on one sweep and succeeded
+    on a later one, while its client stayed foreground the whole time,
+    hits _apply_selection's `key == self._selected_key` early return on
+    the second sweep -- the key never changed, only whether a window
+    existed for it. Without applying the selected state there too, the
+    foreground client would show no ring until the user tabbed away and
+    back."""
+
+    class _FakeWindow:
+        def __init__(self):
+            self.selected = False
+
+        def set_selected(self, selected):
+            self.selected = selected
+
+        def close(self):
+            pass
+
+    attempts = []
+
+    def flaky_create(cls, *a, **k):
+        attempts.append(None)
+        return None if len(attempts) == 1 else _FakeWindow()
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(flaky_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=0x1000)]
+    )
+    libs = _FakeLibs(_FakeUser32(foreground=0x1000))
+
+    h._sweep(libs)  # creation fails; Alice is selected but has no window yet
+    assert h._selected_key == "Alice"
+    assert "Alice" not in h._windows
+
+    h._sweep(libs)  # creation succeeds; the selected key is unchanged
+    assert h._windows["Alice"].selected is True

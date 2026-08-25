@@ -25,6 +25,10 @@ SWEEP_MS = 700  # TriffView uses the same interval
 SWEEP_TIMER_ID = 1
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
+# Anything beyond a handful means the pump has stopped draining, not that
+# a lot of characters are in a fight at once -- raise_alert's docstring
+# has the reasoning.
+PENDING_ALERTS_MAX = 10
 
 
 def reconcile(current: set, desired: set):
@@ -131,6 +135,20 @@ class PreviewHost:
         self._registered = {}  # hotkey_id -> action
         self._hotkey_status = {}  # gesture text -> registered?
         self._last_cycled = None
+        # Same shape as _desired_hotkeys above, and for the same reason:
+        # PostMessageW carries integers only, so the payload travels in a
+        # field under the lock and only the signal is posted. A list, not
+        # one slot, because two clients can be alerted between ticks.
+        self._pending_alerts = []
+        # Recorded by the foreground hook (an arbitrary thread) and
+        # resolved by _sweep, never the other way around -- see
+        # _install_hook and _apply_selection.
+        self._foreground = 0
+        # The stable_key whose client currently owns the foreground
+        # window, or None when it is not a client at all (a browser,
+        # Discord, or Wingman itself). Read by PreviewWindow.set_selected
+        # callers in _apply_selection.
+        self._selected_key = None
 
     @property
     def is_running(self) -> bool:
@@ -176,8 +194,36 @@ class PreviewHost:
 
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
+        self._post(win32.WM_APP_SWEEP_NOW)
+
+    def raise_alert(self, character: str, event: str, spec: dict) -> None:
+        """Queue an alert and nudge the pump. Safe from any thread.
+
+        The queue is filled whether or not a window exists to post to:
+        start() returns before the preview thread has created _hwnd, and
+        an alert raised in that gap would otherwise be dropped.
+
+        Bounded to PENDING_ALERTS_MAX: _apply_alerts drains this every
+        WM_APP_ALERT, and in normal operation that is within ~80ms. Only
+        a pump that is not running at all -- previews disabled, the host
+        window not yet created -- lets this grow, and there the right
+        answer is dropping the oldest, not remembering an unbounded
+        session's worth of fights for whenever the pump comes back.
+        """
+        with self._lock:
+            self._pending_alerts.append((character, event, dict(spec)))
+            if len(self._pending_alerts) > PENDING_ALERTS_MAX:
+                del self._pending_alerts[:-PENDING_ALERTS_MAX]
+        self._post(win32.WM_APP_ALERT)
+
+    def _post(self, msg) -> None:
         if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_SWEEP_NOW, 0, 0)
+            win32.bind().user32.PostMessageW(self._hwnd, msg, 0, 0)
+
+    def _drain_alerts(self) -> list:
+        with self._lock:
+            pending, self._pending_alerts = self._pending_alerts, []
+        return pending
 
     def set_hotkeys(self, table) -> None:
         """Replace the whole binding table. Safe from any thread.
@@ -233,6 +279,7 @@ class PreviewHost:
             self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
         )
         self._ready.set()
+        self._apply_alerts(libs, self._drain_alerts())
 
         msg = wintypes.MSG()
         while libs.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -302,6 +349,9 @@ class PreviewHost:
                 table = dict(self._desired_hotkeys)
             self._apply_hotkeys(libs, table)
             return 0
+        if msg == win32.WM_APP_ALERT:
+            self._apply_alerts(libs, self._drain_alerts())
+            return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
             return 0
@@ -313,6 +363,12 @@ class PreviewHost:
         there is the thread-affinity violation that hangs."""
 
         def on_event(hook, event, hwnd, obj, child, tid, ms):
+            # Recorded, not resolved: this callback arrives on an arbitrary
+            # thread and must not touch a preview. _sweep resolves it, which
+            # is also the only place _clients is refreshed -- so a
+            # just-launched client's first focus cannot resolve against a
+            # stale registry.
+            self._foreground = int(hwnd) if hwnd else 0
             self.request_sweep()
 
         cb = win32.winevent_proc_type()(on_event)
@@ -390,6 +446,44 @@ class PreviewHost:
                 self._on_clients_changed(now)
             except Exception:
                 logger.exception("on_clients_changed callback raised")
+
+        self._apply_selection(libs)
+
+    def _apply_selection(self, libs) -> None:
+        """Mark the preview whose client owns the foreground window.
+
+        Nothing is selected when the foreground is not an EVE client --
+        a browser, Discord, or Wingman itself. That is deliberate: a
+        sticky "last client used" highlight could not be distinguished
+        from an alert on that same client, and acknowledging the alert
+        would then clear one the user never saw.
+        """
+        foreground = self._foreground or (
+            libs.user32.GetForegroundWindow() if libs is not None else 0
+        )
+        key = next((k for k, c in self._clients.items() if c.hwnd == foreground), None)
+        if key == self._selected_key:
+            # Usually a genuine no-op: the common case is a foreground
+            # that has not changed and a window that is already selected,
+            # and PreviewWindow.set_selected is itself idempotent
+            # (window.py:356), so calling it costs a dict lookup and one
+            # no-op call, not a repaint. It is NOT always a no-op though:
+            # a preview whose creation failed on an earlier sweep and
+            # succeeded on this one, while its client stayed foreground
+            # the whole time, reaches this branch with a brand-new window
+            # that has never been told it is selected. Applying it here
+            # is what puts the ring on it without waiting for the user to
+            # tab away and back. The early return itself stays -- that is
+            # the hot path this whole branch exists to keep cheap.
+            win = self._windows.get(key) if key else None
+            if win is not None:
+                win.set_selected(True)
+            return
+        previous, self._selected_key = self._selected_key, key
+        for candidate in (previous, key):
+            win = self._windows.get(candidate) if candidate else None
+            if win is not None:
+                win.set_selected(candidate == key)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -480,6 +574,19 @@ class PreviewHost:
             logger.debug("Preview hotkey target %r is not running", target)
             return
         window_mod.activate(libs, client.hwnd)
+
+    def _apply_alerts(self, libs, pending) -> None:
+        """No-op for now -- rendering the alert on its preview window is
+        wired up by a later task. Just keep the mailbox draining so
+        raise_alert() never backs up unbounded.
+        """
+        for character, event, spec in pending:
+            logger.debug(
+                "Alert for %s (%s, %s) received; renderer not wired yet",
+                character,
+                event,
+                spec,
+            )
 
     def _screen(self):
         """Virtual-desktop bounds, re-read each sweep.
@@ -647,6 +754,19 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
+        # Same reasoning, for state the held render path will start
+        # reading: _apply_alerts is a no-op today, but once it renders,
+        # an hour-old batch queued between stop() and the next enable
+        # would arm every preview at once with a stale fight (raise_alert
+        # is safe from any thread and keeps filling this while the pump
+        # is torn down). And _apply_selection's `if key == self.
+        # _selected_key: return` would otherwise leave a freshly-created
+        # window unselected forever across a stop/start, since nothing
+        # else resets it.
+        with self._lock:
+            self._pending_alerts = []
+        self._selected_key = None
+        self._foreground = 0
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)  # 1. hook
             self._hook = None

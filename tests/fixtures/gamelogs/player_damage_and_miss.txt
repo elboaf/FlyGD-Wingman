@@ -1,0 +1,9 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Torvin Wexley
+  Session Started: 2025.11.13 18:29:33
+------------------------------------------------------------
+[ 2025.11.13 18:36:34 ] (combat) <color=0xffcc0000><b>65</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>Bellrik Sanmar[VYKO](Vexor)</b><font size=10><color=0x77ffffff> - Hammerhead II - Hits
+[ 2025.11.13 18:36:34 ] (combat) <color=0xffcc0000><b>83</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>Renar Duthie[VYKO](Vexor)</b><font size=10><color=0x77ffffff> - Hammerhead II - Penetrates
+[ 2025.11.13 18:36:30 ] (combat) Hammerhead II belonging to Bellrik Sanmar misses you completely - Hammerhead II
+[ 2025.11.13 18:36:31 ] (combat) Hobgoblin II belonging to Renar Duthie misses you completely - Hobgoblin II

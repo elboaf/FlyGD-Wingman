@@ -461,6 +461,96 @@
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
       </section>
+
+      <section class="card">
+        <h2>Alerts</h2>
+        <div class="row"><span class="lab"></span>
+          <span class="hint">Gamelog-driven alerts pulse a client's preview
+            when combat starts, your warp is scrambled, or you decloak
+            &mdash; useful for a client that is not the one you are
+            looking at.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alerts-previews-off" style="display:none">
+            Previews are off, so alerts have nothing to draw on. Turn on
+            client previews above to use them.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alerts-no-folder" style="display:none">
+            Your EVE Gamelogs folder is not set. Alerts cannot run without
+            it &mdash; set it under Settings &rsaquo; Folders.</span></div>
+        <div class="row">
+          <span class="lab">Enable</span>
+          <label class="check">
+            <input type="checkbox" id="alert-enabled"><span class="box"></span>
+            Watch gamelogs and raise alerts
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Never the character count alone: get_alert_state's `running`
+               flag renders in the same sentence, so a dead tailer thread
+               cannot keep reading as a healthy "watching N characters". -->
+          <span class="hint" id="alerts-health"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alerts-status"></span></div>
+        <div class="row">
+          <span class="lab">PvE filter</span>
+          <label class="check">
+            <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
+            Ignore combat that looks like NPC fire, not a player's
+          </label>
+        </div>
+        <div class="row">
+          <span class="lab">Persist</span>
+          <label class="check">
+            <input type="checkbox" id="alert-persist"><span class="box"></span>
+            Keep pulsing until you select the preview
+          </label>
+        </div>
+        <div class="row"><span class="lab">Combat</span>
+          <label class="check">
+            <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>
+            Enabled
+          </label>
+          <input type="color" class="alert-color" id="alert-event-combat-color"
+            aria-label="Combat alert colour">
+          <select class="field" id="alert-event-combat-sound"
+            aria-label="Combat alert sound">
+            <option value="none">No sound</option>
+            <option value="chime">Chime</option>
+            <option value="bell">Bell</option>
+          </select>
+          <button class="btn" id="alert-event-combat-test">Test</button>
+        </div>
+        <div class="row"><span class="lab">Warp scramble</span>
+          <label class="check">
+            <input type="checkbox" id="alert-event-warp_scramble-enabled"><span class="box"></span>
+            Enabled
+          </label>
+          <input type="color" class="alert-color" id="alert-event-warp_scramble-color"
+            aria-label="Warp scramble alert colour">
+          <select class="field" id="alert-event-warp_scramble-sound"
+            aria-label="Warp scramble alert sound">
+            <option value="none">No sound</option>
+            <option value="chime">Chime</option>
+            <option value="bell">Bell</option>
+          </select>
+          <button class="btn" id="alert-event-warp_scramble-test">Test</button>
+        </div>
+        <div class="row"><span class="lab">Decloak</span>
+          <label class="check">
+            <input type="checkbox" id="alert-event-decloak-enabled"><span class="box"></span>
+            Enabled
+          </label>
+          <input type="color" class="alert-color" id="alert-event-decloak-color"
+            aria-label="Decloak alert colour">
+          <select class="field" id="alert-event-decloak-sound"
+            aria-label="Decloak alert sound">
+            <option value="none">No sound</option>
+            <option value="chime">Chime</option>
+            <option value="bell">Bell</option>
+          </select>
+          <button class="btn" id="alert-event-decloak-test">Test</button>
+        </div>
+      </section>
     </div>
 
     <div class="settings" id="section-general">
@@ -871,6 +961,7 @@
   <script src="app.js"></script>
   <script src="bookmarks.js"></script>
   <script src="previews.js"></script>
+  <script src="alerts.js"></script>
   <script src="evesettings.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>

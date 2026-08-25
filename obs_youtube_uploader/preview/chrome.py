@@ -97,8 +97,12 @@ def render(
     img = Image.new("RGBA", (w, h), INTERIOR_BG)
     d = ImageDraw.Draw(img)
 
-    width = border * 2 if selected else border
-    d.rectangle([0, 0, w - 1, h - 1], outline=border_color, width=width)
+    # Only the selected preview carries a ring. An unselected one shows the
+    # interior fill at the inset width instead -- near-black, which reads as
+    # nothing over a dark desktop and as a thin dark edge over bright game
+    # content. That is the intended look; see the design's Outcome section.
+    if selected:
+        d.rectangle([0, 0, w - 1, h - 1], outline=border_color, width=border)
 
     band_bottom = min(h - 1, border + label_h)
     if band_bottom > border:

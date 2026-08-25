@@ -12,7 +12,9 @@ CYAN = (0, 200, 220, 255)
 
 
 def test_border_is_drawn_in_the_requested_colour():
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN)
+    """Only when selected -- the ring is now conditional; see the
+    selected/unselected tests below."""
+    img = chrome.render((320, 210), "Pilot", border_color=CYAN, selected=True)
     assert img.getpixel((0, 0)) == CYAN
     assert img.getpixel((319, 209)) == CYAN
 
@@ -63,10 +65,35 @@ def test_long_labels_do_not_overflow_the_band():
     assert img.getpixel((160, 40)) == band.getpixel((160, 40))
 
 
-def test_selected_draws_a_thicker_border():
-    plain = chrome.render((320, 210), "P", border_color=CYAN, border=5)
-    picked = chrome.render((320, 210), "P", border_color=CYAN, border=5, selected=True)
-    assert plain.tobytes() != picked.tobytes()
+def test_an_unselected_preview_draws_no_ring():
+    """The alert ring is then the only coloured ring on screen, which is
+    what makes it legible on a small tile."""
+    img = chrome.render(
+        (200, 150), "Alice", border_color=(0, 200, 220, 255), border=2, selected=False
+    )
+    assert img.getpixel((0, 100))[:3] != (0, 200, 220)
+
+
+def test_the_selected_preview_draws_its_ring():
+    img = chrome.render(
+        (200, 150), "Alice", border_color=(0, 200, 220, 255), border=2, selected=True
+    )
+    assert img.getpixel((0, 100))[:3] == (0, 200, 220)
+
+
+def test_the_interior_stays_opaque_either_way():
+    """Opacity is load-bearing, not cosmetic: a layered window is
+    hit-tested against its own alpha, so a transparent pixel is
+    click-through and drag breaks (chrome.py:22-30)."""
+    for selected in (True, False):
+        img = chrome.render(
+            (200, 150),
+            "Alice",
+            border_color=(0, 200, 220, 255),
+            border=2,
+            selected=selected,
+        )
+        assert img.getpixel((100, 100))[3] == 255
 
 
 def test_degenerate_size_does_not_raise():

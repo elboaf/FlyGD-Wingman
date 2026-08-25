@@ -32,6 +32,7 @@
   // is a commit on its own.
   ['set_privacy', 'set_notify_mode', 'set_category',
    'set_discord_webhook', 'clear_discord_webhook',
+   'set_alert_enabled', 'set_alert_pve_filter', 'set_alert_persist',
    // M3. Same three-key shape, and it belongs in this list rather than the
    // generic one for the same reason: the ABOUT card reverts its checkbox
    // on anything that is not `applied`.
@@ -46,6 +47,33 @@
   api.set_folder = function (which, path) {
     console.log('DEV api.set_folder(', which, ',', path, ')');
     return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  // Same tier as the block above: set_alert_event and test_alert both
+  // return {applied, persisted, error} and the page reads all three.
+  api.set_alert_event = function (event, field, value) {
+    console.log('DEV api.set_alert_event(', event, field, value, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  api.test_alert = function (event) {
+    console.log('DEV api.test_alert(', event, ')');
+    return Promise.resolve({applied: true, persisted: false, error: null});
+  };
+
+  // get_alert_state is a read (like get_preview_hotkey_state), not a
+  // push -- see alerts.js. Kept in one place so the Alerts card can be
+  // eyeballed under ?dev=1 without launching Python.
+  api.get_alert_state = function () {
+    console.log('DEV api.get_alert_state()');
+    return Promise.resolve({
+      previews_enabled: true,
+      alerts: settingsPayload().settings.preview.alerts,
+      running: true,
+      last_error: null,
+      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
+      gamelogs_folder: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs'
+    });
   };
 
   // NOT generic stubs, for the same reason save_settings above is not: the
@@ -235,7 +263,25 @@
           recording_dir: 'D:\\Videos',
           gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
           discord_webhook: 'https://discord.com/api/webhooks/1/tok',
-          channel_id: 'UC123', channel_title: 'FlyGD' }, patch || {}),
+          channel_id: 'UC123', channel_title: 'FlyGD',
+          // Was entirely absent before the Alerts card: _settings_payload
+          // ships preview.alerts for free (a shallow dict(cfg)), so this
+          // is what makes the card eyeballable under ?dev=1 at all.
+          preview: { enabled: true, restore_preview_positions: true,
+            alerts: { enabled: true, pve_filter: true,
+              persist_until_selected: true,
+              events: {
+                combat: { enabled: true, cooldown_s: 1, duration_ms: 1200,
+                  pulses: 3, color: '#ff4d4d', sound: 'chime' },
+                warp_scramble: { enabled: true, cooldown_s: 8,
+                  duration_ms: 1200, pulses: 3, color: '#ffd24d',
+                  sound: 'bell' },
+                decloak: { enabled: true, cooldown_s: 8, duration_ms: 1200,
+                  pulses: 3, color: '#4dd2ff', sound: 'chime' }
+              }
+            }
+          }
+        }, patch || {}),
       webhook_status: statusLine === undefined
         ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
       detected: { recording: 'D:\\Videos',

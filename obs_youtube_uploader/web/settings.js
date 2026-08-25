@@ -425,6 +425,15 @@
         // backend never accepted.
         box.checked = !wanted;
       }
+      // #preview-enabled and the Alerts card share one section with no
+      // navigation between them (alerts.js's wm:section refresh never
+      // fires), so the card would otherwise keep showing a stale "watching
+      // N characters" line -- persistently, since the backend really did
+      // stop the poll thread -- until the user left and returned to the
+      // route. Dispatched after the bridge call settles, not on the raw
+      // change, so alerts.js's get_alert_state read cannot race ahead of
+      // set_preview_enabled's own host.stop()/alerts.reconcile().
+      document.dispatchEvent(new CustomEvent('wm:preview-enabled-changed'));
     });
   });
 

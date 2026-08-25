@@ -48,6 +48,8 @@ from .. import (
     uploader,
 )
 from .. import settings as settings_mod
+from ..alerts import patterns as alert_patterns
+from ..alerts import service as alert_service
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
@@ -78,6 +80,14 @@ FIRST_RUN_PUSH_S = 1.5
 EVE_CONFIRM_TIMEOUT_S = 300.0
 
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
+
+# set_alert_event's writable fields. Kept as a set to check against rather
+# than duplicated per-field range checks -- settings.validated_alerts owns
+# the ranges (cooldown_s/duration_ms/pulses clamping, color/sound
+# validation) and this is the only other place event shape is named.
+_ALERT_EVENT_FIELDS = frozenset(
+    {"enabled", "cooldown_s", "duration_ms", "pulses", "color", "sound"}
+)
 
 
 def _folder_dialog_kind():
@@ -261,6 +271,7 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         skills=None,
+        alerts=None,
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
@@ -304,6 +315,13 @@ class Api:
         # returns a safe value, which is what lets the page render the route
         # without probing for a capability first.
         self._skills = skills
+
+        # None off the happy path -- pre-Windows-check, off Linux in tests,
+        # and when the gamelogs feature is otherwise unavailable. Every
+        # call site below tolerates its absence: reconcile() is the only
+        # method ever invoked on it, and every one of the alert bridge
+        # methods below guards on it first.
+        self._alerts = alerts
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -1695,7 +1713,15 @@ class Api:
             # empty value legitimately means "no gamelogs folder".
             if text and not Path(text).is_dir():
                 return self._field_refused("That folder does not exist.")
-            return self._write_setting("gamelogs_dir", text or None)
+            result = self._write_setting("gamelogs_dir", text or None)
+            # This IS the watcher this branch's docstring says it drives
+            # none of: AlertService reads gamelogs_dir through the same
+            # `folder` callable reconcile() re-evaluates, so a repointed
+            # or newly-set folder is exactly the case that used to persist
+            # while nothing ever polled it.
+            if self._alerts is not None:
+                self._alerts.reconcile()
+            return result
 
         text = str(path or "").strip()
         if not text:
@@ -1787,6 +1813,8 @@ class Api:
         previews EVE clients should pay none of it.
         """
         if self._preview_host is None:
+            if self._alerts is not None:
+                self._alerts.reconcile()
             return
         section = self._state.settings.get("preview", {})
         # Pushed before start(): the first registration pass runs inside
@@ -1795,6 +1823,12 @@ class Api:
         self._preview_host.set_hotkeys(section.get("hotkeys") or {})
         if section.get("enabled"):
             self._preview_host.start()
+        if self._alerts is not None:
+            # After start(), not before: the folder callable __main__ wires
+            # up gates on the host's live is_running, and reconciling
+            # before start() would evaluate it against the pre-launch
+            # state.
+            self._alerts.reconcile()
 
     def set_preview_enabled(self, enabled: bool) -> None:
         """Toggle previews and persist the choice.
@@ -1830,6 +1864,11 @@ class Api:
                 self._preview_host.start()
             else:
                 self._preview_host.stop()
+        if self._alerts is not None:
+            # Alerts gate on preview.enabled through the `folder` callable
+            # (decision: no previews, no polling thread), so a toggle here
+            # is one of the five places that answer can change.
+            self._alerts.reconcile()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
         # returned None (settings.js:181 documents the same trap).
@@ -1843,12 +1882,22 @@ class Api:
         thread owning HWNDs and Wingman lingering in Task Manager after
         it has left the tray.
         """
-        if self._preview_host is None:
-            return
-        try:
-            self._preview_host.stop()
-        except Exception:
-            logger.exception("Preview host did not stop cleanly")
+        if self._preview_host is not None:
+            try:
+                self._preview_host.stop()
+            except Exception:
+                logger.exception("Preview host did not stop cleanly")
+        if self._alerts is not None:
+            # reconcile(), not a direct stop(): the folder callable
+            # __main__ wires up gates on the host's live is_running, which
+            # preview_host.stop() above has already flipped false, so this
+            # is the same "no previews, no polling thread" answer every
+            # other call site relies on -- run after the host teardown,
+            # not before, or it would see the pre-shutdown state.
+            try:
+                self._alerts.reconcile()
+            except Exception:
+                logger.exception("Alert service did not stop cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
@@ -1969,6 +2018,196 @@ class Api:
         if status is not None:
             payload["registration"] = status
         self._push("onPreviewHotkeys", payload)
+
+    # ---- Gamelog alerts --------------------------------------------------
+
+    def _write_alert_setting(self, path: tuple, value) -> dict:
+        """Persist one value under preview.alerts, no-op guarded.
+
+        `_write_setting` (above) cannot reach here: it only ever does
+        `doc[key] = value` against the top-level document, and
+        `preview.alerts` is nested two levels below that. This instead
+        follows set_restore_preview_positions's shape for the write itself
+        -- descend through `doc.setdefault(...)` inside `settings_mod.
+        update`, so the mutation happens under `_SAVE_LOCK` -- generalised
+        to an arbitrary path so it covers all six alert fields instead of
+        being copied six times.
+
+        Unlike set_restore_preview_positions, a raise here is reported as
+        refused (`applied: False`), not as `applied: True, persisted:
+        False`: settings_mod.update restores the live dict on OSError, so
+        the value genuinely did NOT take effect for this session either --
+        `applied: True` would tell the page a change is live that never
+        happened, and a checkbox or select left showing it would be
+        showing a state the app is not in.
+
+        `path` is walked fresh against `self._state.settings` both for the
+        no-op check and inside the `update()` block, never against a
+        `preview` or `alerts` reference held across the call: `_normalize`
+        reassigns both wholesale on every write (settings.py:373-378), so
+        a reference captured before `update()` is stale by the time it
+        returns.
+        """
+        alerts = self._state.settings.get("preview", {}).get("alerts", {})
+        node = alerts
+        for key in path[:-1]:
+            node = node.get(key, {})
+        if node.get(path[-1]) == value:
+            # Same rationale as _write_setting's no-op guard: a save
+            # projects the complete document, so this would otherwise be a
+            # full rewrite for a value that has not changed.
+            return self._field_ok()
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                node = doc.setdefault("preview", {}).setdefault("alerts", {})
+                for key in path[:-1]:
+                    node = node.setdefault(key, {})
+                node[path[-1]] = value
+        except OSError:
+            logger.exception("Could not persist alert setting %s", ".".join(path))
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
+
+    def set_alert_enabled(self, enabled) -> dict:
+        """Turn the gamelog alert poller on or off."""
+        result = self._write_alert_setting(("enabled",), bool(enabled))
+        if self._alerts is not None:
+            # One of the five places reconcile() must run from: alerts
+            # gate on this flag (composed with the preview/folder state in
+            # the `folder` callable __main__ wires up), so this toggle is
+            # exactly the case that can change AlertService._wanted()'s
+            # answer.
+            self._alerts.reconcile()
+        return result
+
+    def set_alert_pve_filter(self, enabled) -> dict:
+        """Suppress alerts that look like NPC fire rather than a player's.
+
+        Read live by the poll thread through the same config callable on
+        its next tick -- no reconcile() needed, this cannot change whether
+        the thread itself should run.
+        """
+        return self._write_alert_setting(("pve_filter",), bool(enabled))
+
+    def set_alert_persist(self, enabled) -> dict:
+        """Keep an alert pulsing until its preview is selected, rather
+        than only for its configured duration."""
+        return self._write_alert_setting(("persist_until_selected",), bool(enabled))
+
+    def set_alert_event(self, event, field, value) -> dict:
+        """Persist one field of one event's alert spec.
+
+        Refuses an unknown event or field outright. settings.validated_
+        alerts iterates alert_patterns.EVENTS on load, so an unknown event
+        would be silently dropped on the next normalise anyway -- refusing
+        here tells the page immediately instead of on the next restart.
+
+        Deliberately does NOT clamp cooldown_s/duration_ms/pulses or
+        validate color/sound itself: settings.validated_alerts already
+        owns those ranges, and letting `update()`'s normalise pass apply
+        them keeps that the one place they are defined. A rejected value
+        is silently dropped by normalise rather than reported here, which
+        matches how every other clamped field in this file already
+        behaves (e.g. set_folder never separately re-validates what
+        settings._normalize will coerce).
+        """
+        if event not in alert_patterns.EVENTS:
+            return self._field_refused(f"Unknown alert event: {event}")
+        if field not in _ALERT_EVENT_FIELDS:
+            return self._field_refused(f"Unknown alert field: {field}")
+        if field == "enabled":
+            value = bool(value)
+        return self._write_alert_setting(("events", event, field), value)
+
+    def test_alert(self, event) -> dict:
+        """Fire one alert manually on every currently previewed character,
+        bypassing cooldowns entirely. Reaches the host directly rather
+        than through AlertService: the service owns the poll path, and
+        Test is not a poll.
+
+        NEVER persistent, regardless of persist_until_selected -- always
+        `persisted: False`, on every path including success, since
+        nothing is ever saved here: the user is looking at Wingman, not
+        at a preview, so nothing would ever select the client to
+        acknowledge it, and a persistent test alert would pulse until
+        they alt-tabbed to that client by hand.
+
+        The sound plays exactly once regardless of how many previews are
+        open, matching AlertService._handle's one-sound-per-dispatched-
+        event behaviour -- N previews must not mean N overlapping sounds.
+
+        With no live preview to ring -- previews off (no host at all) or
+        a host present but no named EVE client -- the sound still plays
+        and this still reports `applied: True`: the sound genuinely fired,
+        so nothing was refused, and a silent no-op here would be
+        indistinguishable from a broken feature. `error` carries the
+        plain-language reason nothing visual happened, distinguishing the
+        two cases -- "previews are off" and "no client is open" leave the
+        user looking at a different fix -- and the page renders it inline.
+        """
+        if event not in alert_patterns.EVENTS:
+            return self._field_refused(f"Unknown alert event: {event}")
+        events = (
+            self._state.settings.get("preview", {}).get("alerts", {}).get("events", {})
+        )
+        spec = dict(events.get(event, {}))
+        spec["persist_until_selected"] = False
+        sound = spec.get("sound") or "none"
+        if sound != "none":
+            alert_service.play_sound(sound)
+        if self._preview_host is None:
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": "Previews are off, so only the sound played.",
+            }
+        characters = self._preview_host.characters()
+        if not characters:
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": "No EVE clients are open, so only the sound played.",
+            }
+        for character in characters:
+            self._preview_host.raise_alert(event=event, character=character, spec=spec)
+        return self._field_ok(persisted=False)
+
+    def get_alert_state(self) -> dict:
+        """Everything the Alerts card needs, in one read.
+
+        A read, not a push, for the same reason get_preview_hotkey_state
+        is one: previews (and therefore alerts) can start before the
+        webview exists -- start_previews_if_enabled runs before
+        window_mod.run() -- so a health change discovered at launch would
+        be pushed into a window that is not there yet and _push swallows
+        it. The page asks for this on load instead.
+        """
+        section = self._state.settings.get("preview", {})
+        alerts = section.get("alerts", {})
+        gamelogs = self._state.settings.get("gamelogs_dir")
+        folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        # Same test as AlertService._wanted(): a folder that was valid and
+        # stopped being one (an unmounted drive, an unlinked OneDrive
+        # folder, a settings.json carried from another machine) must show
+        # the no-folder banner, not the healthy card, even though the
+        # setting still holds a path.
+        if folder is not None and not folder.is_dir():
+            folder = None
+        if self._alerts is not None:
+            health = self._alerts.health()
+            running = health.running
+            last_error = health.last_error
+            characters = list(health.characters)
+        else:
+            running, last_error, characters = False, None, []
+        return {
+            "previews_enabled": bool(section.get("enabled")),
+            "alerts": dict(alerts),
+            "running": running,
+            "last_error": last_error,
+            "characters": characters,
+            "gamelogs_folder": str(folder) if folder is not None else None,
+        }
 
     # ---- Where a preview opens ------------------------------------------
 

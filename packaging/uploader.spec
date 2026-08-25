@@ -61,6 +61,10 @@ a = Analysis(
         # bitmap default, so every preview label ships in the wrong face
         # with no failure anywhere in the build.
         (str(ROOT / "obs_youtube_uploader" / "assets" / "fonts"), "assets/fonts"),
+        # Alert sounds, resolved by alerts.service.sound_path() through
+        # paths.bundle_dir() -- the same web/-style precedent as above, not
+        # chrome.py's font lookup, which this destination does not match.
+        (str(ROOT / "obs_youtube_uploader" / "assets" / "sounds"), "assets/sounds"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at

@@ -1,0 +1,6 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Torvin Wexley
+  Session Started: 2026.08.11 04:30:00
+------------------------------------------------------------
+[ 2026.08.11 04:38:17 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b>Emergent Preserver</b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font><color=0xffffffff><fontsize=12>Torvin Wexley [OXWLD]</color><color=0xfff0f000> Drekavac</color><color=0xffffffff>
