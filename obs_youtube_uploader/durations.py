@@ -127,6 +127,12 @@ def resolve(cache: dict[str, CacheEntry], infos: list) -> list:
         if hit:
             info.duration = duration
             info.probed = True
+            # Explicit rather than left to the default: only a definitive
+            # verdict is ever admitted to the cache (see library.probe), so
+            # a hit is always an answer -- but this flag decides which glyph
+            # the column draws, and leaving it implicit is how the two
+            # states collapsed into one in the first place.
+            info.answered = True
         else:
             pending.append(info)
     return pending

@@ -173,6 +173,12 @@ class RowSnapshot:
             return
         info.duration = duration
         info.probed = True
+        # The flag reaches the CELL, not just this class's supersede rule.
+        # It used to stop here: every no-verdict probe rendered as "?", so
+        # an install with no ffprobe at all told the user, once per row,
+        # that ffprobe could not open that particular file. See
+        # library.VideoInfo.answered.
+        info.answered = definitive
         if definitive:
             self._definitive.add(row_id)
         self._replace(row_id, duration=info.duration_str)

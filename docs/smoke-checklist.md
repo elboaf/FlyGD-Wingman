@@ -257,25 +257,34 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **Display scaling at 100%, 125%, 150% and 200%.** Restart at each.
       Expected: text sharp AND the right apparent size next to Notepad;
       neither route opens larger than the screen; Title, Description,
-      Stitch, the combat-log checkbox, the summary and Upload all fully
+      Stitch, the no-webhook note, the summary and Upload all fully
       visible with nothing clipped. (Retry is absent until a failure —
-      see The list and Upload.) The upload panel is deliberately narrower
-      below 840 CSS px — 248px, then 220px — so check the longest prose in
+      see The list and Upload. The combat-log CHECKBOX is gone — logs are
+      unconditional now and a configured webhook is what decides the post;
+      what remains is the sentence.) The upload panel is deliberately
+      narrower below 840 CSS px — 248px — so check the longest prose in
       it wraps rather than being cut off at the panel edge: clear the
-      webhook first so the two-line combat-log hint is showing, which is
+      webhook first so the two-line no-webhook note is showing, which is
       the longest string the panel ever holds. NOTE: the viewport floor is
-      840 CSS px at every scaling, so 220px is unreachable and 248px is
+      840 CSS px at every scaling. (The 220px step is gone — it lived in a
+      `max-width: 607px` block that could never fire.) 248px is
       reachable only at SOME scalings: `max-width: 839px` matches at 200%,
       where DPI rounding puts the floor at 839 CSS, and not at 100%, where
       it is 840. Expect the panel at 320px at 100% and 248px at 200%, at
       the same window size. That is a known defect (`DESIGN.md`), not
       something to verify as correct — record which you saw.
-- [ ] **Nothing is clipped at the minimum window size.** The
-      Description box shrinks first and **Delete selected** is still fully
-      visible on its own row. Drag the window down to its floor (840x625
-      logical) to check this — before resizing existed, "minimum" was the
-      only size the window ever had and this was free; now a user can
-      actually get here.
+- [ ] **Nothing is clipped at the minimum window size, and Upload is above
+      the fold.** Drag the window down to its floor (840x625 logical) with
+      the webhook CLEARED and every row selected — that is the tallest the
+      panel ever gets. Expected: no scrollbar inside the panel at all, and
+      **Upload fully visible with its label**, not a sliver of accent at
+      the pane's bottom edge. It used to be clipped there: the panel was
+      two cards, and the most-pressed control in the app was last in a
+      stack of a title, a 96px description, two checkboxes, a three-line
+      webhook explanation, a summary, a second card heading and a line of
+      prose. It is one card now, and **Delete selected** has moved to the
+      list footer beside Select all / Select none, where the files it
+      deletes are.
 - [ ] **Settings rows stay usable at the window floor.** With the window at
       its floor, open Settings > Folders and Settings > Discord. Expected:
       the path and the masked webhook are both wide enough to read, with
@@ -352,19 +361,39 @@ somewhere stale and nothing on that screen is worth reviewing.
       visibly highlighted** — even when below the fold.
 - [ ] **Selected, focused and uploaded rows are distinguishable** from one
       another at a glance.
-- [ ] **Hovering an unreadable Length explains it,** and a `…` cell reads
-      "Measuring length…" instead — the two glyphs mean opposite things.
+- [ ] **Three Length glyphs, three different sentences.** Hover a `?`, a
+      `—` and a `…` cell. `?` blames the FILE ("ffprobe could not open this
+      file"); `—` blames the INSTALL ("ffprobe was not found", with
+      reinstalling as the way out); `…` says "Measuring length…". The first
+      two shared the `?` glyph until round 2, so a build with no ffprobe
+      accused every recording in the folder of being unreadable.
+      **To see `—` on purpose:** run from a source checkout with no
+      `packaging/bin/ffprobe.exe` fetched and no ffprobe on PATH. Every row
+      shows `—`, and the selection summary reads `0:00:00+` — the `+` is
+      required, because without it the line states a confident zero for a
+      108.8 MB recording.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
       appears over an empty Link cell, a filename, a header, or empty space.
 - [ ] **The list at the minimum window width.** Drag the window to its
-      floor. Expected: all six columns present — check, Filename, Modified,
-      Size, Length, Link — with the upload panel at its narrower 248px.
+      floor. Expected: **five** columns — check, Filename, Size, Length,
+      Link — with **Modified absent**, and the filename shown WHOLE, with
+      no ellipsis. Widen the window past ~932 CSS px and Modified comes
+      back.
+      **Modified giving way at the floor is the point, not a defect.** At
+      840 the six-column layout put the Filename track on a 120px floor
+      while an OBS filename measures 205px, so the column carrying the
+      row's identity was truncated to "Fight 2026-08-24 17-57-…" — losing
+      the seconds, the only characters that tell one row from another —
+      while Modified sat intact beside it carrying the same timestamp in a
+      friendlier form. The name floor is 212px now and Modified is what
+      yields. If you see six columns at the floor, or an ellipsis in a
+      filename, that is the regression.
       **This item used to demand three checks at three viewports (840 at
       100%, 672 at 125%, 560 at 150%) and two of them do not exist.** The
       floor is 840 CSS px at every scaling, so there is one width to
-      check, not three, and the column-dropping steps below it
-      (`max-width: 767px` drops Size and Length, `max-width: 607px` drops
-      Modified) cannot be reached by resizing the window at any scaling.
+      check, not three, and the tier below the floor (`max-width: 767px`,
+      dropping Size and Length) cannot be reached by resizing the window
+      at any scaling.
       Do still restart at each scaling for the reasons in the Display
       scaling item — apparent size, sharpness, clipping — but the CSS
       width does not move.
@@ -373,7 +402,9 @@ somewhere stale and nothing on that screen is worth reviewing.
       has kept a cell its rows have dropped is the specific failure the
       shared grid template exists to prevent.
       Widen the window back up and confirm the columns come back.
-- [ ] **The Modified column reads as relative time, not a timestamp.** It
+- [ ] **The Modified column reads as relative time, not a timestamp.**
+      Widen the window past ~932 CSS px first — Modified is not rendered at
+      the floor any more (see the item above). It
       must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
       week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
       beyond it. It shows the file's MTIME, which is why it must not look
@@ -381,7 +412,8 @@ somewhere stale and nothing on that screen is worth reviewing.
       remuxed recording the two legitimately differ by minutes or hours,
       and printing both as clock times made the app look like it was
       contradicting itself. The header must read **Modified**, not "Date".
-- [ ] **Sorting by Modified still orders newest-first.** Click Modified.
+- [ ] **Sorting by Modified still orders newest-first.** Widen the window
+      until Modified is showing, then click it.
       The order must follow the underlying mtime, NOT the rendered text — a
       text sort would put "2d ago" before "3h ago" and "Aug" before "Dec".
       Check with a folder holding both a recording from today and one over
@@ -616,6 +648,15 @@ behavior that only shows up at size.
       file and combat-log upload is unavailable for it. Hover a row showing
       `…` and confirm it reads "Measuring length…" instead — the two glyphs
       mean opposite things and both were previously unexplained.
+- [ ] **A build with no ffprobe says so, and does not blame the files.**
+      Run from a source checkout with no `packaging/bin/ffprobe.exe` and no
+      ffprobe on PATH. Expected: every row shows `—`, NOT `?`, and hovering
+      one says ffprobe was not found and that reinstalling restores
+      lengths. Select a row: the summary must read `0:00:00+` — with the
+      `+`. Both halves shipped wrong until round 2, because a probe that
+      reached no verdict was rendered identically to one that read the
+      file and failed: every row accused its own recording, and the
+      summary stated a confident zero for a 108.8 MB file.
 - [ ] **Hovering the ↗ link glyph explains both gestures.** Rest the pointer
       on a filled Link cell. Expected: a tooltip naming double-click to open
       and right-click to copy. Confirm no tooltip appears over an empty Link
@@ -626,13 +667,14 @@ behavior that only shows up at size.
       yellow, and that it disappears on click and when the pointer leaves
       the list.
 - [ ] **Retry is not on screen at all until something has failed.** On a
-      fresh start, the Publish card shows Upload and then **Delete
-      selected** on a row of its own, full width — no greyed Retry beside
-      it. Retry is enabled only after a failure in this session, which for
-      most users is never, so its resting state was a dead control given
-      equal weight to the one button on this screen that removes files from
-      disk. It is hidden, not greyed: there is no tooltip to hover, and
+      fresh start, the panel's single card shows **Upload** and nothing
+      under it but the destination line — no greyed Retry. Retry is
+      enabled only after a failure in this session, which for most users is
+      never. It is hidden, not greyed: there is no tooltip to hover, and
       tabbing through the panel must skip it entirely.
+      (**Delete selected** is no longer beside it. It deletes files from
+      disk, so it moved to the list footer beside Select all / Select none,
+      where the files it acts on are.)
 
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
@@ -716,7 +758,7 @@ behavior that only shows up at size.
       token portion of the URL.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
-      Settings, then press **Upload** with the logs box ticked. Expected:
+      Settings, then press **Upload**. Expected:
       the video uploads, and the strip finishes amber on "…combat logs
       skipped: your EVE Gamelogs folder was not found. Set it in Settings."
       No dialog. Then open Settings → **Detect** next to Gamelogs
@@ -724,7 +766,7 @@ behavior that only shows up at size.
       again with the field already set to that path: a dialog says it's
       already set to the detected folder, rather than silently re-filling it.
 - [ ] **A normal successful upload.** Select one or more recordings from a
-      real fight and press **Upload** with the logs box ticked. Expected:
+      real fight and press **Upload**. Expected:
       the video uploads first, the strip says "Upload complete!", and then
       it steps through "Collecting combat logs…" → "Building archive…" →
       "Posting to Discord…" → a green "Posted \<name\>.zip (N KB)." message.
@@ -733,25 +775,25 @@ behavior that only shows up at size.
       In Discord, the message names the character(s) and file count, and
       the attached zip contains a `manifest.json` plus the `.txt` logs. The
       temp archive under `%LOCALAPPDATA%\...\tmp` is gone afterward.
-- [ ] **Unticking the box uploads the video alone.** With a working webhook
-      and Gamelogs folder, untick **Also post combat logs to Discord** and
-      press **Upload**. Expected: the video publishes, the strip rests on
-      "Upload complete!", and NOTHING is posted to Discord — check the
-      channel. This is the only way to get a video without logs, so it has
-      to work.
+- [ ] **~~Unticking the box uploads the video alone.~~ REMOVED — there is
+      no box.** Uploader 8: the checkbox had no true second state ("there
+      is no scenario where I don't want to upload logs also"), so logs are
+      unconditional and a configured webhook is what decides the post. The
+      way to get a video without logs is to have no webhook configured;
+      that case is checked immediately below.
 - [ ] **Selection spanning one fight in multiple clips posts ONE archive.**
       Select three clips that together cover one continuous fight. Expected:
       a single upload covering the earliest start to the latest end across
       all three — not three separate posts.
 - [ ] **No readable duration (ffprobe missing/failed).** Rename
       `bin\ffprobe.exe` in the install directory, then select a recording and
-      press **Upload** with the logs box ticked. Expected: the video
+      press **Upload**. Expected: the video
       uploads, then an amber "…combat logs skipped: no readable duration for
       \<filename\>…" naming the specific recordings affected and mentioning
       ffprobe. No dialog. Restore the binary afterward.
 - [ ] **Uploading before the durations finish loading.** Delete
       `durations.json`, launch against a large folder, and press **Upload**
-      with the logs box ticked immediately, while rows still read "…".
+      immediately, while rows still read "…".
       Expected: after the video, a brief pause while just the selected
       recordings are probed, then the normal log post — NOT the "no readable
       duration" skip. That message must only ever mean ffprobe actually
@@ -787,7 +829,7 @@ behavior that only shows up at size.
       checks — this item covers the rail specifically, not a duplicate of
       those.
 - [ ] **One upload at a time, both halves included.** Start an upload with
-      the logs box ticked, and while the Discord half is still posting press
+      a webhook configured, and while the Discord half is still posting press
       **Upload** again. Expected: the "An upload is already in progress"
       warning. Both halves run on one worker thread, so the guard that
       always covered the video now covers the log post as well.
@@ -797,38 +839,40 @@ behavior that only shows up at size.
       Discord…". All three must be readable. Before this refresh the first
       of them was hardcoded to black, which was invisible on a dark
       background — this item exists to catch that regressing.
-- [ ] **The combat-log checkbox is where the other upload options are.**
-      Confirm **Also post combat logs to Discord** sits in the **Upload card
-      on the right, directly under Stitch** — not in the Publish card beside
-      the buttons — and that it is TICKED on a fresh launch **when a
-      webhook is configured**. It is not persisted, so every launch starts
-      ticked.
-      With NO webhook stored it must instead be unticked, disabled, and
-      followed by "No Discord webhook is configured, so logs would be
-      skipped. Set one in Settings › Discord." Clear the webhook and
-      confirm the box goes off and dims; put one back and confirm it comes
-      back ticked without a restart. Then untick it by hand, clear the
-      webhook and restore it: it must stay UNTICKED, because that one was
-      the user's decision and not the gate's.
-      Note the gate tests only whether a webhook is STORED. A webhook that
-      is stored but does not parse leaves the box available — the confirm
-      dialog is what reports that case, and it is checked under Upload.
+- [ ] **There is no combat-log checkbox, and the fact is on the panel.**
+      With a webhook configured, the panel's card holds Title, Description,
+      Stitch, the selection summary and Upload — and nothing about logs.
+      Clear the webhook in Settings › Discord: a note appears under Stitch
+      reading "No Discord webhook is configured, so combat logs are not
+      posted. Set one in Settings › Discord." Put the webhook back and the
+      note goes, with no restart.
+      **The note is load-bearing, not decoration.** With no checkbox,
+      `Api._post_combat_logs` is deliberately SILENT on a webhook-less
+      install — a "combat logs skipped" strip after every upload, forever,
+      is the recurring-failure pattern it exists to avoid — so the panel
+      note is the only place the fact is stated. If the note is missing,
+      the feature fails without saying so anywhere.
+      The note tests only whether a webhook is STORED. A webhook that is
+      stored but does not parse gets no note here — the confirm dialog
+      reports that case, and a genuine post failure still earns its WARNING
+      strip. Checked under Upload.
 
 ## Upload
 - [ ] **Upload confirms before publishing anything.** Select two
       recordings and press it. Expected: a dialog naming the destination
       channel, the privacy setting, the exact title(s) that will be sent
       (including the `(1/2)` … `(2/2)` numbering), the total size and
-      duration, and — while the logs box is ticked — a "Logs:" line saying
+      duration, and — when a webhook is configured — a "Logs:" line saying
       combat logs will be posted to Discord afterwards, and a closing line
-      naming BOTH as un-undoable. Untick the box and confirm both the Logs
-      line and the Discord half of the closing line disappear: this dialog
-      is the only disclosure that one press publishes to two places. Choose No and confirm nothing uploads. This is the app's
+      naming BOTH as un-undoable. Clear the webhook and confirm both the
+      Logs line and the Discord half of the closing line disappear: this
+      dialog is the only disclosure that one press publishes to two places,
+      and since the checkbox went it is the webhook alone that decides.
+      Choose No and confirm nothing uploads. This is the app's
       only irreversible action, and deleting local files — which are
       recoverable — already confirmed.
-- [ ] **With the logs box ticked and NO webhook configured, the confirm
-      says the logs will be SKIPPED.** Clear the webhook in
-      Settings > Discord, tick the combat-log box, and press Upload.
+- [ ] **With NO webhook configured, the confirm says the logs will be
+      SKIPPED.** Clear the webhook in Settings > Discord and press Upload.
       Expected: the "Logs:" line reads "skipped — no Discord webhook is
       configured (set one in Settings)", and the closing line names
       YouTube ONLY. It must not promise a Discord post.

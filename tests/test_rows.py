@@ -282,6 +282,29 @@ def test_a_definitive_answer_is_never_replaced_by_a_probe_that_never_ran(tmp_pat
     assert snapshot.rows()[0]["duration"] == "1:30"
 
 
+def test_a_probe_that_never_ran_renders_differently_from_an_unreadable_file(
+    tmp_path,
+):
+    """The verdict flag reaches the CELL, not just the supersede rule above.
+
+    It used to stop at the supersede rule: set_duration marked every
+    completed attempt `probed` and rendered "?" for both Nones. So an
+    install with no ffprobe at all -- packaging/bin is gitignored and
+    fetched at build time -- told the user, once per row, that ffprobe
+    could not open that particular file, which it had never tried to.
+    """
+    _touch(tmp_path, "a.mkv")
+    snapshot, listed = _snapshot_over(tmp_path)
+    snapshot.set_duration(listed[0]["id"], None, definitive=False)
+    assert snapshot.rows()[0]["duration"] == "—"
+    info = snapshot.resolve(listed[0]["id"])
+    # Still "probed": the attempt is over, so the row must stop reading
+    # "measuring". It is `answered` that carries whether the attempt said
+    # anything, and it is the one this had been discarding.
+    assert info.probed is True
+    assert info.answered is False
+
+
 def test_a_probe_that_never_ran_can_still_be_superseded(tmp_path):
     """The mirror of the case above. "No ffprobe configured" is not a
     verdict, so a real one landing later must win."""

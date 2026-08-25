@@ -77,56 +77,100 @@
              Reports through the status strip, not a dialog: see
              Api.open_recording_dir. -->
         <button class="btn" id="btn-open-folder">Open folder</button>
+        <!-- Uploader 2, third seam: this deletes files from disk and was
+             filed under a card headed PUBLISH, beside the button that
+             sends them to YouTube. It belongs with the files it acts on.
+             Moving it also took 43px out of the panel, which is what
+             Uploader 9 needed -- but the reason is the seam, not the
+             pixels. -->
+        <button class="btn" id="btn-delete">Delete selected</button>
         <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
 
-    <!-- Filled by Task 12 (upload panel). -->
     <div id="panel-slot">
       <div class="panel">
 
+        <!-- ONE card, not two. Uploader 2: the card headed UPLOAD did not
+             contain the Upload button -- that lived in a second card
+             headed PUBLISH, which is one concept under two names on one
+             screen (DESIGN.md, "One name per concept"). It also repeated
+             the route's own tab name as its first card heading, which
+             DESIGN.md forbids and lane 2 already fixed for Settings.
+             Collapsing the two answers all of that AND returns ~54px of
+             card chrome to Uploader 9, whose whole complaint is that the
+             most-pressed control in the app is last in a stack that
+             overflows the pane at the window floor.
+
+             The heading names the job, not the screen: "This upload". -->
         <section class="card">
-          <h2>Upload</h2>
+          <h2>This upload</h2>
+
+          <!-- Uploader 13. The panel used to read identically with zero
+               recordings in the folder: live fields, full-strength accent
+               Upload, nothing acknowledging there was nothing to act on.
+               panel.js unhides this and disables the controls below it.
+               `hidden` is enough on its own -- .hint sets no display, so
+               it needs no [hidden] override (DESIGN.md). -->
+          <p class="hint" id="panel-empty-note" hidden>There are no
+            recordings in this folder yet, so there is nothing to
+            upload.</p>
+
           <label class="lab" for="f-title" id="lab-title">Title</label>
           <input class="field" id="f-title" type="text" spellcheck="false"
                  placeholder="Title for this upload">
           <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
           <textarea class="field" id="f-desc" spellcheck="false"
                     placeholder="Optional description"></textarea>
-          <label class="check" style="margin-top:12px">
+
+          <!-- Uploader 15 was "two adjacent checkboxes are too close to
+               distinguish by aim", and the maintainer hit the wrong one.
+               Uploader 8 deleted the other one (combat logs are
+               unconditional now), so one checkbox cannot be confused with
+               its neighbour and 15 needs no separate work. What remains is
+               that Stitch is meaningless below two selected: panel.js
+               disables it there rather than hiding it. Hiding was the
+               walkthrough's suggestion (17) and was rejected -- a control
+               that appears and disappears under the pointer is a new
+               hazard on the one screen with a recorded mis-click, and the
+               height it would have saved is already paid for by the card
+               merge above and the Delete move below. -->
+          <label class="check" id="lab-stitch" style="margin-top:12px">
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <!-- Ticked by default, and panel.js unticks and disables it when
-               no webhook is stored. On a fresh install this used to be a
-               feature the user appeared to have: the box was on, the
-               confirm promised a Discord post, and every upload then ended
-               on a WARNING strip about logs being skipped, which reads as a
-               recurring failure rather than as an unconfigured option.
-               The hint is `hidden` rather than absent so the sentence has
-               one home whichever way the payload lands; .hint sets no
-               display, so the attribute is enough on its own here. -->
-          <label class="check" id="lab-logs" style="margin-top:8px">
-            <input type="checkbox" id="f-logs" checked><span class="box"></span>
-            Also post combat logs to Discord
-          </label>
-          <p class="hint" id="logs-hint" hidden>No Discord webhook is
-            configured, so logs would be skipped. Set one in
-            Settings &rsaquo; Discord.</p>
+          <p class="hint" id="stitch-hint" hidden>Select two or more
+            recordings to stitch them into one video.</p>
+
+          <!-- Uploader 8's sentence, which outlives the control it used to
+               footnote. With no checkbox this is a fact about the install
+               rather than a caveat on an option, so it is stated whenever
+               it is true. The text comes from the payload
+               (INERT_NOTES["no_webhook"]) and is NOT typed here: S3 put
+               the app's one voice for an unmet precondition in copy.py so
+               two screens cannot drift, and Api._post_combat_logs stays
+               silent in exactly this case precisely because the panel says
+               it instead. -->
+          <p class="hint" id="logs-note" hidden></p>
+
           <p class="summary" id="selection-summary"
              style="margin-top:12px">Nothing selected</p>
-        </section>
 
-        <section class="card">
-          <h2>Publish</h2>
-          <p class="destination" id="destination">Channel confirmed after the first upload</p>
+          <!-- Uploader 1: the loudest element on the screen was the one
+               that could not act, and the state that blocked it was dim
+               body text 200px away at the foot of the card ABOVE it. Both
+               halves are fixed here -- the button takes the disabled
+               treatment through WM.setEnabled, and the selection summary
+               is now the line directly above it rather than a card away.
+               #destination follows the button rather than heading the
+               card: it is a standing fact about the account, read once,
+               and it was occupying the position directly above the
+               most-pressed control in the app. -->
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
-            <div class="secondary-row">
-              <button class="btn" id="btn-retry" disabled>Retry</button>
-              <button class="btn" id="btn-delete">Delete selected</button>
-            </div>
+            <button class="btn" id="btn-retry" disabled>Retry</button>
           </div>
+          <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>
 
       </div>

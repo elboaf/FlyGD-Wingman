@@ -102,6 +102,45 @@ def test_duration_str_shows_pending_while_unprobed(tmp_path):
     assert info.duration_str == "…"
 
 
+def test_duration_str_tells_no_verdict_apart_from_an_unreadable_file(tmp_path):
+    """Uploader 5 and 10. probe() already separates "ffprobe ran and could
+    not read this" from "ffprobe never reached a verdict" -- it has to, or
+    one antivirus quarantine of ffprobe.exe would be cached under a
+    (size, mtime) key that never changes and pin the row to "?" forever.
+
+    The COLUMN did not make that distinction, and both rendered "?". On an
+    install where ffprobe was never found at all -- packaging/bin is
+    gitignored and fetched at build time, so a source run has none -- every
+    row therefore accused its own recording of being unreadable, and the
+    selection summary printed a confident "0:00:00" for a 108.8 MB file.
+
+    Three states, and the two Nones are not the same None.
+    """
+    f = _touch(tmp_path / "a.mkv")
+    unreadable = library.VideoInfo(
+        path=f, mtime=0.0, size=1, duration=None, probed=True, answered=True
+    )
+    never_measured = library.VideoInfo(
+        path=f, mtime=0.0, size=1, duration=None, probed=True, answered=False
+    )
+    assert unreadable.duration_str == "?"
+    assert never_measured.duration_str == "—"
+    assert unreadable.duration_str != never_measured.duration_str
+
+
+def test_a_no_verdict_probe_is_what_produces_the_unmeasured_state(tmp_path):
+    """Ties the flag to its one producer. probe() returns definitive=False
+    with no ffprobe configured; that False is what rows.set_duration hands
+    to `answered`, so this is the whole chain from a missing binary to the
+    glyph."""
+    f = _touch(tmp_path / "a.mkv")
+    duration, definitive = library.probe(f, None)
+    assert (duration, definitive) == (None, False)
+    info = library.stat_info(f)
+    info.duration, info.probed, info.answered = duration, True, definitive
+    assert info.duration_str == "—"
+
+
 def test_build_info_results_are_marked_probed(tmp_path):
     f = _touch(tmp_path / "a.mkv")
     assert library.build_info(f, None).probed is True

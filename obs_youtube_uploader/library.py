@@ -99,6 +99,20 @@ class VideoInfo:
     # to the combat-log upload (app._start_combat_log_upload). Defaults to
     # True so every existing construction keeps meaning "this is final".
     probed: bool = True
+    # Whether a None duration is an ANSWER or the absence of one. probe()
+    # already draws this line for the cache's sake -- a no-verdict result
+    # must never be stored, or one antivirus quarantine of ffprobe.exe pins
+    # a recording to "?" forever -- and the COLUMN has to draw it too. It
+    # did not, and the consequence was visible on any install where
+    # ffprobe was never found at all: every row rendered "?", whose help
+    # text says "ffprobe could not open this file", diagnosing a file that
+    # was never read; and the selection summary printed a confident
+    # "0:00:00" for a 108.8 MB recording, because a no-verdict row looked
+    # exactly like a finished one and so earned no partial marker. The two
+    # states leave `duration` None together and mean opposite things: one
+    # is about the recording, the other is about the install.
+    # Defaults True for the same reason `probed` does.
+    answered: bool = True
 
     @property
     def date_str(self) -> str:
@@ -116,7 +130,10 @@ class VideoInfo:
         if not self.probed:
             return "…"
         if self.duration is None:
-            return "?"
+            # Three states, not two. "?" blames the file; the dash blames
+            # the install. See `answered` above for what shipped while
+            # these shared one glyph.
+            return "?" if self.answered else "—"
         minutes, seconds = divmod(int(self.duration), 60)
         return f"{minutes}:{seconds:02d}"
 

@@ -41,62 +41,120 @@
   // disclosure must appear and disappear with this checkbox too.
   WM.el('f-stitch').addEventListener('change', refreshPanelText);
 
+  // ---- what can act, and what cannot -----------------------------------
+  // X1 execution, through S1's WM.setEnabled. The rule in its comment is
+  // that a control is inert when the app ALREADY KNOWS the action cannot
+  // be carried out from the state it is holding -- not when it might fail
+  // once attempted -- and that nothing may disable the only route back out
+  // of the state that disabled it. Both apply here:
+  //
+  //   Upload    needs at least one selected recording (Uploader 1). It was
+  //             full-strength accent with a glow and nothing to do, while
+  //             the blocker whispered from the foot of the card above it.
+  //   Stitch    is meaningless below two selected. Disabled, NOT hidden --
+  //             see the note beside it in index.html.
+  //   the list  is not disabled by any of this: selecting a row is the way
+  //             out of every state above, so it must stay live.
+  //
+  // Nothing here disables Delete: it acts on a selection too, but it lives
+  // in the list footer beside Select all / Select none, and list.js owns
+  // it for the same reason it owns those.
+  function refreshEnabled() {
+    var selected = WM.list.selectedIds().length;
+    var rows = WM.list.rowCount();
+
+    // Uploader 13. The panel used to be identical with an empty folder --
+    // live fields, accent Upload, nothing acknowledging there was nothing
+    // to act on -- so the empty and full states read as the same product
+    // in the wrong direction. An empty folder is a fact about the folder,
+    // so it is stated once and the note is the whole of the treatment.
+    //
+    // Title and Description stay LIVE, deliberately. S1's rule disables a
+    // control when the action cannot be carried out, and typing a title is
+    // an action that can -- the same reading that keeps the Previews
+    // keybinds live under Settings 1 (recording a keybind for later is
+    // still recording it). Upload is already inert here through the
+    // selection test below, because an empty folder has nothing selected
+    // in it, so nothing needs a second predicate for the empty case.
+    var empty = rows === 0;
+    WM.el('panel-empty-note').hidden = !empty;
+
+    WM.setEnabled('btn-upload', selected > 0);
+    WM.setEnabled('f-stitch', selected > 1);
+    // Only while there IS something to stitch. With an empty folder the
+    // empty note above is the whole explanation, and a second sentence
+    // telling the user to select two of nothing would be the "three
+    // statements of the same emptiness" the walkthrough counted (14).
+    WM.el('stitch-hint').hidden = empty || selected > 1;
+    WM.el('lab-stitch').classList.toggle('disabled', selected < 2);
+    // A box left ticked while its control is inert would still be read by
+    // start_upload's caller below, so the checked state has to follow.
+    if (selected < 2) WM.el('f-stitch').checked = false;
+  }
+  document.addEventListener('wm:selection', refreshEnabled);
+
   // ---- actions -------------------------------------------------------
-  // Every one of these sends unconditionally, including with an empty
-  // selection: the "select at least one video" warnings are distinct
-  // messages composed in Python, and a page-side early return would
-  // silently swallow them.
+  // Upload still sends unconditionally, even though refreshEnabled above
+  // disables it with an empty selection. The guard and the disabled state
+  // are not redundant: "select at least one video to upload" is composed
+  // in Python (start_upload's _alert) and a page-side early return would
+  // silently swallow it, and the button can be reached by a keyboard or a
+  // stale render in the window between a selection changing and the event
+  // landing. The disabled attribute is what the user reads; the Python
+  // message is what they get if they arrive anyway.
   WM.el('btn-upload').addEventListener('click', function () {
+    // Four arguments, not five. The combat-log checkbox is gone
+    // (Uploader 8) and start_upload's `logs` parameter went with it in the
+    // same commit; logs are unconditional and a configured webhook is what
+    // decides the post.
     WM.send('start_upload',
             WM.el('f-title').value,
             WM.el('f-desc').value,
             WM.el('f-stitch').checked,
-            WM.el('f-logs').checked,
             WM.list.selectedIds());
-  });
-
-  WM.el('btn-delete').addEventListener('click', function () {
-    WM.send('delete_selected', WM.list.selectedIds());
   });
 
   WM.el('btn-retry').addEventListener('click', function () {
     WM.send('retry');
   });
 
-  // ---- the combat-log option is only real with a webhook ---------------
-  // The box shipped ticked with nothing gating it, so on a fresh install
-  // it looked like a feature the user had: they ticked nothing, confirmed,
-  // and the run ended on a WARNING strip saying logs were skipped -- once
-  // per upload, forever, reading as a recurring failure rather than as an
-  // unconfigured option.
+  // ---- the no-webhook fact --------------------------------------------
+  // This used to gate a checkbox. There is no checkbox now (Uploader 8):
+  // logs are posted whenever a webhook exists, so the absence of one is a
+  // standing fact about the install rather than a caveat on an option, and
+  // it is stated wherever it is true instead of footnoting a control the
+  // maintainer read past while asking for exactly this behaviour.
+  //
+  // Api._post_combat_logs is silent in this case ON PURPOSE and says so:
+  // with no checkbox, a "combat logs skipped" strip on a webhook-less
+  // install would fire on every upload forever, which is the recurring-
+  // failure pattern format_upload_confirm's docstring records as a past
+  // bug. The panel carrying the fact is what makes that silence honest.
   //
   // This tests for an ABSENT webhook, not an invalid one, and the
   // difference is deliberate. Whether a stored value actually posts is
-  // discord.parse_webhook's answer, and format_upload_confirm now runs
-  // that exact function so the dialog cannot drift from the upload -- a
-  // second predicate here, in JavaScript, is the drift ui/copy.py warns
-  // about in as many words. So the page states only what it can verify
-  // itself (nothing is stored) and leaves "this is stored but will not
-  // parse" to the confirm, which says so in Python's words. Both
-  // statements are true; neither is a copy of the other.
-  var forcedOff = false;
-
+  // discord.parse_webhook's answer, and format_upload_confirm runs that
+  // exact function so the dialog cannot drift from the upload -- a second
+  // predicate here, in JavaScript, is the drift ui/copy.py warns about in
+  // as many words. So the page states only what it can verify itself
+  // (nothing is stored) and leaves "this is stored but will not parse" to
+  // the confirm, which says so in Python's words. A configured-but-broken
+  // webhook still earns its WARNING strip from _post_combat_logs, because
+  // nothing else will tell them.
+  //
+  // The sentence is read off the payload rather than typed here: S3 put
+  // the app's one voice for an unmet precondition in copy.py (INERT_NOTES)
+  // so the two screens that need one cannot drift apart.
   document.addEventListener('wm:settings', function (ev) {
-    var cfg = (ev.detail || {}).settings || {};
+    var detail = ev.detail || {};
+    var cfg = detail.settings || {};
+    var notes = detail.inert_notes || {};
     var configured = String(cfg.discord_webhook || '').trim() !== '';
-    var box = WM.el('f-logs');
-    box.disabled = !configured;
-    if (!configured) {
-      // Only remembered as ours if it was actually on. A user who unticked
-      // the box deliberately and then cleared their webhook must not find
-      // it ticked again when they put the webhook back.
-      if (box.checked) { box.checked = false; forcedOff = true; }
-    } else if (forcedOff) {
-      box.checked = true;
-      forcedOff = false;
-    }
-    WM.el('lab-logs').classList.toggle('disabled', !configured);
-    WM.el('logs-hint').hidden = configured;
+    var note = WM.el('logs-note');
+    note.textContent = notes.no_webhook || '';
+    // Empty text as well as configured: a payload without the table would
+    // otherwise unhide an empty paragraph holding 8px of margin.
+    note.hidden = configured || !note.textContent;
   });
 
   // ---- status strip ---------------------------------------------------
