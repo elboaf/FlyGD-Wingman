@@ -188,8 +188,13 @@
           <button class="btn" id="btn-auth">Sign in with Google</button>
         </div>
         <p class="hint">
-          Videos are uploaded to YouTube and are subject to the YouTube Terms of Service:
-          <span class="linkish" id="tos-link">https://www.youtube.com/t/terms</span>
+          Videos are uploaded to YouTube and are subject to the
+          <!-- The link is the words, not the address. This was the raw
+               https://www.youtube.com/t/terms printed as its own text --
+               the only bare URL in the app, and the only blue in it. S1
+               made the colour a declared token (--link); this is the other
+               half. settings.js still holds the URL it opens. -->
+          <span class="linkish" id="tos-link">YouTube Terms of Service</span>.
         </p>
       </section>
 
@@ -212,10 +217,16 @@
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false">
         </div>
+        <!-- Settings 13. The maintainer settled the control half: this
+             stays a free string, and set_category still validates
+             digits-only, so what was left of the finding was the copy.
+             It ran to three lines whose burden was "do not use this
+             field". The number is YouTube's rather than EVE's, so it
+             still needs explaining -- PRODUCT.md's line is assume fluency
+             in EVE, explain Wingman -- but saying it once is enough. -->
         <p class="sub-hint">
-          YouTube files every video under one of its own numbered categories.
-          20 is Gaming, which is where fight footage belongs &mdash; leave it
-          unless you know you want a different one.
+          20 is YouTube&rsquo;s Gaming category, which is where fight
+          footage belongs. Change it only if you know the number you want.
         </p>
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
@@ -306,12 +317,24 @@
             Register keybinds in EVE
           </label>
         </div>
-        <div class="row"><span class="lab"></span>
+        <!-- `hidden` is the resting state, not a bug. bookmarks.js shows
+             this row only where the line is news -- see showEngineRow.
+             Without it the markup's own "Not running" is on screen from
+             first paint until the first payload lands, under an unticked
+             switch that already said so. -->
+        <div class="row" id="eve-engine-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-engine-state">Not running</span></div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
-        <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-import">Import from an existing helper&hellip;</button></div>
+        <!-- No `Import from an existing helper...` button. It held the only
+             button position in the first card of this section, directly
+             under the feature's own switch, and the maintainer's use report
+             is that nobody uses it: "No one uses import from an existing
+             helper." It also assumed knowledge of a third-party tool, which
+             PRODUCT.md puts on the wrong side of its own line -- assume
+             fluency in EVE, explain Wingman. Api.import_bookmarks and its
+             tests are deliberately left in place; removing a bridge method
+             is another lane's file. -->
       </section>
 
 
@@ -379,10 +402,16 @@
             Bookmarks have a second set that fires only in EVE &mdash;
             Settings &rsaquo; Bookmarks. A keybind the two share is marked
             below.</span></div>
+        <!-- Deliberately EMPTY. The sentence is ui/copy.py's
+             INERT_NOTES["previews_off"], delivered on the settings payload
+             and written in by previews.js (walkthrough Settings 1). It
+             used to be typed here as well, which put one sentence in two
+             files with nothing holding them in step; inert_note()'s
+             docstring already says the page hides the slot when the string
+             is empty, so blank-until-the-payload-lands is the designed
+             state and not a gap. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-off" style="display:none">
-            Previews are off, so every keybind below is unregistered until
-            you turn them back on.</span></div>
+          <span class="hint" id="preview-binds-off" style="display:none"></span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to
@@ -404,6 +433,38 @@
           OBS&nbsp;&rarr;&nbsp;YouTube uploader.
         </p>
         <p class="field-msg" id="msg-general" hidden></p>
+      </section>
+
+      <!-- M2 and M3. `General` is one checkbox and last in the rail, so it
+           has the room for a second card; a ninth rail item is deferred
+           until THIRD-PARTY-NOTICES.md has a surface of its own to justify
+           one. The version is deliberately in TWO places -- the titlebar
+           (S1) and here -- because the titlebar cannot hold the licence or
+           the login switch, and this is the card a user is sent to when
+           they are asked which build they are running. -->
+      <section class="card">
+        <h2>About Wingman</h2>
+        <!-- Pushed from __version__ through the settings payload, never
+             typed into this page. .hint carries user-select: text, so the
+             number can be copied into a bug report. -->
+        <p class="hint" id="about-version">Version &mdash;</p>
+        <!-- The one string on this card that IS typed here. There is no
+             payload key for it and ui/api.py belongs to another lane; the
+             SPDX identifier is also stable in a way the version is not --
+             pyproject.toml's `license = "GPL-3.0-only"` has outlived every
+             version this app has shipped. If a licence change ever makes
+             that untrue, this line is the one that has to move with it. -->
+        <p class="hint">Free software under the GPL-3.0-only licence.</p>
+        <label class="check">
+          <input type="checkbox" id="start-on-login"><span class="box"></span>
+          Start Wingman when I sign in to Windows
+        </label>
+        <p class="hint">
+          Wingman starts hidden in the tray. Bookmark keybinds only fire
+          while it is running, so this is what keeps them available without
+          launching it by hand.
+        </p>
+        <p class="field-msg" id="msg-about" hidden></p>
       </section>
 
     </div>

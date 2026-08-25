@@ -112,3 +112,71 @@ def test_no_two_settings_cards_share_a_heading():
                 f"{heading!r} heads a card in both {seen[key]} and {name}"
             )
             seen[key] = name
+
+
+# ---- state that must not be retyped into the page ----------------------
+
+
+def test_the_page_never_types_a_version_number():
+    """M2's whole point. `__version__` reaches the page on the settings
+    payload and is written into the titlebar and into ABOUT by JS; a third
+    hand-typed copy in the markup is the drift DESIGN.md's "State that must
+    not be retyped" exists to prevent, and the copy a user reads is the one
+    that matters when they report a bug.
+
+    pyproject.toml already derives its version from `__version__` rather
+    than carrying one, and tests/test_packaging_version.py asserts that
+    chain. This is the same rule for the surface the user actually sees.
+    """
+    body = re.sub(r"<!--.*?-->", "", HTML, flags=re.DOTALL)
+    literals = re.findall(r"\b\d+\.\d+\.\d+\b", body)
+    assert not literals, (
+        "index.html types a version-shaped literal: "
+        f"{literals!r} -- push it from __version__ instead"
+    )
+
+
+def test_the_previews_inert_note_is_not_typed_into_the_page():
+    """Walkthrough Settings 1. "Previews are off, so every keybind below is
+    unregistered..." is ui/copy.py's INERT_NOTES["previews_off"], shipped
+    on the settings payload. It was ALSO typed into index.html, which is
+    one sentence in two files with nothing holding them in step -- and the
+    Python one is the tested one.
+
+    The slot stays in the markup and stays empty; previews.js writes it.
+    """
+    from obs_youtube_uploader.ui import copy as copy_mod
+
+    note = copy_mod.INERT_NOTES["previews_off"]
+    # Compare on words, not on the raw markup: the page wraps and indents,
+    # so a substring test would pass while the sentence really was there.
+    flat = " ".join(re.sub(r"<[^>]+>", " ", HTML).split())
+    assert note not in flat, (
+        "index.html types INERT_NOTES['previews_off'] instead of rendering "
+        "it from the payload"
+    )
+
+    previews_js = (WEB / "previews.js").read_text(encoding="utf-8")
+    assert "inertNotes.previews_off" in previews_js, (
+        "previews.js no longer reads the note off the settings payload"
+    )
+
+
+def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
+    """dev.js is the one file allowed to fabricate data, and it fabricates
+    this table so the Previews card can be verified in ?dev=1 at all. A
+    double that has drifted from the thing it doubles hides exactly the bug
+    it should catch -- the same argument dev.js's own comment makes about
+    pushing onSettings when the bridge returns it.
+    """
+    from obs_youtube_uploader.ui import copy as copy_mod
+
+    dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
+    # The strings are wrapped across source lines by ' + ', so join them
+    # back before comparing.
+    flat = re.sub(r"'\s*\+\s*'", "", dev_js)
+    for key, note in copy_mod.INERT_NOTES.items():
+        assert key in flat, f"dev.js's inert_notes is missing {key!r}"
+        assert note in flat, (
+            f"dev.js's inert_notes[{key!r}] has drifted from ui/copy.py"
+        )

@@ -70,15 +70,66 @@
   // next tick, or forever if the watcher has not started.
   function renderEngineState() {
     var el = WM.el('eve-engine-state');
-    if (!el || !state.engine) return;
+    if (!el) return;
+    var engine = state && state.engine;
+    if (!engine) {
+      // No engine block at all -- a payload from before the key existed,
+      // or a bridge that answered with less than it usually does. Treated
+      // as off rather than left showing whatever the row said last: the
+      // line is only ever news when it contradicts the switch, and it
+      // cannot contradict anything we have not been told.
+      showEngineRow('off', '');
+      return;
+    }
     var label = { off: 'Not running', stopped: 'Stopped',
                   stale: 'Not responding',
-                  running: 'Running' }[state.engine.state] || '';
+                  running: 'Running' }[engine.state] || '';
     // The reason matters more than the state: "Stopped" alone leaves the
     // user with no idea the engine is missing rather than merely idle.
-    el.textContent = state.engine.last_error
-      ? label + ' — ' + state.engine.last_error
+    el.textContent = engine.last_error
+      ? label + ' — ' + engine.last_error
       : label;
+    showEngineRow(engine.state, engine.last_error);
+  }
+
+  // Walkthrough Settings 8. "Not running" directly under an UNTICKED
+  // `Register keybinds in EVE` is the same fact twice, the second time
+  // unlabelled and dim -- the engine is not running because the user
+  // switched it off, which the checkbox above already says. So the line is
+  // withheld in exactly that state and shown in every other, where it is
+  // genuinely news: "Not running" while the switch is ON means something
+  // failed.
+  //
+  // A last_error keeps the row whatever the state. An error carried on an
+  // `off` engine is the record of why it stopped, and hiding it would lose
+  // the one actionable thing the user was told.
+  //
+  // The ROW is hidden, not the span: .lab:empty collapses the label but
+  // the row keeps its 10px margin-bottom, so hiding only the text leaves a
+  // gap under the checkbox with nothing in it.
+  function showEngineRow(engineState, lastError) {
+    var row = WM.el('eve-engine-row');
+    if (!row) return;
+    row.hidden = engineState === 'off' && !lastError;
+  }
+
+  // Every EVE client titles its window "EVE - <character>", so a list of
+  // them begins every line with the word every line shares and puts the
+  // character -- the only part that tells one row from another -- past the
+  // eye's landing point (walkthrough Settings 7, the same instinct as
+  // Uploader 11's `Fight ` prefix). The card is headed EVE WINDOWS inside
+  // a section reached from an EVE-only rail item, so the prefix is carried
+  // three times before the row repeats it.
+  //
+  // DISPLAY ONLY. `title` stays the identity: it is the key in
+  // settings.windows, it is what the engine matches on, and a stripped
+  // copy written back would silently unbind every window. Anything not
+  // matching the pattern is shown whole rather than guessed at.
+  var EVE_TITLE = /^EVE\s*-\s*(.+)$/;
+
+  function windowLabel(title) {
+    var m = EVE_TITLE.exec(title);
+    return m ? m[1] : title;
   }
 
   function renderWindows() {
@@ -110,7 +161,11 @@
       // Same .check/.box pattern the rest of the app uses: the real input
       // is opacity:0 and the span is the visible control. Without it these
       // rendered as native white checkboxes against the dark card.
-      var label = WM.make('label', 'check', ' ' + title);
+      var label = WM.make('label', 'check', ' ' + windowLabel(title));
+      // The real window title, for the one case the stripped name is not
+      // enough to identify the row -- two clients whose titles differ only
+      // in the part the prefix rule removed.
+      label.title = title;
       label.prepend(WM.make('span', 'box'));
       label.prepend(box);
       if (live.indexOf(title) === -1) {
@@ -309,28 +364,11 @@
       });
   });
 
-  WM.el('eve-import').addEventListener('click', function () {
-    WM.send('import_bookmarks').then(function (result) {
-      if (!result) return;
-      if (!result.ok) {
-        // A failure carries a reason: an unreadable or malformed file, not
-        // simply the user cancelling the dialog (which comes back with an
-        // empty `notes`, and needs no alert at all).
-        if (result.notes && result.notes.length) {
-          WM.send('alert_bookmarks', result.notes.join('\n\n'));
-        }
-        return;
-      }
-      var lines = [];
-      if (result.discarded.length) {
-        lines.push('These no longer exist and were not imported: ' +
-                   result.discarded.join(', ') + '.');
-      }
-      result.notes.forEach(function (note) { lines.push(note); });
-      if (lines.length) WM.send('alert_import', lines.join('\n\n'));
-      WM.send('get_bookmarks').then(render);
-    });
-  });
+  // No `eve-import` handler. The control it drove is gone from index.html
+  // -- walkthrough Settings 19, on the maintainer's use report that nobody
+  // uses it. Api.import_bookmarks, its `alert_import` counterpart and
+  // tests/test_bookmarks_import.py are all left alone: removing a bridge
+  // method is another lane's file, and the import logic is still correct.
 
   WM.handle('onBookmarks', render);
 
@@ -344,6 +382,11 @@
     // Hidden entirely when off, so nothing changes for users who never
     // turn the feature on.
     host.hidden = (payload.state === 'off');
+    // The route's own engine line follows the same rule as after a save --
+    // see showEngineRow. Done BEFORE the early return, so an engine that
+    // goes off on a poll tick takes the line with it rather than leaving
+    // the last state it had on screen under an unticked box.
+    showEngineRow(payload.state, payload.last_error);
     if (payload.state === 'off') return;
 
     var live = payload.state === 'running';
