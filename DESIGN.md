@@ -150,10 +150,15 @@ built in JavaScript too, which is where the worst instance shipped: one per
 character, forty of them.
 
 **Field labels go through `.lab`, and `.lab` sits above its control.**
-`.settings .row > .lab` is full-width, left-aligned and `--text-dim`, for
-the whole screen; the row is `flex-wrap: wrap` with a 4px `row-gap`, so
-every label stacks above the thing it labels and every control starts at
-the card's own left edge. A label outside `.lab` renders brighter than
+`.settings .row > .lab` is full-width, left-aligned and `--text-dim`
+across Settings *and* Profiles — both render `class="settings"`. The row
+is `flex-wrap: wrap` with a 4px `row-gap`, so every label stacks above the
+thing it labels and every control starts at the card's own left edge.
+
+This did not invent a pattern. The Uploader's panel has always stacked its
+labels above their controls, through a separate `.panel .lab` rule that is
+not a `.settings` descendant and was never part of the column. Settings
+now agrees with the one screen that was already doing it. A label outside `.lab` renders brighter than
 every other label and at its own width — that is still the failure being
 prevented, and it is still why three labels on one screen once sat at
 47px, 84px and 71px. Prefer `<label class="lab" for="...">` over a
@@ -189,6 +194,16 @@ that needed it most. `tests/test_page_conventions.py` enforces the general
 rule. See "What this means for `style.css`" above: those two restores are
 unreachable through the window and mandatory, which is not a
 contradiction.
+
+**Open, not decided — the two stacked treatments are 1.5px apart.**
+`.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
+`.panel .lab` is `--fs-muted` (11.5px) with a 5px `margin-bottom`. While
+one was a right-aligned column and the other a stacked block, nobody could
+confuse them. Now they read as one pattern implemented twice, a pixel and
+a half apart, and neither difference is recorded as deliberate. Whether
+they should converge — and on which — belongs to whoever owns both blocks,
+and it is in no lane's findings. Recorded here so it is not rediscovered;
+do not fix it in passing.
 
 *Note for anyone reading the tests:* the docstrings of
 `test_settings_rows_label_through_the_shared_column` and
