@@ -100,9 +100,17 @@ path:
 
 ### 8. Label customisation
 
-Text override, placement (top/bottom/centre), font size, colours. `chrome.render`
+**Partly done in #87:** labels can be switched off (`preview.show_labels`,
+and `PreviewWindow._label_h()` returns 0 when they are). Still open: text
+override, placement (top/bottom/centre), font size, colours. `chrome.render`
 already takes the label; everything else is new settings and UI. `window.py`
 passes `LABEL_H = 30` and `chrome.render`'s `font_size=17` default.
+
+Anything here that changes the band's HEIGHT has to invalidate the alert
+frame cache the way the on/off toggle already does — the frames bake the
+band in, so a preview alerting while the height changes would keep flashing
+the old geometry until the alert cleared (`PreviewWindow.arm_alert`'s
+staleness check).
 
 ### 10. Switching behaviour
 
@@ -127,28 +135,28 @@ Lowest priority, largest pure-parsing job.
 
 ## Smaller gaps
 
-- **`preview.opacity` is dead config.** Stored and clamped to 20–255
-  (`settings.py`), read by nothing: `window.py` calls `self._thumb.update(rect)`
-  at both call sites, so it defaults to 255. **This entry used to say it "must"
-  go through `SetLayeredWindowAttributes`. That is wrong, and the ring probe
-  above is why:** that call permanently disables `UpdateLayeredWindow` on the
-  window, which is the preview's only means of drawing its own chrome. Wire it
-  through the thumbnail's own opacity instead — `Thumbnail.update` already takes
-  `opacity` and already sets `DWM_TNP_OPACITY`, so this is passing a value that
-  is presently hardcoded to the default. Putting it in the Pillow bitmap's alpha
-  remains wrong for the original reason: a layered window is hit-tested against
-  its alpha channel, so that reintroduces click-through.
+- **`preview.opacity` is wired** (#87), through `Thumbnail.update`'s
+  `DWM_TNP_OPACITY` — `window.py` passes `self.opacity` at all three call
+  sites now.
 
-  It also **does not** collide with the alert render path, which this file
-  previously claimed it did. They touch different surfaces — thumbnail opacity
-  dims the game content, the ring frames repaint the chrome around it — so
-  neither has to compose with the other and they can land in either order.
+  This entry used to say opacity "must" go through
+  `SetLayeredWindowAttributes`. **That would have broken previews outright**,
+  and the ring probe above is why: one such call permanently disables
+  `UpdateLayeredWindow` on that window, which is the preview's only means of
+  drawing its own chrome. #87 took the thumbnail route independently and is
+  correct; the claim is recorded here because it survived in this file long
+  enough to have been followed. Putting opacity in the Pillow bitmap's alpha
+  remains wrong for the original reason: a layered window is hit-tested
+  against its alpha channel, so that reintroduces click-through.
 
-- **Lock previews has no UI.** The plumbing is complete — `layout.Entry` carries
-  `locked`, it survives a restart, right-drag overrides it — but nothing sets
-  it. One checkbox, but it crosses the bridge (new `Api` method, `previews.js`,
-  `index.html`), and nothing in the suite renders the page, so it lands
-  unverified until someone opens it by hand.
+  It also never collided with the alert render path, which this file once
+  claimed it did. They touch different surfaces — thumbnail opacity dims the
+  game content, the ring frames repaint the chrome around it — which is why
+  they landed independently and in the opposite order to the one this file
+  warned about.
+
+- **Lock previews has a UI** (#87): `previews.js` drives `set_preview_locked`
+  per character.
 - **Border thickness and colour are constants.** `chrome.render` takes `border`
   and `border_color`; `window.py` passes `BORDER = 2` and a literal
   `(0, 200, 220, 255)`. The third member of this group, `selected`, is done.
