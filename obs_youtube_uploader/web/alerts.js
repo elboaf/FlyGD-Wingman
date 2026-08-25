@@ -28,6 +28,13 @@
     {id: 'decloak', label: 'Decloak'}
   ];
 
+  // Last-known-good color/sound per event, so a refused or bridge-
+  // failed change has something to revert the control to -- by the
+  // time 'change' fires the browser has already committed the new
+  // value into the element, so the element itself cannot tell us
+  // what it was before.
+  var lastGood = {};
+
   function say(text) { if (status) { status.textContent = text || ''; } }
 
   function eventRow(id) {
@@ -37,6 +44,23 @@
       sound: WM.el('alert-event-' + id + '-sound'),
       test: WM.el('alert-event-' + id + '-test')
     };
+  }
+
+  // Shared by the wm:settings hydration and refresh() (get_alert_state),
+  // so the per-event rows repaint from the same shape either way.
+  function applyAlerts(alerts) {
+    var events = (alerts && alerts.events) || {};
+    EVENTS.forEach(function (ev) {
+      var row = eventRow(ev.id);
+      if (!row.enabled) { return; }
+      var spec = events[ev.id] || {};
+      row.enabled.checked = !!spec.enabled;
+      var color = spec.color || row.color.value;
+      var sound = spec.sound || 'none';
+      row.color.value = color;
+      row.sound.value = sound;
+      lastGood[ev.id] = {color: color, sound: sound};
+    });
   }
 
   // Shared by all three top-level checkboxes. WM.send resolves to null
@@ -79,10 +103,38 @@
       });
     });
     row.color.addEventListener('change', function () {
-      WM.send('set_alert_event', ev.id, 'color', row.color.value);
+      var wanted = row.color.value;
+      WM.send('set_alert_event', ev.id, 'color', wanted).then(function (res) {
+        if (!res || !res.applied) {
+          row.color.value = (lastGood[ev.id] || {}).color || wanted;
+          return;
+        }
+        lastGood[ev.id] = lastGood[ev.id] || {};
+        lastGood[ev.id].color = wanted;
+        if (!res.persisted) {
+          say(ev.label + ' colour is set for this session, but could not '
+            + 'be written to settings — it will not survive a restart.');
+        } else {
+          say('');
+        }
+      });
     });
     row.sound.addEventListener('change', function () {
-      WM.send('set_alert_event', ev.id, 'sound', row.sound.value);
+      var wanted = row.sound.value;
+      WM.send('set_alert_event', ev.id, 'sound', wanted).then(function (res) {
+        if (!res || !res.applied) {
+          row.sound.value = (lastGood[ev.id] || {}).sound || wanted;
+          return;
+        }
+        lastGood[ev.id] = lastGood[ev.id] || {};
+        lastGood[ev.id].sound = wanted;
+        if (!res.persisted) {
+          say(ev.label + ' sound is set for this session, but could not '
+            + 'be written to settings — it will not survive a restart.');
+        } else {
+          say('');
+        }
+      });
     });
     row.test.addEventListener('click', function () {
       // Never persistent (api.py's test_alert docstring): nothing here
@@ -123,6 +175,7 @@
       folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
     }
     if (healthLine) { healthLine.textContent = healthText(state); }
+    applyAlerts(state.alerts);
   }
 
   function refresh() {
@@ -143,15 +196,7 @@
     // previews.js: an upgrading user's file predates the key.
     pveBox.checked = alerts.pve_filter !== false;
     persistBox.checked = alerts.persist_until_selected !== false;
-    var events = alerts.events || {};
-    EVENTS.forEach(function (ev2) {
-      var row = eventRow(ev2.id);
-      if (!row.enabled) { return; }
-      var spec = events[ev2.id] || {};
-      row.enabled.checked = !!spec.enabled;
-      if (spec.color) { row.color.value = spec.color; }
-      row.sound.value = spec.sound || 'none';
-    });
+    applyAlerts(alerts);
   });
 
   // Refreshed on route entry, same reasoning as previews.js and
