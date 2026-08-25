@@ -60,6 +60,15 @@
       <div class="list-foot">
         <button class="btn" id="btn-select-all">Select all</button>
         <button class="btn" id="btn-select-none">Select none</button>
+        <!-- The only file affordances on this screen were double-click and
+             the context menu, and BOTH act on the YouTube link rather than
+             the file (Api.open_path resolves a row to a URL, despite the
+             name). A recording that is missing, mid-write, or not what OBS
+             was supposed to produce is inspected outside Wingman, so the
+             screen about a folder's contents needs a way to reach it.
+             Reports through the status strip, not a dialog: see
+             Api.open_recording_dir. -->
+        <button class="btn" id="btn-open-folder">Open folder</button>
         <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
@@ -80,10 +89,22 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <label class="check" style="margin-top:8px">
+          <!-- Ticked by default, and panel.js unticks and disables it when
+               no webhook is stored. On a fresh install this used to be a
+               feature the user appeared to have: the box was on, the
+               confirm promised a Discord post, and every upload then ended
+               on a WARNING strip about logs being skipped, which reads as a
+               recurring failure rather than as an unconfigured option.
+               The hint is `hidden` rather than absent so the sentence has
+               one home whichever way the payload lands; .hint sets no
+               display, so the attribute is enough on its own here. -->
+          <label class="check" id="lab-logs" style="margin-top:8px">
             <input type="checkbox" id="f-logs" checked><span class="box"></span>
             Also post combat logs to Discord
           </label>
+          <p class="hint" id="logs-hint" hidden>No Discord webhook is
+            configured, so logs would be skipped. Set one in
+            Settings &rsaquo; Discord.</p>
           <p class="summary" id="selection-summary"
              style="margin-top:12px">Nothing selected</p>
         </section>

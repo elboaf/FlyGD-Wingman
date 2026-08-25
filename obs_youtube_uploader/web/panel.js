@@ -63,6 +63,42 @@
     WM.send('retry');
   });
 
+  // ---- the combat-log option is only real with a webhook ---------------
+  // The box shipped ticked with nothing gating it, so on a fresh install
+  // it looked like a feature the user had: they ticked nothing, confirmed,
+  // and the run ended on a WARNING strip saying logs were skipped -- once
+  // per upload, forever, reading as a recurring failure rather than as an
+  // unconfigured option.
+  //
+  // This tests for an ABSENT webhook, not an invalid one, and the
+  // difference is deliberate. Whether a stored value actually posts is
+  // discord.parse_webhook's answer, and format_upload_confirm now runs
+  // that exact function so the dialog cannot drift from the upload -- a
+  // second predicate here, in JavaScript, is the drift ui/copy.py warns
+  // about in as many words. So the page states only what it can verify
+  // itself (nothing is stored) and leaves "this is stored but will not
+  // parse" to the confirm, which says so in Python's words. Both
+  // statements are true; neither is a copy of the other.
+  var forcedOff = false;
+
+  document.addEventListener('wm:settings', function (ev) {
+    var cfg = (ev.detail || {}).settings || {};
+    var configured = String(cfg.discord_webhook || '').trim() !== '';
+    var box = WM.el('f-logs');
+    box.disabled = !configured;
+    if (!configured) {
+      // Only remembered as ours if it was actually on. A user who unticked
+      // the box deliberately and then cleared their webhook must not find
+      // it ticked again when they put the webhook back.
+      if (box.checked) { box.checked = false; forcedOff = true; }
+    } else if (forcedOff) {
+      box.checked = true;
+      forcedOff = false;
+    }
+    WM.el('lab-logs').classList.toggle('disabled', !configured);
+    WM.el('logs-hint').hidden = configured;
+  });
+
   // ---- status strip ---------------------------------------------------
   var KINDS = ['FG', 'SUCCESS', 'WARNING', 'ERROR'];
 
