@@ -1287,10 +1287,10 @@ button.btn:disabled,
    eighteen keybind rows and Previews holds one row per known character,
    and either exceeds the window height. */
 
-/* Character names, like bookmarks' action names, are not short field
-   labels, so they do not take the stacked label treatment every other
-   settings row gets -- see the #eve-binds block below, which carries the
-   reasoning and the measurements for both lists. */
+/* Character names, like bookmarks' action names, are long -- but they take
+   the stacked label treatment anyway, like every other settings row on the
+   route. They did not until round 3's B1; the #eve-binds block below
+   carries the reasoning and the measurements for both lists. */
 /* ABOUT is the one card on this route that states facts BEFORE it offers a
    control -- every other card leads with the control and explains it
    underneath. Without this the licence line and the login switch touch,
@@ -1312,8 +1312,9 @@ button.btn:disabled,
 #preview-binds-off { color: var(--text-dim); }
 
 #preview-binds {
-  display: grid; gap: 10px; align-items: center; justify-content: start;
-  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+  display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
+  justify-content: start;
+  grid-template-columns: repeat(3, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -1321,11 +1322,28 @@ button.btn:disabled,
    children with the row itself gone. */
 #preview-binds .row[hidden] { display: none; }
 #preview-binds .row > .lab {
+  grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
+/* 4px row-gap holds the name to its own controls; this restores the space
+   BETWEEN items. One gap cannot do both jobs here, because display:contents
+   flattens every row into the same grid, so the grid cannot tell "the line
+   under a name" from "the next name". Same reason .settings .row carries
+   its own 4px row-gap: a label equidistant from its field and from the row
+   above belongs to neither.
 
-/* The name takes the whole line at narrow widths -- the grid equivalent of
-   the flex `flex: 0 0 100%`, and the same reason. See #eve-binds below. */
+   Applied to every .lab rather than skipping the first with
+   :not(:first-child): rows here are hidden individually (previews.js hides
+   a row per character), so "first child" is not "first visible row", and
+   12px above the leading name is right anyway -- it follows the card's
+   prose. */
+#preview-binds .row > .lab { margin-top: 8px; }
+
+/* Redundant since B1 collapsed the column unconditionally above, and kept
+   deliberately: tests/test_page_conventions.py requires every id override
+   of the shared label column to restore the collapse inside this block,
+   and that rule protects the NEXT override, which will not have collapsed
+   itself. See #eve-binds below. */
 @media (max-width: 720px) {
   #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
@@ -1357,6 +1375,57 @@ button.btn:disabled,
    Copy button and the whole Backups card fall below the window with no
    scrollbar, exactly as the bookmarks binds did. */
 #route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* P10 / D1 -- the roster is the one thing on this route that the 620px
+   measure is wrong for.
+
+   THE MECHANISM, which the walkthrough left as a measurement. This route
+   wraps itself in `.settings` (index.html), and `.settings` is
+   `max-width: 620px; margin: 0 auto` -- the same wrapper the eight Settings
+   sections use. So a 32-name roster meant to be SCANNED inherited the
+   measure that is right for a label/field pair, with no separate decision
+   behind it. That is what P10 measured: window 838 -> 969 CSS moved every
+   control right by exactly 133 physical px and widened none of them,
+   because nothing inside is permitted past 620.
+
+   D1 answered it: deliberate for prose and form rows, accidental for the
+   roster. So the cap is lifted for exactly one card -- the one holding the
+   roster -- and re-applied inside it to everything that is not the roster.
+   The folder card above keeps 620 and keeps its centring, which is why the
+   cap is restored on `> .card` rather than left off .settings.
+
+   `:has()` rather than a new id, because this reaches the card by the one
+   thing that makes it the exception. Same evergreen-Chromium argument the
+   .settings hint rules make: if a runtime ever lacks :has(), every rule
+   here drops and the route renders exactly as it does on main.
+
+   No cap on the wide card on purpose. .es-roster is already
+   `columns: 170px`, so the extra width becomes extra roster columns with no
+   layout code. Measured in the ?dev=1 harness with its 34 names, against
+   three columns at every width before: 4 at the 840 floor, 4 at 969 (wider
+   ones -- 229px against 197), 7 at 1400. The number that matters is not the
+   column count though: `Copy to selected` now sits at y=611 in a 625 floor,
+   i.e. ABOVE the fold, where P10 found it below the fold at 969 with
+   widening the window unable to help. That is the gesture the screen was
+   failing to reward.
+
+   .settings itself is untouched: Settings' eight sections share that rule
+   and their 620 is correct. */
+#route-evesettings > .settings { max-width: none; }
+/* margin-inline: 0, not auto. The cards used to centre because .settings
+   centred, and the folder card kept centring after the wrapper was lifted
+   -- which put a 620px card in the middle of the page above a full-width
+   one starting at the route's own padding, two left edges on one screen.
+   Left-aligned, the folder card keeps its 620 measure exactly and simply
+   shares the copy card's edge. */
+#route-evesettings > .settings > .card { max-width: 620px; margin-inline: 0; }
+#route-evesettings > .settings > .card:has(> .es-roster) { max-width: none; }
+/* The card grew; its form rows and its prose did not. 586px, not 620:
+   inside the card the 620 wrapper only ever gave them 586, and this is
+   holding that measure rather than restoring a number from one level up. */
+#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster) {
+  max-width: 586px;
+}
 
 /* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
    anything, and .card is not one -- so the list takes content height and
@@ -1543,39 +1612,88 @@ button.btn:disabled,
 #eve-bind-warning { color: var(--err); }
 
 /* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
-   "Finisher: C13 (shattered)"), not short field labels like the rest of
-   this route's cards, so they opt out of the stacked label above every
-   other settings row and keep the name beside its binding.
+   "Finisher: C13 (shattered)") and character names, not short field labels.
+   They used to answer that by keeping the name BESIDE its binding in a
+   column sized to the widest name. Round 3's B1 is why they no longer do.
 
-   THE COLUMN IS SIZED TO THE WIDEST NAME, NOT TO THE ROW. Measured in the
-   ?dev=1 harness at the 840 floor, with the eighteen real BIND_LABELS: the
-   row is 586px, the widest name's ink is 190px, and the old `flex: 1` gave
-   the label a 316px box regardless. That surplus became a void between
-   each name and its binding -- 137px on the longest name and 274px on
-   "Set Root", eighteen times down the card. The walkthrough called it
-   ~600px, which is not reachable inside a 620px-max-width .settings; the
-   real figures are the ones above.
+   WHAT B1 MEASURED. Bookmarks and Previews build the same row from the
+   same four elements, and rendered it at two geometries, because each
+   grid's first track was max-content over ITS OWN list. Re-measured in the
+   ?dev=1 harness with the eighteen real BIND_LABELS seeded into #eve-binds
+   (dev.js leaves it empty -- get_bookmarks is unstubbed):
 
-   The rule, which Skills' plan rail shares (walkthrough Skills 6) and is
-   recorded for it in docs/r2-handoffs.md: a full-width row does not
-   stretch its label to fill. The value column sits at the widest label
-   plus one gap, and the width left over stays unused at the right rather
-   than becoming a gap in the middle.
+     Bookmarks  column 189.6px ("Convert EvE-Scout Bookmarks")  bind at 200.6
+     Previews   column  86.2px ("Cycle forward")                bind at  97.2
+
+   103.4 CSS px apart, from a 586px row in both. The walkthrough measured
+   79 CSS on the live app; the difference is not a discrepancy but the
+   point -- Previews' column tracks whichever characters are logged in, so
+   it does not agree with Bookmarks OR with itself between sessions. A
+   geometry that no capture can pin down cannot be made to match by
+   choosing a number.
+
+   WHAT THE ALTERNATIVES COST, all measured, none hypothetical:
+
+   - A shared explicit column has to be at least the widest BIND_LABEL, so
+     Previews gets the void back: 104px on "Cycle forward", 130px on a
+     short character name. It is also a derived figure retyped into CSS,
+     which CLAUDE.md forbids and no test could assert without rendering.
+   - Stretching the name (`minmax(0, 1fr)`) and right-aligning the controls
+     puts every control at the same x in both sections and uses the width,
+     and it reproduces the exact defect this block was written to fix:
+     328.3px of control column leaves 138.7px between the longest name and
+     its binding and 276px after "Set Root". Those are the same two figures
+     the old `flex: 1` produced, to within a pixel.
+   - Per-row max-content unaligns the bindings: eighteen buttons at
+     eighteen x-positions, worse than any void.
+
+   So the name takes its own line and the controls take the next, which is
+   the stacked full-width .lab every other section on this route already
+   uses, and which THIS FILE ALREADY IMPLEMENTED below 720px as the narrow
+   form of these same rows. It is the only shape that depends on no
+   content: both sections now put the bind button at x=1 on line two, at
+   every width, whoever is logged in.
+
+   IT COSTS HEIGHT, and the figure is here so the trade can be reversed
+   knowingly rather than rediscovered. Measured at the 840 floor, both trees
+   under one protocol: #eve-binds goes 710px -> 1112px for eighteen rows
+   (39.4 -> 61.8 per row) and #preview-binds 190 -> 306 for five. The card
+   already scrolled inside .settings-pane at the 625 floor; it now scrolls
+   about 2.2 screens instead of 1.4.
+
+   Measure it with the list settled, not straight after building the rows.
+   Freshly injected .bindbtns report 28px before the webfont applies to them
+   and 30px after, which is 36px across eighteen rows -- enough to look like
+   a width-dependent layout difference when it is only a paint that has not
+   happened yet. `document.fonts.ready` alone does not cover it.
+
+   The rule this block still keeps, which Skills' plan rail shares
+   (walkthrough Skills 6) and is recorded for it in docs/r2-handoffs.md: a
+   full-width row does not stretch its label to fill. The width left over
+   stays unused at the right rather than becoming a gap in the middle --
+   which is now true of the control line too, at 254.3px used of 588.
 
    Grid on the CONTAINER with `display: contents` on the rows, because that
-   is the only way the column can be one column: max-content on a per-row
-   grid sizes each row separately and the bindings stop aligning, which is
-   worse than the void -- eighteen buttons at eighteen x-positions. The
-   rows keep no box of their own, so .row's 10px gap and 10px margin-bottom
-   are re-stated here as the grid's own gap.
+   is the only way the three control columns can be three columns rather
+   than one per row. The rows keep no box of their own, so .row's spacing is
+   re-stated here: 10px across as the column-gap, and 12px down as 4px of
+   row-gap plus the .lab's 8px margin (see #preview-binds for why those are
+   two numbers and not one).
 
-   minmax(0, max-content) rather than max-content on the name: a
-   pathologically long character name must be able to shrink rather than
-   push the buttons out of the card, which is what `min-width: 0` did
-   under flex. */
+   The trailing `minmax(0, 1fr)` track holds no control and exists so that
+   `grid-column: 1 / -1` reaches the CARD's width rather than the three
+   control tracks' 253.3px. Without it a character name longer than the
+   control line wraps at 253.3 with 335px of empty card beside it. The
+   controls do not move: they are max-content tracks packed at the start,
+   and the 1fr only absorbs what is left.
+
+   The 253.3 is .bindbtn's 150 plus Clear and Edit… at their own widths, so
+   it moves when a control is renamed -- B6's Type… -> Edit… took 6.4px off
+   it. Re-measure rather than adjusting the figure by hand. */
 #eve-binds {
-  display: grid; gap: 10px; align-items: center; justify-content: start;
-  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+  display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
+  justify-content: start;
+  grid-template-columns: repeat(3, max-content) minmax(0, 1fr);
 }
 #eve-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity -- the
@@ -1583,8 +1701,12 @@ button.btn:disabled,
    note about. */
 #eve-binds .row[hidden] { display: none; }
 #eve-binds .row > .lab {
+  grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
+/* See #preview-binds for why this is a margin and not the grid's row-gap,
+   and why it is not skipped on the first row. */
+#eve-binds .row > .lab { margin-top: 8px; }
 
 /* Settings 1's third case, kept in its grid form. Lane 0's
    `max-width: 720px` block collapses the shared label column above its
@@ -1593,15 +1715,14 @@ button.btn:disabled,
    SHRANK instead, which is the failure the collapse exists to prevent.
    #preview-binds carries the same override and the same repair.
 
-   `grid-column: 1 / -1` is the grid equivalent of the flex `flex: 0 0
-   100%` this used to be: the name takes the whole line and the controls
-   take the next one at their natural widths.
-
-   By C1 this can never fire in the app window -- the CSS floor is 840x625
-   at every scaling, so 720px is below it. It is kept because it still
-   fires in the ?dev=1 harness, it is the guard that would make lowering
-   MIN_WIDTH safe, and tests/test_page_conventions.py requires every id
-   override of the shared label column to restore its collapse. */
+   Since B1 the override above collapses the column unconditionally, so
+   this block now restates it and changes nothing. It is kept for the rule
+   rather than for its effect: tests/test_page_conventions.py requires
+   every id override of the shared label column to restore the collapse
+   here, and the next override to be written will not have collapsed
+   itself. It is also still the guard that would make lowering MIN_WIDTH
+   safe. By C1 it cannot fire in the app window regardless -- the CSS floor
+   is 840x625 at every scaling, so 720px is below it. */
 @media (max-width: 720px) {
   #eve-binds .row > .lab { grid-column: 1 / -1; }
 }
@@ -2123,7 +2244,36 @@ button.btn:disabled,
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
 .skills-filterbar .field { flex: 1; }
 
-.skills-roster { flex: 1; min-height: 0; overflow-y: auto; }
+/* S8 -- the pane is elastic and its content is not, so every extra pixel of
+   window used to become RULED emptiness.
+
+   Measured on main: window 833 -> 976 CSS moved the pane's right edge +276
+   physical while `Not trained`'s right edge moved +12, leaving 239 -> 371
+   CSS px of empty pane to the right of every answer. The separators below
+   ruled all of it, so the emptiness read as an unfinished table rather than
+   as margin -- which is the walkthrough's own diagnosis and names the fix.
+
+   NOT by widening the name column. --name-col is 240 because that is the
+   width the longest EVE skill and character names need and no more; the
+   block below records that 320 was tried and reserved 80px nothing could
+   fill. The status column is right where it belongs. What was wrong is
+   only that the rule under each row kept going.
+
+   width: max-content, so the figure is DERIVED from the row rather than
+   chosen: the list is as wide as a chevron, the 240px name cap, a gap and
+   the widest status, and the separators stop there. max-width: 100% keeps
+   the 840 floor unaffected -- below the content width the list shrinks as
+   it always did, and the names ellipsise rather than overflow.
+
+   This is NOT P10's fix and must not be merged with it. Profiles wasted
+   width OUTSIDE a fixed card and had a roster that could use it; Skills
+   wastes it INSIDE an elastic pane and has content that cannot. So
+   Profiles turns the width into columns and Skills turns it into honest
+   margin. Same symptom, opposite mechanisms. */
+.skills-roster {
+  flex: 1; min-height: 0; overflow-y: auto;
+  width: max-content; max-width: 100%;
+}
 .skills-group { margin-bottom: 12px; }
 .skills-group-head {
   display: flex; align-items: center; gap: 8px;
@@ -2216,11 +2366,26 @@ button.btn:disabled,
    sets ~228 at --fs-body. 240 is the smallest cap that truncates neither,
    and anything longer than that ellipsises as it always did. Do not round
    it up for comfort: 320 was the first value tried and reserved 80px that
-   nothing on the screen could ever fill. */
+   nothing on the screen could ever fill.
+
+   S8 changed HOW the 240 is stated, not the number. `flex: 1` plus
+   `max-width` grew the name to 240 only while the row happened to be wider
+   than 240 plus the status; the cap did the aligning by accident of there
+   always being room. Once S8 sized the list to its content that stopped
+   being true and the statuses went ragged in exactly the way this note
+   predicts -- on `Training - timing unknown` the leftover was under 240, so
+   the cap never bound and each status landed at its own x.
+
+   An explicit `width` is what fixes it, and flex-basis is not: measured in
+   the harness, `flex: 0 1 var(--name-col)` still contributed each name's
+   TEXT to the list's intrinsic width (roster 268px, statuses at six
+   different x), while `width: var(--name-col)` contributes 240 (roster
+   447.8px, every status at 280). Shrink stays 1, so at the floor the
+   column still gives way and the names ellipsise as before. */
 .skills-main { --name-col: 240px; }
 
 .skills-name {
-  flex: 1; min-width: 0; max-width: var(--name-col);
+  width: var(--name-col); flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
@@ -2253,12 +2418,15 @@ button.btn:disabled,
 
 .req-list { display: flex; flex-direction: column; gap: 3px; }
 .req { display: flex; align-items: baseline; gap: 10px; }
-/* Same cap, same reason, and deliberately the same value: a requirement
+/* Same column, same reason, and deliberately the same value: a requirement
    row is the character row's answer one level down, and two different
-   caps would put the two state columns at two different offsets in a
-   block the eye reads as one list. */
+   widths would put the two state columns at two different offsets in a
+   block the eye reads as one list. It follows .skills-name from cap to
+   explicit width for the same S8 reason -- an expanded row is inside the
+   list whose intrinsic width S8 now derives, so a name that contributed
+   its text here would widen the list for every collapsed row too. */
 .req-name {
-  flex: 1; min-width: 0; max-width: var(--name-col);
+  width: var(--name-col); flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--fs-muted);
 }

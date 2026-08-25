@@ -176,6 +176,49 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
+def test_the_two_keybind_lists_render_the_same_row():
+    """Bookmarks and Previews build a keybind row from the same four
+    elements, and for two rounds they rendered it at two geometries.
+
+    Each list is its own grid, and the first track used to be max-content
+    over ITS OWN labels -- so the column was 189.6px in Bookmarks ("Convert
+    EvE-Scout Bookmarks") and 86.2px in Previews ("Cycle forward"), putting
+    the bind button 103.4 CSS px apart in two sections of one screen.
+    Previews' half of that is not even stable between sessions: the track
+    tracked whichever characters were logged in. Round 3's B1.
+
+    The fix was to stack the name above its controls in both, so the
+    geometry depends on no content at all. Nothing renders the page in this
+    suite, so what stops the two drifting apart again is this: the two
+    grids must declare the same columns, and both must put the name on its
+    own line. Both halves are read out of the stylesheet rather than
+    restated here, so the test cannot disagree with the file about what the
+    shared value is -- only about whether it is shared.
+    """
+    hosts = ("#eve-binds", "#preview-binds")
+
+    columns = {}
+    for host in hosts:
+        m = re.search(re.escape(host) + r" \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{host} has no rule block at all"
+        tracks = re.search(r"grid-template-columns:\s*([^;]+);", m.group(1))
+        assert tracks, f"{host} declares no grid-template-columns"
+        columns[host] = " ".join(tracks.group(1).split())
+
+    assert columns["#eve-binds"] == columns["#preview-binds"], (
+        "the two keybind lists declare different columns, which is round 3's "
+        f"B1 exactly: {columns}"
+    )
+
+    for host in hosts:
+        m = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{host} has no .lab override"
+        assert "grid-column: 1 / -1" in m.group(1), (
+            f"{host}'s name no longer takes its own line, so its bind button "
+            f"is back at an offset that depends on that list's own labels"
+        )
+
+
 # ---- the [hidden] trap -------------------------------------------------
 
 
