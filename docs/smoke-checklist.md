@@ -737,13 +737,26 @@ behavior that only shows up at size.
 ## Combat logs
 
 - [ ] **No webhook configured.** Clear the Discord webhook field (or use a
-      fresh install), select a recording, and press **Upload** with **Also
-      post combat logs to Discord** ticked. Expected: the VIDEO uploads
-      normally, and the status strip finishes on an amber "Upload complete —
-      combat logs skipped: Enter a Discord webhook URL. Set it up in
-      Settings." There is NO dialog, and the video half is never blocked by
-      the Discord half being unconfigured — that regression is the whole
-      reason the two buttons could be merged.
+      fresh install), select a recording, and press **Upload**. Expected:
+      the VIDEO uploads normally and the status strip finishes on a green
+      `Uploaded "<your title>" to YouTube.` and **nothing about logs at
+      all**. There is NO dialog, no amber strip, and the video half is
+      never blocked by the Discord half being unconfigured — that
+      regression is the whole reason the two buttons could be merged.
+      The silence is deliberate and `Api._post_combat_logs` says why: with
+      the checkbox gone nobody *asked* for logs on this run, so reporting
+      them as "skipped" would put a warning on every upload a webhook-less
+      install ever performs. The fact belongs on the panel note, where it
+      is true all the time.
+      Configured-and-broken is the other half of that rule and does earn a
+      strip — `Uploaded "…" to YouTube. Combat logs skipped: … Set it up in
+      Settings.` in amber. Reaching it by hand needs a settings.json edited
+      outside the app, because the field below now refuses to store a
+      webhook that does not parse; `test_a_webhook_that_does_not_parse_
+      still_warns` is what actually holds that branch.
+      (This item used to claim the amber line for the EMPTY case and to
+      name a checkbox removed by Uploader 8. Both were wrong; corrected in
+      round 3's L7 while rewriting the string it quoted.)
 - [ ] **An invalid webhook URL is refused.** In Settings > Discord, paste
       a URL that is not a Discord webhook (e.g. `https://example.com/hook`,
       or `https://discord.com.evil.example/api/webhooks/1/x`) and press
@@ -783,11 +796,13 @@ behavior that only shows up at size.
       already set to the detected folder, rather than silently re-filling it.
 - [ ] **A normal successful upload.** Select one or more recordings from a
       real fight and press **Upload**. Expected:
-      the video uploads first, the strip says "Upload complete!", and then
-      it steps through "Collecting combat logs…" → "Building archive…" →
-      "Posting to Discord…" → a green "Posted \<name\>.zip (N KB)." message.
-      "Upload complete!" must NOT be the last thing said — a user who reads
-      it as the end will close the window mid-post.
+      the video uploads first, the strip says `Uploaded "<your title>" to
+      YouTube.`, and then it steps through "Collecting combat logs…" →
+      "Building archive…" → "Posting to Discord…" → a green
+      `Uploaded "<your title>" to YouTube. Posted \<name\>.zip (N KB).`
+      The upload line must NOT be the last thing said on its own — a user
+      who reads it as the end will close the window mid-post — and the
+      line that IS last still names the upload first (round 3, finding 13).
       In Discord, the message names the character(s) and file count, and
       the attached zip contains a `manifest.json` plus the `.txt` logs. The
       temp archive under `%LOCALAPPDATA%\...\tmp` is gone afterward.
@@ -804,7 +819,7 @@ behavior that only shows up at size.
 - [ ] **No readable duration (ffprobe missing/failed).** Rename
       `bin\ffprobe.exe` in the install directory, then select a recording and
       press **Upload**. Expected: the video
-      uploads, then an amber "…combat logs skipped: no readable duration for
+      uploads, then an amber "… Combat logs skipped: no readable duration for
       \<filename\>…" naming the specific recordings affected and mentioning
       ffprobe. No dialog. Restore the binary afterward.
 - [ ] **Uploading before the durations finish loading.** Delete
@@ -1061,6 +1076,35 @@ response leaves a worker waiting forever, which presents as a hung upload.
 - [ ] **Status severity colours are distinguishable.** Force a red error, a
       green success and an ordinary status in one session. All three legible
       against the near-black ground and clearly different.
+- [ ] **LOAD-BEARING: a finished job does not follow you around.** Round 3's
+      finding 14: a green `Posted combatlogs-….zip (15 KB).` and a bar at
+      100% were still on screen in a capture of a *different folder with
+      zero recordings*, and again on Profiles and Skills. Complete one
+      upload, then click Skills, Profiles and the gear. The strip must read
+      **Idle** with an empty bar and no percentage on each, and stay Idle
+      when you come back. It clears on leaving the route, so the completion
+      is still there while you are looking at the folder it was about.
+- [ ] **LOAD-BEARING: a job still running is never cleared.** The opposite
+      case, and the reason this is not just "clear on every route change".
+      Mid-upload, click Skills and back: the percentage and the bar are
+      exactly where they were, still counting. Then the harder one —
+      **during a stitch**, which reports no progress at all and can go
+      minutes between pushes, so a cleared strip would leave the app looking
+      idle with nothing due to repaint it. Switch route mid-stitch: the bar
+      must still be animating and the text must still say
+      `Stitching with FFmpeg…`.
+- [ ] **A successful upload is announced as one.** Round 3's finding 13: the
+      strip used to end on `Posted combatlogs-….zip (15 KB).` — the words
+      *uploaded*, the title and *YouTube* appeared nowhere on the app's one
+      irreversible action. Upload one recording with a webhook configured:
+      the last line reads `Uploaded "<your title>" to YouTube. Posted
+      combatlogs-….zip (…).` Upload two without stitching: `Uploaded 2
+      recordings to YouTube.` — no title, because build_body numbers them
+      and there is no single name to give. With Stitch on, two recordings
+      are one video and the title comes back.
+- [ ] **A skipped log half still says the upload worked.** Point Gamelogs at
+      nothing and upload: `Uploaded "…" to YouTube. Combat logs skipped: …`
+      in amber, no dialog. The sentence must open with the upload.
 
 ## Release
 - [ ] **`uv.lock` carries the new version.** It records this project's own

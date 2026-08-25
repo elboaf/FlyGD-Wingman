@@ -475,25 +475,32 @@
       window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
                          destination: 'Uploads go to FlyGD \u00b7 unlisted' });
       window.onAuthState({ state: 'connected', message: 'Connected' });
-      window.onStatus({ text: 'Idle', kind: 'FG' });
+      window.onStatus({ text: 'Idle', kind: 'FG', busy: false });
     }, 0);
     return Promise.resolve(null);
   };
 
   // Manual drivers for the pushes no click can produce in a browser.
   // Typed into the devtools console during verification.
+  //
+  // `busy` is carried here exactly as Python carries it, because it is the
+  // flag that decides whether a route change clears the strip: without it
+  // the harness cannot show that a LIVE upload survives a trip to Skills
+  // and a finished one does not, which is the whole of round 3's
+  // finding 14.
   window.DEV = {
     determinate: function (pct) {
       window.onProgress({ mode: 'determinate', pct: pct,
                           text: 'Uploading file 1 of 3\u2026 ' + pct + '%',
-                          kind: 'FG' });
+                          kind: 'FG', busy: true });
     },
     stitching: function () {
       window.onProgress({ mode: 'indeterminate', pct: 0,
-                          text: 'Stitching with FFmpeg\u2026', kind: 'FG' });
+                          text: 'Stitching with FFmpeg\u2026',
+                          kind: 'FG', busy: true });
     },
-    status: function (text, kind) {
-      window.onStatus({ text: text, kind: kind });
+    status: function (text, kind, busy) {
+      window.onStatus({ text: text, kind: kind, busy: !!busy });
     },
     retry: function (available) {
       window.onRetryAvailable({ available: available });

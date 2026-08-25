@@ -160,6 +160,26 @@
   // ---- status strip ---------------------------------------------------
   var KINDS = ['FG', 'SUCCESS', 'WARNING', 'ERROR'];
 
+  // The strip is global chrome, and app.js deliberately never tells Python
+  // which route is showing, so the page cannot work out on its own whether
+  // what the strip holds is still true. Round 3's finding 14 is what that
+  // costs: a green `Posted combatlogs-2026-08-24_21-54.zip (15 KB).` and a
+  // bar at 100% were still on screen in a capture of a DIFFERENT folder
+  // with zero recordings, and again on the Profiles and Skills routes. The
+  // completion state of one upload outlived everything it described.
+  //
+  // `busy` on every strip payload is the missing fact, and Python is the
+  // only place that has it (ui/api.py, _status / _progress). A RESULT is
+  // cleared when the route changes; something STILL RUNNING never is,
+  // because during an upload the strip is the only feedback there is
+  // (finding 12) and a stitch can go minutes between pushes -- blanking it
+  // there would leave the app looking idle mid-job.
+  var stripBusy = false;
+
+  // Read off the markup, not retyped: index.html carries the word and the
+  // paragraph explaining why the resting text is `Idle` and not `Ready`.
+  var IDLE = WM.el('status').textContent;
+
   function setStatus(text, kind) {
     var node = WM.el('status');
     node.textContent = text;
@@ -167,11 +187,25 @@
     node.title = text;   // the strip ellipsises a long ffmpeg error
   }
 
+  function resetStrip() {
+    if (stripBusy) return;
+    setStatus(IDLE, 'FG');
+    WM.el('track').classList.remove('indeterminate');
+    // Back to the markup's resting state: no inline width, and an EMPTY
+    // percentage rather than `0%`, which would read as a stalled job.
+    WM.el('bar').style.width = '';
+    WM.el('pct').textContent = '';
+  }
+
+  document.addEventListener('wm:route', resetStrip);
+
   WM.handle('onStatus', function (p) {
+    stripBusy = !!p.busy;
     setStatus(p.text || '', p.kind);
   });
 
   WM.handle('onProgress', function (p) {
+    stripBusy = !!p.busy;
     var track = WM.el('track'), bar = WM.el('bar'), pct = WM.el('pct');
     if (p.mode === 'indeterminate') {
       // A stitch reports no readable percentage. The bar must say
