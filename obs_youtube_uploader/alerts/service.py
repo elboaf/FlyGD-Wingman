@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
+from .. import paths
 from . import patterns, tailer
 
 logger = logging.getLogger(__name__)
@@ -179,5 +180,44 @@ class AlertService:
         return dispatched
 
 
+def sound_path(sound_id: str) -> Path | None:
+    """Resolve a sound id to a file, or None.
+
+    Two cases, mirroring paths.icon_file() and window._web_dir(): a frozen
+    build collects assets/sounds to the bundle root via uploader.spec's
+    `datas` entry, so `bundle_dir() / "assets" / "sounds"` is correct there.
+    A source checkout has no such collection step, so bundle_dir() (the
+    repo root) is wrong; the real files live under the package's own
+    assets/ folder instead. Deliberately NOT Path(__file__).parent alone:
+    chrome.py's font does that and its destination in uploader.spec does
+    not match, which is very likely why it is broken in the frozen build --
+    do not copy that pattern.
+    """
+    if sound_id in (None, "", "none"):
+        return None
+    frozen_candidate = paths.bundle_dir() / "assets" / "sounds" / f"{sound_id}.wav"
+    if frozen_candidate.is_file():
+        return frozen_candidate
+    source_candidate = (
+        Path(__file__).resolve().parent.parent / "assets" / "sounds" / f"{sound_id}.wav"
+    )
+    if source_candidate.is_file():
+        return source_candidate
+    return None
+
+
 def play_sound(sound_id: str) -> None:
-    """Replaced in the sound task."""
+    path = sound_path(sound_id)
+    if path is None:
+        # Logged, not silent: a missing file looks exactly like a broken
+        # alert from the user's side.
+        logger.warning("No sound file for id %r; alert will be silent", sound_id)
+        return
+    try:
+        import winsound  # Deferred: CI is ubuntu-latest.
+    except ImportError:
+        return
+    try:
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except RuntimeError:
+        logger.exception("Could not play alert sound %s", path)
