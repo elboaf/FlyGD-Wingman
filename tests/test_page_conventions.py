@@ -39,6 +39,11 @@ CSS = re.sub(
     r"/\*.*?\*/", "", (WEB / "style.css").read_text(encoding="utf-8"), flags=re.DOTALL
 )
 
+# Read OFF the page rather than typed here: these two rules exist to catch
+# the page drifting from settings.py, and a third hand-kept copy in the
+# test would just be one more thing to drift. Sorted for a stable message.
+_ALERT_EVENT_IDS = sorted(set(re.findall(r'id="alert-event-([a-z_]+)-enabled"', HTML)))
+
 
 def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
@@ -678,4 +683,58 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
+    """index.html hand-writes nine <option>s for three events, and
+    settings.py owns the list they must match.
+
+    settings.py:20-22 states the failure this prevents: "An id present in
+    the UI dropdown but missing here normalises to silence, which is
+    indistinguishable from a broken alert." The guard it asks for existed
+    only for the ASSETS -- tests/test_alerts_sound.py checks a .wav exists
+    per VALID_SOUNDS -- and nothing tied the page's options to the same
+    set. A fourth sound, or a renamed one, shipped a card that could
+    silently select an id the backend drops.
+    """
+    from obs_youtube_uploader.settings import VALID_SOUNDS
+
+    for event in _ALERT_EVENT_IDS:
+        select = re.search(
+            rf'<select[^>]*id="alert-event-{event}-sound".*?</select>',
+            HTML,
+            re.DOTALL,
+        )
+        assert select, f"no sound select for {event!r}"
+        offered = set(re.findall(r'<option value="([^"]+)"', select.group(0)))
+        assert offered == VALID_SOUNDS, (
+            f"the {event} sound options are {sorted(offered)}, but "
+            f"settings.VALID_SOUNDS is {sorted(VALID_SOUNDS)} -- an id the "
+            f"page offers and settings drops normalises to silence"
+        )
+
+
+def test_the_alert_rows_name_the_events_settings_actually_has():
+    """The row ids are a hand-kept copy of _ALERT_EVENT_DEFAULTS' keys.
+
+    api.py's set_alert_event refuses an unknown event outright, so a
+    renamed key does not corrupt anything -- it just makes every control
+    in that row fail silently, on a card whose whole failure mode is
+    silence. alerts.js carries the same three ids for the same reason and
+    is checked here too, so the three copies cannot drift apart.
+    """
+    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+
+    expected = set(_ALERT_EVENT_DEFAULTS)
+    assert set(_ALERT_EVENT_IDS) == expected, (
+        f"index.html has alert rows for {sorted(_ALERT_EVENT_IDS)}, but "
+        f"settings defines {sorted(expected)}"
+    )
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var EVENTS = \[(.*?)\]", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a flat EVENTS list"
+    assert set(re.findall(r"'([^']+)'", listed.group(1))) == expected, (
+        "alerts.js's EVENTS has drifted from settings._ALERT_EVENT_DEFAULTS"
     )

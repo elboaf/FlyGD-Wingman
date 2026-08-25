@@ -37,11 +37,17 @@
   var DEPENDS = 'Alerts are off, so nothing below is watching yet — these '
               + 'apply when you turn them on.';
 
-  var EVENTS = [
-    {id: 'combat', label: 'Combat'},
-    {id: 'warp_scramble', label: 'Warp scramble'},
-    {id: 'decloak', label: 'Decloak'}
-  ];
+  // Ids only. The display names used to be carried here as well, for
+  // messages that named their event ("Combat colour is set for this
+  // session..."). Those messages now render INSIDE the event's own row,
+  // so the name would be repeating the label six inches to its left --
+  // and a hand-kept copy of three labels that index.html already holds is
+  // exactly the drift CLAUDE.md's derive-don't-retype rule is about.
+  //
+  // These ids are still a hand-kept copy of settings.py's
+  // _ALERT_EVENT_DEFAULTS keys. That one is load-bearing and untested;
+  // see the id/option guard in tests/test_page_conventions.py.
+  var EVENTS = ['combat', 'warp_scramble', 'decloak'];
 
   // Last-known-good color/sound per event, so a refused or bridge-
   // failed change has something to revert the control to -- by the
@@ -63,24 +69,38 @@
       enabled: WM.el('alert-event-' + id + '-enabled'),
       color: WM.el('alert-event-' + id + '-color'),
       sound: WM.el('alert-event-' + id + '-sound'),
-      test: WM.el('alert-event-' + id + '-test')
+      test: WM.el('alert-event-' + id + '-test'),
+      msg: WM.el('alert-event-' + id + '-msg')
     };
+  }
+
+  // Each event row reports its own outcome, beside the control that
+  // produced it. #alerts-status stays for CARD-level state only (the three
+  // top-level switches), which is the one thing it was ever right for.
+  //
+  // `hidden` alone is enough: .field-msg carries its own [hidden] override
+  // (style.css:1845), so this is not the trap DESIGN.md names.
+  function sayRow(row, text, severity) {
+    if (!row.msg) { return; }
+    row.msg.textContent = text || '';
+    row.msg.className = 'field-msg' + (text && severity ? ' ' + severity : '');
+    row.msg.hidden = !text;
   }
 
   // Shared by the wm:settings hydration and refresh() (get_alert_state),
   // so the per-event rows repaint from the same shape either way.
   function applyAlerts(alerts) {
     var events = (alerts && alerts.events) || {};
-    EVENTS.forEach(function (ev) {
-      var row = eventRow(ev.id);
+    EVENTS.forEach(function (id) {
+      var row = eventRow(id);
       if (!row.enabled) { return; }
-      var spec = events[ev.id] || {};
+      var spec = events[id] || {};
       row.enabled.checked = !!spec.enabled;
       var color = spec.color || row.color.value;
       var sound = spec.sound || 'none';
       row.color.value = color;
       row.sound.value = sound;
-      lastGood[ev.id] = {color: color, sound: sound};
+      lastGood[id] = {color: color, sound: sound};
     });
   }
 
@@ -119,67 +139,77 @@
   writeFlag(pveBox, 'set_alert_pve_filter', 'The PvE filter');
   writeFlag(persistBox, 'set_alert_persist', 'Persisting alerts');
 
-  EVENTS.forEach(function (ev) {
-    var row = eventRow(ev.id);
+  EVENTS.forEach(function (id) {
+    var row = eventRow(id);
     if (!row.enabled) { return; }
 
     row.enabled.addEventListener('change', function () {
       var wanted = row.enabled.checked;
-      WM.send('set_alert_event', ev.id, 'enabled', wanted).then(function (res) {
+      WM.send('set_alert_event', id, 'enabled', wanted).then(function (res) {
         // set_alert_event refuses an unknown event/field outright but a
         // clamped value is still applied -- only a refusal or a bridge
         // failure reverts the box.
-        if (!res || !res.applied) { row.enabled.checked = !wanted; }
+        if (!res || !res.applied) {
+          row.enabled.checked = !wanted;
+          sayRow(row, (res && res.error)
+            || 'That could not be changed, so it has been put back.', 'err');
+          return;
+        }
+        sayRow(row, '');
       });
     });
     row.color.addEventListener('change', function () {
       var wanted = row.color.value;
-      WM.send('set_alert_event', ev.id, 'color', wanted).then(function (res) {
+      WM.send('set_alert_event', id, 'color', wanted).then(function (res) {
         if (!res || !res.applied) {
-          row.color.value = (lastGood[ev.id] || {}).color || wanted;
+          row.color.value = (lastGood[id] || {}).color || wanted;
+          sayRow(row, (res && res.error)
+            || 'That colour could not be set, so it has been put back.', 'err');
           return;
         }
-        lastGood[ev.id] = lastGood[ev.id] || {};
-        lastGood[ev.id].color = wanted;
+        lastGood[id] = lastGood[id] || {};
+        lastGood[id].color = wanted;
         if (!res.persisted) {
-          say(ev.label + ' colour is set for this session, but could not '
-            + 'be written to settings — it will not survive a restart.');
+          sayRow(row, 'The colour is set for this session, but could not be '
+            + 'written to settings — it will not survive a restart.', 'warn');
         } else {
-          say('');
+          sayRow(row, '');
         }
       });
     });
     row.sound.addEventListener('change', function () {
       var wanted = row.sound.value;
-      WM.send('set_alert_event', ev.id, 'sound', wanted).then(function (res) {
+      WM.send('set_alert_event', id, 'sound', wanted).then(function (res) {
         if (!res || !res.applied) {
-          row.sound.value = (lastGood[ev.id] || {}).sound || wanted;
+          row.sound.value = (lastGood[id] || {}).sound || wanted;
+          sayRow(row, (res && res.error)
+            || 'That sound could not be set, so it has been put back.', 'err');
           return;
         }
-        lastGood[ev.id] = lastGood[ev.id] || {};
-        lastGood[ev.id].sound = wanted;
+        lastGood[id] = lastGood[id] || {};
+        lastGood[id].sound = wanted;
         if (!res.persisted) {
-          say(ev.label + ' sound is set for this session, but could not '
-            + 'be written to settings — it will not survive a restart.');
+          sayRow(row, 'The sound is set for this session, but could not be '
+            + 'written to settings — it will not survive a restart.', 'warn');
         } else {
-          say('');
+          sayRow(row, '');
         }
       });
     });
     row.test.addEventListener('click', function () {
       // Never persistent (api.py's test_alert docstring): nothing here
       // is looking at a preview to acknowledge it, so nothing is saved.
-      WM.send('test_alert', ev.id).then(function (res) {
-        if (res && res.error) { say(res.error); return; }
+      WM.send('test_alert', id).then(function (res) {
+        if (res && res.error) { sayRow(row, res.error, 'warn'); return; }
         // A successful Test with the master switch off is the one way
         // this card can actively mislead: a ring pulses, a sound plays,
         // and nothing is watching gamelogs. The DEPENDS line says so
         // permanently; this says it at the moment it would be believed.
         if (!enabledBox.checked) {
-          say('That is what the alert looks like. Alerts are still off, '
-            + 'so nothing is watching gamelogs yet.');
+          sayRow(row, 'That is what the alert looks like. Alerts are still '
+            + 'off, so nothing is watching gamelogs yet.', 'warn');
         } else {
-          say('');
+          sayRow(row, '');
         }
       });
     });

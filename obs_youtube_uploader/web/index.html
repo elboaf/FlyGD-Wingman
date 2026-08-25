@@ -673,10 +673,18 @@
             Keep pulsing until you select the preview
           </label>
         </div>
-        <div class="row"><span class="lab">Combat</span>
+        <!-- One grid over all three rows, with the rows themselves
+             display:contents -- the same technique #preview-binds uses,
+             and for the same reason. Three independent flex rows put each
+             event's swatch, sound and Test wherever its NAME happened to
+             end, so "Warp scramble" pushed its controls ~45px right of
+             "Combat"'s. A table whose columns do not line up is not
+             giving the scan it costs a table's markup to get. -->
+        <div class="alert-events">
+        <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>
-            Enabled
+            Combat
           </label>
           <input type="color" class="alert-color" id="alert-event-combat-color"
             aria-label="Combat alert colour">
@@ -686,12 +694,14 @@
             <option value="chime">Chime</option>
             <option value="bell">Bell</option>
           </select>
-          <button class="btn" id="alert-event-combat-test">Test</button>
+          <button class="btn" id="alert-event-combat-test"
+            aria-label="Test the Combat alert">Test</button>
+          <span class="field-msg" id="alert-event-combat-msg" hidden></span>
         </div>
-        <div class="row"><span class="lab">Warp scramble</span>
+        <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-warp_scramble-enabled"><span class="box"></span>
-            Enabled
+            Warp scramble
           </label>
           <input type="color" class="alert-color" id="alert-event-warp_scramble-color"
             aria-label="Warp scramble alert colour">
@@ -701,12 +711,14 @@
             <option value="chime">Chime</option>
             <option value="bell">Bell</option>
           </select>
-          <button class="btn" id="alert-event-warp_scramble-test">Test</button>
+          <button class="btn" id="alert-event-warp_scramble-test"
+            aria-label="Test the Warp scramble alert">Test</button>
+          <span class="field-msg" id="alert-event-warp_scramble-msg" hidden></span>
         </div>
-        <div class="row"><span class="lab">Decloak</span>
+        <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-decloak-enabled"><span class="box"></span>
-            Enabled
+            Decloak
           </label>
           <input type="color" class="alert-color" id="alert-event-decloak-color"
             aria-label="Decloak alert colour">
@@ -716,7 +728,10 @@
             <option value="chime">Chime</option>
             <option value="bell">Bell</option>
           </select>
-          <button class="btn" id="alert-event-decloak-test">Test</button>
+          <button class="btn" id="alert-event-decloak-test"
+            aria-label="Test the Decloak alert">Test</button>
+          <span class="field-msg" id="alert-event-decloak-msg" hidden></span>
+        </div>
         </div>
       </section>
     </div>

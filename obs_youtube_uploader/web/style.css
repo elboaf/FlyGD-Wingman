@@ -1624,6 +1624,61 @@ button.btn:disabled,
   border-radius: 4px; background: none; cursor: pointer;
 }
 
+/* An event row reports its OWN failures. Twelve controls used to write
+   into one shared .hint at the top of the card, each message overwriting
+   the last, ~400px from the control that produced it -- so a session-only
+   colour write on Decloak announced itself above the Enable switch and
+   was gone by the time anything else was touched. */
+
+/* One grid across all three rows so the columns line up, with each row
+   display:contents -- lifted from #preview-binds, which solved the same
+   problem for the keybind table.
+
+   Three independent flex rows aligned nothing: the checkbox label is the
+   event's NAME now, so its width varies, and every control after it
+   started at a different x. max-content on the first two columns rather
+   than a px or ch width, because both of those are font-fragile and this
+   column's content is three fixed strings the CSS does not own. */
+.alert-events {
+  display: grid;
+  /* The sound column is the only one allowed to give: the name, the
+     swatch and Test are all content-sized, and four rigid max-content
+     tracks overflowed the card at the 840 floor, where the Settings rail
+     leaves this card around 500px. Grid tracks do not wrap, so an
+     overflow here is a horizontally scrolling page, which DESIGN.md
+     forbids outright. */
+  grid-template-columns: max-content max-content minmax(110px, 150px) max-content;
+  /* Pack left. Without it the tracks are spread across the card's full
+     width and the swatch ends up far from the name it belongs to, which
+     reads as four unrelated columns rather than one row per event. */
+  justify-content: start;
+  gap: 10px; align-items: center;
+}
+.alert-events .alert-row > select.field { width: 100%; min-width: 0; }
+.alert-events .alert-row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity, which is the
+   [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
+   children with the row itself gone. */
+.alert-events .alert-row[hidden] { display: none; }
+/* Its own full-width line under the row it belongs to. .field-msg carries
+   its own [hidden] override (:1845), which is what makes `hidden` alone
+   enough on the span.
+
+   `width: 0` with `min-width: 100%` is not a trick for its own sake. A
+   grid item spanning intrinsic tracks contributes its max-content width
+   to them, so this sentence -- the longest string in the card -- was
+   inflating the NAME column and pushing Test off the card's right edge at
+   the 840 floor. Zero width removes that contribution; min-width puts the
+   rendered box back. */
+.alert-events .alert-row > .field-msg {
+  grid-column: 1 / -1; margin: 0 0 4px; width: 0; min-width: 100%;
+}
+/* The name takes its own line before the controls start colliding. */
+@media (max-width: 720px) {
+  .alert-events { grid-template-columns: max-content minmax(90px, 1fr) max-content; }
+  .alert-events .alert-row > .check { grid-column: 1 / -1; }
+}
+
 /* The pill sits inside .card > h2, which is already an align-items:center
    flex row -- only the heading's own treatment has to be undone, or the
    status reads as EVE RUNNING in letter-spaced small caps. margin-left:auto
