@@ -1432,6 +1432,17 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .settings .row > select.field { flex: 0 0 150px; }
 .settings .row > input#f-category { flex: 0 0 90px; }
 
+/* No wrapper convention exists for input[type=range] the way .check/.radio
+   exist for checkboxes/radios -- `color-scheme: dark` above already gets a
+   dark-themed native track and thumb from WebView2's Chromium, so the only
+   thing left off-brand is the thumb's default blue. accent-color is enough
+   to fix that without a bespoke track/thumb build. */
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
+.range-value {
+  flex: none; min-width: 2.5em; text-align: right;
+  color: var(--text-dim); font-size: var(--fs-mono); font-family: var(--mono);
+}
+
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);
   margin: 6px 0 0;

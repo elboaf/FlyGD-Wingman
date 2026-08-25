@@ -551,3 +551,149 @@
     else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
   }
 }());
+
+// ---- Preview labels -------------------------------------------------------
+// Same shape as restore-preview-positions above, with one difference:
+// _write_preview_setting (ui/api.py) reports a persistence failure as
+// `applied: false`, not `applied: true, persisted: false` -- settings_mod.
+// update restores the LIVE dict on OSError here, so the value genuinely
+// never took effect either. That is why this checks `res.applied` before
+// falling back to `res.persisted`, rather than only the falsy-`res` check
+// restore-preview-positions's writer gets away with.
+(function () {
+  var box = WM.el('preview-show-labels');
+  var status = WM.el('preview-show-labels-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  // Same dependence note as Position above: PreviewHost.restyle() only
+  // touches previews that are actually open, so with previews off this
+  // sets tomorrow's label, not today's.
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_show_labels', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        // Refused: the live value never changed either, so put the box
+        // back rather than show a state the app is not in.
+        box.checked = !wanted;
+        say(res && res.error);
+        return;
+      }
+      if (!res.persisted) {
+        say('Showing character names is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      } else {
+        say('');
+        sayDependence();
+      }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    // Absent means on: settings.py's default is True, and an upgrading
+    // user's file predates the key.
+    box.checked = !(s.preview && s.preview.show_labels === false);
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());
+
+// ---- Preview opacity --------------------------------------------------
+// The "border and label stay full strength" sentence is a separate static
+// hint in index.html, not this status line: it has to stay on screen even
+// while this line is reporting a write failure or the previews-off
+// dependence note, because it is the one sentence in this card that
+// contradicts what a TriffView user would otherwise assume.
+(function () {
+  var box = WM.el('preview-opacity');
+  var readout = WM.el('preview-opacity-value');
+  var status = WM.el('preview-opacity-status');
+  if (!box || !readout || !status) { return; }
+
+  // The last value the backend actually accepted, so a refusal can put
+  // the slider back rather than leave it showing what the user dragged to.
+  var lastGood = box.value;
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  // Live readout as the thumb moves; the setting itself commits only on
+  // `change` (DESIGN.md: discrete controls commit on change, and a range
+  // fires `input` per pixel dragged -- a write per pixel is the bug this
+  // rule exists to prevent).
+  box.addEventListener('input', function () {
+    readout.textContent = box.value;
+  });
+
+  box.addEventListener('change', function () {
+    var wanted = parseInt(box.value, 10);
+    WM.send('set_preview_opacity', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        // Refused: put the slider back where it was rather than show a
+        // value the app never actually took.
+        box.value = lastGood;
+        readout.textContent = box.value;
+        say(res && res.error);
+        return;
+      }
+      lastGood = box.value;
+      if (!res.persisted) {
+        say('Opacity ' + wanted + ' is set for this session, but could '
+          + 'not be written to settings — it will not survive a restart.');
+      } else {
+        say('');
+        sayDependence();
+      }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    var value = (s.preview && s.preview.opacity) || 255;
+    box.value = value;
+    lastGood = box.value;
+    readout.textContent = box.value;
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());

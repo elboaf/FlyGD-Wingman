@@ -436,6 +436,28 @@
             each preview in a default stack instead. Positions are still
             remembered while this is off, so turning it back on restores
             what you last had.</span></div>
+        <div class="row">
+          <span class="lab">Labels</span>
+          <label class="check">
+            <input type="checkbox" id="preview-show-labels"><span class="box"></span>
+            Show the character name on each preview
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-show-labels-status"></span></div>
+        <div class="row">
+          <span class="lab">Opacity</span>
+          <input type="range" id="preview-opacity" min="20" max="255">
+          <span class="range-value" id="preview-opacity-value"></span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Required reading, not decoration: TriffView fades the whole
+               preview including its label, so a user arriving from it will
+               expect the same here unless told otherwise. -->
+          <span class="hint">Only the mirrored video dims &mdash; the border
+            and label stay at full strength.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-opacity-status"></span></div>
       </section>
 
       <section class="card">

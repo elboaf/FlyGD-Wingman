@@ -36,7 +36,11 @@
    // M3. Same three-key shape, and it belongs in this list rather than the
    // generic one for the same reason: the ABOUT card reverts its checkbox
    // on anything that is not `applied`.
-   'set_start_on_login'
+   'set_start_on_login',
+   // Task 6: same shape again, and set_preview_show_labels/set_preview_
+   // opacity revert their control on a refused write just like the rest
+   // of this list.
+   'set_preview_show_labels', 'set_preview_opacity'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -268,6 +272,7 @@
           // ships preview.alerts for free (a shallow dict(cfg)), so this
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
+            show_labels: true, opacity: 255,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
               events: {
