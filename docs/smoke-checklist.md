@@ -826,9 +826,12 @@ Bookmarks and Previews stopped being top-level destinations and became
 sections here. Nothing in pytest executes the page, so the wiring below is
 only ever checked by hand.
 
-- [ ] **Seven rail entries** — Account, Uploads, Notifications, Folders,
-      Discord, Bookmarks, Previews — and clicking each shows its content
-      with exactly one entry highlighted.
+- [ ] **Eight rail entries** — General, Account, Uploads, Notifications,
+      Folders, Discord, Bookmarks, Previews — and clicking each shows its
+      content with exactly one entry highlighted. If that count is wrong,
+      trust the rail and fix this line: it said seven for exactly as long
+      as it took to add General one commit later, which is the drift this
+      checklist exists to catch elsewhere.
 - [ ] **Bookmarks and Previews render their real data**, not empty shells:
       the keybind rows, the EVE window list, the per-character preview
       keybinds. Both used to load on entering their own route; they load on
