@@ -1511,13 +1511,44 @@ button.btn:disabled,
   font-weight: 400;
 }
 
+/* P4 -- the folder path is a VALUE, not a field.
+
+   Both paths were span.field.mono, and .field is the input treatment:
+   --field fill, --field-border, radius, input padding. The walkthrough
+   sampled #es-root at #0A0B0E and read it as identical to the real
+   Filter... input below it; the sample is a shade off -- the computed fill
+   was rgb(12, 10, 15), --field since L1's retheme -- but the conclusion is
+   exact, and it is stronger than "these two look alike". Settings >
+   Folders renders a genuinely EDITABLE path (#f-recdir) in this same
+   class, and it computes the same fill, border and padding. One route
+   apart the identical box was a text field and here it was not, with
+   nothing but a click to tell them apart.
+
+   Everything .field was carrying for a reason is kept, because none of it
+   was about looking like an input:
+     - the mono face, so a path reads as a path (and it is not a bare
+       `mono` class: there is no such rule -- see #es-backups .bk-when);
+     - flex/min-width, which is what stops a long root pushing Change... or
+       Detect off the right of the row (Profiles 7's row);
+     - the end ellipsis, for the same long root;
+     - user-select, because a path is a thing people copy out by hand.
+   What goes is the fill, the border, the radius and the horizontal
+   padding -- the padding too, so the value now starts on the same left
+   edge as the stacked .lab above it rather than 10px inside it. */
+.es-path {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: var(--fs-mono); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 7px 0; user-select: text;
+}
+
 /* Neither half of the folder card overrides [hidden]: #es-folder-detail sets
    no display of its own, and #es-folder-summary is a .row, which carries the
    override already. Said out loud because an absent override is what the
    trap looks like, and this is the one place on the screen it is deliberate.
 
    The server and profile are their OWN element rather than part of the
-   path, because span.field's ellipsis truncates from the end and those two
+   path, because .es-path's ellipsis truncates from the end and those two
    change often enough to be worth reading. Given one line, the path is the
    half that may be cut. */
 #es-folder-set {
@@ -1562,6 +1593,33 @@ button.btn:disabled,
    it anyway. */
 #es-eve-state-commit { margin-left: auto; }
 #es-eve-state-commit[hidden] { display: none; }
+
+/* P3 -- the most consequential control on the screen was the smallest.
+
+   The walkthrough measured `Copy from` at ~149 CSS px against the
+   `Filter...` box's ~432, at the floor, with the roster the tallest thing
+   on screen; re-measured here the select's box is a flat 150 at every
+   width and the filter 432.64, so the figures were text against box and
+   both stand. The
+   source decides WHAT CONTENT overwrites every ticked character, and the
+   maintainer's flow sharpens that rather than softening it -- the source is
+   the one thing they know going in, and the targets are "all the others"
+   reached with one Select all. So the screen was giving its area to the
+   gesture that barely varies.
+
+   The mechanism is one shared rule, not this screen's: `.settings .row >
+   select.field` is `flex: 0 0 150px`, written for the Server/Profile pair
+   that shares a row. `Copy from` is alone on its row and inherited a cap
+   meant for two-up. An id override rather than an edit to that rule --
+   Server and Profile still want the fixed track, and the rule is L6's
+   block.
+
+   Widened to the row, not past it: D1 keeps the copy card's form rows at
+   the 586 measure while the roster below spans the card, so this is the
+   whole width the source is allowed and it is now the widest control in
+   the card. `.settings .row > .field`'s own flex is what a full-measure
+   field is; this only stops the select opting out of it. */
+#es-source { flex: 1; }
 
 /* Profiles 6 -- an empty Server or Profile rendered exactly like a working
    one: blank, un-placeholdered and undimmed before a folder exists, so it
