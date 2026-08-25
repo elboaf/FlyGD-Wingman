@@ -519,3 +519,31 @@ def test_exhausted_retries_on_odd_body_still_raise_upload_failed():
             Request(), max_attempts=2, sleep=lambda s: None, jitter=lambda: 0.0
         )
     assert caught.value.outcome is uploader.Outcome.RETRY
+
+
+def test_a_cancel_is_noticed_between_chunks_and_is_not_a_failure():
+    """D5's seam. The predicate is polled at the TOP of the loop, before
+    the chunk is sent, so a stop requested during a backoff sleep is
+    honoured on the next pass instead of sending one more chunk first."""
+    sent = []
+
+    class Request:
+        def next_chunk(self):
+            sent.append(1)
+            return None, {"id": "vid1"}
+
+    # Never cancelled: the upload completes as before.
+    assert uploader.upload(Request(), should_cancel=lambda: False) == "vid1"
+    assert len(sent) == 1
+
+    # Cancelled before the first chunk: nothing is sent at all.
+    sent.clear()
+    with pytest.raises(uploader.UploadCancelled):
+        uploader.upload(Request(), should_cancel=lambda: True)
+    assert sent == []
+
+
+def test_a_cancel_is_not_an_upload_failure():
+    """It must not reach the retry classifier, offer Retry, or be reported
+    as a failure -- so it deliberately does not inherit UploadFailed."""
+    assert not issubclass(uploader.UploadCancelled, uploader.UploadFailed)

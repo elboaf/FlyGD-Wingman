@@ -131,7 +131,6 @@
     name.title = row.name;   // the elastic column ellipsises at narrow widths
     node.appendChild(name);
 
-    node.appendChild(WM.make('span', 'c-date', row.date));
     node.appendChild(WM.make('span', 'c-size', row.size));
 
     var dur = WM.make('span', 'c-len', row.duration);
@@ -415,6 +414,26 @@
   });
   window.addEventListener('blur', hideMenu);
 
+  // Round 3, finding 7 (and round 2's Settings 14, the same species one
+  // screen over): all three of these were live at `0 recordings`, so three
+  // of the four footer controls could not do anything and said nothing
+  // about it. WM.setEnabled's rule is that a control whose object is
+  // ABSENT is inert -- Select all's object is the list, and Select none's
+  // and Delete's is the selection.
+  //
+  // Open folder is deliberately NOT here: its object is the folder, which
+  // exists whether or not it holds recordings, and it is the one control
+  // that helps when the list is empty. Nor does this disable the list
+  // itself, which is the only route out of the state that disabled these.
+  function refreshFooter() {
+    var any = rows.length > 0;
+    var picked = WM.list.selectedIds().length > 0;
+    WM.setEnabled('btn-select-all', any);
+    WM.setEnabled('btn-select-none', picked);
+    WM.setEnabled('btn-delete', picked);
+  }
+  document.addEventListener('wm:selection', refreshFooter);
+
   WM.el('btn-select-all').addEventListener('click', function () {
     rows.forEach(function (r) { selected[r.id] = true; });
     render();
@@ -504,6 +523,15 @@
       return order.map(byId).filter(function (r) { return r && selected[r.id]; });
     },
     rowCount: function () { return rows.length; },
+    // For the panel's completion state (round 3, finding 5). Selection is
+    // list.js's own state and no other module touches `selected` directly;
+    // this is the one operation the panel needs and it goes through
+    // render(), so the drawn boxes, the footer's enabled rule and the
+    // panel's summary all settle from the same dispatch.
+    clearSelection: function () {
+      rows.forEach(function (r) { selected[r.id] = false; });
+      render();
+    },
     // Exposed for console verification of the pure logic.
     parseSize: parseSize,
     parseDuration: parseDuration,
