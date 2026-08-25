@@ -1878,11 +1878,19 @@ class Api:
         `_write_setting` (above) cannot reach here: it only ever does
         `doc[key] = value` against the top-level document, and
         `preview.alerts` is nested two levels below that. This instead
-        follows set_restore_preview_positions's shape -- descend through
-        `doc.setdefault(...)` inside `settings_mod.update`, so the mutation
-        happens under `_SAVE_LOCK` and a failed write restores the prior
-        value -- generalised to an arbitrary path so it covers all six
-        alert fields instead of being copied six times.
+        follows set_restore_preview_positions's shape for the write itself
+        -- descend through `doc.setdefault(...)` inside `settings_mod.
+        update`, so the mutation happens under `_SAVE_LOCK` -- generalised
+        to an arbitrary path so it covers all six alert fields instead of
+        being copied six times.
+
+        Unlike set_restore_preview_positions, a raise here is reported as
+        refused (`applied: False`), not as `applied: True, persisted:
+        False`: settings_mod.update restores the live dict on OSError, so
+        the value genuinely did NOT take effect for this session either --
+        `applied: True` would tell the page a change is live that never
+        happened, and a checkbox or select left showing it would be
+        showing a state the app is not in.
 
         `path` is walked fresh against `self._state.settings` both for the
         no-op check and inside the `update()` block, never against a
@@ -1908,7 +1916,7 @@ class Api:
                 node[path[-1]] = value
         except OSError:
             logger.exception("Could not persist alert setting %s", ".".join(path))
-            return self._field_ok(persisted=False)
+            return self._field_refused("Could not save this to settings.")
         return self._field_ok()
 
     def set_alert_enabled(self, enabled) -> dict:
@@ -1979,12 +1987,14 @@ class Api:
         open, matching AlertService._handle's one-sound-per-dispatched-
         event behaviour -- N previews must not mean N overlapping sounds.
 
-        With no live preview to ring (previews off, host absent, or no
-        named clients), the sound still plays and this still reports
-        `applied: True`: the sound genuinely fired, so nothing was
-        refused, and a silent no-op here would be indistinguishable from
-        a broken feature. `error` carries the plain-language reason nothing
-        visual happened; the page renders it inline.
+        With no live preview to ring -- previews off (no host at all) or
+        a host present but no named EVE client -- the sound still plays
+        and this still reports `applied: True`: the sound genuinely fired,
+        so nothing was refused, and a silent no-op here would be
+        indistinguishable from a broken feature. `error` carries the
+        plain-language reason nothing visual happened, distinguishing the
+        two cases -- "previews are off" and "no client is open" leave the
+        user looking at a different fix -- and the page renders it inline.
         """
         if event not in alert_patterns.EVENTS:
             return self._field_refused(f"Unknown alert event: {event}")
@@ -1996,12 +2006,18 @@ class Api:
         sound = spec.get("sound") or "none"
         if sound != "none":
             alert_service.play_sound(sound)
-        characters = self._preview_host.characters() if self._preview_host else []
-        if not characters:
+        if self._preview_host is None:
             return {
                 "applied": True,
                 "persisted": False,
                 "error": "Previews are off, so only the sound played.",
+            }
+        characters = self._preview_host.characters()
+        if not characters:
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": "No EVE clients are open, so only the sound played.",
             }
         for character in characters:
             self._preview_host.raise_alert(event=event, character=character, spec=spec)

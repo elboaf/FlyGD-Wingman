@@ -162,10 +162,11 @@ def test_start_and_shutdown_also_reconcile(tmp_path):
     assert alerts.reconciled == 2
 
 
-def test_a_no_op_preview_toggle_still_reconciles(tmp_path):
-    """set_preview_enabled's early-return no-op path is a settings
-    optimisation, not a reason to skip reconcile(): the folder callable
-    can still have changed in the meantime via set_folder."""
+def test_a_no_op_preview_toggle_does_not_reconcile(tmp_path):
+    """set_preview_enabled returns early when the requested value already
+    matches the stored one, so it never reaches the write or reconcile()
+    at all -- set_folder owns the folder-changed case instead, which is
+    why a no-op toggle reconciling nothing is correct, not a gap."""
     alerts = FakeAlerts()
     api = make_api(tmp_path, alerts=alerts)
     api._state.settings["preview"] = {"enabled": True}
@@ -291,6 +292,10 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
 def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
     monkeypatch, tmp_path
 ):
+    """Previews being on with no client open is a different situation from
+    previews being off, and the copy has to say which -- otherwise a user
+    with a live host and no logged-in character reads the same "previews
+    are off" message as someone who never turned previews on at all."""
     played = []
     monkeypatch.setattr(alert_service, "play_sound", played.append)
     host = FakePreviewHost(characters=[])  # host present, nothing named
@@ -300,7 +305,7 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
     result = api.test_alert("combat")
 
     assert result["applied"] is True
-    assert result["error"] == "Previews are off, so only the sound played."
+    assert result["error"] == "No EVE clients are open, so only the sound played."
     assert played == ["chime"]
     assert host.raised == []
 
