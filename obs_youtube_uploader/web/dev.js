@@ -443,20 +443,19 @@
     // failure this file's own comment warns about: a double that models a
     // shape the bridge does not produce.
     //
-    // `enabled: false`, and everything downstream of it honest about that.
-    // The real method gates on `host.is_running`, so a stopped host
-    // returns characters [] and registration {} -- there is no state in
-    // which previews are off and Windows is holding chords. A fixture
-    // showing registered chords beside an unticked Enable box would be
-    // more complete than the thing it doubles, which is how a harness
-    // starts hiding the bug it exists to catch. Off is also what the
-    // settings payload says, since it carries no `preview` key at all.
-    //
-    // The rows are therefore the offline kind: bound characters whose
-    // client is not running, which is a real and under-looked-at state --
-    // the binding is saved and works the moment they log in.
+    // `enabled: true`, not false. This fixture originally shipped with
+    // previews OFF -- deliberately, to exercise the under-looked-at
+    // offline-binding path -- but that meant every row went through
+    // `makeRow`'s `online === null` branch (previews.js: `state.enabled ?
+    // entry.online : null`), and `.dim` never got added to a single row.
+    // Previews being ON is the normal state for anyone using this
+    // feature, so an always-off fixture left the branch users actually
+    // see unrendered and unverified. `characters` (below) now lists who
+    // is running -- Windows genuinely cannot hold chords with the host
+    // stopped, so `enabled: true` requires this to be non-empty, unlike
+    // the old `enabled: false` + `characters: []` pair.
     return Promise.resolve({
-      enabled: false,
+      enabled: true,
       // Preview gestures are stored as preview/gestures.py display()
       // strings -- "Ctrl+Alt+Right" -- and NOT as AHK. Bookmarks use AHK
       // and send a separate `displays` table; previews render the stored
@@ -473,23 +472,44 @@
         cycle_next: 'Ctrl+Alt+Right',
         cycle_prev: ''
       },
-      // A fixture of short names hides exactly the class of bug that
-      // matters here: #preview-binds's first grid column is
-      // `minmax(0, max-content)`, the only track that can shrink, and the
-      // five Lock/Never-minimize/Clear/Type columns after it cannot. A
-      // real EVE character name runs far longer than 'Aiga Otsolen' --
-      // this fixture must always carry one at least this long, or a
-      // render check against it cannot see a name column that clips or a
-      // pane that grows its own horizontal scrollbar.
-      roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Aleksandrina Shadowbanes Voidstriders'],
-      characters: [],
-      registration: {},
-      // Task 11: one of each state, on the OFFLINE rows above (enabled:
-      // false, characters: []) -- proving locked/never_minimize render
-      // and commit for a character with no running client, not only one
-      // the harness happens to show online.
+      // Running (online) characters. Both are also owed a row by
+      // `hotkeys.characters` above, so this is what flips them from the
+      // offline/dim branch to the online one now that `enabled: true`.
+      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
+      // `roster` is every character previews knows about, running or
+      // not -- `rows()` (previews.js) already de-dupes against
+      // `characters`, so listing the same two names again here is
+      // harmless and matches what the real bridge sends. Four distinct
+      // rows total, not three: a three-row fixture never has to prove
+      // `.settings-pane`'s vertical scroller (overflow-y: auto,
+      // style.css:1009) actually does anything at the 625px floor, and
+      // never puts an offline (dim) row next to an online one so both
+      // render at once.
+      //
+      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays for the
+      // same reason it was added in the prior fix round: a fixture of
+      // short names hides a name-column clip/overflow bug, since
+      // #preview-binds's first grid column (`minmax(0, max-content)`) is
+      // the only one of six tracks that can shrink.
+      roster: [
+        'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
+        'Aleksandrina Shadowbanes Voidstriders'
+      ],
+      // Windows holding all three configured chords -- the normal case
+      // once the host is actually running, unlike the old `{}` that
+      // matched `enabled: false`'s "nothing can be registered" state.
+      registration: {
+        'Ctrl+Alt+1': true,
+        'Ctrl+Alt+2': true,
+        'Ctrl+Alt+Right': true
+      },
+      // One lock and one never-minimize, split across the online/offline
+      // divide on purpose: 'Aiga Otsolen' is running (Lock on an online
+      // row), 'Tanuki Solette' is not (Never-minimize on an offline/dim
+      // row) -- so both checkboxes are proven against both branches
+      // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
-      never_minimize: ['Zuelo Parvi'],
+      never_minimize: ['Tanuki Solette'],
       // Latent rather than active, for the same consistency: bookmarks
       // register nothing while this chord could still be taken later.
       bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }
