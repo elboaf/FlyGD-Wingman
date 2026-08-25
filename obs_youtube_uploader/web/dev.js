@@ -257,17 +257,6 @@
       // of the same SHAPE and not the real one, so a stale fake cannot
       // be mistaken for the app agreeing with itself.
       version: '0.0.0-dev',
-      // ui/copy.py's INERT_NOTES. Settings 1 renders the sentence from
-      // here rather than from markup, so without it the Previews card
-      // would fall back to the copy in index.html and the harness would
-      // verify the wrong half of the change. Worded as Python words it;
-      // if the two ever disagree the page is the one that is wrong.
-      inert_notes: {
-        previews_off: 'Previews are off, so every keybind below is '
-          + 'unregistered until you turn them back on.',
-        no_webhook: 'No Discord webhook is configured, so combat logs are '
-          + 'not posted. Set one in Settings › Discord.'
-      },
       // Read live from the registry by autostart.is_enabled(). Default is
       // opt-in, so an install that was never asked reads false -- which is
       // what this shows.
