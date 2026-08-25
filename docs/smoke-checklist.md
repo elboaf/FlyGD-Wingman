@@ -1791,13 +1791,28 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
 - [ ] **The folder card is one line on every visit after the first.** With a
-      folder already chosen, open the route. Expected: the Settings folder
-      card is a single row — `Folder`, the path, the server and profile, and
-      a `Change…` link — and the Copy settings card's target list is on
-      screen without scrolling. Press `Change…`: the folder, Server and
-      Profile controls appear. Leave the route and come back: it is one line
-      again. This is deliberate and not a bug — the collapse is what puts the
-      task on screen, so it is not remembered.
+      folder already chosen, open the route. Expected: the EVE settings
+      folder card is a single row — `Folder`, the path, the server and
+      profile, and a `Change…` button — and the Copy EVE settings card's
+      target list is on screen without scrolling. Press `Change…`: the
+      folder, Server and Profile controls appear. Leave the route and come
+      back: it is one line again. This is deliberate and not a bug — the
+      collapse is what puts the task on screen, so it is not remembered.
+- [ ] **Neither folder path can be clicked into.** Open the route with a
+      folder chosen, then press `Change…`. Expected: the path in both faces
+      of the card is monospace text on the card's own left edge, with no
+      fill, no border and no focus ring — click it and nothing happens and
+      nothing is focused. Compare it against Settings › Folders, where the
+      recording path in the same monospace face IS a text field you can
+      type into: the two must not look alike. Drag the window to the floor
+      with a deep root selected — the path ellipsises at its end and
+      `Choose folder…` and `Detect` stay on the row.
+- [ ] **`Copy from` is the widest control in its card.** With a folder
+      chosen, look at the copy card. Expected: the `Copy from` dropdown
+      spans the card's form measure — wider than the `Filter…` box below
+      it, which shares its row with `Select all` and `Clear`. It decides
+      what content overwrites every ticked character, and it used to be the
+      narrowest control on the screen.
 - [ ] **Widening the window adds roster columns, not gutter.** With a folder
       chosen and a few dozen characters, put the window at the floor and note
       how many columns of names the target list has and where `Copy to

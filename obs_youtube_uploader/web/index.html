@@ -673,7 +673,17 @@
              used to share is the half of this card that collapses away, and
              "EVE running" is the hazard the copy below is guarded against,
              so it may not disappear with the controls. -->
-        <h2>Settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
+        <!-- "EVE settings folder", not "Settings folder" (round 2's Profiles 8).
+             DESIGN.md renamed the TAB away from "EVE Settings" because a tab
+             of that name beside a gear named "Settings" describes the
+             implementation; the cards kept the word, so the gear's own name
+             went on appearing twice inside the screen renamed to avoid it.
+             The word itself is the user's -- "a settings change in one
+             character that I want to propagate" -- and PRODUCT.md says to
+             name things the way they do, so it is QUALIFIED rather than
+             removed. Settings > Folders already disambiguates the same way:
+             "EVE gamelogs" beside "Recordings". -->
+        <h2>EVE settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
         <!-- Two faces of one card. Folder, server and profile are set on the
              first visit and rarely again, while the copy card below is why
              the screen exists; five controls above it pushed the target list
@@ -687,15 +697,18 @@
              the number it was argued against. -->
         <div class="row" id="es-folder-summary" hidden>
           <span class="lab">Folder</span>
-          <span id="es-folder-root" class="field mono"></span>
+          <span id="es-folder-root" class="es-path"></span>
           <span id="es-folder-set"></span>
-          <!-- Profiles 7: a .btn, not a .linkbtn. This row is a mono boxed
-               path that looks interactive and is not, dim static text, and
+          <!-- Profiles 7: a .btn, not a .linkbtn. This row was a mono BOXED
+               path that looked interactive and is not, dim static text, and
                then the one thing on it that acts -- which was link-styled,
                borderless, and no more prominent than the text beside it.
                The one control was the least control-like element present.
                .linkbtn's own box model is not touched; the class is simply
-               the wrong one for a row where nothing else is a control. -->
+               the wrong one for a row where nothing else is a control.
+               (The box is gone too now -- see .es-path, round 3's P4 -- so
+               the row no longer offers a second thing that looks clickable
+               for this button to lose against.) -->
           <button id="es-folder-edit" class="btn">Change…</button>
         </div>
         <div id="es-folder-detail">
@@ -707,9 +720,19 @@
                  nothing to stop a long root pushing the button out. (That
                  treatment is a stacked full-width .lab now, not the 118px
                  right-aligned column this comment used to name -- see
-                 style.css's `.settings .row > .lab`.) -->
+                 style.css's `.settings .row > .lab`.)
+
+                 .es-path, NOT .field.mono, since round 3's P4: .field is the
+                 INPUT treatment -- fill, border, radius -- and this value
+                 cannot be typed into. The same treatment sits on a genuinely
+                 editable path one route away (#f-recdir, Settings >
+                 Folders), so the two were identical and only one of them
+                 could be clicked into. .es-path keeps everything the
+                 treatment was carrying for a reason: the mono face, the
+                 ellipsis, and the flex that stops a long root pushing the
+                 buttons off the row. -->
             <span class="lab">Folder</span>
-            <span id="es-root" class="field mono">No folder selected</span>
+            <span id="es-root" class="es-path">No folder selected</span>
             <button id="es-pick" class="btn">Choose folder…</button>
             <!-- Profiles 4. Detect existed in Settings > Folders and on the
                  first-run screen, for a folder shallower and better known
@@ -734,7 +757,7 @@
       </section>
 
       <section class="card">
-        <h2>Copy settings</h2>
+        <h2>Copy EVE settings</h2>
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
              opacity:0 and the styled .ring is the visible control, so a
              bare radio here rendered as a native white Windows dot against
