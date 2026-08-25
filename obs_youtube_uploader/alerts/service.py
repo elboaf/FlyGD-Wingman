@@ -116,23 +116,34 @@ class AlertService:
             if thread.is_alive():
                 # Wedged in a slow poll -- a OneDrive-redirected or network
                 # Gamelogs path (combatlog.py:82-85) can make a single
-                # readlines() call outlast this join. Logged, not retried:
-                # the stop event it was handed (below) still belongs to it,
-                # so it will exit on its own next wake and never observe
-                # the generation this call installs.
+                # readlines() call outlast this join. Do NOT build a
+                # replacement: the old generation still owns its Tailer
+                # (captured as a parameter in its _run call, not read off
+                # self._tailer), so starting a second thread here would
+                # have two threads polling -- one the old folder via its
+                # captured Tailer, one whatever this call resolves next --
+                # racing _cooldowns regardless. Restore self._thread so
+                # the old generation stays authoritative and the next
+                # reconcile() tries the join again, rather than believing
+                # no thread is running at all.
                 logger.warning(
                     "Alert poll thread did not exit within %.1fs; "
-                    "rebuilding the tailer anyway",
+                    "leaving the previous generation running",
                     POLL_INTERVAL_S * 3,
                 )
+                with self._lock:
+                    if self._thread is None:
+                        self._thread = thread
+                return
         with self._lock:
             stop_event = threading.Event()
             self._stop = stop_event
-            self._tailer = tailer.Tailer(folder)
+            new_tailer = tailer.Tailer(folder)
+            self._tailer = new_tailer
             self._cooldowns.clear()
             self._thread = threading.Thread(
                 target=self._run,
-                args=(stop_event,),
+                args=(stop_event, new_tailer),
                 name="wingman-alerts",
                 daemon=False,
             )
@@ -163,29 +174,32 @@ class AlertService:
 
     # ---- the thread ----------------------------------------------------
 
-    def _run(self, stop_event: threading.Event) -> None:
-        """Poll until *stop_event* -- passed in, not read off the instance.
+    def _run(self, stop_event: threading.Event, tailer_: tailer.Tailer) -> None:
+        """Poll until *stop_event*, against *tailer_* -- both passed in,
+        neither read off the instance.
 
-        reconcile() REPLACES self._stop with a fresh Event when it rebuilds
-        the thread (:129-130 above), after a join() whose timeout it does
-        not treat as fatal. If this loop re-read self._stop on every
-        iteration, a thread wedged past that join's timeout (a OneDrive-
-        redirected or network Gamelogs path can make one readlines() call
-        outlast it -- combatlog.py:82-85) would wake, test the NEW
-        generation's event, see it unset, and keep polling: two threads on
-        one tailer, splitting file positions and racing _cooldowns.
-        Capturing the event this thread was actually signalled with as a
-        parameter makes that impossible regardless of what self._stop
-        points to by the time it is checked.
+        reconcile() REPLACES self._stop AND self._tailer with a fresh Event
+        and a fresh Tailer when it rebuilds the thread (above), after a
+        join() whose timeout it does not treat as fatal. If this loop
+        re-read either off self._stop/self._tailer on every iteration, a
+        thread wedged past that join's timeout (a OneDrive-redirected or
+        network Gamelogs path can make one readlines() call outlast it --
+        combatlog.py:82-85) would wake, see the NEW generation's event
+        unset and the NEW generation's Tailer installed, and keep polling
+        THAT folder: two threads on one tailer, splitting file positions
+        and racing _cooldowns. Capturing both as parameters makes that
+        impossible regardless of what self._stop/self._tailer are
+        reassigned to by the time they are checked -- this thread only
+        ever touches the generation it was started with.
         """
         last_rescan = 0.0
         while not stop_event.is_set():
             try:
                 now = self._clock()
                 if now - last_rescan >= RESCAN_INTERVAL_S:
-                    self._tailer.rescan(datetime.datetime.now(UTC))
+                    tailer_.rescan(datetime.datetime.now(UTC))
                     last_rescan = now
-                self._handle(self._tailer.poll(), now)
+                self._handle(tailer_.poll(), now)
                 with self._lock:
                     self._last_poll = now
             except Exception as exc:

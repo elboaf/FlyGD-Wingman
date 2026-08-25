@@ -7,6 +7,7 @@ layer is covered without a thread or a clock.
 import threading
 
 from obs_youtube_uploader.alerts import service, tailer
+from obs_youtube_uploader.alerts.service import POLL_INTERVAL_S
 
 PLAYER = "Bob Smith[BURN](Rifter)"
 NPC = "Sleepless Sentinel"
@@ -214,7 +215,7 @@ def test_run_stops_on_the_event_it_was_given_not_a_later_generation(tmp_path):
     )
     s._tailer = tailer.Tailer(tmp_path)
     my_generation = threading.Event()
-    thread = threading.Thread(target=s._run, args=(my_generation,))
+    thread = threading.Thread(target=s._run, args=(my_generation, s._tailer))
     thread.start()
     try:
         # Simulate what reconcile() does when a join times out: install a
@@ -226,6 +227,82 @@ def test_run_stops_on_the_event_it_was_given_not_a_later_generation(tmp_path):
     finally:
         my_generation.set()
         thread.join(timeout=2.0)
+
+
+def test_run_only_touches_the_tailer_it_was_given(tmp_path):
+    """Mirrors the stop-event test above, but for the other half of the
+    fix: _run must poll the Tailer it was started with, not self._tailer
+    re-read on every loop. reconcile() swaps self._tailer to a new
+    generation whenever it rebuilds the thread -- if _run read the
+    instance attribute instead of its captured local, a thread still
+    running against its own generation would start polling the NEW
+    Tailer the moment reconcile() installs one, splitting file positions
+    between two threads."""
+    own_tailer = tailer.Tailer(tmp_path)
+    own_tailer.rescan = lambda now_utc: None
+    own_tailer.poll = list
+
+    class _ExplodingTailer(tailer.Tailer):
+        def rescan(self, now_utc):
+            raise AssertionError("must not touch a later generation's tailer")
+
+        def poll(self):
+            raise AssertionError("must not touch a later generation's tailer")
+
+    other_tailer = _ExplodingTailer(tmp_path)
+
+    cfg = _config()
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: str(tmp_path),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    stop_event = threading.Event()
+    thread = threading.Thread(target=s._run, args=(stop_event, own_tailer))
+    thread.start()
+    try:
+        # As reconcile() would after starting a replacement thread for a
+        # folder change -- this thread must not notice.
+        s._tailer = other_tailer
+        stop_event.wait(POLL_INTERVAL_S * 2.5)
+    finally:
+        stop_event.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+
+
+def test_reconcile_does_not_replace_a_wedged_thread(tmp_path):
+    """A join that times out means the old generation is still running,
+    possibly still polling files. Starting a replacement thread here --
+    a second Tailer, a second poll loop -- would race the first over the
+    same folder and its own _cooldowns. reconcile() must instead log and
+    leave the old generation as the sole authority until it actually
+    exits."""
+    old_tailer = tailer.Tailer(tmp_path)
+    stuck = threading.Event()  # never set -- stands in for a wedged thread
+    stuck_thread = threading.Thread(target=stuck.wait, daemon=True)
+
+    other_folder = tmp_path / "moved"
+    other_folder.mkdir()
+    cfg = _config()
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: str(other_folder),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    s._thread = stuck_thread
+    s._tailer = old_tailer
+    s._stop = threading.Event()
+    stuck_thread.start()
+    try:
+        s.reconcile()
+        assert s._tailer is old_tailer
+        assert s._thread is stuck_thread
+    finally:
+        stuck.set()
+        stuck_thread.join(timeout=2.0)
 
 
 def test_a_timed_out_join_is_logged_not_silent(monkeypatch, tmp_path, caplog):

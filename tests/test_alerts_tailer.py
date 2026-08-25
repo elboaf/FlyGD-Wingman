@@ -135,3 +135,51 @@ def test_a_missing_folder_is_not_an_error(tmp_path):
     t = tailer.Tailer(tmp_path / "gone")
     t.rescan(NOW)
     assert t.poll() == [] and t.characters() == []
+
+
+def _log_at(folder, name, session_started, stem):
+    """Like _log, but with a header naming its own Session Started time,
+    so distinct sessions for the same character sort distinctly."""
+    header = (
+        "------------------------------------------------------------\n"
+        "  Gamelog\n"
+        f"  Listener: {name}\n"
+        f"  Session Started: {session_started}\n"
+        "------------------------------------------------------------\n"
+    )
+    path = folder / f"{stem}.txt"
+    path.write_text(header, encoding="utf-8")
+    return path
+
+
+def test_dedup_runs_before_the_file_cap_not_after(tmp_path):
+    """One character with more sessions than MAX_FILES inside the window
+    (a client stuck in a relog loop) must not consume the whole cap and
+    silently starve every other character. Busy's sessions are all more
+    recent than Alice's and Bravo's single sessions, so a cap-first pass
+    -- take the MAX_FILES newest candidates, then dedup -- fills the
+    entire budget with nothing but Busy's own history and never even
+    reaches Alice's or Bravo's, which is the failure mode this pins."""
+    busy_newest = NOW - datetime.timedelta(minutes=1)
+    for i in range(tailer.MAX_FILES + 20):
+        started = busy_newest - datetime.timedelta(minutes=i)
+        _log_at(
+            tmp_path,
+            "Busy",
+            started.strftime("%Y.%m.%d %H:%M:%S"),
+            stem=f"busy_{i:03d}",
+        )
+    # Older than every Busy session above, but still inside the 12h window.
+    older = NOW - datetime.timedelta(hours=5)
+    _log_at(tmp_path, "Alice", older.strftime("%Y.%m.%d %H:%M:%S"), stem="alice_0")
+    _log_at(
+        tmp_path,
+        "Bravo",
+        (older - datetime.timedelta(minutes=1)).strftime("%Y.%m.%d %H:%M:%S"),
+        stem="bravo_0",
+    )
+
+    t = tailer.Tailer(tmp_path)
+    t.rescan(NOW)
+
+    assert set(t.characters()) == {"Busy", "Alice", "Bravo"}

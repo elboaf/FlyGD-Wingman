@@ -6,13 +6,16 @@ at 1s anyway underneath its watcher, so this is its mechanism without
 its optimisation, and one second of latency on "you are being shot" does
 not change the decision the alert exists to prompt.
 
-rescan() and poll() are separate and take no locks, so the thread in
-service.py drives them on its own cadence and the tests drive them
-directly.
+rescan() and poll() take no lock between each other -- both only ever run
+on the poll thread in service.py, one after the other, so the tests can
+still drive them directly without one. rescan()'s own internal lock exists
+solely to protect _tracked's structure from characters(), the one method
+called from a different thread (health(), off the UI thread).
 """
 
 import datetime
 import logging
+import threading
 from pathlib import Path
 from typing import NamedTuple
 
@@ -54,13 +57,22 @@ class Tailer:
         # old file on disk and reading both would alert twice.
         self._tracked: dict[str, _Tracked] = {}
         self._seen_first_scan = False
+        # Guards _tracked's structure (additions/removals), not the
+        # contents of one _Tracked -- those are only ever touched by the
+        # poll thread, from rescan() and poll()/_read() in the same call.
+        # characters() is the one method called from a different thread
+        # (health(), from the UI thread) while rescan() is mutating the
+        # dict on the poll thread; without this, health() iterating the
+        # dict while rescan() adds or deletes a key raises RuntimeError.
+        self._lock = threading.Lock()
 
     @property
     def folder(self) -> Path:
         return self._folder
 
     def characters(self) -> list[str]:
-        return sorted(self._tracked)
+        with self._lock:
+            return sorted(self._tracked)
 
     def rescan(self, now_utc: datetime.datetime) -> None:
         """Discover logs and attribute them to characters."""
@@ -85,11 +97,22 @@ class Tailer:
                 continue
             candidates.append((header, path, mtime))
 
-        # Newest first, then capped: an unordered cap drops live logs.
+        # Dedup to one log per character FIRST, then cap: capping before
+        # dedup lets one character with more than MAX_FILES sessions
+        # inside the window (a client that relogged repeatedly) consume
+        # the whole budget on its own, silently starving every other
+        # character -- no error, no log line, they just stop alerting.
         candidates.sort(key=lambda c: c[0].session_start, reverse=True)
         best: dict[str, tuple] = {}
-        for header, path, mtime in candidates[:MAX_FILES]:
+        for header, path, mtime in candidates:
             best.setdefault(header.listener, (path, mtime))
+        # `best`'s insertion order already tracks each character's most
+        # recent session: candidates is sorted newest-first and setdefault
+        # only records a character's first (i.e. newest) occurrence, so
+        # slicing here keeps the MAX_FILES most recently active
+        # characters rather than the first MAX_FILES sessions of however
+        # few characters produced them.
+        best = dict(list(best.items())[:MAX_FILES])
 
         for character, (path, _mtime) in best.items():
             existing = self._tracked.get(character)
@@ -104,11 +127,13 @@ class Tailer:
                     start = path.stat().st_size
                 except OSError:
                     start = 0
-            self._tracked[character] = _Tracked(path, start)
+            with self._lock:
+                self._tracked[character] = _Tracked(path, start)
 
-        for character in list(self._tracked):
-            if character not in best:
-                del self._tracked[character]
+        with self._lock:
+            for character in list(self._tracked):
+                if character not in best:
+                    del self._tracked[character]
 
         self._seen_first_scan = True
 
