@@ -44,6 +44,18 @@ CSS = re.sub(
 # test would just be one more thing to drift. Sorted for a stable message.
 _ALERT_EVENT_IDS = sorted(set(re.findall(r'id="alert-event-([a-z_]+)-enabled"', HTML)))
 
+# The span that renders in place of a hidden native control, mapped to the
+# wrapper class whose CSS hides it. Three of them, not two: the alert
+# colour swatches are radios drawn as filled squares, so `.ring` -- a 12px
+# circle with a dot -- is the wrong shape to reuse and would have meant a
+# radio styled as something it is not just to satisfy a test.
+#
+# Adding a name here is only safe because test_every_hiding_wrapper_
+# actually_hides_its_input checks each one really does take its input out
+# of the layout. Without that, this dict is a hole in the guard.
+_WRAPPERS = {"box": "check", "ring": "radio", "dot": "swatch"}
+_WRAPPERS_FOR = {"checkbox": ("box",), "radio": ("ring", "dot")}
+
 
 def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
@@ -60,11 +72,31 @@ def _strip_js_comments(text: str) -> str:
 # ---- native form controls ---------------------------------------------
 
 
+def test_every_hiding_wrapper_actually_hides_its_input():
+    """The invariant the two tests below stand on, asserted rather than
+    assumed.
+
+    Each wrapper works the same way: the real input is taken out of the
+    layout and made invisible, and a styled sibling span is what renders.
+    Naming a third wrapper in the allowlist below is only safe if that is
+    true of it too -- otherwise the allowlist is how a native control gets
+    waved through by a test written to catch native controls.
+    """
+    for wrapper in sorted(set(_WRAPPERS.values())):
+        rule = re.search(rf"\.{wrapper} input \{{([^}}]*)\}}", CSS)
+        assert rule, f".{wrapper} has no `input` rule, so its input renders"
+        body = rule.group(1)
+        assert "opacity: 0" in body and "position: absolute" in body, (
+            f".{wrapper} input must be position:absolute and opacity:0 -- "
+            f"otherwise the native control is still on screen"
+        )
+
+
 def test_no_checkbox_or_radio_renders_as_a_native_control():
     """Nothing in style.css targets input[type=checkbox] or [type=radio].
-    The dark appearance comes ENTIRELY from the .check/.radio wrappers --
-    .check input is opacity:0 and the styled .box beside it is what you
-    see. A bare input is therefore a white Windows widget on a dark card.
+    The dark appearance comes ENTIRELY from the wrappers -- the input is
+    opacity:0 and the styled span beside it is what you see. A bare input
+    is therefore a white Windows widget on a dark card.
 
     EVE Settings shipped one per character in exactly this way, while
     bookmarks.js already carried a comment warning about it.
@@ -76,8 +108,8 @@ def test_no_checkbox_or_radio_renders_as_a_native_control():
     for match in re.finditer(r'<input[^>]*type="(checkbox|radio)"[^>]*>', body):
         tag = match.group(0)
         after = body[match.end() : match.end() + 120]
-        wrapper = "box" if match.group(1) == "checkbox" else "ring"
-        assert f'class="{wrapper}"' in after, (
+        allowed = _WRAPPERS_FOR[match.group(1)]
+        assert any(f'class="{w}"' in after for w in allowed), (
             f"bare {match.group(1)} renders as a native Windows control: {tag}"
         )
 
@@ -90,10 +122,11 @@ def test_generated_controls_use_the_wrapper_too():
         src = _strip_js_comments(path.read_text(encoding="utf-8"))
         for match in re.finditer(r"""\.type\s*=\s*['"](checkbox|radio)['"]""", src):
             window = src[match.start() : match.start() + 600]
-            wrapper = "box" if match.group(1) == "checkbox" else "ring"
-            assert f"'{wrapper}'" in window or f'"{wrapper}"' in window, (
+            allowed = _WRAPPERS_FOR[match.group(1)]
+            assert any(f"'{w}'" in window or f'"{w}"' in window for w in allowed), (
                 f"{path.name}: a generated {match.group(1)} with no "
-                f".{wrapper} wrapper renders as a native Windows control"
+                f"{' or '.join('.' + w for w in allowed)} wrapper renders "
+                f"as a native Windows control"
             )
 
 
@@ -737,4 +770,28 @@ def test_the_alert_rows_name_the_events_settings_actually_has():
     assert listed, "alerts.js no longer declares a flat EVENTS list"
     assert set(re.findall(r"'([^']+)'", listed.group(1))) == expected, (
         "alerts.js's EVENTS has drifted from settings._ALERT_EVENT_DEFAULTS"
+    )
+
+
+def test_every_default_alert_colour_is_offered_by_the_swatches():
+    """The colour control is a fixed palette now, not <input type="color">.
+
+    A default that is not in the palette would render as an unlabelled
+    sixth swatch on every fresh install -- paintSwatches appends any stored
+    colour it does not recognise, precisely so a hand-edited settings.json
+    is not silently rewritten, and that escape hatch would quietly become
+    the normal case for a shipped default.
+    """
+    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var COLOURS = \[(.*?)\]", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a COLOURS palette"
+    palette = set(re.findall(r"'(#[0-9a-fA-F]{6})'", listed.group(1)))
+
+    defaults = {spec["color"] for spec in _ALERT_EVENT_DEFAULTS.values()}
+    missing = defaults - palette
+    assert not missing, (
+        f"settings defaults {sorted(missing)} are not in the swatch palette "
+        f"{sorted(palette)}, so a fresh install shows an extra swatch"
     )

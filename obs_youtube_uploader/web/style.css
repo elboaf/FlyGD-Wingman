@@ -644,7 +644,6 @@ button.btn:disabled,
 .navbtn:focus-visible,
 .winbtn:focus-visible,
 .bindbtn:focus-visible,
-.alert-color:focus-visible,
 .linkbtn:focus-visible,
 .rail-plan:focus-visible,
 .rail-item:focus-visible,
@@ -1632,13 +1631,34 @@ button.btn:disabled,
    silently do nothing, which reads as nothing happening in game. */
 #alerts-no-folder { color: var(--warn); }
 
-/* input[type=color] has no border/background hooks of its own in most
-   browsers, so its native chrome (usually white) sits directly against
-   this dark theme unless sized and boxed to match the other row
-   controls. */
-.alert-color {
-  width: 28px; height: 24px; padding: 0; border: 1px solid var(--panel-border);
-  border-radius: 4px; background: none; cursor: pointer;
+/* The alert colour, as a small fixed palette rather than a colour input.
+   <input type="color"> opened the native Win32 ChooseColor dialog -- the
+   last unstyled system chrome reachable from this app, which restyled the
+   scrollbar (:647-649) precisely because native chrome was a tell -- and
+   offered 16.7 million answers to a question with about five. alerts.js
+   carries the palette and the reasoning.
+
+   The hex arrives as --swatch on the element, set from JS. That is the one
+   colour this file does not decide: it is the user's data, painted onto a
+   preview of someone else's window, not chrome. Every other pixel here is
+   still tokens. */
+.swatches { display: flex; gap: 5px; align-items: center; }
+.swatch { display: inline-flex; cursor: pointer; }
+/* Same trick .check and .radio use: the real input is invisible and the
+   span beside it is what you see, so no native control ever renders. */
+.swatch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.swatch .dot {
+  width: 18px; height: 18px; border-radius: 4px;
+  border: 1px solid var(--control-edge); background: var(--swatch);
+}
+/* A halo in the page's own colours rather than a tint of the swatch, so
+   "which one is selected" does not depend on the selected colour. The
+   inner ring is the card, which separates the halo from the swatch. */
+.swatch input:checked + .dot {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--text);
+}
+.swatch input:focus-visible + .dot {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
 
 /* An event row reports its OWN failures. Twelve controls used to write

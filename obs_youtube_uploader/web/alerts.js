@@ -49,6 +49,28 @@
   // see the id/option guard in tests/test_page_conventions.py.
   var EVENTS = ['combat', 'warp_scramble', 'decloak'];
 
+  // The colours offered, and the whole reason this is not an
+  // <input type="color">. That control opened the native Win32 dialog --
+  // the only unstyled system chrome left in a frameless dark app that
+  // restyled the scrollbar precisely because native chrome was a tell --
+  // and offered 16.7 million choices for a decision with about five good
+  // answers. The ring is read in peripheral vision, on a small tile, over
+  // arbitrary game content, while you are aligned on a wormhole. Two
+  // similar purples silently destroy the one thing that makes three
+  // alerts distinguishable, and nothing ever told you.
+  //
+  // Five, well separated in hue and all bright enough to hold up over
+  // moving game content. The three settings.py defaults are among them by
+  // rule, not by luck -- tests/test_page_conventions.py pins that, since a
+  // default that is not offered would render as an unlabelled sixth
+  // swatch on every fresh install.
+  //
+  // Deliberately no second teal: the SELECTED-preview ring is
+  // (0,200,220) in window.py, and decloak's #4dd2ff already sits close
+  // enough to it that the smoke checklist has an item asking whether the
+  // two can be told apart.
+  var COLOURS = ['#ff4d4d', '#ffd24d', '#4dff7a', '#4dd2ff', '#ff4db8'];
+
   // Last-known-good color/sound per event, so a refused or bridge-
   // failed change has something to revert the control to -- by the
   // time 'change' fires the browser has already committed the new
@@ -83,7 +105,7 @@
   function eventRow(id) {
     return {
       enabled: WM.el('alert-event-' + id + '-enabled'),
-      color: WM.el('alert-event-' + id + '-color'),
+      colors: WM.el('alert-event-' + id + '-colors'),
       sound: WM.el('alert-event-' + id + '-sound'),
       test: WM.el('alert-event-' + id + '-test'),
       msg: WM.el('alert-event-' + id + '-msg')
@@ -103,6 +125,52 @@
     row.msg.hidden = !text;
   }
 
+  // Built here rather than typed into index.html: the page would
+  // otherwise carry fifteen colour literals, and DESIGN.md keeps colour
+  // decisions out of the markup. The hex reaches CSS as a custom property
+  // on the element, so the stylesheet still owns every other pixel of the
+  // control.
+  //
+  // A stored colour outside the palette gets its own swatch, appended and
+  // selected, instead of being silently snapped to the nearest offered
+  // one. settings.validated_alerts accepts any #rrggbb, so a hand-edited
+  // settings.json is a legitimate state -- and quietly rewriting a user's
+  // choice the moment they open the card would be the card editing
+  // settings it was only asked to display.
+  function paintSwatches(row, id, colour) {
+    if (!row.colors) { return; }
+    var wanted = COLOURS.slice();
+    if (colour && wanted.indexOf(colour) === -1) { wanted.push(colour); }
+
+    if (row.colors.getAttribute('data-built') !== wanted.join(',')) {
+      row.colors.textContent = '';
+      wanted.forEach(function (hex) {
+        var label = document.createElement('label');
+        label.className = 'swatch';
+        var input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'alert-color-' + id;
+        input.value = hex;
+        var dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.setProperty('--swatch', hex);
+        // The only text a screen reader gets for a colour: the hex is not
+        // a name, but it is honest and it distinguishes the five.
+        label.title = hex;
+        input.setAttribute('aria-label', hex);
+        label.appendChild(input);
+        label.appendChild(dot);
+        row.colors.appendChild(label);
+      });
+      row.colors.setAttribute('data-built', wanted.join(','));
+    }
+
+    var boxes = row.colors.querySelectorAll('input');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].checked = boxes[i].value === colour;
+    }
+  }
+
   // Shared by the wm:settings hydration and refresh() (get_alert_state),
   // so the per-event rows repaint from the same shape either way.
   function applyAlerts(alerts) {
@@ -112,9 +180,9 @@
       if (!row.enabled) { return; }
       var spec = events[id] || {};
       row.enabled.checked = !!spec.enabled;
-      var color = spec.color || row.color.value;
+      var color = spec.color || (lastGood[id] || {}).color || COLOURS[0];
       var sound = spec.sound || 'none';
-      row.color.value = color;
+      paintSwatches(row, id, color);
       row.sound.value = sound;
       lastGood[id] = {color: color, sound: sound};
     });
@@ -174,11 +242,15 @@
         sayRow(row, '');
       });
     });
-    row.color.addEventListener('change', function () {
-      var wanted = row.color.value;
+    // Delegated: the swatches are rebuilt whenever a stored colour falls
+    // outside the palette, so a listener bound to each input would be lost
+    // on the rebuild that replaces them.
+    row.colors.addEventListener('change', function (event) {
+      var wanted = event.target && event.target.value;
+      if (!wanted) { return; }
       WM.send('set_alert_event', id, 'color', wanted).then(function (res) {
         if (!res || !res.applied) {
-          row.color.value = (lastGood[id] || {}).color || wanted;
+          paintSwatches(row, id, (lastGood[id] || {}).color || wanted);
           sayRow(row, (res && res.error)
             || 'That colour could not be set, so it has been put back.', 'err');
           return;
