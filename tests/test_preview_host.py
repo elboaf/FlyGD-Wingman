@@ -1035,3 +1035,46 @@ def test_a_stale_selection_clears_once_the_client_loses_the_foreground(monkeypat
     assert h._selected_key == "Alice"
     h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
     assert h._selected_key is None
+
+
+def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
+    """A preview whose window failed to create on one sweep and succeeded
+    on a later one, while its client stayed foreground the whole time,
+    hits _apply_selection's `key == self._selected_key` early return on
+    the second sweep -- the key never changed, only whether a window
+    existed for it. Without applying the selected state there too, the
+    foreground client would show no ring until the user tabbed away and
+    back."""
+
+    class _FakeWindow:
+        def __init__(self):
+            self.selected = False
+
+        def set_selected(self, selected):
+            self.selected = selected
+
+        def close(self):
+            pass
+
+    attempts = []
+
+    def flaky_create(cls, *a, **k):
+        attempts.append(None)
+        return None if len(attempts) == 1 else _FakeWindow()
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(flaky_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=0x1000)]
+    )
+    libs = _FakeLibs(_FakeUser32(foreground=0x1000))
+
+    h._sweep(libs)  # creation fails; Alice is selected but has no window yet
+    assert h._selected_key == "Alice"
+    assert "Alice" not in h._windows
+
+    h._sweep(libs)  # creation succeeds; the selected key is unchanged
+    assert h._windows["Alice"].selected is True

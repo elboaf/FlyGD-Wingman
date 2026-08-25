@@ -463,6 +463,21 @@ class PreviewHost:
         )
         key = next((k for k, c in self._clients.items() if c.hwnd == foreground), None)
         if key == self._selected_key:
+            # Usually a genuine no-op: the common case is a foreground
+            # that has not changed and a window that is already selected,
+            # and PreviewWindow.set_selected is itself idempotent
+            # (window.py:356), so calling it costs a dict lookup and one
+            # no-op call, not a repaint. It is NOT always a no-op though:
+            # a preview whose creation failed on an earlier sweep and
+            # succeeded on this one, while its client stayed foreground
+            # the whole time, reaches this branch with a brand-new window
+            # that has never been told it is selected. Applying it here
+            # is what puts the ring on it without waiting for the user to
+            # tab away and back. The early return itself stays -- that is
+            # the hot path this whole branch exists to keep cheap.
+            win = self._windows.get(key) if key else None
+            if win is not None:
+                win.set_selected(True)
             return
         previous, self._selected_key = self._selected_key, key
         for candidate in (previous, key):
