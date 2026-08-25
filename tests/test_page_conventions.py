@@ -376,7 +376,7 @@ def test_opening_a_dialog_disarms_an_armed_keybind_capture():
     Tab included. While these prompts were window.prompt it did not matter:
     a native OS dialog takes input outside the page. WM.prompt is an
     in-page field, so an armed capture swallows everything typed into it --
-    arm a capture on one bind, press Type… on another, and the dialog opens
+    arm a capture on one bind, press Edit… on another, and the dialog opens
     dead.
 
     previews.js always disarmed here; bookmarks.js did not, and the
@@ -468,3 +468,103 @@ def test_the_training_states_do_not_reuse_the_outbound_link_colour():
         assert "var(--link)" not in rule.group(1), (
             f".{cls} paints a training state in --link, the outbound-link token"
         )
+
+
+# ---- the control vocabulary --------------------------------------------
+
+
+def test_every_action_control_shares_one_disabled_state():
+    """Round 3's B2 asked for one shared disabled state and found three
+    answers plus two omissions.
+
+    `.linkbtn` and `.bindbtn` had no `:disabled` rule at all, and their
+    `:hover` rules did not exclude `:disabled` either -- so a control the
+    page had switched off still lifted its background under the pointer
+    and still looked live. That is the exact state B2 wants `Clear` put
+    into on a keybind reading `Not set`, so the omission was on the path
+    of its own fix.
+
+    Both halves are checked: one declaration covers all four selectors,
+    and no hover rule for any of them can fire while disabled.
+    """
+    controls = ("button.btn", ".linkbtn", ".bindbtn", ".ctxmenu button")
+
+    disabled = [
+        block
+        for block in re.findall(r"([^{}]+)\{([^}]*)\}", CSS)
+        if all(f"{c}:disabled" in block[0] for c in controls)
+    ]
+    assert disabled, (
+        "no single rule disables all of "
+        + ", ".join(controls)
+        + " -- one disabled state means one declaration, not four"
+    )
+    body = disabled[0][1]
+    for prop in ("opacity", "cursor"):
+        assert re.search(rf"\b{prop}\s*:", body), (
+            f"the shared disabled rule does not set {prop}"
+        )
+
+    for control in controls:
+        hovers = list(
+            re.finditer(re.escape(control) + r"[^,{}]*:hover([^,{}]*)[,{]", CSS)
+        )
+        # Asserted rather than assumed: this loop is the whole second half
+        # of the check, and deleting the rule it inspects would otherwise
+        # make it pass by matching nothing -- which is precisely the state
+        # `.linkbtn` and `.bindbtn` were in when B2 was written.
+        assert hovers, f"{control} has no :hover rule left to check"
+        for hover in hovers:
+            assert ":not(:disabled)" in hover.group(1), (
+                f"{control}:hover can fire on a disabled control -- a dead "
+                f"button that lights up under the pointer is B2's own bug"
+            )
+
+
+def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
+    """`.btn.danger` is the ONE destructive treatment (round 3, B3/S4/P2).
+
+    Two failure modes, both already shipped elsewhere in this sheet.
+
+    The first is `button.btn.acc`'s hover trap. It is NOT a specificity
+    race -- `button.btn.danger:hover:not(:disabled)` is (0,4,1) against the
+    generic rule's (0,3,1), so it wins outright, and the sibling accent
+    test's source-order premise is over-stated for the same reason. What
+    actually bit was declaration coverage: a hover rule that names only
+    `background` lets the generic rule supply `color`, and --text on the
+    filled red is the failure. So only the declarations are asserted here.
+
+    The second is the vocabulary itself: `red text, no button` was retired,
+    and `.linkbtn.danger` is kept for exactly one site until R3 converts
+    `Forget character`. A second user of it re-opens S4.
+    """
+    danger = CSS.index("button.btn.danger:hover:not(:disabled)")
+    block = CSS[danger : CSS.index("}", danger)]
+    for prop in ("background", "color"):
+        assert re.search(rf"\b{prop}\s*:", block), (
+            f"button.btn.danger:hover must restate {prop}: the generic "
+            f"button hover rule sets it at the same specificity"
+        )
+
+    rest = re.search(r"button\.btn\.danger\s*\{([^}]*)\}", CSS)
+    assert rest and rest.group(1).count("var(--danger)") == 2, (
+        "button.btn.danger must take BOTH its border and its label from "
+        "--danger -- an outline in one red and a label in another is not a "
+        "treatment"
+    )
+
+    users = {
+        path.name
+        for path in sorted(WEB.glob("*.js"))
+        if "linkbtn danger" in _strip_js_comments(path.read_text(encoding="utf-8"))
+    }
+    # A subset rather than an equality, deliberately. skills.js is the one
+    # site the treatment is tolerated at, and R3's job is to REMOVE it -- an
+    # equality would go red on the lane this rule exists to enable, with a
+    # message accusing it of adding a user when it deleted the last one.
+    # When `users` is empty, delete the `.linkbtn.danger` pair in style.css
+    # and this clause with it.
+    assert users <= {"skills.js"}, (
+        "`red text, no button` is not in the control vocabulary; the only "
+        f"site it is tolerated at is skills.js, but found: {sorted(users)}"
+    )

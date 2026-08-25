@@ -244,6 +244,85 @@ current and passing** — they forbid a bare `<label>` in a settings row and
 require a restore per override, both of which still hold. Only the prose
 is stale. Nothing is broken; do not go hunting.
 
+**Four treatments, and this is the whole list.** Round 3 counted five
+vocabularies for "clickable" — accent button, neutral button, red-outlined
+button, red text, dim text — with no rule about which meant what, so three
+screens each invented an answer for the same destructive verb. What a
+control looks like is decided by what it *means*:
+
+| treatment | means |
+|---|---|
+| `.btn.acc` | the one action the screen exists to perform — one per screen or none, per the rule below |
+| `.btn` | every other action; the default, and reaching past it needs a reason from this table |
+| `.btn.danger` | the action destroys something the user cannot get back by clicking again |
+| `.linkbtn` | the quiet tier, which takes a stated reason — see below |
+
+`.linkbtn` is not a volume knob. Two reasons are admissible, and both are
+already load-bearing in the app:
+
+1. The action is **subordinate** to the control or field it trails and as
+   a `.btn` would compete with it — `Clear` and `Edit…` belong to the
+   `.bindbtn`, `Clear filter` to the filter field, `Set this up later` to
+   `Continue`.
+2. A full-width `.btn` would put **its own label into a rail's width
+   floor**. Skills' `Open plans folder` and `Reload plans` are `.linkbtn`
+   for this reason and `index.html:774-781` reasons it out.
+
+Neither reason and it is a `.btn`, however minor it feels: `Change…` on
+Profiles is one because nothing else on its row acts, so link-styling made
+the only control the least control-like element present
+(`index.html:632-638`).
+
+The four cover actions **on a surface**. Three other clickable families sit
+outside the table and are not exceptions to it: **chrome** (`.navbtn`,
+`.winbtn`, `.rail-item`, `.rail-plan`) navigates rather than acts; **value
+controls** (`.bindbtn`, `input.field`, `.check`/`.radio`) hold a value
+rather than performing one; and **menu items and outbound links**
+(`.ctxmenu button`, `.linkish`, `.glyph-link`) take their shape from the
+menu they sit in or from `--link`'s own rule about leaving the application.
+A menu item is still an action control for the disabled rule below — that
+exclusion is about shape, not behaviour.
+
+"Red text with no button" is not a treatment; `.linkbtn.danger` survives at
+one site pending its conversion and must not gain a second.
+
+**The rule is ahead of its sites, deliberately.** Round 3 landed the
+primitive in its own lane so that three screen lanes would convert to one
+thing rather than invent a third answer between them. Until they do,
+`Delete selected` on the Uploader and `Remove` on Settings › Discord are
+still plain `.btn`s that destroy something, and `Forget character` on
+Skills is still red text.
+
+**Destructive treatment, confirmation, and mechanism are three questions,
+not one.** Conflating them is how `Restore` nearly got red-outlined:
+
+- **`.btn.danger` when** the action destroys something unrecoverable — a
+  recording, a backup, a stored credential, a refresh token. Not "this is
+  important", and not "this is tedious to undo".
+- **A destructive action confirms, but a confirmation does not imply the
+  treatment.** `Restore` overwrites a live profile and confirms, yet stays
+  a plain `.btn`, because it backs the profile up first and the dialog says
+  so — nothing is destroyed. (The dialog text is in `ui/api.py`'s
+  `eve_settings_restore`; `evesettings.js` reasons out the *treatment* at
+  the site, not the backup.) One site does not meet the rule yet: `Remove`
+  on Settings › Discord destroys the webhook credential on a single click
+  with no confirmation at all. The other five destructive actions all
+  confirm, through three different mechanisms.
+- **Which confirmation** is decided by the thread the action runs on, and
+  that is the table under *Which confirmation, and why* below.
+
+**One disabled state.** A control whose object is absent is disabled —
+`WM.setEnabled` in `app.js` carries the rule for *when*, including the
+constraint that nothing may disable the only route out of the state that
+disabled it. What disabled *looks* like is one declaration in `style.css`
+covering `.btn`, `.linkbtn`, `.bindbtn` and context-menu items, and every
+one of their `:hover` rules excludes `:disabled`. Among those four it had
+been two answers and two omissions: `.linkbtn` and `.bindbtn` had no
+disabled state at all, so a dead control still lit up under the pointer. A
+few controls outside the four keep scoped rules of their own for stated
+reasons — `#lab-stitch`, the three `#es-*` dropdowns — and the accent
+button adds `grayscale` on top of the shared one rather than replacing it.
+
 **One accent per screen, or none.** `.btn.acc` is the single brand-accent
 control. Zero is fine — a screen that applies immediately has no commit
 action to accent. Two is two things claiming to be primary. Its label is
@@ -408,6 +487,21 @@ A screen may not repeat its own tab name as its first card heading.
 Say what a control does, not what it configures. A tab named "EVE
 Settings" beside a gear named "Settings" describes the implementation and
 confuses the reader; "Profiles" is what the thing is called.
+
+Same rule pointed the other way: name a control for its effect, not for
+the user's next move. `Clear`, `Restore`, `Detect`, `Refresh`, `Edit…`.
+`Type…` was the one control *name* in the app that was an instruction, and
+it sat beside `Clear` in the same treatment, so the pair read as two
+options rather than as a value-clearer and an editor.
+
+A trailing `…` on a control name means *this opens something* — `Browse…`,
+`Change…`, `Choose folder…`, `Edit…`. It is not decoration, and a control
+that opens nothing may not wear one.
+
+Both rules are about the name a control *rests* at. A transient state
+label may be an instruction and may trail an ellipsis, because that is what
+it is for: an armed `.bindbtn` reads `Press a key…` for as long as the
+capture is live, and the ellipsis there means *waiting*, not *opens*.
 
 
 ## State that must not be retyped

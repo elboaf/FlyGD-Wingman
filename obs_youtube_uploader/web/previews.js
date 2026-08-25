@@ -1,5 +1,5 @@
 // Preview hotkeys. The row shape deliberately mirrors bookmarks.js: a
-// capture button, a Clear, and a Type... escape hatch. That is not copied
+// capture button, a Clear, and an Edit... escape hatch. That is not copied
 // for consistency -- capture reads event.code, which maps a physical key to
 // the wrong character on non-US layouts, and manual entry is the way out.
 // Both paths are validated by the same Python rules so they cannot disagree.
@@ -125,7 +125,10 @@
     clear.addEventListener('click', function () { endCapture(); onSet(''); });
     row.appendChild(clear);
 
-    var typed = WM.make('button', 'linkbtn', 'Type…');
+    // `Edit…`, not `Type…` -- round 3's B6; the reasoning is on the
+    // matching control in bookmarks.js. The two lists build the same row
+    // and their labels have to agree.
+    var typed = WM.make('button', 'linkbtn', 'Edit…');
     typed.addEventListener('click', function () {
       endCapture();
       // The app's own dialog -- see the matching comment in bookmarks.js.

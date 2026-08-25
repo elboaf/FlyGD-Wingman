@@ -221,14 +221,21 @@
       // event.code table maps a physical key to the wrong character. The
       // typed string is validated by the same Python rules as capture, so
       // the two cannot disagree.
-      var typed = WM.make('button', 'linkbtn', 'Type…');
+      //
+      // Named for what it does, not for what the user must do. `Type…`
+      // was the one control in the app whose label was an instruction
+      // (round 3, B6) while every other one is a verb for its effect --
+      // Clear, Restore, Detect, Refresh. The ellipsis is the app's own
+      // "this opens something" mark, shared with Browse…, Change… and
+      // Choose folder…, which is exactly what this does.
+      var typed = WM.make('button', 'linkbtn', 'Edit…');
       typed.addEventListener('click', function () {
         // Disarm first, as previews.js already did. This did not matter
         // while the prompt was window.prompt: a native OS dialog takes
         // input outside the page entirely. WM.prompt is an in-page field,
         // and an armed capture's document-level keydown handler
         // preventDefault()s EVERY key -- so arming a capture on one bind
-        // and pressing Type… on another opened a prompt that could not be
+        // and pressing Edit… on another opened a prompt that could not be
         // typed into.
         endCapture();
         // The app's own dialog, not window.prompt: WebView2 captions that

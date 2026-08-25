@@ -309,7 +309,7 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **The bind rows collapse too.** Still at the floor, open Settings >
       Bookmarks and read the keybind list, then Settings > Previews. Expected:
       each action or character name on its own line with its keybind button,
-      Clear and Type... on the line below — "Convert EvE-Scout Bookmarks" and
+      Clear and Edit... on the line below — "Convert EvE-Scout Bookmarks" and
       "Finisher: C13 (shattered)" readable in one line each, not ragged over
       three in a ~60px column.
       This was a known gap for two releases. Both lists take the shared label
@@ -1112,6 +1112,31 @@ only ever checked by hand.
       pane with no error anywhere. That silence is the failure mode: a
       handler that throws mid-module takes every registration below it with
       it, and the route loads as an inert copy of itself.
+- [ ] **An armed capture is purple-ringed, and its label is not purple.**
+      Click a keybind button so it reads "Press a key…". Expected: a purple
+      border and a lifted background, with the label in ordinary white
+      text. The label used to be `--brand-text` too, which measures 4.16:1
+      on that background and 3.99:1 with the pointer on it — both under
+      4.5:1, on the one control in the app that is asking to be read.
+      Pick a row with **no clash warning**: `.bindbtn.clash` is declared
+      below `.bindbtn.capturing` at equal specificity, so a row that is
+      both arms in the clash red rather than the brand purple. That is
+      pre-existing and unowned; it is called out here so this step is not
+      read as a failure on a colliding bind.
+- [ ] **A disabled control looks disabled and stays inert under the
+      pointer.** Hover each control the page switches off: `Upload` with
+      nothing selected, `Show` / `Remove` with no webhook configured,
+      `Continue` on first run before a folder is chosen. Expected: dimmed
+      to .45, no background lift, and the plain arrow cursor rather than
+      the hand.
+      Round 3's L5 moved four control classes onto one declaration; all
+      three sites above are `.btn`, so this is a regression check on the
+      one class that already had a treatment.
+      `.linkbtn` and `.bindbtn` gained one here and have **no disabled site
+      yet** — the first will be finding B2's `Clear` on a keybind reading
+      `Not set`, which lane R4 applies. When that lands, hover it: before
+      L5 those two classes had no disabled rule at all, so a dead one still
+      lit up.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
       reads "Press a key…", then WITHOUT pressing a key click **Folders** in
