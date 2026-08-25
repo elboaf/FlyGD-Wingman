@@ -345,8 +345,14 @@
   //   2. No Gamelogs folder -- the important one, since without it
   //      alerts silently do nothing, indistinguishable from nothing
   //      happening in game.
-  //   3. Otherwise, the health line above (running + character count).
-  function render(state) {
+  //   3. Otherwise, the health line above (running + the characters).
+  //
+  // `controls` is false on the status poll below: re-applying the stored
+  // spec to the checkboxes, swatches and selects every two seconds would
+  // fight a click whose write is still in flight, snapping the control
+  // back to the old value for one frame. The poll is about what the app
+  // is DOING; the controls belong to whoever last touched them.
+  function render(state, controls) {
     if (offBanner) {
       offBanner.style.display = state.previews_enabled ? 'none' : '';
     }
@@ -358,14 +364,52 @@
     // is what the user just clicked, and a refused or bridge-failed write
     // reverts it. This must describe what the app is actually doing.
     showDepends(!!(state.alerts && state.alerts.enabled));
-    applyAlerts(state.alerts);
+    if (controls) { applyAlerts(state.alerts); }
   }
 
-  function refresh() {
+  function read(controls) {
     WM.send('get_alert_state').then(function (state) {
       if (!state) { return; }
-      render(state);
+      render(state, controls);
     });
+  }
+
+  function refresh() { read(true); }
+
+  // The first setInterval in the page, so it is worth saying why.
+  //
+  // get_alert_state is deliberately a READ, not a push -- the tailer can
+  // start before the webview exists, so a health change discovered at
+  // launch would be pushed into a window that is not there. That is still
+  // right. What it left was a card that reads its state exactly three
+  // times: on section entry, on a previews toggle, and immediately after
+  // the alerts switch.
+  //
+  // That last one is the bug this fixes, and it was reported from a real
+  // session: enabling alerts refreshes AT ONCE, while AlertService has
+  // only just been reconciled and its tailer's first rescan is up to
+  // POLL_INTERVAL_S away. So the card read `running: true, characters:
+  // []`, rendered "no characters online yet", and nothing ever read
+  // again -- five characters online and the card saying none, for as long
+  // as you left it open.
+  //
+  // The same gap hid the failure the health line exists to catch: a
+  // tailer that dies at minute 40 of a sit kept reading as healthy,
+  // because nothing asked again.
+  //
+  // Only while the section is showing. Nothing needs to be current when
+  // it is not, which is the same reasoning the one-shot reads were built
+  // on.
+  var STATUS_POLL_MS = 2000;
+  var poll = null;
+
+  function startPolling() {
+    if (poll === null) { poll = window.setInterval(function () { read(false); },
+                                                   STATUS_POLL_MS); }
+  }
+
+  function stopPolling() {
+    if (poll !== null) { window.clearInterval(poll); poll = null; }
   }
 
   // panel.js owns onSettings and re-dispatches it; the three checkboxes
@@ -383,11 +427,25 @@
     applyAlerts(alerts);
   });
 
-  // Refreshed on route entry, same reasoning as previews.js and
-  // bookmarks.js: this is a read, not a push, so nothing keeps it
-  // current while the tab is not showing.
+  // Refreshed on section entry, same reasoning as previews.js and
+  // bookmarks.js. Leaving is load-bearing here, as DESIGN.md says of every
+  // enter/leave contract on this page: the poll must stop, or a card
+  // nobody is looking at keeps a bridge call running every two seconds
+  // for the life of the session.
   document.addEventListener('wm:section', function (event) {
-    if (event.detail === 'previews') { refresh(); }
+    if (event.detail === 'previews') {
+      refresh();
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
+
+  // A route change leaves Settings without dispatching wm:section at all,
+  // so the section listener above never hears about it and the poll would
+  // outlive the screen.
+  document.addEventListener('wm:route', function (event) {
+    if (event.detail !== 'settings') { stopPolling(); }
   });
 
   // #preview-enabled and this card share ONE section (#section-previews)
