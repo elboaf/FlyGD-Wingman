@@ -473,7 +473,15 @@
         cycle_next: 'Ctrl+Alt+Right',
         cycle_prev: ''
       },
-      roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Kaska Rin'],
+      // A fixture of short names hides exactly the class of bug that
+      // matters here: #preview-binds's first grid column is
+      // `minmax(0, max-content)`, the only track that can shrink, and the
+      // five Lock/Never-minimize/Clear/Type columns after it cannot. A
+      // real EVE character name runs far longer than 'Aiga Otsolen' --
+      // this fixture must always carry one at least this long, or a
+      // render check against it cannot see a name column that clips or a
+      // pane that grows its own horizontal scrollbar.
+      roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Aleksandrina Shadowbanes Voidstriders'],
       characters: [],
       registration: {},
       // Task 11: one of each state, on the OFFLINE rows above (enabled:
