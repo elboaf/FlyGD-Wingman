@@ -298,7 +298,15 @@
     <div class="settings" id="section-folders">
 
       <section class="card">
-        <h2>Where your recordings and gamelogs live</h2>
+        <!-- Round 3, B10. This and Discord's below were the only two
+             card headings in the app that were second-person sentences
+             rather than noun phrases, and at 310 and 225 CSS px the two
+             longest -- set in a uppercase letter-spaced treatment meant
+             for short labels. 31a14ca's "headings that stop echoing the
+             rail" was right (a section named Folders should not head its
+             card FOLDERS); these two over-corrected past the noun. The
+             noun that does not echo the rail is what the rows hold. -->
+        <h2>Recordings and gamelogs</h2>
         <div class="row">
           <span class="lab">Recordings</span>
           <input class="field mono" id="f-recdir" type="text" spellcheck="false">
@@ -312,9 +320,15 @@
           <button class="btn" data-detect="gamelogs">Detect</button>
         </div>
         <p class="field-msg" id="msg-folders" hidden></p>
+        <!-- Pre-payload text only; settings.js's render() rewrites this
+             slot, and FOLDER_COST there is the source of the sentence.
+             Kept in step by hand is exactly what this used to be and how
+             it drifted, so the two are asserted equal in
+             tests/test_settings_page.py rather than trusted. -->
         <p class="sub-hint" id="detect-note">
-          Detect reads the recording folder from OBS's own config, and the gamelogs
-          folder from your EVE Online documents folder.
+          Changing the recording folder starts watching it. Recordings
+          already there won’t be announced, and arrive unticked in the
+          list.
         </p>
       </section>
 
@@ -323,7 +337,10 @@
     <div class="settings" id="section-discord">
 
       <section class="card">
-        <h2>Where combat logs are posted</h2>
+        <!-- The other half of B10. Names the two things the card is
+             about -- what is posted, and the control that posts it -- and
+             leaves "Discord" to the rail entry that already says it. -->
+        <h2>Combat log webhook</h2>
         <div class="row">
           <span class="lab">Webhook URL</span>
           <!-- Masked by default. A webhook URL is a credential: anyone
@@ -334,7 +351,13 @@
                  autocomplete="off">
           <button class="btn toggle" id="btn-webhook-show"
                   aria-pressed="false">Show</button>
-          <button class="btn" id="btn-webhook-remove">Remove</button>
+          <!-- Round 3, B12 and L5's destructive rule: this destroys a
+               stored credential that nothing can get back, so it wears
+               THE destructive treatment rather than looking exactly like
+               `Show` beside it, which merely reveals one. The confirm is
+               a separate question with a separate answer and lives in
+               settings.js. -->
+          <button class="btn danger" id="btn-webhook-remove">Remove</button>
         </div>
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
@@ -350,7 +373,20 @@
          the app on one of its least-visited screens. -->
     <div class="settings" id="section-bookmarks">
       <section class="card">
-        <h2>EVE bookmarks</h2>
+        <!-- Round 2's finding 7: three card headings in this section
+             all opened with the same word, in a section already named
+             Bookmarks. This one now leads with what distinguishes it --
+             the feature this card switches on, named as the rest of the
+             app names it (General's hint, PRODUCT.md, CLAUDE.md all say
+             "bookmark keybinds").
+
+             The other two keep EVE first ON PURPOSE, and the finding is
+             wrong about them: `EVE windows` led by `Windows` reads as the
+             operating system, and `EVE-focused` is precisely the fact
+             that separates that card from the global set under Previews.
+             Two of the three lead with their distinguishing word already;
+             it just happens to be EVE. -->
+        <h2>Bookmark keybinds</h2>
         <div class="row">
           <span class="lab">Enable</span>
           <!-- The .check/.box pattern is not decoration: .check input is
@@ -393,10 +429,26 @@
 
       <section class="card">
         <h2>EVE-focused keybinds</h2>
-        <p class="hint">Previews have a second set, registered globally
-          rather than only in EVE &mdash; Settings &rsaquo; Previews. A
-          keybind used there takes one of these while a client is
-          focused.</p>
+        <!-- Round 3, R4's finding 4. This and the matching hint under
+             Previews &rsaquo; Global keybinds pointed at each other and
+             left the reader to work out what `takes` meant: precedence,
+             consumption, or disabling. It is precedence, and the app
+             already knows which way it runs -- Api._bookmark_chords: a
+             preview chord is a global RegisterHotKey and a bookmark chord
+             is an AHK hotkey scoped with #HotIf WinActive, so where they
+             collide the preview wins while EVE is focused and the
+             bookmark simply does not fire. Windows reports nothing,
+             because the scoped hotkey is not a registration to collide
+             with.
+
+             Both sections now state that one rule in the same words, so
+             it is learned once rather than assembled from two halves. The
+             cross-reference stays: PRODUCT.md asks for it, and a user who
+             cannot find the other set is the worse outcome. -->
+        <p class="hint">Previews have a second set that fires anywhere, not
+          only in EVE &mdash; Settings &rsaquo; Previews. Where both use
+          the same keys the Previews one wins, and the bookmark does not
+          fire.</p>
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
@@ -440,11 +492,15 @@
 
       <section class="card">
         <h2>Global keybinds</h2>
+        <!-- The other half of finding 4. Same rule, same words as the
+             hint under Bookmarks &rsaquo; Bookmark keybinds; the reasoning
+             is there. -->
         <div class="row"><span class="lab"></span>
           <span class="hint">These work from any application, including a
             browser, and are released while previews are switched off.
             Bookmarks have a second set that fires only in EVE &mdash;
-            Settings &rsaquo; Bookmarks. A keybind the two share is marked
+            Settings &rsaquo; Bookmarks. Where both use the same keys this
+            set wins and the bookmark does not fire; those are marked
             below.</span></div>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
@@ -470,9 +526,15 @@
             &mdash; useful for a client that is not the one you are
             looking at.</span></div>
         <div class="row"><span class="lab"></span>
+          <!-- Round 3, R4's finding 3. Opened "Previews are off, so"
+               like the two sentences above it, in a view where the
+               unticked switch says it as well. Rendered only while it is
+               true, so the state clause was the one part carrying nothing
+               new; what is left is the consequence and the way out, which
+               is the shape ui/copy.py's INERT_NOTES keeps. -->
           <span class="hint" id="alerts-previews-off" style="display:none">
-            Previews are off, so alerts have nothing to draw on. Turn on
-            client previews above to use them.</span></div>
+            Alerts pulse a preview, so they need previews switched on. The
+            switch is in the card above.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-no-folder" style="display:none">
             Your EVE Gamelogs folder is not set. Alerts cannot run without

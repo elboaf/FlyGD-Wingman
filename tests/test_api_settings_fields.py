@@ -196,6 +196,83 @@ def test_recommitting_the_same_folder_never_rebinds(monkeypatch, tmp_path):
     assert watcher.rebound == []
 
 
+def test_a_rebind_reports_how_many_recordings_it_silenced(monkeypatch, tmp_path):
+    """Round 3's B11 answer. A hint written before the click cannot carry
+    the number -- it depends on the folder the user is about to name -- so
+    the disclosure is a report the endpoint sends back, and the page shows
+    it in the same .field-msg slot a refusal uses.
+
+    The count is the recordings rebind() has just marked as seen: they are
+    still listed, they simply arrive unannounced and unticked.
+    """
+    new_dir = tmp_path / "elsewhere"
+    new_dir.mkdir()
+    for name in ("a.mp4", "b.mp4", "c.mp4"):
+        (new_dir / name).write_bytes(b"x")
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    result = api.set_folder("recording", str(new_dir))
+
+    assert watcher.rebound == [new_dir]
+    assert result["note"] == (
+        f"Now watching {new_dir}. 3 recordings already there were not announced."
+    )
+
+
+def test_an_empty_new_folder_reports_the_move_and_no_count(monkeypatch, tmp_path):
+    """ "0 recordings were not announced" is a sentence the reader has to
+    parse twice to learn nothing happened."""
+    new_dir = tmp_path / "empty"
+    new_dir.mkdir()
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert (
+        api.set_folder("recording", str(new_dir))["note"] == f"Now watching {new_dir}."
+    )
+
+
+def test_one_silenced_recording_is_singular(monkeypatch, tmp_path):
+    new_dir = tmp_path / "one"
+    new_dir.mkdir()
+    (new_dir / "a.mp4").write_bytes(b"x")
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert (
+        "1 recording already there was not announced"
+        in (api.set_folder("recording", str(new_dir))["note"])
+    )
+
+
+def test_a_first_folder_reports_no_suppression_it_cannot_vouch_for(
+    monkeypatch, tmp_path
+):
+    """The other branch. With no watcher yet, start_watching() calls
+    Watcher.baseline(), which silently baselines only on a first-EVER run
+    and otherwise announces what it finds -- so "were not announced" would
+    be a guess. No note rather than a wrong one.
+    """
+    new_dir = tmp_path / "elsewhere"
+    new_dir.mkdir()
+    (new_dir / "a.mp4").write_bytes(b"x")
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=None)
+    api._on_recording_dir_ready = lambda folder: None
+
+    assert "note" not in api.set_folder("recording", str(new_dir))
+
+
+def test_recommitting_the_same_folder_reports_nothing(monkeypatch, tmp_path):
+    """The early return is the whole point: nothing was rebound, so there
+    is nothing to report, and a note would tell the user a cost they did
+    not pay."""
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert "note" not in api.set_folder("recording", str(tmp_path))
+
+
 def test_a_folder_that_does_not_exist_leaves_the_watcher_alone(monkeypatch, tmp_path):
     watcher = fakes.FakeWatcher(tmp_path)
     api, _window, saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
