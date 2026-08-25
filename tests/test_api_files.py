@@ -85,6 +85,7 @@ def test_only_files_that_actually_went_are_forgotten_by_the_watcher(
     assert fakes.payloads(sent, "onStatus")[-1] == {
         "text": "Deleted 1 file(s). 1 failed.",
         "kind": "FG",
+        "busy": False,
     }
 
 
@@ -97,7 +98,7 @@ def test_copy_returns_the_link_and_reports_it(tmp_path):
 
     assert api.copy_path("r0") == "https://www.youtube.com/watch?v=abc"
     assert fakes.payloads(sent, "onStatus") == [
-        {"text": "Link copied to clipboard", "kind": "SUCCESS"}
+        {"text": "Link copied to clipboard", "kind": "SUCCESS", "busy": False}
     ]
 
 
