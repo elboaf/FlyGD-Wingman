@@ -292,10 +292,6 @@ The repository was reformatted with `ruff format` in one commit touching
 that reformat rather than to whoever wrote the code. The setting is
 per-clone and cannot be committed, so every clone needs it once.
 
-Note that `.git-blame-ignore-revs` has no active entry until the
-reformat's commit hash is recorded in it — see the TODO in that file.
-Until then, running the command above is harmless but changes nothing.
-
 Official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which injects
 the project's own Google OAuth desktop-client configuration from repository

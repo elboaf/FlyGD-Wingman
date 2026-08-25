@@ -1,19 +1,19 @@
-# Mechanical reformats. Configure once with:
+# Commits to skip when running `git blame`, so a mechanical reformat does
+# not take credit for 136 files it only re-indented.
+#
+# Configure once per clone (this cannot be committed):
+#
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
 #
-# This repository squash-merges PRs (confirmed against PRs #33-#37 on
-# main), which rewrites every commit's SHA. The entry below MUST be the
-# SHA the "Apply ruff format" commit gets on `main` after this PR merges
-# -- not its SHA on this branch. Recording the pre-merge SHA would be
-# silently ignored by `git blame` (no error, no warning) and every one
-# of the 136 reformatted files would stay attributed to the reformat.
-#
-# TODO(post-merge): after this PR lands, run:
-#   git fetch origin
-#   git log origin/main --format='%H %s' -20 | grep 'Apply ruff format'
-# and uncomment the line below with that commit's real SHA, in a small
-# follow-up commit. Until that follow-up lands, this file has no active
-# entries and `git blame` behaves exactly as it does without it.
+# The hash below is only valid if this pull request is merged with a real
+# merge commit. This repository squash-merges by default, and a squash
+# would collapse the whole branch into one new commit, leaving no commit
+# with this hash in main's history. Git ignores an unknown hash here
+# SILENTLY -- no error, no warning -- and every reformatted file would
+# stay attributed to the reformat regardless. If this branch was squashed
+# by mistake, delete the line below rather than substituting the squash
+# commit: that one also covers the lint fixes, the CI changes, and the
+# noqa fix, none of which should be hidden from blame.
 
 # Adopt ruff format across the tree (136 Python files, no behaviour change)
-# REPLACE_WITH_POST_MERGE_SHA_OF_APPLY_RUFF_FORMAT_ON_MAIN
+f20055e08ea4a74958702abe1a8329e3adc355fc
