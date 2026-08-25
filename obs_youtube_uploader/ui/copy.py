@@ -180,6 +180,26 @@ def format_upload_confirm(
     )
 
 
+def _whole_percent(value: float) -> int:
+    """Percent, rounded the way the progress bar rounds it.
+
+    `int(x + 0.5)` rather than `"{:.0f}"`, which is round-HALF-EVEN: at an
+    exact tie that prints 0% beside a bar reading 1%, which is the "one
+    number in two precisions" disagreement round 3's finding 17 recorded.
+    panel.js's `Math.round` is half-up and every percent the app renders
+    has to match it, not merely share its precision.
+
+    A function rather than the expression repeated at each call site: it is
+    repeated at two now (the upload strip and the quit confirm), and the
+    second was written with "{:.0f}" precisely because the rule lived in a
+    comment instead of in code.
+
+    Callers pass a PERCENT, not a fraction. Neither is ever negative, so
+    truncation toward zero is a floor.
+    """
+    return int(value + 0.5)
+
+
 def format_progress(index: int, total: int, fraction: float) -> str:
     """The status line during an upload.
 
@@ -199,12 +219,9 @@ def format_progress(index: int, total: int, fraction: float) -> str:
     # differ in VALUE (this tracks the file, the bar tracks the batch);
     # that is the point of the wording below, and it survives here.
     #
-    # int(x + 0.5) rather than "{:.0f}", which is round-HALF-EVEN: at an
-    # exact tie it would print 0% beside a bar reading 1%, reintroducing
-    # the same disagreement one value at a time. Math.round is half-up and
-    # this has to match it, not merely share its precision. Fraction is
-    # never negative, so truncation toward zero is a floor.
-    pct = f"{int(fraction * 100 + 0.5)}%"
+    # The rounding rule itself is _whole_percent's, shared with the quit
+    # confirm so a second surface cannot pick a different one.
+    pct = f"{_whole_percent(fraction * 100)}%"
     if total <= 1:
         return f"Uploading… {pct}"
     return f"Uploading file {index + 1} of {total}… {pct}"
@@ -444,6 +461,38 @@ def format_eve_copy_confirm(count: int, kind: str | None, eve_running: bool) -> 
         f"Each one is backed up first.\n\n"
         f"{running}"
         "This cannot be undone except by restoring a backup."
+    )
+
+
+def format_quit_confirm(pct: float) -> str:
+    """The confirm shown when tray Quit lands on a running upload.
+
+    Quit destroys the window, which returns from the GUI loop and ends the
+    process -- and the upload runs on a daemon thread, so it dies mid-chunk
+    with nothing on screen and no record. This is the sentence that turns
+    that silent discard into a decision.
+
+    Rounded to whole percent through `_whole_percent`, the same rule the
+    upload strip uses, so the two cannot disagree at a tie. This function
+    originally used "{:.0f}" -- round-half-even -- which is exactly the
+    second rendering rule lane L2 removed, reintroduced by a surface it
+    did not yet cover.
+
+    It says "the upload in progress", not "the upload": a multi-recording
+    job links each video as it lands (Api._upload_worker), so quitting at
+    60% of four files leaves the first two ON the channel. A dialog
+    claiming the whole upload is discarded would be wrong in exactly the
+    case where the user most needs to know what survived.
+
+    Nothing is said about YouTube needing a cleanup, because it does not:
+    the insert is resumable, and a session that never completes expires
+    without ever becoming a video.
+    """
+    return (
+        f"An upload is {_whole_percent(pct)}% complete. Quit anyway?\n\n"
+        "The upload in progress stops and will not appear on YouTube. "
+        "Anything already uploaded is unaffected, and no recording is "
+        "deleted from disk."
     )
 
 

@@ -568,8 +568,17 @@ def main() -> int:
             window.show()
 
     def on_quit() -> None:
-        if window is not None:
-            window.destroy()  # unblocks window_mod.run() below
+        if window is None:
+            return
+        # An upload runs on a daemon thread, so destroying the window here
+        # kills it mid-chunk with nothing on screen -- a multi-gigabyte
+        # transfer discarded by one menu click. The decision lives on Api
+        # because it has to raise the hidden window and bound its own wait;
+        # see _confirm_quit_if_busy. A refusal leaves the app running,
+        # which is the recoverable half of the two failures.
+        if not api._confirm_quit_if_busy():
+            return
+        window.destroy()  # unblocks window_mod.run() below
 
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()
