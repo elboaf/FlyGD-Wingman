@@ -5,6 +5,7 @@ reads one of these strings, and TriffView has no automated coverage of
 it at all. That is the one posture this port deliberately does not
 inherit.
 """
+
 from datetime import UTC, datetime, timedelta
 
 from obs_youtube_uploader.eveskills import evaluator as ev
@@ -14,9 +15,13 @@ T0 = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
 
 def entry(skill_id, finished_level, position, finish=None):
-    return ev.QueueEntry(skill_id=skill_id, finished_level=finished_level,
-                         start_date=T0, finish_date=finish,
-                         queue_position=position)
+    return ev.QueueEntry(
+        skill_id=skill_id,
+        finished_level=finished_level,
+        start_date=T0,
+        finish_date=finish,
+        queue_position=position,
+    )
 
 
 def test_no_sufficient_entry_returns_none():
@@ -47,8 +52,10 @@ def test_the_finish_date_never_decides_which_entry_is_chosen():
     a date. Here the V entry finishes days BEFORE the III entry, and the
     III entry still wins because it is the lowest sufficient level. The
     port keeps that behaviour and renames the function to say so."""
-    queue = [entry(100, 5, 0, finish=T0 + timedelta(days=1)),
-             entry(100, 3, 1, finish=T0 + timedelta(days=9))]
+    queue = [
+        entry(100, 5, 0, finish=T0 + timedelta(days=1)),
+        entry(100, 3, 1, finish=T0 + timedelta(days=9)),
+    ]
     chosen = ev.lowest_sufficient_entry(queue, 100, 3)
     assert chosen.finished_level == 3
     assert chosen.finish_date == T0 + timedelta(days=9)
@@ -62,15 +69,16 @@ def test_an_entry_with_no_finish_date_is_still_selectable():
     assert ev.lowest_sufficient_entry(queue, 100, 4) is not None
 
 
-def evaluate(reqs, *, ids=None, active=None, trained=None, queue=(),
-             snapshot=True):
+def evaluate(reqs, *, ids=None, active=None, trained=None, queue=(), snapshot=True):
     """Call evaluate() with the four mappings defaulted to empty."""
-    return ev.evaluate(reqs,
-                       skill_ids={"Navigation": 100} if ids is None else ids,
-                       active_levels=active or {},
-                       trained_levels=trained or {},
-                       queue=queue,
-                       has_snapshot=snapshot)
+    return ev.evaluate(
+        reqs,
+        skill_ids={"Navigation": 100} if ids is None else ids,
+        active_levels=active or {},
+        trained_levels=trained or {},
+        queue=queue,
+        has_snapshot=snapshot,
+    )
 
 
 NAV3 = (Requirement("Navigation", 3),)
@@ -144,8 +152,9 @@ def test_the_skill_id_lookup_is_case_insensitive():
     """Every name comparison in this subsystem is case-insensitive, and
     the cache is keyed on whatever spelling ESI returned, which is not
     necessarily the spelling in the plan file."""
-    got = evaluate((Requirement("navigation", 3),),
-                   ids={"NAVIGATION": 100}, active={100: 5})
+    got = evaluate(
+        (Requirement("navigation", 3),), ids={"NAVIGATION": 100}, active={100: 5}
+    )
     assert got.requirements[0].state == ev.ACTIVE
 
 
@@ -176,15 +185,20 @@ def test_a_known_but_untrained_skill_reports_zero_not_none():
 
 def test_all_active_is_ready():
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 5, 200: 5})
+    got = evaluate(
+        reqs, ids={"Navigation": 100, "Mechanics": 200}, active={100: 5, 200: 5}
+    )
     assert got.readiness == ev.READY
 
 
 def test_one_queued_requirement_makes_the_plan_training():
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 5}, queue=[entry(200, 2, 0, finish=T0)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        active={100: 5},
+        queue=[entry(200, 2, 0, finish=T0)],
+    )
     assert got.readiness == ev.TRAINING
 
 
@@ -196,16 +210,24 @@ def test_locked_outranks_training():
     its own, the first needs the user to go do something. So Locked
     ranks WORSE than Training and the plan reads Locked."""
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 1}, trained={100: 5},
-                   queue=[entry(200, 2, 0, finish=T0)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        active={100: 1},
+        trained={100: 5},
+        queue=[entry(200, 2, 0, finish=T0)],
+    )
     assert got.readiness == ev.LOCKED
 
 
 def test_missing_outranks_locked():
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 1}, trained={100: 5})
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        active={100: 1},
+        trained={100: 5},
+    )
     assert got.readiness == ev.READINESS_MISSING
 
 
@@ -244,9 +266,11 @@ def test_the_eta_is_the_latest_finish_not_the_earliest():
     fly the ship."""
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
     late = T0 + timedelta(days=9)
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   queue=[entry(100, 3, 0, finish=T0),
-                          entry(200, 2, 1, finish=late)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        queue=[entry(100, 3, 0, finish=T0), entry(200, 2, 1, finish=late)],
+    )
     assert got.readiness == ev.TRAINING
     assert got.estimated_finish_utc == late
 
@@ -257,9 +281,11 @@ def test_one_dateless_queue_entry_suppresses_the_eta_entirely():
     "Training - timing unknown" instead of showing a date it cannot
     stand behind."""
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   queue=[entry(100, 3, 0, finish=T0),
-                          entry(200, 2, 1, finish=None)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        queue=[entry(100, 3, 0, finish=T0), entry(200, 2, 1, finish=None)],
+    )
     assert got.readiness == ev.TRAINING
     assert got.estimated_finish_utc is None
     assert got.queue_timing_unknown is True
@@ -277,9 +303,13 @@ def test_a_locked_plan_has_no_eta_even_with_a_dated_queue_entry():
     queued requirement with a real date, and showing it would promise a
     completion the inactive clone will not deliver."""
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 1}, trained={100: 5},
-                   queue=[entry(200, 2, 0, finish=T0)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        active={100: 1},
+        trained={100: 5},
+        queue=[entry(200, 2, 0, finish=T0)],
+    )
     assert got.readiness == ev.LOCKED
     assert got.estimated_finish_utc is None
 
@@ -293,9 +323,13 @@ def test_a_locked_plans_queue_timing_unknown_flag_is_also_gated_to_training():
     plan's ETA suppressed", and a Locked plan never had one to begin
     with."""
     reqs = (Requirement("Navigation", 3), Requirement("Mechanics", 2))
-    got = evaluate(reqs, ids={"Navigation": 100, "Mechanics": 200},
-                   active={100: 1}, trained={100: 5},
-                   queue=[entry(200, 2, 0, finish=None)])
+    got = evaluate(
+        reqs,
+        ids={"Navigation": 100, "Mechanics": 200},
+        active={100: 1},
+        trained={100: 5},
+        queue=[entry(200, 2, 0, finish=None)],
+    )
     assert got.readiness == ev.LOCKED
     assert got.queue_timing_unknown is False
     # The requirement itself still says it's genuinely queued with an
@@ -306,16 +340,36 @@ def test_a_locked_plans_queue_timing_unknown_flag_is_also_gated_to_training():
 
 
 def test_the_counts_partition_the_requirements():
-    reqs = (Requirement("A", 1), Requirement("B", 1), Requirement("C", 1),
-            Requirement("D", 1), Requirement("E", 1))
-    got = evaluate(reqs, ids={"A": 1, "B": 2, "C": 3, "D": 4},
-                   active={1: 5}, trained={2: 5},
-                   queue=[entry(3, 1, 0, finish=T0)])
-    assert (got.active_count, got.trained_inactive_count, got.queued_count,
-            got.missing_count, got.unknown_count) == (1, 1, 1, 1, 1)
-    assert sum([got.active_count, got.trained_inactive_count,
-                got.queued_count, got.missing_count,
-                got.unknown_count]) == len(got.requirements)
+    reqs = (
+        Requirement("A", 1),
+        Requirement("B", 1),
+        Requirement("C", 1),
+        Requirement("D", 1),
+        Requirement("E", 1),
+    )
+    got = evaluate(
+        reqs,
+        ids={"A": 1, "B": 2, "C": 3, "D": 4},
+        active={1: 5},
+        trained={2: 5},
+        queue=[entry(3, 1, 0, finish=T0)],
+    )
+    assert (
+        got.active_count,
+        got.trained_inactive_count,
+        got.queued_count,
+        got.missing_count,
+        got.unknown_count,
+    ) == (1, 1, 1, 1, 1)
+    assert sum(
+        [
+            got.active_count,
+            got.trained_inactive_count,
+            got.queued_count,
+            got.missing_count,
+            got.unknown_count,
+        ]
+    ) == len(got.requirements)
 
 
 def test_compact_status_of_nothing_is_unknown():

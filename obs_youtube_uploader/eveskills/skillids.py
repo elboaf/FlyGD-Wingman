@@ -11,6 +11,7 @@ resolved wrongly stays wrong until the file is deleted.
 Ground truth: TriffSkills/SkillIdCache.cs and the resolve flow in
 TriffSkillsController.cs (~503-615).
 """
+
 import concurrent.futures
 import contextlib
 import json
@@ -50,8 +51,10 @@ REASON_NOT_A_SKILL = "Resolved inventory type is not in EVE's skill category."
 # different facts, and a user reading the plan-issues rollup cannot tell
 # "ESI was down just now" from "this genuinely is not a skill" unless the
 # strings say so.
-REASON_ESI_UNAVAILABLE = ("Could not confirm this skill with ESI; it will "
-                          "be retried on the next resolve pass.")
+REASON_ESI_UNAVAILABLE = (
+    "Could not confirm this skill with ESI; it will "
+    "be retried on the next resolve pass."
+)
 
 
 def _key(name) -> str:
@@ -134,7 +137,8 @@ def _read_bounded(path: Path) -> str:
     if path.stat().st_size > MAX_CACHE_FILE_BYTES:
         raise ValueError(
             f"{path.name} exceeds the "
-            f"{MAX_CACHE_FILE_BYTES // (1024 * 1024)} MiB limit.")
+            f"{MAX_CACHE_FILE_BYTES // (1024 * 1024)} MiB limit."
+        )
     return path.read_text(encoding="utf-8")
 
 
@@ -146,8 +150,7 @@ def _preserve_corrupt(path: Path) -> str:
     millisecond-resolution stamp plus a numeric suffix fallback so two
     corruptions in the same wall-clock second cannot overwrite each other.
     """
-    stamp = (time.strftime("%Y%m%d-%H%M%S")
-             + f"{int(time.time() * 1000) % 1000:03d}")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"{int(time.time() * 1000) % 1000:03d}"
     target = path.with_name(f"{path.name}.corrupt-{stamp}")
     suffix = 0
     while target.exists():
@@ -238,9 +241,10 @@ def save(cache: SkillIdCache, path: Path) -> None:
         # category_id is written on every entry so the load-time check has
         # something real to require. It is constant today; writing it is
         # what makes the requirement honest rather than tautological.
-        "entries": [{"name": name, "type_id": type_id,
-                     "category_id": SKILL_CATEGORY_ID}
-                    for name, type_id in sorted(cache.type_ids().items())],
+        "entries": [
+            {"name": name, "type_id": type_id, "category_id": SKILL_CATEGORY_ID}
+            for name, type_id in sorted(cache.type_ids().items())
+        ],
     }
     # Written and confirmed durable first -- only once this succeeds is the
     # existing primary touched at all.
@@ -314,8 +318,10 @@ def load(path: Path) -> tuple:
         # A genuine access failure rather than bad content. There is
         # nothing to preserve or recover here: if the file cannot even be
         # opened, neither can its .bak sibling for the same reason.
-        warnings.append(f"{path.name} could not be read ({exc.strerror}); "
-                        "skill names will be resolved again.")
+        warnings.append(
+            f"{path.name} could not be read ({exc.strerror}); "
+            "skill names will be resolved again."
+        )
         return SkillIdCache(), warnings
     except ValueError:
         # _read_bounded's own size-cap check -- corrupt-content territory,
@@ -367,7 +373,8 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
     if recovered is None:
         warnings.append(
             f"{path.name} was missing and its backup ({backup.name}) could "
-            "not be read either; skill names will be resolved again.")
+            "not be read either; skill names will be resolved again."
+        )
         return SkillIdCache(), warnings
 
     # Write the recovered document back to *path* immediately. save() sees
@@ -381,12 +388,14 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
             f"{path.name} was missing; recovered it from {backup.name}, but "
             f"the recovery could not be saved back to disk ({exc}). If the "
             "app closes before the next successful save, this recovery "
-            "will be lost.")
+            "will be lost."
+        )
         return recovered, warnings
 
     warnings.append(
         f"{path.name} was missing (likely an interrupted save) and was "
-        f"recovered from its backup, {backup.name}.")
+        f"recovered from its backup, {backup.name}."
+    )
     return recovered, warnings
 
 
@@ -422,7 +431,8 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
     if recovered is None:
         warnings.append(
             f"{path.name} could not be read and was preserved as "
-            f"{preserved or 'a copy'}; skill names will be resolved again.")
+            f"{preserved or 'a copy'}; skill names will be resolved again."
+        )
         return SkillIdCache(), warnings
 
     if not preserved:
@@ -438,7 +448,8 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             f"Recovered {path.name} from backup after the main file could "
             "not be read, but the corrupt file could not be moved aside "
             "and was left in place; the recovery could not be saved back "
-            "to disk.")
+            "to disk."
+        )
         return recovered, warnings
 
     # Re-persisted immediately, mirroring state.py: _preserve_corrupt has
@@ -452,12 +463,14 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
         warnings.append(
             f"Recovered {path.name} from backup after the main file could "
             f"not be read, but the recovery could not be saved back to "
-            f"disk ({exc}); it was preserved as {preserved or 'a copy'}.")
+            f"disk ({exc}); it was preserved as {preserved or 'a copy'}."
+        )
         return recovered, warnings
 
     warnings.append(
         f"Recovered {path.name} from backup after the main file could not "
-        f"be read; it was preserved as {preserved or 'a copy'}.")
+        f"be read; it was preserved as {preserved or 'a copy'}."
+    )
     return recovered, warnings
 
 
@@ -519,8 +532,7 @@ def _classify(name: str, type_id: int, client) -> tuple:
     if not isinstance(response.data, dict):
         return name, None, REASON_NO_GROUP
     group_id = response.data.get("group_id")
-    if isinstance(group_id, bool) or not isinstance(group_id, int) \
-            or group_id <= 0:
+    if isinstance(group_id, bool) or not isinstance(group_id, int) or group_id <= 0:
         return name, None, REASON_NO_GROUP
     category, request_failed = _category_for_group(group_id, client)
     if request_failed:
@@ -533,8 +545,13 @@ def _classify(name: str, type_id: int, client) -> tuple:
     return name, type_id, ""
 
 
-def resolve(cache: SkillIdCache, names: Sequence[str], client, *,
-            max_workers: int = RESOLVE_WORKERS) -> dict:
+def resolve(
+    cache: SkillIdCache,
+    names: Sequence[str],
+    client,
+    *,
+    max_workers: int = RESOLVE_WORKERS,
+) -> dict:
     """Resolve uncached names, returning name -> failure reason.
 
     Three steps, ported whole: a batch POST to universe/ids, a per-type
@@ -551,7 +568,7 @@ def resolve(cache: SkillIdCache, names: Sequence[str], client, *,
     for start in range(0, len(pending), BATCH_SIZE):
         # ESI rejects a universe/ids body over 500 names outright, so an
         # unbatched first refresh over a large plan set fails entirely.
-        batch = pending[start:start + BATCH_SIZE]
+        batch = pending[start : start + BATCH_SIZE]
         response = client.post("/v3/universe/ids/", batch)
         by_key: dict = {}
         if response.ok and isinstance(response.data, dict):
@@ -564,8 +581,11 @@ def resolve(cache: SkillIdCache, names: Sequence[str], client, *,
         # would strand those requirements permanently.
         for name in batch:
             type_id = by_key.get(_key(name))
-            if isinstance(type_id, int) and not isinstance(type_id, bool) \
-                    and type_id > 0:
+            if (
+                isinstance(type_id, int)
+                and not isinstance(type_id, bool)
+                and type_id > 0
+            ):
                 candidates[name] = type_id
             else:
                 failures[name] = REASON_NOT_RESOLVED
@@ -579,8 +599,10 @@ def resolve(cache: SkillIdCache, names: Sequence[str], client, *,
     # budget the refresh loop protects by staying sequential.
     workers = max(1, min(max_workers, len(candidates)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_classify, name, type_id, client)
-                   for name, type_id in candidates.items()]
+        futures = [
+            pool.submit(_classify, name, type_id, client)
+            for name, type_id in candidates.items()
+        ]
         for future in concurrent.futures.as_completed(futures):
             name, type_id, reason = future.result()
             if reason:

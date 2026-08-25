@@ -1,6 +1,7 @@
 """The eve_bookmarks values drive a file that registers keyboard hooks, so
 load() has to be defensive about them in a way a title string never needed.
 """
+
 import json
 
 import pytest
@@ -56,8 +57,9 @@ def test_bad_enabled_falls_back_to_off(tmp_path, bad):
 
 def test_unknown_bind_ids_are_dropped_and_missing_ones_defaulted(tmp_path):
     path = tmp_path / "s.json"
-    path.write_text(json.dumps({"eve_bookmarks": {
-        "keybinds": {"FinH": "^h", "Nonsense": "^x"}}}))
+    path.write_text(
+        json.dumps({"eve_bookmarks": {"keybinds": {"FinH": "^h", "Nonsense": "^x"}}})
+    )
     binds = settings.load(path)["eve_bookmarks"]["keybinds"]
     assert binds["FinH"] == "^h"
     assert "Nonsense" not in binds
@@ -71,11 +73,18 @@ def test_a_settings_file_from_before_the_naming_removal_is_cleaned_up(tmp_path):
     rather than carried forward, so nothing keeps steering behaviour that
     has no control left."""
     path = tmp_path / "s.json"
-    path.write_text(json.dumps({"eve_bookmarks": {
-        "keybinds": {"Copy": "^j", "Paste": "^k", "FinH": "^h"},
-        "home_zero": True,
-        "preface_return": False,
-        "return_preface": "@"}}))
+    path.write_text(
+        json.dumps(
+            {
+                "eve_bookmarks": {
+                    "keybinds": {"Copy": "^j", "Paste": "^k", "FinH": "^h"},
+                    "home_zero": True,
+                    "preface_return": False,
+                    "return_preface": "@",
+                }
+            }
+        )
+    )
     section = settings.load(path)["eve_bookmarks"]
     assert section["keybinds"]["FinH"] == "^h"
     assert "Copy" not in section["keybinds"]
@@ -100,10 +109,13 @@ def test_non_string_bind_value_falls_back(tmp_path, bad):
 
 def test_window_map_coerces_to_bool_and_drops_non_string_keys(tmp_path):
     path = tmp_path / "s.json"
-    path.write_text(json.dumps({"eve_bookmarks": {
-        "windows": {"EVE - Pilot": 1, "EVE - Alt": 0}}}))
+    path.write_text(
+        json.dumps({"eve_bookmarks": {"windows": {"EVE - Pilot": 1, "EVE - Alt": 0}}})
+    )
     assert settings.load(path)["eve_bookmarks"]["windows"] == {
-        "EVE - Pilot": True, "EVE - Alt": False}
+        "EVE - Pilot": True,
+        "EVE - Alt": False,
+    }
 
 
 @pytest.mark.parametrize("bad", [7, "x", None, []])

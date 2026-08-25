@@ -3,6 +3,7 @@
 reconcile() is where a leak would live: a client that disappears without
 being removed leaves a thumbnail registered against a dead source and a
 window that never closes."""
+
 import itertools
 import logging
 import sys
@@ -71,7 +72,7 @@ def test_start_twice_does_not_spawn_two_threads(monkeypatch):
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     monkeypatch.setattr(h, "_run", fake_run)
     h.start()
-    running.wait(5)          # the first worker is definitely still alive
+    running.wait(5)  # the first worker is definitely still alive
     h.start()
     release.set()
     h.stop()
@@ -83,8 +84,9 @@ def test_shutdown_flushes_pending_layouts(monkeypatch):
     after a drag would otherwise discard the move -- and the plan called
     for this explicitly before anyone noticed it was missing."""
     flushed = []
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         flush_layouts=lambda: flushed.append(1))
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, flush_layouts=lambda: flushed.append(1)
+    )
 
     class FakeUser32:
         def __getattr__(self, _name):
@@ -104,13 +106,13 @@ def test_teardown_completes_even_if_the_flush_raises():
             def record(*a, **k):
                 calls.append(name)
                 return 0
+
             return record
 
     def boom():
         raise OSError("read-only filesystem")
 
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         flush_layouts=boom)
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, flush_layouts=boom)
     h._teardown(type("L", (), {"user32": FakeUser32()})())
     assert "PostQuitMessage" in calls
 
@@ -137,14 +139,16 @@ def test_a_restored_lock_survives_into_the_new_window():
     from obs_youtube_uploader.preview.geometry import Rect
     from obs_youtube_uploader.preview.layout import Entry
 
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         saved_layouts={"Pilot": Entry(Rect(1, 2, 320, 210),
-                                                       locked=True)})
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Pilot": Entry(Rect(1, 2, 320, 210), locked=True)},
+    )
     assert h._saved["Pilot"].locked is True
 
 
-@pytest.mark.skipif(sys.platform != "win32",
-                    reason="needs a real message pump and window station")
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="needs a real message pump and window station"
+)
 def test_stop_from_another_thread_really_exits_the_pump(monkeypatch):
     """End to end, on the thread boundary that matters.
 
@@ -184,15 +188,17 @@ def test_the_client_registry_keeps_clients_with_no_window(monkeypatch):
     """A client whose preview could not be created is still running, and a
     chord aimed at it must still work."""
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Alice"), _FakeClient("Bravo")])
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.PreviewWindow, "create",
-                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient("Alice"), _FakeClient("Bravo")],
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
 
     h._sweep(libs=None)
 
@@ -206,19 +212,20 @@ def test_the_registry_refreshes_hwnds_for_a_kept_key(monkeypatch):
     on a NEW hwnd counts as 'kept' -- a retained record would point at a
     dead window."""
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.PreviewWindow, "create",
-                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
 
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Alice", hwnd=0x1111)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=0x1111)]
+    )
     h._sweep(libs=None)
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Alice", hwnd=0x2222)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=0x2222)]
+    )
     h._sweep(libs=None)
 
     assert h._clients["Alice"].hwnd == 0x2222
@@ -226,17 +233,17 @@ def test_the_registry_refreshes_hwnds_for_a_kept_key(monkeypatch):
 
 def test_characters_excludes_clients_at_character_select(monkeypatch):
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.PreviewWindow, "create",
-                        classmethod(lambda cls, *a, **k: None))
-    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
     monkeypatch.setattr(
-        host.discovery, "list_clients",
-        lambda: [_FakeClient("Alice"),
-                 _FakeClient("hwnd:0x9", character=None)])
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient("Alice"), _FakeClient("hwnd:0x9", character=None)],
+    )
     h._sweep(libs=None)
 
     assert h.characters() == ["Alice"]
@@ -244,20 +251,19 @@ def test_characters_excludes_clients_at_character_select(monkeypatch):
 
 def test_a_changed_client_set_is_reported_once(monkeypatch):
     seen = []
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         on_clients_changed=seen.append)
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.PreviewWindow, "create",
-                        classmethod(lambda cls, *a, **k: None))
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_clients_changed=seen.append
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Alice")])
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [_FakeClient("Alice")])
 
     h._sweep(libs=None)
-    h._sweep(libs=None)      # unchanged: must not report again
+    h._sweep(libs=None)  # unchanged: must not report again
 
     assert seen == [["Alice"]]
 
@@ -271,16 +277,23 @@ def test_host_command_messages_are_distinct():
     that need no DLL -- and CI is ubuntu-latest only, so that skip would
     hide this assertion from every CI run.
     """
-    commands = {host.win32.WM_APP_SHUTDOWN, host.win32.WM_APP_SWEEP_NOW,
-                host.win32.WM_APP_REBIND}
+    commands = {
+        host.win32.WM_APP_SHUTDOWN,
+        host.win32.WM_APP_SWEEP_NOW,
+        host.win32.WM_APP_REBIND,
+    }
     assert len(commands) == 3
     assert all(c >= host.win32.WM_APP for c in commands)
 
 
 def test_plan_assigns_one_id_per_binding():
     plan = host.plan_registrations(
-        {"characters": {"Bravo": "Ctrl+F2", "Alice": "Ctrl+F1"},
-         "cycle_next": "Ctrl+Alt+Right", "cycle_prev": "Ctrl+Alt+Left"})
+        {
+            "characters": {"Bravo": "Ctrl+F2", "Alice": "Ctrl+F1"},
+            "cycle_next": "Ctrl+Alt+Right",
+            "cycle_prev": "Ctrl+Alt+Left",
+        }
+    )
     ids = [entry[0] for entry in plan]
     assert len(ids) == len(set(ids)) == 4
     assert all(0 < i <= 0xBFFF for i in ids)
@@ -289,15 +302,22 @@ def test_plan_assigns_one_id_per_binding():
 def test_plan_is_stable_across_calls():
     """Rebinding unregisters and re-registers everything, so an unstable
     id assignment would churn registrations that did not change."""
-    table = {"characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
-             "cycle_next": "", "cycle_prev": ""}
+    table = {
+        "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
+        "cycle_next": "",
+        "cycle_prev": "",
+    }
     assert host.plan_registrations(table) == host.plan_registrations(table)
 
 
 def test_plan_drops_unparseable_and_empty_gestures():
     plan = host.plan_registrations(
-        {"characters": {"Alice": "", "Bravo": "nonsense", "Carol": "Ctrl+F3"},
-         "cycle_next": "", "cycle_prev": ""})
+        {
+            "characters": {"Alice": "", "Bravo": "nonsense", "Carol": "Ctrl+F3"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        }
+    )
     assert [entry[2] for entry in plan] == [("focus", "Carol")]
 
 
@@ -305,15 +325,23 @@ def test_plan_drops_a_duplicate_chord():
     """Windows would refuse the second registration anyway; catching it
     here keeps the reported status honest about which binding lost."""
     plan = host.plan_registrations(
-        {"characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
-         "cycle_next": "", "cycle_prev": ""})
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        }
+    )
     assert len(plan) == 1
 
 
 def test_cycle_actions_carry_direction():
     plan = host.plan_registrations(
-        {"characters": {}, "cycle_next": "Ctrl+Alt+Right",
-         "cycle_prev": "Ctrl+Alt+Left"})
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+Alt+Right",
+            "cycle_prev": "Ctrl+Alt+Left",
+        }
+    )
     actions = sorted(entry[2] for entry in plan)
     assert actions == [("cycle", -1), ("cycle", 1)]
 
@@ -350,29 +378,38 @@ def test_rebind_unregisters_everything_before_registering():
     user32 = _FakeUser32()
     libs = _FakeLibs(user32)
 
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
     user32.calls.clear()
-    h._apply_hotkeys(libs, {"characters": {"Bravo": "Ctrl+F2"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Bravo": "Ctrl+F2"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     kinds = [kind for kind, _ in user32.calls]
     assert kinds.index("unregister") < kinds.index("register")
     assert list(user32.registered.values()) == [
-        (gestures.parse("Ctrl+F2").mods, gestures.parse("Ctrl+F2").vk)]
+        (gestures.parse("Ctrl+F2").mods, gestures.parse("Ctrl+F2").vk)
+    ]
 
 
 def test_a_refused_chord_is_reported_and_the_others_still_register():
     refused = gestures.parse("Ctrl+F1")
     user32 = _FakeUser32(refuse={(refused.mods, refused.vk)})
     reported = []
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         on_hotkey_status=reported.append)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_hotkey_status=reported.append
+    )
     h._hwnd = 0x99
 
-    h._apply_hotkeys(_FakeLibs(user32),
-                     {"characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
-                      "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        _FakeLibs(user32),
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
 
     assert h.hotkey_status() == {"Ctrl+F1": False, "Ctrl+F2": True}
     assert reported == [{"Ctrl+F1": False, "Ctrl+F2": True}]
@@ -389,13 +426,18 @@ def test_apply_hotkeys_logs_a_one_line_registration_summary(caplog):
     h._hwnd = 0x99
 
     with caplog.at_level(logging.INFO):
-        h._apply_hotkeys(_FakeLibs(user32),
-                         {"characters": {"Alice": "Ctrl+F1",
-                                         "Bravo": "Ctrl+F2"},
-                          "cycle_next": "", "cycle_prev": ""})
+        h._apply_hotkeys(
+            _FakeLibs(user32),
+            {
+                "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
+                "cycle_next": "",
+                "cycle_prev": "",
+            },
+        )
 
-    assert any("1 registered" in r.message and "1 refused" in r.message
-              for r in caplog.records)
+    assert any(
+        "1 registered" in r.message and "1 refused" in r.message for r in caplog.records
+    )
 
 
 def test_status_is_readable_after_a_pass_that_reported_to_nobody():
@@ -404,9 +446,10 @@ def test_status_is_readable_after_a_pass_that_reported_to_nobody():
     afterwards or it is lost for the session."""
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
-    h._apply_hotkeys(_FakeLibs(_FakeUser32()),
-                     {"characters": {"Alice": "Ctrl+F1"},
-                      "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        _FakeLibs(_FakeUser32()),
+        {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""},
+    )
     assert h.hotkey_status() == {"Ctrl+F1": True}
 
 
@@ -439,8 +482,9 @@ def test_teardown_releases_hotkeys_before_destroying_the_host_window():
     h._hwnd = 0x99
     h._hook = 0x55
     libs = _FakeLibs(user32)
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     h._teardown(libs)
 
@@ -453,6 +497,7 @@ def test_teardown_clears_the_client_and_registration_reports():
     If teardown left these populated, a stopped host would keep reporting
     characters as online and chords as registered after the thread that
     owned them is gone and Windows holds none of them."""
+
     class _TeardownUser32(_FakeUser32):
         def __getattr__(self, name):
             # Anything _teardown calls beyond Register/UnregisterHotKey
@@ -464,8 +509,9 @@ def test_teardown_clears_the_client_and_registration_reports():
     h._hwnd = 0x99
     h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
     libs = _FakeLibs(_TeardownUser32())
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
     assert h.characters() == ["Alice"]
     assert h.hotkey_status() == {"Ctrl+F1": True}
 
@@ -477,16 +523,18 @@ def test_teardown_clears_the_client_and_registration_reports():
 
 def test_hotkey_focuses_the_named_character(monkeypatch):
     activated = []
-    monkeypatch.setattr(host.window_mod, "activate",
-                        lambda libs, hwnd: activated.append(hwnd) or True)
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
     h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
     user32 = _FakeUser32()
     user32.GetForegroundWindow = lambda: 0
     libs = _FakeLibs(user32)
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     ident = next(iter(user32.registered))
     h._on_hotkey(libs, ident)
@@ -496,17 +544,21 @@ def test_hotkey_focuses_the_named_character(monkeypatch):
 
 def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
     activated = []
-    monkeypatch.setattr(host.window_mod, "activate",
-                        lambda libs, hwnd: activated.append(hwnd) or True)
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
-    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1111),
-                  "Bravo": _FakeClient("Bravo", hwnd=0x2222)}
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
     user32 = _FakeUser32()
     user32.GetForegroundWindow = lambda: 0x1111
     libs = _FakeLibs(user32)
-    h._apply_hotkeys(libs, {"characters": {}, "cycle_next": "Ctrl+Alt+Right",
-                            "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {}, "cycle_next": "Ctrl+Alt+Right", "cycle_prev": ""}
+    )
 
     ident = next(iter(user32.registered))
     h._on_hotkey(libs, ident)
@@ -516,23 +568,24 @@ def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
 
 def test_a_focus_chord_for_an_absent_character_does_nothing(monkeypatch):
     activated = []
-    monkeypatch.setattr(host.window_mod, "activate",
-                        lambda libs, hwnd: activated.append(hwnd) or True)
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
     h._clients = {}
     user32 = _FakeUser32()
     libs = _FakeLibs(user32)
-    h._apply_hotkeys(libs, {"characters": {"Ghost": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Ghost": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     h._on_hotkey(libs, next(iter(user32.registered)))
 
     assert activated == []
 
 
-def test_hotkey_dispatch_is_logged_including_silent_early_returns(
-        monkeypatch, caplog):
+def test_hotkey_dispatch_is_logged_including_silent_early_returns(monkeypatch, caplog):
     """_on_hotkey had no logging at all: an unknown id and a not-running
     target both returned silently, and a field report of 'my hotkey does
     nothing' had no dispatch line to distinguish 'never fired' from 'fired
@@ -544,17 +597,22 @@ def test_hotkey_dispatch_is_logged_including_silent_early_returns(
     user32 = _FakeUser32()
     user32.GetForegroundWindow = lambda: 0
     libs = _FakeLibs(user32)
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1",
-                                           "Ghost": "Ctrl+F2"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {"Alice": "Ctrl+F1", "Ghost": "Ctrl+F2"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
     ident_by_action = {v: k for k, v in h._registered.items()}
     alice_ident = ident_by_action[("focus", "Alice")]
     ghost_ident = ident_by_action[("focus", "Ghost")]
 
     with caplog.at_level(logging.DEBUG):
-        h._on_hotkey(libs, alice_ident)     # fires: target is running
-        h._on_hotkey(libs, ghost_ident)     # silent early return: not running
-        h._on_hotkey(libs, 0xDEAD)          # silent early return: unknown id
+        h._on_hotkey(libs, alice_ident)  # fires: target is running
+        h._on_hotkey(libs, ghost_ident)  # silent early return: not running
+        h._on_hotkey(libs, 0xDEAD)  # silent early return: unknown id
 
     messages = [r.message for r in caplog.records]
     assert any("Alice" in m for m in messages)
@@ -568,16 +626,17 @@ def test_a_raising_status_callback_does_not_kill_the_registration_pass():
     would unwind out of _run and kill the pump while self._hwnd stays
     set -- previews dead for the session, stop() then blocking for the
     full JOIN_TIMEOUT_S posting to a window nothing pumps for."""
+
     def boom(status):
         raise RuntimeError("bridge is gone")
 
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         on_hotkey_status=boom)
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, on_hotkey_status=boom)
     h._hwnd = 0x99
     libs = _FakeLibs(_FakeUser32())
 
-    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1"},
-                            "cycle_next": "", "cycle_prev": ""})
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     # The pass itself must have completed and recorded its own outcome,
     # despite the callback raising.
@@ -588,22 +647,20 @@ def test_a_raising_clients_callback_does_not_kill_the_sweep(monkeypatch):
     """Identical hazard to on_hotkey_status: _sweep() runs from _run()
     before _ready.set() on the very first sweep, so a raise here would
     kill the preview thread the same way."""
+
     def boom(now):
         raise RuntimeError("bridge is gone")
 
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         on_clients_changed=boom)
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.PreviewWindow, "create",
-                        classmethod(lambda cls, *a, **k: None))
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, on_clients_changed=boom)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: [geometry.Rect(0, 0, 1920, 1080)])
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Alice")])
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [_FakeClient("Alice")])
 
-    h._sweep(libs=None)   # must not raise
+    h._sweep(libs=None)  # must not raise
 
     # The sweep itself must have completed despite the callback raising.
     assert h.characters() == ["Alice"]
@@ -620,13 +677,16 @@ VIRTUAL = geometry.Rect(-2560, 0, 8960, 2160)
 
 
 def _on_a_monitor(r):
-    return any(not (r.right <= m.x or r.x >= m.right
-                    or r.bottom <= m.y or r.y >= m.bottom) for m in MONITORS)
+    return any(
+        not (r.right <= m.x or r.x >= m.right or r.bottom <= m.y or r.y >= m.bottom)
+        for m in MONITORS
+    )
 
 
 def _placement_host(monkeypatch, saved=None, **kw):
-    h = host.PreviewHost(on_layout_changed=lambda *a: None,
-                         saved_layouts=saved, size=(320, 210), **kw)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, saved_layouts=saved, size=(320, 210), **kw
+    )
     monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
     return h
 
@@ -639,8 +699,9 @@ def test_a_defaulted_preview_lands_on_a_monitor(monkeypatch):
     Pins the exact rect: an assertion that only checks for intersection
     passes with the nearest-monitor search inverted."""
     h = _placement_host(monkeypatch)
-    assert h._resolve_rect("Guarzo Togenada", 0, MONITORS) == \
-        geometry.Rect(6062, 309, 320, 210)
+    assert h._resolve_rect("Guarzo Togenada", 0, MONITORS) == geometry.Rect(
+        6062, 309, 320, 210
+    )
 
 
 def test_every_defaulted_preview_in_a_full_stack_is_fully_on_a_monitor(monkeypatch):
@@ -651,17 +712,27 @@ def test_every_defaulted_preview_in_a_full_stack_is_fully_on_a_monitor(monkeypat
     h = _placement_host(monkeypatch)
     placed = [h._resolve_rect(f"char-{i}", i, MONITORS) for i in range(6)]
     for i, r in enumerate(placed):
-        host_mon = next((m for m in MONITORS
-                         if r.x >= m.x and r.right <= m.right
-                         and r.y >= m.y and r.bottom <= m.bottom), None)
+        host_mon = next(
+            (
+                m
+                for m in MONITORS
+                if r.x >= m.x
+                and r.right <= m.right
+                and r.y >= m.y
+                and r.bottom <= m.bottom
+            ),
+            None,
+        )
         assert host_mon is not None, (i, r)
     for a, b in itertools.pairwise(placed):
         assert b.y >= a.bottom, (a, b)
 
 
 def test_a_saved_rect_on_a_detached_monitor_is_pulled_back(monkeypatch):
-    h = _placement_host(monkeypatch, saved={"Gone": layout.Entry(
-        geometry.Rect(-9000, 400, 320, 210), False)})
+    h = _placement_host(
+        monkeypatch,
+        saved={"Gone": layout.Entry(geometry.Rect(-9000, 400, 320, 210), False)},
+    )
     assert _on_a_monitor(h._resolve_rect("Gone", 0, MONITORS))
 
 
@@ -695,10 +766,10 @@ def test_the_sweep_places_a_new_preview_at_its_clamped_rect(monkeypatch):
         return _Win()
 
     h = host.PreviewHost(on_layout_changed=lambda *a: None, size=(320, 210))
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("Guarzo Togenada")])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Guarzo Togenada")]
+    )
     monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
     monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
     monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
@@ -717,15 +788,15 @@ def test_the_sweep_enumerates_monitors_once_for_a_whole_batch(monkeypatch):
         return None
 
     h = host.PreviewHost(on_layout_changed=lambda *a: None, size=(320, 210))
-    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically",
-                        lambda: None)
-    monkeypatch.setattr(host.discovery, "list_clients",
-                        lambda: [_FakeClient("A"), _FakeClient("B"),
-                                 _FakeClient("C")])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient("A"), _FakeClient("B"), _FakeClient("C")],
+    )
     monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
     monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
-    monkeypatch.setattr(h, "_monitors",
-                        lambda: (calls.append(1) or MONITORS))
+    monkeypatch.setattr(h, "_monitors", lambda: calls.append(1) or MONITORS)
 
     h._sweep(libs=None)
 
@@ -734,34 +805,39 @@ def test_the_sweep_enumerates_monitors_once_for_a_whole_batch(monkeypatch):
 
 # --- restore_preview_positions gates the saved rect -------------------------
 
+
 def test_a_saved_rect_is_ignored_when_restoring_is_off(monkeypatch):
     """Off means the preview opens where a first-time character's would --
     and not only at launch, but every time the client appears."""
     placed = geometry.Rect(3106, 546, 320, 210)
-    h = _placement_host(monkeypatch,
-                        saved={"Isiga": layout.Entry(placed, False)},
-                        restore_positions=lambda: False)
-    assert h._resolve_rect("Isiga", 0, MONITORS) == \
-        h._resolve_rect("never-seen", 0, MONITORS)
+    h = _placement_host(
+        monkeypatch,
+        saved={"Isiga": layout.Entry(placed, False)},
+        restore_positions=lambda: False,
+    )
+    assert h._resolve_rect("Isiga", 0, MONITORS) == h._resolve_rect(
+        "never-seen", 0, MONITORS
+    )
 
 
 def test_the_off_path_is_clamped_to_a_monitor_too(monkeypatch):
     """The clamp must apply on BOTH paths. Branching early and returning
     the raw default would put the preview back in the dead zone above a
     staggered monitor -- the bug #30 fixed."""
-    h = _placement_host(monkeypatch,
-                        saved={"Gone": layout.Entry(
-                            geometry.Rect(-9000, 400, 320, 210), False)},
-                        restore_positions=lambda: False)
-    assert h._resolve_rect("Gone", 0, MONITORS) == \
-        geometry.Rect(6062, 309, 320, 210)
+    h = _placement_host(
+        monkeypatch,
+        saved={"Gone": layout.Entry(geometry.Rect(-9000, 400, 320, 210), False)},
+        restore_positions=lambda: False,
+    )
+    assert h._resolve_rect("Gone", 0, MONITORS) == geometry.Rect(6062, 309, 320, 210)
 
 
 def test_the_saved_path_is_still_clamped_when_restoring_is_on(monkeypatch):
-    h = _placement_host(monkeypatch,
-                        saved={"Gone": layout.Entry(
-                            geometry.Rect(-9000, 400, 320, 210), False)},
-                        restore_positions=lambda: True)
+    h = _placement_host(
+        monkeypatch,
+        saved={"Gone": layout.Entry(geometry.Rect(-9000, 400, 320, 210), False)},
+        restore_positions=lambda: True,
+    )
     assert _on_a_monitor(h._resolve_rect("Gone", 0, MONITORS))
 
 
@@ -771,9 +847,11 @@ def test_the_setting_is_read_per_placement_not_captured(monkeypatch):
     value the app started with for the rest of the run."""
     wanted = [False]
     placed = geometry.Rect(3106, 546, 320, 210)
-    h = _placement_host(monkeypatch,
-                        saved={"Isiga": layout.Entry(placed, False)},
-                        restore_positions=lambda: wanted[0])
+    h = _placement_host(
+        monkeypatch,
+        saved={"Isiga": layout.Entry(placed, False)},
+        restore_positions=lambda: wanted[0],
+    )
     assert h._resolve_rect("Isiga", 0, MONITORS) != placed
     wanted[0] = True
     assert h._resolve_rect("Isiga", 0, MONITORS) == placed
@@ -788,9 +866,11 @@ def test_an_unreadable_setting_restores_rather_than_discards(monkeypatch):
     def boom():
         raise RuntimeError("settings vanished")
 
-    h = _placement_host(monkeypatch,
-                        saved={"Isiga": layout.Entry(placed, False)},
-                        restore_positions=boom)
+    h = _placement_host(
+        monkeypatch,
+        saved={"Isiga": layout.Entry(placed, False)},
+        restore_positions=boom,
+    )
     assert h._resolve_rect("Isiga", 0, MONITORS) == placed
 
 
@@ -798,10 +878,10 @@ def test_positions_are_recorded_even_while_restoring_is_off():
     """Switching back on must restore what the user last had rather than
     nothing, so a drag is persisted whatever the setting says."""
     recorded = []
-    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a),
-                         restore_positions=lambda: False)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: recorded.append(a), restore_positions=lambda: False
+    )
     rect = geometry.Rect(10, 20, 320, 210)
     h._layout_changed("Isiga", rect, False)
     assert recorded == [("Isiga", rect, False)]
     assert h._saved["Isiga"].rect == rect
-

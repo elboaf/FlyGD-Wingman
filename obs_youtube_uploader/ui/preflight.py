@@ -16,6 +16,7 @@ the same three keys, and must stay that way.
 Testable without a VM: point WEBVIEW2_BROWSER_EXECUTABLE_FOLDER at an empty
 directory to reproduce the runtime-not-found path non-destructively.
 """
+
 import logging
 import sys
 
@@ -136,7 +137,8 @@ def _message_box(title: str, body: str) -> None:
     MB_SETFOREGROUND = 0x10000
     MB_TOPMOST = 0x40000
     ctypes.windll.user32.MessageBoxW(
-        None, body, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST)
+        None, body, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+    )
     return
 
 
@@ -155,7 +157,9 @@ def require_webview2(version=webview2_version, alert=_message_box) -> bool:
     if found is not None:
         logger.debug("WebView2 runtime %s detected", found)
         return True
-    logger.error("WebView2 runtime not found; refusing to start a webview "
-                 "that would silently render nothing")
+    logger.error(
+        "WebView2 runtime not found; refusing to start a webview "
+        "that would silently render nothing"
+    )
     alert(MISSING_RUNTIME_TITLE, missing_runtime_message())
     return False

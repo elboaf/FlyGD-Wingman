@@ -18,6 +18,7 @@ engine is verified":
 
 The manual smoke checklist is the backstop for all of these.
 """
+
 import re
 
 import pytest
@@ -42,8 +43,9 @@ def _code(source: str) -> str:
     would still be searched; if that ever produces a false failure, move the
     comment onto its own line rather than weakening the assertion.
     """
-    return "\n".join(line for line in source.splitlines()
-                     if not line.strip().startswith(";"))
+    return "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith(";")
+    )
 
 
 @pytest.fixture
@@ -100,8 +102,9 @@ def test_the_engine_reads_only_keybinds_and_enabled(source):
     That is exactly how the compiled HomeZeroIs0 default came to renumber
     home bookmarks.
     """
-    sections = set(re.findall(r"IniRead,\s*\w+\s*,\s*%IniFile%\s*,\s*(\w+)",
-                              source, re.IGNORECASE))
+    sections = set(
+        re.findall(r"IniRead,\s*\w+\s*,\s*%IniFile%\s*,\s*(\w+)", source, re.IGNORECASE)
+    )
     assert sections == {"Keybinds", "Enabled"}, sections
 
 
@@ -119,19 +122,20 @@ def test_home_hole_resumption_is_reachable(source):
     Nothing caught it, because every assertion here was about the presence
     of names rather than about their being reachable. Hence this one.
     """
-    assert re.search(r"ZeroMode\s*:=\s*True", source), \
+    assert re.search(r"ZeroMode\s*:=\s*True", source), (
         "ZeroMode is never entered -- home-hole resumption is dead code"
+    )
     # Anchored on DoSemi's body rather than on a bare call count. Comparing
     # calls against definitions matched at column 0 would silently start
     # passing if a future revision ever indented a definition: definitions
     # drops to 0, calls stays 1, and 1 > 0 holds for code that is still
     # dead -- reintroducing exactly the bug this test exists to catch.
-    body = re.search(r"^DoSemi:\n(.*?)^Return$", source,
-                     re.DOTALL | re.MULTILINE)
+    body = re.search(r"^DoSemi:\n(.*?)^Return$", source, re.DOTALL | re.MULTILINE)
     assert body, "DoSemi not found"
     for helper in ("CountValidBookmarkLines", "AllPrefixesSingle"):
-        assert re.search(helper + r"\s*\(", body.group(1)), \
+        assert re.search(helper + r"\s*\(", body.group(1)), (
             f"{helper} is not called from DoSemi -- it is dead code"
+        )
 
 
 def test_copy_and_paste_are_gone(source):
@@ -184,15 +188,17 @@ def test_every_bind_is_registered_inside_the_window_loop(source):
     The loop is bounded by its own closing brace, so a RegisterBind outside
     it cannot match `body` -- which is exactly what this asserts.
     """
-    loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
-                     re.IGNORECASE | re.DOTALL)
+    loop = re.search(
+        r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source, re.IGNORECASE | re.DOTALL
+    )
     assert loop, "per-window registration loop not found"
     body = loop.group(0)
     calls = re.findall(r'RegisterBind\("(\w+)"', source)
     inside = re.findall(r'RegisterBind\("(\w+)"', body)
     assert calls, "no registrations at all"
-    assert sorted(calls) == sorted(inside), \
+    assert sorted(calls) == sorted(inside), (
         f"registered outside the window loop: {set(calls) - set(inside)}"
+    )
     assert "SetRoot" in inside
     assert "GrabSig" in inside
 
@@ -213,8 +219,9 @@ def test_set_root_is_scoped_by_registration_alone(source):
     Asserted positively so this cannot pass vacuously: Set Root must still
     be registered, and only inside the window loop.
     """
-    loop = re.search(r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source,
-                     re.IGNORECASE | re.DOTALL)
+    loop = re.search(
+        r"if\s*\(Val\s*=\s*\"1\"\)\s*\{[^}]*\}", source, re.IGNORECASE | re.DOTALL
+    )
     assert loop, "per-window registration loop not found"
     assert 'RegisterBind("SetRoot"' in loop.group(0)
     outside = source.replace(loop.group(0), "")
@@ -222,9 +229,10 @@ def test_set_root_is_scoped_by_registration_alone(source):
     # The removal itself, asserted rather than merely described above. The
     # guard's name is the whole of it: IsEveWindow appears nowhere else in
     # the engine, so its return would be caught here.
-    assert "IsEveWindow" not in source, \
-        "DoSemi's window guard is back -- it was dropped to track the " \
+    assert "IsEveWindow" not in source, (
+        "DoSemi's window guard is back -- it was dropped to track the "
         "author's script; re-adding it is a divergence, not a fix"
+    )
 
 
 def test_nothing_sends_the_engine_commands(source, lowered):
@@ -252,8 +260,14 @@ def test_nothing_sends_the_engine_commands(source, lowered):
     # The status file is the whole of the engine -> Wingman contract. AHK
     # escapes a quote by doubling it, so a field reads """name"": in source.
     published = set(re.findall(r'"""(\w+)"":', source))
-    assert published == {"sig", "root", "next_num", "next_alpha",
-                         "failed_binds", "written"}, published
+    assert published == {
+        "sig",
+        "root",
+        "next_num",
+        "next_alpha",
+        "failed_binds",
+        "written",
+    }, published
 
 
 def test_every_registration_records_failures(source):
@@ -261,8 +275,9 @@ def test_every_registration_records_failures(source):
     Any Hotkey line dereferencing a KB_ variable directly has bypassed it --
     whether or not it also passes UseErrorLevel, since omitting that swallows
     the failure just as silently."""
-    direct = re.findall(r"^\s*Hotkey\s*,[^\n]*%KB_\w+%", source,
-                         re.MULTILINE | re.IGNORECASE)
+    direct = re.findall(
+        r"^\s*Hotkey\s*,[^\n]*%KB_\w+%", source, re.MULTILINE | re.IGNORECASE
+    )
     assert direct == [], f"registration bypassing RegisterBind: {direct}"
     assert re.search(r"RegisterBind\s*\(", source, re.IGNORECASE)
 
@@ -282,13 +297,16 @@ def test_window_scoped_teardown_exists(source):
     assert re.search(
         r"For\s+\w+\s*,\s*\w+\s+in\s+RegisteredWindows\s*\{[^}]*"
         r"Hotkey\s*,\s*IfWinActive\s*,\s*%\w+%",
-        source, re.IGNORECASE)
+        source,
+        re.IGNORECASE,
+    )
 
 
 def test_status_is_published_atomically(lowered):
     assert "eve_status.json.tmp" in lowered
-    assert re.search(r"filemove,\s*eve_status\.json\.tmp,\s*eve_status\.json,\s*1",
-                      lowered)
+    assert re.search(
+        r"filemove,\s*eve_status\.json\.tmp,\s*eve_status\.json,\s*1", lowered
+    )
 
 
 def test_globals_written_inside_functions_are_declared(source):
@@ -307,36 +325,47 @@ def test_globals_written_inside_functions_are_declared(source):
     than for one name, so the next function to reach for one is covered
     without anybody remembering to come back here.
     """
-    watched = {"FailedBinds", "UsedNums", "UsedAlphas", "NextNum",
-               "NextAlpha", "RootKey", "RootModeActive", "ZeroMode",
-               "LastSigId", "ConsumedSeq", "ReadyToIncrement"}
-    functions = re.findall(r"^([A-Za-z_]\w*)\s*\([^)]*\)\s*\{(.*?)^\}",
-                           source, re.DOTALL | re.MULTILINE)
+    watched = {
+        "FailedBinds",
+        "UsedNums",
+        "UsedAlphas",
+        "NextNum",
+        "NextAlpha",
+        "RootKey",
+        "RootModeActive",
+        "ZeroMode",
+        "LastSigId",
+        "ConsumedSeq",
+        "ReadyToIncrement",
+    }
+    functions = re.findall(
+        r"^([A-Za-z_]\w*)\s*\([^)]*\)\s*\{(.*?)^\}", source, re.DOTALL | re.MULTILINE
+    )
     # `if (...) {` at column 0 matches the same shape as a definition.
     keywords = {"if", "while", "for", "loop", "else", "return"}
     functions = [(n, b) for n, b in functions if n.lower() not in keywords]
     assert functions, "no functions found"
     checked = 0
     for name, body in functions:
-        declarations = re.findall(r"^\s*global\s+([^\n;]+)", body,
-                                  re.MULTILINE)
-        declared = {n.strip()
-                    for line in declarations for n in line.split(",")}
+        declarations = re.findall(r"^\s*global\s+([^\n;]+)", body, re.MULTILINE)
+        declared = {n.strip() for line in declarations for n in line.split(",")}
         for global_name in watched:
             if not re.search(r"\b" + global_name + r"\b", body):
                 continue
             checked += 1
             assert global_name in declared, (
                 f"{name}() touches {global_name} without declaring it "
-                f"global -- in AHK v1 that is a local, and the write is lost")
+                f"global -- in AHK v1 that is a local, and the write is lost"
+            )
     # Guards against the whole loop quietly matching nothing, which is
     # exactly how the previous version of this test died.
     assert checked, "no function touched a watched global -- test is vacuous"
 
 
 def _label_body(source, label):
-    match = re.search(r"^" + label + r":\n(.*?)^Return$", source,
-                      re.DOTALL | re.MULTILINE)
+    match = re.search(
+        r"^" + label + r":\n(.*?)^Return$", source, re.DOTALL | re.MULTILINE
+    )
     assert match, f"{label} not found"
     return match.group(1)
 
@@ -369,10 +398,11 @@ def test_no_clipboard_read_can_pick_up_stale_data(source):
     for label in _CLIPBOARD_READERS:
         body = _label_body(source, label)
         assert "Send ^c" in body, label
-        before = body[:body.index("Send ^c")]
+        before = body[: body.index("Send ^c")]
         assert re.search(r"Clipboard\s*:=\s*\"\"", before), (
             f"{label} sends ^c without first clearing the clipboard, so a "
-            f"failed copy silently reads whatever was already there")
+            f"failed copy silently reads whatever was already there"
+        )
 
 
 def test_grab_sig_reports_a_failed_copy(source):
@@ -391,6 +421,7 @@ def test_grab_sig_reports_a_failed_copy(source):
     does not change that. DoConvertScout already reports its own.
     """
     body = _label_body(source, "DoQ")
-    assert re.search(r"if\s*\(ErrorLevel\)", body), \
+    assert re.search(r"if\s*\(ErrorLevel\)", body), (
         "DoQ ignores ClipWait's ErrorLevel, so a failed copy is silent"
+    )
     assert "ToolTip" in body, "DoQ has no way to tell the user the copy failed"

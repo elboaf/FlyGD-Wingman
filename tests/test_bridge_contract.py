@@ -28,14 +28,14 @@ Purely lexical, and only as good as the spellings it watches:
 - A handler in the allowlist that nothing registers is not an error: it may
   be pushed from somewhere other than ui/api.py.
 """
+
 import re
 from pathlib import Path
 
 import pytest
 
 WEB = Path(__file__).resolve().parent.parent / "obs_youtube_uploader" / "web"
-API = (Path(__file__).resolve().parent.parent / "obs_youtube_uploader"
-       / "ui" / "api.py")
+API = Path(__file__).resolve().parent.parent / "obs_youtube_uploader" / "ui" / "api.py"
 
 
 def allowlist() -> list:
@@ -85,7 +85,8 @@ def test_every_pushed_name_is_in_the_allowlist(name):
     assert name in allowlist(), (
         f"ui/api.py pushes {name!r}, which is absent from WM.HANDLERS in "
         "web/app.js. WM.handle() throws on an unknown name, so the route "
-        "registering it would fail to load entirely.")
+        "registering it would fail to load entirely."
+    )
 
 
 @pytest.mark.parametrize("name", sorted(registered_names()))
@@ -96,7 +97,8 @@ def test_every_registered_handler_is_in_the_allowlist(name):
     assert name in allowlist(), (
         f"{where} registers {name!r} via WM.handle(), which is absent from "
         "WM.HANDLERS in web/app.js. That throws at registration and every "
-        "handler declared below it in the same file is never registered.")
+        "handler declared below it in the same file is never registered."
+    )
 
 
 def test_the_eve_settings_route_registers_all_three_of_its_pushes():
@@ -104,7 +106,6 @@ def test_the_eve_settings_route_registers_all_three_of_its_pushes():
     is the route the sweep was written for and a regression here is
     invisible to every other test."""
     registered = registered_names()
-    for name in ("onEveSettingsNames", "onEveSettingsRunning",
-                 "onEveSettingsDone"):
+    for name in ("onEveSettingsNames", "onEveSettingsRunning", "onEveSettingsDone"):
         assert name in allowlist(), name
         assert "evesettings.js" in registered.get(name, []), name

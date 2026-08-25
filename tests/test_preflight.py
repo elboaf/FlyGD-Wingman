@@ -10,6 +10,7 @@ Registry access and the native message box are injected, so the decision
 logic is tested on ubuntu-latest with no Windows and no runtime present --
 the same reader= convention theme.detect_mode uses.
 """
+
 import sys
 
 import pytest
@@ -37,7 +38,8 @@ def test_all_three_documented_keys_are_checked():
 def test_a_version_under_any_single_key_counts_as_present(key):
     hive, subkey = preflight.REGISTRY_KEYS[key]
     found = preflight.webview2_version(
-        reader=_reader({(hive, subkey): "151.0.4129.93"}))
+        reader=_reader({(hive, subkey): "151.0.4129.93"})
+    )
     assert found == "151.0.4129.93"
 
 
@@ -66,7 +68,8 @@ def test_a_usable_key_wins_over_an_emptied_one():
     stale = preflight.REGISTRY_KEYS[0]
     live = preflight.REGISTRY_KEYS[2]
     found = preflight.webview2_version(
-        reader=_reader({stale: "0.0.0.0", live: "151.0.4129.93"}))
+        reader=_reader({stale: "0.0.0.0", live: "151.0.4129.93"})
+    )
     assert found == "151.0.4129.93"
 
 
@@ -74,6 +77,7 @@ def test_a_reader_that_raises_does_not_take_down_startup():
     """Injected here, but the real reader wraps winreg, which raises for a
     dozen unremarkable reasons. An unreadable key means "not found here",
     never "crash before the window exists"."""
+
     def boom(hive, subkey):
         raise OSError("access denied")
 
@@ -84,7 +88,8 @@ def test_present_runtime_proceeds_without_alerting():
     alerts = []
     ok = preflight.require_webview2(
         version=lambda: "151.0.4129.93",
-        alert=lambda title, body: alerts.append((title, body)))
+        alert=lambda title, body: alerts.append((title, body)),
+    )
     assert ok is True
     assert alerts == []
 
@@ -92,8 +97,8 @@ def test_present_runtime_proceeds_without_alerting():
 def test_absent_runtime_alerts_and_refuses_to_proceed():
     alerts = []
     ok = preflight.require_webview2(
-        version=lambda: None,
-        alert=lambda title, body: alerts.append((title, body)))
+        version=lambda: None, alert=lambda title, body: alerts.append((title, body))
+    )
     assert ok is False
     assert len(alerts) == 1
 
@@ -111,15 +116,18 @@ def test_the_alert_title_says_what_is_missing():
     assert "WebView2" in preflight.MISSING_RUNTIME_TITLE
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="off-Windows degradation; on Windows it really reads the registry")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="off-Windows degradation; on Windows it really reads the registry",
+)
 def test_the_real_reader_degrades_rather_than_raising_off_windows():
     for hive, subkey in preflight.REGISTRY_KEYS:
         assert preflight._read_pv(hive, subkey) is None
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="would pop a real modal dialog and hang the suite")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="would pop a real modal dialog and hang the suite"
+)
 def test_the_real_message_box_is_a_no_op_off_windows():
     """ctypes.windll does not exist off Windows. This must degrade, not
     raise: the suite runs on ubuntu-latest."""

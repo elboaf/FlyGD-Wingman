@@ -20,6 +20,7 @@ Datetimes are timezone-aware `datetime` objects everywhere inside the
 package. This module is the bridge boundary and the only place they become
 ISO strings.
 """
+
 import copy
 import json
 import logging
@@ -54,9 +55,12 @@ MAX_DIAGNOSTICS_PER_ISSUE = 20
 MSG_REAUTH = "EVE rejected the stored authorisation. Re-authenticate this character."
 MSG_NO_TOKEN = "No stored authorisation. Re-authenticate this character."
 MSG_TOKEN_UNREADABLE = (
-    "The stored authorisation could not be decrypted. Re-authenticate this character.")
+    "The stored authorisation could not be decrypted. Re-authenticate this character."
+)
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
-MSG_OWNER_CHANGE_DETECTED = "Character ownership changed. Re-authenticate this character."
+MSG_OWNER_CHANGE_DETECTED = (
+    "Character ownership changed. Re-authenticate this character."
+)
 # NOT used by the refresh path above. That path's own detection IS
 # definitive (owner_changed is in sso._DEFINITIVE), so it does end up
 # clearing the stored refresh token -- _refresh_one hands the definitive
@@ -151,12 +155,15 @@ def _parse_queue(data):
             finished_level = int(row["finished_level"])
         except (KeyError, TypeError, ValueError):
             continue
-        entries.append(evaluator.QueueEntry(
-            skill_id=skill_id,
-            finished_level=max(1, min(5, finished_level)),
-            start_date=_parse_date(row.get("start_date")),
-            finish_date=_parse_date(row.get("finish_date")),
-            queue_position=_clamp_position(row.get("queue_position"))))
+        entries.append(
+            evaluator.QueueEntry(
+                skill_id=skill_id,
+                finished_level=max(1, min(5, finished_level)),
+                start_date=_parse_date(row.get("start_date")),
+                finish_date=_parse_date(row.get("finish_date")),
+                queue_position=_clamp_position(row.get("queue_position")),
+            )
+        )
     return tuple(entries)
 
 
@@ -182,11 +189,16 @@ def _detail_error(character_id: int, plan_name: str, message: str) -> dict:
     fields on failure means every access in skills.js needs a guard, and the
     one that gets forgotten throws inside a click handler.
     """
-    return {"ok": False, "message": message,
-            "character_id": character_id, "plan_name": plan_name,
-            "readiness": evaluator.READINESS_UNKNOWN,
-            "estimated_finish_utc": "", "queue_timing_unknown": False,
-            "requirements": []}
+    return {
+        "ok": False,
+        "message": message,
+        "character_id": character_id,
+        "plan_name": plan_name,
+        "readiness": evaluator.READINESS_UNKNOWN,
+        "estimated_finish_utc": "",
+        "queue_timing_unknown": False,
+        "requirements": [],
+    }
 
 
 def _default_open_folder(path: Path) -> None:
@@ -207,11 +219,24 @@ def _default_open_folder(path: Path) -> None:
 class SkillsController:
     """Owns the roster in memory and the state document on disk."""
 
-    def __init__(self, *, state_path, cache_path, plans_dir, push, alert,
-                 client=None, key_source=None, spawn=threading.Thread,
-                 open_folder=None, launch_browser=webbrowser.open,
-                 now=_utcnow, sso=None, listener_factory=None,
-                 validate_token=None) -> None:
+    def __init__(
+        self,
+        *,
+        state_path,
+        cache_path,
+        plans_dir,
+        push,
+        alert,
+        client=None,
+        key_source=None,
+        spawn=threading.Thread,
+        open_folder=None,
+        launch_browser=webbrowser.open,
+        now=_utcnow,
+        sso=None,
+        listener_factory=None,
+        validate_token=None,
+    ) -> None:
         self._state_path = Path(state_path)
         self._cache_path = Path(cache_path)
         self._plans_dir = Path(plans_dir)
@@ -220,10 +245,14 @@ class SkillsController:
         self._now = now
         self._spawn = spawn
         self._launch_browser = launch_browser
-        self._open_folder = (open_folder if open_folder is not None
-                             else _default_open_folder)
-        self._client = client if client is not None else esi_mod.EsiClient(
-            user_agent=application.USER_AGENT)
+        self._open_folder = (
+            open_folder if open_folder is not None else _default_open_folder
+        )
+        self._client = (
+            client
+            if client is not None
+            else esi_mod.EsiClient(user_agent=application.USER_AGENT)
+        )
         # Built lazily on first use rather than here: constructing a
         # SigningKeySource is cheap but a JWKS fetch is not, and a user who
         # never signs in must never pay for one. (Task 14.)
@@ -316,8 +345,14 @@ class SkillsController:
         try:
             plans, issues = planstore.list_plans(self._plans_dir)
         except OSError as exc:
-            plans, issues = [], [planstore.PlanIssue(
-                "plans", f"Could not read the plans folder: {exc}", ())]
+            plans, issues = (
+                [],
+                [
+                    planstore.PlanIssue(
+                        "plans", f"Could not read the plans folder: {exc}", ()
+                    )
+                ],
+            )
         self._plans = plans
         self._plan_issues = list(issues)
         self._plans_updated = self._now()
@@ -368,8 +403,9 @@ class SkillsController:
             "refresh_in_flight": self._refresh_in_flight,
             "selected_plan_name": selected.name if selected else "",
             "plans": [self._plan_row_locked(plan, ids) for plan in self._plans],
-            "characters": [self._character_row(ch, selected, ids)
-                           for ch in self._state.characters],
+            "characters": [
+                self._character_row(ch, selected, ids) for ch in self._state.characters
+            ],
             # Every issue planstore.list_plans reported: a rejected file
             # (with its per-line diagnostics) and a folder-level problem
             # (empty diagnostics) both come through unchanged, keyed by
@@ -378,11 +414,16 @@ class SkillsController:
             # a PlanFile that made it into self._plans is `ok` by
             # construction (list_plans excludes anything with diagnostics).
             "plan_issues": [
-                {"file_name": issue.file_name, "message": issue.message,
-                 "diagnostics": [{"line": d.line, "message": d.message}
-                                 for d in issue.diagnostics[
-                                     :MAX_DIAGNOSTICS_PER_ISSUE]]}
-                for issue in self._plan_issues],
+                {
+                    "file_name": issue.file_name,
+                    "message": issue.message,
+                    "diagnostics": [
+                        {"line": d.line, "message": d.message}
+                        for d in issue.diagnostics[:MAX_DIAGNOSTICS_PER_ISSUE]
+                    ],
+                }
+                for issue in self._plan_issues
+            ],
             "warnings": list(self._load_warnings[:MAX_WARNINGS]),
             "plans_updated_utc": _iso(self._plans_updated),
         }
@@ -401,13 +442,20 @@ class SkillsController:
             if not ch.has_snapshot:
                 continue
             analysis = evaluator.evaluate(
-                plan.requirements, ids, ch.active_levels,
-                ch.trained_levels, ch.queue, True)
+                plan.requirements,
+                ids,
+                ch.active_levels,
+                ch.trained_levels,
+                ch.queue,
+                True,
+            )
             if analysis.readiness == evaluator.READY:
                 ready += 1
-        return {"name": plan.name,
-                "requirement_count": len(plan.requirements),
-                "ready_count": ready}
+        return {
+            "name": plan.name,
+            "requirement_count": len(plan.requirements),
+            "ready_count": ready,
+        }
 
     def _character_row(self, ch, plan, ids) -> dict:
         """One roster row, scored against the selected plan.
@@ -423,8 +471,13 @@ class SkillsController:
         analysis = None
         if plan is not None:
             analysis = evaluator.evaluate(
-                plan.requirements, ids, ch.active_levels, ch.trained_levels,
-                ch.queue, ch.has_snapshot)
+                plan.requirements,
+                ids,
+                ch.active_levels,
+                ch.trained_levels,
+                ch.queue,
+                ch.has_snapshot,
+            )
         return {
             "character_id": ch.character_id,
             "character_name": ch.character_name,
@@ -433,13 +486,16 @@ class SkillsController:
             "needs_reauth": bool(ch.needs_reauth),
             "stale": ch.stale,
             "readiness": analysis.readiness if analysis else evaluator.UNSCORED,
-            "estimated_finish_utc": (_iso(analysis.estimated_finish_utc)
-                                     if analysis else ""),
-            "queue_timing_unknown": (bool(analysis.queue_timing_unknown)
-                                     if analysis else False),
+            "estimated_finish_utc": (
+                _iso(analysis.estimated_finish_utc) if analysis else ""
+            ),
+            "queue_timing_unknown": (
+                bool(analysis.queue_timing_unknown) if analysis else False
+            ),
             "active_count": analysis.active_count if analysis else 0,
-            "trained_inactive_count": (analysis.trained_inactive_count
-                                       if analysis else 0),
+            "trained_inactive_count": (
+                analysis.trained_inactive_count if analysis else 0
+            ),
             "queued_count": analysis.queued_count if analysis else 0,
             "missing_count": analysis.missing_count if analysis else 0,
             "unknown_count": analysis.unknown_count if analysis else 0,
@@ -514,9 +570,11 @@ class SkillsController:
         # page block a refresh worker's commit.
         self._push_state(force=True)
         if not saved:
-            self._alert("warning", "Could not save the selected plan",
-                        "Your selection was not saved and has been "
-                        "reverted.")
+            self._alert(
+                "warning",
+                "Could not save the selected plan",
+                "Your selection was not saved and has been reverted.",
+            )
             return False
         return True
 
@@ -534,8 +592,11 @@ class SkillsController:
             self._open_folder(plans_dir)
         except Exception:
             logger.exception("Could not open the skill plans folder")
-            self._alert("warning", "Could not open the plans folder",
-                        f"The folder is {plans_dir}.")
+            self._alert(
+                "warning",
+                "Could not open the plans folder",
+                f"The folder is {plans_dir}.",
+            )
 
     # ----- refresh --------------------------------------------------------
 
@@ -551,7 +612,7 @@ class SkillsController:
                 self._refresh_again = True
                 return
             self._refresh_in_flight = True
-        self._push_state(force=True)     # The button becomes "Refreshing...".
+        self._push_state(force=True)  # The button becomes "Refreshing...".
         self._spawn(target=self._refresh_worker, daemon=True).start()
 
     def _refresh_worker(self) -> None:
@@ -593,19 +654,25 @@ class SkillsController:
 
     def _refresh_pass(self) -> None:
         with self._lock:
-            targets = [(ch.character_id, ch.character_name)
-                       for ch in self._state.characters]
+            targets = [
+                (ch.character_id, ch.character_name) for ch in self._state.characters
+            ]
         self._resolve_missing_skill_ids()
         total = len(targets)
         for index, (character_id, name) in enumerate(targets, start=1):
             if self._stopping.is_set():
                 return
             error = self._refresh_one(character_id)
-            self._push_cb("onSkillsProgress",
-                          {"character_id": character_id,
-                           "character_name": name,
-                           "completed": index, "total": total,
-                           "error": error})
+            self._push_cb(
+                "onSkillsProgress",
+                {
+                    "character_id": character_id,
+                    "character_name": name,
+                    "completed": index,
+                    "total": total,
+                    "error": error,
+                },
+            )
             # Not forced: a character forgotten mid-pass makes _refresh_one
             # return "" without touching the roster, and the dedupe is what
             # keeps that no-op from rebuilding the page. (Every actual
@@ -618,11 +685,12 @@ class SkillsController:
         with self._lock:
             ch = self._state.find(character_id)
             if ch is None:
-                return ""      # Forgotten between the snapshot and here.
+                return ""  # Forgotten between the snapshot and here.
             skills_etag, queue_etag = ch.skills_etag, ch.queue_etag
 
         skills, error, definitive = self._authorised_get(
-            character_id, _skills_path(character_id), skills_etag)
+            character_id, _skills_path(character_id), skills_etag
+        )
         if skills is None:
             # Short-circuit, ported verbatim: the queue result could not be
             # committed on its own anyway, so spending the second request
@@ -631,7 +699,8 @@ class SkillsController:
             return error
 
         queue, error, definitive = self._authorised_get(
-            character_id, _queue_path(character_id), queue_etag)
+            character_id, _queue_path(character_id), queue_etag
+        )
         if queue is None:
             self._commit_failure(character_id, error, definitive)
             return error
@@ -688,24 +757,35 @@ class SkillsController:
                 # TriffSkillsAuthentication.cs:152-161, folded into the same
                 # try as the refresh itself so both codes flow through the
                 # one classification below.
-                validate = (self._validate_token if self._validate_token is not None
-                           else jwt_mod.validate)
-                identity = validate(token_set.access_token,
-                                    client_id=application.CLIENT_ID,
-                                    required_scopes=application.SCOPES,
-                                    key_source=self._keys())
+                validate = (
+                    self._validate_token
+                    if self._validate_token is not None
+                    else jwt_mod.validate
+                )
+                identity = validate(
+                    token_set.access_token,
+                    client_id=application.CLIENT_ID,
+                    required_scopes=application.SCOPES,
+                    key_source=self._keys(),
+                )
                 if identity.character_id != character_id:
                     raise sso_mod.OAuthError(
-                        401, "identity_mismatch",
-                        "Refreshed token belongs to a different character.")
+                        401,
+                        "identity_mismatch",
+                        "Refreshed token belongs to a different character.",
+                    )
                 # Compared only when BOTH sides are non-blank: an absent
                 # hash on either side is missing information, not evidence
                 # of a transfer, and treating it as one would force a
                 # reauth on the first refresh after an upgrade.
-                if (owner_hash and identity.owner_hash
-                        and identity.owner_hash != owner_hash):
+                if (
+                    owner_hash
+                    and identity.owner_hash
+                    and identity.owner_hash != owner_hash
+                ):
                     raise sso_mod.OAuthError(
-                        401, "owner_changed", "Character ownership changed.")
+                        401, "owner_changed", "Character ownership changed."
+                    )
             except sso_mod.OAuthError as exc:
                 # `definitive` is the OAuth error's own classification --
                 # invalid_grant, identity_mismatch, owner_changed. Everything
@@ -718,9 +798,13 @@ class SkillsController:
                 # cached skill/queue data the way MSG_OWNER_CHANGED claims,
                 # so that wording would still be a lie here. See
                 # MSG_OWNER_CHANGE_DETECTED's own comment.
-                message = (MSG_OWNER_CHANGE_DETECTED if exc.code == "owner_changed" else
-                          MSG_REAUTH if exc.definitive else
-                          f"EVE SSO refused the token refresh: {exc}")
+                message = (
+                    MSG_OWNER_CHANGE_DETECTED
+                    if exc.code == "owner_changed"
+                    else MSG_REAUTH
+                    if exc.definitive
+                    else f"EVE SSO refused the token refresh: {exc}"
+                )
                 return None, message, exc.definitive
             except jwt_mod.JwtError as exc:
                 # The token EVE just minted failed to validate. Neither of
@@ -763,7 +847,8 @@ class SkillsController:
                     ch.refresh_token_blob = tokens.wrap(token_set.refresh_token)
                 self._access_tokens[character_id] = (
                     token_set.access_token,
-                    now + timedelta(seconds=max(0, int(token_set.expires_in))))
+                    now + timedelta(seconds=max(0, int(token_set.expires_in))),
+                )
                 if not self._save_locked():
                     # The rotated token is live in memory and correct; only
                     # the offline copy is missing. Surfaced the way
@@ -832,8 +917,7 @@ class SkillsController:
             # rejected again is not a clock-skew problem, it is a revoked
             # grant, and retrying forever would spend the error-limit
             # budget discovering that repeatedly.
-            token, error, definitive = self._access_token(character_id,
-                                                          rejected=token)
+            token, error, definitive = self._access_token(character_id, rejected=token)
             if token is None:
                 return None, error, definitive
             response = self._client.get(path, token=token, etag=etag or None)
@@ -847,7 +931,11 @@ class SkillsController:
         if not (response.ok or response.not_modified):
             # Includes esi.py's synthetic 503 for retry exhaustion, which
             # did not necessarily come from ESI -- transient either way.
-            return None, f"ESI request failed ({response.status}): {response.error}", False
+            return (
+                None,
+                f"ESI request failed ({response.status}): {response.error}",
+                False,
+            )
         return response, "", False
 
     def _sso_module(self):
@@ -896,8 +984,9 @@ class SkillsController:
             ch.error = MSG_SAVE_FAILED
             return MSG_SAVE_FAILED
 
-    def _commit_failure(self, character_id: int, message: str,
-                        definitive: bool) -> None:
+    def _commit_failure(
+        self, character_id: int, message: str, definitive: bool
+    ) -> None:
         """Record the failure. The snapshot is deliberately left untouched.
 
         `fetched_utc` does not move here, which is the whole mechanism
@@ -937,8 +1026,9 @@ class SkillsController:
             # never enters this list (see `_state_payload_locked`'s own
             # comment on that). The `ok` filter TriffSkillsController.cs
             # never needed for the same reason would be dead here too.
-            names = sorted({req.skill_name for plan in self._plans
-                            for req in plan.requirements})
+            names = sorted(
+                {req.skill_name for plan in self._plans for req in plan.requirements}
+            )
             missing = self._cache.unresolved(names)
         if not missing:
             return
@@ -1002,9 +1092,11 @@ class SkillsController:
                     self._access_tokens[wanted] = previous_token
         self._push_state(force=True)
         if not saved:
-            self._alert("warning", "Could not save the change",
-                        "The character was not forgotten and has been "
-                        "restored.")
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The character was not forgotten and has been restored.",
+            )
             return False
         return True
 
@@ -1018,17 +1110,23 @@ class SkillsController:
         Running that here would freeze the window for the duration.
         """
         if not application.is_configured():
-            self._alert("warning", "EVE sign-in is not configured",
-                        "This build has no EVE application client id compiled "
-                        "in, so it cannot ask CCP for authorisation.")
+            self._alert(
+                "warning",
+                "EVE sign-in is not configured",
+                "This build has no EVE application client id compiled "
+                "in, so it cannot ask CCP for authorisation.",
+            )
             return
         if not self._auth_latch.acquire(blocking=False):
             # Non-blocking on purpose: two authorisations would fight over
             # the same fixed loopback port, and the redirect URI is
             # registered with CCP so there is no second port to fall back
             # to.
-            self._alert("warning", "Sign-in already in progress",
-                        "Finish or cancel the EVE sign-in already running.")
+            self._alert(
+                "warning",
+                "Sign-in already in progress",
+                "Finish or cancel the EVE sign-in already running.",
+            )
             return
         with self._lock:
             self._auth_in_progress = True
@@ -1045,8 +1143,9 @@ class SkillsController:
                 self._auth_in_progress = False
             self._auth_latch.release()
             self._push_state(force=True)
-            self._alert("warning", "Sign-in failed",
-                        "Could not start the EVE sign-in worker.")
+            self._alert(
+                "warning", "Sign-in failed", "Could not start the EVE sign-in worker."
+            )
 
     def _auth_worker(self) -> None:
         added = False
@@ -1057,16 +1156,18 @@ class SkillsController:
             # on it would make the cancel button feel like a failure.
             logger.info("EVE sign-in cancelled")
         except loopback_mod.CallbackTimeout:
-            self._alert("warning", "Sign-in timed out",
-                        "No response from EVE SSO within five minutes.")
+            self._alert(
+                "warning",
+                "Sign-in timed out",
+                "No response from EVE SSO within five minutes.",
+            )
         except sso_mod.OAuthError as exc:
             self._alert("warning", "EVE refused the sign-in", str(exc))
         except jwt_mod.JwtError as exc:
             # A token that does not validate is never accepted as a
             # fallback: the whole point of validation is that a failure
             # rejects rather than degrades.
-            self._alert("warning", "EVE returned a token we cannot trust",
-                        str(exc))
+            self._alert("warning", "EVE returned a token we cannot trust", str(exc))
         except Exception as exc:
             logger.exception("EVE sign-in failed")
             self._alert("warning", "Sign-in failed", str(exc))
@@ -1085,8 +1186,11 @@ class SkillsController:
     def _run_auth(self) -> bool:
         sso = self._sso_module()
         pkce = sso.generate_pkce()
-        factory = (self._listener_factory if self._listener_factory is not None
-                   else loopback_mod.LoopbackListener)
+        factory = (
+            self._listener_factory
+            if self._listener_factory is not None
+            else loopback_mod.LoopbackListener
+        )
         # Snapshotted before the browser opens, not at commit time: the
         # up-to-five-minute consent window is long enough for the user to
         # forget this very character from the roster page while it is open.
@@ -1094,9 +1198,11 @@ class SkillsController:
         # the same reason and refuses to commit an id that vanished from it.
         with self._lock:
             known_ids = frozenset(c.character_id for c in self._state.characters)
-        with factory(host=application.REDIRECT_HOST,
-                     port=application.REDIRECT_PORT,
-                     path=application.REDIRECT_PATH) as listener:
+        with factory(
+            host=application.REDIRECT_HOST,
+            port=application.REDIRECT_PORT,
+            path=application.REDIRECT_PATH,
+        ) as listener:
             with self._lock:
                 self._listener = listener
             # The browser launches only AFTER the bind. The reverse order
@@ -1112,12 +1218,17 @@ class SkillsController:
             return False
 
         token_set = sso.exchange_code(callback.code, pkce.verifier)
-        validate = (self._validate_token if self._validate_token is not None
-                    else jwt_mod.validate)
-        identity = validate(token_set.access_token,
-                            client_id=application.CLIENT_ID,
-                            required_scopes=application.SCOPES,
-                            key_source=self._keys())
+        validate = (
+            self._validate_token
+            if self._validate_token is not None
+            else jwt_mod.validate
+        )
+        identity = validate(
+            token_set.access_token,
+            client_id=application.CLIENT_ID,
+            required_scopes=application.SCOPES,
+            key_source=self._keys(),
+        )
         return self._upsert_identity(identity, token_set, known_ids)
 
     def _upsert_identity(self, identity, token_set, known_ids=frozenset()) -> bool:
@@ -1139,8 +1250,7 @@ class SkillsController:
                 # new character (existing is None), so the aliasing below
                 # only ever mutates a row this method itself owns.
                 previous = copy.deepcopy(existing) if existing is not None else None
-                ch = existing or state_mod.Character(
-                    character_id=identity.character_id)
+                ch = existing or state_mod.Character(character_id=identity.character_id)
                 # Compared only when BOTH sides carry a hash: an absent
                 # claim on either side is missing information, not evidence
                 # of a transfer, and treating it as one would wipe a good
@@ -1148,9 +1258,12 @@ class SkillsController:
                 # a stored hash and disable every future check -- on the
                 # first re-auth after an upgrade. Mirrors _access_token's
                 # own comparison above.
-                if (existing is not None and existing.owner_hash
-                        and identity.owner_hash
-                        and existing.owner_hash != identity.owner_hash):
+                if (
+                    existing is not None
+                    and existing.owner_hash
+                    and identity.owner_hash
+                    and existing.owner_hash != identity.owner_hash
+                ):
                     # A different account owns this character now. Its
                     # skills, queue and etags describe someone else's
                     # training, and scoring a plan against them would be
@@ -1189,7 +1302,8 @@ class SkillsController:
                 else:
                     self._access_tokens[ch.character_id] = (
                         token_set.access_token,
-                        now + timedelta(seconds=max(0, int(token_set.expires_in))))
+                        now + timedelta(seconds=max(0, int(token_set.expires_in))),
+                    )
                     saved = self._save_locked()
                     if not saved:
                         # ch may be the SAME object as the live roster
@@ -1214,20 +1328,28 @@ class SkillsController:
                         else:
                             self._access_tokens.pop(ch.character_id, None)
         if forgotten_mid_auth:
-            self._alert("warning", "Sign-in not completed",
-                        "The character was forgotten while reauthorization "
-                        "was in progress.")
+            self._alert(
+                "warning",
+                "Sign-in not completed",
+                "The character was forgotten while reauthorization was in progress.",
+            )
             return False
         if full:
             # Alerted outside the lock: _alert reaches pywebview, and a slow
             # page must not hold the state lock.
-            self._alert("warning", "Too many characters",
-                        f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
-                        "characters. Forget one before adding another.")
+            self._alert(
+                "warning",
+                "Too many characters",
+                f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
+                "characters. Forget one before adding another.",
+            )
             return False
         if not saved:
-            self._alert("warning", "Could not save the sign-in",
-                        "The sign-in was not saved and has been reverted.")
+            self._alert(
+                "warning",
+                "Could not save the sign-in",
+                "The sign-in was not saved and has been reverted.",
+            )
             return False
         return True
 
@@ -1261,7 +1383,8 @@ class SkillsController:
             ch = self._state.find(wanted)
             if ch is None:
                 return _detail_error(
-                    wanted, name, "That character is no longer in the roster.")
+                    wanted, name, "That character is no longer in the roster."
+                )
             plan = self._find_plan_locked(name)
             if plan is None:
                 # Covers both "no such plan file" and "the file exists but
@@ -1271,14 +1394,22 @@ class SkillsController:
                 # _find_plan_locked is `ok` by construction. There is no
                 # second, reachable branch here for "the plan has errors".
                 return _detail_error(
-                    wanted, name, "That plan is no longer available. Reload plans.")
+                    wanted, name, "That plan is no longer available. Reload plans."
+                )
             analysis = evaluator.evaluate(
-                plan.requirements, self._cache.type_ids(), ch.active_levels,
-                ch.trained_levels, ch.queue, ch.has_snapshot)
+                plan.requirements,
+                self._cache.type_ids(),
+                ch.active_levels,
+                ch.trained_levels,
+                ch.queue,
+                ch.has_snapshot,
+            )
 
         return {
-            "ok": True, "message": "",
-            "character_id": wanted, "plan_name": plan.name,
+            "ok": True,
+            "message": "",
+            "character_id": wanted,
+            "plan_name": plan.name,
             "readiness": analysis.readiness,
             "estimated_finish_utc": _iso(analysis.estimated_finish_utc),
             "queue_timing_unknown": bool(analysis.queue_timing_unknown),
@@ -1286,31 +1417,34 @@ class SkillsController:
             # the expanded row, which is a display decision; filtering here
             # would make the payload lie about what the plan requires.
             "requirements": [
-                {"skill_name": req.skill_name,
-                 "required_level": req.required_level,
-                 # Plain ints across the bridge: the page compares these
-                 # arithmetically, and `null > 3` is quietly false in
-                 # JavaScript rather than an error.
-                 #
-                 # This collapses None into 0 -- a deliberate, LOSSY
-                 # collapse. None means the skill NAME never resolved
-                 # (unrecognised by the type cache); 0 means it resolved
-                 # but was never trained. Those are different facts
-                 # (SkillPlanEvaluator.cs:73,77-78 passes null for the
-                 # former and 0 for the latter, and that distinction
-                 # survives all the way through evaluator.py). `state`
-                 # is what still carries it on this side of the bridge:
-                 # `state == "Unknown"` means the name did not resolve.
-                 # Anything that renders active_level/trained_level
-                 # (e.g. a future "Active n / Trained n" column) must
-                 # check state first -- 0 is not a meaningful count when
-                 # state is Unknown.
-                 "active_level": int(req.active_level or 0),
-                 "trained_level": int(req.trained_level or 0),
-                 "state": req.state,
-                 "queued_finish_utc": _iso(req.queued_finish_utc),
-                 "queue_timing_unknown": bool(req.queue_timing_unknown)}
-                for req in analysis.requirements],
+                {
+                    "skill_name": req.skill_name,
+                    "required_level": req.required_level,
+                    # Plain ints across the bridge: the page compares these
+                    # arithmetically, and `null > 3` is quietly false in
+                    # JavaScript rather than an error.
+                    #
+                    # This collapses None into 0 -- a deliberate, LOSSY
+                    # collapse. None means the skill NAME never resolved
+                    # (unrecognised by the type cache); 0 means it resolved
+                    # but was never trained. Those are different facts
+                    # (SkillPlanEvaluator.cs:73,77-78 passes null for the
+                    # former and 0 for the latter, and that distinction
+                    # survives all the way through evaluator.py). `state`
+                    # is what still carries it on this side of the bridge:
+                    # `state == "Unknown"` means the name did not resolve.
+                    # Anything that renders active_level/trained_level
+                    # (e.g. a future "Active n / Trained n" column) must
+                    # check state first -- 0 is not a meaningful count when
+                    # state is Unknown.
+                    "active_level": int(req.active_level or 0),
+                    "trained_level": int(req.trained_level or 0),
+                    "state": req.state,
+                    "queued_finish_utc": _iso(req.queued_finish_utc),
+                    "queue_timing_unknown": bool(req.queue_timing_unknown),
+                }
+                for req in analysis.requirements
+            ],
         }
 
     # ----- shutdown -----------------------------------------------------

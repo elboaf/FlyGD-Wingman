@@ -19,8 +19,9 @@ def api_with(tmp_path, names=("a.mkv", "b.mkv"), watcher=None, **kw):
         path = tmp_path / name
         path.write_bytes(b"\0" * 1024)
         rows[f"r{index}"] = fakes.info(path, size=1024, mtime=1_700_000_000.0)
-    api, window = fakes.build_api(tmp_path, rows=fakes.FakeRows(rows),
-                                  watcher=watcher, **kw)
+    api, window = fakes.build_api(
+        tmp_path, rows=fakes.FakeRows(rows), watcher=watcher, **kw
+    )
     api._alert = fakes.Alerts()
     api._confirm = fakes.Answers()
     # Task 6's refresh; not under test here.
@@ -36,7 +37,8 @@ def test_deleting_nothing_says_so(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     api.delete_selected([])
     assert api._alert.raised == [
-        ("warning", "No Selection", "Select at least one video to delete.")]
+        ("warning", "No Selection", "Select at least one video to delete.")
+    ]
 
 
 def test_delete_confirms_by_naming_every_file_and_saying_it_is_final(tmp_path):
@@ -45,7 +47,7 @@ def test_delete_confirms_by_naming_every_file_and_saying_it_is_final(tmp_path):
     api.delete_selected(["r0", "r1"])
     join_delete(api)
 
-    (title, body), = api._confirm.asked
+    ((title, body),) = api._confirm.asked
     assert title == "Confirm Delete"
     assert "a.mkv" in body and "b.mkv" in body
     assert "cannot be undone" in body
@@ -60,7 +62,9 @@ def test_declining_the_delete_leaves_the_files_alone(tmp_path):
     assert (tmp_path / "a.mkv").exists()
 
 
-def test_only_files_that_actually_went_are_forgotten_by_the_watcher(monkeypatch, tmp_path):
+def test_only_files_that_actually_went_are_forgotten_by_the_watcher(
+    monkeypatch, tmp_path
+):
     """A file that failed to delete still exists, and dropping its
     seen-entry would make the watcher announce it again as if it were new."""
     watcher = fakes.FakeWatcher(tmp_path)
@@ -79,7 +83,9 @@ def test_only_files_that_actually_went_are_forgotten_by_the_watcher(monkeypatch,
 
     assert watcher.forgotten == [rows["r0"].path]
     assert fakes.payloads(sent, "onStatus")[-1] == {
-        "text": "Deleted 1 file(s). 1 failed.", "kind": "FG"}
+        "text": "Deleted 1 file(s). 1 failed.",
+        "kind": "FG",
+    }
 
 
 def test_copy_returns_the_link_and_reports_it(tmp_path):
@@ -91,7 +97,8 @@ def test_copy_returns_the_link_and_reports_it(tmp_path):
 
     assert api.copy_path("r0") == "https://www.youtube.com/watch?v=abc"
     assert fakes.payloads(sent, "onStatus") == [
-        {"text": "Link copied to clipboard", "kind": "SUCCESS"}]
+        {"text": "Link copied to clipboard", "kind": "SUCCESS"}
+    ]
 
 
 def test_copy_on_a_row_with_no_link_returns_nothing_and_says_nothing(tmp_path):

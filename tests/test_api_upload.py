@@ -4,6 +4,7 @@ Every one of these ran through Tk's messagebox and widget calls before the
 replatform; they are the behaviours that had no test at all because the
 only thing asserting them was a widget.
 """
+
 import datetime
 import threading
 
@@ -31,7 +32,8 @@ def test_uploading_nothing_says_so_rather_than_starting_an_empty_job(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     api.start_upload("t", "d", False, False, [])
     assert api._alert.raised == [
-        ("warning", "No Selection", "Select at least one video to upload.")]
+        ("warning", "No Selection", "Select at least one video to upload.")
+    ]
     assert api._upload_thread is None
 
 
@@ -41,7 +43,8 @@ def test_stitching_one_recording_is_refused_with_its_own_message(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     api.start_upload("t", "d", True, False, ["r1"])
     assert api._alert.raised == [
-        ("warning", "Stitch", "Select at least two videos to stitch.")]
+        ("warning", "Stitch", "Select at least two videos to stitch.")
+    ]
 
 
 def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
@@ -52,7 +55,8 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     try:
         api.start_upload("t", "d", False, False, ["r1"])
         assert api._alert.raised == [
-            ("warning", "Busy", "An upload is already in progress.")]
+            ("warning", "Busy", "An upload is already in progress.")
+        ]
     finally:
         gate.set()
         api._upload_thread.join(timeout=5)
@@ -61,8 +65,9 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
 def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tmp_path):
     """The app's only irreversible action. 2.2.0 added this confirm
     deliberately; the port must not quietly drop it."""
-    api, _window, _rows = api_with(tmp_path, settings={"channel_title": "Zoolanders",
-                                                       "privacy": "public"})
+    api, _window, _rows = api_with(
+        tmp_path, settings={"channel_title": "Zoolanders", "privacy": "public"}
+    )
     api._confirm = fakes.Answers(answer=False)
     called = []
     monkeypatch.setattr(uploader, "upload", lambda *a, **k: called.append(a))
@@ -73,7 +78,7 @@ def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tm
     join(api)
 
     assert called == []
-    (title, body), = api._confirm.asked
+    ((title, body),) = api._confirm.asked
     assert title == "Confirm Upload"
     # Built through format_upload_confirm, so the numbering shown is the
     # numbering build_body will send.
@@ -83,18 +88,24 @@ def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tm
     assert "cannot be undone" in body
 
 
-def fake_upload_ok(video_id="vid123", channel=("UC1", "Zoolanders"), fractions=(0.5, 1.0)):
+def fake_upload_ok(
+    video_id="vid123", channel=("UC1", "Zoolanders"), fractions=(0.5, 1.0)
+):
     """uploader.upload's contract: drive on_progress, then on_response."""
-    def _upload(request, *, on_progress=None, on_retry=None, on_response=None,
-                **kw):
+
+    def _upload(request, *, on_progress=None, on_retry=None, on_response=None, **kw):
         for fraction in fractions:
             if on_progress is not None:
                 on_progress(fraction)
         if on_response is not None:
-            on_response({"id": video_id,
-                         "snippet": {"channelId": channel[0],
-                                     "channelTitle": channel[1]}})
+            on_response(
+                {
+                    "id": video_id,
+                    "snippet": {"channelId": channel[0], "channelTitle": channel[1]},
+                }
+            )
         return video_id
+
     return _upload
 
 
@@ -116,7 +127,9 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     assert window.calls
 
 
-def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(monkeypatch, tmp_path):
+def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
+    monkeypatch, tmp_path
+):
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
     fakes.stub_auth(monkeypatch)
@@ -127,8 +140,12 @@ def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(monkeypatch, 
     join(api)
 
     bars = [p for p in fakes.payloads(sent, "onProgress") if p["text"]]
-    assert bars[0] == {"mode": "determinate", "pct": 25.0,
-                       "text": "Uploading file 1 of 2… 50.0%", "kind": "FG"}
+    assert bars[0] == {
+        "mode": "determinate",
+        "pct": 25.0,
+        "text": "Uploading file 1 of 2… 50.0%",
+        "kind": "FG",
+    }
 
 
 def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path):
@@ -143,13 +160,15 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
     # _remember_channel now writes through settings_mod.update(), which
     # calls _save_locked internally rather than save() directly.
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.settings_mod._save_locked",
-                        lambda data, path=None: saved.update(data))
+    monkeypatch.setattr(
+        "obs_youtube_uploader.ui.api.settings_mod._save_locked",
+        lambda data, path=None: saved.update(data),
+    )
 
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
 
-    channel, = fakes.payloads(sent, "onChannel")
+    (channel,) = fakes.payloads(sent, "onChannel")
     assert channel["channel_id"] == "UC1"
     assert channel["channel_title"] == "Zoolanders"
     # The rendered line rides along, so the page never composes it.
@@ -161,7 +180,7 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     # saying a bare "Connected", so it is refreshed here rather than at the
     # next launch -- otherwise the very session that learned the name shows
     # the least informative version of it.
-    state, = fakes.payloads(sent, "onAuthState")
+    (state,) = fakes.payloads(sent, "onAuthState")
     assert state == {"state": "connected", "message": "Connected as Zoolanders"}
 
 
@@ -175,7 +194,9 @@ def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
 
-    assert {"text": "Upload complete!", "kind": "SUCCESS"} in fakes.payloads(sent, "onStatus")
+    assert {"text": "Upload complete!", "kind": "SUCCESS"} in fakes.payloads(
+        sent, "onStatus"
+    )
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
     assert api._retry_state is None
 
@@ -210,6 +231,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
 def failing_upload(outcome, request=object()):
     def _upload(req, **kw):
         raise uploader.UploadFailed(outcome, request=request)
+
     return _upload
 
 
@@ -219,8 +241,9 @@ def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp
     sent = fakes.record_pushes(api)
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.RETRY, session))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, session)
+    )
 
     api.start_upload("Fight", "d", False, False, ["r1", "r2"])
     join(api)
@@ -231,7 +254,9 @@ def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp
     assert api._alert.raised[-1][0] == "error"
 
 
-def test_a_permanent_failure_offers_no_retry_and_drops_the_session(monkeypatch, tmp_path):
+def test_a_permanent_failure_offers_no_retry_and_drops_the_session(
+    monkeypatch, tmp_path
+):
     """A non-RETRY outcome cannot be resumed, and holding the request would
     keep an open handle on the user's own recording -- which blocks
     renaming or deleting it on Windows."""
@@ -239,8 +264,9 @@ def test_a_permanent_failure_offers_no_retry_and_drops_the_session(monkeypatch, 
     sent = fakes.record_pushes(api)
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.QUOTA, object()))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.QUOTA, object())
+    )
 
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
@@ -257,8 +283,9 @@ def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_p
     api, _window, _rows = api_with(tmp_path)
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.RETRY, object()))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
+    )
 
     @contextlib.contextmanager
     def fake_stitched(sources, ffmpeg_bin, tmp):
@@ -279,8 +306,9 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     api, _window, _rows = api_with(tmp_path)
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.RETRY, session))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, session)
+    )
     api.start_upload("Fight", "d", False, False, ["r1", "r2"])
     join(api)
 
@@ -298,7 +326,10 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     # The FIRST call reuses the stored session -- that is what makes this
     # resume rather than restart -- and the second file follows on.
     assert resumed[0] is session
-    assert [link["video_id"] for link in fakes.payloads(sent, "onLink")] == ["vidA", "vidB"]
+    assert [link["video_id"] for link in fakes.payloads(sent, "onLink")] == [
+        "vidA",
+        "vidB",
+    ]
     assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
     assert api._retry_state is None
 
@@ -322,7 +353,8 @@ def test_the_stored_privacy_and_category_decide_the_upload(monkeypatch, tmp_path
     read self.state.settings at dispatch time; so does this.
     """
     api, _window, _rows = api_with(
-        tmp_path, settings={"privacy": "private", "category": "27"})
+        tmp_path, settings={"privacy": "private", "category": "27"}
+    )
     jobs = []
     monkeypatch.setattr(api, "_confirm_then_upload", lambda job: jobs.append(job))
     api.start_upload("Fight", "d", False, False, ["r1"])
@@ -340,7 +372,7 @@ def test_the_confirm_dialog_names_the_privacy_that_will_be_used(tmp_path):
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
 
-    (_title, body), = api._confirm.asked
+    ((_title, body),) = api._confirm.asked
     assert "private" in body
     assert "unlisted" not in body
 
@@ -359,7 +391,7 @@ def test_the_confirm_names_the_discord_half_when_logs_are_requested(tmp_path):
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
 
-    (_title, body), = api._confirm.asked
+    ((_title, body),) = api._confirm.asked
     assert "combat logs" in body.lower()
 
 
@@ -369,8 +401,9 @@ def test_declining_the_confirm_posts_no_logs_either(monkeypatch, tmp_path):
     api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": HOOK})
     api._confirm = fakes.Answers(answer=False)
     posted = []
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: posted.append(path))
+    monkeypatch.setattr(
+        api_mod.discord, "post_archive", lambda hook, path, content: posted.append(path)
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
@@ -394,20 +427,35 @@ def combined_api(tmp_path, monkeypatch, settings=None, dropped=0):
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
     stamp = datetime.datetime(2026, 8, 21, 19, 0, tzinfo=datetime.UTC)
-    monkeypatch.setattr(api_mod.combatlog, "select_logs",
-                        lambda d, s, e: combatlog.Selection(
-                            logs=[combatlog.SelectedLog(
-                                path=logs_dir / "x.txt", listener="Pilot",
-                                span_start=stamp,
-                                span_end=stamp + datetime.timedelta(minutes=5))],
-                            dropped=dropped))
+    monkeypatch.setattr(
+        api_mod.combatlog,
+        "select_logs",
+        lambda d, s, e: combatlog.Selection(
+            logs=[
+                combatlog.SelectedLog(
+                    path=logs_dir / "x.txt",
+                    listener="Pilot",
+                    span_start=stamp,
+                    span_end=stamp + datetime.timedelta(minutes=5),
+                )
+            ],
+            dropped=dropped,
+        ),
+    )
     archive_path = tmp_path / "combatlogs.zip"
     archive_path.write_bytes(b"zip")
-    monkeypatch.setattr(api_mod.combatlog, "build_archive",
-                        lambda sel, out, s, e: combatlog.ArchiveResult(
-                            path=archive_path, file_count=1,
-                            characters=["Pilot"], raw_bytes=10, zip_bytes=3,
-                            dropped=dropped))
+    monkeypatch.setattr(
+        api_mod.combatlog,
+        "build_archive",
+        lambda sel, out, s, e: combatlog.ArchiveResult(
+            path=archive_path,
+            file_count=1,
+            characters=["Pilot"],
+            raw_bytes=10,
+            zip_bytes=3,
+            dropped=dropped,
+        ),
+    )
     return api, window, rows
 
 
@@ -416,13 +464,17 @@ def test_one_upload_publishes_the_video_and_then_posts_the_logs(monkeypatch, tmp
     on one thread so the existing busy guard still covers both."""
     order = []
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(uploader, "upload", lambda *a, **k: (
-        order.append("video"), "vid123")[1])
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: (
-                            order.append("logs"),
-                            discord.PostResult(ok=True,
-                                               message="Posted combatlogs.zip."))[1])
+    monkeypatch.setattr(
+        uploader, "upload", lambda *a, **k: (order.append("video"), "vid123")[1]
+    )
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: (
+            order.append("logs"),
+            discord.PostResult(ok=True, message="Posted combatlogs.zip."),
+        )[1],
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
@@ -432,13 +484,17 @@ def test_one_upload_publishes_the_video_and_then_posts_the_logs(monkeypatch, tmp
 
 
 def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_path):
-    """"Upload complete!" must not be the last thing said while the log half
+    """ "Upload complete!" must not be the last thing said while the log half
     is still running, or a user reads the app as finished and closes it."""
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     sent = fakes.record_pushes(api)
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: discord.PostResult(
-                            ok=True, message="Posted combatlogs.zip."))
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: discord.PostResult(
+            ok=True, message="Posted combatlogs.zip."
+        ),
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
@@ -451,8 +507,9 @@ def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_
 def test_leaving_the_box_unchecked_uploads_the_video_alone(monkeypatch, tmp_path):
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     posted = []
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: posted.append(path))
+    monkeypatch.setattr(
+        api_mod.discord, "post_archive", lambda hook, path, content: posted.append(path)
+    )
 
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
@@ -469,9 +526,13 @@ def test_leaving_the_box_unchecked_uploads_the_video_alone(monkeypatch, tmp_path
 # time they are reached, so the app has to report a half-done job rather
 # than pretend it did nothing.
 
-def test_an_unconfigured_webhook_skips_the_logs_and_keeps_the_video(monkeypatch, tmp_path):
-    api, _window, _rows = combined_api(tmp_path, monkeypatch,
-                                       settings={"discord_webhook": ""})
+
+def test_an_unconfigured_webhook_skips_the_logs_and_keeps_the_video(
+    monkeypatch, tmp_path
+):
+    api, _window, _rows = combined_api(
+        tmp_path, monkeypatch, settings={"discord_webhook": ""}
+    )
     sent = fakes.record_pushes(api)
 
     api.start_upload("Fight", "d", False, True, ["r1"])
@@ -488,9 +549,12 @@ def test_an_unconfigured_webhook_skips_the_logs_and_keeps_the_video(monkeypatch,
     assert api._alert.raised == []
 
 
-def test_a_missing_gamelogs_folder_skips_the_logs_and_keeps_the_video(monkeypatch, tmp_path):
-    api, _window, _rows = combined_api(tmp_path, monkeypatch,
-                                       settings={"gamelogs_dir": ""})
+def test_a_missing_gamelogs_folder_skips_the_logs_and_keeps_the_video(
+    monkeypatch, tmp_path
+):
+    api, _window, _rows = combined_api(
+        tmp_path, monkeypatch, settings={"gamelogs_dir": ""}
+    )
     monkeypatch.setattr(api_mod.combatlog, "find_gamelogs_dir", lambda: None)
     sent = fakes.record_pushes(api)
 
@@ -503,7 +567,9 @@ def test_a_missing_gamelogs_folder_skips_the_logs_and_keeps_the_video(monkeypatc
     assert api._alert.raised == []
 
 
-def test_an_unreadable_duration_skips_the_logs_and_names_the_file(monkeypatch, tmp_path):
+def test_an_unreadable_duration_skips_the_logs_and_names_the_file(
+    monkeypatch, tmp_path
+):
     """No duration means no start time, so there is no window to build --
     still a refusal, but one that names the file it could not measure."""
     api, _window, rows = combined_api(tmp_path, monkeypatch)
@@ -528,16 +594,21 @@ def test_an_unprobed_recording_is_probed_rather_than_blamed(monkeypatch, tmp_pat
     rows.infos["r1"].probed = False
     sent = fakes.record_pushes(api)
     monkeypatch.setattr(api_mod.library, "probe", lambda path, binary: (30.0, True))
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: discord.PostResult(
-                            ok=True, message="Posted combatlogs.zip."))
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: discord.PostResult(
+            ok=True, message="Posted combatlogs.zip."
+        ),
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
 
     # KEY IS `id`, matching every other duration message.
     assert fakes.payloads(sent, "onDuration") == [
-        {"id": "r1", "duration": 30.0, "definitive": True}]
+        {"id": "r1", "duration": 30.0, "definitive": True}
+    ]
     assert "Posted combatlogs.zip." in fakes.payloads(sent, "onStatus")[-1]["text"]
 
 
@@ -547,10 +618,12 @@ def test_a_failed_video_posts_no_logs_and_leaves_them_to_retry(monkeypatch, tmp_
     the user must act on would be buried under a Discord success line."""
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     posted = []
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.RETRY, object()))
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: posted.append(path))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
+    )
+    monkeypatch.setattr(
+        api_mod.discord, "post_archive", lambda hook, path, content: posted.append(path)
+    )
     sent = fakes.record_pushes(api)
 
     api.start_upload("Fight", "d", False, True, ["r1"])
@@ -566,17 +639,22 @@ def test_a_retried_upload_still_posts_the_logs_it_promised(monkeypatch, tmp_path
     """Retry re-runs the job the user confirmed, and that job included the
     Discord half."""
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(uploader, "upload",
-                        failing_upload(uploader.Outcome.RETRY, object()))
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
+    )
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
 
     posted = []
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: (
-                            posted.append(path),
-                            discord.PostResult(ok=True, message="Posted."))[1])
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: (
+            posted.append(path),
+            discord.PostResult(ok=True, message="Posted."),
+        )[1],
+    )
 
     api.retry()
     join(api)
@@ -591,14 +669,21 @@ def test_a_retried_upload_still_posts_the_logs_it_promised(monkeypatch, tmp_path
 # post FAILURE still alerts, because it leaves a file on disk the user has
 # to be told about.
 
-def test_a_posted_archive_is_deleted_and_the_drop_note_is_appended(monkeypatch, tmp_path):
+
+def test_a_posted_archive_is_deleted_and_the_drop_note_is_appended(
+    monkeypatch, tmp_path
+):
     """The status line must not report a truncated export as a complete one."""
     api, _window, _rows = combined_api(tmp_path, monkeypatch, dropped=2)
     sent = fakes.record_pushes(api)
     archive_path = tmp_path / "combatlogs.zip"
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: discord.PostResult(
-                            ok=True, message="Posted combatlogs.zip (0.0 MB)."))
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: discord.PostResult(
+            ok=True, message="Posted combatlogs.zip (0.0 MB)."
+        ),
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
@@ -616,9 +701,13 @@ def test_a_rejected_archive_is_kept_and_its_location_named(monkeypatch, tmp_path
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     sent = fakes.record_pushes(api)
     archive_path = tmp_path / "combatlogs.zip"
-    monkeypatch.setattr(api_mod.discord, "post_archive",
-                        lambda hook, path, content: discord.PostResult(
-                            ok=False, message="The archive is too large."))
+    monkeypatch.setattr(
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: discord.PostResult(
+            ok=False, message="The archive is too large."
+        ),
+    )
 
     api.start_upload("Fight", "d", False, True, ["r1"])
     join(api)
@@ -647,7 +736,9 @@ def test_a_failure_after_the_archive_exists_still_names_it(monkeypatch, tmp_path
     assert str(archive_path) in body
 
 
-def test_a_crash_in_the_log_half_does_not_report_the_video_as_failed(monkeypatch, tmp_path):
+def test_a_crash_in_the_log_half_does_not_report_the_video_as_failed(
+    monkeypatch, tmp_path
+):
     """The log half runs inside the upload worker's try block, so anything
     it raises outside _combat_log_worker's own handler -- a probe blowing
     up, a bad mtime -- would otherwise be caught by the handler for a FAILED
@@ -701,8 +792,10 @@ def test_the_busy_guard_still_holds_while_the_logs_are_posting(monkeypatch, tmp_
         assert api._busy()
         api.start_upload("Fight again", "d", False, True, ["r2"])
         assert api._alert.raised[-1] == (
-            "warning", "Busy", "An upload is already in progress.")
+            "warning",
+            "Busy",
+            "An upload is already in progress.",
+        )
     finally:
         release.set()
     join(api)
-

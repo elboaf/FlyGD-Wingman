@@ -4,6 +4,7 @@ No real pywebview here. window.py imports it lazily inside create()/run()
 (see that module's docstring), which is what lets these tests inject a stub
 module and run on a headless box with no WebView2 anywhere.
 """
+
 import logging
 import sys
 from pathlib import Path
@@ -47,16 +48,18 @@ def fake_webview(monkeypatch):
         calls["shown_handlers"] = []
         calls["window"] = SimpleNamespace(
             label="the-window",
-            events=SimpleNamespace(
-                shown=_FakeEvent(calls["shown_handlers"])))
+            events=SimpleNamespace(shown=_FakeEvent(calls["shown_handlers"])),
+        )
         return calls["window"]
 
     def start(**kwargs):
         calls["start_kwargs"] = kwargs
 
     monkeypatch.setitem(
-        sys.modules, "webview",
-        SimpleNamespace(create_window=create_window, start=start))
+        sys.modules,
+        "webview",
+        SimpleNamespace(create_window=create_window, start=start),
+    )
     return calls
 
 
@@ -158,12 +161,14 @@ def test_no_public_attribute_of_the_api_holds_the_window(fake_webview):
     window_mod.create(api)
 
     assert all(name.startswith("_") for name in vars(api)), (
-        f"public instance attribute on Api: {sorted(vars(api))}")
+        f"public instance attribute on Api: {sorted(vars(api))}"
+    )
     for name in dir(api):
         if name.startswith("_"):
             continue
         assert callable(getattr(api, name)), (
-            f"Api.{name} is public and is not a method; pywebview will walk it")
+            f"Api.{name} is public and is not a method; pywebview will walk it"
+        )
 
 
 def test_run_pins_the_backend(fake_webview):
@@ -182,6 +187,7 @@ def test_run_hands_startup_work_to_pywebview_rather_than_doing_it_first(fake_web
     the full twenty seconds and then loses its message to Api._push's bare
     except. start() runs `func` on its own thread instead.
     """
+
     def work():
         pass
 
@@ -228,8 +234,9 @@ def test_placement_is_in_logical_units_on_a_scaled_primary():
     x=2800 on a screen 3840 wide and hung 1014px off the right edge, half
     of it on the next monitor. Invisible at 100%, where the two units are
     the same number."""
-    x, y = window_mod._placement(1040, 680, metrics=lambda: (3840, 2160),
-                                 scale=lambda: 2.0)
+    x, y = window_mod._placement(
+        1040, 680, metrics=lambda: (3840, 2160), scale=lambda: 2.0
+    )
     assert (x, y) == (440, 200)
     # What pywebview will actually use, once it applies the scale back.
     assert (x * 2, y * 2) == (880, 400)
@@ -238,13 +245,14 @@ def test_placement_is_in_logical_units_on_a_scaled_primary():
 def test_placement_at_100_percent_is_unchanged():
     """The scaled path must not move the window for the majority of users
     who run at 100%."""
-    assert window_mod._placement(1000, 600, metrics=lambda: (1920, 1080),
-                                 scale=lambda: 1.0) == (460, 240)
+    assert window_mod._placement(
+        1000, 600, metrics=lambda: (1920, 1080), scale=lambda: 1.0
+    ) == (460, 240)
 
 
 def test_placement_survives_a_scale_of_zero():
     """GetDpiForSystem returning 0 is a documented failure mode, and
     dividing by it would take the window down at startup."""
-    assert window_mod._placement(1000, 600, metrics=lambda: (1920, 1080),
-                                 scale=lambda: 0.0) == (460, 240)
-
+    assert window_mod._placement(
+        1000, 600, metrics=lambda: (1920, 1080), scale=lambda: 0.0
+    ) == (460, 240)

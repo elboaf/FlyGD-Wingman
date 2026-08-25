@@ -36,6 +36,7 @@ would take WM_NCCALCSIZE to carve a real non-client frame, or giving up
 `frameless` and taking the OS title bar back. Do not spend time trying to
 fix it from this file.
 """
+
 import ctypes
 import logging
 import sys
@@ -134,21 +135,24 @@ def _win32():
     LRESULT = ctypes.c_ssize_t
     WPARAM = ctypes.c_size_t
     LPARAM = ctypes.c_ssize_t
-    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
-                                 WPARAM, LPARAM)
+    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, WPARAM, LPARAM)
 
     class MONITORINFO(ctypes.Structure):
-        _fields_ = [("cbSize", wintypes.DWORD),
-                    ("rcMonitor", wintypes.RECT),
-                    ("rcWork", wintypes.RECT),
-                    ("dwFlags", wintypes.DWORD)]
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
 
     class MINMAXINFO(ctypes.Structure):
-        _fields_ = [("ptReserved", wintypes.POINT),
-                    ("ptMaxSize", wintypes.POINT),
-                    ("ptMaxPosition", wintypes.POINT),
-                    ("ptMinTrackSize", wintypes.POINT),
-                    ("ptMaxTrackSize", wintypes.POINT)]
+        _fields_ = [
+            ("ptReserved", wintypes.POINT),
+            ("ptMaxSize", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT),
+            ("ptMinTrackSize", wintypes.POINT),
+            ("ptMaxTrackSize", wintypes.POINT),
+        ]
 
     user32 = ctypes.windll.user32
     set_ptr = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
@@ -156,20 +160,22 @@ def _win32():
     set_ptr.argtypes = [wintypes.HWND, ctypes.c_int, WNDPROC]
 
     user32.CallWindowProcW.restype = LRESULT
-    user32.CallWindowProcW.argtypes = [WNDPROC, wintypes.HWND, wintypes.UINT,
-                                       WPARAM, LPARAM]
+    user32.CallWindowProcW.argtypes = [
+        WNDPROC,
+        wintypes.HWND,
+        wintypes.UINT,
+        WPARAM,
+        LPARAM,
+    ]
     # Declared for the same reason as CallWindowProcW: it is the fallback
     # inside the window proc, so a truncated default return type there
     # would corrupt the one path that exists to avoid a crash.
     user32.DefWindowProcW.restype = LRESULT
-    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT,
-                                      WPARAM, LPARAM]
-    user32.GetWindowRect.argtypes = [wintypes.HWND,
-                                     ctypes.POINTER(wintypes.RECT)]
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user32.MonitorFromWindow.restype = wintypes.HANDLE
     user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-    user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE,
-                                       ctypes.POINTER(MONITORINFO)]
+    user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
 
     return user32, set_ptr, WNDPROC, MONITORINFO, MINMAXINFO, wintypes
 
@@ -266,8 +272,7 @@ def enable_resize(window, pad: int = INSET) -> bool:
     try:
         user32, set_ptr, WNDPROC, MONITORINFO, MINMAXINFO, wintypes = _win32()
     except Exception:
-        logger.warning("Win32 setup failed; window stays fixed-size.",
-                       exc_info=True)
+        logger.warning("Win32 setup failed; window stays fixed-size.", exc_info=True)
         return False
 
     handle = wintypes.HWND(hwnd)
@@ -281,8 +286,9 @@ def enable_resize(window, pad: int = INSET) -> bool:
     except Exception:
         # Without the band the subclass cannot receive anything, so there
         # is nothing to gain by continuing to attach it.
-        logger.warning("Could not inset the web view; window stays "
-                       "fixed-size.", exc_info=True)
+        logger.warning(
+            "Could not inset the web view; window stays fixed-size.", exc_info=True
+        )
         return False
 
     chained = []
@@ -324,8 +330,7 @@ def enable_resize(window, pad: int = INSET) -> bool:
         rect = wintypes.RECT()
         if not user32.GetWindowRect(handle, ctypes.byref(rect)):
             return None
-        return hit_code((rect.left, rect.top, rect.right, rect.bottom),
-                        x, y, scale)
+        return hit_code((rect.left, rect.top, rect.right, rect.bottom), x, y, scale)
 
     def proc(hwnd_, msg, wparam, lparam):
         if not chained:
@@ -347,8 +352,7 @@ def enable_resize(window, pad: int = INSET) -> bool:
                 # Chain FIRST so WinForms fills ptMinTrackSize in from
                 # MinimumSize, THEN override only the max fields. The other
                 # order throws min_size away entirely.
-                result = user32.CallWindowProcW(original, hwnd_, msg,
-                                                wparam, lparam)
+                result = user32.CallWindowProcW(original, hwnd_, msg, wparam, lparam)
                 _clamp(lparam)
                 return result
         except Exception:
@@ -380,8 +384,9 @@ def enable_resize(window, pad: int = INSET) -> bool:
         _on_ui_thread(native, _install)
     except Exception:
         _KEEPALIVE.remove(callback)
-        logger.warning("Could not install the window proc; window stays "
-                       "fixed-size.", exc_info=True)
+        logger.warning(
+            "Could not install the window proc; window stays fixed-size.", exc_info=True
+        )
         return False
 
     if not installed.get("previous"):
@@ -416,7 +421,16 @@ def _log_geometry(native, pad: int, scale: float) -> None:
         logger.info(
             "resize band: asked %spx at scale %s, got %dpx left / %dpx top "
             "(client %dx%d, display %dx%d, padding %s, dpi %s)",
-            pad, scale, display.X, display.Y, client.Width, client.Height,
-            display.Width, display.Height, native.Padding, native.DeviceDpi)
+            pad,
+            scale,
+            display.X,
+            display.Y,
+            client.Width,
+            client.Height,
+            display.Width,
+            display.Height,
+            native.Padding,
+            native.DeviceDpi,
+        )
     except Exception:
         logger.debug("Could not read back the inset geometry", exc_info=True)

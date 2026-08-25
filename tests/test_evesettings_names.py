@@ -1,5 +1,6 @@
 """ESI universe/names. The transport is injected everywhere, so nothing here
 touches the network."""
+
 import json
 
 import pytest
@@ -8,8 +9,7 @@ from obs_youtube_uploader.evesettings import names
 
 
 def test_classify_reads_a_successful_body():
-    body = json.dumps([{"id": 1, "name": "Pilot One"},
-                       {"id": 2, "name": "Pilot Two"}])
+    body = json.dumps([{"id": 1, "name": "Pilot One"}, {"id": 2, "name": "Pilot Two"}])
     outcome, resolved = names.classify(200, body)
     assert outcome == names.RESOLVED
     assert resolved == {1: "Pilot One", 2: "Pilot Two"}
@@ -44,8 +44,9 @@ def test_classify_treats_unparseable_success_as_transient():
 
 
 def test_classify_drops_entries_with_no_usable_name():
-    body = json.dumps([{"id": 1, "name": "  "}, {"id": 0, "name": "x"},
-                       {"id": 3, "name": "Pilot"}])
+    body = json.dumps(
+        [{"id": 1, "name": "  "}, {"id": 0, "name": "x"}, {"id": 3, "name": "Pilot"}]
+    )
     _, resolved = names.classify(200, body)
     assert resolved == {3: "Pilot"}
 
@@ -198,15 +199,16 @@ def test_a_non_serialisable_id_degrades_instead_of_raising(tmp_path):
     to positive ints before calling here, so nothing reaches it today --
     which is exactly why the contract must not depend on that filter.
     """
+
     def unreachable(*_args, **_kwargs):  # pragma: no cover - never called
         raise AssertionError("the request was built, so the id serialised")
 
-    assert names.fetch_batch([object()], transport=unreachable) == (
-        names.TRANSIENT, {})
+    assert names.fetch_batch([object()], transport=unreachable) == (names.TRANSIENT, {})
 
 
 def test_an_unbuildable_request_degrades_instead_of_raising(monkeypatch):
     """The other statement that used to sit outside the try."""
+
     def explode(*_args, **_kwargs):
         raise ValueError("unknown url type")
 

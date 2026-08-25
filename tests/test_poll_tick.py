@@ -5,6 +5,7 @@ module-level function now precisely so the three things that were only ever
 verified by hand -- the deferred-refresh flag, the notify_mode branch, and
 the one-shot failure notification -- have tests.
 """
+
 from pathlib import Path
 
 from obs_youtube_uploader.__main__ import (
@@ -78,7 +79,8 @@ def test_new_recordings_refresh_the_list_and_toast():
     # A set of Path, matching RowSnapshot.rebuild's contract -- not strings.
     assert api.rows_calls == [{Path("a.mkv")}]
     assert icon.notifications == [
-        ("1 new recording(s) ready to upload", "FlyGD Wingman")]
+        ("1 new recording(s) ready to upload", "FlyGD Wingman")
+    ]
     assert window.shown == 0
 
 
@@ -186,6 +188,7 @@ def test_a_failing_status_push_does_not_skip_the_poll():
     """The status push and the watcher poll are separate failure domains: a
     broken status push must not be miscounted as a failing tick, and must
     not skip poll_once for that tick."""
+
     class _RaisingApi(_FakeApi):
         def _push_eve_status(self):
             self.status_pushes += 1

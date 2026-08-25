@@ -5,6 +5,7 @@ so a window that records that call is a complete stand-in for WebView2.
 That is what lets these tests run on ubuntu-latest with no webview, no
 display, and no Tk.
 """
+
 import sys
 import types
 from pathlib import Path
@@ -113,20 +114,30 @@ class Alerts:
 
 
 def info(path, size=1000, duration=60.0, mtime=1000.0, probed=True):
-    return library.VideoInfo(path=Path(path), mtime=mtime, size=size,
-                              duration=duration, probed=probed)
+    return library.VideoInfo(
+        path=Path(path), mtime=mtime, size=size, duration=duration, probed=probed
+    )
 
 
 def build_api(tmp_path, rows=None, settings=None, watcher=None):
     """Construct an Api the way ui.window.create() does: state in, window after."""
     cfg = {
-        "privacy": "unlisted", "category": "20", "notify_mode": "toast",
-        "recording_dir": str(tmp_path), "discord_webhook": "",
-        "gamelogs_dir": None, "channel_id": "", "channel_title": "",
+        "privacy": "unlisted",
+        "category": "20",
+        "notify_mode": "toast",
+        "recording_dir": str(tmp_path),
+        "discord_webhook": "",
+        "gamelogs_dir": None,
+        "channel_id": "",
+        "channel_title": "",
     }
     cfg.update(settings or {})
-    state = api_mod.AppState(recording_dir=Path(tmp_path), settings=cfg,
-                              ffmpeg_bin="/usr/bin/ffmpeg", ffprobe_bin=None)
+    state = api_mod.AppState(
+        recording_dir=Path(tmp_path),
+        settings=cfg,
+        ffmpeg_bin="/usr/bin/ffmpeg",
+        ffprobe_bin=None,
+    )
     window = FakeWindow()
     api = api_mod.Api(state, rows=rows if rows is not None else FakeRows())
     api._window = window

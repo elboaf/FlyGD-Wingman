@@ -1,5 +1,6 @@
 """The supervisor is Windows-only at runtime but must import and be tested
 on Linux, the same way ui/chrome.py is (window-resize-plan.md:130-140)."""
+
 import subprocess
 
 from obs_youtube_uploader import bookmarks, hotkeys
@@ -40,8 +41,7 @@ class FakeSpawner:
 
 
 def section(**over):
-    base = {"enabled": True, "keybinds": dict(bookmarks.DEFAULT_BINDS),
-            "windows": {}}
+    base = {"enabled": True, "keybinds": dict(bookmarks.DEFAULT_BINDS), "windows": {}}
     base.update(over)
     return base
 
@@ -49,10 +49,13 @@ def section(**over):
 def engine(tmp_path, spawner):
     (tmp_path / "ahk.exe").write_text("")
     (tmp_path / "e.ahk").write_text("")
-    return hotkeys.HotkeyEngine(str(tmp_path / "ahk.exe"),
-                                tmp_path / "e.ahk", tmp_path,
-                                spawner=spawner,
-                                token_factory=lambda: "TOKEN123")
+    return hotkeys.HotkeyEngine(
+        str(tmp_path / "ahk.exe"),
+        tmp_path / "e.ahk",
+        tmp_path,
+        spawner=spawner,
+        token_factory=lambda: "TOKEN123",
+    )
 
 
 def test_apply_writes_the_ini(tmp_path):
@@ -100,13 +103,15 @@ def test_start_records_pid_and_token(tmp_path):
     eng.apply(section())
     eng.start()
     import json
+
     record = json.loads((tmp_path / "eve_engine.pid").read_text())
     assert record == {"pid": 4321, "token": "TOKEN123"}
 
 
 def test_start_fails_cleanly_when_the_binary_is_missing(tmp_path):
-    eng = hotkeys.HotkeyEngine(None, tmp_path / "e.ahk", tmp_path,
-                               spawner=FakeSpawner())
+    eng = hotkeys.HotkeyEngine(
+        None, tmp_path / "e.ahk", tmp_path, spawner=FakeSpawner()
+    )
     assert eng.start() is False
     assert eng.is_running() is False
     assert "engine" in (eng.last_error or "").lower()
@@ -114,8 +119,9 @@ def test_start_fails_cleanly_when_the_binary_is_missing(tmp_path):
 
 def test_start_fails_cleanly_when_the_script_is_missing(tmp_path):
     (tmp_path / "ahk.exe").write_text("")
-    eng = hotkeys.HotkeyEngine(str(tmp_path / "ahk.exe"), None, tmp_path,
-                               spawner=FakeSpawner())
+    eng = hotkeys.HotkeyEngine(
+        str(tmp_path / "ahk.exe"), None, tmp_path, spawner=FakeSpawner()
+    )
     assert eng.start() is False
     assert "engine" in (eng.last_error or "").lower()
 
@@ -129,7 +135,9 @@ def test_start_is_idempotent(tmp_path):
     assert len(spawner.calls) == 1
 
 
-def test_start_stops_the_child_when_the_pid_record_cannot_be_written(tmp_path, monkeypatch):
+def test_start_stops_the_child_when_the_pid_record_cannot_be_written(
+    tmp_path, monkeypatch
+):
     """A write failure here must not leave a running, unrecorded child: with
     no PID file on disk, orphan recovery could never find it, yet
     is_running() would keep reporting the engine alive even though start()
@@ -165,7 +173,7 @@ def test_stop_escalates_to_kill_when_terminate_is_ignored(tmp_path):
 
     class Stubborn(FakeProc):
         def terminate(self):
-            self.terminated = True   # ignores it
+            self.terminated = True  # ignores it
 
     spawner.proc = Stubborn()
     eng = engine(tmp_path, spawner)

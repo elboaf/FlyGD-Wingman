@@ -8,6 +8,7 @@ the local UTC offset — the wrong hour, or nothing, with no error raised.
 Measured on a real folder: a log whose header reads 20:42:50 has an mtime of
 21:55:16 UTC / 17:55:16 local. Only the UTC reading is coherent.
 """
+
 import contextlib
 import datetime
 import json
@@ -156,7 +157,9 @@ def _filename_start(name: str) -> datetime.datetime | None:
         return None
 
 
-def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) -> Selection:
+def select_logs(
+    directory, start_utc, end_utc, *, max_files: int = MAX_FILES
+) -> Selection:
     """Gamelogs overlapping [start_utc, end_utc] padded by WINDOW_PADDING.
 
     Both bounds must be timezone-aware UTC — see the module docstring.

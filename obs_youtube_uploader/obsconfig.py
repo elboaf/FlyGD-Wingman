@@ -3,6 +3,7 @@
 This is what removes the last manual configuration step: rather than asking
 the user where OBS records, read it from OBS.
 """
+
 import configparser
 import os
 from pathlib import Path
@@ -57,7 +58,8 @@ def _read_path(ini: Path) -> Path | None:
         mode = "advanced"
 
     primary, secondary = (
-        (_ADVANCED_PATH_KEY, _SIMPLE_PATH_KEY) if mode == "advanced"
+        (_ADVANCED_PATH_KEY, _SIMPLE_PATH_KEY)
+        if mode == "advanced"
         else (_SIMPLE_PATH_KEY, _ADVANCED_PATH_KEY)
     )
     for section, key in (primary, secondary):

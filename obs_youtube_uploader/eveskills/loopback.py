@@ -25,6 +25,7 @@ AUTH_TIMEOUT_S with no diagnostic anywhere. The code is protected by never
 being logged or displayed, not by being rewritten; sso.exchange_code's own
 non-blank / <=2048 / no-NUL checks are what validate it.
 """
+
 import contextlib
 import hmac
 import socket
@@ -57,7 +58,8 @@ _ACCEPT_POLL_S = 0.25
 # The filter applied to the ERROR value only (never the code) before it can
 # reach a log line or a user-visible message.
 _CODE_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
 _HEX = frozenset("0123456789abcdefABCDEF")
 
 
@@ -97,8 +99,9 @@ def _read_line(raw: bytes, offset: int) -> tuple[str, int]:
     return chunk.decode("ascii"), end + 1
 
 
-def parse_request(raw: bytes, *, expected_host: str,
-                  expected_path: str) -> dict[str, str]:
+def parse_request(
+    raw: bytes, *, expected_host: str, expected_path: str
+) -> dict[str, str]:
     """Parse a callback request, returning its query mapping.
 
     Raises ValueError on any violation. There is no tolerant mode.
@@ -108,18 +111,23 @@ def parse_request(raw: bytes, *, expected_host: str,
     # split accepts "GET  /callback/  HTTP/1.1" and "GET /x HTTP/1.1 extra",
     # neither of which any browser sends.
     pieces = request_line.split(" ")
-    if (len(pieces) != 3 or pieces[0] != "GET" or pieces[2] != "HTTP/1.1"
-            or not pieces[1].startswith("/")):
+    if (
+        len(pieces) != 3
+        or pieces[0] != "GET"
+        or pieces[2] != "HTTP/1.1"
+        or not pieces[1].startswith("/")
+    ):
         # startswith("/") pins origin-form: an absolute-form target is
         # another way to name an authority the Host check never sees.
         raise ValueError("Local callback request line was not a plain GET.")
-    return _parse_headers(pieces[1], raw, offset,
-                          expected_host=expected_host,
-                          expected_path=expected_path)
+    return _parse_headers(
+        pieces[1], raw, offset, expected_host=expected_host, expected_path=expected_path
+    )
 
 
-def _parse_headers(target: str, raw: bytes, offset: int, *,
-                   expected_host: str, expected_path: str) -> dict[str, str]:
+def _parse_headers(
+    target: str, raw: bytes, offset: int, *, expected_host: str, expected_path: str
+) -> dict[str, str]:
     host = None
     header_bytes = 0
     while True:
@@ -141,7 +149,7 @@ def _parse_headers(target: str, raw: bytes, offset: int, *,
             continue
         if host is not None:
             raise ValueError("Local callback contained duplicate Host headers.")
-        host = line[separator + 1:].strip()
+        host = line[separator + 1 :].strip()
 
     # The DNS-rebinding guard. A page on any origin can point a name at
     # 127.0.0.1 and make the browser issue this exact request; what it
@@ -150,7 +158,9 @@ def _parse_headers(target: str, raw: bytes, offset: int, *,
     # meaning in a hostname, and by equality because a port-less or
     # differently-ported authority is a different authority.
     if host is None or host.lower() != expected_host.lower():
-        raise ValueError("Local callback Host header did not match the redirect authority.")
+        raise ValueError(
+            "Local callback Host header did not match the redirect authority."
+        )
 
     return _parse_target(target, expected_path=expected_path)
 
@@ -162,7 +172,7 @@ def _parse_target(target: str, *, expected_path: str) -> dict[str, str]:
         raise ValueError("Local callback target contained a fragment.")
     marker = target.find("?")
     path = target if marker < 0 else target[:marker]
-    query = "" if marker < 0 else target[marker + 1:]
+    query = "" if marker < 0 else target[marker + 1 :]
     # An EXACT literal match. EVE echoes the registered redirect_uri back
     # verbatim, so exactness is achievable -- and accepting "/%63allback/"
     # or "/callback/../callback/" as the same path would mean re-deriving
@@ -182,9 +192,14 @@ def _ensure_percent_encoding(value: str) -> None:
     index = 0
     while index < len(value):
         if value[index] == "%":
-            if (index + 2 >= len(value) or value[index + 1] not in _HEX
-                    or value[index + 2] not in _HEX):
-                raise ValueError("Local callback query contained invalid percent encoding.")
+            if (
+                index + 2 >= len(value)
+                or value[index + 1] not in _HEX
+                or value[index + 2] not in _HEX
+            ):
+                raise ValueError(
+                    "Local callback query contained invalid percent encoding."
+                )
             index += 2
         index += 1
 
@@ -204,8 +219,9 @@ def _parse_query(query: str) -> dict[str, str]:
         # valid UTF-8 raises (UnicodeDecodeError is a ValueError) rather
         # than producing replacement characters.
         key = unquote(key_text.replace("+", " "), errors="strict")
-        value = (unquote(value_text.replace("+", " "), errors="strict")
-                 if separator else "")
+        value = (
+            unquote(value_text.replace("+", " "), errors="strict") if separator else ""
+        )
         if len(key) > MAX_QUERY_KEY_CHARS or len(value) > MAX_QUERY_VALUE_CHARS:
             raise ValueError("Local callback query exceeded its configured limit.")
         if key in result:
@@ -237,13 +253,15 @@ def safe_oauth_code(value: object) -> str:
 
 
 _SUCCESS_HTML = (
-    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    '<!doctype html><html><head><meta charset="utf-8">'
     "<title>FlyGD Wingman</title></head><body><p>Authentication complete. "
-    "You can close this tab and return to Wingman.</p></body></html>")
+    "You can close this tab and return to Wingman.</p></body></html>"
+)
 _FAILURE_HTML = (
-    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    '<!doctype html><html><head><meta charset="utf-8">'
     "<title>FlyGD Wingman</title></head><body><p>Authentication was not "
-    "accepted. You can close this tab and return to Wingman.</p></body></html>")
+    "accepted. You can close this tab and return to Wingman.</p></body></html>"
+)
 
 
 def _reply(connection, success: bool) -> None:
@@ -261,7 +279,8 @@ def _reply(connection, success: bool) -> None:
         "Content-Type: text/html; charset=utf-8\r\n"
         f"Content-Length: {len(body)}\r\n"
         "Cache-Control: no-store\r\n"
-        "Connection: close\r\n\r\n").encode("ascii")
+        "Connection: close\r\n\r\n"
+    ).encode("ascii")
     # The browser closing first is normal and is not a failure of the
     # flow: the callback has already been read off the wire.
     with contextlib.suppress(OSError):
@@ -368,7 +387,7 @@ class LoopbackListener:
                         "Another program may be using this port, or a "
                         "previous sign-in attempt has not finished closing "
                         "it yet -- if so, waiting a few seconds and trying "
-                        "again should clear it."
+                        "again should clear it.",
                     ) from exc
                 time.sleep(_BIND_RETRY_INTERVAL_S)
         try:
@@ -392,8 +411,9 @@ class LoopbackListener:
         """Make a pending wait() raise CallbackCancelled."""
         self._cancelled.set()
 
-    def wait(self, expected_state: str, *,
-             timeout_s: float = AUTH_TIMEOUT_S) -> Callback:
+    def wait(
+        self, expected_state: str, *, timeout_s: float = AUTH_TIMEOUT_S
+    ) -> Callback:
         """Serve callback hits until one carries the expected state.
 
         Raises CallbackTimeout at the overall deadline and CallbackCancelled
@@ -432,7 +452,8 @@ class LoopbackListener:
                     query = parse_request(
                         _read_request(connection, read_deadline, self._cancelled),
                         expected_host=self._authority,
-                        expected_path=self._path)
+                        expected_path=self._path,
+                    )
                 except CallbackCancelled:
                     # Let this propagate out of wait(): a cancellation that
                     # arrives mid-read must interrupt the read itself, not
@@ -454,8 +475,9 @@ class LoopbackListener:
                 # mismatch. EveLoopbackCallback.cs:149-153 compares
                 # Encoding.UTF8.GetBytes of both sides for the same reason.
                 returned = query.get("state", "")
-                if not hmac.compare_digest(expected_state.encode("utf-8"),
-                                          returned.encode("utf-8")):
+                if not hmac.compare_digest(
+                    expected_state.encode("utf-8"), returned.encode("utf-8")
+                ):
                     _reply(connection, False)
                     continue
 

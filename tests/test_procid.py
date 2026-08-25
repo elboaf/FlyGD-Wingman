@@ -1,6 +1,7 @@
 """terminate() feeds HotkeyEngine.recover_orphan, which relies on a False
 return to keep the PID record for another try. A taskkill that exits
 non-zero without raising must not be reported as a successful kill."""
+
 from types import SimpleNamespace
 
 from obs_youtube_uploader import procid
@@ -8,7 +9,8 @@ from obs_youtube_uploader import procid
 
 def fake_runner(returncode, stderr=""):
     return lambda argv, **kwargs: SimpleNamespace(
-        returncode=returncode, stdout="", stderr=stderr)
+        returncode=returncode, stdout="", stderr=stderr
+    )
 
 
 def test_terminate_reports_success_on_zero_returncode(monkeypatch):

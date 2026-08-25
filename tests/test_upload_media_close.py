@@ -20,6 +20,7 @@ doubles, since that MediaFileUpload stub is already vetted against the
 real call site (chunksize=uploader.CHUNK_SIZE, resumable=True) and its
 .stream().close() shape is exactly what _close_media calls.
 """
+
 import types
 
 import pytest
@@ -30,9 +31,15 @@ from tests import fakes
 
 
 def _job(ids=("r1",), stitch=True):
-    return UploadJob(items=[fakes.info(f"{rid}.mkv") for rid in ids], ids=list(ids),
-                     title="t", description="d", stitch=stitch,
-                     privacy="unlisted", category="20")
+    return UploadJob(
+        items=[fakes.info(f"{rid}.mkv") for rid in ids],
+        ids=list(ids),
+        title="t",
+        description="d",
+        stitch=stitch,
+        privacy="unlisted",
+        category="20",
+    )
 
 
 def _upload_one(api, monkeypatch, upload_impl, **kwargs):
@@ -40,8 +47,9 @@ def _upload_one(api, monkeypatch, upload_impl, **kwargs):
     MediaFileUpload = fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", upload_impl)
     youtube = fakes.FakeYouTube()
-    return api._upload_one(youtube, MediaFileUpload, "/tmp/stitch-abc.mkv",
-                           _job(), 0, 1, **kwargs)
+    return api._upload_one(
+        youtube, MediaFileUpload, "/tmp/stitch-abc.mkv", _job(), 0, 1, **kwargs
+    )
 
 
 def test_stitched_upload_closes_media_on_success(tmp_path, monkeypatch):
@@ -96,8 +104,9 @@ def test_stitched_worker_asks_upload_one_to_close_the_media(tmp_path, monkeypatc
 
     recorded = {}
 
-    def fake_upload_one(youtube, MediaFileUploadCls, path, job, index, total,
-                        close_media=False):
+    def fake_upload_one(
+        youtube, MediaFileUploadCls, path, job, index, total, close_media=False
+    ):
         recorded["close_media"] = close_media
         return "vid123"
 
@@ -121,17 +130,22 @@ def test_stitched_worker_asks_upload_one_to_close_the_media(tmp_path, monkeypatc
 
     assert recorded.get("close_media") is True, (
         "the stitched call site must ask _upload_one to close the media, or "
-        "the merged temp file cannot be unlinked on Windows")
+        "the merged temp file cannot be unlinked on Windows"
+    )
 
 
-@pytest.mark.parametrize("outcome,retryable", [
-    (uploader.Outcome.RETRY, True),
-    (uploader.Outcome.UPLOAD_LIMIT, False),
-    (uploader.Outcome.AUTH, False),
-    (uploader.Outcome.PERMANENT, False),
-])
+@pytest.mark.parametrize(
+    "outcome,retryable",
+    [
+        (uploader.Outcome.RETRY, True),
+        (uploader.Outcome.UPLOAD_LIMIT, False),
+        (uploader.Outcome.AUTH, False),
+        (uploader.Outcome.PERMANENT, False),
+    ],
+)
 def test_retry_availability_after_a_failed_retry_matches_the_outcome(
-        tmp_path, monkeypatch, outcome, retryable):
+    tmp_path, monkeypatch, outcome, retryable
+):
     """A retry that fails again must re-enable Retry only when retrying can
     still help. Re-enabling it for a channel limit invites the user into a
     loop of instant 'wait a day' dialogs.
@@ -139,6 +153,7 @@ def test_retry_availability_after_a_failed_retry_matches_the_outcome(
     retry() disables the button before starting the worker; this drives
     _retry_worker directly, so the only "re-enable" signal possible is the
     onRetryAvailable push the worker itself makes on a RETRY outcome."""
+
     def boom(request, **kw):
         raise uploader.UploadFailed(outcome, request=request)
 
@@ -188,7 +203,8 @@ def test_terminal_retry_failure_releases_the_recording(tmp_path, monkeypatch):
 
 
 def test_retryable_retry_failure_keeps_the_stream_for_the_next_resume(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     api, media = _run_retry(tmp_path, monkeypatch, uploader.Outcome.RETRY)
     assert not media.closed
     assert api._retry_state.request is not None

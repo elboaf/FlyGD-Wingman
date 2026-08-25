@@ -6,6 +6,7 @@ and 50.0.0 is bundled into every release today, so verification here is ten
 lines against an audited implementation rather than a hand-rolled RSA
 primitive -- see EveJwtValidator.cs, which this module ports.
 """
+
 import base64
 import binascii
 import contextlib
@@ -83,11 +84,15 @@ def _decode_json_segment(segment: str) -> dict:
     return parsed
 
 
-def validate(token: str, *, client_id: str,
-             required_scopes: Iterable[str],
-             key_source,
-             now: datetime | None = None,
-             skew_s: int = CLOCK_SKEW_S) -> EveIdentity:
+def validate(
+    token: str,
+    *,
+    client_id: str,
+    required_scopes: Iterable[str],
+    key_source,
+    now: datetime | None = None,
+    skew_s: int = CLOCK_SKEW_S,
+) -> EveIdentity:
     """Validate an EVE SSO access token and return the identity it carries.
 
     Raises JwtError for every rejection; there is no partial success.
@@ -142,15 +147,18 @@ def validate(token: str, *, client_id: str,
     signing_input = f"{head_b64}.{body_b64}".encode("ascii")
     signature = _b64url_decode(sig_b64)
     try:
-        public_key.verify(signature, signing_input,
-                           padding.PKCS1v15(), hashes.SHA256())
+        public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
     except InvalidSignature as exc:
         raise JwtError("EVE SSO access token failed signature verification.") from exc
 
     claims = _decode_json_segment(body_b64)
-    return _read_claims(claims, client_id=client_id,
-                         required_scopes=required_scopes,
-                         now=now, skew_s=skew_s)
+    return _read_claims(
+        claims,
+        client_id=client_id,
+        required_scopes=required_scopes,
+        now=now,
+        skew_s=skew_s,
+    )
 
 
 def _is_control(character: str) -> bool:
@@ -159,7 +167,9 @@ def _is_control(character: str) -> bool:
     return unicodedata.category(character) == "Cc"
 
 
-def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> EveIdentity:
+def _read_claims(
+    claims: dict, *, client_id, required_scopes, now, skew_s
+) -> EveIdentity:
     issuer = claims.get("iss")
     # Membership in a fixed set, deliberately not a suffix match:
     # "login.eveonline.com.evil.test" must not pass.
@@ -192,8 +202,11 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
     # past the epoch. isfinite excludes inf/nan -- json.loads("1e400")
     # overflows to inf, and `inf + skew_s <= now` is always False, so
     # without this an unbounded exp would silently read as never-expiring.
-    if (isinstance(expiry, bool) or not isinstance(expiry, (int, float))
-            or not math.isfinite(expiry)):
+    if (
+        isinstance(expiry, bool)
+        or not isinstance(expiry, (int, float))
+        or not math.isfinite(expiry)
+    ):
         raise JwtError("EVE SSO access token had no usable expiry.")
     moment = now or datetime.now(UTC)
     if expiry + skew_s <= moment.timestamp():
@@ -204,8 +217,11 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
     # (RFC 7519); only a PRESENT, future nbf is a rejection.
     not_before = claims.get("nbf")
     if not_before is not None:
-        if (isinstance(not_before, bool) or not isinstance(not_before, (int, float))
-                or not math.isfinite(not_before)):
+        if (
+            isinstance(not_before, bool)
+            or not isinstance(not_before, (int, float))
+            or not math.isfinite(not_before)
+        ):
             raise JwtError("EVE SSO access token had an unusable not-before claim.")
         if not_before - skew_s > moment.timestamp():
             raise JwtError("EVE SSO access token is not yet valid.")
@@ -245,11 +261,18 @@ def _read_claims(claims: dict, *, client_id, required_scopes, now, skew_s) -> Ev
     missing = sorted(scope for scope in required_scopes if scope not in granted)
     if missing:
         # Named, because the message is what the user acts on.
-        raise JwtError("EVE SSO access token is missing required scopes: "
-                        + ", ".join(missing) + ".")
+        raise JwtError(
+            "EVE SSO access token is missing required scopes: "
+            + ", ".join(missing)
+            + "."
+        )
 
-    return EveIdentity(character_id=character_id, name=name,
-                        owner_hash=owner_hash, scopes=frozenset(granted))
+    return EveIdentity(
+        character_id=character_id,
+        name=name,
+        owner_hash=owner_hash,
+        scopes=frozenset(granted),
+    )
 
 
 def _read_scopes(raw: object) -> frozenset[str]:
@@ -272,8 +295,9 @@ def _read_scopes(raw: object) -> frozenset[str]:
         # empties, which covers both the single-scope and separated forms.
         return frozenset(raw.split())
     if isinstance(raw, list):
-        return frozenset(item.strip() for item in raw
-                          if isinstance(item, str) and item.strip())
+        return frozenset(
+            item.strip() for item in raw if isinstance(item, str) and item.strip()
+        )
     # Neither shape. Reading this as "no scopes" would hide a response
     # nobody understands behind a plausible-looking permissions error.
     raise JwtError("EVE SSO access token had an unreadable scope claim.")
@@ -367,8 +391,9 @@ class SigningKeySource:
     wanted, and reuses that result instead of doing its own.
     """
 
-    def __init__(self, *, transport=_default_transport, now=_utcnow,
-                 ttl_s: int = JWKS_TTL_S) -> None:
+    def __init__(
+        self, *, transport=_default_transport, now=_utcnow, ttl_s: int = JWKS_TTL_S
+    ) -> None:
         self._transport = transport
         self._now = now
         self._ttl_s = ttl_s
@@ -389,7 +414,11 @@ class SigningKeySource:
 
         with self._lock:
             moment = self._now()
-            fresh = bool(self._keys) and self._expires is not None and self._expires > moment
+            fresh = (
+                bool(self._keys)
+                and self._expires is not None
+                and self._expires > moment
+            )
             if fresh and not force:
                 return dict(self._keys)
             if force and self._keys and self._version != observed_version:
@@ -429,8 +458,11 @@ class SigningKeySource:
         # name a URL whose contents this process then trusts, and a
         # relative, plaintext, or off-host value is exactly how that becomes
         # key substitution.
-        if (parsed.scheme != "https" or not parsed.hostname
-                or parsed.hostname.lower() != application.SSO_HOST):
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.hostname.lower() != application.SSO_HOST
+        ):
             raise JwtError("EVE SSO metadata returned an unexpected JWKS address.")
 
         key_set = self._fetch_json(jwks_uri, MAX_JWKS_BYTES)
@@ -449,9 +481,13 @@ class SigningKeySource:
 
     def _fetch_json(self, url: str, limit: int) -> object:
         request = urllib.request.Request(
-            url, headers={"User-agent": application.USER_AGENT,
-                           "Accept": "application/json"},
-            method="GET")
+            url,
+            headers={
+                "User-agent": application.USER_AGENT,
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
         try:
             with self._transport(request, timeout=TIMEOUT_S) as response:
                 # limit + 1 so an oversized body is detected rather than
@@ -460,8 +496,9 @@ class SigningKeySource:
         except urllib.error.HTTPError as exc:
             raise JwtError(f"EVE SSO key fetch returned {exc.code}.") from exc
         except (urllib.error.URLError, OSError) as exc:
-            raise JwtError("EVE SSO key fetch could not reach "
-                            f"{application.SSO_HOST}.") from exc
+            raise JwtError(
+                f"EVE SSO key fetch could not reach {application.SSO_HOST}."
+            ) from exc
         if len(raw) > limit:
             raise JwtError("EVE SSO response exceeded the configured limit.")
         try:

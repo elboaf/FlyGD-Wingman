@@ -1,6 +1,7 @@
 """A stale readout is worse than none: a plausible-looking dead root system
 would be acted on. Liveness is the authority; the file only supplies values
 once liveness is established."""
+
 import json
 
 import pytest
@@ -8,9 +9,15 @@ import pytest
 from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
 
-VALUES = {"sig": "-ABC", "root": "J1234", "next_num": "J12345",
-          "next_alpha": "J1234A", "failed_binds": [], "seq": 0,
-          "written": 1000.0}
+VALUES = {
+    "sig": "-ABC",
+    "root": "J1234",
+    "next_num": "J12345",
+    "next_alpha": "J1234A",
+    "failed_binds": [],
+    "seq": 0,
+    "written": 1000.0,
+}
 
 
 def write_status(tmp_path, **over):
@@ -98,9 +105,16 @@ def test_a_malformed_failed_binds_is_stale_not_empty(tmp_path, bad):
     assert got.root is None
 
 
-@pytest.mark.parametrize("bad,expected", [
-    ({"a": 1}, None), ([1], None), (True, None), (42, "42"), ("  ", None),
-])
+@pytest.mark.parametrize(
+    "bad,expected",
+    [
+        ({"a": 1}, None),
+        ([1], None),
+        (True, None),
+        (42, "42"),
+        ("  ", None),
+    ],
+)
 def test_display_values_are_coerced_for_a_label(tmp_path, bad, expected):
     """These render into a status bar; a dict would appear as its repr, and
     a bool as "True", which is not a system name."""

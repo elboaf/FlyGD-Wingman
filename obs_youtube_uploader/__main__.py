@@ -1,4 +1,5 @@
 """Entry point: single-instance tray application."""
+
 import contextlib
 import logging
 import os
@@ -78,10 +79,14 @@ def configure_logging() -> None:
     try:
         handler = RotatingFileHandler(
             paths.log_dir() / "uploader_debug.log",
-            maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8",
+            maxBytes=2 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
         )
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+
         # Redaction is enforced here, not at call sites. This handler is
         # attached to the ROOT logger, so every library logger inherits it --
         # an HTTP transport logging its request URL at DEBUG would otherwise
@@ -89,8 +94,7 @@ def configure_logging() -> None:
         # The callable re-reads settings so a webhook configured after
         # startup is still redacted.
         def _current_webhook():
-            hook, _ = discord.parse_webhook(
-                settings_mod.load().get("discord_webhook"))
+            hook, _ = discord.parse_webhook(settings_mod.load().get("discord_webhook"))
             return hook
 
         handler.addFilter(discord.RedactingFilter(_current_webhook))
@@ -119,6 +123,7 @@ def acquire_single_instance():
         return object()  # No enforcement off-Windows; development only.
     import ctypes
     from ctypes import wintypes
+
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.CreateMutexW(None, wintypes.BOOL(True), MUTEX_NAME)
     ERROR_ALREADY_EXISTS = 183
@@ -217,6 +222,7 @@ class PollState:
     module-level function with a test harness. Under Tk this state lived in
     closure cells that nothing outside main() could reach.
     """
+
     consecutive_failures: int = 0
     refresh_deferred: bool = False
 
@@ -332,8 +338,7 @@ def build_preview_host(state, api_box):
         from .preview.host import PreviewHost
         from .preview.store import LayoutStore
 
-        store = LayoutStore(
-            update_settings=lambda: settings_mod.update(state.settings))
+        store = LayoutStore(update_settings=lambda: settings_mod.update(state.settings))
         section = state.settings.get("preview", {})
 
         def on_layout_changed(stable_key, rect, locked):
@@ -368,8 +373,9 @@ def build_preview_host(state, api_box):
             # Absent means on: an upgrading user's file predates the key,
             # and defaulting to off would silently discard every position
             # they have.
-            return bool(state.settings.get("preview", {}).get(
-                "restore_preview_positions", True))
+            return bool(
+                state.settings.get("preview", {}).get("restore_preview_positions", True)
+            )
 
         return PreviewHost(
             on_layout_changed=on_layout_changed,
@@ -382,7 +388,8 @@ def build_preview_host(state, api_box):
             flush_layouts=store.flush,
             on_clients_changed=on_clients_changed,
             on_hotkey_status=on_hotkey_status,
-            restore_positions=restore_positions)
+            restore_positions=restore_positions,
+        )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
@@ -420,7 +427,8 @@ def build_skills_controller(api):
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
             push=api._push,
-            alert=api._alert)
+            alert=api._alert,
+        )
     except Exception:
         # Skills are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
@@ -473,8 +481,9 @@ def main() -> int:
         ffmpeg_bin=paths.resolve_binary("ffmpeg"),
         ffprobe_bin=paths.resolve_binary("ffprobe"),
     )
-    engine = hotkeys.HotkeyEngine(paths.engine_exe(), paths.engine_script(),
-                                  paths.state_dir())
+    engine = hotkeys.HotkeyEngine(
+        paths.engine_exe(), paths.engine_script(), paths.state_dir()
+    )
     state.engine = engine
     engine.apply(state.settings["eve_bookmarks"])
     # Unconditional, and before the enabled check: an engine orphaned by a
@@ -537,8 +546,9 @@ def main() -> int:
         # the recording folder changes, and delete_selected forgets what it
         # actually removed. No callback indirection.
         api._watcher = w
-        scheduler = Scheduler(POLL_SECONDS,
-                              lambda: poll_tick(w, api, icon, window, poll_state))
+        scheduler = Scheduler(
+            POLL_SECONDS, lambda: poll_tick(w, api, icon, window, poll_state)
+        )
         scheduler.start()
 
     api._on_recording_dir_ready = start_watching

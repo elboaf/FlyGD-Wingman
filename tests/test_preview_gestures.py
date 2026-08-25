@@ -33,8 +33,14 @@ def test_unknown_key_is_rejected():
 
 
 def test_round_trips_through_display():
-    for text in ("Ctrl+F1", "Ctrl+Alt+Shift+A", "Win+Delete", "Ctrl+Numpad0",
-                 "Ctrl+,", "Alt+["):
+    for text in (
+        "Ctrl+F1",
+        "Ctrl+Alt+Shift+A",
+        "Win+Delete",
+        "Ctrl+Numpad0",
+        "Ctrl+,",
+        "Alt+[",
+    ):
         assert gestures.display(gestures.parse(text)) == text
 
 
@@ -50,16 +56,17 @@ def test_accepts_explicit_virtual_key_forms():
 
 
 def test_capture_maps_a_dom_event():
-    result = gestures.from_capture({"ctrl": True, "alt": True, "shift": False,
-                                    "meta": False, "code": "F1"})
+    result = gestures.from_capture(
+        {"ctrl": True, "alt": True, "shift": False, "meta": False, "code": "F1"}
+    )
     assert result == {"gesture": "Ctrl+Alt+F1", "error": None}
 
 
 def test_capture_letters_and_digits():
-    assert gestures.from_capture(
-        {"ctrl": True, "code": "KeyA"})["gesture"] == "Ctrl+A"
-    assert gestures.from_capture(
-        {"ctrl": True, "code": "Digit4"})["gesture"] == "Ctrl+4"
+    assert gestures.from_capture({"ctrl": True, "code": "KeyA"})["gesture"] == "Ctrl+A"
+    assert (
+        gestures.from_capture({"ctrl": True, "code": "Digit4"})["gesture"] == "Ctrl+4"
+    )
 
 
 def test_capture_reports_a_modifier_only_press_distinctly():

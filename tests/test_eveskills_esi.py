@@ -12,6 +12,7 @@ http_error_301/302/303/307/308 -- there is no http_error_304 -- so a real
 instead RETURNED a 304 response would exercise a code path production never
 takes.
 """
+
 import io
 import json
 import urllib.error
@@ -24,32 +25,33 @@ from obs_youtube_uploader.eveskills import esi
 
 
 def test_a_normal_path_is_returned_unchanged():
-    assert esi.validate_path("/v3/universe/types/3300/") == \
-        "/v3/universe/types/3300/"
+    assert esi.validate_path("/v3/universe/types/3300/") == "/v3/universe/types/3300/"
 
 
 def test_a_path_without_a_trailing_slash_is_accepted():
-    assert esi.validate_path("/v3/universe/types/3300") == \
-        "/v3/universe/types/3300"
+    assert esi.validate_path("/v3/universe/types/3300") == "/v3/universe/types/3300"
 
 
-@pytest.mark.parametrize("path", [
-    "characters/1/skills/",          # no leading slash
-    "//evil.example/skills/",        # protocol-relative: another authority
-    "https://evil.example/skills/",  # absolute URL
-    "/v3\\universe/",                # backslash
-    "/v3/universe/?page=2",          # query
-    "/v3/universe/#frag",            # fragment
-    "/v3/universe/\x00/",            # NUL
-    "/v3//universe/",                # empty interior segment
-    "/v3/../admin/",                 # dot-dot traversal
-    "/v3/./universe/",               # single dot
-    "/v3/universe types/",           # space
-    "/v3/universe%2Ftypes/",         # percent-encoding
-    "/v3/universe/types//",          # empty trailing segment
-    "/",                             # no segments
-    "",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "characters/1/skills/",  # no leading slash
+        "//evil.example/skills/",  # protocol-relative: another authority
+        "https://evil.example/skills/",  # absolute URL
+        "/v3\\universe/",  # backslash
+        "/v3/universe/?page=2",  # query
+        "/v3/universe/#frag",  # fragment
+        "/v3/universe/\x00/",  # NUL
+        "/v3//universe/",  # empty interior segment
+        "/v3/../admin/",  # dot-dot traversal
+        "/v3/./universe/",  # single dot
+        "/v3/universe types/",  # space
+        "/v3/universe%2Ftypes/",  # percent-encoding
+        "/v3/universe/types//",  # empty trailing segment
+        "/",  # no segments
+        "",
+    ],
+)
 def test_hostile_paths_are_rejected(path):
     """These are all the ways a caller-built path could be steered off the
     intended endpoint. The Authorization header rides on every request, so a
@@ -101,8 +103,12 @@ class _Response:
 
 def _http_error(code, body=b"", headers=None):
     return urllib.error.HTTPError(
-        "https://esi.evetech.net/x", code, "err",
-        headers if headers is not None else Message(), io.BytesIO(body))
+        "https://esi.evetech.net/x",
+        code,
+        "err",
+        headers if headers is not None else Message(),
+        io.BytesIO(body),
+    )
 
 
 class FakeTransport:
@@ -131,9 +137,11 @@ class FakeSleep:
 
 
 def _client(outcomes, sleep=None):
-    return esi.EsiClient(user_agent="TestAgent/1.0",
-                         transport=FakeTransport(outcomes),
-                         sleep=sleep or FakeSleep())
+    return esi.EsiClient(
+        user_agent="TestAgent/1.0",
+        transport=FakeTransport(outcomes),
+        sleep=sleep or FakeSleep(),
+    )
 
 
 def test_a_successful_get_returns_parsed_json():
@@ -148,21 +156,20 @@ def test_every_request_carries_the_required_headers():
     """User-Agent identifies the app to CCP, X-Compatibility-Date pins the
     schema, and Accept stops a proxy negotiating something else."""
     transport = FakeTransport([_Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="TestAgent/1.0", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(
+        user_agent="TestAgent/1.0", transport=transport, sleep=FakeSleep()
+    )
     client.get("/v6/characters/1/skills/")
     headers = transport.requests[0].headers
     assert headers["User-agent"] == "TestAgent/1.0"
     assert headers["Accept"] == "application/json"
-    assert headers["X-compatibility-date"] == \
-        esi.application.ESI_COMPATIBILITY_DATE
+    assert headers["X-compatibility-date"] == esi.application.ESI_COMPATIBILITY_DATE
     assert "Authorization" not in headers
 
 
 def test_a_token_becomes_a_bearer_header():
     transport = FakeTransport([_Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     client.get("/v6/characters/1/skills/", token="tok")
     assert transport.requests[0].headers["Authorization"] == "Bearer tok"
 
@@ -173,8 +180,7 @@ def test_an_etag_becomes_an_if_none_match_header():
     refetches per click, charged against the error-limit budget to
     re-download data that mostly has not changed."""
     transport = FakeTransport([_Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     client.get("/v6/characters/1/skills/", etag='W/"abc"')
     assert transport.requests[0].headers["If-none-match"] == 'W/"abc"'
 
@@ -215,14 +221,12 @@ def test_the_method_and_path_come_back_on_the_response():
     to be able to tell which half a response belongs to."""
     client = _client([_Response(200, b"{}")])
     response = client.get("/v6/characters/1/skills/")
-    assert (response.method, response.path) == \
-        ("GET", "/v6/characters/1/skills/")
+    assert (response.method, response.path) == ("GET", "/v6/characters/1/skills/")
 
 
 def test_post_sends_a_json_body():
     transport = FakeTransport([_Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     client.post("/v3/universe/ids/", ["Navigation"])
     request = transport.requests[0]
     assert request.get_method() == "POST"
@@ -235,8 +239,7 @@ def test_an_invalid_path_raises_before_any_request_is_made():
     so it raises rather than returning a response -- and it must fire before
     the transport sees anything."""
     transport = FakeTransport([])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     with pytest.raises(ValueError):
         client.get("/v3/universe/?page=2")
     assert transport.requests == []
@@ -255,8 +258,7 @@ def test_a_non_retryable_status_returns_immediately():
     two more requests against the error-limit budget to confirm it costs the
     other characters queued behind this one in the refresh."""
     transport = FakeTransport([_http_error(403, b'{"error":"forbidden"}')])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.get("/v6/characters/1/skills/")
     assert response.status == 403
     assert len(transport.requests) == 1
@@ -264,15 +266,18 @@ def test_a_non_retryable_status_returns_immediately():
 
 def test_backoff_grows_with_the_attempt():
     sleep = FakeSleep()
-    _client([_http_error(500), _http_error(500), _http_error(500)],
-            sleep).get("/v6/characters/1/skills/")
+    _client([_http_error(500), _http_error(500), _http_error(500)], sleep).get(
+        "/v6/characters/1/skills/"
+    )
     assert sleep.delays == [pytest.approx(0.650), pytest.approx(1.300)]
 
 
 def test_retry_after_wins_over_the_default_backoff():
     sleep = FakeSleep()
-    client = _client([_http_error(429, headers=_headers(Retry_After=7)),
-                      _Response(200, b"{}")], sleep)
+    client = _client(
+        [_http_error(429, headers=_headers(Retry_After=7)), _Response(200, b"{}")],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(7.0)]
 
@@ -282,8 +287,12 @@ def test_the_error_limit_reset_is_used_when_retry_after_is_absent():
     Retry-After. Ignoring it is how a client gets its budget zeroed."""
     sleep = FakeSleep()
     client = _client(
-        [_http_error(420, headers=_headers(X_Esi_Error_Limit_Reset=12)),
-         _Response(200, b"{}")], sleep)
+        [
+            _http_error(420, headers=_headers(X_Esi_Error_Limit_Reset=12)),
+            _Response(200, b"{}"),
+        ],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(12.0)]
 
@@ -294,9 +303,14 @@ def test_retry_after_wins_over_the_error_limit_reset():
     budget refills."""
     sleep = FakeSleep()
     client = _client(
-        [_http_error(429, headers=_headers(Retry_After=3,
-                                           X_Esi_Error_Limit_Reset=25)),
-         _Response(200, b"{}")], sleep)
+        [
+            _http_error(
+                429, headers=_headers(Retry_After=3, X_Esi_Error_Limit_Reset=25)
+            ),
+            _Response(200, b"{}"),
+        ],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(3.0)]
 
@@ -305,8 +319,10 @@ def test_a_server_suggested_wait_is_capped():
     """A hostile or misconfigured Retry-After would otherwise hold a refresh
     worker for a day, which the user cannot tell from a crash."""
     sleep = FakeSleep()
-    client = _client([_http_error(429, headers=_headers(Retry_After=86400)),
-                      _Response(200, b"{}")], sleep)
+    client = _client(
+        [_http_error(429, headers=_headers(Retry_After=86400)), _Response(200, b"{}")],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(esi.MAX_BACKOFF_S)]
 
@@ -316,9 +332,14 @@ def test_a_non_numeric_retry_after_falls_through_to_the_default():
     here, and the fallback must be the ladder rather than a crash."""
     sleep = FakeSleep()
     client = _client(
-        [_http_error(503,
-                     headers=_headers(Retry_After="Wed, 21 Oct 2026 07:28:00 GMT")),
-         _Response(200, b"{}")], sleep)
+        [
+            _http_error(
+                503, headers=_headers(Retry_After="Wed, 21 Oct 2026 07:28:00 GMT")
+            ),
+            _Response(200, b"{}"),
+        ],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(0.650)]
 
@@ -330,8 +351,10 @@ def test_a_zero_retry_after_is_treated_as_absent():
     slowdown. It must fall through to the fixed ladder exactly like a
     missing or unparsable header."""
     sleep = FakeSleep()
-    client = _client([_http_error(429, headers=_headers(Retry_After=0)),
-                      _Response(200, b"{}")], sleep)
+    client = _client(
+        [_http_error(429, headers=_headers(Retry_After=0)), _Response(200, b"{}")],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(0.650)]
 
@@ -339,8 +362,12 @@ def test_a_zero_retry_after_is_treated_as_absent():
 def test_a_zero_error_limit_reset_is_treated_as_absent():
     sleep = FakeSleep()
     client = _client(
-        [_http_error(420, headers=_headers(X_Esi_Error_Limit_Reset=0)),
-         _Response(200, b"{}")], sleep)
+        [
+            _http_error(420, headers=_headers(X_Esi_Error_Limit_Reset=0)),
+            _Response(200, b"{}"),
+        ],
+        sleep,
+    )
     client.get("/v6/characters/1/skills/")
     assert sleep.delays == [pytest.approx(0.650)]
 
@@ -359,14 +386,16 @@ def test_exhausting_http_retries_returns_the_real_last_status():
     error-limiting -- item 3 from the last review round -- exists to
     surface, in exactly the case it was added for."""
     headers = _headers(Retry_After=5)
-    transport = FakeTransport([
-        _http_error(500),
-        _http_error(502),
-        _http_error(429, json.dumps({"error": "error limited"}).encode(),
-                    headers=headers),
-    ])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    transport = FakeTransport(
+        [
+            _http_error(500),
+            _http_error(502),
+            _http_error(
+                429, json.dumps({"error": "error limited"}).encode(), headers=headers
+            ),
+        ]
+    )
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.get("/v6/characters/1/skills/")
     assert response.status == 429
     assert "error limited" in response.error
@@ -383,10 +412,8 @@ def test_exhausting_network_retries_returns_a_synthetic_503():
     synthesised here because the final attempt raised with no response to
     report at all, not because ESI (or anything in front of it) ever sent
     one."""
-    transport = FakeTransport([urllib.error.URLError("no route")] *
-                             esi.MAX_ATTEMPTS)
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    transport = FakeTransport([urllib.error.URLError("no route")] * esi.MAX_ATTEMPTS)
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.get("/v6/characters/1/skills/")
     assert response.status == 503
     assert response.ok is False
@@ -400,13 +427,14 @@ def test_http_failures_then_a_final_network_failure_still_synthesizes():
     response at all must still synthesize, because there is no real
     response left to return -- an earlier attempt's stale HTTP response
     would be exactly as misleading as inventing one from nothing."""
-    transport = FakeTransport([
-        _http_error(500),
-        _http_error(502),
-        urllib.error.URLError("connection reset"),
-    ])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    transport = FakeTransport(
+        [
+            _http_error(500),
+            _http_error(502),
+            urllib.error.URLError("connection reset"),
+        ]
+    )
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.get("/v6/characters/1/skills/")
     assert response.status == 503
     assert len(transport.requests) == esi.MAX_ATTEMPTS
@@ -416,17 +444,21 @@ def test_network_errors_retry_on_their_own_ladder():
     """A connection that never opened produced no headers to read a
     server-suggested wait from, so the ladder is fixed and short."""
     sleep = FakeSleep()
-    client = _client([urllib.error.URLError("no route"),
-                      TimeoutError("timed out"),
-                      _Response(200, b"{}")], sleep)
+    client = _client(
+        [
+            urllib.error.URLError("no route"),
+            TimeoutError("timed out"),
+            _Response(200, b"{}"),
+        ],
+        sleep,
+    )
     assert client.get("/v6/characters/1/skills/").ok is True
     assert sleep.delays == [pytest.approx(0.5), pytest.approx(1.0)]
 
 
 def test_an_oserror_from_the_transport_is_retried_not_raised():
     sleep = FakeSleep()
-    client = _client([OSError("connection reset"), _Response(200, b"{}")],
-                     sleep)
+    client = _client([OSError("connection reset"), _Response(200, b"{}")], sleep)
     assert client.get("/v6/characters/1/skills/").ok is True
 
 
@@ -471,8 +503,9 @@ def test_a_blank_error_body_reports_no_response_body():
 
 
 def test_a_non_json_error_body_reports_the_generic_message():
-    response = _client([_http_error(400, b"<html>Service Unavailable</html>")]) \
-        .get("/v6/characters/1/skills/")
+    response = _client([_http_error(400, b"<html>Service Unavailable</html>")]).get(
+        "/v6/characters/1/skills/"
+    )
     assert response.error == "Remote service returned an unreadable error."
 
 
@@ -482,10 +515,12 @@ def test_rate_limit_headers_are_appended_to_the_error_text():
     design mentioned it; EsiClient.cs has it and the discovery was reported
     back before this fix landed."""
     body = json.dumps({"error": "forbidden"}).encode("utf-8")
-    headers = _headers(X_Esi_Error_Limit_Remain=42, X_Esi_Error_Limit_Reset=15,
-                       Retry_After=3)
-    response = _client([_http_error(403, body, headers=headers)]) \
-        .get("/v6/characters/1/skills/")
+    headers = _headers(
+        X_Esi_Error_Limit_Remain=42, X_Esi_Error_Limit_Reset=15, Retry_After=3
+    )
+    response = _client([_http_error(403, body, headers=headers)]).get(
+        "/v6/characters/1/skills/"
+    )
     assert "forbidden" in response.error
     assert "X-Esi-Error-Limit-Remain=42" in response.error
     assert "X-Esi-Error-Limit-Reset=15" in response.error
@@ -511,8 +546,7 @@ def test_a_post_to_the_ids_route_is_retried():
     """The batch name lookup is idempotent and is the only POST this package
     makes. A first refresh over a large plan set depends on it."""
     transport = FakeTransport([_http_error(503), _Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     assert client.post("/v3/universe/ids/", ["Navigation"]).ok is True
     assert len(transport.requests) == 2
 
@@ -522,8 +556,7 @@ def test_a_version_bump_keeps_the_ids_route_retryable():
     retry the day CCP ships v4, and the symptom would be an intermittent
     first refresh nobody connects back to the route check."""
     transport = FakeTransport([_http_error(503), _Response(200, b"{}")])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     assert client.post("/v4/universe/ids/", ["Navigation"]).ok is True
     assert len(transport.requests) == 2
 
@@ -533,8 +566,7 @@ def test_a_post_to_any_other_route_is_not_retried():
     write. This package makes no writes today, and the guard is a route
     check rather than a method check so that stays true if one is added."""
     transport = FakeTransport([_http_error(503)])
-    client = esi.EsiClient(user_agent="A", transport=transport,
-                           sleep=FakeSleep())
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.post("/v1/ui/openwindow/", {})
     assert response.status == 503
     assert len(transport.requests) == 1
@@ -567,9 +599,10 @@ def test_a_cross_host_redirect_does_not_leak_the_authorization_header():
     handler = esi._NoRedirectHandler()
     request = urllib.request.Request(
         "https://esi.evetech.net/v6/characters/1/skills/",
-        headers={"Authorization": "Bearer super-secret-token"})
+        headers={"Authorization": "Bearer super-secret-token"},
+    )
     redirect_headers = _headers(Location="https://evil.example/steal")
     result = handler.redirect_request(
-        request, None, 302, "Found", redirect_headers,
-        "https://evil.example/steal")
+        request, None, 302, "Found", redirect_headers, "https://evil.example/steal"
+    )
     assert result is None

@@ -4,6 +4,7 @@ Ported from TriffView's SkillPlanEvaluator.cs. Dates are timezone-aware
 UTC datetimes throughout; conversion to ISO strings happens only at the
 bridge boundary in controller.py, so nothing here formats anything.
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -24,8 +25,14 @@ UNSCORED = "Unscored"
 
 # Best first. compact_status() takes the worst present, so a plan is only
 # Ready when every one of its requirements is.
-READINESS_ORDER = (READY, TRAINING, LOCKED, READINESS_MISSING,
-                   READINESS_UNKNOWN, UNSCORED)
+READINESS_ORDER = (
+    READY,
+    TRAINING,
+    LOCKED,
+    READINESS_MISSING,
+    READINESS_UNKNOWN,
+    UNSCORED,
+)
 
 # Requirement state -> the plan readiness it contributes. Locked ranks
 # WORSE than Training on purpose: a character who has trained a skill but
@@ -63,9 +70,11 @@ def lowest_sufficient_entry(queue, skill_id: int, required_level: int):
     that actually satisfies the requirement, not the deepest one that
     happens to cover it.
     """
-    candidates = [e for e in queue
-                  if e.skill_id == skill_id
-                  and e.finished_level >= required_level]
+    candidates = [
+        e
+        for e in queue
+        if e.skill_id == skill_id and e.finished_level >= required_level
+    ]
     if not candidates:
         return None
     return min(candidates, key=lambda e: (e.finished_level, e.queue_position))
@@ -139,8 +148,9 @@ def compact_status(analyses) -> str:
     return worst
 
 
-def evaluate(requirements, skill_ids, active_levels, trained_levels,
-             queue, has_snapshot: bool) -> PlanAnalysis:
+def evaluate(
+    requirements, skill_ids, active_levels, trained_levels, queue, has_snapshot: bool
+) -> PlanAnalysis:
     """Score *requirements* for one character against one snapshot."""
     if not has_snapshot:
         # Unscored, with an EMPTY requirement list. Every newly
@@ -153,8 +163,7 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
     # Case-insensitive on the name, because the cache is keyed on the
     # spelling ESI returned and the plan file carries whatever the user
     # typed. Built once per plan rather than per requirement.
-    lookup = {str(name).casefold(): int(type_id)
-              for name, type_id in skill_ids.items()}
+    lookup = {str(name).casefold(): int(type_id) for name, type_id in skill_ids.items()}
 
     analyses = []
     for req in requirements:
@@ -162,10 +171,17 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
         if skill_id is None:
             # Unknown is about the plan, not the character. No levels are
             # reported because there is no id to have looked them up by.
-            analyses.append(RequirementAnalysis(
-                skill_name=req.skill_name, required_level=req.level,
-                active_level=None, trained_level=None, state=UNKNOWN,
-                queued_finish_utc=None, queue_timing_unknown=False))
+            analyses.append(
+                RequirementAnalysis(
+                    skill_name=req.skill_name,
+                    required_level=req.level,
+                    active_level=None,
+                    trained_level=None,
+                    state=UNKNOWN,
+                    queued_finish_utc=None,
+                    queue_timing_unknown=False,
+                )
+            )
             continue
         # Defaults to 0, not None, matching the source's TryGetValue: a
         # resolved skill the character has simply never trained is level
@@ -184,26 +200,32 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
         else:
             chosen = lowest_sufficient_entry(queue, skill_id, req.level)
             state = QUEUED if chosen is not None else MISSING
-        analyses.append(RequirementAnalysis(
-            skill_name=req.skill_name,
-            required_level=req.level,
-            active_level=active,
-            trained_level=trained,
-            state=state,
-            queued_finish_utc=chosen.finish_date if chosen else None,
-            # A paused queue reports null dates. The requirement is still
-            # queued; what is unknown is when it lands.
-            queue_timing_unknown=bool(chosen is not None
-                                      and chosen.finish_date is None),
-        ))
+        analyses.append(
+            RequirementAnalysis(
+                skill_name=req.skill_name,
+                required_level=req.level,
+                active_level=active,
+                trained_level=trained,
+                state=state,
+                queued_finish_utc=chosen.finish_date if chosen else None,
+                # A paused queue reports null dates. The requirement is still
+                # queued; what is unknown is when it lands.
+                queue_timing_unknown=bool(
+                    chosen is not None and chosen.finish_date is None
+                ),
+            )
+        )
 
     readiness = compact_status(analyses)
     timing_unknown = any(a.queue_timing_unknown for a in analyses)
     # The MAXIMUM finish date among queued requirements, not the minimum:
     # the plan completes when the LAST one does. Taking the minimum would
     # promise a date by which the character still cannot fly the ship.
-    finishes = [a.queued_finish_utc for a in analyses
-                if a.state == QUEUED and a.queued_finish_utc is not None]
+    finishes = [
+        a.queued_finish_utc
+        for a in analyses
+        if a.state == QUEUED and a.queued_finish_utc is not None
+    ]
     # Both the ETA and the sibling flag are gated to readiness being
     # EXACTLY Training (SkillPlanEvaluator.cs:104-108), not just the ETA.
     # A Locked plan can have an undated queue entry too -- Mechanics
@@ -212,6 +234,9 @@ def evaluate(requirements, skill_ids, active_levels, trained_levels,
     # ETA for the plan to have suppressed. The per-requirement analysis
     # still reports its own queue_timing_unknown truthfully either way.
     is_training = readiness == TRAINING
-    estimated = max(finishes) if is_training and finishes and not timing_unknown else None
-    return PlanAnalysis(readiness, estimated, is_training and timing_unknown,
-                        tuple(analyses))
+    estimated = (
+        max(finishes) if is_training and finishes and not timing_unknown else None
+    )
+    return PlanAnalysis(
+        readiness, estimated, is_training and timing_unknown, tuple(analyses)
+    )

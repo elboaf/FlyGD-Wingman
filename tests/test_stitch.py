@@ -25,7 +25,11 @@ def test_order_for_stitch_is_earliest_first():
     a = _info(Path("a.mkv"), 300)
     b = _info(Path("b.mkv"), 100)
     c = _info(Path("c.mkv"), 200)
-    assert [i.path.name for i in stitch.order_for_stitch([a, b, c])] == ["b.mkv", "c.mkv", "a.mkv"]
+    assert [i.path.name for i in stitch.order_for_stitch([a, b, c])] == [
+        "b.mkv",
+        "c.mkv",
+        "a.mkv",
+    ]
 
 
 def test_write_concat_list_quotes_every_source(tmp_path):
@@ -64,10 +68,16 @@ def test_build_command_is_a_stream_copy(tmp_path):
     even with the flags scrambled."""
     cmd = stitch.build_command(tmp_path / "list.txt", tmp_path / "out.mkv", "ffmpeg")
     assert cmd == [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(tmp_path / "list.txt"),
-        "-c", "copy",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(tmp_path / "list.txt"),
+        "-c",
+        "copy",
         str(tmp_path / "out.mkv"),
     ]
 
@@ -124,8 +134,9 @@ def test_stitched_raises_when_ffmpeg_fails(tmp_path):
 
 
 def test_stitched_requires_at_least_two_sources(tmp_path):
-    with pytest.raises(ValueError), stitch.stitched(
-        [tmp_path / "a.mkv"], "ffmpeg", tmp_path, runner=_ok
+    with (
+        pytest.raises(ValueError),
+        stitch.stitched([tmp_path / "a.mkv"], "ffmpeg", tmp_path, runner=_ok),
     ):
         pass
 

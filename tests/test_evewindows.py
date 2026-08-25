@@ -1,6 +1,7 @@
 """Windows-only at runtime, importable on Linux -- the ui/chrome.py pattern
 (window-resize-plan.md:130-140). The enumerator is injected so the matching
 and de-duplication logic is testable off-platform."""
+
 from obs_youtube_uploader import bookmarks, evewindows
 
 
@@ -13,7 +14,9 @@ def test_keeps_only_eve_titles(monkeypatch):
     monkeypatch.setattr(evewindows.sys, "platform", "win32")
     titles = ["EVE - Pilot One", "Notepad", "EVE - Alt Two", "eve online"]
     assert evewindows.list_eve_windows(enumerator=lambda: titles) == [
-        "EVE - Alt Two", "EVE - Pilot One"]
+        "EVE - Alt Two",
+        "EVE - Pilot One",
+    ]
 
 
 def test_deduplicates(monkeypatch):
@@ -61,8 +64,11 @@ def test_enumerate_titles_is_derived_from_the_handle_enumerator(monkeypatch):
     subsystem and the bookmarks checkbox disagree about which clients
     exist, and only one of them is visible to the user."""
     monkeypatch.setattr(evewindows.sys, "platform", "win32")
-    monkeypatch.setattr(evewindows, "_enumerate_windows",
-                        lambda: [(0x10, "EVE - Pilot"), (0x20, "Notepad")])
+    monkeypatch.setattr(
+        evewindows,
+        "_enumerate_windows",
+        lambda: [(0x10, "EVE - Pilot"), (0x20, "Notepad")],
+    )
     assert evewindows._enumerate_titles() == ["EVE - Pilot", "Notepad"]
 
 
@@ -70,6 +76,7 @@ def test_list_eve_windows_still_returns_plain_sorted_titles(monkeypatch):
     """ui/api.py hands this list straight to the page. The return type is
     frozen; adding handles here would break it silently."""
     monkeypatch.setattr(evewindows.sys, "platform", "win32")
-    monkeypatch.setattr(evewindows, "_enumerate_windows",
-                        lambda: [(0x20, "EVE - B"), (0x10, "EVE - A")])
+    monkeypatch.setattr(
+        evewindows, "_enumerate_windows", lambda: [(0x20, "EVE - B"), (0x10, "EVE - A")]
+    )
     assert evewindows.list_eve_windows() == ["EVE - A", "EVE - B"]

@@ -1,6 +1,7 @@
 """If Wingman crashes, the engine survives holding a global keyboard hook
 with no UI left to disable it. Recovery is the backstop -- but it kills a
 process, so identity has to be right."""
+
 import json
 
 from obs_youtube_uploader import hotkeys
@@ -8,18 +9,23 @@ from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
 
 
 def write_record(tmp_path, pid=999, token="TOKEN123"):
-    (tmp_path / "eve_engine.pid").write_text(
-        json.dumps({"pid": pid, "token": token}))
+    (tmp_path / "eve_engine.pid").write_text(json.dumps({"pid": pid, "token": token}))
 
 
 def test_kills_a_matching_orphan(tmp_path, monkeypatch):
     write_record(tmp_path)
     killed = []
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"C:\app\bin\AutoHotkeyU64.exe",
-        "cmdline": r'AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123'})
-    monkeypatch.setattr(hotkeys.procid, "terminate",
-                        lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {
+            "image": r"C:\app\bin\AutoHotkeyU64.exe",
+            "cmdline": r"AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123",
+        },
+    )
+    monkeypatch.setattr(
+        hotkeys.procid, "terminate", lambda pid: killed.append(pid) or True
+    )
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is True
     assert killed == [999]
@@ -30,8 +36,11 @@ def test_does_not_kill_a_reused_pid(tmp_path, monkeypatch):
     shutdown -- the recorded PID may since belong to anything."""
     write_record(tmp_path)
     killed = []
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"C:\Windows\explorer.exe", "cmdline": "explorer.exe"})
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {"image": r"C:\Windows\explorer.exe", "cmdline": "explorer.exe"},
+    )
     monkeypatch.setattr(hotkeys.procid, "terminate", lambda pid: killed.append(pid))
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is False
@@ -43,9 +52,14 @@ def test_does_not_kill_the_interpreter_running_another_script(tmp_path, monkeypa
     interpreter and the user may be running their own scripts."""
     write_record(tmp_path)
     killed = []
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"C:\app\bin\AutoHotkeyU64.exe",
-        "cmdline": r"AutoHotkeyU64.exe someone-elses.ahk"})
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {
+            "image": r"C:\app\bin\AutoHotkeyU64.exe",
+            "cmdline": r"AutoHotkeyU64.exe someone-elses.ahk",
+        },
+    )
     monkeypatch.setattr(hotkeys.procid, "terminate", lambda pid: killed.append(pid))
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is False
@@ -74,11 +88,17 @@ def test_no_record_is_not_an_error(tmp_path):
 def test_start_recovers_before_spawning(tmp_path, monkeypatch):
     write_record(tmp_path)
     order = []
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"bin\AutoHotkeyU64.exe",
-        "cmdline": "AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123"})
-    monkeypatch.setattr(hotkeys.procid, "terminate",
-                        lambda pid: order.append("kill") or True)
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {
+            "image": r"bin\AutoHotkeyU64.exe",
+            "cmdline": "AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123",
+        },
+    )
+    monkeypatch.setattr(
+        hotkeys.procid, "terminate", lambda pid: order.append("kill") or True
+    )
     spawner = FakeSpawner()
 
     eng = engine(tmp_path, spawner)
@@ -99,16 +119,21 @@ def test_an_undecodable_command_line_does_not_prevent_starting(tmp_path, monkeyp
     monkeypatch.setattr(hotkeys.procid, "describe", boom)
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is False
-    assert (tmp_path / "eve_engine.pid").exists()   # not discarded
+    assert (tmp_path / "eve_engine.pid").exists()  # not discarded
 
 
 def test_a_failed_kill_keeps_the_record(tmp_path, monkeypatch):
     """The record is the only handle for retrying next start; discarding it
     after a failed kill strands a live keyboard hook."""
     write_record(tmp_path)
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"C:\app\bin\AutoHotkeyU64.exe",
-        "cmdline": "AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123"})
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {
+            "image": r"C:\app\bin\AutoHotkeyU64.exe",
+            "cmdline": "AutoHotkeyU64.exe eve_bookmarks.ahk /token TOKEN123",
+        },
+    )
     monkeypatch.setattr(hotkeys.procid, "terminate", lambda pid: False)
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is False
@@ -119,12 +144,18 @@ def test_an_unrelated_exe_under_an_autohotkey_folder_is_not_ours(tmp_path, monke
     """Basename equality, not a substring: a folder named AutoHotkeyBackup
     must not make an unrelated executable look like the engine."""
     write_record(tmp_path)
-    monkeypatch.setattr(hotkeys.procid, "describe", lambda pid: {
-        "image": r"C:\Users\bob\AutoHotkeyBackup\notepad.exe",
-        "cmdline": "notepad.exe /token TOKEN123"})
+    monkeypatch.setattr(
+        hotkeys.procid,
+        "describe",
+        lambda pid: {
+            "image": r"C:\Users\bob\AutoHotkeyBackup\notepad.exe",
+            "cmdline": "notepad.exe /token TOKEN123",
+        },
+    )
     killed = []
-    monkeypatch.setattr(hotkeys.procid, "terminate",
-                        lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(
+        hotkeys.procid, "terminate", lambda pid: killed.append(pid) or True
+    )
     eng = engine(tmp_path, FakeSpawner())
     assert eng.recover_orphan() is False
     assert killed == []
@@ -139,6 +170,7 @@ def test_an_unremovable_pid_record_is_logged_not_swallowed(tmp_path, caplog):
     removed means something is holding it, and that was invisible.
     """
     import logging
+
     eng = engine(tmp_path, FakeSpawner())
 
     class Boom:
@@ -147,6 +179,6 @@ def test_an_unremovable_pid_record_is_logged_not_swallowed(tmp_path, caplog):
 
     eng._pid_path = lambda: Boom()
     with caplog.at_level(logging.WARNING):
-        eng._clear_pid_record()          # must not raise
+        eng._clear_pid_record()  # must not raise
     assert "engine PID record" in caplog.text
     assert "held open by something" in caplog.text

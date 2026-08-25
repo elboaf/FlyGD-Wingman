@@ -135,7 +135,9 @@ def test_changed_file_is_reported_again(tmp_path):
 
 def test_stale_seen_entry_does_not_suppress_a_new_file(tmp_path):
     seen_path = tmp_path / "seen.json"
-    watcher.save_seen(seen_path, {str(tmp_path / "ghost.mkv"): watcher.SeenEntry(1, 1.0)})
+    watcher.save_seen(
+        seen_path, {str(tmp_path / "ghost.mkv"): watcher.SeenEntry(1, 1.0)}
+    )
     _write(tmp_path / "real.mkv", 10)
     w = watcher.Watcher(tmp_path, seen_path)
     w.baseline()
@@ -166,8 +168,10 @@ def test_missing_directory_yields_no_results(tmp_path):
 
 def _break_save(monkeypatch):
     """Make every write through _save() fail as if the disk rejected it."""
+
     def _raise(*a, **kw):
         raise OSError("disk full")
+
     monkeypatch.setattr(watcher, "save_seen", _raise)
 
 
@@ -184,7 +188,9 @@ def test_baseline_survives_save_failure(tmp_path, monkeypatch, caplog):
     assert any("seen-set" in r.message for r in caplog.records)
 
 
-def test_poll_once_survives_save_failure_and_still_reports_ready_files(tmp_path, monkeypatch):
+def test_poll_once_survives_save_failure_and_still_reports_ready_files(
+    tmp_path, monkeypatch
+):
     w = watcher.Watcher(tmp_path, tmp_path / "seen.json")
     w.baseline()
     f = _write(tmp_path / "new.mkv", 10)
@@ -235,10 +241,16 @@ def test_load_seen_rejects_non_dict_json(tmp_path):
 
 def test_load_seen_skips_a_malformed_per_key_entry(tmp_path):
     p = tmp_path / "seen.json"
-    p.write_text(json.dumps({
-        "good.mkv": {"size": 10, "mtime": 1.0},
-        "bad.mkv": {"size": "not-a-number"},  # missing mtime, and unconvertible size
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "good.mkv": {"size": 10, "mtime": 1.0},
+                "bad.mkv": {
+                    "size": "not-a-number"
+                },  # missing mtime, and unconvertible size
+            }
+        )
+    )
     seen = watcher.load_seen(p)
     assert seen.keys() == {"good.mkv"}
     assert seen["good.mkv"] == watcher.SeenEntry(size=10, mtime=1.0)

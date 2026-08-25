@@ -4,6 +4,7 @@ These tests cover the pure logic only. The Tk wiring in app.py that
 consumes it has no test harness in this repo (see library.py's docstring),
 so the cache API is deliberately shaped so the untestable layer stays thin.
 """
+
 import json
 import logging
 from pathlib import Path
@@ -14,11 +15,13 @@ from obs_youtube_uploader import durations, library
 
 
 def _info(path, size=10, mtime=100.0):
-    return library.VideoInfo(path=path, mtime=mtime, size=size,
-                             duration=None, probed=False)
+    return library.VideoInfo(
+        path=path, mtime=mtime, size=size, duration=None, probed=False
+    )
 
 
 # --- round-tripping ------------------------------------------------------
+
 
 def test_load_returns_empty_for_missing_file(tmp_path):
     assert durations.load(tmp_path / "nope.json") == {}
@@ -42,11 +45,16 @@ def test_load_skips_malformed_entries_but_keeps_good_ones(tmp_path):
     """One bad entry must not throw away an entire cache -- mirrors
     watcher.load_seen, which does the same for seen.json."""
     p = tmp_path / "d.json"
-    p.write_text(json.dumps({
-        "/good.mkv": {"size": 10, "mtime": 100.0, "duration": 42.5},
-        "/bad.mkv": {"size": "not-an-int", "mtime": 100.0, "duration": 1.0},
-        "/missing-key.mkv": {"size": 10},
-    }), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "/good.mkv": {"size": 10, "mtime": 100.0, "duration": 42.5},
+                "/bad.mkv": {"size": "not-an-int", "mtime": 100.0, "duration": 1.0},
+                "/missing-key.mkv": {"size": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
     cache = durations.load(p)
     assert list(cache) == ["/good.mkv"]
 
@@ -56,14 +64,16 @@ def test_load_preserves_a_cached_probe_failure(tmp_path):
     a malformed entry -- dropping it would re-probe a corrupt file, at 15s
     of timeout each, on every single refresh."""
     p = tmp_path / "d.json"
-    p.write_text(json.dumps(
-        {"/corrupt.mkv": {"size": 10, "mtime": 100.0, "duration": None}}),
-        encoding="utf-8")
+    p.write_text(
+        json.dumps({"/corrupt.mkv": {"size": 10, "mtime": 100.0, "duration": None}}),
+        encoding="utf-8",
+    )
     cache = durations.load(p)
     assert cache["/corrupt.mkv"].duration is None
 
 
 # --- lookup keying -------------------------------------------------------
+
 
 def test_lookup_hits_on_identical_size_and_mtime(tmp_path):
     cache = {}
@@ -94,6 +104,7 @@ def test_lookup_hit_reports_a_cached_failure_as_a_hit(tmp_path):
 
 # --- resolve: the part refresh() delegates to ---------------------------
 
+
 def test_resolve_splits_cached_from_pending(tmp_path):
     cache = {}
     durations.remember(cache, tmp_path / "cached.mkv", 10, 100.0, 42.5)
@@ -123,6 +134,7 @@ def test_resolve_on_an_empty_cache_makes_everything_pending(tmp_path):
 
 
 # --- pruning -------------------------------------------------------------
+
 
 def test_prune_drops_entries_for_paths_no_longer_present(tmp_path):
     """Without this the cache grows forever as recordings are deleted --
@@ -177,6 +189,7 @@ def test_prune_count_is_usable_as_a_dirty_flag(tmp_path):
 
 # --- caching policy ------------------------------------------------------
 
+
 def test_only_a_definitive_verdict_reaches_the_cache(tmp_path):
     """The policy now lives in library.probe's `definitive` flag rather
     than in this module; these pin the contract remember() relies on."""
@@ -189,6 +202,7 @@ def test_only_a_definitive_verdict_reaches_the_cache(tmp_path):
 
 # --- failure handling ----------------------------------------------------
 
+
 def test_save_failure_does_not_raise(tmp_path, monkeypatch):
     """A read-only or full disk must degrade to "cache nothing this run",
     never crash a refresh -- watcher._save takes the same position.
@@ -197,6 +211,7 @@ def test_save_failure_does_not_raise(tmp_path, monkeypatch):
     CI may well be) a read-only directory is still writable, and the test
     would pass without exercising the guard at all.
     """
+
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
@@ -207,6 +222,7 @@ def test_save_failure_does_not_raise(tmp_path, monkeypatch):
 def test_save_failure_is_logged(tmp_path, monkeypatch, caplog):
     """Degrading silently would leave no trace of a cache that never
     persists -- the user would just see every launch re-probe forever."""
+
     def boom(*args, **kwargs):
         raise OSError("disk full")
 

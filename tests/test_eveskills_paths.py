@@ -6,6 +6,7 @@ returning a Path, never a module constant -- monkeypatching state_dir()
 is how the whole suite redirects state into tmp_path, and a constant
 computed at import time would defeat it.
 """
+
 from obs_youtube_uploader import paths
 from obs_youtube_uploader.eveskills import application
 
@@ -33,8 +34,9 @@ def test_the_placeholder_client_id_is_not_configured(monkeypatch):
     login.eveonline.com with a literal placeholder in the query string,
     and CCP's error page is not a recognisable diagnosis for 'this build
     was never registered'."""
-    monkeypatch.setattr(application, "CLIENT_ID",
-                        "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID")
+    monkeypatch.setattr(
+        application, "CLIENT_ID", "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
+    )
     assert application.is_configured() is False
 
 
@@ -66,14 +68,17 @@ def test_the_redirect_uri_is_assembled_from_its_own_parts():
 def test_the_scopes_are_read_only_and_exactly_two():
     """Widening this tuple widens the consent screen every user sees.
     Nothing in this subsystem writes to ESI."""
-    assert application.SCOPES == ("esi-skills.read_skills.v1",
-                                  "esi-skills.read_skillqueue.v1")
+    assert application.SCOPES == (
+        "esi-skills.read_skills.v1",
+        "esi-skills.read_skillqueue.v1",
+    )
 
 
 def test_the_user_agent_carries_the_app_version_and_a_contact_url():
     """CCP asks third-party clients to identify themselves; an anonymous
     agent is what gets an application rate-limited without warning."""
     from obs_youtube_uploader import __version__
+
     assert application.USER_AGENT.startswith(f"FlyGD-Wingman/{__version__} ")
     assert "github.com/elboaf/FlyGD-Wingman" in application.USER_AGENT
 
@@ -85,8 +90,10 @@ def test_all_three_issuer_spellings_are_accepted():
     TriffView's own validator (EveJwtValidator.cs:12-15) accepts all
     three -- the bare authority, the full origin, and the full origin
     with a trailing slash, since OAuth issuers appear both ways."""
-    assert application.ACCEPTED_ISSUERS == frozenset({  # noqa: SIM300
-        "login.eveonline.com",
-        "https://login.eveonline.com",
-        "https://login.eveonline.com/",
-    })
+    assert application.ACCEPTED_ISSUERS == frozenset(
+        {  # noqa: SIM300
+            "login.eveonline.com",
+            "https://login.eveonline.com",
+            "https://login.eveonline.com/",
+        }
+    )

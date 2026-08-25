@@ -19,6 +19,7 @@ This module owns no cache. durations.resolve needs the cache dict, and the
 caller has it; rebuild() therefore produces rows with durations unknown and
 the caller re-applies cache hits through set_duration.
 """
+
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,7 @@ class Row:
     that misses the stored copy leaves the page showing one thing while
     resolve() answers with another.
     """
+
     id: str
     name: str
     date: str
@@ -91,23 +93,24 @@ class RowSnapshot:
                 continue
 
         live = {info.path for info in infos}
-        self._links = {path: url for path, url in self._links.items()
-                       if path in live}
+        self._links = {path: url for path, url in self._links.items() if path in live}
         self._infos = {}
         self._definitive = set()
         self._rows = []
         for info in infos:
             row_id = self._mint()
             self._infos[row_id] = info
-            self._rows.append(Row(
-                id=row_id,
-                name=info.path.name,
-                date=info.date_str,
-                size=info.size_str,
-                duration=info.duration_str,
-                link=self._links.get(info.path),
-                preselected=info.path in preselect,
-            ))
+            self._rows.append(
+                Row(
+                    id=row_id,
+                    name=info.path.name,
+                    date=info.date_str,
+                    size=info.size_str,
+                    duration=info.duration_str,
+                    link=self._links.get(info.path),
+                    preselected=info.path in preselect,
+                )
+            )
         return self.rows()
 
     def rows(self) -> list[dict]:
@@ -146,8 +149,9 @@ class RowSnapshot:
         self._links[info.path] = url
         self._replace(row_id, link=url)
 
-    def set_duration(self, row_id: str, duration: float | None,
-                     definitive: bool) -> None:
+    def set_duration(
+        self, row_id: str, duration: float | None, definitive: bool
+    ) -> None:
         """Record one probe result. Unknown id: no-op.
 
         *definitive* is library.probe's verdict flag, and it decides whether

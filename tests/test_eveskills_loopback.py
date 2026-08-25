@@ -5,6 +5,7 @@ exists as a separate function: every rejection rule below is exercised on
 Linux with no socket, no browser, and no timing. The listener tests further
 down do open a real loopback socket, but the security surface is proved here.
 """
+
 import socket as _socket
 import threading
 import time
@@ -17,8 +18,14 @@ HOST = "127.0.0.1:51779"
 PATH = "/callback/"
 
 
-def request(target="/callback/?code=abc&state=xyz", *,
-            host=HOST, method="GET", version="HTTP/1.1", extra=()):
+def request(
+    target="/callback/?code=abc&state=xyz",
+    *,
+    host=HOST,
+    method="GET",
+    version="HTTP/1.1",
+    extra=(),
+):
     """Assemble a raw HTTP/1.1 request as bytes."""
     lines = [f"{method} {target} {version}"]
     if host is not None:
@@ -34,6 +41,7 @@ def parse(raw):
 # ---------------------------------------------------------------------------
 # Cycle 1 -- the request line
 # ---------------------------------------------------------------------------
+
 
 def test_parses_a_well_formed_callback():
     assert parse(request()) == {"code": "abc", "state": "xyz"}
@@ -61,8 +69,12 @@ def test_rejects_a_request_line_with_the_wrong_number_of_fields():
     A tolerant split accepts "GET  /callback/  HTTP/1.1" and, worse,
     "GET /callback/ HTTP/1.1 extra" -- neither of which any browser sends.
     """
-    for line in (b"GET /callback/\r\n", b"GET  /callback/ HTTP/1.1\r\n",
-                 b"GET /callback/ HTTP/1.1 extra\r\n", b"\r\n"):
+    for line in (
+        b"GET /callback/\r\n",
+        b"GET  /callback/ HTTP/1.1\r\n",
+        b"GET /callback/ HTTP/1.1 extra\r\n",
+        b"\r\n",
+    ):
         with pytest.raises(ValueError):
             parse(line + b"Host: 127.0.0.1:51779\r\n\r\n")
 
@@ -88,6 +100,7 @@ def test_rejects_a_request_that_ends_mid_line():
 # Cycle 2 -- headers, the Host guard, and the byte caps
 # ---------------------------------------------------------------------------
 
+
 def test_rejects_a_duplicate_host_header():
     """The DNS-rebinding guard, bypassed.
 
@@ -112,8 +125,13 @@ def test_rejects_a_host_that_is_not_the_redirect_authority():
     which still carries the name the browser resolved. The bare "127.0.0.1"
     case matters because a port-less Host is a different authority.
     """
-    for host in ("evil.test", "evil.test:51779", "127.0.0.1:51780",
-                 "localhost:51779", "127.0.0.1"):
+    for host in (
+        "evil.test",
+        "evil.test:51779",
+        "127.0.0.1:51780",
+        "localhost:51779",
+        "127.0.0.1",
+    ):
         with pytest.raises(ValueError, match="Host"):
             parse(request(host=host))
 
@@ -166,6 +184,7 @@ def test_rejects_a_nul_byte():
 # Cycle 3 -- the target path and the query
 # ---------------------------------------------------------------------------
 
+
 def test_target_path_must_match_exactly():
     """No normalisation, no prefix match, no trailing-slash tolerance.
 
@@ -174,8 +193,16 @@ def test_target_path_must_match_exactly():
     same path would mean re-deriving every normalisation rule correctly for
     no benefit at all.
     """
-    for bad in ("/callback", "/callback//", "/Callback/", "/callback/x",
-                "/other/", "/", "/%63allback/", "/callback/../callback/"):
+    for bad in (
+        "/callback",
+        "/callback//",
+        "/Callback/",
+        "/callback/x",
+        "/other/",
+        "/",
+        "/%63allback/",
+        "/callback/../callback/",
+    ):
         with pytest.raises(ValueError, match="path"):
             parse(request(target=bad + "?state=xyz"))
 
@@ -253,6 +280,7 @@ def test_rejects_an_oversized_query_key_or_value():
 # Cycle 4 -- safe_oauth_code and the listener's success path
 # ---------------------------------------------------------------------------
 
+
 def test_safe_oauth_code_filters_and_truncates():
     """Anything outside [A-Za-z0-9_-] is dropped; anything past 64 is cut.
 
@@ -314,7 +342,8 @@ def deliver(port, target, into=None):
     """Start a thread that sends one request; returns (thread, sink list)."""
     sink = into if into is not None else []
     worker = threading.Thread(
-        target=lambda: sink.append(send(port, listener_request(port, target))))
+        target=lambda: sink.append(send(port, listener_request(port, target)))
+    )
     worker.start()
     return worker, sink
 
@@ -398,6 +427,7 @@ def test_the_authorization_code_is_taken_raw_not_filtered():
 # Cycle 5 -- wait(): state comparison, persistence, timeout, cancellation
 # ---------------------------------------------------------------------------
 
+
 def test_a_wrong_state_does_not_end_the_wait():
     """The listener serves the failure page and KEEPS LISTENING.
 
@@ -411,10 +441,20 @@ def test_a_wrong_state_does_not_end_the_wait():
         replies = []
 
         def both():
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=wrong&state=not-the-state")))
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=right&state=expected-state")))
+            replies.append(
+                send(
+                    port,
+                    listener_request(port, "/callback/?code=wrong&state=not-the-state"),
+                )
+            )
+            replies.append(
+                send(
+                    port,
+                    listener_request(
+                        port, "/callback/?code=right&state=expected-state"
+                    ),
+                )
+            )
 
         worker = threading.Thread(target=both)
         worker.start()
@@ -432,11 +472,17 @@ def test_a_malformed_request_does_not_end_the_wait():
     """A parse rejection is a probe, not a failure of the flow."""
     port = free_port()
     with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+
         def both():
-            send(port, b"GET /callback/?state=expected-state HTTP/1.1\r\n"
-                       b"Host: evil.test\r\n\r\n")
-            send(port, listener_request(
-                port, "/callback/?code=right&state=expected-state"))
+            send(
+                port,
+                b"GET /callback/?state=expected-state HTTP/1.1\r\n"
+                b"Host: evil.test\r\n\r\n",
+            )
+            send(
+                port,
+                listener_request(port, "/callback/?code=right&state=expected-state"),
+            )
 
         worker = threading.Thread(target=both)
         worker.start()
@@ -457,6 +503,7 @@ def test_state_is_compared_in_constant_time():
     expected_state" for "expected_state == returned") does not slip past.
     """
     import inspect
+
     source = inspect.getsource(loopback.LoopbackListener.wait)
     assert "compare_digest" in source
     assert "expected_state ==" not in source
@@ -478,10 +525,17 @@ def test_a_non_ascii_state_does_not_crash_the_listener():
         replies = []
 
         def both():
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=x&state=%C3%A9")))
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=right&state=expected-state")))
+            replies.append(
+                send(port, listener_request(port, "/callback/?code=x&state=%C3%A9"))
+            )
+            replies.append(
+                send(
+                    port,
+                    listener_request(
+                        port, "/callback/?code=right&state=expected-state"
+                    ),
+                )
+            )
 
         worker = threading.Thread(target=both)
         worker.start()
@@ -537,8 +591,9 @@ def test_cancel_interrupts_a_connection_mid_read():
         try:
             # A request line with no terminating blank line: the server is
             # left waiting for more bytes that never arrive.
-            client.sendall(b"GET /callback/?state=s HTTP/1.1\r\n"
-                            b"Host: 127.0.0.1:%d\r\n" % port)
+            client.sendall(
+                b"GET /callback/?state=s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n" % port
+            )
             canceller = threading.Timer(0.3, listener.cancel)
             canceller.start()
             start = time.monotonic()
@@ -602,10 +657,20 @@ def test_the_failure_reply_is_also_never_cached_and_not_a_redirect():
         replies = []
 
         def both():
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=wrong&state=not-the-state")))
-            replies.append(send(port, listener_request(
-                port, "/callback/?code=right&state=expected-state")))
+            replies.append(
+                send(
+                    port,
+                    listener_request(port, "/callback/?code=wrong&state=not-the-state"),
+                )
+            )
+            replies.append(
+                send(
+                    port,
+                    listener_request(
+                        port, "/callback/?code=right&state=expected-state"
+                    ),
+                )
+            )
 
         worker = threading.Thread(target=both)
         worker.start()
@@ -642,6 +707,7 @@ def test_a_whitespace_only_code_reads_as_absent_for_the_reply_but_not_the_callba
 # genuinely held port still failing, with a clearer message either way
 # ---------------------------------------------------------------------------
 
+
 def test_a_transient_bind_conflict_is_retried_and_recovers(monkeypatch):
     """The fixed port is very likely to have been listening a moment ago
     (this app's own previous run, or the previous auth attempt), sitting
@@ -674,8 +740,9 @@ def test_a_persistent_bind_conflict_still_fails_with_a_clear_message():
     holder.bind(("127.0.0.1", port))
     holder.listen(1)
     try:
-        with pytest.raises(OSError) as excinfo, loopback.LoopbackListener(
-            host="127.0.0.1", port=port, path=PATH
+        with (
+            pytest.raises(OSError) as excinfo,
+            loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH),
         ):
             pass
         assert str(port) in str(excinfo.value)

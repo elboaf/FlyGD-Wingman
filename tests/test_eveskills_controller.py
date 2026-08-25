@@ -4,6 +4,7 @@ Every test here is headless. No network (the ESI client is a fake), no
 sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
+
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -56,13 +57,14 @@ class DeferredSpawn:
 def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
     """A controller over a fresh tmp state dir, with its pushes recorded."""
     plans_dir = tmp_path / "skill_plans"
-    plans_dir.mkdir(exist_ok=True)          # Exists, so nothing is seeded.
+    plans_dir.mkdir(exist_ok=True)  # Exists, so nothing is seeded.
     for name, body in (plans or {}).items():
         (plans_dir / f"{name}.txt").write_text(body, encoding="utf-8")
 
     if characters or selected:
-        seed = state_mod.SkillsState(characters=list(characters),
-                                     selected_plan_name=selected)
+        seed = state_mod.SkillsState(
+            characters=list(characters), selected_plan_name=selected
+        )
         state_mod.save(seed, tmp_path / "eve_skills.json")
 
     pushed = []
@@ -76,8 +78,11 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
     # validator here; a test that wants to exercise identity/owner-hash
     # mismatches passes its own `validate_token=` and this default steps
     # aside for it.
-    if (sso is not None and "validate_token" not in kwargs
-            and hasattr(sso, "identity_for")):
+    if (
+        sso is not None
+        and "validate_token" not in kwargs
+        and hasattr(sso, "identity_for")
+    ):
         kwargs["validate_token"] = sso.identity_for
     controller = SkillsController(
         state_path=tmp_path / "eve_skills.json",
@@ -88,7 +93,8 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
         client=kwargs.pop("client", None) or object(),
         now=kwargs.pop("now", Clock()),
         sso=sso,
-        **kwargs)
+        **kwargs,
+    )
     return controller, pushed, alerts
 
 
@@ -126,25 +132,33 @@ def test_a_character_with_no_snapshot_is_unscored_with_zero_counts(tmp_path):
     re-authenticating, so a character with no row is a character that cannot
     be repaired."""
     character = state_mod.Character(character_id=95, character_name="Zuelo Parvi")
-    controller, _, _ = build(tmp_path, characters=[character],
-                             plans={"Interceptor": "Navigation V\n"},
-                             selected="Interceptor")
+    controller, _, _ = build(
+        tmp_path,
+        characters=[character],
+        plans={"Interceptor": "Navigation V\n"},
+        selected="Interceptor",
+    )
 
     row = controller.state_payload()["characters"][0]
 
     assert row["readiness"] == "Unscored"
     assert row["fetched_utc"] == ""
-    assert (row["active_count"], row["missing_count"],
-            row["unknown_count"]) == (0, 0, 0)
+    assert (row["active_count"], row["missing_count"], row["unknown_count"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 def test_with_no_plan_selected_every_character_is_unscored(tmp_path):
     """Not an error state: the route opens with nothing selected, and forty
     rows reading Unscored is the correct first frame."""
-    character = state_mod.Character(character_id=95, character_name="Aiga",
-                                    fetched_utc=T0)
-    controller, _, _ = build(tmp_path, characters=[character],
-                             plans={"Interceptor": "Navigation V\n"})
+    character = state_mod.Character(
+        character_id=95, character_name="Aiga", fetched_utc=T0
+    )
+    controller, _, _ = build(
+        tmp_path, characters=[character], plans={"Interceptor": "Navigation V\n"}
+    )
 
     payload = controller.state_payload()
 
@@ -155,15 +169,19 @@ def test_with_no_plan_selected_every_character_is_unscored(tmp_path):
 def test_plan_rows_carry_their_size_and_their_ready_count(tmp_path):
     """The left rail shows a ready ratio per plan, so the payload has to
     score every character against every plan, not only the selected one."""
-    controller, _, _ = build(tmp_path, plans={
-        "Interceptor": "Navigation V\nSpaceship Command III\n",
-        "Hauler": "Navigation I\n"})
+    controller, _, _ = build(
+        tmp_path,
+        plans={
+            "Interceptor": "Navigation V\nSpaceship Command III\n",
+            "Hauler": "Navigation I\n",
+        },
+    )
 
     rows = {row["name"]: row for row in controller.state_payload()["plans"]}
 
     assert rows["Interceptor"]["requirement_count"] == 2
     assert rows["Hauler"]["requirement_count"] == 1
-    assert rows["Interceptor"]["ready_count"] == 0   # No characters at all.
+    assert rows["Interceptor"]["ready_count"] == 0  # No characters at all.
 
 
 def test_a_rejected_plan_file_becomes_a_plan_issue(tmp_path):
@@ -208,10 +226,10 @@ def test_a_save_failure_rolls_back_the_selection_and_warns(tmp_path):
     unrelated save, or on the next launch, with no warning ever having
     appeared."""
     controller, _, alerts = build(tmp_path, plans={"Interceptor": "Navigation V\n"})
-    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+    controller._save_locked = lambda: False  # Simulate an unwritable disk.
 
     assert controller.select_plan("Interceptor") is False
-    assert controller._state.selected_plan_name == ""      # Rolled back.
+    assert controller._state.selected_plan_name == ""  # Rolled back.
     assert alerts and alerts[-1][0] == "warning"
 
 
@@ -237,11 +255,11 @@ def test_an_identical_push_is_skipped_but_a_mutation_always_pushes(tmp_path):
     controller, pushed, _ = build(tmp_path, plans={"A": "Navigation I\n"})
 
     controller._push_state()
-    controller._push_state()                 # Identical: skipped.
+    controller._push_state()  # Identical: skipped.
     assert len(pushed) == 1
 
-    controller.select_plan("A")              # Mutation: forced.
-    controller.select_plan("A")              # Same value, still forced.
+    controller.select_plan("A")  # Mutation: forced.
+    controller.select_plan("A")  # Same value, still forced.
     assert len(pushed) == 3
 
 
@@ -249,8 +267,7 @@ def test_reload_plans_sees_a_file_added_since_construction(tmp_path):
     """The whole point of the button: the user drops a .txt in the folder
     with Wingman already running."""
     controller, _, _ = build(tmp_path, plans={"A": "Navigation I\n"})
-    (tmp_path / "skill_plans" / "B.txt").write_text("Navigation II\n",
-                                                    encoding="utf-8")
+    (tmp_path / "skill_plans" / "B.txt").write_text("Navigation II\n", encoding="utf-8")
 
     controller.reload_plans()
 
@@ -272,6 +289,7 @@ def test_a_failing_opener_warns_instead_of_raising(tmp_path):
     """This runs on the bridge thread. An exception here surfaces only as a
     rejected promise in a page nobody is debugging, so it becomes the alert
     channel that already exists."""
+
     def boom(path):
         raise OSError("no shell")
 
@@ -286,15 +304,23 @@ def test_a_failing_opener_warns_instead_of_raising(tmp_path):
 
 
 def esi_response(status, data=None, etag="", error="", path="/x/"):
-    return esi_mod.EsiResponse(status=status, data=data, error=error,
-                               etag=etag, method="GET", path=path)
+    return esi_mod.EsiResponse(
+        status=status, data=data, error=error, etag=etag, method="GET", path=path
+    )
 
 
-SKILLS_BODY = {"skills": [{"skill_id": 3327, "active_skill_level": 4,
-                           "trained_skill_level": 5}]}
-QUEUE_BODY = [{"skill_id": 3327, "finished_level": 5, "queue_position": 0,
-               "start_date": "2026-08-24T12:00:00Z",
-               "finish_date": "2026-08-26T12:00:00Z"}]
+SKILLS_BODY = {
+    "skills": [{"skill_id": 3327, "active_skill_level": 4, "trained_skill_level": 5}]
+}
+QUEUE_BODY = [
+    {
+        "skill_id": 3327,
+        "finished_level": 5,
+        "queue_position": 0,
+        "start_date": "2026-08-24T12:00:00Z",
+        "finish_date": "2026-08-26T12:00:00Z",
+    }
+]
 
 
 class FakeEsi:
@@ -316,7 +342,7 @@ class FakeEsi:
     def get(self, path, *, token=None, etag=None):
         self.calls.append((path, token, etag))
         if self.on_get is not None and not self._hooked:
-            self._hooked = True          # Fires once, or the test never ends.
+            self._hooked = True  # Fires once, or the test never ends.
             self.on_get(path)
         script = self.skills if path.endswith("/skills/") else self.queue
         assert script, f"unscripted ESI call: {path}"
@@ -350,9 +376,11 @@ class FakeSso:
         self.refreshes.append(token)
         if self.raises is not None:
             raise self.raises
-        return sso_mod.TokenSet(access_token=f"access-{len(self.refreshes)}",
-                                refresh_token=f"refresh-{len(self.refreshes)}",
-                                expires_in=self.expires_in)
+        return sso_mod.TokenSet(
+            access_token=f"access-{len(self.refreshes)}",
+            refresh_token=f"refresh-{len(self.refreshes)}",
+            expires_in=self.expires_in,
+        )
 
     def identity_for(self, token, **kwargs):
         """The default `validate_token` fake: a matching, valid identity.
@@ -362,10 +390,14 @@ class FakeSso:
         item 3's real-by-default `jwt_mod.validate` call.
         """
         character_id, owner_hash = self.identities[
-            (len(self.refreshes) - 1) % len(self.identities)]
-        return jwt_mod.EveIdentity(character_id=character_id, name="Test Pilot",
-                                   owner_hash=owner_hash,
-                                   scopes=frozenset(application.SCOPES))
+            (len(self.refreshes) - 1) % len(self.identities)
+        ]
+        return jwt_mod.EveIdentity(
+            character_id=character_id,
+            name="Test Pilot",
+            owner_hash=owner_hash,
+            scopes=frozenset(application.SCOPES),
+        )
 
 
 class DirectSpawn:
@@ -388,6 +420,7 @@ def plaintext_tokens(monkeypatch):
     would only make the assertions unreadable.
     """
     from obs_youtube_uploader.eveskills import tokens as tokens_mod
+
     monkeypatch.setattr(tokens_mod, "wrap", lambda token, **kw: token)
     monkeypatch.setattr(tokens_mod, "unwrap", lambda blob, **kw: blob or None)
 
@@ -415,8 +448,9 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
     esi = FakeEsi()
     controller = None
     esi.on_get = lambda path: controller.refresh_characters()  # once; see below
-    controller, _, _ = build(tmp_path, characters=[character], client=esi,
-                             sso=FakeSso(), spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path, characters=[character], client=esi, sso=FakeSso(), spawn=DirectSpawn()
+    )
 
     controller.refresh_characters()
 
@@ -424,7 +458,9 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
     assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
 
 
-def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(tmp_path):
+def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
+    tmp_path,
+):
     """Round 2 review, item 7 (Minor). The exception handler used to clear
     `_refresh_again` and stop -- so a refresh clicked while the running pass
     was about to fail vanished silently, unlike a refresh clicked during a
@@ -436,12 +472,13 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
     controller = None
 
     def blow_up_once(path):
-        controller.refresh_characters()   # arrives while this pass is "in flight"
+        controller.refresh_characters()  # arrives while this pass is "in flight"
         raise RuntimeError("boom")
 
     esi.on_get = blow_up_once
-    controller, _, _ = build(tmp_path, characters=[character], client=esi,
-                             sso=FakeSso(), spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path, characters=[character], client=esi, sso=FakeSso(), spawn=DirectSpawn()
+    )
 
     controller.refresh_characters()
 
@@ -457,10 +494,16 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
 def with_snapshot(**kwargs):
     """A character that already has committed data, so a later refresh has
     something to preserve or overwrite."""
-    defaults = dict(character_id=95, character_name="Aiga Otsolen",
-                    refresh_token_blob="blob", fetched_utc=T0,
-                    active_levels={3327: 3}, trained_levels={3327: 3},
-                    skills_etag='"old-s"', queue_etag='"old-q"')
+    defaults = dict(
+        character_id=95,
+        character_name="Aiga Otsolen",
+        refresh_token_blob="blob",
+        fetched_utc=T0,
+        active_levels={3327: 3},
+        trained_levels={3327: 3},
+        skills_etag='"old-s"',
+        queue_etag='"old-q"',
+    )
     defaults.update(kwargs)
     return state_mod.Character(**defaults)
 
@@ -468,8 +511,14 @@ def with_snapshot(**kwargs):
 def run_refresh(tmp_path, esi, character=None, clock=None, **kwargs):
     clock = clock or Clock()
     controller, pushed, _alerts = build(
-        tmp_path, characters=[character or with_snapshot()], client=esi,
-        sso=FakeSso(), spawn=DirectSpawn(), now=clock, **kwargs)
+        tmp_path,
+        characters=[character or with_snapshot()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        now=clock,
+        **kwargs,
+    )
     controller.refresh_characters()
     return controller, pushed, clock
 
@@ -503,8 +552,8 @@ def test_304_and_304_keeps_the_data_and_still_advances_fetched_utc(tmp_path):
 
     ch = controller._state.characters[0]
     assert ch.fetched_utc == clock.value
-    assert ch.active_levels == {3327: 3}          # Untouched.
-    assert ch.skills_etag == '"old-s"'            # A 304 carries no new etag.
+    assert ch.active_levels == {3327: 3}  # Untouched.
+    assert ch.skills_etag == '"old-s"'  # A 304 carries no new etag.
 
 
 def test_200_and_304_commits_the_fresh_half_and_keeps_the_stored_one(tmp_path):
@@ -515,8 +564,8 @@ def test_200_and_304_commits_the_fresh_half_and_keeps_the_stored_one(tmp_path):
     controller, _, _ = run_refresh(tmp_path, esi)
 
     ch = controller._state.characters[0]
-    assert ch.active_levels == {3327: 4}          # Fresh skills committed.
-    assert ch.queue_etag == '"old-q"'             # Stored queue kept.
+    assert ch.active_levels == {3327: 4}  # Fresh skills committed.
+    assert ch.queue_etag == '"old-q"'  # Stored queue kept.
     assert ch.error == ""
 
 
@@ -570,7 +619,8 @@ def test_a_definitive_failure_needs_reauth_and_deletes_the_token(tmp_path, statu
     assert ch.needs_reauth is True
     assert ch.refresh_token_blob == ""
     assert ch.error == (
-        "EVE rejected the stored authorisation. Re-authenticate this character.")
+        "EVE rejected the stored authorisation. Re-authenticate this character."
+    )
     assert ch.active_levels == {3327: 3}, "last-good data still stays visible"
 
 
@@ -600,9 +650,12 @@ def test_a_definitive_oauth_error_is_definitive_here_too(tmp_path):
     honours it rather than inventing a second one."""
     esi = FakeEsi()
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()], client=esi,
+        tmp_path,
+        characters=[with_snapshot()],
+        client=esi,
         sso=FakeSso(raises=sso_mod.OAuthError(400, "invalid_grant", "revoked")),
-        spawn=DirectSpawn())
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
@@ -614,9 +667,12 @@ def test_a_transient_oauth_error_keeps_the_token(tmp_path):
     """An SSO 503 is not a revoked grant. Deleting the token here would cost
     the user a re-authentication for CCP's downtime."""
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()], client=FakeEsi(),
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
         sso=FakeSso(raises=sso_mod.OAuthError(503, "server_error", "down")),
-        spawn=DirectSpawn())
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
@@ -627,8 +683,13 @@ def test_a_cached_token_is_reused_across_both_calls(tmp_path):
     """Two ESI calls per character must not mean two token refreshes. At
     forty characters that is forty wasted SSO round trips per click."""
     sso = FakeSso()
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
+        sso=sso,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 1
@@ -640,15 +701,20 @@ def test_a_401_forces_exactly_one_refresh_and_one_retry(tmp_path):
     the first find a token that no longer matches and reuse it, and one
     stale token produces one refresh rather than N."""
     sso = FakeSso()
-    esi = FakeEsi(skills=[esi_response(401, error="expired"),
-                          esi_response(200, SKILLS_BODY, etag='"s1"')])
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=esi, sso=sso, spawn=DirectSpawn())
+    esi = FakeEsi(
+        skills=[
+            esi_response(401, error="expired"),
+            esi_response(200, SKILLS_BODY, etag='"s1"'),
+        ]
+    )
+    controller, _, _ = build(
+        tmp_path, characters=[with_snapshot()], client=esi, sso=sso, spawn=DirectSpawn()
+    )
     controller.refresh_characters()
 
     skills_calls = [c for c in esi.calls if c[0].endswith("/skills/")]
-    assert len(skills_calls) == 2                     # One 401, one retry.
-    assert skills_calls[0][1] != skills_calls[1][1]   # A different token.
+    assert len(skills_calls) == 2  # One 401, one retry.
+    assert skills_calls[0][1] != skills_calls[1][1]  # A different token.
     # Two refreshes total: the initial mint, and the one the 401 forced.
     # The queue call that follows reuses the second and adds none.
     assert len(sso.refreshes) == 2
@@ -657,9 +723,14 @@ def test_a_401_forces_exactly_one_refresh_and_one_retry(tmp_path):
 def test_an_expiring_token_is_refreshed_before_it_is_used(tmp_path):
     """A token that is valid when checked and expired when it lands is a
     401 the user pays a retry for. The margin covers the round trip."""
-    sso = FakeSso(expires_in=10)      # Inside TOKEN_EXPIRY_MARGIN_S.
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    sso = FakeSso(expires_in=10)  # Inside TOKEN_EXPIRY_MARGIN_S.
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
+        sso=sso,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 2, "the second call must not reuse it"
@@ -681,17 +752,26 @@ def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
 
         def refresh_token(self, token, **kwargs):
             self.refreshes.append(token)
-            return sso_mod.TokenSet(access_token="access-1",
-                                    refresh_token="", expires_in=1200)
+            return sso_mod.TokenSet(
+                access_token="access-1", refresh_token="", expires_in=1200
+            )
 
         def identity_for(self, token, **kwargs):
-            return jwt_mod.EveIdentity(character_id=95, name="Test Pilot",
-                                       owner_hash="",
-                                       scopes=frozenset(application.SCOPES))
+            return jwt_mod.EveIdentity(
+                character_id=95,
+                name="Test Pilot",
+                owner_hash="",
+                scopes=frozenset(application.SCOPES),
+            )
 
     sso = OmittingSso()
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
+        sso=sso,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 1
@@ -712,17 +792,26 @@ def test_a_whitespace_only_refresh_token_does_not_wipe_the_stored_one(tmp_path):
 
         def refresh_token(self, token, **kwargs):
             self.refreshes.append(token)
-            return sso_mod.TokenSet(access_token="access-1",
-                                    refresh_token="   ", expires_in=1200)
+            return sso_mod.TokenSet(
+                access_token="access-1", refresh_token="   ", expires_in=1200
+            )
 
         def identity_for(self, token, **kwargs):
-            return jwt_mod.EveIdentity(character_id=95, name="Test Pilot",
-                                       owner_hash="",
-                                       scopes=frozenset(application.SCOPES))
+            return jwt_mod.EveIdentity(
+                character_id=95,
+                name="Test Pilot",
+                owner_hash="",
+                scopes=frozenset(application.SCOPES),
+            )
 
     sso = WhitespaceSso()
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=FakeEsi(), sso=sso, spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
+        sso=sso,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 1
@@ -742,8 +831,13 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
     this test exists to catch.
     """
     character = with_snapshot()
-    controller, _, _ = build(tmp_path, characters=[character], client=FakeEsi(),
-                             sso=FakeSso(), spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[character],
+        client=FakeEsi(),
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+    )
     controller._save_locked = lambda: False
 
     token, _error, definitive = controller._access_token(character.character_id)
@@ -752,8 +846,7 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
     assert definitive is False
     ch = controller._state.characters[0]
     assert ch.refresh_token_blob == "refresh-1", "rotated correctly in memory"
-    assert ch.error == (
-        "Fresh data is in memory but was not saved for offline use.")
+    assert ch.error == ("Fresh data is in memory but was not saved for offline use.")
 
 
 def test_a_refreshed_token_for_a_different_character_forces_reauth(tmp_path):
@@ -762,14 +855,24 @@ def test_a_refreshed_token_for_a_different_character_forces_reauth(tmp_path):
     names a different character_id than the one being refreshed must never
     be trusted -- CCP's own session confusion, or a stale cache entry, must
     not let one character's row start showing another's data."""
+
     def wrong_identity(token, **kwargs):
-        return jwt_mod.EveIdentity(character_id=999, name="Someone Else",
-                                   owner_hash="", scopes=frozenset(application.SCOPES))
+        return jwt_mod.EveIdentity(
+            character_id=999,
+            name="Someone Else",
+            owner_hash="",
+            scopes=frozenset(application.SCOPES),
+        )
 
     esi = FakeEsi()
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()], client=esi,
-                             sso=FakeSso(), validate_token=wrong_identity,
-                             spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=esi,
+        sso=FakeSso(),
+        validate_token=wrong_identity,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
@@ -783,16 +886,24 @@ def test_a_changed_owner_hash_forces_reauth(tmp_path):
     refreshed token's hash are non-blank here, so a mismatch is real
     evidence the character changed hands -- the stored grant is deleted,
     matching every other definitive failure."""
+
     def transferred_identity(token, **kwargs):
-        return jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
-                                   owner_hash="new-owner",
-                                   scopes=frozenset(application.SCOPES))
+        return jwt_mod.EveIdentity(
+            character_id=95,
+            name="Aiga Otsolen",
+            owner_hash="new-owner",
+            scopes=frozenset(application.SCOPES),
+        )
 
     esi = FakeEsi()
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot(owner_hash="old-owner")],
-        client=esi, sso=FakeSso(), validate_token=transferred_identity,
-        spawn=DirectSpawn())
+        tmp_path,
+        characters=[with_snapshot(owner_hash="old-owner")],
+        client=esi,
+        sso=FakeSso(),
+        validate_token=transferred_identity,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
@@ -807,14 +918,23 @@ def test_a_blank_owner_hash_on_either_side_skips_the_comparison(tmp_path):
     runs when BOTH sides are non-blank. An older stored row with no hash
     yet, or a token that omits the claim, is missing information, not
     evidence of a transfer, and must not force a reauth on its own."""
+
     def blank_hash_identity(token, **kwargs):
-        return jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
-                                   owner_hash="", scopes=frozenset(application.SCOPES))
+        return jwt_mod.EveIdentity(
+            character_id=95,
+            name="Aiga Otsolen",
+            owner_hash="",
+            scopes=frozenset(application.SCOPES),
+        )
 
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot(owner_hash="old-owner")],
-        client=FakeEsi(), sso=FakeSso(), validate_token=blank_hash_identity,
-        spawn=DirectSpawn())
+        tmp_path,
+        characters=[with_snapshot(owner_hash="old-owner")],
+        client=FakeEsi(),
+        sso=FakeSso(),
+        validate_token=blank_hash_identity,
+        spawn=DirectSpawn(),
+    )
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
@@ -840,21 +960,28 @@ def test_esi_calls_happen_with_the_state_lock_released(tmp_path):
                 released.append(held)
                 if held:
                     controller._lock.release()
+
             thread = threading.Thread(target=probe)
             thread.start()
             thread.join(timeout=5)
             return super().get(path, token=token, etag=etag)
 
     esi = LockCheckingEsi()
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()], client=esi,
-                             sso=FakeSso(), spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+    )
 
     controller.refresh_characters()
 
     assert released, "the probe thread never ran"
     assert all(released), (
         "a second thread must be able to take the state lock while an ESI "
-        "call is in flight -- the lock must not be held across it")
+        "call is in flight -- the lock must not be held across it"
+    )
 
 
 def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
@@ -869,8 +996,13 @@ def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
         controller.forget(95)
 
     esi.on_get = forget_during_the_fetch
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=esi, sso=FakeSso(), spawn=DirectSpawn())
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+    )
 
     controller.refresh_characters()
 
@@ -880,12 +1012,17 @@ def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
 def test_progress_is_pushed_once_per_character(tmp_path):
     """A forty-character pass is eighty sequential requests. Without a
     per-character push the window looks hung for the duration."""
-    characters = [with_snapshot(character_id=1, character_name="A"),
-                  with_snapshot(character_id=2, character_name="B")]
-    controller, pushed, _ = build(tmp_path, characters=characters,
-                                  client=FakeEsi(),
-                                  sso=FakeSso(identities=[(1, ""), (2, "")]),
-                                  spawn=DirectSpawn())
+    characters = [
+        with_snapshot(character_id=1, character_name="A"),
+        with_snapshot(character_id=2, character_name="B"),
+    ]
+    controller, pushed, _ = build(
+        tmp_path,
+        characters=characters,
+        client=FakeEsi(),
+        sso=FakeSso(identities=[(1, ""), (2, "")]),
+        spawn=DirectSpawn(),
+    )
 
     controller.refresh_characters()
 
@@ -906,10 +1043,14 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
         cache.merge({name: 3327 for name in names})
         return {}
 
-    controller, _, _ = build(tmp_path, characters=[with_snapshot()],
-                             client=FakeEsi(), sso=FakeSso(),
-                             spawn=DirectSpawn(),
-                             plans={"Interceptor": "Navigation V\n"})
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=FakeEsi(),
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        plans={"Interceptor": "Navigation V\n"},
+    )
     controller._resolve = fake_resolve
 
     controller.refresh_characters()
@@ -974,7 +1115,7 @@ def test_forget_rejects_a_non_positive_id(tmp_path):
 
 def test_a_forget_save_failure_rolls_back_and_warns(tmp_path):
     controller, _, alerts = build(tmp_path, characters=[with_snapshot()])
-    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+    controller._save_locked = lambda: False  # Simulate an unwritable disk.
 
     assert controller.forget(95) is False
 
@@ -984,9 +1125,12 @@ def test_a_forget_save_failure_rolls_back_and_warns(tmp_path):
 
 # ----- interactive sign-in ------------------------------------------------
 
-IDENTITY = jwt_mod.EveIdentity(character_id=95, name="Aiga Otsolen",
-                               owner_hash="hash-1",
-                               scopes=frozenset(application.SCOPES))
+IDENTITY = jwt_mod.EveIdentity(
+    character_id=95,
+    name="Aiga Otsolen",
+    owner_hash="hash-1",
+    scopes=frozenset(application.SCOPES),
+)
 
 
 class FakeListener:
@@ -999,8 +1143,7 @@ class FakeListener:
     real listener blocks on accept().
     """
 
-    def __init__(self, events, callback=None, error_to_raise=None,
-                on_wait=None):
+    def __init__(self, events, callback=None, error_to_raise=None, on_wait=None):
         self.events = events
         self.callback = callback
         self.error_to_raise = error_to_raise
@@ -1042,14 +1185,15 @@ class FakeAuthSso:
 
     def __init__(self, token_set=None, raises=None):
         self.token_set = token_set or sso_mod.TokenSet(
-            access_token="access-1", refresh_token="refresh-1",
-            expires_in=1200)
+            access_token="access-1", refresh_token="refresh-1", expires_in=1200
+        )
         self.raises = raises
         self.exchanged = []
 
     def generate_pkce(self):
-        return sso_mod.Pkce(state="state-1", verifier="verifier-1",
-                            challenge="challenge-1")
+        return sso_mod.Pkce(
+            state="state-1", verifier="verifier-1", challenge="challenge-1"
+        )
 
     def authorize_url(self, pkce):
         return f"https://login.eveonline.com/v2/oauth/authorize?state={pkce.state}"
@@ -1061,24 +1205,40 @@ class FakeAuthSso:
         return self.token_set
 
 
-def build_auth(tmp_path, monkeypatch, *, events=None, callback=None,
-               listener_error=None, on_wait=None, sso=None,
-               validate_token=None, **kwargs):
+def build_auth(
+    tmp_path,
+    monkeypatch,
+    *,
+    events=None,
+    callback=None,
+    listener_error=None,
+    on_wait=None,
+    sso=None,
+    validate_token=None,
+    **kwargs,
+):
     # Pinned rather than inherited from application.py: these tests
     # exercise authenticate()'s own behaviour, and must not start
     # failing the day the registered client id is rotated or a fork
     # blanks it back to the placeholder.
     monkeypatch.setattr(application, "CLIENT_ID", "test-client-id")
     events = events if events is not None else []
-    listener = FakeListener(events, callback=callback or
-                            loopback_mod.Callback(code="code-1", error=""),
-                            error_to_raise=listener_error, on_wait=on_wait)
+    listener = FakeListener(
+        events,
+        callback=callback or loopback_mod.Callback(code="code-1", error=""),
+        error_to_raise=listener_error,
+        on_wait=on_wait,
+    )
     launched = []
     controller, pushed, alerts = build(
-        tmp_path, sso=sso or FakeAuthSso(),
-        listener_factory=listener, launch_browser=launched.append,
+        tmp_path,
+        sso=sso or FakeAuthSso(),
+        listener_factory=listener,
+        launch_browser=launched.append,
         validate_token=validate_token or (lambda *a, **k: IDENTITY),
-        spawn=kwargs.pop("spawn", DirectSpawn()), **kwargs)
+        spawn=kwargs.pop("spawn", DirectSpawn()),
+        **kwargs,
+    )
     return controller, pushed, alerts, events, launched
 
 
@@ -1098,7 +1258,8 @@ def test_the_listener_is_bound_before_the_browser_launches(tmp_path, monkeypatch
     of completing the sign-in."""
     events = []
     controller, _, _, events, launched = build_auth(
-        tmp_path, monkeypatch, events=events)
+        tmp_path, monkeypatch, events=events
+    )
 
     controller.authenticate()
 
@@ -1122,7 +1283,8 @@ def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
     """Two authorisations would fight over the same fixed loopback port,
     and there is no second port registered with CCP to fall back to."""
     controller, _pushed, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, spawn=DeferredSpawn())
+        tmp_path, monkeypatch, spawn=DeferredSpawn()
+    )
 
     controller.authenticate()
     controller.authenticate()
@@ -1141,7 +1303,8 @@ def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
         controller.cancel_auth()
 
     controller, _, _, events, _ = build_auth(
-        tmp_path, monkeypatch, events=events, on_wait=cancel_from_inside_wait)
+        tmp_path, monkeypatch, events=events, on_wait=cancel_from_inside_wait
+    )
 
     controller.authenticate()
 
@@ -1150,8 +1313,10 @@ def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
 
 def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
     controller, _pushed, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch,
-        callback=loopback_mod.Callback(code="", error="access_denied"))
+        tmp_path,
+        monkeypatch,
+        callback=loopback_mod.Callback(code="", error="access_denied"),
+    )
 
     controller.authenticate()
 
@@ -1163,8 +1328,11 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     """The same owner signing back in must not look like a transfer -- the
     cached snapshot is still theirs."""
     controller, _, _alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
-        validate_token=lambda *a, **k: IDENTITY)
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY,
+    )
 
     controller.authenticate()
 
@@ -1178,8 +1346,11 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     """A different account now owns this character. Its cached skills,
     queue and etags describe someone else's training."""
     controller, _, _, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="old-hash")],
-        validate_token=lambda *a, **k: IDENTITY)
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot(owner_hash="old-hash")],
+        validate_token=lambda *a, **k: IDENTITY,
+    )
 
     controller.authenticate()
 
@@ -1191,17 +1362,23 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     assert found.fetched_utc is None
     assert found.skills_etag == ""
     assert found.queue_etag == ""
-    assert found.error == ("Character ownership changed; cached skill data "
-                           "was cleared.")
+    assert found.error == (
+        "Character ownership changed; cached skill data was cleared."
+    )
 
 
 def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatch):
     """state.SkillsState.upsert() raises at MAX_CHARACTERS for a genuinely
     new id; the roster is left untouched rather than partially written."""
-    full_roster = [with_snapshot(character_id=n) for n in range(1, state_mod.MAX_CHARACTERS + 1)]
+    full_roster = [
+        with_snapshot(character_id=n) for n in range(1, state_mod.MAX_CHARACTERS + 1)
+    ]
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=full_roster,
-        validate_token=lambda *a, **k: IDENTITY)
+        tmp_path,
+        monkeypatch,
+        characters=full_roster,
+        validate_token=lambda *a, **k: IDENTITY,
+    )
 
     controller.authenticate()
 
@@ -1217,11 +1394,17 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
     because a hash was stored last time, and must not blank that stored
     hash out from under future checks."""
     blank_identity = jwt_mod.EveIdentity(
-        character_id=95, name="Aiga Otsolen", owner_hash="",
-        scopes=frozenset(application.SCOPES))
+        character_id=95,
+        name="Aiga Otsolen",
+        owner_hash="",
+        scopes=frozenset(application.SCOPES),
+    )
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
-        validate_token=lambda *a, **k: blank_identity)
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: blank_identity,
+    )
 
     controller.authenticate()
 
@@ -1235,7 +1418,7 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
 
 def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(tmp_path, monkeypatch)
-    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+    controller._save_locked = lambda: False  # Simulate an unwritable disk.
 
     controller.authenticate()
 
@@ -1249,9 +1432,12 @@ def test_a_sign_in_save_failure_rolls_back_an_existing_character(tmp_path, monke
     or no save. A failed save must restore the pre-mutation snapshot, not
     just skip an append."""
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
-        validate_token=lambda *a, **k: IDENTITY)
-    controller._save_locked = lambda: False   # Simulate an unwritable disk.
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY,
+    )
+    controller._save_locked = lambda: False  # Simulate an unwritable disk.
 
     controller.authenticate()
 
@@ -1271,8 +1457,12 @@ def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
         controller.forget(95)
 
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, characters=[with_snapshot(owner_hash="hash-1")],
-        validate_token=lambda *a, **k: IDENTITY, on_wait=forget_during_wait)
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot(owner_hash="hash-1")],
+        validate_token=lambda *a, **k: IDENTITY,
+        on_wait=forget_during_wait,
+    )
 
     controller.authenticate()
 
@@ -1289,7 +1479,8 @@ def test_a_cancelled_sign_in_produces_no_alert(tmp_path, monkeypatch):
         controller.cancel_auth()
 
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, on_wait=cancel_from_inside_wait)
+        tmp_path, monkeypatch, on_wait=cancel_from_inside_wait
+    )
 
     controller.authenticate()
 
@@ -1299,7 +1490,8 @@ def test_a_cancelled_sign_in_produces_no_alert(tmp_path, monkeypatch):
 
 def test_a_timed_out_sign_in_alerts(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, listener_error=loopback_mod.CallbackTimeout())
+        tmp_path, monkeypatch, listener_error=loopback_mod.CallbackTimeout()
+    )
 
     controller.authenticate()
 
@@ -1308,8 +1500,10 @@ def test_a_timed_out_sign_in_alerts(tmp_path, monkeypatch):
 
 def test_an_oauth_error_during_exchange_alerts(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch,
-        sso=FakeAuthSso(raises=sso_mod.OAuthError(400, "invalid_grant", "bad code")))
+        tmp_path,
+        monkeypatch,
+        sso=FakeAuthSso(raises=sso_mod.OAuthError(400, "invalid_grant", "bad code")),
+    )
 
     controller.authenticate()
 
@@ -1322,7 +1516,8 @@ def test_a_jwt_error_during_validation_alerts(tmp_path, monkeypatch):
         raise jwt_mod.JwtError("signature verification failed")
 
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, validate_token=raising_validate)
+        tmp_path, monkeypatch, validate_token=raising_validate
+    )
 
     controller.authenticate()
 
@@ -1335,7 +1530,8 @@ def test_an_unexpected_exception_during_sign_in_alerts(tmp_path, monkeypatch):
         raise RuntimeError("boom")
 
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, validate_token=raising_validate)
+        tmp_path, monkeypatch, validate_token=raising_validate
+    )
 
     controller.authenticate()
 
@@ -1348,18 +1544,21 @@ def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
     itself raises -- authenticate() has to release the latch and clear the
     in-progress flag itself in that window, or sign-in is dead until
     restart."""
+
     class RaisingSpawn:
         def __call__(self, target, daemon=True):
             raise OSError("could not start thread")
 
     controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, spawn=RaisingSpawn())
+        tmp_path, monkeypatch, spawn=RaisingSpawn()
+    )
 
     controller.authenticate()
 
     assert any("Sign-in failed" in title for _, title, _ in alerts)
     assert controller._auth_in_progress is False
     assert controller._auth_latch.acquire(blocking=False)
+
 
 # ----- character_detail ---------------------------------------------------
 
@@ -1368,8 +1567,10 @@ def test_character_detail_includes_active_requirements(tmp_path):
     """Active requirements are included in the payload; the page filters
     the expanded row, not the controller."""
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()],
-        plans={"Interceptor": "Navigation III\n"})
+        tmp_path,
+        characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\n"},
+    )
     controller._cache.merge({"navigation": 3327})
 
     detail = controller.character_detail(95, "Interceptor")
@@ -1381,8 +1582,10 @@ def test_character_detail_includes_active_requirements(tmp_path):
 
 def test_character_detail_matches_the_plan_name_case_insensitively(tmp_path):
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()],
-        plans={"Interceptor": "Navigation III\n"})
+        tmp_path,
+        characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\n"},
+    )
     controller._cache.merge({"navigation": 3327})
 
     detail = controller.character_detail(95, "iNtErCePtOr")
@@ -1406,8 +1609,8 @@ def test_character_detail_for_a_missing_plan_says_so(tmp_path):
     reachable from _find_plan_locked is `ok` by construction -- there is no
     reachable "the plan has errors" branch here, only "not found"."""
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()],
-        plans={"Broken": "Navigation +5\n"})
+        tmp_path, characters=[with_snapshot()], plans={"Broken": "Navigation +5\n"}
+    )
 
     detail = controller.character_detail(95, "Broken")
 
@@ -1419,8 +1622,10 @@ def test_character_detail_reports_levels_as_integers(tmp_path):
     """Plain ints across the bridge: the page compares these arithmetically,
     and `null > 3` is quietly false in JavaScript rather than an error."""
     controller, _, _ = build(
-        tmp_path, characters=[with_snapshot()],
-        plans={"Interceptor": "Navigation III\nSpaceship Command III\n"})
+        tmp_path,
+        characters=[with_snapshot()],
+        plans={"Interceptor": "Navigation III\nSpaceship Command III\n"},
+    )
     controller._cache.merge({"navigation": 3327})
 
     detail = controller.character_detail(95, "Interceptor")
@@ -1460,9 +1665,14 @@ def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):
     esi = FakeEsi()
     controller, _, _ = build(
         tmp_path,
-        characters=[with_snapshot(character_id=95),
-                   with_snapshot(character_id=96, character_name="B")],
-        client=esi, sso=FakeSso(), spawn=DirectSpawn())
+        characters=[
+            with_snapshot(character_id=95),
+            with_snapshot(character_id=96, character_name="B"),
+        ],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+    )
 
     seen = []
 
@@ -1478,4 +1688,3 @@ def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):
     # Exactly the first character's two calls (skills + queue) happened;
     # the second character was never fetched.
     assert len(seen) <= 2
-

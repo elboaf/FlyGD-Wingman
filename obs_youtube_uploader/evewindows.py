@@ -13,6 +13,7 @@ read a window that doesn't exist, and the list would come back silently
 wrong -- with no test able to catch it, since this code path never runs off
 Windows. Do not trim these as noise.
 """
+
 import logging
 import sys
 
@@ -42,16 +43,14 @@ def _enumerate_windows() -> list:
     # undeclared function marshals it as a 32-bit C int, truncating a 64-bit
     # handle. IsWindowVisible and GetWindowTextW would then be reading a
     # window that does not exist, and the list would come back silently wrong.
-    wndenumproc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
-                                      wintypes.LPARAM)
+    wndenumproc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows.argtypes = [wndenumproc, wintypes.LPARAM]
     user32.EnumWindows.restype = wintypes.BOOL
     user32.IsWindowVisible.argtypes = [wintypes.HWND]
     user32.IsWindowVisible.restype = wintypes.BOOL
     user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
     user32.GetWindowTextLengthW.restype = ctypes.c_int
-    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR,
-                                      ctypes.c_int]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     user32.GetWindowTextW.restype = ctypes.c_int
 
     titles = []

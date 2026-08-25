@@ -17,7 +17,8 @@ def test_parses_a_valid_webhook():
 
 def test_accepts_discordapp_host():
     hook, err = discord.parse_webhook(
-        "https://discordapp.com/api/webhooks/1234567890/tok")
+        "https://discordapp.com/api/webhooks/1234567890/tok"
+    )
     assert err == "" and hook is not None
 
 
@@ -34,19 +35,23 @@ def test_rejects_http():
 
 def test_rejects_foreign_host():
     hook, err = discord.parse_webhook(
-        "https://evil.example.com/api/webhooks/1234567890/tok")
+        "https://evil.example.com/api/webhooks/1234567890/tok"
+    )
     assert hook is None and "host" in err.lower()
 
 
-@pytest.mark.parametrize("host", [
-    # Defeats a substring check (`"discord.com" in hostname` is True here),
-    # but NOT an endswith check -- this host ends with "evil.example".
-    "discord.com.evil.example",
-    # The mirror image: both of these END with "discord.com", so an
-    # endswith check accepts them. A substring check does too.
-    "evil-discord.com",
-    "notdiscord.com",
-])
+@pytest.mark.parametrize(
+    "host",
+    [
+        # Defeats a substring check (`"discord.com" in hostname` is True here),
+        # but NOT an endswith check -- this host ends with "evil.example".
+        "discord.com.evil.example",
+        # The mirror image: both of these END with "discord.com", so an
+        # endswith check accepts them. A substring check does too.
+        "evil-discord.com",
+        "notdiscord.com",
+    ],
+)
 def test_rejects_hosts_that_defeat_a_naive_check(host):
     """The cases the exact-match allowlist actually exists for.
 
@@ -56,8 +61,7 @@ def test_rejects_hosts_that_defeat_a_naive_check(host):
     so together they pin the exact-match behaviour rather than merely
     asserting that some bad host is refused.
     """
-    hook, err = discord.parse_webhook(
-        f"https://{host}/api/webhooks/1234567890/tok")
+    hook, err = discord.parse_webhook(f"https://{host}/api/webhooks/1234567890/tok")
     assert hook is None
     assert "host" in err.lower()
 
@@ -116,7 +120,9 @@ def test_logging_filter_redacts_a_foreign_logger(caplog):
 
 def test_logging_filter_survives_no_webhook_configured():
     filt = discord.RedactingFilter(lambda: None)
-    record = logging.LogRecord("x", logging.INFO, __file__, 1, "plain message", (), None)
+    record = logging.LogRecord(
+        "x", logging.INFO, __file__, 1, "plain message", (), None
+    )
     assert filt.filter(record) is True
     assert record.getMessage() == "plain message"
 
@@ -134,7 +140,8 @@ def test_redact_does_not_corrupt_the_id_when_token_is_a_substring_of_it():
     """If the token happens to be a substring of the webhook id, redacting the
     bare token must not also mangle the id that describe() displays."""
     hook, err = discord.parse_webhook(
-        "https://discord.com/api/webhooks/123999/abcDEF-token_xyz")
+        "https://discord.com/api/webhooks/123999/abcDEF-token_xyz"
+    )
     assert err == ""
     msg = f"POST {hook.url} failed"
     out = discord.redact(msg, hook)
@@ -154,7 +161,8 @@ def test_describe_uses_the_actual_configured_host():
     canary.discord.com webhook should be shown with its real host, not a
     silently wrong one."""
     hook, err = discord.parse_webhook(
-        "https://ptb.discord.com/api/webhooks/1234567890/abcDEF-token_xyz")
+        "https://ptb.discord.com/api/webhooks/1234567890/abcDEF-token_xyz"
+    )
     assert err == ""
     described = discord.describe(hook)
     assert "ptb.discord.com" in described
@@ -210,10 +218,17 @@ def test_logging_filter_redacts_stack_info():
 
 
 class FakeResponse:
-    def __init__(self, status): self.status = status
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
-    def read(self): return b""
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return b""
 
 
 def _transport(status=204, exc=None):
@@ -249,27 +264,39 @@ def test_post_sends_multipart_to_the_webhook_url(tmp_path):
     assert b"payload" in req.data
 
 
-@pytest.mark.parametrize("status,fragment", [
-    (401, "invalid"), (404, "invalid"), (413, "too large"), (429, "rate"),
-])
+@pytest.mark.parametrize(
+    "status,fragment",
+    [
+        (401, "invalid"),
+        (404, "invalid"),
+        (413, "too large"),
+        (429, "rate"),
+    ],
+)
 def test_error_statuses_map_to_plain_language(tmp_path, status, fragment):
     import urllib.error
+
     hook, _ = discord.parse_webhook(GOOD)
     zip_path = tmp_path / "a.zip"
     zip_path.write_bytes(b"payload")
     err = urllib.error.HTTPError(GOOD, status, "err", {}, None)
-    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(exc=err))
+    result = discord.post_archive(
+        hook, zip_path, "fight", transport=_transport(exc=err)
+    )
     assert not result.ok
     assert fragment in result.message.lower()
 
 
 def test_failure_message_never_contains_the_token(tmp_path):
     import urllib.error
+
     hook, _ = discord.parse_webhook(GOOD)
     zip_path = tmp_path / "a.zip"
     zip_path.write_bytes(b"payload")
     err = urllib.error.HTTPError(GOOD, 500, f"boom at {GOOD}", {}, None)
-    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(exc=err))
+    result = discord.post_archive(
+        hook, zip_path, "fight", transport=_transport(exc=err)
+    )
     assert "abcDEF-token_xyz" not in result.message
 
 
@@ -288,8 +315,9 @@ def test_network_error_is_reported_not_raised(tmp_path):
     hook, _ = discord.parse_webhook(GOOD)
     zip_path = tmp_path / "a.zip"
     zip_path.write_bytes(b"payload")
-    result = discord.post_archive(hook, zip_path, "fight",
-                                  transport=_transport(exc=OSError("no route")))
+    result = discord.post_archive(
+        hook, zip_path, "fight", transport=_transport(exc=OSError("no route"))
+    )
     assert not result.ok and result.message
 
 
@@ -318,8 +346,7 @@ def test_unreadable_archive_is_reported_not_raised(tmp_path, monkeypatch):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(Path, "read_bytes", unreadable)
-    result = discord.post_archive(hook, zip_path, "fight",
-                                  transport=_transport(204))
+    result = discord.post_archive(hook, zip_path, "fight", transport=_transport(204))
     assert isinstance(result, discord.PostResult)
     assert result.ok is False
 

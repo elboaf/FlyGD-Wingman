@@ -3,6 +3,7 @@
 Errors are classified before they reach the UI so users see plain language
 instead of a traceback in a log file nobody reads.
 """
+
 import contextlib
 import enum
 import json
@@ -130,16 +131,18 @@ class UploadFailed(Exception):
     resume the existing session instead of restarting from zero.
     """
 
-    def __init__(self, outcome: Outcome, original: Exception | None = None,
-                 request=None):
+    def __init__(
+        self, outcome: Outcome, original: Exception | None = None, request=None
+    ):
         self.outcome = outcome
         self.original = original
         self.request = request
         super().__init__(message_for(outcome))
 
 
-def build_body(title: str, description: str, privacy: str, category: str,
-               index: int, total: int) -> dict:
+def build_body(
+    title: str, description: str, privacy: str, category: str, index: int, total: int
+) -> dict:
     title = title or "Untitled"
     if total > 1:
         title = f"{title} ({index + 1}/{total})"
@@ -171,13 +174,22 @@ def channel_of(response) -> tuple[str, str]:
         return "", ""
     cid = snippet.get("channelId")
     title = snippet.get("channelTitle")
-    return (cid if isinstance(cid, str) else "",
-            title if isinstance(title, str) else "")
+    return (
+        cid if isinstance(cid, str) else "",
+        title if isinstance(title, str) else "",
+    )
 
 
-def upload(request, *, on_progress=None, on_retry=None, on_response=None,
-           max_attempts: int = 5,
-           sleep=time.sleep, jitter=random.random) -> str:
+def upload(
+    request,
+    *,
+    on_progress=None,
+    on_retry=None,
+    on_response=None,
+    max_attempts: int = 5,
+    sleep=time.sleep,
+    jitter=random.random,
+) -> str:
     """Drive a resumable upload to completion, retrying transient failures.
 
     The *same* request object is reused across retries — that is what makes
@@ -219,9 +231,12 @@ def upload(request, *, on_progress=None, on_retry=None, on_response=None,
                 # YouTube's.
                 logger.warning(
                     "Upload failed (%s) after %d attempt(s): status=%s reasons=%s",
-                    outcome.value, attempts, _status_of(exc),
+                    outcome.value,
+                    attempts,
+                    _status_of(exc),
                     ",".join(sorted(r for r in _reasons(exc) if r)) or "-",
-                    exc_info=exc)
+                    exc_info=exc,
+                )
                 raise UploadFailed(outcome, exc, request=request) from exc
             delay = min(BASE_BACKOFF * (2 ** (attempts - 1)), MAX_BACKOFF) + jitter()
             if on_retry is not None:
@@ -236,8 +251,9 @@ def upload(request, *, on_progress=None, on_retry=None, on_response=None,
     if not video_id:
         # A 2xx with no video id: nothing raised, so the branch above never
         # ran and this would otherwise be silent too.
-        logger.warning("Upload completed but the response carried no video id: %r",
-                       response)
+        logger.warning(
+            "Upload completed but the response carried no video id: %r", response
+        )
         raise UploadFailed(Outcome.PERMANENT, request=request)
     # After the id check, so a response too malformed to carry one is still
     # a failure rather than a success with an unknown channel.
@@ -255,6 +271,7 @@ def load_credentials(token_path: Path):
     if not token_path.exists():
         return None
     from google.oauth2.credentials import Credentials
+
     try:
         return Credentials.from_authorized_user_file(str(token_path), SCOPES)
     except Exception:  # noqa: BLE001 - a corrupted token is not a crash
@@ -312,7 +329,9 @@ def needs_reauth(creds) -> bool:
         return True
     if getattr(creds, "valid", False):
         return False
-    return not (getattr(creds, "expired", False) and getattr(creds, "refresh_token", None))
+    return not (
+        getattr(creds, "expired", False) and getattr(creds, "refresh_token", None)
+    )
 
 
 def run_oauth_flow():
@@ -320,11 +339,13 @@ def run_oauth_flow():
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     from .credentials import CLIENT_CONFIG
+
     flow = InstalledAppFlow.from_client_config(CLIENT_CONFIG, SCOPES)
     return flow.run_local_server(port=0)
 
 
 def refresh_credentials(creds):
     from google.auth.transport.requests import Request
+
     creds.refresh(Request())
     return creds

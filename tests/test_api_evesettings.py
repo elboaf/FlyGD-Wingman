@@ -1,4 +1,5 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
+
 import os
 
 import pytest
@@ -22,8 +23,9 @@ class ImmediateThread:
 
 def build(tmp_path, monkeypatch, answer=True):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    state = api_mod.AppState(recording_dir=tmp_path,
-                             settings=settings.load(tmp_path / "settings.json"))
+    state = api_mod.AppState(
+        recording_dir=tmp_path, settings=settings.load(tmp_path / "settings.json")
+    )
     built = api_mod.Api(state, spawn=ImmediateThread)
     built._window = FakeWindow()
     built._confirm = lambda title, body: answer
@@ -80,8 +82,9 @@ def test_copy_writes_every_target(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_1.dat"
 
 
@@ -89,8 +92,9 @@ def test_copy_takes_a_backup_of_each_target(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     assert len(api.eve_settings_state()["backups"]) == 1
 
 
@@ -98,13 +102,13 @@ def test_copy_declined_at_the_prompt_changes_nothing(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch, answer=False)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
 
 
-def test_a_second_mutation_is_refused_while_one_holds_the_lock(tmp_path,
-                                                               monkeypatch):
+def test_a_second_mutation_is_refused_while_one_holds_the_lock(tmp_path, monkeypatch):
     """_confirm parks each worker independently, so without a lock two
     approved operations can interleave over the same files."""
     profile = eve_tree(tmp_path)
@@ -112,8 +116,9 @@ def test_a_second_mutation_is_refused_while_one_holds_the_lock(tmp_path,
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_mutation.acquire()
     try:
-        accepted = api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                                          [str(profile / "core_char_2.dat")])
+        accepted = api.eve_settings_copy(
+            str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+        )
     finally:
         api._eve_mutation.release()
     assert accepted is False
@@ -129,8 +134,9 @@ def test_the_lock_is_released_even_when_the_worker_raises(tmp_path, monkeypatch)
         raise RuntimeError("boom")
 
     monkeypatch.setattr(api_mod.evesettings_ops, "copy_to_targets", explode)
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     assert api._eve_mutation.acquire(blocking=False) is True
     api._eve_mutation.release()
 
@@ -162,8 +168,7 @@ def test_no_push_when_a_pass_resolves_nothing(tmp_path, monkeypatch):
     assert not any("onEveSettingsNames" in call for call in api._window.calls)
 
 
-def test_copy_refuses_a_target_outside_the_configured_root(tmp_path,
-                                                           monkeypatch):
+def test_copy_refuses_a_target_outside_the_configured_root(tmp_path, monkeypatch):
     """Containment is not the page's job: a junction inside the settings
     tree is what makes a target that looks local land on another disk."""
     profile = eve_tree(tmp_path)
@@ -194,8 +199,7 @@ def test_backup_refuses_a_path_that_no_longer_exists(tmp_path, monkeypatch):
     assert api.eve_settings_state()["backups"] == []
 
 
-def test_backup_refuses_a_path_outside_the_configured_root(tmp_path,
-                                                           monkeypatch):
+def test_backup_refuses_a_path_outside_the_configured_root(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     other = tmp_path / "elsewhere"
     other.mkdir()
@@ -206,8 +210,7 @@ def test_backup_refuses_a_path_outside_the_configured_root(tmp_path,
     assert api.eve_settings_state()["backups"] == []
 
 
-def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path,
-                                                          monkeypatch):
+def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path, monkeypatch):
     """Only the worker releases the lock, and a worker that never started
     never will -- every later operation would be refused for good."""
     profile = eve_tree(tmp_path)
@@ -220,19 +223,23 @@ def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path,
             raise RuntimeError("can't start new thread")
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    state = api_mod.AppState(recording_dir=tmp_path,
-                             settings=settings.load(tmp_path / "s.json"))
+    state = api_mod.AppState(
+        recording_dir=tmp_path, settings=settings.load(tmp_path / "s.json")
+    )
     api = api_mod.Api(state, spawn=Refuses)
     api._window = FakeWindow()
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    assert api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                                 [str(profile / "core_char_2.dat")]) is False
+    assert (
+        api.eve_settings_copy(
+            str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+        )
+        is False
+    )
     assert api._eve_mutation.acquire(blocking=False) is True
     api._eve_mutation.release()
 
 
-def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path,
-                                                                monkeypatch):
+def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path, monkeypatch):
     """_push swallows every evaluate_js failure, so a confirmation whose
     push never reached the page would park the worker forever holding the
     lock. The wait is bounded and a missing answer reads as "no"."""
@@ -241,22 +248,23 @@ def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path,
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     del api._eve_confirm  # back to the real, bounded implementation
     monkeypatch.setattr(api_mod, "EVE_CONFIRM_TIMEOUT_S", 0.05)
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
     assert api._eve_mutation.acquire(blocking=False) is True
     api._eve_mutation.release()
 
 
-def test_every_mutation_pushes_a_completion_the_page_can_wait_on(tmp_path,
-                                                                 monkeypatch):
+def test_every_mutation_pushes_a_completion_the_page_can_wait_on(tmp_path, monkeypatch):
     """eve_settings_copy returns as soon as the worker is spawned, so this
     push is the page's only signal that the work is actually done."""
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api.eve_settings_copy(str(profile / "core_char_1.dat"),
-                          [str(profile / "core_char_2.dat")])
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
     assert len(done) == 1 and '"ok": true' in done[0]
 
@@ -271,7 +279,7 @@ def test_a_failed_mutation_still_pushes_a_completion(tmp_path, monkeypatch):
 
 
 def test_state_reports_an_unreadable_backup_store(tmp_path, monkeypatch):
-    """"Couldn't read your backups" and "you have none yet" are different
+    """ "Couldn't read your backups" and "you have none yet" are different
     answers, and only one of them means something is wrong. Telling a user
     the second when the first is true invites an overwrite they believe is
     protected."""
@@ -298,15 +306,13 @@ def test_state_reports_an_unreadable_backup_store(tmp_path, monkeypatch):
         store.chmod(0o700)
 
 
-def test_state_does_not_call_a_readable_empty_store_unreadable(tmp_path,
-                                                               monkeypatch):
+def test_state_does_not_call_a_readable_empty_store_unreadable(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     assert api.eve_settings_state()["backups_unreadable"] is False
 
 
-def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path,
-                                                              monkeypatch):
+def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path, monkeypatch):
     """`root` is an input to every containment check, so changing it under
     an in-flight restore has that operation validate against a different
     root than the one in effect when the user approved it. _eve_begin's
@@ -324,7 +330,8 @@ def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path,
 
 
 def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     opened = []
@@ -348,8 +355,7 @@ def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
     assert api.eve_settings_pick_root() == str(tmp_path / "EVE")
 
 
-def test_selecting_releases_the_lock_for_the_next_mutation(tmp_path,
-                                                           monkeypatch):
+def test_selecting_releases_the_lock_for_the_next_mutation(tmp_path, monkeypatch):
     """A hold that leaked would refuse every later copy, backup, restore
     and delete until the app restarted."""
     eve_tree(tmp_path)
@@ -359,8 +365,7 @@ def test_selecting_releases_the_lock_for_the_next_mutation(tmp_path,
     api._eve_mutation.release()
 
 
-def test_a_pick_root_that_raises_still_releases_the_lock(tmp_path,
-                                                         monkeypatch):
+def test_a_pick_root_that_raises_still_releases_the_lock(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
 
@@ -376,7 +381,8 @@ def test_a_pick_root_that_raises_still_releases_the_lock(tmp_path,
 
 
 def test_state_reads_the_running_pill_from_cache_not_a_fresh_probe(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     """eve_settings_state is costed in the design as scandir over a few
     dozen files. list_clients() enumerates every top-level window and
     resolves PIDs to executables, which is not that -- so it runs on a
@@ -391,8 +397,7 @@ def test_state_reads_the_running_pill_from_cache_not_a_fresh_probe(
     assert calls == [1]
 
 
-def test_the_running_probe_pushes_only_when_the_answer_changes(tmp_path,
-                                                              monkeypatch):
+def test_the_running_probe_pushes_only_when_the_answer_changes(tmp_path, monkeypatch):
     """One push per change, not per refresh: the page has nothing to
     redraw when the pill still says what it already said."""
     eve_tree(tmp_path)
@@ -434,8 +439,7 @@ def test_a_probe_that_raises_leaves_the_pill_alone(tmp_path, monkeypatch):
     assert pushed == [] and api._eve_running is None
 
 
-def test_state_refuses_a_root_too_wide_to_be_an_eve_folder(tmp_path,
-                                                           monkeypatch):
+def test_state_refuses_a_root_too_wide_to_be_an_eve_folder(tmp_path, monkeypatch):
     """A mis-picked root costs a scandir per child on the bridge thread.
     Refused with a reason, rather than probed slowly."""
     api = build(tmp_path, monkeypatch)
@@ -468,8 +472,7 @@ def test_the_pill_is_unknown_until_the_probe_answers(tmp_path, monkeypatch):
     assert api.eve_settings_state()["eve_running"] is None
 
 
-def test_a_second_probe_is_skipped_while_one_is_in_flight(tmp_path,
-                                                          monkeypatch):
+def test_a_second_probe_is_skipped_while_one_is_in_flight(tmp_path, monkeypatch):
     """eve_settings_state() fires a probe on every call -- route open and
     after every mutation -- so two overlap easily. Without single-flight a
     slow probe finishing after a fast one publishes the OLDER observation
@@ -494,8 +497,7 @@ def test_a_second_probe_is_skipped_while_one_is_in_flight(tmp_path,
     assert len(started) == 1, "a second probe was spawned over the first"
 
 
-def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path,
-                                                                monkeypatch):
+def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path, monkeypatch):
     """Only the worker releases, and a worker that never started never
     will -- that would freeze the pill for the process's lifetime."""
     eve_tree(tmp_path)
@@ -510,8 +512,7 @@ def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path,
     api._eve_probe.release()
 
 
-def test_the_probe_releases_its_lock_even_when_it_raises(tmp_path,
-                                                         monkeypatch):
+def test_the_probe_releases_its_lock_even_when_it_raises(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
 

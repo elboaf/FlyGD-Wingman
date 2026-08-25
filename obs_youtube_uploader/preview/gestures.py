@@ -10,6 +10,7 @@ hold it (see preview/discovery.py's note on the same leak). These gestures
 go to RegisterHotKey, which wants modifier flags and a virtual-key code, and
 the translation between the two notations is lossy in both directions.
 """
+
 from typing import NamedTuple
 
 MOD_ALT = 0x0001
@@ -23,24 +24,57 @@ MOD_NOREPEAT = 0x4000
 
 # Order is display order, so two spellings of one chord produce one string
 # and the clash check cannot be fooled by "Alt+Ctrl+F2" vs "Ctrl+Alt+F2".
-_MODIFIERS = (("ctrl", MOD_CONTROL, "Ctrl"),
-              ("alt", MOD_ALT, "Alt"),
-              ("shift", MOD_SHIFT, "Shift"),
-              ("meta", MOD_WIN, "Win"))
+_MODIFIERS = (
+    ("ctrl", MOD_CONTROL, "Ctrl"),
+    ("alt", MOD_ALT, "Alt"),
+    ("shift", MOD_SHIFT, "Shift"),
+    ("meta", MOD_WIN, "Win"),
+)
 
-_MODIFIER_CODES = {"ControlLeft", "ControlRight", "AltLeft", "AltRight",
-                   "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight"}
+_MODIFIER_CODES = {
+    "ControlLeft",
+    "ControlRight",
+    "AltLeft",
+    "AltRight",
+    "ShiftLeft",
+    "ShiftRight",
+    "MetaLeft",
+    "MetaRight",
+}
 
 # name -> virtual-key. The name is what the user sees and types.
 _KEYS = {
-    "Space": 0x20, "Enter": 0x0D, "Tab": 0x09, "Esc": 0x1B,
-    "Backspace": 0x08, "Delete": 0x2E, "Insert": 0x2D,
-    "Home": 0x24, "End": 0x23, "PgUp": 0x21, "PgDn": 0x22,
-    "Up": 0x26, "Down": 0x28, "Left": 0x25, "Right": 0x27,
-    ",": 0xBC, ".": 0xBE, "/": 0xBF, ";": 0xBA, "'": 0xDE, "`": 0xC0,
-    "-": 0xBD, "=": 0xBB, "[": 0xDB, "]": 0xDD, "\\": 0xDC,
-    "NumpadAdd": 0x6B, "NumpadSub": 0x6D, "NumpadMult": 0x6A,
-    "NumpadDiv": 0x6F, "NumpadDot": 0x6E,
+    "Space": 0x20,
+    "Enter": 0x0D,
+    "Tab": 0x09,
+    "Esc": 0x1B,
+    "Backspace": 0x08,
+    "Delete": 0x2E,
+    "Insert": 0x2D,
+    "Home": 0x24,
+    "End": 0x23,
+    "PgUp": 0x21,
+    "PgDn": 0x22,
+    "Up": 0x26,
+    "Down": 0x28,
+    "Left": 0x25,
+    "Right": 0x27,
+    ",": 0xBC,
+    ".": 0xBE,
+    "/": 0xBF,
+    ";": 0xBA,
+    "'": 0xDE,
+    "`": 0xC0,
+    "-": 0xBD,
+    "=": 0xBB,
+    "[": 0xDB,
+    "]": 0xDD,
+    "\\": 0xDC,
+    "NumpadAdd": 0x6B,
+    "NumpadSub": 0x6D,
+    "NumpadMult": 0x6A,
+    "NumpadDiv": 0x6F,
+    "NumpadDot": 0x6E,
 }
 for _i in range(10):
     _KEYS[str(_i)] = 0x30 + _i
@@ -55,16 +89,36 @@ _NAMES = {vk: name for name, vk in _KEYS.items()}
 # DOM event.code -> our key name. Same US-layout assumption bookmarks.py
 # documents, and mitigated the same way: a Type... escape hatch in the UI.
 _CODES = {
-    "Space": "Space", "Enter": "Enter", "Tab": "Tab", "Escape": "Esc",
-    "Backspace": "Backspace", "Delete": "Delete", "Insert": "Insert",
-    "Home": "Home", "End": "End", "PageUp": "PgUp", "PageDown": "PgDn",
-    "ArrowUp": "Up", "ArrowDown": "Down", "ArrowLeft": "Left",
+    "Space": "Space",
+    "Enter": "Enter",
+    "Tab": "Tab",
+    "Escape": "Esc",
+    "Backspace": "Backspace",
+    "Delete": "Delete",
+    "Insert": "Insert",
+    "Home": "Home",
+    "End": "End",
+    "PageUp": "PgUp",
+    "PageDown": "PgDn",
+    "ArrowUp": "Up",
+    "ArrowDown": "Down",
+    "ArrowLeft": "Left",
     "ArrowRight": "Right",
-    "Comma": ",", "Period": ".", "Slash": "/", "Semicolon": ";",
-    "Quote": "'", "Backquote": "`", "Minus": "-", "Equal": "=",
-    "BracketLeft": "[", "BracketRight": "]", "Backslash": "\\",
-    "NumpadAdd": "NumpadAdd", "NumpadSubtract": "NumpadSub",
-    "NumpadMultiply": "NumpadMult", "NumpadDivide": "NumpadDiv",
+    "Comma": ",",
+    "Period": ".",
+    "Slash": "/",
+    "Semicolon": ";",
+    "Quote": "'",
+    "Backquote": "`",
+    "Minus": "-",
+    "Equal": "=",
+    "BracketLeft": "[",
+    "BracketRight": "]",
+    "Backslash": "\\",
+    "NumpadAdd": "NumpadAdd",
+    "NumpadSubtract": "NumpadSub",
+    "NumpadMultiply": "NumpadMult",
+    "NumpadDivide": "NumpadDiv",
     "NumpadDecimal": "NumpadDot",
 }
 
@@ -129,7 +183,7 @@ def parse(text):
             return None
         mods |= flag
     if not mods:
-        return None      # a bare chord would be claimed desktop-wide
+        return None  # a bare chord would be claimed desktop-wide
     vk = _vk(key)
     if vk is None:
         return None

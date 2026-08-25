@@ -12,6 +12,7 @@ that is still being written -- same path, growing size -- can never serve a
 stale duration. That is the same identity ``watcher.SeenEntry`` uses, for
 the same reason.
 """
+
 import json
 import logging
 from dataclasses import dataclass
@@ -76,8 +77,9 @@ def save(path: Path, cache: dict[str, CacheEntry]) -> None:
         logger.warning("Could not persist duration cache to %s", path, exc_info=True)
 
 
-def lookup(cache: dict[str, CacheEntry], video_path: Path,
-           size: int, mtime: float) -> tuple[bool, float | None]:
+def lookup(
+    cache: dict[str, CacheEntry], video_path: Path, size: int, mtime: float
+) -> tuple[bool, float | None]:
     """Return ``(hit, duration)`` for this exact version of the file.
 
     The boolean is not redundant with the duration: ``(True, None)`` means
@@ -92,8 +94,13 @@ def lookup(cache: dict[str, CacheEntry], video_path: Path,
     return True, entry.duration
 
 
-def remember(cache: dict[str, CacheEntry], video_path: Path,
-             size: int, mtime: float, duration: float | None) -> None:
+def remember(
+    cache: dict[str, CacheEntry],
+    video_path: Path,
+    size: int,
+    mtime: float,
+    duration: float | None,
+) -> None:
     """Record a probe result, including a definitive failure.
 
     Storing ``None`` is deliberate but narrow. A file ffprobe ran on and

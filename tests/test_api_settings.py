@@ -5,6 +5,7 @@ masked webhook that reports parse errors, an account control that tracks
 four states, two independent Detect actions, and a Save that reaches the
 live watcher and not just the settings file.
 """
+
 import copy
 import json
 import types
@@ -28,7 +29,10 @@ def test_connected_offers_to_switch_rather_than_to_connect():
 
 def test_disconnected_asks_for_sign_in():
     assert copy_mod.auth_state("disconnected") == (
-        "Not connected", "Sign in with Google", True)
+        "Not connected",
+        "Sign in with Google",
+        True,
+    )
 
 
 def test_both_transient_states_disable_the_button():
@@ -42,22 +46,29 @@ def test_both_transient_states_disable_the_button():
 def test_an_unknown_state_stays_usable():
     """Nothing should be able to leave the user with a dead button."""
     assert copy_mod.auth_state("nonsense") == (
-        "Not connected", "Sign in with Google", True)
+        "Not connected",
+        "Sign in with Google",
+        True,
+    )
 
 
 def test_the_page_can_read_the_whole_label_table_in_one_call(tmp_path):
     """Kept in Python, where it is tested, rather than duplicated in JS."""
     api, _window = fakes.build_api(tmp_path)
     table = api.auth_labels()
-    assert table["connected"] == {"message": "Connected",
-                                  "label": "Switch account", "enabled": True}
+    assert table["connected"] == {
+        "message": "Connected",
+        "label": "Switch account",
+        "enabled": True,
+    }
     assert set(table) == {"disconnected", "connecting", "connected", "revoking"}
 
 
 # --- account_line ----------------------------------------------------------
 
+
 def test_the_account_line_names_the_channel_once_it_is_known():
-    """"Connected" alone did not say WHICH account, which matters here
+    """ "Connected" alone did not say WHICH account, which matters here
     because the app can upload to the wrong channel without saying so."""
     assert copy_mod.account_line("connected", "Tommy") == "Connected as Tommy"
 
@@ -71,14 +82,13 @@ def test_the_account_line_stays_bare_before_the_first_upload():
 
 @pytest.mark.parametrize("state", ["disconnected", "connecting", "revoking"])
 def test_only_the_connected_state_is_decorated(state):
-    """"Not connected as Tommy" is nonsense and "Signing out… as Tommy" is
+    """ "Not connected as Tommy" is nonsense and "Signing out… as Tommy" is
     noise -- a stale title must not leak into the other states."""
     assert copy_mod.account_line(state, "Tommy") == copy_mod.auth_state(state)[0]
 
 
 def test_the_account_line_falls_back_like_auth_state_does():
     assert copy_mod.account_line("nonsense", "Tommy") == "Not connected"
-
 
 
 HOOK = "https://discord.com/api/webhooks/1538615213203656754/tok"
@@ -103,9 +113,14 @@ def settings_api(tmp_path, monkeypatch, watcher=None, **kw):
 
 
 def values(tmp_path, **kw):
-    payload = {"privacy": "public", "category": "20", "notify_mode": "toast",
-               "recording_dir": str(tmp_path), "discord_webhook": "",
-               "gamelogs_dir": None}
+    payload = {
+        "privacy": "public",
+        "category": "20",
+        "notify_mode": "toast",
+        "recording_dir": str(tmp_path),
+        "discord_webhook": "",
+        "gamelogs_dir": None,
+    }
     payload.update(kw)
     return payload
 
@@ -118,7 +133,7 @@ def test_saving_persists_and_reloads_the_canonical_settings(monkeypatch, tmp_pat
 
     assert saved["privacy"] == "public"
     assert api._state.settings["privacy"] == "public"
-    pushed, = fakes.payloads(sent, "onSettings")
+    (pushed,) = fakes.payloads(sent, "onSettings")
     assert pushed["settings"]["privacy"] == "public"
 
 
@@ -145,7 +160,9 @@ def test_saving_the_same_folder_does_not_rebind(monkeypatch, tmp_path):
     assert watcher.rebound == []
 
 
-def test_a_non_numeric_category_is_refused_before_anything_is_written(monkeypatch, tmp_path):
+def test_a_non_numeric_category_is_refused_before_anything_is_written(
+    monkeypatch, tmp_path
+):
     api, _window, saved = settings_api(tmp_path, monkeypatch)
     assert api.save_settings(values(tmp_path, category="gaming")) is False
     assert saved == {}
@@ -154,8 +171,12 @@ def test_a_non_numeric_category_is_refused_before_anything_is_written(monkeypatc
 
 def test_an_invalid_webhook_is_refused_with_the_parse_error(monkeypatch, tmp_path):
     api, _window, saved = settings_api(tmp_path, monkeypatch)
-    assert api.save_settings(
-        values(tmp_path, discord_webhook="http://discord.com/api/webhooks/1/2")) is False
+    assert (
+        api.save_settings(
+            values(tmp_path, discord_webhook="http://discord.com/api/webhooks/1/2")
+        )
+        is False
+    )
     assert saved == {}
     _kind, title, body = api._alert.raised[0]
     assert title == "Invalid webhook"
@@ -164,13 +185,17 @@ def test_an_invalid_webhook_is_refused_with_the_parse_error(monkeypatch, tmp_pat
 
 def test_a_recording_folder_that_is_not_a_folder_is_refused(monkeypatch, tmp_path):
     api, _window, saved = settings_api(tmp_path, monkeypatch)
-    assert api.save_settings(
-        values(tmp_path, recording_dir=str(tmp_path / "nope"))) is False
+    assert (
+        api.save_settings(values(tmp_path, recording_dir=str(tmp_path / "nope")))
+        is False
+    )
     assert saved == {}
     assert api._alert.titles() == ["Invalid folder"]
 
 
-def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypatch, tmp_path):
+def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(
+    monkeypatch, tmp_path
+):
     """State and disk must never diverge: bail out before touching memory
     and tell the user, so their edits can be retried."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
@@ -185,19 +210,22 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(monkeypat
     assert api._alert.titles() == ["Could not save settings"]
 
 
-def test_the_pushed_settings_describe_the_webhook_without_its_token(monkeypatch, tmp_path):
+def test_the_pushed_settings_describe_the_webhook_without_its_token(
+    monkeypatch, tmp_path
+):
     """The field is masked in the page, so this line is the only
     confirmation of WHICH webhook is stored. Top-level key, not nested."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
     sent = fakes.record_pushes(api)
     api.save_settings(values(tmp_path, discord_webhook=HOOK))
-    pushed, = fakes.payloads(sent, "onSettings")
+    (pushed,) = fakes.payloads(sent, "onSettings")
     assert "1538615213203656754" in pushed["webhook_status"]
     assert "tok" not in pushed["webhook_status"].split("/")[-1]
 
 
-
-def test_browse_opens_a_native_folder_dialog_at_the_current_folder(monkeypatch, tmp_path):
+def test_browse_opens_a_native_folder_dialog_at_the_current_folder(
+    monkeypatch, tmp_path
+):
     api, window, _saved = settings_api(tmp_path, monkeypatch)
     monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
     window.dialog_result = (str(tmp_path / "picked"),)
@@ -252,7 +280,9 @@ def test_detect_says_when_it_cannot_find_the_gamelogs_folder(monkeypatch, tmp_pa
     assert api._alert.titles() == ["Gamelogs not found"]
 
 
-def test_detect_that_agrees_with_the_field_says_so_rather_than_nothing(monkeypatch, tmp_path):
+def test_detect_that_agrees_with_the_field_says_so_rather_than_nothing(
+    monkeypatch, tmp_path
+):
     """Silently rewriting the field with the value already in it looks like
     a dead button."""
     found = tmp_path / "obs"
@@ -264,15 +294,17 @@ def test_detect_that_agrees_with_the_field_says_so_rather_than_nothing(monkeypat
     assert "Already set" in api._alert.raised[0][2]
 
 
-
-def test_connecting_announces_the_transient_state_before_the_browser_opens(monkeypatch, tmp_path):
+def test_connecting_announces_the_transient_state_before_the_browser_opens(
+    monkeypatch, tmp_path
+):
     """The state, not just the outcome: the page disables the control while
     it is connecting so a second press cannot start a second OAuth flow."""
     api, _window = fakes.build_api(tmp_path)
     api._alert = fakes.Alerts()
     sent = fakes.record_pushes(api)
-    monkeypatch.setattr(uploader, "run_oauth_flow",
-                        lambda: types.SimpleNamespace(valid=True))
+    monkeypatch.setattr(
+        uploader, "run_oauth_flow", lambda: types.SimpleNamespace(valid=True)
+    )
     monkeypatch.setattr(uploader, "save_credentials", lambda c, p: None)
 
     api.connect_google()
@@ -297,7 +329,9 @@ def test_a_failed_sign_in_reports_it_and_returns_to_disconnected(monkeypatch, tm
     api._auth_thread.join(timeout=5)
 
     assert [p["state"] for p in fakes.payloads(sent, "onAuthState")] == [
-        "connecting", "disconnected"]
+        "connecting",
+        "disconnected",
+    ]
     kind, title, body = api._alert.raised[0]
     assert (kind, title) == ("error", "Connection failed")
     assert "browser" in body
@@ -311,8 +345,11 @@ def test_a_second_press_while_connecting_is_ignored(monkeypatch, tmp_path):
     gate = _threading.Event()
     api, _window = fakes.build_api(tmp_path)
     api._alert = fakes.Alerts()
-    monkeypatch.setattr(uploader, "run_oauth_flow",
-                        lambda: (gate.wait(5), types.SimpleNamespace(valid=True))[1])
+    monkeypatch.setattr(
+        uploader,
+        "run_oauth_flow",
+        lambda: (gate.wait(5), types.SimpleNamespace(valid=True))[1],
+    )
     monkeypatch.setattr(uploader, "save_credentials", lambda c, p: None)
 
     api.connect_google()
@@ -323,20 +360,25 @@ def test_a_second_press_while_connecting_is_ignored(monkeypatch, tmp_path):
     first.join(timeout=5)
 
 
-def test_the_startup_check_resolves_the_state_off_the_bridge_thread(monkeypatch, tmp_path):
+def test_the_startup_check_resolves_the_state_off_the_bridge_thread(
+    monkeypatch, tmp_path
+):
     """load_credentials drags in google.auth, requests and cryptography;
     off a PyInstaller build's disk that is a visible pause."""
     api, _window = fakes.build_api(tmp_path)
     sent = fakes.record_pushes(api)
-    monkeypatch.setattr(uploader, "load_credentials",
-                        lambda p: types.SimpleNamespace(valid=True))
+    monkeypatch.setattr(
+        uploader, "load_credentials", lambda p: types.SimpleNamespace(valid=True)
+    )
     monkeypatch.setattr(uploader, "needs_reauth", lambda c: False)
 
     api.refresh_auth()
     api._auth_thread.join(timeout=5)
 
     assert [p["state"] for p in fakes.payloads(sent, "onAuthState")] == [
-        "connecting", "connected"]
+        "connecting",
+        "connected",
+    ]
 
 
 def test_an_unreadable_token_reads_as_not_connected(monkeypatch, tmp_path):
@@ -421,9 +463,14 @@ def test_the_page_can_ask_for_the_stored_settings_at_load(tmp_path):
     what app.js already does for list_rows and auth_labels.
     """
     api, _window = fakes.build_api(
-        tmp_path, settings={"privacy": "private", "category": "27",
-                            "channel_title": "Zoolanders",
-                            "gamelogs_dir": "/logs"})
+        tmp_path,
+        settings={
+            "privacy": "private",
+            "category": "27",
+            "channel_title": "Zoolanders",
+            "gamelogs_dir": "/logs",
+        },
+    )
     payload = api.get_settings()
 
     assert payload["settings"]["privacy"] == "private"
@@ -443,7 +490,6 @@ def test_asking_for_settings_pushes_nothing(tmp_path):
     sent = fakes.record_pushes(api)
     api.get_settings()
     assert sent == []
-
 
 
 # A real-threaded save_settings-vs-LayoutStore stress test was tried here
@@ -504,8 +550,7 @@ def test_settings_object_identity_survives_a_save(monkeypatch, tmp_path):
     assert "Pilot" in api._state.settings["preview"]["layouts"]
 
 
-def test_saving_settings_does_not_revert_the_uploaders_channel(monkeypatch,
-                                                               tmp_path):
+def test_saving_settings_does_not_revert_the_uploaders_channel(monkeypatch, tmp_path):
     """save_settings once built its payload from self._state.settings, a
     snapshot taken outside _SAVE_LOCK, and _save_locked projects the
     COMPLETE document from DEFAULTS -- so any key another writer set after
@@ -543,8 +588,7 @@ def test_saving_settings_does_not_revert_the_uploaders_channel(monkeypatch,
     assert api._state.settings["channel_title"] == "Live Channel"
 
 
-def test_first_run_does_not_revert_the_uploaders_channel(monkeypatch,
-                                                         tmp_path):
+def test_first_run_does_not_revert_the_uploaders_channel(monkeypatch, tmp_path):
     """set_recording_dir had the identical stale-snapshot shape."""
     folder = tmp_path / "recordings"
     folder.mkdir()

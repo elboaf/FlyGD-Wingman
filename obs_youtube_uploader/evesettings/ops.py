@@ -4,6 +4,7 @@ The loop never aborts. TriffView throws on the first failure, leaving an
 unknown mix of copied and uncopied targets and discarding the count it
 computed; library.delete's (deleted, failures) shape is the one followed here.
 """
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,8 +42,9 @@ def _describe(error: BaseException) -> str:
     return str(error) or error.__class__.__name__
 
 
-def copy_to_targets(source, targets, *, root, backup,
-                    copy=atomicio.copy_atomic) -> CopyReport:
+def copy_to_targets(
+    source, targets, *, root, backup, copy=atomicio.copy_atomic
+) -> CopyReport:
     """Copy *source* onto each of *targets*, backing each one up first.
 
     `root` is the configured EVE folder. Every path is resolved and checked
@@ -93,18 +95,26 @@ def copy_to_targets(source, targets, *, root, backup,
             continue
         target_kind = tree.file_kind(target)
         if target_kind != source_kind:
-            outcomes.append(TargetOutcome(
-                target, False,
-                f"Cannot copy {source_kind} settings onto "
-                f"{target_kind or 'an unknown file'}."))
+            outcomes.append(
+                TargetOutcome(
+                    target,
+                    False,
+                    f"Cannot copy {source_kind} settings onto "
+                    f"{target_kind or 'an unknown file'}.",
+                )
+            )
             continue
         if target.exists():
             try:
                 backup(target)
             except Exception as error:  # noqa: BLE001 - reported per target
-                outcomes.append(TargetOutcome(
-                    target, False,
-                    f"Skipped: its backup could not be made. {_describe(error)}"))
+                outcomes.append(
+                    TargetOutcome(
+                        target,
+                        False,
+                        f"Skipped: its backup could not be made. {_describe(error)}",
+                    )
+                )
                 continue
         try:
             copy(source, target)

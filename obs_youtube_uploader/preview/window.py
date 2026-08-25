@@ -3,6 +3,7 @@
 The gesture arithmetic at the top is pure and tested in CI. Everything
 below it touches HWNDs and therefore may only run on the preview thread.
 """
+
 import logging
 import os
 import time
@@ -52,8 +53,9 @@ def resize_result(start, current, rect, min_size=MIN_SIZE):
     preview just goes blank, with nothing logged.
     """
     dx, dy = current[0] - start[0], current[1] - start[1]
-    return rect._replace(w=max(min_size[0], rect.w + dx),
-                         h=max(min_size[1], rect.h + dy))
+    return rect._replace(
+        w=max(min_size[0], rect.w + dx), h=max(min_size[1], rect.h + dy)
+    )
 
 
 def activate(libs, hwnd) -> bool:
@@ -86,8 +88,11 @@ def activate(libs, hwnd) -> bool:
     attached = []
     try:
         for tid in (fg_tid, target_tid):
-            if tid and tid != our_tid and libs.user32.AttachThreadInput(
-                    our_tid, tid, True):
+            if (
+                tid
+                and tid != our_tid
+                and libs.user32.AttachThreadInput(our_tid, tid, True)
+            ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
     finally:
@@ -101,10 +106,13 @@ def activate(libs, hwnd) -> bool:
         # ever send us -- for the single most likely field complaint,
         # "clicking a preview does nothing". It cannot spam either: this
         # fires once per click, and only when the click failed.
-        logger.info("Activation of 0x%x did not take; foreground is 0x%x. "
-                    "Windows refuses a foreground change from a process "
-                    "that has not received recent user input.",
-                    hwnd, libs.user32.GetForegroundWindow() or 0)
+        logger.info(
+            "Activation of 0x%x did not take; foreground is 0x%x. "
+            "Windows refuses a foreground change from a process "
+            "that has not received recent user input.",
+            hwnd,
+            libs.user32.GetForegroundWindow() or 0,
+        )
     return ok
 
 
@@ -121,18 +129,21 @@ def _ensure_class(libs):
     from ctypes import wintypes
 
     class WNDCLASSW(ctypes.Structure):
-        _fields_ = [("style", wintypes.UINT),
-                    ("lpfnWndProc", win32.wndproc_type()),
-                    ("cbClsExtra", ctypes.c_int),
-                    ("cbWndExtra", ctypes.c_int),
-                    ("hInstance", wintypes.HINSTANCE),
-                    ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
-                    ("hbrBackground", wintypes.HBRUSH),
-                    ("lpszMenuName", wintypes.LPCWSTR),
-                    ("lpszClassName", wintypes.LPCWSTR)]
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", win32.wndproc_type()),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HANDLE),
+            ("hbrBackground", wintypes.HBRUSH),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
 
     proc = win32.wndproc_type()(_dispatch)
-    win32._KEEPALIVE.append(proc)   # see win32._KEEPALIVE's comment
+    win32._KEEPALIVE.append(proc)  # see win32._KEEPALIVE's comment
     cls = WNDCLASSW()
     cls.lpfnWndProc = proc
     cls.hInstance = libs.kernel32.GetModuleHandleW(None)
@@ -172,7 +183,8 @@ def drag_target(start_screen, cur_screen, start_rect):
     """
     return start_rect._replace(
         x=start_rect.x + (cur_screen[0] - start_screen[0]),
-        y=start_rect.y + (cur_screen[1] - start_screen[1]))
+        y=start_rect.y + (cur_screen[1] - start_screen[1]),
+    )
 
 
 def coalesce_moves(peek, hwnd, lparam):
@@ -195,8 +207,9 @@ def coalesce_moves(peek, hwnd, lparam):
     from ctypes import wintypes as _wt
 
     msg = _wt.MSG()
-    while peek(byref(msg), hwnd, win32.WM_MOUSEMOVE, win32.WM_MOUSEMOVE,
-               win32.PM_REMOVE):
+    while peek(
+        byref(msg), hwnd, win32.WM_MOUSEMOVE, win32.WM_MOUSEMOVE, win32.PM_REMOVE
+    ):
         lparam = msg.lParam
     return lparam
 
@@ -204,6 +217,7 @@ def coalesce_moves(peek, hwnd, lparam):
 def _cursor_pos(libs):
     """Absolute cursor position. Immune to the window moving under it."""
     import ctypes
+
     pt = win32.POINT()
     libs.user32.GetCursorPos(ctypes.byref(pt))
     return (pt.x, pt.y)
@@ -215,8 +229,7 @@ def _lparam_point(lparam):
     preview jump to the far edge of the desktop."""
     x = lparam & 0xFFFF
     y = (lparam >> 16) & 0xFFFF
-    return (x - 0x10000 if x > 0x7FFF else x,
-            y - 0x10000 if y > 0x7FFF else y)
+    return (x - 0x10000 if x > 0x7FFF else x, y - 0x10000 if y > 0x7FFF else y)
 
 
 class PreviewWindow:
@@ -227,8 +240,17 @@ class PreviewWindow:
     is a hang, not an exception.
     """
 
-    def __init__(self, libs, client, rect, on_activate, on_rect_changed,
-                 neighbours, screen, locked=False):
+    def __init__(
+        self,
+        libs,
+        client,
+        rect,
+        on_activate,
+        on_rect_changed,
+        neighbours,
+        screen,
+        locked=False,
+    ):
         self._libs = libs
         self.client = client
         self.rect = rect
@@ -256,17 +278,38 @@ class PreviewWindow:
         self._start_rect = None
 
     @classmethod
-    def create(cls, libs, client, rect, on_activate, on_rect_changed,
-               neighbours, screen, locked=False):
-        self = cls(libs, client, rect, on_activate, on_rect_changed,
-                   neighbours, screen, locked)
+    def create(
+        cls,
+        libs,
+        client,
+        rect,
+        on_activate,
+        on_rect_changed,
+        neighbours,
+        screen,
+        locked=False,
+    ):
+        self = cls(
+            libs, client, rect, on_activate, on_rect_changed, neighbours, screen, locked
+        )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
-            win32.WS_EX_LAYERED | win32.WS_EX_TOOLWINDOW
-            | win32.WS_EX_NOACTIVATE | win32.WS_EX_TOPMOST,
-            CLASS_NAME, "wingman-preview", win32.WS_POPUP,
-            rect.x, rect.y, rect.w, rect.h,
-            None, None, libs.kernel32.GetModuleHandleW(None), None)
+            win32.WS_EX_LAYERED
+            | win32.WS_EX_TOOLWINDOW
+            | win32.WS_EX_NOACTIVATE
+            | win32.WS_EX_TOPMOST,
+            CLASS_NAME,
+            "wingman-preview",
+            win32.WS_POPUP,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            None,
+            None,
+            libs.kernel32.GetModuleHandleW(None),
+            None,
+        )
         if not self.hwnd:
             logger.warning("CreateWindowExW failed for %s", client.stable_key)
             return None
@@ -275,14 +318,17 @@ class PreviewWindow:
         libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
-            self._thumb.update(geometry.thumbnail_rect(self.rect, BORDER,
-                                                       LABEL_H))
+            self._thumb.update(geometry.thumbnail_rect(self.rect, BORDER, LABEL_H))
         return self
 
     # -- rendering -------------------------------------------------------
     def _chrome_key(self):
-        return (self.rect.w, self.rect.h,
-                self.client.character or self.client.title, self.selected)
+        return (
+            self.rect.w,
+            self.rect.h,
+            self.client.character or self.client.title,
+            self.selected,
+        )
 
     def redraw(self, force: bool = False) -> None:
         """Re-render the chrome bitmap and push it to the layered surface.
@@ -296,10 +342,14 @@ class PreviewWindow:
         if not force and key == self._chrome_cache_key:
             return
         label = self.client.character or self.client.title
-        img = chrome.render((self.rect.w, self.rect.h), label,
-                            border_color=(0, 200, 220, 255),
-                            border=BORDER, label_h=LABEL_H,
-                            selected=self.selected)
+        img = chrome.render(
+            (self.rect.w, self.rect.h),
+            label,
+            border_color=(0, 200, 220, 255),
+            border=BORDER,
+            label_h=LABEL_H,
+            selected=self.selected,
+        )
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
         self._chrome_cache_key = key
 
@@ -314,15 +364,15 @@ class PreviewWindow:
         self.rect = rect
         # SWP_NOACTIVATE | SWP_NOZORDER: moving a preview must not steal
         # focus from the client the user is about to click into.
-        self._libs.user32.SetWindowPos(self.hwnd, None, rect.x, rect.y,
-                                       rect.w, rect.h, 0x0010 | 0x0004)
+        self._libs.user32.SetWindowPos(
+            self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
+        )
         if resized:
             # The bitmap is sized to the window, so a resize must re-push
             # it or the surface stays at the old dimensions.
             self.redraw()
             if self._thumb is not None:
-                self._thumb.update(
-                    geometry.thumbnail_rect(rect, BORDER, LABEL_H))
+                self._thumb.update(geometry.thumbnail_rect(rect, BORDER, LABEL_H))
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):
@@ -332,9 +382,9 @@ class PreviewWindow:
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
             self._start = _cursor_pos(self._libs)
-            if (msg == win32.WM_LBUTTONDOWN
-                    and geometry.hit_resize_handle(
-                        geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt)):
+            if msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
+                geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
+            ):
                 self._mode = "resize"
             elif msg == win32.WM_RBUTTONDOWN:
                 # Tracked separately from a left drag: right-drag is the
@@ -346,9 +396,13 @@ class PreviewWindow:
                 self._mode = "drag"
             self._libs.user32.SetCapture(self.hwnd)
             if PERF:
-                self._perf = {"n": 0, "handler": 0.0, "gap": 0.0,
-                              "last": time.perf_counter(),
-                              "start": time.perf_counter()}
+                self._perf = {
+                    "n": 0,
+                    "handler": 0.0,
+                    "gap": 0.0,
+                    "last": time.perf_counter(),
+                    "start": time.perf_counter(),
+                }
             return 0
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
@@ -371,8 +425,7 @@ class PreviewWindow:
                 self.move(resize_result(self._start, cur, self._start_rect))
             else:
                 moved = drag_target(self._start, cur, self._start_rect)
-                self.move(geometry.snap(moved, self._neighbours(),
-                                        self._screen()))
+                self.move(geometry.snap(moved, self._neighbours(), self._screen()))
             if PERF:
                 now = time.perf_counter()
                 self._perf["handler"] += now - t0
@@ -388,22 +441,27 @@ class PreviewWindow:
                 logger.info(
                     "drag perf: %d moves in %.0fms (%.0f/s) | handler "
                     "%.3fms avg, %.1f%% of wall | worst gap between events "
-                    "%.1fms", p["n"], wall * 1000, n / max(wall, 1e-6),
-                    p["handler"] * 1000 / n, 100 * p["handler"] / max(wall, 1e-6),
-                    p["gap"] * 1000)
+                    "%.1fms",
+                    p["n"],
+                    wall * 1000,
+                    n / max(wall, 1e-6),
+                    p["handler"] * 1000 / n,
+                    100 * p["handler"] / max(wall, 1e-6),
+                    p["gap"] * 1000,
+                )
                 self._perf = None
             mode, self._mode = self._mode, None
             if mode == "drag" and msg == win32.WM_LBUTTONUP:
                 # Only a left click activates. A right-drag release falls
                 # through to reporting the new rect.
-                action, _ = drag_result(self._start, _cursor_pos(self._libs),
-                                        self._start_rect, self.locked)
+                action, _ = drag_result(
+                    self._start, _cursor_pos(self._libs), self._start_rect, self.locked
+                )
                 if action == "activate":
                     activate(self._libs, self.client.hwnd)
                     self._on_activate(self.client)
                     return 0
-            self._on_rect_changed(self.client.stable_key, self.rect,
-                                  self.locked)
+            self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0
 
         if msg == win32.WM_DESTROY:

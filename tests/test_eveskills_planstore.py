@@ -5,6 +5,7 @@ are Windows' rules even when the suite runs on Linux, because the
 released application is Windows-only and a name accepted here would fail
 at the write.
 """
+
 import pytest
 
 from obs_youtube_uploader.eveskills import planstore
@@ -12,6 +13,7 @@ from obs_youtube_uploader.eveskills import planstore
 # ---------------------------------------------------------------------------
 # Cycle A -- name validation
 # ---------------------------------------------------------------------------
+
 
 def test_an_ordinary_name_is_valid():
     assert planstore.validate_plan_name("Core Ship Skills") == ""
@@ -35,8 +37,9 @@ def test_a_name_over_120_characters_is_rejected():
     assert planstore.validate_plan_name("N" * 121) != ""
 
 
-@pytest.mark.parametrize("bad", ['a<b', 'a>b', 'a:b', 'a"b', 'a/b', 'a\\b',
-                                 'a|b', 'a?b', 'a*b'])
+@pytest.mark.parametrize(
+    "bad", ["a<b", "a>b", "a:b", 'a"b', "a/b", "a\\b", "a|b", "a?b", "a*b"]
+)
 def test_path_invalid_characters_are_rejected(bad):
     """Windows refuses all nine outright. `/` and `\\` are also the
     traversal primitives, so this check is doing two jobs."""
@@ -49,7 +52,7 @@ def test_a_control_character_is_rejected():
 
 
 def test_dot_dot_is_rejected():
-    """".." is not in the invalid-character set -- there is no dot in it
+    """ ".." is not in the invalid-character set -- there is no dot in it
     -- and ".." is a perfectly legal filename fragment right up until it
     is joined to a path. `plans_dir / ".."` escapes the folder, and the
     plan name arrives from the bridge, which is to say from the page."""
@@ -72,8 +75,9 @@ def test_a_trailing_dot_is_rejected():
     assert planstore.validate_plan_name("Core.") != ""
 
 
-@pytest.mark.parametrize("reserved", ["CON", "PRN", "AUX", "NUL", "COM1",
-                                      "COM9", "LPT1", "LPT9"])
+@pytest.mark.parametrize(
+    "reserved", ["CON", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9"]
+)
 def test_reserved_windows_device_names_are_rejected(reserved):
     """These are device names, not files. CreateFile on CON.txt opens the
     console; the write appears to succeed and nothing lands on disk."""
@@ -89,7 +93,7 @@ def test_the_reserved_check_looks_at_the_stem_before_the_first_dot():
 
 
 def test_a_name_merely_starting_with_a_device_name_is_fine():
-    """"CONVOY" is not CON. Matching by prefix rather than by the whole
+    """ "CONVOY" is not CON. Matching by prefix rather than by the whole
     stem would reject ordinary names."""
     assert planstore.validate_plan_name("CONVOY") == ""
     assert planstore.validate_plan_name("COM10") == ""
@@ -105,6 +109,7 @@ def test_a_non_string_name_is_rejected_rather_than_raising():
 # ---------------------------------------------------------------------------
 # Cycle B -- listing the folder
 # ---------------------------------------------------------------------------
+
 
 def write_plan(folder, stem, body="Navigation IV\n"):
     folder.mkdir(parents=True, exist_ok=True)
@@ -137,7 +142,8 @@ class _NamedProxy:
 
     def stat(self):
         assert self._backing is not None, (
-            "stat() on a proxy expected to be rejected before any file op")
+            "stat() on a proxy expected to be rejected before any file op"
+        )
         return self._backing.stat()
 
     def read_text(self, encoding=None):
@@ -190,7 +196,9 @@ def test_the_contents_are_parsed(tmp_path):
     found, _ = planstore.list_plans(tmp_path)
     assert found[0].ok
     assert [(r.skill_name, r.level) for r in found[0].requirements] == [
-        ("Navigation", 4), ("Mechanics", 3)]
+        ("Navigation", 4),
+        ("Mechanics", 3),
+    ]
 
 
 def test_a_plan_that_fails_to_parse_is_excluded_and_reported_as_an_issue(
@@ -254,11 +262,13 @@ def test_a_bom_before_a_comment_line_does_not_corrupt_it(tmp_path):
     it as a literal U+FEFF glued onto the first line -- here a comment
     marker, which would then no longer be recognised as one."""
     (tmp_path / "Commented.txt").write_bytes(
-        "# a note\nNavigation IV\n".encode("utf-8-sig"))
+        "# a note\nNavigation IV\n".encode("utf-8-sig")
+    )
     found, issues = planstore.list_plans(tmp_path)
     assert issues == []
     assert [(r.skill_name, r.level) for r in found[0].requirements] == [
-        ("Navigation", 4)]
+        ("Navigation", 4)
+    ]
 
 
 def test_a_bom_before_the_first_skill_name_does_not_corrupt_it(tmp_path):
@@ -266,11 +276,14 @@ def test_a_bom_before_the_first_skill_name_does_not_corrupt_it(tmp_path):
     a comment -- the more common case, since most plans have no leading
     comment line at all."""
     (tmp_path / "Rifter.txt").write_bytes(
-        "Navigation IV\nMechanics III\n".encode("utf-8-sig"))
+        "Navigation IV\nMechanics III\n".encode("utf-8-sig")
+    )
     found, issues = planstore.list_plans(tmp_path)
     assert issues == []
     assert [(r.skill_name, r.level) for r in found[0].requirements] == [
-        ("Navigation", 4), ("Mechanics", 3)]
+        ("Navigation", 4),
+        ("Mechanics", 3),
+    ]
 
 
 def test_at_most_200_files_are_read(tmp_path):
@@ -296,6 +309,7 @@ def test_the_cap_keeps_the_first_files_in_sort_order(tmp_path):
 
 # --- Mandatory correction 1: each stem is run through validate_plan_name ---
 
+
 def test_a_file_whose_stem_fails_validation_is_skipped_with_an_issue(tmp_path):
     """PlanStore.cs:81-85 -- a stem is validated before it is trusted as
     a plan identity. Without this, "CON.txt" -- a Windows device name,
@@ -320,12 +334,14 @@ def test_a_stem_with_a_windows_invalid_character_is_skipped(tmp_path):
     (PlanStore.cs:81-85)."""
     real = write_plan(tmp_path, "Real")
     found, issues = planstore.list_plans(
-        FixedEntries([_NamedProxy("Bad:Name.txt"), real]))
+        FixedEntries([_NamedProxy("Bad:Name.txt"), real])
+    )
     assert [p.name for p in found] == ["Real"]
     assert len(issues) == 1 and issues[0].file_name == "Bad:Name.txt"
 
 
 # --- Mandatory correction 2: reject stems colliding case-insensitively ---
+
 
 def test_a_case_differing_pair_of_stems_collides(tmp_path):
     """PlanStore.cs:86-90 -- the seenNames set is case-insensitive.
@@ -336,13 +352,15 @@ def test_a_case_differing_pair_of_stems_collides(tmp_path):
     so writing "rifter.txt" once "Rifter.txt" already exists just
     overwrites that same file."""
     rifter = write_plan(tmp_path, "Rifter")
-    found, issues = planstore.list_plans(FixedEntries(
-        [rifter, _NamedProxy("rifter.txt", backing=rifter)]))
+    found, issues = planstore.list_plans(
+        FixedEntries([rifter, _NamedProxy("rifter.txt", backing=rifter)])
+    )
     assert [p.name for p in found] == ["Rifter"]
     assert len(issues) == 1
     assert issues[0].file_name == "rifter.txt"
     assert issues[0].message == (
-        "Plan name collides case-insensitively with another file.")
+        "Plan name collides case-insensitively with another file."
+    )
 
 
 def test_the_surviving_stem_does_not_depend_on_enumeration_order(tmp_path):
@@ -359,24 +377,26 @@ def test_the_surviving_stem_does_not_depend_on_enumeration_order(tmp_path):
         assert [i.file_name for i in issues] == ["rifter.txt"], entries
 
 
-def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(
-        tmp_path):
+def test_the_cap_drops_the_same_plan_whatever_the_enumeration_order(tmp_path):
     """The cap slices the sorted list, so a tie at the boundary decides
     which plan is dropped. With a non-total sort that choice was the
     filesystem's, and `Only the first N of M` would name a different
     casualty per machine while reading as deterministic."""
     alpha = write_plan(tmp_path, "Alpha")
     alpha_lower = _NamedProxy("alpha.txt", backing=alpha)
-    plans_ = [write_plan(tmp_path, f"Plan{n:03d}")
-              for n in range(planstore.MAX_PLAN_FILES - 1)]
+    plans_ = [
+        write_plan(tmp_path, f"Plan{n:03d}")
+        for n in range(planstore.MAX_PLAN_FILES - 1)
+    ]
     entries = [alpha, alpha_lower, *plans_]
 
     for order in (entries, list(reversed(entries))):
         found, issues = planstore.list_plans(FixedEntries(order))
         kept = [p.name for p in found]
         assert "Alpha" in kept and "alpha" not in kept, order
-        assert any(i.file_name == "plans" and "Only the first" in i.message
-                   for i in issues), order
+        assert any(
+            i.file_name == "plans" and "Only the first" in i.message for i in issues
+        ), order
 
 
 def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
@@ -384,10 +404,10 @@ def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
     (e cedilla as one code point vs. e + combining acute) are the same
     plan identity once validate_plan_name's NFC pass runs. Comparing raw
     bytes would miss this collision entirely."""
-    nfc = "Caf\u00e9"          # U+00E9 LATIN SMALL LETTER E WITH ACUTE
-    nfd = "Cafe\u0301"         # e + U+0301 COMBINING ACUTE ACCENT
-    assert nfc != nfd          # distinct code points, or this test
-                               # proves nothing
+    nfc = "Caf\u00e9"  # U+00E9 LATIN SMALL LETTER E WITH ACUTE
+    nfd = "Cafe\u0301"  # e + U+0301 COMBINING ACUTE ACCENT
+    assert nfc != nfd  # distinct code points, or this test
+    # proves nothing
     write_plan(tmp_path, nfc)
     write_plan(tmp_path, nfd)
     found, issues = planstore.list_plans(tmp_path)
@@ -397,6 +417,7 @@ def test_an_nfc_vs_nfd_pair_of_stems_collides(tmp_path):
 
 
 # --- Mandatory correction 3: bound the read by file size before reading ---
+
 
 def test_an_oversized_file_is_rejected_by_size_before_its_contents_are_read(
     tmp_path,
@@ -422,6 +443,7 @@ def test_an_oversized_file_is_rejected_by_size_before_its_contents_are_read(
 # ---------------------------------------------------------------------------
 # Cycle C -- the starter plan
 # ---------------------------------------------------------------------------
+
 
 def test_the_starter_plan_is_written_into_an_empty_folder(tmp_path):
     folder = tmp_path / "skill_plans"
@@ -474,11 +496,11 @@ def test_seeding_is_skipped_once_the_folder_exists_even_if_emptied(tmp_path):
 def test_seeding_twice_writes_once(tmp_path):
     folder = tmp_path / "skill_plans"
     assert planstore.seed_starter_plan(folder) is True
-    (folder / "Core Ship Skills.txt").write_text("Mechanics V\n",
-                                                 encoding="utf-8")
+    (folder / "Core Ship Skills.txt").write_text("Mechanics V\n", encoding="utf-8")
     assert planstore.seed_starter_plan(folder) is False
     assert (folder / "Core Ship Skills.txt").read_text(
-        encoding="utf-8") == "Mechanics V\n"
+        encoding="utf-8"
+    ) == "Mechanics V\n"
 
 
 def test_seeding_into_an_unwritable_location_returns_false(tmp_path):
@@ -494,4 +516,3 @@ def test_the_starter_plan_name_passes_validation():
     """It is written by us and selected by name like any other, so it
     has to satisfy the same rules a user-typed name does."""
     assert planstore.validate_plan_name(planstore.STARTER_PLAN_NAME) == ""
-

@@ -4,10 +4,11 @@ All rects are absolute virtual-desktop pixels. Conversion to a window's
 own client coordinates happens at the Win32 boundary, not here, so this
 module stays testable on any platform.
 """
+
 from typing import NamedTuple
 
-EDGE_MARGIN = 18   # gap from the screen edge for the default stack
-STACK_GAP = 10     # vertical gap between stacked previews
+EDGE_MARGIN = 18  # gap from the screen edge for the default stack
+STACK_GAP = 10  # vertical gap between stacked previews
 RESIZE_HANDLE = 16
 
 
@@ -57,14 +58,21 @@ def snap(rect: Rect, others: list, screen: Rect, threshold: int = 12) -> Rect:
     for o in others:
         xs += [o.x, o.right, o.right - rect.w, o.x - rect.w]
         ys += [o.y, o.bottom, o.bottom - rect.h, o.y - rect.h]
-    return Rect(_snap_axis(rect.x, xs, threshold),
-                _snap_axis(rect.y, ys, threshold), rect.w, rect.h)
+    return Rect(
+        _snap_axis(rect.x, xs, threshold),
+        _snap_axis(rect.y, ys, threshold),
+        rect.w,
+        rect.h,
+    )
 
 
-def hit_resize_handle(rect: Rect, px: int, py: int,
-                      handle: int = RESIZE_HANDLE) -> bool:
-    return (rect.right - handle <= px <= rect.right
-            and rect.bottom - handle <= py <= rect.bottom)
+def hit_resize_handle(
+    rect: Rect, px: int, py: int, handle: int = RESIZE_HANDLE
+) -> bool:
+    return (
+        rect.right - handle <= px <= rect.right
+        and rect.bottom - handle <= py <= rect.bottom
+    )
 
 
 def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
@@ -73,9 +81,12 @@ def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
     Clamped at zero: a preview dragged smaller than its own chrome would
     otherwise produce an inverted rect, which DWM rejects.
     """
-    return Rect(border, border + label_h,
-                max(0, rect.w - border * 2),
-                max(0, rect.h - border - border - label_h))
+    return Rect(
+        border,
+        border + label_h,
+        max(0, rect.w - border * 2),
+        max(0, rect.h - border - border - label_h),
+    )
 
 
 def virtual_desktop(metrics) -> Rect:
@@ -127,8 +138,12 @@ def stack_monitor(monitors: list, screen: Rect) -> Rect:
 
 
 def _intersects(rect: Rect, monitor: Rect) -> bool:
-    return not (rect.right <= monitor.x or rect.x >= monitor.right
-                or rect.bottom <= monitor.y or rect.y >= monitor.bottom)
+    return not (
+        rect.right <= monitor.x
+        or rect.x >= monitor.right
+        or rect.bottom <= monitor.y
+        or rect.y >= monitor.bottom
+    )
 
 
 def clamp_to_monitors(rect: Rect, monitors: list) -> Rect:

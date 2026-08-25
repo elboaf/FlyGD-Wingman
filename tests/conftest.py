@@ -15,6 +15,7 @@ redirecting it moves settings, durations, token, seen, logs and tmp
 together. Patching settings_file() would also break test_paths.py:16-19,
 which sets this same variable and then asserts on the real function.
 """
+
 import pytest
 
 

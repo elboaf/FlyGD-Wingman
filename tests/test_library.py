@@ -113,6 +113,7 @@ def test_build_info_results_are_marked_probed(tmp_path):
 # so caching an environmental failure pins that file to "?" permanently and
 # blocks its combat-log upload even after the cause is fixed.
 
+
 def test_probe_reports_a_duration_as_definitive(tmp_path):
     f = _touch(tmp_path / "a.mkv")
 
@@ -200,18 +201,21 @@ def _ago(**delta):
     return (NOW - datetime.timedelta(**delta)).timestamp()
 
 
-@pytest.mark.parametrize("delta,expected", [
-    ({"seconds": 5}, "just now"),
-    ({"seconds": 89}, "just now"),
-    ({"seconds": 90}, "1m ago"),
-    ({"minutes": 45}, "45m ago"),
-    ({"minutes": 59}, "59m ago"),
-    ({"hours": 1}, "1h ago"),
-    ({"hours": 23}, "23h ago"),
-    ({"hours": 25}, "yesterday"),
-    ({"days": 2}, "2d ago"),
-    ({"days": 6}, "6d ago"),
-])
+@pytest.mark.parametrize(
+    "delta,expected",
+    [
+        ({"seconds": 5}, "just now"),
+        ({"seconds": 89}, "just now"),
+        ({"seconds": 90}, "1m ago"),
+        ({"minutes": 45}, "45m ago"),
+        ({"minutes": 59}, "59m ago"),
+        ({"hours": 1}, "1h ago"),
+        ({"hours": 23}, "23h ago"),
+        ({"hours": 25}, "yesterday"),
+        ({"days": 2}, "2d ago"),
+        ({"days": 6}, "6d ago"),
+    ],
+)
 def test_format_date_is_relative_for_the_last_week(delta, expected):
     """The column answers "is this recent?", and precision degrades with age
     on purpose: minutes matter for this session's recording and are noise
@@ -251,7 +255,8 @@ def test_format_date_defaults_now_to_the_clock():
     branches above pin literal strings, so this cannot become a time bomb."""
     mtime = datetime.datetime.now().timestamp()  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
     assert library.format_date(mtime) == library.format_date(
-        mtime, now=datetime.datetime.now())  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
+        mtime, now=datetime.datetime.now()
+    )  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
 
 
 def test_date_str_delegates_to_format_date(tmp_path):

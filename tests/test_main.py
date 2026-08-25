@@ -21,8 +21,10 @@ def test_stored_value_wins_over_detection(tmp_path):
     detected_dir.mkdir()
     cfg = {"recording_dir": str(stored_dir)}
 
-    with patch("obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
-               return_value=detected_dir) as mock_detect:
+    with patch(
+        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        return_value=detected_dir,
+    ) as mock_detect:
         result = resolve_recording_dir(cfg)
 
     assert result == stored_dir
@@ -37,8 +39,10 @@ def test_stale_stored_value_falls_through_to_detection(tmp_path):
     detected_dir.mkdir()
     cfg = {"recording_dir": str(tmp_path / "does-not-exist")}
 
-    with patch("obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
-               return_value=detected_dir):
+    with patch(
+        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        return_value=detected_dir,
+    ):
         result = resolve_recording_dir(cfg)
 
     assert result == detected_dir
@@ -49,14 +53,18 @@ def test_no_stored_value_falls_through_to_detection(tmp_path):
     detected_dir.mkdir()
     cfg = {}
 
-    with patch("obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
-               return_value=detected_dir):
+    with patch(
+        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        return_value=detected_dir,
+    ):
         result = resolve_recording_dir(cfg)
 
     assert result == detected_dir
 
 
-def test_configure_logging_redacts_webhook_token_from_foreign_logger(tmp_path, monkeypatch):
+def test_configure_logging_redacts_webhook_token_from_foreign_logger(
+    tmp_path, monkeypatch
+):
     """The redaction filter must be attached to the HANDLER, not a logger, so
     it also catches records from libraries we never touch directly (e.g. an
     HTTP transport logging a request URL at DEBUG). A filter on our own
@@ -109,6 +117,7 @@ class _FakeShcore:
 
 def _fake_windll(monkeypatch, **modules):
     import ctypes
+
     monkeypatch.setattr(ctypes, "windll", SimpleNamespace(**modules), raising=False)
 
 
@@ -192,8 +201,7 @@ def test_configure_logging_applies_the_requested_level(tmp_path, monkeypatch):
         assert root_logger.level == logging.DEBUG
         logging.getLogger("preview.probe").debug("dpi override accepted")
         root_logger.handlers[-1].flush()
-        contents = (paths.log_dir() / "uploader_debug.log").read_text(
-            encoding="utf-8")
+        contents = (paths.log_dir() / "uploader_debug.log").read_text(encoding="utf-8")
     finally:
         for h in list(root_logger.handlers):
             if h not in original_handlers:
@@ -202,4 +210,3 @@ def test_configure_logging_applies_the_requested_level(tmp_path, monkeypatch):
         root_logger.setLevel(original_level)
 
     assert "dpi override accepted" in contents
-

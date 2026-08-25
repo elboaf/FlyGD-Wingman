@@ -1,4 +1,5 @@
 """EVE Settings section validation. Mirrors test_settings_preview.py."""
+
 import json
 
 import pytest
@@ -36,7 +37,9 @@ def test_non_string_paths_fall_back_to_none():
 
 @pytest.mark.parametrize("given,expected", [(0, 1), (500, 100), (25, 25)])
 def test_auto_keep_is_clamped_not_rejected(given, expected):
-    assert settings.validated_eve_settings({"auto_keep": given})["auto_keep"] == expected
+    assert (
+        settings.validated_eve_settings({"auto_keep": given})["auto_keep"] == expected
+    )
 
 
 def test_booleans_are_not_accepted_as_auto_keep():
@@ -76,8 +79,7 @@ def test_update_section_mutates_the_live_document_in_place(tmp_path):
     target = tmp_path / "settings.json"
     data = settings.load(target)
 
-    live = settings.update_section(data, "eve_settings",
-                                   {"root": "C:\\EVE"}, target)
+    live = settings.update_section(data, "eve_settings", {"root": "C:\\EVE"}, target)
 
     assert live is data
     assert data["eve_settings"]["root"] == "C:\\EVE"
@@ -86,8 +88,7 @@ def test_update_section_mutates_the_live_document_in_place(tmp_path):
 
 def test_a_corrupt_section_does_not_take_the_file_down(tmp_path):
     target = tmp_path / "settings.json"
-    target.write_text(json.dumps({"eve_settings": "garbage",
-                                  "privacy": "public"}))
+    target.write_text(json.dumps({"eve_settings": "garbage", "privacy": "public"}))
     loaded = settings.load(target)
     assert loaded["eve_settings"] == settings._eve_settings_defaults()
     assert loaded["privacy"] == "public"
@@ -103,9 +104,9 @@ def test_the_public_surface_returns_the_same_defaults(tmp_path):
     validated_eve_settings rather than reaching across the module boundary
     for the private _eve_settings_defaults. This pins the two together, so
     the public entry point cannot quietly stop being equivalent."""
-    assert settings.validated_eve_settings({}) == \
-        settings._eve_settings_defaults()
+    assert settings.validated_eve_settings({}) == settings._eve_settings_defaults()
     first = settings.validated_eve_settings({})
     first["root"] = "/tmp/mutated"
-    assert settings.validated_eve_settings({})["root"] is None, \
+    assert settings.validated_eve_settings({})["root"] is None, (
         "a fresh dict per call, never the module global"
+    )

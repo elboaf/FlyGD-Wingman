@@ -12,6 +12,7 @@ Linux by design (structs and constants at import time, DLLs only inside
 bind()), so importorskip would not skip -- the test would run and fail in
 CI on the bind() call.
 """
+
 import ctypes
 import sys
 
@@ -19,28 +20,62 @@ import pytest
 
 from obs_youtube_uploader.preview import win32
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32",
-                                reason="binds user32/gdi32/dwmapi")
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32", reason="binds user32/gdi32/dwmapi"
+)
 
 REQUIRED = {
-    "user32": ["CreateWindowExW", "DestroyWindow", "DefWindowProcW",
-               "RegisterClassW", "ShowWindow", "SetWindowPos",
-               "UpdateLayeredWindow", "SetLayeredWindowAttributes",
-               "GetMessageW", "DispatchMessageW", "TranslateMessage",
-               "PostMessageW", "PostQuitMessage", "GetDC", "ReleaseDC",
-               "GetClientRect", "InvalidateRect", "LoadCursorW",
-               "SetCapture", "ReleaseCapture", "GetCursorPos",
-               "SetForegroundWindow", "GetForegroundWindow",
-               "AttachThreadInput", "IsIconic", "ShowWindowAsync",
-               "GetWindowThreadProcessId", "SetTimer", "KillTimer",
-               "SetWinEventHook", "UnhookWinEvent",
-               "RegisterHotKey", "UnregisterHotKey",
-               "SetThreadDpiAwarenessContext",
-               "EnumDisplayMonitors", "GetMonitorInfoW"],
-    "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject",
-              "DeleteObject", "DeleteDC"],
-    "dwmapi": ["DwmRegisterThumbnail", "DwmUnregisterThumbnail",
-               "DwmUpdateThumbnailProperties", "DwmIsCompositionEnabled"],
+    "user32": [
+        "CreateWindowExW",
+        "DestroyWindow",
+        "DefWindowProcW",
+        "RegisterClassW",
+        "ShowWindow",
+        "SetWindowPos",
+        "UpdateLayeredWindow",
+        "SetLayeredWindowAttributes",
+        "GetMessageW",
+        "DispatchMessageW",
+        "TranslateMessage",
+        "PostMessageW",
+        "PostQuitMessage",
+        "GetDC",
+        "ReleaseDC",
+        "GetClientRect",
+        "InvalidateRect",
+        "LoadCursorW",
+        "SetCapture",
+        "ReleaseCapture",
+        "GetCursorPos",
+        "SetForegroundWindow",
+        "GetForegroundWindow",
+        "AttachThreadInput",
+        "IsIconic",
+        "ShowWindowAsync",
+        "GetWindowThreadProcessId",
+        "SetTimer",
+        "KillTimer",
+        "SetWinEventHook",
+        "UnhookWinEvent",
+        "RegisterHotKey",
+        "UnregisterHotKey",
+        "SetThreadDpiAwarenessContext",
+        "EnumDisplayMonitors",
+        "GetMonitorInfoW",
+    ],
+    "gdi32": [
+        "CreateDIBSection",
+        "CreateCompatibleDC",
+        "SelectObject",
+        "DeleteObject",
+        "DeleteDC",
+    ],
+    "dwmapi": [
+        "DwmRegisterThumbnail",
+        "DwmUnregisterThumbnail",
+        "DwmUpdateThumbnailProperties",
+        "DwmIsCompositionEnabled",
+    ],
     "kernel32": ["GetModuleHandleW", "GetCurrentThreadId"],
 }
 
@@ -51,10 +86,17 @@ REQUIRED = {
 # CreateDIBSection both hand back handles, and DefWindowProcW an LRESULT.
 # Checking argtypes alone would have caught neither.
 POINTER_SIZED_RETURNS = {
-    "user32": ["CreateWindowExW", "DefWindowProcW", "GetDC",
-               "GetForegroundWindow", "SetCapture", "SetTimer",
-               "SetWinEventHook", "SetThreadDpiAwarenessContext",
-               "DispatchMessageW"],
+    "user32": [
+        "CreateWindowExW",
+        "DefWindowProcW",
+        "GetDC",
+        "GetForegroundWindow",
+        "SetCapture",
+        "SetTimer",
+        "SetWinEventHook",
+        "SetThreadDpiAwarenessContext",
+        "DispatchMessageW",
+    ],
     "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject"],
     "kernel32": ["GetModuleHandleW"],
 }
@@ -93,8 +135,10 @@ def test_pointer_sized_returns_are_not_left_at_the_c_int_default():
             restype = getattr(lib, fn).restype
             if restype is ctypes.c_int or restype is None:
                 bad.append(f"{lib_name}.{fn} restype is {restype!r}")
-            elif not (restype in _WIDE
-                      or ctypes.sizeof(restype) >= ctypes.sizeof(ctypes.c_void_p)):
+            elif not (
+                restype in _WIDE
+                or ctypes.sizeof(restype) >= ctypes.sizeof(ctypes.c_void_p)
+            ):
                 bad.append(f"{lib_name}.{fn} restype {restype!r} is too narrow")
     assert not bad, "\n".join(bad)
 

@@ -7,6 +7,7 @@ backoff ladder be tested headless with no real sleeps.
 Nothing here writes to ESI. The two scopes this application requests are
 read-only, and the only POST is the unauthenticated universe/ids lookup.
 """
+
 import json
 import re
 import time
@@ -59,8 +60,12 @@ def validate_path(path: str) -> str:
         raise ValueError("ESI path must not start with '//'.")
     if "://" in path:
         raise ValueError("ESI path must not be an absolute URL.")
-    for forbidden, label in (("\\", "backslash"), ("?", "query"),
-                             ("#", "fragment"), ("\x00", "NUL")):
+    for forbidden, label in (
+        ("\\", "backslash"),
+        ("?", "query"),
+        ("#", "fragment"),
+        ("\x00", "NUL"),
+    ):
         if forbidden in path:
             raise ValueError(f"ESI path must not contain a {label}.")
 
@@ -77,8 +82,8 @@ def validate_path(path: str) -> str:
             raise ValueError("ESI path must not contain '.' or '..'.")
         if not _SEGMENT.match(segment):
             raise ValueError(
-                f"ESI path segment {segment!r} has characters outside "
-                "[A-Za-z0-9_-].")
+                f"ESI path segment {segment!r} has characters outside [A-Za-z0-9_-]."
+            )
     return path
 
 
@@ -174,8 +179,7 @@ def _sanitize(text) -> str:
     """
     text = text if isinstance(text, str) else ""
     filtered = "".join(
-        ch for ch in text
-        if ch in "\r\n\t" or unicodedata.category(ch) != "Cc"
+        ch for ch in text if ch in "\r\n\t" or unicodedata.category(ch) != "Cc"
     )[:_SANITIZE_MAX_CHARS]
     cleaned = filtered.replace("\r", " ").replace("\n", " ").strip()
     return cleaned or "Remote service returned an unreadable error."
@@ -217,8 +221,7 @@ def _append_rate_limit(error: str, headers) -> str:
     if headers is None:
         return error
     parts = []
-    for name in ("X-Esi-Error-Limit-Remain", "X-Esi-Error-Limit-Reset",
-                "Retry-After"):
+    for name in ("X-Esi-Error-Limit-Remain", "X-Esi-Error-Limit-Reset", "Retry-After"):
         value = headers.get(name)
         if value is not None:
             parts.append(f"{name}={_sanitize(str(value))}")
@@ -273,8 +276,9 @@ def _is_ids_route(path: str) -> bool:
 
 
 class EsiClient:
-    def __init__(self, *, user_agent: str, transport=_default_transport,
-                 sleep=time.sleep) -> None:
+    def __init__(
+        self, *, user_agent: str, transport=_default_transport, sleep=time.sleep
+    ) -> None:
         self._user_agent = user_agent
         self._transport = transport
         self._sleep = sleep
@@ -285,8 +289,9 @@ class EsiClient:
     def post(self, path: str, body, *, token=None) -> EsiResponse:
         return self._request("POST", path, body=body, token=token)
 
-    def _request(self, method: str, path: str, *, body=None, token=None,
-                 etag=None) -> EsiResponse:
+    def _request(
+        self, method: str, path: str, *, body=None, token=None, etag=None
+    ) -> EsiResponse:
         # Raises, deliberately: a bad path is a bug in the caller, not a
         # runtime condition, and it must never reach the network.
         validate_path(path)
@@ -321,8 +326,9 @@ class EsiClient:
         last_network_error = ""
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            request = urllib.request.Request(url, data=payload,
-                                             headers=headers, method=method)
+            request = urllib.request.Request(
+                url, data=payload, headers=headers, method=method
+            )
             try:
                 with self._transport(request, timeout=TIMEOUT_S) as response:
                     return self._read(response, method, path, etag)
@@ -347,10 +353,12 @@ class EsiClient:
                     # losing it here would cost every subsequent refresh
                     # its conditional request and silently double ESI load.
                     exc_headers = getattr(exc, "headers", None)
-                    response_etag = (exc_headers.get("ETag", "")
-                                     if exc_headers else "") or ""
-                    return EsiResponse(304, None, "", etag or response_etag,
-                                       method, path)
+                    response_etag = (
+                        exc_headers.get("ETag", "") if exc_headers else ""
+                    ) or ""
+                    return EsiResponse(
+                        304, None, "", etag or response_etag, method, path
+                    )
                 text = self._error_text(exc, token)
                 if exc.code in RETRY_STATUSES and retryable_method:
                     # The real response, headers and all -- not just its
@@ -358,8 +366,7 @@ class EsiClient:
                     # attempt, exhaustion can return it unchanged instead of
                     # replacing it with a synthetic status that discards
                     # the very rate-limit headers _error_text just appended.
-                    last_result = EsiResponse(exc.code, None, text, "",
-                                              method, path)
+                    last_result = EsiResponse(exc.code, None, text, "", method, path)
                     if attempt < MAX_ATTEMPTS:
                         self._sleep(self._backoff(exc.headers, attempt))
                     continue
@@ -399,9 +406,13 @@ class EsiClient:
         # no response at all, and a caller reading it as an upstream outage
         # will be wrong about the cause.
         return EsiResponse(
-            503, None,
+            503,
+            None,
             last_network_error or f"No response after {MAX_ATTEMPTS} attempts.",
-            "", method, path)
+            "",
+            method,
+            path,
+        )
 
     @staticmethod
     def _read(response, method: str, path: str, sent_etag) -> EsiResponse:
@@ -415,8 +426,8 @@ class EsiClient:
         raw = response.read(MAX_SUCCESS_BODY_BYTES + 1)
         if len(raw) > MAX_SUCCESS_BODY_BYTES:
             raise ValueError(
-                f"ESI response for {path} exceeded "
-                f"{MAX_SUCCESS_BODY_BYTES} bytes.")
+                f"ESI response for {path} exceeded {MAX_SUCCESS_BODY_BYTES} bytes."
+            )
         data = json.loads(raw.decode("utf-8")) if raw.strip() else None
         return EsiResponse(status, data, "", response_etag, method, path)
 

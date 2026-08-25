@@ -1,5 +1,6 @@
 """A surviving engine holds a global keyboard hook with no UI to disable it,
 so shutdown must stop it on every exit path."""
+
 from obs_youtube_uploader import __main__ as main_mod
 
 
@@ -52,6 +53,7 @@ def test_shutdown_is_safe_with_no_engine():
 
 def test_shutdown_survives_an_engine_that_raises():
     """Shutdown must not be blocked by the thing it is cleaning up."""
+
     class Angry(Recorder):
         def stop(self, timeout=5.0):
             raise OSError("nope")

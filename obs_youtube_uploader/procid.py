@@ -6,6 +6,7 @@ touches Win32, so hotkeys.py stays importable and testable on Linux.
 
 Every function is a no-op returning None/False off Windows.
 """
+
 import logging
 import subprocess
 import sys
@@ -13,8 +14,7 @@ import sys
 logger = logging.getLogger(__name__)
 
 _NO_WINDOW_KWARGS = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if sys.platform == "win32" else {}
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 )
 
 
@@ -32,9 +32,14 @@ def describe(pid: int, runner=subprocess.run) -> dict | None:
         "if ($p) { $p.ExecutablePath; $p.CommandLine }"
     )
     try:
-        done = runner(["powershell", "-NoProfile", "-Command", script],
-                      capture_output=True, text=True, timeout=10,
-                      errors="replace", **_NO_WINDOW_KWARGS)
+        done = runner(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            errors="replace",
+            **_NO_WINDOW_KWARGS,
+        )
     except Exception:
         # Deliberately broad: this feeds a code path that must never
         # prevent the engine starting. UnicodeDecodeError in particular is
@@ -55,9 +60,14 @@ def terminate(pid: int, runner=subprocess.run) -> bool:
     if sys.platform != "win32":
         return False
     try:
-        done = runner(["taskkill", "/PID", str(int(pid)), "/F"],
-                      capture_output=True, text=True, timeout=10,
-                      errors="replace", **_NO_WINDOW_KWARGS)
+        done = runner(
+            ["taskkill", "/PID", str(int(pid)), "/F"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            errors="replace",
+            **_NO_WINDOW_KWARGS,
+        )
     except Exception:
         logger.exception("Could not terminate process %s", pid)
         return False
@@ -66,7 +76,11 @@ def terminate(pid: int, runner=subprocess.run) -> bool:
         # denied" alike, and not raising on either. Reporting success here
         # regardless is what let recover_orphan discard a live orphan's PID
         # record after a kill that never happened.
-        logger.error("taskkill of pid %s failed (rc=%s): %s",
-                     pid, done.returncode, (done.stderr or "").strip())
+        logger.error(
+            "taskkill of pid %s failed (rc=%s): %s",
+            pid,
+            done.returncode,
+            (done.stderr or "").strip(),
+        )
         return False
     return True

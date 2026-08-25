@@ -8,6 +8,7 @@ rewrite of the integration.
 Windows-only at runtime, importable and testable everywhere: the process is
 reached only through an injected spawner.
 """
+
 import json
 import logging
 import subprocess
@@ -29,12 +30,13 @@ STALE_AFTER_S = 6.0
 # CREATE_NO_WINDOW doesn't exist off Windows, and the tests inject a fake
 # spawner -- same shape as stitch.py:27 and library.py:19.
 _NO_WINDOW_KWARGS = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if sys.platform == "win32" else {}
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 )
 
-_MISSING = ("The bookmark engine is missing from this installation. "
-            "Reinstall FlyGD Wingman to restore it.")
+_MISSING = (
+    "The bookmark engine is missing from this installation. "
+    "Reinstall FlyGD Wingman to restore it."
+)
 
 # Basename match, not a substring: a folder merely containing "autohotkey"
 # (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
@@ -45,6 +47,7 @@ _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
 class EngineStatus:
     """What the UI renders. `state` is authoritative; the values are only
     populated when state == "running"."""
+
     state: str = "off"
     sig: str | None = None
     root: str | None = None
@@ -77,9 +80,15 @@ class HotkeyEngine:
     the process image and a run token before terminating anything.
     """
 
-    def __init__(self, exe, script, state_dir, *,
-                 spawner=subprocess.Popen,
-                 token_factory=lambda: uuid.uuid4().hex):
+    def __init__(
+        self,
+        exe,
+        script,
+        state_dir,
+        *,
+        spawner=subprocess.Popen,
+        token_factory=lambda: uuid.uuid4().hex,
+    ):
         self._exe = exe
         self._script = Path(script) if script else None
         self._state_dir = Path(state_dir)
@@ -96,8 +105,7 @@ class HotkeyEngine:
         The engine picks this up on its own 10s timer, so there is no need
         to restart it and lose in-flight state (root system, used slots).
         """
-        atomicio.write_atomic(self._ini_path(),
-                              bookmarks.generate_ini(section))
+        atomicio.write_atomic(self._ini_path(), bookmarks.generate_ini(section))
 
     # -- lifecycle ---------------------------------------------------
     def start(self) -> bool:
@@ -106,15 +114,17 @@ class HotkeyEngine:
         self.recover_orphan()
         if not self._exe or not self._script or not self._script.exists():
             self.last_error = _MISSING
-            logger.error("Engine not started: exe=%r script=%r",
-                         self._exe, self._script)
+            logger.error(
+                "Engine not started: exe=%r script=%r", self._exe, self._script
+            )
             return False
 
         self._token = self._token_factory()
         argv = [str(self._exe), str(self._script), "/token", self._token]
         try:
             self._proc = self._spawner(
-                argv, cwd=str(self._state_dir), **_NO_WINDOW_KWARGS)
+                argv, cwd=str(self._state_dir), **_NO_WINDOW_KWARGS
+            )
         except OSError as exc:
             self.last_error = f"The bookmark engine could not start: {exc}"
             logger.exception("Engine spawn failed")
@@ -124,7 +134,8 @@ class HotkeyEngine:
         try:
             atomicio.write_atomic(
                 self._pid_path(),
-                json.dumps({"pid": self._proc.pid, "token": self._token}))
+                json.dumps({"pid": self._proc.pid, "token": self._token}),
+            )
         except OSError as exc:
             # The record is what makes this process findable: without it,
             # is_running() would still report the engine alive (self._proc
@@ -273,7 +284,9 @@ class HotkeyEngine:
             self._clear_pid_record()
             return False
 
-        image_ok = PureWindowsPath(info.get("image") or "").name.lower() == _ENGINE_IMAGE_NAME
+        image_ok = (
+            PureWindowsPath(info.get("image") or "").name.lower() == _ENGINE_IMAGE_NAME
+        )
         token_ok = token and token in (info.get("cmdline") or "")
         if not (image_ok and token_ok):
             logger.info("PID %s is not our engine; leaving it alone.", pid)

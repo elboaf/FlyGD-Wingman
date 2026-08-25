@@ -4,6 +4,7 @@ Every file crossing the Wingman/engine boundary goes through here. Single
 writer ownership settles who may write; it says nothing about what a reader
 polling on a timer observes mid-write, and both sides poll.
 """
+
 import contextlib
 import os
 import shutil
@@ -12,8 +13,14 @@ import time
 from pathlib import Path
 
 
-def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
-                 attempts: int = 5, sleep=time.sleep) -> None:
+def write_atomic(
+    path: Path,
+    text: str,
+    encoding: str = "utf-8",
+    *,
+    attempts: int = 5,
+    sleep=time.sleep,
+) -> None:
     """Write *text* to *path* by rename, leaving the old file intact on error.
 
     The temporary file is created in the destination directory on purpose:
@@ -30,9 +37,9 @@ def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(dir=str(path.parent),
-                                        prefix=path.name + ".",
-                                        suffix=".tmp")
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
     try:
         with os.fdopen(handle, "w", encoding=encoding, newline="") as stream:
             stream.write(text)
@@ -47,8 +54,9 @@ def write_atomic(path: Path, text: str, encoding: str = "utf-8", *,
         raise
 
 
-def replace_with_retry(tmp_name: str, path: Path, attempts: int = 5,
-                       sleep=time.sleep) -> None:
+def replace_with_retry(
+    tmp_name: str, path: Path, attempts: int = 5, sleep=time.sleep
+) -> None:
     """os.replace, retried briefly against a locked destination.
 
     Windows only: os.replace maps to MoveFileExW, which raises a sharing
@@ -83,8 +91,9 @@ def replace_with_retry(tmp_name: str, path: Path, attempts: int = 5,
             sleep(0.05 * (attempt + 1))
 
 
-def copy_atomic(source: Path, target: Path, *, attempts: int = 5,
-                sleep=time.sleep) -> None:
+def copy_atomic(
+    source: Path, target: Path, *, attempts: int = 5, sleep=time.sleep
+) -> None:
     """Copy *source* over *target* by rename, leaving it intact on error.
 
     The binary sibling of write_atomic, and separate from it rather than a
@@ -98,9 +107,9 @@ def copy_atomic(source: Path, target: Path, *, attempts: int = 5,
     source = Path(source)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(dir=str(target.parent),
-                                        prefix=target.name + ".",
-                                        suffix=".tmp")
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".tmp"
+    )
     try:
         # The temp descriptor is wrapped FIRST: `with A, B` enters A before
         # B, so opening the source in the same statement leaks this fd

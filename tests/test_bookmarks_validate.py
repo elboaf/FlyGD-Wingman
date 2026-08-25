@@ -47,8 +47,7 @@ def test_only_convertscout_has_a_default():
     """111unified.ahk:57,140 ships ^+s. Blanking it would silently take a
     working binding away from every existing user."""
     assert bookmarks.DEFAULT_BINDS["ConvertScout"] == "^+s"
-    others = {k: v for k, v in bookmarks.DEFAULT_BINDS.items()
-              if k != "ConvertScout"}
+    others = {k: v for k, v in bookmarks.DEFAULT_BINDS.items() if k != "ConvertScout"}
     assert set(others.values()) == {""}
     assert set(bookmarks.DEFAULT_BINDS) == set(bookmarks.BIND_IDS)
 
@@ -72,7 +71,7 @@ def test_blank_binds_never_collide():
 
 
 def test_collision_is_caught_across_modifier_order():
-    """"+^h" and "^+h" are the same physical hotkey; RefreshHotkeys only
+    """ "+^h" and "^+h" are the same physical hotkey; RefreshHotkeys only
     reports this as a silent ErrorLevel at registration, which is the
     failure this check exists to catch before it gets there."""
     binds = dict(bookmarks.DEFAULT_BINDS, FinH="^+h", FinL="+^h")
@@ -83,7 +82,10 @@ def test_parse_ahk_accepts_a_typed_string():
     """The manual escape hatch for non-US layouts, validated by the same
     rules as capture."""
     assert bookmarks.parse_ahk("^+s") == {
-        "ahk": "^+s", "display": "Ctrl+Shift+S", "error": None}
+        "ahk": "^+s",
+        "display": "Ctrl+Shift+S",
+        "error": None,
+    }
 
 
 def test_parse_ahk_normalises_modifier_order():
@@ -116,40 +118,49 @@ class TestRegistrationBlockers:
     """
 
     def test_a_working_setup_has_no_blockers(self):
-        assert bookmarks.registration_blockers(
-            {"windows": {"EVE - Pilot": True},
-             "keybinds": {"FinH": "^y"}}) == []
+        assert (
+            bookmarks.registration_blockers(
+                {"windows": {"EVE - Pilot": True}, "keybinds": {"FinH": "^y"}}
+            )
+            == []
+        )
 
     def test_no_enabled_window_blocks_everything(self):
         """The per-window loop is the only place binds are registered, so
         with nothing ticked it never executes."""
         assert bookmarks.registration_blockers(
-            {"windows": {}, "keybinds": {"FinH": "^y"}}) == ["no_windows"]
+            {"windows": {}, "keybinds": {"FinH": "^y"}}
+        ) == ["no_windows"]
 
     def test_a_window_present_but_unticked_still_blocks(self):
         """The INI carries `Title=0`, and the loop tests for "1"."""
         assert bookmarks.registration_blockers(
-            {"windows": {"EVE - Pilot": False},
-             "keybinds": {"FinH": "^y"}}) == ["no_windows"]
+            {"windows": {"EVE - Pilot": False}, "keybinds": {"FinH": "^y"}}
+        ) == ["no_windows"]
 
     def test_no_bound_key_blocks_everything(self):
         assert bookmarks.registration_blockers(
-            {"windows": {"EVE - Pilot": True},
-             "keybinds": {"FinH": "", "FinL": "   "}}) == ["no_binds"]
+            {"windows": {"EVE - Pilot": True}, "keybinds": {"FinH": "", "FinL": "   "}}
+        ) == ["no_binds"]
 
     def test_both_are_reported_together(self):
         """Fixing one would leave the user in exactly the same silence, so
         naming only the first would send them round twice."""
         assert bookmarks.registration_blockers(
-            {"windows": {}, "keybinds": {"FinH": ""}}) == [
-                "no_windows", "no_binds"]
+            {"windows": {}, "keybinds": {"FinH": ""}}
+        ) == ["no_windows", "no_binds"]
 
     def test_a_malformed_section_is_treated_as_blocked(self):
         """get_bookmarks passes the live settings section, and a
         hand-edited settings.json can carry anything. Claiming a working
         setup on the strength of a wrong type is the failure this check
         exists to prevent."""
-        for section in ({}, {"windows": None, "keybinds": None},
-                        {"windows": "x", "keybinds": 7}):
+        for section in (
+            {},
+            {"windows": None, "keybinds": None},
+            {"windows": "x", "keybinds": 7},
+        ):
             assert bookmarks.registration_blockers(section) == [
-                "no_windows", "no_binds"], section
+                "no_windows",
+                "no_binds",
+            ], section

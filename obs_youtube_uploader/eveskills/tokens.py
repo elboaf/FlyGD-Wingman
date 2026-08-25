@@ -16,6 +16,7 @@ prompt. This is a defence for data at rest -- a stolen laptop, a disk
 image, a backup, a %LOCALAPPDATA% redirected into OneDrive -- not against
 local code execution.
 """
+
 import base64
 import binascii
 

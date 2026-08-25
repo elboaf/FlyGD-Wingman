@@ -51,8 +51,9 @@ def test_channel_identity_defaults_to_empty(tmp_path):
 
 def test_channel_identity_roundtrips(tmp_path):
     p = tmp_path / "s.json"
-    settings.save({**settings.DEFAULTS, "channel_id": "UC123",
-                   "channel_title": "Zoolanders"}, p)
+    settings.save(
+        {**settings.DEFAULTS, "channel_id": "UC123", "channel_title": "Zoolanders"}, p
+    )
     loaded = settings.load(p)
     assert loaded["channel_id"] == "UC123"
     assert loaded["channel_title"] == "Zoolanders"
@@ -87,6 +88,7 @@ def test_non_string_discord_webhook_is_coerced(tmp_path):
     """settings.json is a plain file a user can edit; save-time UI validation
     does not protect the load path."""
     import json
+
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"discord_webhook": 12345}))
     assert settings.load(p)["discord_webhook"] == ""
@@ -94,6 +96,7 @@ def test_non_string_discord_webhook_is_coerced(tmp_path):
 
 def test_non_string_gamelogs_dir_is_coerced(tmp_path):
     import json
+
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"gamelogs_dir": ["a", "b"]}))
     assert settings.load(p)["gamelogs_dir"] is None
@@ -235,8 +238,10 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
             with settings.update(data, path) as doc:
                 doc[key] = value
 
-    threads = [threading.Thread(target=writer, args=("privacy", "public")),
-               threading.Thread(target=writer, args=("category", "22"))]
+    threads = [
+        threading.Thread(target=writer, args=("privacy", "public")),
+        threading.Thread(target=writer, args=("category", "22")),
+    ]
     for t in threads:
         t.start()
     for t in threads:
@@ -252,8 +257,7 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
 
 def test_preview_defaults_carry_an_empty_hotkey_table():
     section = settings._preview_defaults()
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "",
-                                  "cycle_prev": ""}
+    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
     assert section["seen"] == []
 
 
@@ -266,8 +270,14 @@ def test_preview_defaults_are_not_shared_between_calls():
 
 def test_validated_preview_keeps_parseable_gestures():
     section = settings.validated_preview(
-        {"hotkeys": {"characters": {"Alice": "Ctrl+F1"},
-                     "cycle_next": "Ctrl+Alt+Right", "cycle_prev": ""}})
+        {
+            "hotkeys": {
+                "characters": {"Alice": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "",
+            }
+        }
+    )
     assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
     assert section["hotkeys"]["cycle_next"] == "Ctrl+Alt+Right"
 
@@ -276,9 +286,13 @@ def test_validated_preview_drops_one_bad_gesture_not_the_section():
     """Same posture as the layout entries: a hand-edited file costs one
     binding, not the launch."""
     section = settings.validated_preview(
-        {"enabled": True,
-         "hotkeys": {"characters": {"Alice": "Ctrl+F1", "Bravo": "nonsense",
-                                    "Carol": "F1"}}})
+        {
+            "enabled": True,
+            "hotkeys": {
+                "characters": {"Alice": "Ctrl+F1", "Bravo": "nonsense", "Carol": "F1"}
+            },
+        }
+    )
     assert section["enabled"] is True
     assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
 
@@ -286,14 +300,14 @@ def test_validated_preview_drops_one_bad_gesture_not_the_section():
 def test_validated_preview_canonicalises_gestures():
     """Stored in display form so the clash check compares strings."""
     section = settings.validated_preview(
-        {"hotkeys": {"characters": {"Alice": "alt+ctrl+f2"}}})
+        {"hotkeys": {"characters": {"Alice": "alt+ctrl+f2"}}}
+    )
     assert section["hotkeys"]["characters"]["Alice"] == "Ctrl+Alt+F2"
 
 
 def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
     section = settings.validated_preview({"hotkeys": "nonsense"})
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "",
-                                  "cycle_prev": ""}
+    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
 
 
 def test_validated_preview_cleans_the_roster():

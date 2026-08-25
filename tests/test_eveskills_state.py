@@ -8,6 +8,7 @@ validated_*() functions and the rationale preview/layout.py:26-32 records:
 a partially-written or hand-edited file should cost one character's row,
 not the launch.
 """
+
 import json
 import os
 import stat
@@ -36,7 +37,8 @@ def test_an_error_over_existing_data_is_stale():
     character = state.Character(
         character_id=90000001,
         fetched_utc=datetime(2026, 8, 24, tzinfo=UTC),
-        error="ESI timed out")
+        error="ESI timed out",
+    )
     assert character.stale is True
 
 
@@ -51,10 +53,12 @@ def test_upsert_replaces_by_id_and_keeps_position():
     """Merge by character id, never replace the roster wholesale -- the same
     rule preview/store.py carries. Position is kept so a refresh does not
     reshuffle rows under the user's cursor."""
-    roster = state.SkillsState(characters=[
-        state.Character(character_id=1, character_name="First"),
-        state.Character(character_id=2, character_name="Second"),
-    ])
+    roster = state.SkillsState(
+        characters=[
+            state.Character(character_id=1, character_name="First"),
+            state.Character(character_id=2, character_name="Second"),
+        ]
+    )
     roster.upsert(state.Character(character_id=1, character_name="Renamed"))
     assert [c.character_id for c in roster.characters] == [1, 2]
     assert roster.find(1).character_name == "Renamed"
@@ -71,9 +75,11 @@ def test_upsert_refuses_a_new_character_past_capacity():
     character is always allowed -- only a NEW row must be refused, since
     refusing an update would strand a character mid-refresh for no reason
     tied to capacity at all."""
-    roster = state.SkillsState(characters=[
-        state.Character(character_id=n)
-        for n in range(1, state.MAX_CHARACTERS + 1)])
+    roster = state.SkillsState(
+        characters=[
+            state.Character(character_id=n) for n in range(1, state.MAX_CHARACTERS + 1)
+        ]
+    )
     with pytest.raises(ValueError):
         roster.upsert(state.Character(character_id=state.MAX_CHARACTERS + 1))
     # Updating one already present must still succeed at full capacity.
@@ -101,23 +107,33 @@ def test_round_trips_a_full_character():
     ask which form it is holding."""
     original = state.SkillsState(
         selected_plan_name="Interceptors",
-        characters=[state.Character(
-            character_id=90000001,
-            character_name="Aiga Otsolen",
-            owner_hash="abc123",
-            scopes=("esi-skills.read_skills.v1",),
-            authenticated_utc=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
-            fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
-            active_levels={3300: 5},
-            trained_levels={3300: 5, 3301: 4},
-            queue=(QueueEntry(3301, 5,
-                              datetime(2026, 8, 24, tzinfo=UTC),
-                              datetime(2026, 8, 26, tzinfo=UTC), 0),),
-            error="",
-            needs_reauth=False,
-            refresh_token_blob="QUJD",
-            skills_etag='W/"abc"',
-            queue_etag='W/"def"')])
+        characters=[
+            state.Character(
+                character_id=90000001,
+                character_name="Aiga Otsolen",
+                owner_hash="abc123",
+                scopes=("esi-skills.read_skills.v1",),
+                authenticated_utc=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+                fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
+                active_levels={3300: 5},
+                trained_levels={3300: 5, 3301: 4},
+                queue=(
+                    QueueEntry(
+                        3301,
+                        5,
+                        datetime(2026, 8, 24, tzinfo=UTC),
+                        datetime(2026, 8, 26, tzinfo=UTC),
+                        0,
+                    ),
+                ),
+                error="",
+                needs_reauth=False,
+                refresh_token_blob="QUJD",
+                skills_etag='W/"abc"',
+                queue_etag='W/"def"',
+            )
+        ],
+    )
     assert state.from_dict(state.to_dict(original)) == original
 
 
@@ -125,8 +141,14 @@ def test_from_dict_never_raises_on_junk():
     """This runs at launch. Anything that gets here -- a truncated write, a
     hand edit, a file from a future version -- must degrade to an empty
     roster rather than take the app down."""
-    for raw in (None, [], "nope", 3, {"characters": "not-a-list"},
-                {"characters": [None, 7, "x", []]}):
+    for raw in (
+        None,
+        [],
+        "nope",
+        3,
+        {"characters": "not-a-list"},
+        {"characters": [None, 7, "x", []]},
+    ):
         assert isinstance(state.from_dict(raw), state.SkillsState)
 
 
@@ -135,8 +157,10 @@ def test_characters_are_capped_and_deduped():
     what keeps find()/upsert() single-valued, since both stop at the first
     match and a second row with the same id would be unreachable and
     unforgettable."""
-    raw = {"characters": [{"character_id": 1} for _ in range(60)]
-                         + [{"character_id": n} for n in range(2, 80)]}
+    raw = {
+        "characters": [{"character_id": 1} for _ in range(60)]
+        + [{"character_id": n} for n in range(2, 80)]
+    }
     result = state.from_dict(raw)
     assert len(result.characters) == state.MAX_CHARACTERS
     ids = [c.character_id for c in result.characters]
@@ -147,8 +171,9 @@ def test_a_non_positive_character_id_is_dropped():
     """0 is what an absent id coerces to, and a negative id can never match
     a real EVE character. Either would produce a row that cannot be
     refreshed."""
-    raw = {"characters": [{"character_id": 0}, {"character_id": -5},
-                          {"character_id": 42}]}
+    raw = {
+        "characters": [{"character_id": 0}, {"character_id": -5}, {"character_id": 42}]
+    }
     assert [c.character_id for c in state.from_dict(raw).characters] == [42]
 
 
@@ -159,11 +184,13 @@ def test_a_later_duplicate_row_wins_over_an_earlier_one():
     FIRST seen. Two rows with identical data (the older, brief-supplied
     dedup test) cannot distinguish first-wins from last-wins -- this one
     can, because the two rows disagree."""
-    raw = {"characters": [
-        {"character_id": 1, "character_name": "Stale"},
-        {"character_id": 2, "character_name": "Second"},
-        {"character_id": 1, "character_name": "Fresh"},
-    ]}
+    raw = {
+        "characters": [
+            {"character_id": 1, "character_name": "Stale"},
+            {"character_id": 2, "character_name": "Second"},
+            {"character_id": 1, "character_name": "Fresh"},
+        ]
+    }
     characters = state.from_dict(raw).characters
     # Position: id 1 stays first, since that is where it was first seen.
     assert [c.character_id for c in characters] == [1, 2]
@@ -174,8 +201,14 @@ def test_a_later_duplicate_row_wins_over_an_earlier_one():
 def test_scopes_are_capped():
     """The one collection with no other cap of its own --
     TriffSkillsState.cs:159's `.Take(100)`."""
-    raw = {"characters": [{"character_id": 1, "scopes": [
-        f"scope-{n}" for n in range(state.MAX_SCOPES + 20)]}]}
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "scopes": [f"scope-{n}" for n in range(state.MAX_SCOPES + 20)],
+            }
+        ]
+    }
     assert len(state.from_dict(raw).characters[0].scopes) == state.MAX_SCOPES
 
 
@@ -184,14 +217,18 @@ def test_character_name_owner_hash_and_error_are_trimmed():
     blob and the two ETags are opaque values rather than display text and
     must NOT be trimmed -- a blob or ETag that happens to start or end
     with whitespace-like bytes would be silently corrupted."""
-    raw = {"characters": [{
-        "character_id": 1,
-        "character_name": "  Aiga  ",
-        "owner_hash": "  abc123  ",
-        "error": "  ESI timed out  ",
-        "refresh_token_blob": "  QUJD  ",
-        "skills_etag": '  W/"abc"  ',
-    }]}
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "character_name": "  Aiga  ",
+                "owner_hash": "  abc123  ",
+                "error": "  ESI timed out  ",
+                "refresh_token_blob": "  QUJD  ",
+                "skills_etag": '  W/"abc"  ',
+            }
+        ]
+    }
     character = state.from_dict(raw).characters[0]
     assert character.character_name == "Aiga"
     assert character.owner_hash == "abc123"
@@ -204,8 +241,14 @@ def test_malformed_skill_levels_drop_individually():
     """Per-entry drops, not per-character. One unparseable skill id must
     not cost the whole snapshot -- that would silently turn a character
     Unscored and hide the fact behind an empty row."""
-    raw = {"characters": [{"character_id": 1, "active_levels": {
-        "3300": 5, "3301": 9, "bogus": 3, "3302": 4, "-1": 2}}]}
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "active_levels": {"3300": 5, "3301": 9, "bogus": 3, "3302": 4, "-1": 2},
+            }
+        ]
+    }
     levels = state.from_dict(raw).characters[0].active_levels
     assert levels == {3300: 5, 3302: 4}
 
@@ -213,8 +256,7 @@ def test_malformed_skill_levels_drop_individually():
 def test_a_boolean_skill_level_is_dropped():
     """bool is an int subclass in Python, so a JSON `true` would sail
     through an isinstance(value, int) check and store level 1."""
-    raw = {"characters": [{"character_id": 1,
-                           "active_levels": {"3300": True}}]}
+    raw = {"characters": [{"character_id": 1, "active_levels": {"3300": True}}]}
     assert state.from_dict(raw).characters[0].active_levels == {}
 
 
@@ -222,8 +264,7 @@ def test_a_zero_skill_level_is_kept():
     """A resolved-but-untrained skill is level 0, which is a different fact
     from a skill whose name never resolved (absent entirely). Filtering
     zeros out would erase that distinction."""
-    raw = {"characters": [{"character_id": 1,
-                           "active_levels": {"3300": 0}}]}
+    raw = {"characters": [{"character_id": 1, "active_levels": {"3300": 0}}]}
     assert state.from_dict(raw).characters[0].active_levels == {3300: 0}
 
 
@@ -231,28 +272,41 @@ def test_queue_entries_are_validated_and_ordered_by_position():
     """queue_position is the tie-break the evaluator's
     lowest_sufficient_entry relies on, so the stored order must not be
     trusted -- a hand-edited file can list them any way at all."""
-    raw = {"characters": [{"character_id": 1, "queue": [
-        {"skill_id": 20, "finished_level": 3, "queue_position": 2},
-        {"skill_id": 10, "finished_level": 1, "queue_position": 0},
-        {"skill_id": 30, "finished_level": 9, "queue_position": 1},
-        {"skill_id": 0, "finished_level": 2, "queue_position": 3},
-        {"finished_level": 2, "queue_position": 4},
-    ]}]}
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "queue": [
+                    {"skill_id": 20, "finished_level": 3, "queue_position": 2},
+                    {"skill_id": 10, "finished_level": 1, "queue_position": 0},
+                    {"skill_id": 30, "finished_level": 9, "queue_position": 1},
+                    {"skill_id": 0, "finished_level": 2, "queue_position": 3},
+                    {"finished_level": 2, "queue_position": 4},
+                ],
+            }
+        ]
+    }
     queue = state.from_dict(raw).characters[0].queue
     assert [(e.skill_id, e.queue_position) for e in queue] == [(10, 0), (20, 2)]
 
 
 def test_queue_is_capped():
-    raw = {"characters": [{"character_id": 1, "queue": [
-        {"skill_id": n + 1, "finished_level": 1, "queue_position": n}
-        for n in range(state.MAX_QUEUE_ENTRIES + 50)]}]}
-    assert len(state.from_dict(raw).characters[0].queue) == \
-        state.MAX_QUEUE_ENTRIES
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "queue": [
+                    {"skill_id": n + 1, "finished_level": 1, "queue_position": n}
+                    for n in range(state.MAX_QUEUE_ENTRIES + 50)
+                ],
+            }
+        ]
+    }
+    assert len(state.from_dict(raw).characters[0].queue) == state.MAX_QUEUE_ENTRIES
 
 
 def test_scopes_are_deduped_and_non_strings_dropped():
-    raw = {"characters": [{"character_id": 1, "scopes": [
-        "a", "a", 7, None, "b"]}]}
+    raw = {"characters": [{"character_id": 1, "scopes": ["a", "a", 7, None, "b"]}]}
     assert state.from_dict(raw).characters[0].scopes == ("a", "b")
 
 
@@ -267,8 +321,7 @@ def test_a_naive_timestamp_is_read_as_utc():
     """Everything this package writes is UTC. A naive value can only come
     from a hand edit, and treating it as local time would shift an ETA by
     hours depending on the machine."""
-    raw = {"characters": [{"character_id": 1,
-                           "fetched_utc": "2026-08-24T10:30:00"}]}
+    raw = {"characters": [{"character_id": 1, "fetched_utc": "2026-08-24T10:30:00"}]}
     fetched = state.from_dict(raw).characters[0].fetched_utc
     assert fetched == datetime(2026, 8, 24, 10, 30, tzinfo=UTC)
 
@@ -303,8 +356,7 @@ def test_load_of_a_missing_file_is_empty_and_silent(tmp_path):
     assert warnings == []
 
 
-def test_a_missing_primary_with_a_good_bak_is_recovered_not_first_launch(
-        tmp_path):
+def test_a_missing_primary_with_a_good_bak_is_recovered_not_first_launch(tmp_path):
     """This is what save()'s rotate-then-swap leaves behind if the final
     os.replace(staging, path) fails or the process is killed between it and
     the rotate: a *.bak* with no primary. Without the FileNotFoundError
@@ -320,14 +372,12 @@ def test_a_missing_primary_with_a_good_bak_is_recovered_not_first_launch(
 
     loaded, warnings = state.load(target)
     assert loaded.selected_plan_name == "Good"
-    assert any("was missing" in w and "recovered" in w.lower()
-               for w in warnings)
+    assert any("was missing" in w and "recovered" in w.lower() for w in warnings)
     # And the recovery is durable: the primary exists again.
     assert target.exists()
 
 
-def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(
-        tmp_path):
+def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(tmp_path):
     """A genuinely absent pair -- no primary, no backup -- is first launch
     and must stay silent."""
     target = tmp_path / "eve_skills.json"
@@ -337,8 +387,7 @@ def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(
     assert not target.exists()
 
 
-def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(
-        tmp_path):
+def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(tmp_path):
     """The backup itself can be corrupt too. That is not first launch
     either -- the user should be told their roster could not be recovered,
     rather than silently handed an empty one as if nothing had ever been
@@ -356,7 +405,8 @@ def test_save_then_load_round_trips(tmp_path):
     target = tmp_path / "eve_skills.json"
     original = state.SkillsState(
         selected_plan_name="Interceptors",
-        characters=[state.Character(character_id=1, character_name="Aiga")])
+        characters=[state.Character(character_id=1, character_name="Aiga")],
+    )
     state.save(original, target)
     loaded, warnings = state.load(target)
     assert loaded == original
@@ -397,8 +447,7 @@ def test_a_corrupt_document_is_preserved_and_recovered_from_backup(tmp_path):
     assert len(preserved) == 1
 
 
-def test_recovered_state_is_re_persisted_so_a_second_load_still_finds_it(
-        tmp_path):
+def test_recovered_state_is_re_persisted_so_a_second_load_still_finds_it(tmp_path):
     """Mandatory correction 1 / TriffSkillsState.cs:118-119. _preserve_corrupt
     has already renamed the corrupt primary out of the way by the time
     recovery succeeds, so if load() does not immediately write the
@@ -454,8 +503,9 @@ def test_a_file_over_the_size_cap_is_treated_as_unreadable(tmp_path):
     place forever, re-read and re-rejected on every launch.
     """
     target = tmp_path / "eve_skills.json"
-    oversized = json.dumps({"selected_plan_name": "x" * (
-        state.MAX_STATE_FILE_BYTES + 1024)})
+    oversized = json.dumps(
+        {"selected_plan_name": "x" * (state.MAX_STATE_FILE_BYTES + 1024)}
+    )
     target.write_text(oversized, encoding="utf-8")
     loaded, warnings = state.load(target)
     assert loaded.characters == []
@@ -480,8 +530,9 @@ def test_an_oversized_primary_is_recovered_from_a_good_backup(tmp_path):
     # good backup in place before the primary is corrupted below.
     state.save(state.SkillsState(selected_plan_name="Good"), target)
     state.save(state.SkillsState(selected_plan_name="Good"), target)
-    oversized = json.dumps({"selected_plan_name": "x" * (
-        state.MAX_STATE_FILE_BYTES + 1024)})
+    oversized = json.dumps(
+        {"selected_plan_name": "x" * (state.MAX_STATE_FILE_BYTES + 1024)}
+    )
     target.write_text(oversized, encoding="utf-8")
 
     loaded, warnings = state.load(target)
@@ -515,8 +566,7 @@ def test_a_failed_recovery_write_back_does_not_raise(tmp_path, monkeypatch):
     assert any("could not be saved back" in w for w in warnings)
 
 
-def test_two_corruptions_in_the_same_second_do_not_overwrite_each_other(
-        tmp_path):
+def test_two_corruptions_in_the_same_second_do_not_overwrite_each_other(tmp_path):
     """Mandatory correction 5. The preserved filename uses millisecond
     resolution so two corruptions within the same wall-clock second get
     distinct names -- a second-resolution stamp would silently make the
@@ -527,14 +577,14 @@ def test_two_corruptions_in_the_same_second_do_not_overwrite_each_other(
     state.load(target)
     target.write_text("nope again", encoding="utf-8")
     state.load(target)
-    preserved = sorted(p.name for p in tmp_path.iterdir()
-                        if ".corrupt-" in p.name)
+    preserved = sorted(p.name for p in tmp_path.iterdir() if ".corrupt-" in p.name)
     assert len(preserved) == 2
     assert preserved[0] != preserved[1]
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="POSIX mode bits; on Windows DPAPI does the work")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX mode bits; on Windows DPAPI does the work"
+)
 def test_the_document_is_owner_only_on_posix(tmp_path):
     """The file holds refresh tokens, so it wants owner-only permissions --
     but it must NOT be written with os.open(..., 0o600) the way
@@ -554,12 +604,10 @@ def test_the_document_is_owner_only_on_posix(tmp_path):
     os.chmod(target, 0o644)
     state.save(state.SkillsState(), target)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
-    assert stat.S_IMODE((tmp_path / "eve_skills.json.bak").stat().st_mode) \
-        == 0o600
+    assert stat.S_IMODE((tmp_path / "eve_skills.json.bak").stat().st_mode) == 0o600
 
 
-def test_preservation_failure_does_not_overwrite_a_good_backup(
-        tmp_path, monkeypatch):
+def test_preservation_failure_does_not_overwrite_a_good_backup(tmp_path, monkeypatch):
     """The Critical fix: _preserve_corrupt's own os.replace can fail (a
     concurrent handle, a permissions hiccup), leaving the corrupt content
     still sitting at *path*. If _recover_from_backup then called save()
@@ -595,8 +643,9 @@ def test_preservation_failure_does_not_overwrite_a_good_backup(
     # -- the actual assertion under test -- the good backup must still hold
     # the good roster, untouched by the recovery attempt.
     assert target.read_text(encoding="utf-8") == "{ this is not json"
-    backup_state = state.from_dict(json.loads(
-        (tmp_path / "eve_skills.json.bak").read_text(encoding="utf-8")))
+    backup_state = state.from_dict(
+        json.loads((tmp_path / "eve_skills.json.bak").read_text(encoding="utf-8"))
+    )
     assert backup_state.selected_plan_name == "Good"
 
 
@@ -628,10 +677,10 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too(tmp_path):
     assert loaded.selected_plan_name == "Good"
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="POSIX mode bits; on Windows DPAPI does the work")
-def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(
-        tmp_path):
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX mode bits; on Windows DPAPI does the work"
+)
+def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(tmp_path):
     """Split from the platform-neutral test above so Windows honestly
     reports this half as skipped rather than silently passing an
     assertion it cannot make good on: os.chmod on Windows only ever

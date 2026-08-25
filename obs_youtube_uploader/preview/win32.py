@@ -14,6 +14,7 @@ where sys.unraisablehook swallows it and Windows reads the falsy return as
 "stop". Design probing hit this twice -- on DefWindowProcW and again on
 SelectObject -- and both times the symptom appeared nowhere near the cause.
 """
+
 import ctypes
 from ctypes import wintypes
 from functools import lru_cache
@@ -91,20 +92,23 @@ LPARAM = ctypes.c_ssize_t
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
-                ("biHeight", ctypes.c_long), ("biPlanes", wintypes.WORD),
-                ("biBitCount", wintypes.WORD),
-                ("biCompression", wintypes.DWORD),
-                ("biSizeImage", wintypes.DWORD),
-                ("biXPelsPerMeter", ctypes.c_long),
-                ("biYPelsPerMeter", ctypes.c_long),
-                ("biClrUsed", wintypes.DWORD),
-                ("biClrImportant", wintypes.DWORD)]
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", ctypes.c_long),
+        ("biHeight", ctypes.c_long),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", ctypes.c_long),
+        ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    ]
 
 
 class BITMAPINFO(ctypes.Structure):
-    _fields_ = [("bmiHeader", BITMAPINFOHEADER),
-                ("bmiColors", wintypes.DWORD * 3)]
+    _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
 
 
 class POINT(ctypes.Structure):
@@ -116,28 +120,35 @@ class SIZE(ctypes.Structure):
 
 
 class BLENDFUNCTION(ctypes.Structure):
-    _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
-                ("SourceConstantAlpha", ctypes.c_ubyte),
-                ("AlphaFormat", ctypes.c_ubyte)]
+    _fields_ = [
+        ("BlendOp", ctypes.c_ubyte),
+        ("BlendFlags", ctypes.c_ubyte),
+        ("SourceConstantAlpha", ctypes.c_ubyte),
+        ("AlphaFormat", ctypes.c_ubyte),
+    ]
 
 
 class DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
-    _fields_ = [("dwFlags", wintypes.DWORD),
-                ("rcDestination", wintypes.RECT),
-                ("rcSource", wintypes.RECT),
-                ("opacity", ctypes.c_ubyte),
-                ("fVisible", wintypes.BOOL),
-                ("fSourceClientAreaOnly", wintypes.BOOL)]
+    _fields_ = [
+        ("dwFlags", wintypes.DWORD),
+        ("rcDestination", wintypes.RECT),
+        ("rcSource", wintypes.RECT),
+        ("opacity", ctypes.c_ubyte),
+        ("fVisible", wintypes.BOOL),
+        ("fSourceClientAreaOnly", wintypes.BOOL),
+    ]
 
 
 RECT = wintypes.RECT
 
 
 class MONITORINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD),
-                ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT),
-                ("dwFlags", wintypes.DWORD)]
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
 
 
 # Every ctypes callback object ever handed to Windows, kept alive forever.
@@ -151,21 +162,32 @@ _KEEPALIVE = []
 @lru_cache(maxsize=1)
 def wndproc_type():
     """WINFUNCTYPE does not exist off Windows, so build it on demand."""
-    return ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
-                              WPARAM, LPARAM)
+    return ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, WPARAM, LPARAM)
 
 
 @lru_cache(maxsize=1)
 def winevent_proc_type():
-    return ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD,
-                              wintypes.HWND, wintypes.LONG, wintypes.LONG,
-                              wintypes.DWORD, wintypes.DWORD)
+    return ctypes.WINFUNCTYPE(
+        None,
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.HWND,
+        wintypes.LONG,
+        wintypes.LONG,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
 
 
 @lru_cache(maxsize=1)
 def monitor_enum_proc_type():
-    return ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
-                              ctypes.POINTER(wintypes.RECT), LPARAM)
+    return ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HMONITOR,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        LPARAM,
+    )
 
 
 class Libs(NamedTuple):
@@ -201,50 +223,93 @@ def bind() -> Libs:
 
     d = [
         # --- window lifecycle
-        (user32, "CreateWindowExW", HWND,
-         [DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, DWORD, ctypes.c_int,
-          ctypes.c_int, ctypes.c_int, ctypes.c_int, HWND, wintypes.HMENU,
-          wintypes.HINSTANCE, ctypes.c_void_p]),
+        (
+            user32,
+            "CreateWindowExW",
+            HWND,
+            [
+                DWORD,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                DWORD,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                HWND,
+                wintypes.HMENU,
+                wintypes.HINSTANCE,
+                ctypes.c_void_p,
+            ],
+        ),
         (user32, "DestroyWindow", BOOL, [HWND]),
         (user32, "RegisterClassW", wintypes.ATOM, [ctypes.c_void_p]),
         (user32, "DefWindowProcW", LRESULT, [HWND, UINT, WPARAM, LPARAM]),
         (user32, "ShowWindow", BOOL, [HWND, ctypes.c_int]),
         (user32, "ShowWindowAsync", BOOL, [HWND, ctypes.c_int]),
-        (user32, "SetWindowPos", BOOL,
-         [HWND, HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-          UINT]),
+        (
+            user32,
+            "SetWindowPos",
+            BOOL,
+            [HWND, HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, UINT],
+        ),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
         (user32, "GetSystemMetrics", ctypes.c_int, [ctypes.c_int]),
         # Monitor geometry. GetSystemMetrics(SM_*VIRTUALSCREEN) gives only
         # the bounding rectangle; these two give the actual displays, which
         # is what placement has to be clamped against.
-        (user32, "EnumDisplayMonitors", BOOL,
-         [HDC, ctypes.POINTER(wintypes.RECT), MONITORENUMPROC, LPARAM]),
-        (user32, "GetMonitorInfoW", BOOL,
-         [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]),
-        (user32, "InvalidateRect", BOOL,
-         [HWND, ctypes.POINTER(wintypes.RECT), BOOL]),
+        (
+            user32,
+            "EnumDisplayMonitors",
+            BOOL,
+            [HDC, ctypes.POINTER(wintypes.RECT), MONITORENUMPROC, LPARAM],
+        ),
+        (
+            user32,
+            "GetMonitorInfoW",
+            BOOL,
+            [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)],
+        ),
+        (user32, "InvalidateRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT), BOOL]),
         # --- layered rendering
-        (user32, "UpdateLayeredWindow", BOOL,
-         [HWND, HDC, ctypes.POINTER(POINT), ctypes.POINTER(SIZE), HDC,
-          ctypes.POINTER(POINT), wintypes.COLORREF,
-          ctypes.POINTER(BLENDFUNCTION), DWORD]),
-        (user32, "SetLayeredWindowAttributes", BOOL,
-         [HWND, wintypes.COLORREF, ctypes.c_ubyte, DWORD]),
+        (
+            user32,
+            "UpdateLayeredWindow",
+            BOOL,
+            [
+                HWND,
+                HDC,
+                ctypes.POINTER(POINT),
+                ctypes.POINTER(SIZE),
+                HDC,
+                ctypes.POINTER(POINT),
+                wintypes.COLORREF,
+                ctypes.POINTER(BLENDFUNCTION),
+                DWORD,
+            ],
+        ),
+        (
+            user32,
+            "SetLayeredWindowAttributes",
+            BOOL,
+            [HWND, wintypes.COLORREF, ctypes.c_ubyte, DWORD],
+        ),
         (user32, "GetDC", HDC, [HWND]),
         (user32, "ReleaseDC", ctypes.c_int, [HWND, HDC]),
         # --- message pump
-        (user32, "GetMessageW", ctypes.c_int,
-         [ctypes.c_void_p, HWND, UINT, UINT]),
-        (user32, "PeekMessageW", BOOL,
-         [ctypes.c_void_p, HWND, UINT, UINT, UINT]),
+        (user32, "GetMessageW", ctypes.c_int, [ctypes.c_void_p, HWND, UINT, UINT]),
+        (user32, "PeekMessageW", BOOL, [ctypes.c_void_p, HWND, UINT, UINT, UINT]),
         (user32, "TranslateMessage", BOOL, [ctypes.c_void_p]),
         (user32, "DispatchMessageW", LRESULT, [ctypes.c_void_p]),
         (user32, "PostMessageW", BOOL, [HWND, UINT, WPARAM, LPARAM]),
         (user32, "PostQuitMessage", None, [ctypes.c_int]),
-        (user32, "SetTimer", ctypes.c_void_p,
-         [HWND, ctypes.c_void_p, UINT, ctypes.c_void_p]),
+        (
+            user32,
+            "SetTimer",
+            ctypes.c_void_p,
+            [HWND, ctypes.c_void_p, UINT, ctypes.c_void_p],
+        ),
         (user32, "KillTimer", BOOL, [HWND, ctypes.c_void_p]),
         # --- mouse capture
         (user32, "SetCapture", HWND, [HWND]),
@@ -255,34 +320,53 @@ def bind() -> Libs:
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
-        (user32, "GetWindowThreadProcessId", DWORD,
-         [HWND, ctypes.POINTER(DWORD)]),
+        (user32, "GetWindowThreadProcessId", DWORD, [HWND, ctypes.POINTER(DWORD)]),
         # --- hook, hotkeys, DPI
-        (user32, "SetWinEventHook", HANDLE,
-         [UINT, UINT, wintypes.HMODULE, WINEVENTPROC, DWORD, DWORD, UINT]),
+        (
+            user32,
+            "SetWinEventHook",
+            HANDLE,
+            [UINT, UINT, wintypes.HMODULE, WINEVENTPROC, DWORD, DWORD, UINT],
+        ),
         (user32, "UnhookWinEvent", BOOL, [HANDLE]),
         (user32, "RegisterHotKey", BOOL, [HWND, ctypes.c_int, UINT, UINT]),
         (user32, "UnregisterHotKey", BOOL, [HWND, ctypes.c_int]),
-        (user32, "SetThreadDpiAwarenessContext", ctypes.c_void_p,
-         [ctypes.c_void_p]),
+        (user32, "SetThreadDpiAwarenessContext", ctypes.c_void_p, [ctypes.c_void_p]),
         # --- GDI. SelectObject and CreateDIBSection return pointer-sized
         # handles; leaving restype at c_int truncates them on 64-bit and the
         # next call raises OverflowError somewhere unrelated.
-        (gdi32, "CreateDIBSection", wintypes.HBITMAP,
-         [HDC, ctypes.POINTER(BITMAPINFO), UINT,
-          ctypes.POINTER(ctypes.c_void_p), HANDLE, DWORD]),
+        (
+            gdi32,
+            "CreateDIBSection",
+            wintypes.HBITMAP,
+            [
+                HDC,
+                ctypes.POINTER(BITMAPINFO),
+                UINT,
+                ctypes.POINTER(ctypes.c_void_p),
+                HANDLE,
+                DWORD,
+            ],
+        ),
         (gdi32, "CreateCompatibleDC", HDC, [HDC]),
         (gdi32, "SelectObject", wintypes.HGDIOBJ, [HDC, wintypes.HGDIOBJ]),
         (gdi32, "DeleteObject", BOOL, [wintypes.HGDIOBJ]),
         (gdi32, "DeleteDC", BOOL, [HDC]),
         # --- DWM
-        (dwmapi, "DwmRegisterThumbnail", ctypes.c_long,
-         [HWND, HWND, ctypes.POINTER(HANDLE)]),
+        (
+            dwmapi,
+            "DwmRegisterThumbnail",
+            ctypes.c_long,
+            [HWND, HWND, ctypes.POINTER(HANDLE)],
+        ),
         (dwmapi, "DwmUnregisterThumbnail", ctypes.c_long, [HANDLE]),
-        (dwmapi, "DwmUpdateThumbnailProperties", ctypes.c_long,
-         [HANDLE, ctypes.POINTER(DWM_THUMBNAIL_PROPERTIES)]),
-        (dwmapi, "DwmIsCompositionEnabled", ctypes.c_long,
-         [ctypes.POINTER(BOOL)]),
+        (
+            dwmapi,
+            "DwmUpdateThumbnailProperties",
+            ctypes.c_long,
+            [HANDLE, ctypes.POINTER(DWM_THUMBNAIL_PROPERTIES)],
+        ),
+        (dwmapi, "DwmIsCompositionEnabled", ctypes.c_long, [ctypes.POINTER(BOOL)]),
         # --- kernel32
         (kernel32, "GetModuleHandleW", wintypes.HMODULE, [wintypes.LPCWSTR]),
         (kernel32, "GetCurrentThreadId", DWORD, []),

@@ -1,4 +1,5 @@
 """Pure geometry: no Windows, no Pillow, runs in CI on Linux."""
+
 import itertools
 
 import pytest
@@ -106,9 +107,9 @@ def test_default_stack_respects_a_negative_origin_screen():
 # Reproduces a real arrangement: a 4K primary at 192 DPI spanning y 0..2160,
 # with two 1440p monitors either side whose tops sit ~300px lower.
 REAL_MONITORS = [
-    g.Rect(3840, 291, 2560, 1440),    # right, y 291..1731
-    g.Rect(-2560, 306, 2560, 1440),   # left,  y 306..1746
-    g.Rect(0, 0, 3840, 2160),         # primary, the only one reaching y=0
+    g.Rect(3840, 291, 2560, 1440),  # right, y 291..1731
+    g.Rect(-2560, 306, 2560, 1440),  # left,  y 306..1746
+    g.Rect(0, 0, 3840, 2160),  # primary, the only one reaching y=0
 ]
 REAL_VIRTUAL = g.Rect(-2560, 0, 8960, 2160)
 
@@ -219,7 +220,6 @@ def test_defaults_stacked_on_a_monitor_are_fully_on_it():
         assert r.y >= mon.y and r.bottom <= mon.bottom, (i, r)
 
 
-
 def test_default_stack_on_the_real_arrangement_is_off_screen_without_clamping():
     """Regression for the bug this clamp exists to fix: the first defaulted
     preview lands 273px above the top of the only monitor beneath it."""
@@ -230,5 +230,4 @@ def test_default_stack_on_the_real_arrangement_is_off_screen_without_clamping():
 
 
 def _intersects(r, m):
-    return not (r.right <= m.x or r.x >= m.right
-                or r.bottom <= m.y or r.y >= m.bottom)
+    return not (r.right <= m.x or r.x >= m.right or r.bottom <= m.y or r.y >= m.bottom)

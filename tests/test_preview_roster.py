@@ -1,5 +1,6 @@
 """The roster of characters seen. Exists so a binding can be made for an
 alt that is not logged in right now."""
+
 from obs_youtube_uploader.preview import roster
 
 
@@ -28,7 +29,7 @@ def test_eviction_takes_from_the_stale_end():
     result = roster.touch(seen, "New", cap=64)
     assert result[0] == "New"
     assert len(result) == 64
-    assert "Char63" not in result       # the least recently seen
+    assert "Char63" not in result  # the least recently seen
     assert "Char0" in result
 
 
@@ -51,8 +52,10 @@ def test_an_all_protected_roster_grows_rather_than_dropping_a_binding():
 def test_deserialize_drops_malformed_entries():
     """Same posture as preview/layout.py: a hand-edited file costs one
     entry, not the launch."""
-    assert roster.deserialize(["Alice", 5, "", None, "hwnd:0x1",
-                               "Bravo"]) == ["Alice", "Bravo"]
+    assert roster.deserialize(["Alice", 5, "", None, "hwnd:0x1", "Bravo"]) == [
+        "Alice",
+        "Bravo",
+    ]
     assert roster.deserialize("nonsense") == []
     assert roster.deserialize(None) == []
 

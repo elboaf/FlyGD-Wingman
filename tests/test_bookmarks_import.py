@@ -1,6 +1,7 @@
 """Retiring the standalone script without importing its INI would discard
 every existing user's configuration, which -- since Wingman is meant to
 REPLACE the script -- is everyone, not an edge case."""
+
 from obs_youtube_uploader import bookmarks
 
 LEGACY = (
@@ -41,8 +42,7 @@ def test_binds_that_still_exist_are_carried_over():
 
 def test_window_enablement_is_carried_over():
     got = bookmarks.import_legacy_ini(LEGACY)
-    assert got["section"]["windows"] == {"EVE - Pilot": True,
-                                         "EVE - Alt": False}
+    assert got["section"]["windows"] == {"EVE - Pilot": True, "EVE - Alt": False}
 
 
 def test_copy_and_paste_are_reported_as_dropped():
@@ -58,8 +58,7 @@ def test_copy_and_paste_are_reported_as_dropped():
 def test_a_legacy_medium_hole_bind_is_reported_as_dropped():
     """Same construction as Copy and Paste: not in BIND_IDS, so the import
     loop drops it, and only this line stops that being silent."""
-    got = bookmarks.import_legacy_ini(
-        "[Keybinds]\r\nFinH=y\r\nFinM=^u\r\n")
+    got = bookmarks.import_legacy_ini("[Keybinds]\r\nFinH=y\r\nFinM=^u\r\n")
     assert "FinM" not in got["section"]["keybinds"]
     assert any(d.startswith("FinM ") for d in got["discarded"])
 
@@ -67,8 +66,7 @@ def test_a_legacy_medium_hole_bind_is_reported_as_dropped():
 def test_a_bind_that_was_never_set_is_not_reported_as_lost():
     """Naming Copy as discarded when the legacy file left it blank invents
     a loss, which is as misleading as hiding a real one."""
-    got = bookmarks.import_legacy_ini(
-        "[Keybinds]\r\nFinH=y\r\nCopy=\r\n")
+    got = bookmarks.import_legacy_ini("[Keybinds]\r\nFinH=y\r\nCopy=\r\n")
     assert not any(d.startswith("Copy ") for d in got["discarded"])
 
 
@@ -106,23 +104,24 @@ def test_losing_the_preface_is_described():
 
 
 def test_the_note_quotes_the_users_own_preface_character():
-    """"Your ! is gone" is no help to someone who had set it to @."""
-    got = bookmarks.import_legacy_ini(LEGACY.replace("ReturnPreface=!",
-                                                     "ReturnPreface=@"))
+    """ "Your ! is gone" is no help to someone who had set it to @."""
+    got = bookmarks.import_legacy_ini(
+        LEGACY.replace("ReturnPreface=!", "ReturnPreface=@")
+    )
     assert any("@" in n for n in got["notes"])
 
 
 def test_prefacing_already_off_matches_wingman_so_nothing_is_said():
-    got = bookmarks.import_legacy_ini(LEGACY.replace("PrefaceReturn=1",
-                                                     "PrefaceReturn=0"))
+    got = bookmarks.import_legacy_ini(
+        LEGACY.replace("PrefaceReturn=1", "PrefaceReturn=0")
+    )
     assert not any("preface" in n.lower() for n in got["notes"])
 
 
 def test_protean_is_the_one_thing_still_reported():
     got = bookmarks.import_legacy_ini(LEGACY.replace("Mode=2", "Mode=1"))
     assert any("Protean" in n for n in got["notes"])
-    assert not any("Protean" in n
-                   for n in bookmarks.import_legacy_ini(LEGACY)["notes"])
+    assert not any("Protean" in n for n in bookmarks.import_legacy_ini(LEGACY)["notes"])
 
 
 def test_import_never_enables_the_engine():
@@ -159,8 +158,7 @@ def test_a_byte_order_mark_does_not_suppress_a_setting():
 def test_windows_the_engine_could_never_match_are_reported():
     """generate_ini drops these on the next write; a loss the user is never
     told about is exactly what this function exists to prevent."""
-    got = bookmarks.import_legacy_ini(
-        "[Enabled]\r\nNotepad=1\r\nEVE - Ok=1\r\n")
+    got = bookmarks.import_legacy_ini("[Enabled]\r\nNotepad=1\r\nEVE - Ok=1\r\n")
     assert got["section"]["windows"] == {"EVE - Ok": True}
     assert any("Notepad" in d for d in got["discarded"])
 
@@ -174,6 +172,7 @@ def test_windows_the_engine_could_never_match_are_reported():
 # caller then saved over the user's real settings while reporting success.
 # These pin the decode, and the shape of the bug, so it cannot come back.
 
+
 def _encoded(text, encoding):
     return text.encode(encoding)
 
@@ -183,8 +182,7 @@ def test_utf16_le_with_bom_is_the_real_world_case():
     got = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
     assert got["section"]["keybinds"]["GrabSig"] == "q"
     assert got["section"]["keybinds"]["FinH"] == "y"
-    assert got["section"]["windows"] == {"EVE - Pilot": True,
-                                         "EVE - Alt": False}
+    assert got["section"]["windows"] == {"EVE - Pilot": True, "EVE - Alt": False}
     assert got["parsed"] is True
 
 
@@ -195,8 +193,7 @@ def test_utf16_be_with_bom():
 
 
 def test_utf8_with_and_without_a_bom():
-    for raw in (LEGACY.encode("utf-8"),
-                b"\xef\xbb\xbf" + LEGACY.encode("utf-8")):
+    for raw in (LEGACY.encode("utf-8"), b"\xef\xbb\xbf" + LEGACY.encode("utf-8")):
         got = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
         assert got["section"]["keybinds"]["GrabSig"] == "q"
 
