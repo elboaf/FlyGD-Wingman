@@ -1381,3 +1381,93 @@ def test_restyle_reclaims_the_thumbnail_band_when_labels_are_off():
             255,
         )
     ]
+
+
+def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
+    """Sweep once and return the on_activate the host handed the window,
+    alongside a log of the window_mod.activate calls it makes.
+
+    Goes through _sweep rather than calling _activate_client directly:
+    the wiring at the create() call site is the half that breaks. A
+    dropped or stubbed kwarg there leaves clicking a preview doing
+    nothing, and nothing else in the suite looks at it.
+    """
+    calls = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: calls.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    captured = {}
+
+    def fake_create(cls, *a, **k):
+        # Returns no window, as the other _sweep fakes in this file do:
+        # only the kwargs the host hands the window are under test.
+        captured.update(k)
+
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=client_hwnd)]
+    )
+    h._sweep(_FakeLibs(_FakeUser32()))
+    return captured["on_activate"], calls
+
+
+def test_the_host_performs_the_switch_a_clicked_preview_asks_for(monkeypatch):
+    """The window no longer activates; it reports the gesture. If the host
+    keeps handing it the old no-op stub, click-to-focus is dead and no
+    other test notices -- window.py's own tests only see the callback
+    fire, not what it does."""
+    on_activate, calls = _captured_on_activate(monkeypatch)
+
+    on_activate(_FakeClient("Alice", hwnd=0x1000))
+
+    assert calls == [0x1000]
+
+
+def test_the_hosts_activation_callback_switches_to_the_client_it_is_given(monkeypatch):
+    """It must follow its argument rather than anything captured at
+    creation: the roster is re-read every sweep, and the client record for
+    a key is replaced whenever it reappears on a new hwnd."""
+    on_activate, calls = _captured_on_activate(monkeypatch)
+
+    on_activate(_FakeClient("Bravo", hwnd=0x2222))
+
+    assert calls == [0x2222]
+
+
+def test_the_hosts_activation_callback_reports_whether_it_took(monkeypatch):
+    """window_mod.activate's verdict comes from GetForegroundWindow, and a
+    switch can be refused. Anything the host does after a switch has to be
+    able to tell -- dropping the bool here would make a refused switch
+    indistinguishable from one that worked."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: False)
+    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is False
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is True
+
+
+def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
+    """Both entry points must converge on _activate_client, or a step
+    added to the switch silently applies to only one of them."""
+    seen = []
+    monkeypatch.setattr(
+        host.PreviewHost,
+        "_activate_client",
+        lambda self, libs, client: seen.append(client.hwnd) or True,
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32(foreground=0)
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert seen == [0x1234]

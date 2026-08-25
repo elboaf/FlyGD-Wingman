@@ -453,7 +453,7 @@ class PreviewHost:
                 libs,
                 client,
                 rect,
-                on_activate=lambda c: None,
+                on_activate=lambda c: self._activate_client(libs, c),
                 on_rect_changed=self._layout_changed,
                 neighbours=lambda k=key: [
                     w.rect for k2, w in self._windows.items() if k2 != k
@@ -617,7 +617,23 @@ class PreviewHost:
             # never reaching the process at all.
             logger.debug("Preview hotkey target %r is not running", target)
             return
-        window_mod.activate(libs, client.hwnd)
+        self._activate_client(libs, client)
+
+    def _activate_client(self, libs, client) -> bool:
+        """Switch the foreground to *client*. Returns whether it took.
+
+        The single owner of the switch. Both entry points land here -- a
+        hotkey, and a click on a preview (PreviewWindow classifies the
+        gesture and calls this through its on_activate callback, rather
+        than activating on its own as it used to). Keeping one sequence
+        is what lets the host read the outgoing foreground before it
+        moves; a later step in the switch added here applies to both.
+
+        The bool is window_mod.activate's verdict, read from
+        GetForegroundWindow -- callers that do more work after the switch
+        need to know it actually happened.
+        """
+        return window_mod.activate(libs, client.hwnd)
 
     def _apply_alerts(self, libs, pending) -> None:
         """No-op for now -- rendering the alert on its preview window is

@@ -378,14 +378,23 @@ class _FakeLibs:
         self.user32 = User32()
 
 
-def _window_for_gestures(locked):
-    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+def _window_for_gestures(locked, on_activate=lambda c: None):
+    client = type(
+        "C",
+        (),
+        {
+            "character": "Pilot",
+            "title": "EVE - Pilot",
+            "hwnd": 1,
+            "stable_key": "Pilot",
+        },
+    )()
     libs = _FakeLibs()
     w = window.PreviewWindow(
         libs,
         client,
         Rect(100, 100, 320, 210),
-        lambda c: None,
+        on_activate,
         lambda *a: None,
         list,
         lambda: Rect(0, 0, 1920, 1080),
@@ -426,3 +435,60 @@ def test_an_unlocked_left_drag_still_moves():
     libs.cursor = (250, 260)
     w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
     assert w.rect == Rect(150, 160, 320, 210)
+
+
+def test_a_click_hands_the_switch_to_the_host_exactly_once(monkeypatch):
+    """The window classifies the gesture; the host performs the switch.
+
+    Both halves matter and both are plausible ways to break this. If the
+    window keeps calling activate() the switch happens twice and the host
+    reads a foreground that has already moved; if the callback is
+    dropped, clicking a preview silently does nothing at all.
+    """
+    activate_calls = []
+    monkeypatch.setattr(
+        window, "activate", lambda libs, hwnd: activate_calls.append(hwnd) or True
+    )
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == [w.client]
+    assert activate_calls == []
+
+
+def test_a_click_on_a_locked_preview_still_reaches_the_host(monkeypatch):
+    """A lock stops movement, not focus switching -- drag_result() says so
+    and the delegation must not quietly change that."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (400, 300)  # past DRAG_MIN: locked, so still a click
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == [w.client]
+
+
+def test_a_real_drag_release_reports_the_rect_instead_of_activating(monkeypatch):
+    """The other side of the classification: a moved preview must not also
+    steal the foreground on release."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+    reported = []
+    w._on_rect_changed = lambda *a: reported.append(a)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (400, 300)
+    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == []
+    assert len(reported) == 1

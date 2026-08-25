@@ -509,7 +509,13 @@ class PreviewWindow:
                     self._start, _cursor_pos(self._libs), self._start_rect, self.locked
                 )
                 if action == "activate":
-                    activate(self._libs, self.client.hwnd)
+                    # Classify, then hand off: the window does NOT call
+                    # activate() itself. The host owns the switch because
+                    # it is the only thing that knows the previous
+                    # foreground, the roster and the settings -- and it
+                    # has to know them BEFORE the foreground moves. When
+                    # both owned it, the host learned of a click only
+                    # after the switch was already over.
                     self._on_activate(self.client)
                     return 0
             self._on_rect_changed(self.client.stable_key, self.rect, self.locked)

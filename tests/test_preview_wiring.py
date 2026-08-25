@@ -747,6 +747,39 @@ def test_sc_minimize_is_present_and_documented():
     assert "show state" in src.lower()
 
 
+def test_the_preview_window_no_longer_owns_the_switch():
+    """The window classifies the gesture; the host performs the switch.
+
+    Both owned it once -- window.py called activate() and THEN fired the
+    host's callback, which was a no-op stub. The host therefore learned of
+    a click only after the foreground had already moved, which is exactly
+    the information the minimize-inactive-clients feature needs. Restoring
+    a second owner here would activate twice per click and put the
+    outgoing foreground out of reach again, with nothing user-visible to
+    show for it until someone reports keyboard input landing in the wrong
+    client.
+    """
+    import inspect
+    import re
+
+    from obs_youtube_uploader.preview import window as window_mod
+
+    src = inspect.getsource(window_mod.PreviewWindow._on_message)
+    # Comments stripped first: the handler's remaining comment explains
+    # the handoff by naming activate(), and the guard is about what the
+    # code does, not about what it is allowed to say.
+    code = "\n".join(
+        line for line in src.splitlines() if not line.lstrip().startswith("#")
+    )
+    # Bare `activate(`, not `self._on_activate(` -- the lookbehind rejects
+    # any word character (which includes the underscore) before it.
+    assert not re.search(r"(?<![\w.])activate\(", code), (
+        "PreviewWindow._on_message calls activate() again; the host owns "
+        "the switch (see PreviewHost._activate_client)"
+    )
+    assert "self._on_activate(" in code
+
+
 def test_sendmessagew_is_not_declared():
     """Bare `SendMessageW` blocks until the target window's queue processes
     the message, so a hung or still-loading EVE client would stall the
