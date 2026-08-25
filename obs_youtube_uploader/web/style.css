@@ -1100,7 +1100,30 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .settings .check + .hint,
 .settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
 
-/* "Connected" as a status PILL, not an oversized button. */
+/* "Connected" as a status PILL, not an oversized button.
+
+   The two have separate jobs, stated here because they were being used as
+   if either were optional:
+
+   .pill is the READOUT -- a word, plus exactly one severity token
+   (.ok / .warn / .err / .idle). Both pills in the app set that token from
+   JS on every update, so a pill is never severity-less in practice.
+
+   .led is the same severity made SCANNABLE. It takes its colour from the
+   pill via currentColor and pulses under .warn, so it is what lets a
+   reader take the state without reading the word. It is not emphasis and
+   not decoration.
+
+   Which means: a pill that carries a severity token and omits the .led
+   spends the token on tinting text and nothing else, and asks to be read
+   rather than glanced at. Today #auth-pill (Account) has one and
+   #es-eve-state (Profiles) does not, though both set .warn / .idle at
+   runtime. That is markup, so it is R3's to reconcile -- one <span
+   class="led"> -- not a restyle here.
+
+   Skills' green/grey square group markers are a third shape for the same
+   concept and live in that route's own block; out of reach from here and
+   R4's to weigh against this rule. */
 .pill {
   display: inline-flex; align-items: center; gap: 7px; flex: none;
   font-size: var(--fs-muted); color: var(--text-faint);
