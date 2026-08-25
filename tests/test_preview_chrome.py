@@ -4,6 +4,8 @@ Testing pixels directly is the point of moving off GDI+ -- these run in
 CI on Linux, where no Windows drawing API exists.
 """
 
+from pathlib import Path
+
 from obs_youtube_uploader.preview import chrome
 
 CYAN = (0, 200, 220, 255)
@@ -72,15 +74,45 @@ def test_degenerate_size_does_not_raise():
     chrome.render((4, 4), "P", border_color=CYAN)
 
 
+def test_font_path_prefers_the_frozen_location(monkeypatch, tmp_path):
+    """uploader.spec collects the fonts folder at destination "assets/fonts",
+    which lands it at bundle_dir() / "assets" / "fonts" in a frozen build --
+    NOT bundle_dir() / "obs_youtube_uploader" / "assets" / "fonts". A bare
+    Path(__file__) resolution disagreed with the spec by one path segment
+    and silently fell back to Pillow's default face in every shipped build."""
+
+    frozen_fonts = tmp_path / "assets" / "fonts"
+    frozen_fonts.mkdir(parents=True)
+    font_file = frozen_fonts / "Inter-Regular.ttf"
+    font_file.write_bytes(b"")
+    monkeypatch.setattr(chrome, "bundle_dir", lambda: tmp_path)
+
+    assert chrome._font_path() == font_file
+
+
+def test_font_path_falls_back_to_the_source_checkout_copy(monkeypatch, tmp_path):
+    """When bundle_dir() (a frozen build, or the repo root in a source
+    checkout) has no collected assets/fonts, the real source-tree location
+    beside this package is used instead -- the case every test and dev run
+    exercises."""
+
+    monkeypatch.setattr(chrome, "bundle_dir", lambda: tmp_path)
+
+    assert chrome._font_path() == (
+        Path(chrome.__file__).resolve().parent.parent
+        / "assets"
+        / "fonts"
+        / "Inter-Regular.ttf"
+    )
+
+
 def test_missing_font_is_logged_not_swallowed(monkeypatch, caplog):
     """The realistic cause is a frozen build that did not collect the font
     (uploader.spec's datas is enumerated by hand and PyInstaller exits 0
     when an entry misses). A silent fallback ships unlabelled previews
     with nothing in the log to explain them."""
-    import pathlib
-
     chrome._font.cache_clear()
-    monkeypatch.setattr(chrome, "FONT_PATH", pathlib.Path("/nonexistent.ttf"))
+    monkeypatch.setattr(chrome, "FONT_PATH", Path("/nonexistent.ttf"))
     with caplog.at_level("WARNING"):
         chrome.render((320, 210), "Pilot", border_color=CYAN)
     chrome._font.cache_clear()

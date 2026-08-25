@@ -12,11 +12,32 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ..paths import bundle_dir
+
 logger = logging.getLogger(__name__)
 
-FONT_PATH = (
-    Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Regular.ttf"
-)
+
+def _font_path() -> Path:
+    """Locate the bundled Inter face, mirroring paths.icon_file()'s two cases.
+
+    uploader.spec collects the fonts folder at the bundle root (destination
+    "assets/fonts"), so bundle_dir() / "assets" / "fonts" is the frozen
+    location. A source checkout has no such collection step, so bundle_dir()
+    (the repo root) is wrong there; the real file lives under this package's
+    own assets/ folder -- one level up from preview/.
+    """
+    frozen_candidate = bundle_dir() / "assets" / "fonts" / "Inter-Regular.ttf"
+    if frozen_candidate.exists():
+        return frozen_candidate
+    return (
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "fonts"
+        / "Inter-Regular.ttf"
+    )
+
+
+FONT_PATH = _font_path()
 LABEL_BG = (10, 14, 20, 235)
 LABEL_FG = (235, 240, 245, 255)
 # Opaque, and that is load-bearing rather than cosmetic. A layered window
