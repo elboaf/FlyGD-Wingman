@@ -80,7 +80,9 @@
      this one carries a legal obligation to be followed. It is a token
      rather than a hex in .linkish so the exception is declared in the one
      place colour is decided, and so a second outbound link cannot invent
-     a different blue. 7.4:1 on --panel, 7.7:1 on --bg. */
+     a different blue. Measured against the surfaces it actually lands on
+     after the purple retheme: 7.13:1 on a card's tinted top stop
+     (#191426), 7.19:1 on flat --panel, 7.72:1 on --bg. */
   --link: #7aa2f7;
 
   /* ---- type scale ----
