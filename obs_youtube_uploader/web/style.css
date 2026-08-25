@@ -663,6 +663,16 @@ button.btn:disabled,
   color: var(--text-faint); font-size: var(--fs-muted);
   line-height: 1.5; margin-top: 8px; user-select: text;
 }
+/* A .hint is the faintest tone the sheet has, which is right for an aside
+   and wrong for a failure. The bookmark engine reported "Stopped -- The
+   bookmark engine is missing from this installation" in exactly that tone,
+   directly under a TICKED `Register keybinds in EVE`, while the Alerts
+   card spent --warn on a benign "this is what the alert looks like" note.
+   Loud for the harmless one, faint for the broken one.
+
+   Same token and same shape as .field-msg.err and .row-error rather than a
+   fourth treatment -- the sheet already has one colour for this. */
+.hint.err { color: var(--err); }
 .linkish { color: var(--link); cursor: pointer; user-select: text; }
 .linkish:hover { text-decoration: underline; }
 
