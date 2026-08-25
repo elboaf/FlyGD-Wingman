@@ -204,13 +204,53 @@ def test_a_test_alert_refuses_an_unknown_event(tmp_path):
     assert result["error"]
 
 
-def test_a_test_alert_without_a_preview_host_is_refused(tmp_path):
+def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_path):
+    """N previews ringing must not mean N overlapping sounds -- _handle
+    plays one sound per dispatched event, and Test must match that."""
+    played = []
+    monkeypatch.setattr(alert_service, "play_sound", played.append)
+    host = FakePreviewHost(characters=["Alice", "Bob", "Carol"])
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"alerts": _alerts_section()}
+
+    api.test_alert("combat")
+
+    assert played == ["chime"]
+    assert len(host.raised) == 3
+
+
+def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tmp_path):
+    """Nothing was refused -- the sound genuinely fired -- so this is
+    applied: True with a plain-language explanation, never a silent
+    no-op and never applied: False."""
+    played = []
+    monkeypatch.setattr(alert_service, "play_sound", played.append)
     api = make_api(tmp_path)  # preview_host defaults to None
+    api._state.settings["preview"] = {"alerts": _alerts_section()}
 
     result = api.test_alert("combat")
 
-    assert not result["applied"]
-    assert result["error"]
+    assert result["applied"] is True
+    assert result["persisted"] is False
+    assert result["error"] == "Previews are off, so only the sound played."
+    assert played == ["chime"]
+
+
+def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
+    monkeypatch, tmp_path
+):
+    played = []
+    monkeypatch.setattr(alert_service, "play_sound", played.append)
+    host = FakePreviewHost(characters=[])  # host present, nothing named
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"alerts": _alerts_section()}
+
+    result = api.test_alert("combat")
+
+    assert result["applied"] is True
+    assert result["error"] == "Previews are off, so only the sound played."
+    assert played == ["chime"]
+    assert host.raised == []
 
 
 # ---- set_alert_event refuses what it does not own --------------------------

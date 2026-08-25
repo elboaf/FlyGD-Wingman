@@ -1964,17 +1964,30 @@ class Api:
 
     def test_alert(self, event) -> dict:
         """Fire one alert manually on every currently previewed character,
-        bypassing cooldowns entirely.
+        bypassing cooldowns entirely. Reaches the host directly rather
+        than through AlertService: the service owns the poll path, and
+        Test is not a poll.
 
-        NEVER persistent, regardless of persist_until_selected: the user
-        is looking at Wingman, not at a preview, so nothing would ever
-        select the client to acknowledge it -- a persistent test alert
-        would pulse until they alt-tabbed to that client by hand.
+        NEVER persistent, regardless of persist_until_selected -- always
+        `persisted: False`, on every path including success, since
+        nothing is ever saved here: the user is looking at Wingman, not
+        at a preview, so nothing would ever select the client to
+        acknowledge it, and a persistent test alert would pulse until
+        they alt-tabbed to that client by hand.
+
+        The sound plays exactly once regardless of how many previews are
+        open, matching AlertService._handle's one-sound-per-dispatched-
+        event behaviour -- N previews must not mean N overlapping sounds.
+
+        With no live preview to ring (previews off, host absent, or no
+        named clients), the sound still plays and this still reports
+        `applied: True`: the sound genuinely fired, so nothing was
+        refused, and a silent no-op here would be indistinguishable from
+        a broken feature. `error` carries the plain-language reason nothing
+        visual happened; the page renders it inline.
         """
         if event not in alert_patterns.EVENTS:
             return self._field_refused(f"Unknown alert event: {event}")
-        if self._preview_host is None:
-            return self._field_refused("Previews are unavailable.")
         events = (
             self._state.settings.get("preview", {}).get("alerts", {}).get("events", {})
         )
@@ -1983,8 +1996,15 @@ class Api:
         sound = spec.get("sound") or "none"
         if sound != "none":
             alert_service.play_sound(sound)
-        for character in self._preview_host.characters():
-            self._preview_host.raise_alert(character, event, spec)
+        characters = self._preview_host.characters() if self._preview_host else []
+        if not characters:
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": "Previews are off, so only the sound played.",
+            }
+        for character in characters:
+            self._preview_host.raise_alert(event=event, character=character, spec=spec)
         return self._field_ok(persisted=False)
 
     def get_alert_state(self) -> dict:
