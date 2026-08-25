@@ -367,6 +367,12 @@ Packaging lives in [`packaging/`](packaging/) (PyInstaller spec and Inno Setup
 script). Manual pre-release verification steps are in
 [`docs/smoke-checklist.md`](docs/smoke-checklist.md).
 
+CI reports on every pull request but does not *gate* one until branch
+protection is configured, which is a repository setting and cannot be
+committed. The procedure is in
+[`docs/branch-protection.md`](docs/branch-protection.md) — until it is
+applied, a pull request with a red Windows leg is still mergeable.
+
 ## Support
 
 - Bugs and feature requests:

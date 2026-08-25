@@ -30,7 +30,25 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # "/" is a special case for this ecosystem, and a narrow one: it means
+    # .github/workflows/ plus a ROOT-LEVEL action.yml, and nothing else. It
+    # does not recurse. Without the second path below, the setup-uv pin
+    # inside .github/actions/build-installer/action.yml would never be
+    # bumped -- frozen forever, with no update path and nothing saying so,
+    # in the file that IS the release build chain.
+    #
+    # `directories` supports globbing; `directory` does not. The glob also
+    # covers any composite action added later, which matters because the
+    # failure here is silent -- it should not depend on someone remembering
+    # to add a path.
+    #
+    # Unrelated and easy to confuse with the above: Dependabot ignores
+    # `uses: ./.github/actions/build-installer` in the workflows. Local
+    # path references are never bumped, which is correct. This is about the
+    # owner/repo@<sha> reference INSIDE the composite file.
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
     groups:

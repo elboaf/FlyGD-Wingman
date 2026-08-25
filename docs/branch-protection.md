@@ -130,6 +130,31 @@ thing you actually care about.
 
 Delete the test afterwards.
 
+## What this does not cover
+
+Worth knowing, because applying this document correctly can leave you
+believing CI now gates everything. It does not.
+
+**The release path is not gated by any ruleset.** `release.yml` fires on
+`push: tags: ["v*"]`, and a branch ruleset never sees a tag push. What
+protects a release is the `needs: test` edge inside `release.yml` itself —
+`build` cannot start until the suite passes, and `Publish` cannot run
+until `build` succeeds. That is real protection, but it lives in the
+workflow, not here, and nothing in this ruleset reinforces it.
+
+**A Dependabot actions bump goes green without executing the action.**
+`ci.yml` validates pull requests, and it never runs the composite build
+action — it only greps its text. `build.yml` is `workflow_dispatch`-only
+and `release.yml` is tag-only, so neither fires on a pull request. A PR
+bumping `softprops/action-gh-release`, `actions/upload-artifact`, or the
+`setup-uv` pin inside the composite action will be fully green having
+exercised none of them. The first real execution is `git push --tags`.
+
+That is why auto-merge is off, and why an actions bump is worth running
+`build.yml` against by hand before merging — `Actions → Test build → Run
+workflow`, on the Dependabot branch. It takes a few minutes and it is the
+only thing between a bumped action and a release.
+
 ## If you change CI
 
 These names are a copy of `ci.yml`'s job names, kept in sync by hand.
