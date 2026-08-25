@@ -1,7 +1,7 @@
 """The Python/JavaScript bridge contract, checked lexically.
 
-This repo has no JavaScript test harness (webview-replatform-design.md:545),
-so nothing executes web/*.js and nothing would notice a push whose name the
+This repo has no JavaScript test harness
+(docs/history/webview-replatform-design.md:545), so nothing executes web/*.js and nothing would notice a push whose name the
 page refuses to register. `WM.handle` is deliberately strict -- it throws on
 a name absent from `WM.HANDLERS` (web/app.js) so a typo is caught at
 registration rather than becoming a silent no-op.

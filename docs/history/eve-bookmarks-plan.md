@@ -4243,7 +4243,7 @@ Under "License and affiliations":
 Released under the [MIT License](LICENSE).
 
 FFmpeg and AutoHotkey are bundled and are licensed under the GPL. See
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for versions, sources, and
+[THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) for versions, sources, and
 a written offer of source.
 ```
 

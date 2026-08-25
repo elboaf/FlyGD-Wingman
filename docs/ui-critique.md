@@ -18,10 +18,10 @@ EVE visibility gate, the status strip appearing on every route, the
 `gesture` / `alert_bookmarks` identifiers, the README screenshot, and
 anything `tests/test_page_conventions.py` enforces mechanically.
 
-**Relationship to `ui-layout-observations.md`:** that round's findings 1
-(no outer margins), 3 (centred headers over left data), 4 (column widths),
-5 (light dialog title bar), 6 (no typographic hierarchy) and 8 (bare status
-string) are addressed. Finding 2 — "the least-used control dominates" — is
+**Relationship to `docs/history/ui-layout-observations.md`:** that round's
+findings 1 (no outer margins), 3 (centred headers over left data), 4
+(column widths), 5 (light dialog title bar), 6 (no typographic hierarchy)
+and 8 (bare status string) are addressed. Finding 2 — "the least-used control dominates" — is
 **partly** addressed and reappears below in a different form: the
 Description box no longer takes the top 170px, but the panel that holds it
 is a hard 320px that never yields, which is a bigger problem at the real

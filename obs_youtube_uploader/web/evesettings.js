@@ -1,10 +1,10 @@
 /* FlyGD Wingman — the Profiles route (EVE settings copier).
  *
  * Deliberately dumb, for the same reason bookmarks.js is: this repo has no
- * way to test JavaScript (webview-replatform-design.md:545), so every
- * decision -- what is a valid target, what may be overwritten, what gets
- * backed up -- happens in Python. This file captures events, sends them,
- * and renders the answer.
+ * way to test JavaScript (docs/history/webview-replatform-design.md:545),
+ * so every decision -- what is a valid target, what may be overwritten,
+ * what gets backed up -- happens in Python. This file captures events,
+ * sends them, and renders the answer.
  */
 (function () {
   'use strict';

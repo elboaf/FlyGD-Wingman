@@ -2,8 +2,9 @@
  *
  * Deliberately dumb. Every decision about a key -- what it means, whether
  * it is legal, whether it collides -- happens in Python, because this repo
- * has no way to test JavaScript (webview-replatform-design.md:545). This
- * file captures events, sends them, and renders the answer.
+ * has no way to test JavaScript
+ * (docs/history/webview-replatform-design.md:545). This file captures
+ * events, sends them, and renders the answer.
  */
 (function () {
   'use strict';

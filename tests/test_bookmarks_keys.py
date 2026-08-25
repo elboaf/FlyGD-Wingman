@@ -1,6 +1,6 @@
 """The mapping lives in Python because the repo has no way to test JS
-(webview-replatform-design.md:545). These tests are what stands in for the
-browser tests we deliberately do not have."""
+(docs/history/webview-replatform-design.md:545). These tests are what stands
+in for the browser tests we deliberately do not have."""
 
 import pytest
 

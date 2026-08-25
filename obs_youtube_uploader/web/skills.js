@@ -3,8 +3,8 @@
  * Answers one question: who can fly this plan? Every judgement that
  * produces that answer -- readiness precedence, ETA, requirement state --
  * happens in Python's evaluator, because this repo has no way to test
- * JavaScript (webview-replatform-design.md:545). This file groups, sorts,
- * filters, and renders what Python already decided.
+ * JavaScript (docs/history/webview-replatform-design.md:545). This file
+ * groups, sorts, filters, and renders what Python already decided.
  *
  * The one derived value here is the plan rail's ready RATIO: Python sends
  * each plan's ready_count, and the denominator is characters.length, which
