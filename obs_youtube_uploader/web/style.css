@@ -989,6 +989,31 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
 
+/* The 4px 6px padding STAYS. This is the record of that decision, because
+   from one screen it looks like a bug.
+
+   First run's `Set this up later` reads about 6 CSS px right of the h1,
+   the prose and the field, which all share the card's content edge.
+   Measured, the button's BORDER BOX is already flush with them; only its
+   ink is inset, by this padding-left. Three measurements by two methods --
+   text-range origin and computed-box arithmetic -- agree on 6.0. (A
+   walkthrough capture reported 22 physical px, i.e. 11 CSS. That does not
+   reproduce and its cause is unknown; do not size anything to it.)
+
+   So the fix is optical rather than positional, and it belongs to the one
+   screen that wants it, not to this class:
+
+     - `padding-left: 0` is WRONG. :hover paints a background, so zeroing
+       one side leaves the hover rect hugging the glyphs on the left with
+       6px still clear on the right.
+     - `margin-left: -6px`, scoped to `.firstrun-actions .linkbtn`, is the
+       shape: symmetric padding, symmetric hover, ink on the column, and
+       the box overhangs into the card's own 28px padding rather than out
+       of the card.
+
+   Changing the padding here instead would move eighteen bookmark bind
+   rows, Skills' two link buttons and Profiles' `Change...`, none of which
+   anyone reported. */
 .linkbtn {
   background: none; border: 0; color: var(--text-faint);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
