@@ -270,6 +270,13 @@ def test_run_only_touches_the_tailer_it_was_given(tmp_path):
         stop_event.set()
         thread.join(timeout=2.0)
         assert not thread.is_alive()
+    # _ExplodingTailer raises AssertionError from inside the worker
+    # thread if _run ever touched it -- but _run's except clause catches
+    # that and records it via _record_error rather than letting it kill
+    # the loop or reach pytest, so the only way to actually observe it
+    # here is to read health() back, same as
+    # test_a_raising_poll_is_recorded_rather_than_killing_the_loop does.
+    assert s.health().last_error is None
 
 
 def test_reconcile_does_not_replace_a_wedged_thread(tmp_path):

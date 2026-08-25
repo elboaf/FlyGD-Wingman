@@ -161,6 +161,15 @@ class AlertService:
                     "Alert poll thread did not exit within %.1fs",
                     POLL_INTERVAL_S * 3,
                 )
+                # Same rationale as reconcile()'s wedged-join branch above:
+                # a thread that outlives this join is still running, and
+                # forgetting it here (self._thread already cleared above)
+                # would let the next reconcile() start a second poller
+                # alongside it. Restore it as authoritative so reconcile()
+                # keeps deferring until it actually exits.
+                with self._lock:
+                    if self._thread is None:
+                        self._thread = thread
 
     def health(self) -> Health:
         with self._lock:
