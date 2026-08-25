@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import discord, hotkeys, obsconfig, paths, stitch, watcher
+from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
 from .ui import api as api_mod
 from .ui import preflight
@@ -397,6 +397,52 @@ def build_preview_host(state, api_box):
         return None
 
 
+def build_alert_service(state, host):
+    """The gamelog alert poller, or None where it has nowhere to render.
+
+    `host` is the PreviewHost build_preview_host just returned, or None.
+    Alerts dispatch through `host.raise_alert` -- a None host (off
+    Windows, or when preview construction itself failed) has no window to
+    ring, so there is nothing this subsystem could do; return None rather
+    than build a poller whose on_alert callback would be missing.
+
+    Constructed unconditionally otherwise, alerts-enabled or not: like
+    PreviewHost, reconcile() -- not construction -- is what starts its
+    thread, called from Api once previews decide their own live state.
+    """
+    if host is None:
+        return None
+    from .alerts.service import AlertService
+
+    def folder():
+        # None unless previews are actually running AND a Gamelogs folder
+        # resolves. AlertService._wanted() has no way to see preview state
+        # on its own, so this composition is the whole of "no previews, no
+        # polling thread" -- and it is why shutdown_previews's reconcile()
+        # call (api.py) tears this down too: host.stop() flips
+        # host.is_running false before that reconcile() runs.
+        #
+        # host.is_running, not the persisted preview.enabled setting: the
+        # two agree everywhere except the moment of shutdown, and it is
+        # exactly that moment reconcile() has to answer correctly.
+        if not host.is_running:
+            return None
+        gamelogs = state.settings.get("gamelogs_dir")
+        return Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+
+    try:
+        return AlertService(
+            config=lambda: state.settings["preview"]["alerts"],
+            folder=folder,
+            on_alert=host.raise_alert,
+        )
+    except Exception:
+        # Same posture as build_preview_host: alerts are secondary, and a
+        # failure to construct the poller must not stop Wingman launching.
+        logger.exception("Alert subsystem unavailable")
+        return None
+
+
 def build_skills_controller(api):
     """The EVE skills controller, or None where it cannot be built.
 
@@ -493,7 +539,12 @@ def main() -> int:
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
     api_box = {}
-    api = api_mod.Api(state, preview_host=build_preview_host(state, api_box))
+    preview_host = build_preview_host(state, api_box)
+    api = api_mod.Api(
+        state,
+        preview_host=preview_host,
+        alerts=build_alert_service(state, preview_host),
+    )
     api_box["api"] = api
     # After construction, not through the constructor: the controller needs
     # the Api's own _push and _alert. Same shape, and same reason, as
