@@ -1688,3 +1688,26 @@ def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):
     # Exactly the first character's two calls (skills + queue) happened;
     # the second character was never fetched.
     assert len(seen) <= 2
+
+
+def test_plan_text_renders_the_selected_plans_requirements(tmp_path):
+    """S7: the whole plan on the clipboard, because EVE drops the skills a
+    character has already trained on import -- so no per-character diffing
+    is needed and none is done here. Case-insensitive on the name, like
+    every other plan lookup."""
+    controller, _, _ = build(
+        tmp_path, plans={"Ishtar": "Navigation 4\nGallente Cruiser V\n"}
+    )
+
+    assert controller.plan_text("ishtar") == "Navigation IV\nGallente Cruiser V\n"
+
+
+def test_plan_text_is_empty_for_a_plan_that_is_no_longer_there(tmp_path):
+    """The page can hold a plan list a reload invalidated -- select_plan
+    documents the same race. "" is never "an empty plan": parse() rejects a
+    file with no requirements, so a listed plan always has at least one."""
+    controller, _, _ = build(tmp_path, plans={"Ishtar": "Navigation 4\n"})
+
+    assert controller.plan_text("Loki") == ""
+    assert controller.plan_text("") == ""
+    assert controller.plan_text(None) == ""

@@ -227,6 +227,38 @@ def test_duration_str_formats_minutes_and_seconds(tmp_path):
     assert info.duration_str == "2:05"
 
 
+def test_duration_str_is_the_shared_format_and_not_a_second_copy_of_it(tmp_path):
+    """It was a second copy, and it was the one with no hours field, so a
+    two-hour recording rendered "127:07" in the Length column."""
+    f = _touch(tmp_path / "a.mkv")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="7627", stderr="")
+
+    info = library.build_info(f, "ffprobe", runner=fake_run)
+    assert info.duration_str == library.format_duration(7627)
+    assert info.duration_str == "2:07:07"
+
+
+def test_format_duration_omits_the_hour_only_when_there_is_none():
+    assert library.format_duration(0) == "0:00"
+    assert library.format_duration(5) == "0:05"
+    assert library.format_duration(65) == "1:05"
+    assert library.format_duration(1027) == "17:07"
+    # The boundary in both directions: 59:59 keeps two fields, 1:00:00
+    # gains the third rather than rolling minutes past 60.
+    assert library.format_duration(3599) == "59:59"
+    assert library.format_duration(3600) == "1:00:00"
+    assert library.format_duration(360000) == "100:00:00"
+
+
+def test_format_duration_truncates_rather_than_rounding():
+    """ffprobe returns a float. A total that rounded up could print a
+    second the recording does not contain, and the selection summary sums
+    these before formatting."""
+    assert library.format_duration(59.9) == "0:59"
+
+
 def test_size_str_is_human_readable(tmp_path):
     f = _touch(tmp_path / "a.mkv", size=2048)
     assert library.build_info(f, None).size_str == "2.0 KB"

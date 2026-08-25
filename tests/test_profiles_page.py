@@ -139,12 +139,22 @@ def test_the_characters_accounts_switch_is_labelled():
 # ---- the settings-folder path joins the rest of the app ----------------
 
 
-def test_both_folder_paths_are_monospace_fields_on_the_shared_column():
-    """It was the one path in the app in the proportional face, the one row
+def test_both_folder_paths_are_values_and_not_input_lookalikes():
+    """Two findings in one row, and the second undid half of the first.
+
+    It was the one path in the app in the proportional face, the one row
     whose first element was off the shared label column, and it had no
     truncation -- so a long root pushed the Choose button toward the right
-    edge of a card already narrower than 620px at the window floor.
-    span.field's ellipsis is what the row was missing.
+    edge of a card already narrower than 620px at the window floor. The
+    fix was span.field.mono, which carried a mono face, the shared column
+    and an end ellipsis.
+
+    It also carried .field's INPUT costume -- fill, border, radius -- onto
+    a value that cannot be typed into: computed rgb(12, 10, 15), the same
+    fill as the real Filter... input below it and as the genuinely EDITABLE
+    #f-recdir one route away (round 3's P4). .es-path is the same row's
+    answer without the costume, so this asserts both halves: the path is on
+    the shared label column, in .es-path, and .es-path is not .field.
     """
     for ident in ("es-root", "es-folder-root"):
         # The label column and the path in one match: on this row they are
@@ -157,9 +167,83 @@ def test_both_folder_paths_are_monospace_fields_on_the_shared_column():
         )
         assert row, f"#{ident} is not a span on the shared label column"
         classes = row.group(1).split()
-        assert "field" in classes and "mono" in classes, (
-            f"#{ident} must be a span.field.mono: {row.group(1)}"
+        assert "es-path" in classes, (
+            f"#{ident} must be an .es-path value: {row.group(1)}"
         )
+        assert "field" not in classes, (
+            f"#{ident} is wearing the input treatment again: {row.group(1)}"
+        )
+
+    # The four things .field was carrying for a reason, none of which were
+    # about looking like an input. A .es-path that lost min-width or the
+    # ellipsis puts Profiles 7's row back to a long root pushing the one
+    # control on it off the right edge.
+    rule = re.search(r"\.es-path \{([^}]*)\}", CSS)
+    assert rule, ".es-path has no rule -- the paths render unstyled"
+    body = rule.group(1)
+    for prop in ("min-width", "text-overflow", "var(--mono)", "user-select"):
+        assert prop in body, f".es-path dropped {prop}: {body}"
+    for costume in ("border", "background", "var(--field)"):
+        assert costume not in body, (
+            f".es-path is wearing the input treatment again ({costume}): {body}"
+        )
+
+
+# ---- the gear's name does not appear inside the screen renamed off it --
+
+
+def test_no_card_heading_borrows_the_gears_own_name():
+    """Round 2's Profiles 8. DESIGN.md renamed the TAB away from "EVE
+    Settings" because a tab of that name beside a gear named "Settings"
+    describes the implementation -- and the cards kept the word, so the
+    gear's own name went on appearing twice inside the screen that was
+    renamed to avoid it.
+
+    The word is not banned: it is the user's own ("a settings change in one
+    character that I want to propagate"), and PRODUCT.md says to name
+    things the way they do. What is banned is the UNQUALIFIED form, which
+    is the gear's name. Settings > Folders disambiguates the same way --
+    "EVE gamelogs" beside "Recordings".
+    """
+    headings = re.findall(r"<h2>(.*?)</h2>", BODY, re.DOTALL)
+    assert headings, "the route has no card headings at all"
+    for heading in headings:
+        # The pill lives inside the folder card's h2; it is not part of the
+        # name and says "EVE closed" / "EVE running", which would satisfy
+        # the qualifier on its own.
+        words = re.sub(r"<[^>]*>.*", "", heading, flags=re.DOTALL).lower()
+        if "settings" not in words:
+            continue
+        assert "eve settings" in words, (
+            "a card heading uses the gear's own unqualified name: " + words
+        )
+
+
+# ---- the source is not the smallest control on the screen --------------
+
+
+def test_the_source_is_not_held_to_the_two_up_select_track():
+    """P3. `Copy from` decides what content overwrites every ticked
+    character and was the narrowest control on the screen -- 149 CSS px
+    against the filter's 432 -- because `.settings .row > select.field` is
+    a fixed 150px track written for the Server/Profile pair that shares a
+    row. `Copy from` is alone on its row and inherited a cap meant for
+    two-up.
+
+    An id override, so Server and Profile keep the fixed track. Asserted
+    here because the shared rule out-specifies any class this screen could
+    add, so the day the override is dropped the control silently goes back
+    to 150px with nothing else changing.
+    """
+    shared = re.search(r"\.settings \.row > select\.field \{([^}]*)\}", CSS)
+    assert shared, "the shared select track is gone; this override may be stale"
+    assert "flex:" in shared.group(1), shared.group(1)
+
+    rule = re.search(r"#es-source \{([^}]*)\}", CSS)
+    assert rule, "#es-source no longer overrides the shared fixed select track"
+    assert re.search(r"flex:\s*1\b", rule.group(1)), (
+        "the source must take the row's measure, not a fixed track: " + rule.group(1)
+    )
 
 
 # ---- the folder card collapses, and the pill does not go with it -------
@@ -189,7 +273,10 @@ def test_the_eve_pill_is_outside_the_half_that_collapses():
     assert "es-eve-state" not in summary
     detail = BODY[BODY.index("es-folder-detail") : BODY.index("es-warning")]
     assert "es-eve-state" not in detail
-    assert re.search(r"<h2>Settings folder<span id=\"es-eve-state\"", BODY), (
+    # Matched on the heading's SHAPE, not its words: what this test is
+    # about is that the pill sits in the h2 rather than in either face, and
+    # round 2's Profiles 8 renamed the heading underneath the old literal.
+    assert re.search(r'<h2>[^<]+<span id="es-eve-state"', BODY), (
         "the pill must sit in the card heading, which neither face hides"
     )
 
@@ -374,10 +461,11 @@ def test_an_empty_dropdown_does_not_render_as_a_working_one():
 
 
 def test_change_is_a_button_not_a_link():
-    """Profiles 7. The summary row is a mono boxed path that looks
+    """Profiles 7. The summary row was a mono boxed path that looked
     interactive and is not, dim static text, and then the only thing on it
     that acts -- which was link-styled, borderless, and no more prominent
-    than the text beside it.
+    than the text beside it. P4 took the box off the path; this rule is
+    about the other half, and it survives that on its own terms.
     """
     summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
     assert 'id="es-folder-edit" class="btn"' in summary, (

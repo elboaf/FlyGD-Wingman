@@ -306,22 +306,26 @@ somewhere stale and nothing on that screen is worth reviewing.
       be worse than reaching neither. Check the inline hint under a field
       and any refusal message line up with the field. (This item used to
       check a stacked collapse that the window cannot reach; see above.)
-- [ ] **The bind rows collapse too.** Still at the floor, open Settings >
+- [ ] **The bind rows are stacked, and the two lists agree.** Open Settings >
       Bookmarks and read the keybind list, then Settings > Previews. Expected:
       each action or character name on its own line with its keybind button,
-      Clear and Type... on the line below — "Convert EvE-Scout Bookmarks" and
-      "Finisher: C13 (shattered)" readable in one line each, not ragged over
-      three in a ~60px column.
-      This was a known gap for two releases. Both lists take the shared label
-      column away from their rows on purpose, with an ID selector
-      (`#eve-binds .row > .lab`, `#preview-binds .row > .lab`) — and ID
-      specificity also beat the collapse rule, which is written against
-      `.settings .row > .lab`. So the collapse skipped exactly the eighteen
-      rows with three trailing controls that needed it most, and `min-width: 0`
-      made them shrink rather than overflow, so nothing said so.
-      tests/test_page_conventions.py now requires any such override to restore
-      its own collapse. Above 720 CSS px the rows go back to name-left,
-      controls-right; widen the window and confirm that too.
+      Clear and Edit... on the line below — "Convert EvE-Scout Bookmarks" and
+      "Finisher: C13 (shattered)" readable in one line each. Then check the
+      thing this item exists for: **the keybind button starts at the same
+      distance from the card's left edge in both sections**, as do Clear and
+      Edit.... Do it at the floor AND at a comfortable width; the geometry
+      must not change with either.
+      Round 3's B1 is why. Each list was its own grid whose first column was
+      sized to that list's own longest label, so Bookmarks put the button
+      103.4 CSS px further right than Previews — and Previews' offset moved
+      between sessions, because it tracked whichever characters were logged
+      in. Stacking is the only shape that depends on no content. It is also
+      no longer conditional: it used to live in a `max-width: 720px` block
+      that the window can never reach (the floor is 840), so on the two
+      lists that most needed it the collapse never fired at all.
+      tests/test_page_conventions.py now requires the two grids to declare
+      the same columns and both names to take their own line, so a drift
+      fails the suite rather than waiting for a screenshot.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
@@ -340,6 +344,22 @@ somewhere stale and nothing on that screen is worth reviewing.
       `durations.json`, launch against a large folder, click Length while
       rows read "…". Pending rows sort together and each fills in where it
       sits — rows do NOT re-order under the cursor as results arrive.
+- [ ] **Sorting by Length puts an hour-long recording above a 59-minute
+      one.** Needs at least one recording over an hour, so it renders
+      `1:03:09` rather than `17:07`. list.js sorts this column by parsing
+      its own rendered cell, so a format it cannot parse does not fail
+      loudly — those rows silently sort as "not measured", down with the
+      `?` and `…` ones. Round 3 gave the format its hours field and
+      widened the parser in the same change; this is what notices if they
+      ever come apart again.
+
+      **Run this on a folder that has been opened before**, i.e. with
+      `durations.json` already holding these recordings — the opposite of
+      the item above. It is not a convenience: a cell filled in by a
+      probe completing during this run does not carry the format at all
+      (`onDuration` pushes a raw float, so the cell reads `3789`), and
+      that is a separate open defect. On a cold folder this item would
+      pass or fail on cache warmth rather than on what it means to check.
 - [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
       move with ↑/↓, press Space. Focus is visibly distinct from "checked",
       Space toggles exactly the focused row, and Space does NOT scroll. Then
@@ -369,7 +389,7 @@ somewhere stale and nothing on that screen is worth reviewing.
       accused every recording in the folder of being unreadable.
       **To see `—` on purpose:** run from a source checkout with no
       `packaging/bin/ffprobe.exe` fetched and no ffprobe on PATH. Every row
-      shows `—`, and the selection summary reads `0:00:00+` — the `+` is
+      shows `—`, and the selection summary reads `0:00+` — the `+` is
       required, because without it the line states a confident zero for a
       108.8 MB recording.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
@@ -436,6 +456,27 @@ somewhere stale and nothing on that screen is worth reviewing.
       path.
       At 150%, confirm a long path wraps inside the pane instead of running
       off the edge — a Windows path has no spaces to break at.
+- [ ] **The panel's empty-folder note reads as its own paragraph.** Same
+      empty folder, now look at the PANEL. Expected: "There are no
+      recordings in this folder yet…" with a clear blank line between it
+      and the `Title` label below. It used to sit exactly one line-pitch
+      above the label — measured 0px of margin — so `Title` read as the
+      paragraph's third line. The form stays rendered and typeable on
+      purpose (typing a title is an action that can be carried out); this
+      is spacing only.
+- [ ] **Neither field repeats its own label.** Look at `Title` and
+      `Description` with the panel empty. Expected: no placeholder text
+      inside either box. `Title` used to hold "Title for this upload"
+      under a card headed "This upload" and a label reading "Title" —
+      the same word three times. Optionality now sits on the
+      `Description (optional)` label, where it survives the field being
+      typed in.
+- [ ] **The stitch checkbox explains itself by being greyed out.** Select
+      one recording. Expected: `Stitch selected into one video` is greyed
+      and there is NO sentence under it. The old two-line hint sat between
+      the last field typed and the button clicked, stating a precondition
+      the greyed label already shows. With two selected the checkbox goes
+      live and there is still no sentence.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click
@@ -642,6 +683,31 @@ These cover the duration cache and the background probe. Do them against a
 folder with a realistic number of recordings (30+); the whole point is
 behavior that only shows up at size.
 
+- [ ] **The column headers sit over their own data — with the list long
+      enough to scroll.** Fill the folder with 30+ recordings so a
+      scrollbar appears, then compare each header's text with the column
+      under it. Expected: `Size` and `Length` right-align with their
+      numbers, and `Filename` with its names, to within about 2px (that 2
+      is `.list-row`'s own transparent left border, which is also what
+      marks a selected row).
+      **A short list is not a test of this.** The bug was the scrollbar
+      narrowing the scroller while the header, which sits outside it, kept
+      the full width — so with fewer rows than fill the pane it did not
+      reproduce at all, which is how a previous round measured it away.
+      Check both: the columns must not shift sideways as the folder grows
+      past the fold either.
+- [ ] **And at a wide window.** Same list, window dragged out to 1300px or
+      more. Expected: still aligned. This is a different cause with the
+      same symptom — the name column's cap is measured in `ch`, which
+      resolves per font, so a header set in a smaller face computed a
+      different maximum and parted company with its data only once the
+      column got wide enough to reach that cap.
+- [ ] **There is no `Modified` column at any width.** Expected: five
+      columns — the tick, `Filename`, `Size`, `Length`, `Link` — at every
+      window size, wide or at the floor. The recording's timestamp is in
+      its filename; the column printed it twice. Note what goes with it:
+      there is no longer a way to sort by file mtime, and the list's
+      default order (newest first) is what that control used to restore.
 - [ ] **Hovering an unreadable Length explains it.** Find a row showing `?`
       in the Length column and rest the pointer on that cell. Expected: a
       tooltip appears after a short delay saying ffprobe could not open the
@@ -652,7 +718,7 @@ behavior that only shows up at size.
       Run from a source checkout with no `packaging/bin/ffprobe.exe` and no
       ffprobe on PATH. Expected: every row shows `—`, NOT `?`, and hovering
       one says ffprobe was not found and that reinstalling restores
-      lengths. Select a row: the summary must read `0:00:00+` — with the
+      lengths. Select a row: the summary must read `0:00+` — with the
       `+`. Both halves shipped wrong until round 2, because a probe that
       reached no verdict was rendered identically to one that read the
       file and failed: every row accused its own recording, and the
@@ -721,13 +787,26 @@ behavior that only shows up at size.
 ## Combat logs
 
 - [ ] **No webhook configured.** Clear the Discord webhook field (or use a
-      fresh install), select a recording, and press **Upload** with **Also
-      post combat logs to Discord** ticked. Expected: the VIDEO uploads
-      normally, and the status strip finishes on an amber "Upload complete —
-      combat logs skipped: Enter a Discord webhook URL. Set it up in
-      Settings." There is NO dialog, and the video half is never blocked by
-      the Discord half being unconfigured — that regression is the whole
-      reason the two buttons could be merged.
+      fresh install), select a recording, and press **Upload**. Expected:
+      the VIDEO uploads normally and the status strip finishes on a green
+      `Uploaded "<your title>" to YouTube.` and **nothing about logs at
+      all**. There is NO dialog, no amber strip, and the video half is
+      never blocked by the Discord half being unconfigured — that
+      regression is the whole reason the two buttons could be merged.
+      The silence is deliberate and `Api._post_combat_logs` says why: with
+      the checkbox gone nobody *asked* for logs on this run, so reporting
+      them as "skipped" would put a warning on every upload a webhook-less
+      install ever performs. The fact belongs on the panel note, where it
+      is true all the time.
+      Configured-and-broken is the other half of that rule and does earn a
+      strip — `Uploaded "…" to YouTube. Combat logs skipped: … Set it up in
+      Settings.` in amber. Reaching it by hand needs a settings.json edited
+      outside the app, because the field below now refuses to store a
+      webhook that does not parse; `test_a_webhook_that_does_not_parse_
+      still_warns` is what actually holds that branch.
+      (This item used to claim the amber line for the EMPTY case and to
+      name a checkbox removed by Uploader 8. Both were wrong; corrected in
+      round 3's L7 while rewriting the string it quoted.)
 - [ ] **An invalid webhook URL is refused.** In Settings > Discord, paste
       a URL that is not a Discord webhook (e.g. `https://example.com/hook`,
       or `https://discord.com.evil.example/api/webhooks/1/x`) and press
@@ -767,11 +846,13 @@ behavior that only shows up at size.
       already set to the detected folder, rather than silently re-filling it.
 - [ ] **A normal successful upload.** Select one or more recordings from a
       real fight and press **Upload**. Expected:
-      the video uploads first, the strip says "Upload complete!", and then
-      it steps through "Collecting combat logs…" → "Building archive…" →
-      "Posting to Discord…" → a green "Posted \<name\>.zip (N KB)." message.
-      "Upload complete!" must NOT be the last thing said — a user who reads
-      it as the end will close the window mid-post.
+      the video uploads first, the strip says `Uploaded "<your title>" to
+      YouTube.`, and then it steps through "Collecting combat logs…" →
+      "Building archive…" → "Posting to Discord…" → a green
+      `Uploaded "<your title>" to YouTube. Posted \<name\>.zip (N KB).`
+      The upload line must NOT be the last thing said on its own — a user
+      who reads it as the end will close the window mid-post — and the
+      line that IS last still names the upload first (round 3, finding 13).
       In Discord, the message names the character(s) and file count, and
       the attached zip contains a `manifest.json` plus the `.txt` logs. The
       temp archive under `%LOCALAPPDATA%\...\tmp` is gone afterward.
@@ -788,7 +869,7 @@ behavior that only shows up at size.
 - [ ] **No readable duration (ffprobe missing/failed).** Rename
       `bin\ffprobe.exe` in the install directory, then select a recording and
       press **Upload**. Expected: the video
-      uploads, then an amber "…combat logs skipped: no readable duration for
+      uploads, then an amber "… Combat logs skipped: no readable duration for
       \<filename\>…" naming the specific recordings affected and mentioning
       ffprobe. No dialog. Restore the binary afterward.
 - [ ] **Uploading before the durations finish loading.** Delete
@@ -883,6 +964,16 @@ behavior that only shows up at size.
       not a valid Discord URL: the confirm parses it with the same
       function the upload half gates on, so a typo must read as skipped
       too, not as configured.
+- [ ] **The confirm's five values line up.** Same dialog. Expected: the
+      values after `Channel:`, `Privacy:`, `Title:`, `Total:` and `Logs:`
+      all start at the SAME x, and the `(set one in Settings)` second line
+      of the no-webhook branch starts there too. The separator is a tab,
+      not spaces, so this is also the check that Inter actually loaded: the
+      alignment rides on `tab-size` stops measured in the current font's
+      space width, and under a fallback face `Channel:` crosses into the
+      next stop and its value sits ~27 px right of the other four. A
+      staircase here means the bundled font is missing (the failure #72
+      fixed), not that the string is wrong.
 - [ ] **The confirm is honest before the first upload.** With no upload ever
       completed, confirm the Channel line reads "not known yet (learned from
       this upload)" rather than being blank. The app holds only the
@@ -968,7 +1059,52 @@ behavior that only shows up at size.
       from the "kill the network" case above — confirm Retry's state
       differs between the two.
 
+- [ ] **Stopping an upload says how much of it landed.** Start a batch of
+      three or four recordings and press **Cancel** while the second or
+      third is going up. Expected: the strip reads
+      `Stopped. 2 of 4 uploaded.` in amber, the bar stays where it got to
+      rather than resetting to 0, and **Retry does not appear** — a stop is
+      not a failure. Then check YouTube: the recordings that finished are
+      still there, and their rows still carry their `↗`. This is the whole
+      point of the wording. A message implying nothing happened would be
+      the opposite of what is true on the channel, and there is nothing
+      else on screen that says otherwise.
+      The stop is noticed at a 4 MiB chunk boundary, so on a fast link a
+      small file can finish before the cancel lands — use large recordings
+      or a throttled connection, and expect a beat between the click and
+      the strip changing.
+- [ ] **Cancel appears only while the upload is actually going, and takes
+      Retry's place.** Watch the slot beside **Upload** through a whole
+      job. Expected: at rest, `Retry` (disabled) and no Cancel; during the
+      upload, `Cancel` and no Retry; when it ends — successfully, by
+      failure, or by being stopped — Cancel is gone again. The two are
+      never on screen together.
+- [ ] **Cancel is NOT offered while a stitch is running.** Select two or
+      more recordings, tick **Stitch**, and press Upload. Expected: while
+      the strip reads `Stitching with FFmpeg…` there is no Cancel; it
+      appears only once the join is done and the upload of the merged file
+      begins. ffmpeg has no interruption seam here, and a Cancel that did
+      nothing for the minutes a join takes would be worse than none.
+- [ ] **A finished upload stops looking like an armed one.** Upload a
+      single recording and watch the PANEL, not the strip. Expected: the
+      selection clears, the summary returns to `Nothing selected`, and
+      **Upload goes inert**. Before round 3 the post-success screen was
+      near-identical to the pre-upload one — same `1 selected · … · …`
+      above a live, saturated button — and the only evidence of success
+      was a 14px grey arrow in the narrowest column. A stopped job must
+      NOT do this: the selection stays, because which files went and which
+      did not is exactly what matters then.
+
 ## Delete
+- [ ] **`Delete selected` is visibly the destructive one.** Look at the
+      four footer buttons together. Expected: `Delete selected` carries the
+      red outline and label (`.btn.danger`), and the other three do not.
+      It used to be pixel-identical to `Select all` beside it — four
+      buttons of equal weight, one of which destroys recordings. Profiles'
+      `Delete` is the reference; the two must match.
+- [ ] **It still confirms exactly once.** The treatment is appearance only.
+      Expected: one confirmation, naming every file, from Python's own
+      dialog — not two, and not the page's `WM.confirm`.
 - [ ] Confirmation dialog lists the correct filenames
 - [ ] Cancelling deletes nothing
 - [ ] Confirming removes the files and refreshes the list
@@ -1035,6 +1171,35 @@ response leaves a worker waiting forever, which presents as a hung upload.
 - [ ] **Status severity colours are distinguishable.** Force a red error, a
       green success and an ordinary status in one session. All three legible
       against the near-black ground and clearly different.
+- [ ] **LOAD-BEARING: a finished job does not follow you around.** Round 3's
+      finding 14: a green `Posted combatlogs-….zip (15 KB).` and a bar at
+      100% were still on screen in a capture of a *different folder with
+      zero recordings*, and again on Profiles and Skills. Complete one
+      upload, then click Skills, Profiles and the gear. The strip must read
+      **Idle** with an empty bar and no percentage on each, and stay Idle
+      when you come back. It clears on leaving the route, so the completion
+      is still there while you are looking at the folder it was about.
+- [ ] **LOAD-BEARING: a job still running is never cleared.** The opposite
+      case, and the reason this is not just "clear on every route change".
+      Mid-upload, click Skills and back: the percentage and the bar are
+      exactly where they were, still counting. Then the harder one —
+      **during a stitch**, which reports no progress at all and can go
+      minutes between pushes, so a cleared strip would leave the app looking
+      idle with nothing due to repaint it. Switch route mid-stitch: the bar
+      must still be animating and the text must still say
+      `Stitching with FFmpeg…`.
+- [ ] **A successful upload is announced as one.** Round 3's finding 13: the
+      strip used to end on `Posted combatlogs-….zip (15 KB).` — the words
+      *uploaded*, the title and *YouTube* appeared nowhere on the app's one
+      irreversible action. Upload one recording with a webhook configured:
+      the last line reads `Uploaded "<your title>" to YouTube. Posted
+      combatlogs-….zip (…).` Upload two without stitching: `Uploaded 2
+      recordings to YouTube.` — no title, because build_body numbers them
+      and there is no single name to give. With Stitch on, two recordings
+      are one video and the title comes back.
+- [ ] **A skipped log half still says the upload worked.** Point Gamelogs at
+      nothing and upload: `Uploaded "…" to YouTube. Combat logs skipped: …`
+      in amber, no dialog. The sentence must open with the upload.
 
 ## Release
 - [ ] **`uv.lock` carries the new version.** It records this project's own
@@ -1096,6 +1261,31 @@ only ever checked by hand.
       pane with no error anywhere. That silence is the failure mode: a
       handler that throws mid-module takes every registration below it with
       it, and the route loads as an inert copy of itself.
+- [ ] **An armed capture is purple-ringed, and its label is not purple.**
+      Click a keybind button so it reads "Press a key…". Expected: a purple
+      border and a lifted background, with the label in ordinary white
+      text. The label used to be `--brand-text` too, which measures 4.16:1
+      on that background and 3.99:1 with the pointer on it — both under
+      4.5:1, on the one control in the app that is asking to be read.
+      Pick a row with **no clash warning**: `.bindbtn.clash` is declared
+      below `.bindbtn.capturing` at equal specificity, so a row that is
+      both arms in the clash red rather than the brand purple. That is
+      pre-existing and unowned; it is called out here so this step is not
+      read as a failure on a colliding bind.
+- [ ] **A disabled control looks disabled and stays inert under the
+      pointer.** Hover each control the page switches off: `Upload` with
+      nothing selected, `Show` / `Remove` with no webhook configured,
+      `Continue` on first run before a folder is chosen. Expected: dimmed
+      to .45, no background lift, and the plain arrow cursor rather than
+      the hand.
+      Round 3's L5 moved four control classes onto one declaration; all
+      three sites above are `.btn`, so this is a regression check on the
+      one class that already had a treatment.
+      `.linkbtn` and `.bindbtn` gained one here and have **no disabled site
+      yet** — the first will be finding B2's `Clear` on a keybind reading
+      `Not set`, which lane R4 applies. When that lands, hover it: before
+      L5 those two classes had no disabled rule at all, so a dead one still
+      lit up.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
       reads "Press a key…", then WITHOUT pressing a key click **Folders** in
@@ -1671,13 +1861,41 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
 - [ ] **The folder card is one line on every visit after the first.** With a
-      folder already chosen, open the route. Expected: the Settings folder
-      card is a single row — `Folder`, the path, the server and profile, and
-      a `Change…` link — and the Copy settings card's target list is on
-      screen without scrolling. Press `Change…`: the folder, Server and
-      Profile controls appear. Leave the route and come back: it is one line
-      again. This is deliberate and not a bug — the collapse is what puts the
-      task on screen, so it is not remembered.
+      folder already chosen, open the route. Expected: the EVE settings
+      folder card is a single row — `Folder`, the path, the server and
+      profile, and a `Change…` button — and the Copy EVE settings card's
+      target list is on screen without scrolling. Press `Change…`: the
+      folder, Server and Profile controls appear. Leave the route and come
+      back: it is one line again. This is deliberate and not a bug — the
+      collapse is what puts the task on screen, so it is not remembered.
+- [ ] **Neither folder path can be clicked into.** Open the route with a
+      folder chosen, then press `Change…`. Expected: the path in both faces
+      of the card is monospace text on the card's own left edge, with no
+      fill, no border and no focus ring — click it and nothing happens and
+      nothing is focused. Compare it against Settings › Folders, where the
+      recording path in the same monospace face IS a text field you can
+      type into: the two must not look alike. Drag the window to the floor
+      with a deep root selected — the path ellipsises at its end and
+      `Choose folder…` and `Detect` stay on the row.
+- [ ] **`Copy from` is the widest control in its card.** With a folder
+      chosen, look at the copy card. Expected: the `Copy from` dropdown
+      spans the card's form measure — wider than the `Filter…` box below
+      it, which shares its row with `Select all` and `Clear`. It decides
+      what content overwrites every ticked character, and it used to be the
+      narrowest control on the screen.
+- [ ] **Widening the window adds roster columns, not gutter.** With a folder
+      chosen and a few dozen characters, put the window at the floor and note
+      how many columns of names the target list has and where `Copy to
+      selected` sits. Now drag the window much wider. Expected: the names
+      reflow into MORE columns and the button climbs; the folder card above
+      keeps its width and its left edge stays flush with the copy card's.
+      Round 3's P10 measured the opposite — every extra pixel became margin,
+      because Profiles wraps its route in the same `.settings` 620px wrapper
+      the eight Settings sections use, so the roster inherited a measure meant
+      for a label/field pair. D1 lifted the cap for the roster's card only:
+      the prose, the `Copy from` row and the filter row are all still held to
+      the old 586px measure on purpose, so a filter row narrower than the
+      roster beneath it is correct here, not a bug.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -1707,6 +1925,16 @@ so these are the checks that matter and only a Windows machine can run them.
       a settings set. It must be refused as outside the configured folder --
       containment resolves symlinks and junctions, and this is the one path
       Linux CI cannot exercise.
+- [ ] **Confirm Copy names both ends of the copy.** Select a source and one
+      target and press Copy, then read the dialog before answering.
+      Expected: the first line names the SOURCE character — "Copy Guarzo
+      Opper's settings onto 1 other character?" — and the line under it
+      names the target. Check the names match what the roster shows for
+      those two rows (both come from `Api._eve_label`, so a disagreement
+      means two producers have grown back). Then select more than six
+      targets: the dialog names the first six and says "and N more" — the
+      overflow must be stated, never a truncated list that reads as
+      complete. Choose No.
 - [ ] Copy one character onto three others with EVE closed. All three
       update; three auto-backups appear.
 - [ ] Copy with EVE running. It fails with "The file is in use. Close EVE
@@ -1905,6 +2133,20 @@ against a placeholder id; only these items are blocked on the registration.
       so the narrowed-rail states are unreachable through the window and
       840 is not "the one width where this layout was never in doubt", it
       is the only width there is.
+- [ ] **The row separators stop at the answer, not at the pane edge.** Widen
+      the window well past the floor and look at the character list. Expected:
+      every status sits in one column, and the hairline under each row ends a
+      short way past the longest status — the rest of the pane to its right
+      is plain background, with no rule running across it. Expand a row: the
+      requirement names and their states line up with the character names and
+      statuses above, and the wider window does not push either column right.
+      Round 3's S8: the pane is elastic and the content is not (the name
+      column is capped at 240px on purpose, because that is what the longest
+      EVE skill and character names need), so a full-width rule made the dead
+      space read as an unfinished table rather than as margin. The list now
+      takes its width from the row instead. If the statuses ever go ragged,
+      the cause is the name column being sized by `max-width` rather than by
+      `width` — the cap only aligns them while there happens to be room.
 - [ ] **The rail's plan-file actions still work where they now sit.**
       `Open plans folder` and `Reload plans` are link-style actions at the
       foot of the Plans block rather than buttons in a block of their own.
@@ -1932,6 +2174,55 @@ against a placeholder id; only these items are blocked on the registration.
       badge (if any), a re-authenticate banner placed above the
       requirements list (not interleaved with them), and the outstanding
       requirements list with any already-Active skills absent from it.
+- [ ] **Every number on the screen says what it counts** (round 3, S1).
+      A group head reads `Missing requirements   1 character`, not
+      `Missing requirements   1`. That number counts CHARACTERS while the
+      header names REQUIREMENTS, and the row below it and the plan heading
+      above it both state requirement counts — three numbers in one
+      vocabulary, previously two of them bare. Round 2's finding 2 renamed
+      the words and left the numbers, so check the numbers.
+- [ ] **No row repeats the heading it sits under** (round 3, S2). The rows
+      are grouped BY status, so a `Ready` group's rows say only a name, and
+      an `Untrained requirements` group's rows say only a name. The two
+      that still carry a value carry something the heading cannot: a
+      `Missing` row says `2 requirements` (which is also why its group
+      sorts fewest-first) and a `Training` row says the ETA alone,
+      `13h 25m` or `timing unknown`. The catch-all bucket is the deliberate
+      exception — its rows show the raw readiness string, because the
+      heading says `Unrecognised` for all of them.
+- [ ] **`Forget character` is a red-outlined button, not red text**
+      (round 3, S3/S4). It is the app's one destructive treatment, the same
+      one Profiles' `Delete` wears. The inline two-step below it is
+      unchanged and must stay: this row is the only place a character can
+      be forgotten or re-authenticated, so a dialog would cover it.
+- [ ] **LOAD-BEARING: a character's fetch line survives a second render**
+      (round 3, D3/S6). Expand a character that HAS been refreshed and
+      confirm it reads `Last fetched 5h ago`. Then cause any mutation that
+      pushes fresh state — press `Refresh characters`, or select a
+      different plan — and look again. It must still read a time. Until
+      D3's fix, the label was added by the `skills_state` method only, the
+      page asks for that on first entry only, and every render after the
+      first push printed `Never fetched` for every character, beside queue
+      timing from the same payload. Nothing in the suite renders the page
+      and the bridge contract test checks handler names rather than payload
+      shape, so this item is what stands between that and a release.
+- [ ] **A character with no snapshot explains itself and offers the fix**
+      (round 3, S6). Authorise a character and expand its row BEFORE any
+      refresh has landed. Expected: a note saying Wingman has not read its
+      skills from EVE yet, with a `Refresh characters` button in it — not a
+      bare `Never fetched` with the nearest control 700px away in the rail.
+      The requirement list under it must say `Not scored yet`, NOT `Nothing
+      outstanding — every requirement is trained and active`: the evaluator
+      returns an empty requirement list for a character it could not score,
+      and that congratulation is what the empty list used to read as.
+- [ ] **`Copy plan` puts the plan on the clipboard** (round 3, S7). With a
+      plan selected, press `Copy plan` on the pane heading and paste into a
+      text editor. Expected: one `Skill Name IV` line per requirement, in
+      roman numerals, in plan order — and the status strip says it was
+      copied. Then paste it into EVE's skill plan import and confirm the
+      game accepts it and drops the skills already trained (that is why the
+      whole plan is enough and no per-character diffing is done). With no
+      plan selected the button is disabled rather than absent.
 - [ ] **The two-step Forget cannot be triggered by one mis-click.** First
       click arms the control (it changes to a confirm state); a second,
       separate click is required to actually forget the character;

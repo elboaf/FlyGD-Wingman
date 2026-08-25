@@ -49,19 +49,49 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
         return "Nothing selected"
     total_size = sum(info.size for info in infos)
     total_seconds = int(sum(info.duration or 0.0 for info in infos))
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
     partial = "+" if any(not (info.probed and info.answered) for info in infos) else ""
     return (
         f"{len(infos)} selected · {library.format_size(total_size)}"
-        f" · {hours}:{minutes:02d}:{seconds:02d}{partial}"
+        f" · {library.format_duration(total_seconds)}{partial}"
     )
 
 
 def _hms(total_seconds: int) -> str:
-    hours, remainder = divmod(int(total_seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{seconds:02d}"
+    """Confirm Upload's Total, in the app's one duration format.
+
+    Kept as a name here rather than inlined at the call site because this
+    used to BE a second implementation, six lines below a third one in
+    format_selection_summary. Both now land on library.format_duration;
+    this stays only so the dialog reads as a dialog.
+    """
+    return library.format_duration(total_seconds)
+
+
+# A TAB, not a run of spaces, between a fact's label and its value.
+#
+# The dialog body renders in Inter (a proportional face) at
+# `white-space: pre-wrap`, so a fixed CHARACTER pad is not a fixed PIXEL
+# pad. These five labels used to be padded to ten characters each; measured
+# in the page, the values then started at five different x positions
+# spanning 16.7 CSS px, with label-to-value gaps of 7.3, 7.3, 14.6, 14.6
+# and 18.3 -- a column only in the source. `pre-wrap` honours a tab, and
+# CSS `tab-size: 8` puts stops on a grid of eight space-widths, so one tab
+# lands all five on one stop: measured rag 0.00.
+#
+# The catch, and it was accepted deliberately: the grid is measured in the
+# CURRENT font's space width, and all five labels align only because all
+# five happen to end inside the same stop interval. Under the fallback
+# stack (Inter absent) "Channel:" crosses into the next interval and the
+# rag becomes 27.0 -- worse than the 16.7 this replaces. Padding the short
+# labels does not help; the offender is the widest one. A column that
+# survives any font is a CSS property, not a string property, and belongs
+# in `.dialog .body`. This is the string half, chosen knowing that.
+_FACT_SEP = "\t"
+# Two tabs: a value sits on the SECOND stop (every label is wider than the
+# first), so a continuation line needs both to land under it. Coupled to
+# _FACT_SEP above by that fact, not by a coincidence -- if a label ever
+# became narrower than one stop, its value would move and this would not.
+_CONTINUATION = "\t\t"
 
 
 def format_upload_confirm(
@@ -133,16 +163,16 @@ def format_upload_confirm(
     posting = bool(discord.parse_webhook(discord_webhook)[0])
 
     if posting:
-        logs_line = "Logs:     combat logs posted to Discord afterwards\n"
+        logs = "combat logs posted to Discord afterwards"
     elif not discord_webhook.strip():
         # Stated as a fact about the install, not as a skipped request --
         # there is no checkbox to have ticked any more. It stays in the
         # dialog because this is a cost summary and the reader needs to
         # know the Discord half will not happen; the wording no longer
         # implies they asked for it and were refused.
-        logs_line = (
-            "Logs:     not posted — no Discord webhook is configured\n"
-            "          (set one in Settings)\n"
+        logs = (
+            "not posted — no Discord webhook is configured\n"
+            f"{_CONTINUATION}(set one in Settings)"
         )
     else:
         # Configured and unusable is NOT the same as never configured, and
@@ -154,9 +184,9 @@ def format_upload_confirm(
         # (empty stays silent, broken gets a WARNING strip). The two have
         # to agree: this dialog is read before the upload and that strip
         # after it, about one webhook.
-        logs_line = (
-            "Logs:     not posted — the Discord webhook is not valid\n"
-            "          (check it in Settings)\n"
+        logs = (
+            "not posted — the Discord webhook is not valid\n"
+            f"{_CONTINUATION}(check it in Settings)"
         )
 
     final = (
@@ -165,16 +195,41 @@ def format_upload_confirm(
         else "Publishing to YouTube cannot be undone from this app."
     )
 
+    # Built from pairs rather than written out as five f-strings, so the
+    # separator has one definition. The five used to carry their own pads
+    # (two, two, four, four, five spaces), which is how they drifted.
+    facts = [
+        ("Channel", where),
+        ("Privacy", privacy),
+        ("Title", titles),
+        ("Total", f"{library.format_size(total_size)} · {_hms(total_seconds)}"),
+        ("Logs", logs),
+    ]
     return (
         f"Upload {what} to YouTube?\n\n"
-        f"Channel:  {where}\n"
-        f"Privacy:  {privacy}\n"
-        f"Title:    {titles}\n"
-        f"Total:    {library.format_size(total_size)} · "
-        f"{_hms(total_seconds)}\n"
-        f"{logs_line}\n"
-        f"{final}"
+        + "".join(f"{label}:{_FACT_SEP}{value}\n" for label, value in facts)
+        + f"\n{final}"
     )
+
+
+def _whole_percent(value: float) -> int:
+    """Percent, rounded the way the progress bar rounds it.
+
+    `int(x + 0.5)` rather than `"{:.0f}"`, which is round-HALF-EVEN: at an
+    exact tie that prints 0% beside a bar reading 1%, which is the "one
+    number in two precisions" disagreement round 3's finding 17 recorded.
+    panel.js's `Math.round` is half-up and every percent the app renders
+    has to match it, not merely share its precision.
+
+    A function rather than the expression repeated at each call site: it is
+    repeated at two now (the upload strip and the quit confirm), and the
+    second was written with "{:.0f}" precisely because the rule lived in a
+    comment instead of in code.
+
+    Callers pass a PERCENT, not a fraction. Neither is ever negative, so
+    truncation toward zero is a floor.
+    """
+    return int(value + 0.5)
 
 
 def format_progress(index: int, total: int, fraction: float) -> str:
@@ -188,10 +243,44 @@ def format_progress(index: int, total: int, fraction: float) -> str:
 
     A single-file upload gets no "file 1 of 1", which would be noise.
     """
-    pct = f"{fraction * 100:.1f}%"
+    # Whole percent because the BAR is whole percent (panel.js's
+    # Math.round). On a single-file upload the two measure the same thing
+    # and sat about 500 CSS px apart reading "Uploading… 69.9%" beside a
+    # bar labelled "70%" -- one number in two precisions, which reads as a
+    # disagreement rather than as rounding. Mid-batch they legitimately
+    # differ in VALUE (this tracks the file, the bar tracks the batch);
+    # that is the point of the wording below, and it survives here.
+    #
+    # The rounding rule itself is _whole_percent's, shared with the quit
+    # confirm so a second surface cannot pick a different one.
+    pct = f"{_whole_percent(fraction * 100)}%"
     if total <= 1:
         return f"Uploading… {pct}"
     return f"Uploading file {index + 1} of {total}… {pct}"
+
+
+def format_upload_cancelled(uploaded: int, total: int) -> str:
+    """The strip line after the user stops an upload mid-batch.
+
+    The rule this exists to enforce: **never imply that nothing happened.**
+    The plain path links each video as it lands (Api._link), so a batch
+    stopped after two of four leaves two finished, public videos on the
+    channel. A bare "Upload cancelled" would tell the user the opposite of
+    what is true on YouTube, and the two rows already carrying a link are
+    the only other evidence on screen.
+
+    "Stopped", not "Cancelled": the user asked for this, so it is not an
+    error and does not take the ERROR kind. The count is always stated,
+    including the zero case, because "Stopped." alone re-introduces exactly
+    the ambiguity above.
+
+    `uploaded` counts items of THIS job that finished, which on a resumed
+    job includes the ones an earlier attempt completed -- they are on the
+    channel, and that is what the sentence is about.
+    """
+    if uploaded <= 0:
+        return "Stopped. Nothing was uploaded."
+    return f"Stopped. {uploaded} of {total} uploaded."
 
 
 def format_destination(channel_title: str, privacy: str) -> str:
@@ -392,17 +481,46 @@ def format_eve_copy_done(count: int, kind: str | None) -> str:
     return f"Copied to {count} {_copy_noun(count, kind)}."
 
 
-def format_eve_copy_confirm(count: int, kind: str | None, eve_running: bool) -> str:
+# How many targets Confirm Copy names before it stops naming them.
+#
+# NOT a layout bound, which is the guess worth heading off: measured in the
+# page at the 840x625 floor, the body is 221.5 CSS px at this cap and
+# 241.7 at eighteen, against a 46vh ceiling of 288 -- naming every target
+# of a 32-character copy would still not scroll. What the cap is for is
+# reading. The names are here to be CHECKED, and a wall of thirty-two is
+# checked by nobody; past a handful the count is what answers the question
+# they were printed to answer ("is this everyone?"). Raising it is safe
+# and is a product call, not a layout one.
+_COPY_NAME_CAP = 6
+
+
+def format_eve_copy_confirm(
+    target_names: list[str],
+    kind: str | None,
+    eve_running: bool,
+    source_name: str = "",
+) -> str:
     """The confirm shown before one profile's settings overwrite others.
 
-    Two things this says that its predecessor did not.
+    Three things this says that its predecessor did not.
+
+    It names what is being copied and what it lands on. The dialog listed
+    the count, the backup policy, the hazard and the irreversibility, and
+    omitted both ends of the action: "these settings" were some particular
+    character's and it did not say whose, and "1 other character" had a
+    name the dialog did not print. That is the one fact deciding whether
+    this is the right action -- am I copying FROM the character I actually
+    edited -- and it was the fact left out. The source is also the smallest
+    control on the screen, so both ends of the flow under-represented it.
 
     It counts what the user selected. The dialog said "3 other file(s)" at
     someone who had just ticked three character names -- the wrong noun and
     the "(s)" padding PRODUCT.md's tone rule rules out, in the last thing
     shown before an irreversible write. `kind` comes from the target paths
     (evesettings.tree.file_kind), not from a mode flag the page would have
-    to pass and keep in step.
+    to pass and keep in step. The count is now len(target_names) for the
+    same reason: a separately-passed count could disagree with the names
+    printed under it.
 
     It repeats the running-client hazard. The screen already renders a
     warn-toned "EVE running" pill precisely because EVE rewrites its own
@@ -415,6 +533,9 @@ def format_eve_copy_confirm(count: int, kind: str | None, eve_running: bool) -> 
     a false positive must not be able to lock a user out of their own
     profiles.
     """
+    names = [n for n in (target_names or []) if n]
+    count = len(target_names or [])
+
     running = ""
     if eve_running:
         running = (
@@ -423,11 +544,62 @@ def format_eve_copy_confirm(count: int, kind: str | None, eve_running: bool) -> 
             "what is copied now.\n\n"
         )
 
+    # "these settings" only when there is genuinely no name to print --
+    # an unresolved id already degrades to "Character 98123456" upstream,
+    # so this is the bridge-reachable case, not the offline one.
+    what = f"{source_name}'s settings" if source_name else "these settings"
+
+    listed = ""
+    if names:
+        shown = names[:_COPY_NAME_CAP]
+        # Counted against the TARGETS, not against the names: a target
+        # whose label came back empty is still being overwritten, and
+        # dropping it from both the list and the overflow would make six
+        # names under "8 other characters" the only trace of it.
+        rest = count - len(shown)
+        # Stated, never silently truncated: a confirmation that shows six
+        # of thirty-two names without saying so reads as the whole list.
+        joined = ", ".join(shown)
+        listed = f"{joined}, and {rest} more.\n\n" if rest > 0 else f"{joined}.\n\n"
+
     return (
-        f"Copy these settings onto {count} other {_copy_noun(count, kind)}?\n\n"
+        f"Copy {what} onto {count} other {_copy_noun(count, kind)}?\n\n"
+        f"{listed}"
         f"Each one is backed up first.\n\n"
         f"{running}"
         "This cannot be undone except by restoring a backup."
+    )
+
+
+def format_quit_confirm(pct: float) -> str:
+    """The confirm shown when tray Quit lands on a running upload.
+
+    Quit destroys the window, which returns from the GUI loop and ends the
+    process -- and the upload runs on a daemon thread, so it dies mid-chunk
+    with nothing on screen and no record. This is the sentence that turns
+    that silent discard into a decision.
+
+    Rounded to whole percent through `_whole_percent`, the same rule the
+    upload strip uses, so the two cannot disagree at a tie. This function
+    originally used "{:.0f}" -- round-half-even -- which is exactly the
+    second rendering rule lane L2 removed, reintroduced by a surface it
+    did not yet cover.
+
+    It says "the upload in progress", not "the upload": a multi-recording
+    job links each video as it lands (Api._upload_worker), so quitting at
+    60% of four files leaves the first two ON the channel. A dialog
+    claiming the whole upload is discarded would be wrong in exactly the
+    case where the user most needs to know what survived.
+
+    Nothing is said about YouTube needing a cleanup, because it does not:
+    the insert is resumable, and a session that never completes expires
+    without ever becoming a video.
+    """
+    return (
+        f"An upload is {_whole_percent(pct)}% complete. Quit anyway?\n\n"
+        "The upload in progress stops and will not appear on YouTube. "
+        "Anything already uploaded is unaffected, and no recording is "
+        "deleted from disk."
     )
 
 

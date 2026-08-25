@@ -176,6 +176,108 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
+def test_the_two_keybind_lists_render_the_same_row():
+    """Bookmarks and Previews build a keybind row from the same four
+    elements, and for two rounds they rendered it at two geometries.
+
+    Each list is its own grid, and the first track used to be max-content
+    over ITS OWN labels -- so the column was 189.6px in Bookmarks ("Convert
+    EvE-Scout Bookmarks") and 86.2px in Previews ("Cycle forward"), putting
+    the bind button 103.4 CSS px apart in two sections of one screen.
+    Previews' half of that is not even stable between sessions: the track
+    tracked whichever characters were logged in. Round 3's B1.
+
+    The fix was to stack the name above its controls in both, so the
+    geometry depends on no content at all. Nothing renders the page in this
+    suite, so what stops the two drifting apart again is this: the two
+    grids must declare control tracks of the same KIND and the same
+    flexible trailing track, and both must put the name on its own line.
+    Both halves are read out of the stylesheet rather than restated here,
+    so the test cannot disagree with the file about what the shared value
+    is -- only about whether it is shared.
+
+    THIS USED TO BE A BYTE-EQUALITY CHECK on the two templates, and it was
+    RELAXED DELIBERATELY -- it did not erode. Previews grew two
+    per-character controls, Lock and Never minimize, that Bookmarks has no
+    equivalent of, so the two templates now share a prefix and then
+    diverge: three control tracks against five. Byte equality could only
+    have been restored by giving Bookmarks two tracks holding nothing,
+    which would be a lie in the stylesheet about a row that has three
+    controls.
+
+    What matters is that byte equality was never the invariant, only a
+    proxy for it. B1 was the bind button sitting at two different offsets;
+    that offset is decided by `.lab { grid-column: 1 / -1 }`, asserted
+    below and untouched, which puts the name on its own line and starts
+    the control line at the container edge in both lists. Measured in the
+    ?dev=1 harness at 840x625 after the divergence: the bind button is at
+    offset 0 in BOTH, and the three shared control tracks compute
+    identically at 150 / 40.7969 / 42.4531px. So what is guarded here is
+    what is left -- the shared tracks must still be the same KIND of track
+    (a content-sized column, not one list switching to a fixed or
+    fractional one), and neither list may drop the trailing flexible track
+    that lets `grid-column: 1 / -1` reach the card's width instead of the
+    control tracks' width.
+    """
+    hosts = ("#eve-binds", "#preview-binds")
+
+    columns = {}
+    for host in hosts:
+        m = re.search(re.escape(host) + r" \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{host} has no rule block at all"
+        tracks = re.search(r"grid-template-columns:\s*([^;]+);", m.group(1))
+        assert tracks, f"{host} declares no grid-template-columns"
+        columns[host] = " ".join(tracks.group(1).split())
+
+    # Split each template into "how many control tracks", "of what kind",
+    # and "what trails them". Anchored and whole-string: a template this
+    # cannot parse fails here rather than being waved through, which is
+    # what stops the relaxation above from widening any further by
+    # accident.
+    shape = {}
+    for host in hosts:
+        m = re.fullmatch(r"repeat\((\d+),\s*([^)]+)\)\s+(.+)", columns[host])
+        assert m, (
+            f"{host} no longer declares its columns as `repeat(N, <kind>) "
+            f"<trailing>`, so this test can no longer tell whether the two "
+            f"lists still agree: {columns[host]!r}"
+        )
+        shape[host] = (int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+
+    bookmarks, previews = shape["#eve-binds"], shape["#preview-binds"]
+
+    assert bookmarks[1] == previews[1], (
+        "the two keybind lists size their control tracks differently, which "
+        f"puts their shared controls back at two geometries -- round 3's B1: "
+        f"{bookmarks[1]!r} vs {previews[1]!r}"
+    )
+
+    for host in hosts:
+        assert shape[host][2] == "minmax(0, 1fr)", (
+            f"{host} dropped the flexible trailing track, so its full-width "
+            f"name now reaches only as far as its control tracks instead of "
+            f"the card: {shape[host][2]!r}"
+        )
+
+    # Previews may carry MORE controls than Bookmarks -- Lock and Never
+    # minimize are per-character and Bookmarks has no character. It may not
+    # carry fewer: that would mean a control went missing from the row
+    # rather than being added to it.
+    assert previews[0] >= bookmarks[0], (
+        f"Previews declares fewer control tracks than Bookmarks "
+        f"({previews[0]} < {bookmarks[0]}), so a control its rows build has "
+        f"no column to sit in"
+    )
+
+    for host in hosts:
+        m = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{host} has no .lab override"
+        assert "grid-column: 1 / -1" in m.group(1), (
+            f"{host}'s name no longer takes its own line, so its bind button "
+            f"is back at an offset that depends on that list's own labels"
+        )
+
+
 # ---- the [hidden] trap -------------------------------------------------
 
 
@@ -376,7 +478,7 @@ def test_opening_a_dialog_disarms_an_armed_keybind_capture():
     Tab included. While these prompts were window.prompt it did not matter:
     a native OS dialog takes input outside the page. WM.prompt is an
     in-page field, so an armed capture swallows everything typed into it --
-    arm a capture on one bind, press Type… on another, and the dialog opens
+    arm a capture on one bind, press Edit… on another, and the dialog opens
     dead.
 
     previews.js always disarmed here; bookmarks.js did not, and the
@@ -391,3 +493,189 @@ def test_opening_a_dialog_disarms_an_armed_keybind_capture():
             assert "endCapture()" in before, (
                 f"{name} raises WM.prompt without disarming an armed capture first"
             )
+
+
+def test_no_colour_is_decided_outside_the_root_token_block():
+    """Every hex colour in style.css lives in :root.
+
+    DESIGN.md and CLAUDE.md have both stated this all along, and it was
+    broken the whole time: the vermilion-to-purple retheme moved --brand
+    and left 72 hex literals sitting in rules further down, so the tokens
+    went violet and the surfaces they describe did not. What that looked
+    like on screen was .list-head -- a `#101216` blue-grey band welded to
+    the top of a violet list, on the first screen the app opens (round 3,
+    finding 7). Nothing caught it, because nothing was looking.
+
+    The count is DERIVED, not retyped: the assertion is "none", so a new
+    literal fails here rather than drifting a number in a docstring.
+
+    Comments are already stripped from CSS at the top of this module, so a
+    literal QUOTED IN A COMMENT is fine and several are -- the notes on
+    --brand-text and --link name the values they are explaining.
+    """
+    root = re.search(r":root\s*\{(.*?)\n\}", CSS, flags=re.DOTALL)
+    assert root, "style.css has no :root block?"
+    rules = CSS[: root.start()] + CSS[root.end() :]
+    stray = re.findall(r"#[0-9a-fA-F]{3,8}\b", rules)
+    assert not stray, (
+        "colour decided outside :root: "
+        + ", ".join(sorted(set(stray)))
+        + " -- add a token instead (L1 owns :root; see finding 7)"
+    )
+
+
+def test_a_readiness_state_is_not_painted_in_the_error_colour():
+    """`Missing` / `Not trained` are facts about a character, not failures.
+
+    C2 settled this for `Unknown skill`; round 3's S3 found the same
+    mistake still shipping on five rules, where --err painted a readiness
+    state, a group swatch AND `Forget character` -- the control that
+    deletes the character -- in one colour, about 130 CSS px apart. The
+    readiness ramp now ends in --unmet and destructive controls carry
+    --danger, so no one token means all three.
+
+    The check is over every `.key-` / `.status-` / `.state-` rule there IS
+    rather than a list of names. R3's S2 deleted three of them -- the row
+    no longer restates its group, so `.status-Unknown`, `.status-Ready` and
+    `.status-Locked` paint nothing -- and a hand-kept list turns a correct
+    deletion into a failure that reads as "the classes moved". What must
+    hold is a property of the whole family, and the two rungs that were
+    actually wrong are pinned by name below.
+    """
+    painted = re.findall(r"\.((?:key|status|state)-\w+)\s*\{([^}]*)\}", CSS)
+    assert painted, "the readiness classes are gone entirely -- did they move?"
+    for cls, body in painted:
+        assert "var(--err)" not in body, (
+            f".{cls} paints a readiness state in --err; it belongs on --unmet"
+        )
+
+    # The two S3 named, on the two surfaces that still render them.
+    named = {cls for cls, _ in painted}
+    for cls in ("key-Missing", "key-Unknown", "state-Missing", "state-Unknown"):
+        assert cls in named, f".{cls} is gone -- did the readiness classes move?"
+
+
+def test_the_training_states_do_not_reuse_the_outbound_link_colour():
+    """--link means "this leaves the application" and nothing else.
+
+    After the purple retheme it was the only blue left, and the three
+    training states were a bare `#7aa2f7` -- which is EXACTLY --link's
+    value, so blue meant both "follow this out of the app" and "this skill
+    is queued", and the queued one is not clickable (round 3, S5). --link
+    could not move: it carries a legal obligation to be followed and its
+    own note says so. The states moved, to --training.
+    """
+    root = re.search(r":root\s*\{(.*?)\n\}", CSS, flags=re.DOTALL)
+    values = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", root.group(1)))
+    assert values["--training"].strip() != values["--link"].strip(), (
+        "--training and --link hold the same value again; that collision is S5"
+    )
+    for cls in ("key-Training", "status-Training", "state-Queued"):
+        rule = re.search(r"\." + cls + r"\s*\{([^}]*)\}", CSS)
+        assert rule, f".{cls} is gone -- did the training classes move?"
+        assert "var(--link)" not in rule.group(1), (
+            f".{cls} paints a training state in --link, the outbound-link token"
+        )
+
+
+# ---- the control vocabulary --------------------------------------------
+
+
+def test_every_action_control_shares_one_disabled_state():
+    """Round 3's B2 asked for one shared disabled state and found three
+    answers plus two omissions.
+
+    `.linkbtn` and `.bindbtn` had no `:disabled` rule at all, and their
+    `:hover` rules did not exclude `:disabled` either -- so a control the
+    page had switched off still lifted its background under the pointer
+    and still looked live. That is the exact state B2 wants `Clear` put
+    into on a keybind reading `Not set`, so the omission was on the path
+    of its own fix.
+
+    Both halves are checked: one declaration covers all four selectors,
+    and no hover rule for any of them can fire while disabled.
+    """
+    controls = ("button.btn", ".linkbtn", ".bindbtn", ".ctxmenu button")
+
+    disabled = [
+        block
+        for block in re.findall(r"([^{}]+)\{([^}]*)\}", CSS)
+        if all(f"{c}:disabled" in block[0] for c in controls)
+    ]
+    assert disabled, (
+        "no single rule disables all of "
+        + ", ".join(controls)
+        + " -- one disabled state means one declaration, not four"
+    )
+    body = disabled[0][1]
+    for prop in ("opacity", "cursor"):
+        assert re.search(rf"\b{prop}\s*:", body), (
+            f"the shared disabled rule does not set {prop}"
+        )
+
+    for control in controls:
+        hovers = list(
+            re.finditer(re.escape(control) + r"[^,{}]*:hover([^,{}]*)[,{]", CSS)
+        )
+        # Asserted rather than assumed: this loop is the whole second half
+        # of the check, and deleting the rule it inspects would otherwise
+        # make it pass by matching nothing -- which is precisely the state
+        # `.linkbtn` and `.bindbtn` were in when B2 was written.
+        assert hovers, f"{control} has no :hover rule left to check"
+        for hover in hovers:
+            assert ":not(:disabled)" in hover.group(1), (
+                f"{control}:hover can fire on a disabled control -- a dead "
+                f"button that lights up under the pointer is B2's own bug"
+            )
+
+
+def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
+    """`.btn.danger` is the ONE destructive treatment (round 3, B3/S4/P2).
+
+    Two failure modes, both already shipped elsewhere in this sheet.
+
+    The first is `button.btn.acc`'s hover trap. It is NOT a specificity
+    race -- `button.btn.danger:hover:not(:disabled)` is (0,4,1) against the
+    generic rule's (0,3,1), so it wins outright, and the sibling accent
+    test's source-order premise is over-stated for the same reason. What
+    actually bit was declaration coverage: a hover rule that names only
+    `background` lets the generic rule supply `color`, and --text on the
+    filled red is the failure. So only the declarations are asserted here.
+
+    The second is the vocabulary itself: `red text, no button` was retired.
+    L5 kept `.linkbtn.danger` alive for one site, R3 converted that site
+    (`Forget character`) and deleted the pair with it, so the rule now has
+    no exceptions -- any `linkbtn danger` in a page module re-opens S4.
+    """
+    danger = CSS.index("button.btn.danger:hover:not(:disabled)")
+    block = CSS[danger : CSS.index("}", danger)]
+    for prop in ("background", "color"):
+        assert re.search(rf"\b{prop}\s*:", block), (
+            f"button.btn.danger:hover must restate {prop}: the generic "
+            f"button hover rule sets it at the same specificity"
+        )
+
+    rest = re.search(r"button\.btn\.danger\s*\{([^}]*)\}", CSS)
+    assert rest and rest.group(1).count("var(--danger)") == 2, (
+        "button.btn.danger must take BOTH its border and its label from "
+        "--danger -- an outline in one red and a label in another is not a "
+        "treatment"
+    )
+
+    users = {
+        path.name
+        for path in sorted(WEB.glob("*.js"))
+        if "linkbtn danger" in _strip_js_comments(path.read_text(encoding="utf-8"))
+    }
+    # Was `users <= {"skills.js"}` while R3 was outstanding, with a note
+    # saying to tighten it to empty once that lane converted the site. R3
+    # did, so this is that tightening -- and the CSS half is checked too,
+    # because a rule with no users is an invitation to acquire one.
+    assert not users, (
+        "`red text, no button` is not in the control vocabulary; there is "
+        f"one destructive treatment and it is .btn.danger, but found: "
+        f"{sorted(users)}"
+    )
+    assert ".linkbtn.danger {" not in CSS, (
+        "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )

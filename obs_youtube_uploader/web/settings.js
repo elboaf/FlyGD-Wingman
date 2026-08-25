@@ -11,6 +11,15 @@
 
   var YOUTUBE_TOS_URL = 'https://www.youtube.com/t/terms';
 
+  // What changing a recording folder costs, stated before the click. The
+  // number belongs to the report set_folder sends back afterwards -- see
+  // _folder_note in ui/api.py -- because it depends on the folder chosen.
+  // Not "data loss": the recordings are still listed, they simply arrive
+  // unticked and unannounced.
+  var FOLDER_COST = 'Changing the recording folder starts watching it. '
+                  + 'Recordings already there won\u2019t be announced, and '
+                  + 'arrive unticked in the list.';
+
   var current = {};    // last settings dict from Python
   var detected = {};   // detected-folder suggestions from the same payload
   // Fetched once from Python rather than duplicated here: ui/copy.py's
@@ -73,8 +82,13 @@
                 + 'settings — it will not survive a restart.', 'warn');
         return;
       }
-      say(slot, '');
-      if (onOk) { onOk(); }
+      // A `note` is the endpoint reporting what the commit actually
+      // did, with a number no hint written beforehand could have had --
+      // set_folder's is the only one so far (round 3, B11). Neutral tone
+      // on purpose: it is not a warning, and it replaces any blur warning
+      // still sitting in the slot.
+      say(slot, res.note || '');
+      if (onOk) { onOk(res); }
     });
   }
 
@@ -159,18 +173,22 @@
     // The FIELD stays live -- it is the only route back out of the state
     // that disabled these two, which the helper's own comment forbids
     // closing off.
-    var configured = !!s.discord_webhook;
-    WM.setEnabled('btn-webhook-show', configured);
-    WM.setEnabled('btn-webhook-remove', configured);
-    // A revealed webhook that is then removed would leave `Hide` on a
-    // disabled button over an empty field.
-    if (!configured) { remask(); }
+    renderWebhook(payload.webhook_status, !!s.discord_webhook);
+    // Round 3, B11 and R4's finding 1. This slot used to explain what
+    // Detect READS, which is the least valuable thing on the card and was
+    // occupying the space the consequence needed. All three controls on
+    // these rows -- Enter, Browse and Detect -- perform the same rebind,
+    // so the sentence is written about the folder CHANGE rather than
+    // about any one of them; a hint framed around Enter aims at the only
+    // route that already warns on blur.
+    //
     // Detect is always offered, but say so when there is nothing to find.
-    WM.el('detect-note').textContent = (d.recording || d.gamelogs)
-      ? 'Detect reads the recording folder from OBS’s own config, and the '
-        + 'gamelogs folder from your EVE Online documents folder.'
-      : 'Detect found neither folder automatically — use Browse to pick '
-        + 'them yourself.';
+    // That half is a state report, not mechanism, so it survives -- after
+    // the consequence, which is true whichever way the folder gets set.
+    WM.el('detect-note').textContent = FOLDER_COST + ((d.recording || d.gamelogs)
+      ? ''
+      : ' Detect found neither folder automatically — use Browse to pick '
+        + 'them yourself.');
     // M2. Pushed from __version__ through the payload, never typed here. A
     // payload without the key leaves the em dash rather than painting
     // "undefined" -- the same tolerance app.js gives the titlebar copy, so
@@ -338,8 +356,17 @@
   webhook.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Enter') { return; }
     ev.preventDefault();
+    // Applied HERE, exactly as show-eve-tools does above and for the same
+    // reason: the per-field endpoints do not push, and get_settings is
+    // fetched once at page load. Without this the webhook persisted while
+    // the summary line kept reading `not configured` and Show/Remove
+    // stayed disabled until the next launch.
     commit('msg-discord', ['set_discord_webhook', webhook.value],
-           function () { setField('f-webhook', current.discord_webhook || ''); });
+           function () { setField('f-webhook', current.discord_webhook || ''); },
+           function (res) {
+             current.discord_webhook = webhook.value;
+             renderWebhook(res.webhook_status, true);
+           });
   });
 
   webhook.addEventListener('blur', function () {
@@ -347,9 +374,69 @@
     say('msg-discord', 'Press Enter to save this webhook.', 'warn');
   });
 
+  // Round 3, B12. This was the one destructive action in the app that
+  // asked nothing: one click, no undo, on a value the field is masking so
+  // the user cannot read what they are about to lose. The other five all
+  // confirm, through three different mechanisms.
+  //
+  // WM.confirm, NOT Api._confirm. clear_discord_webhook is a plain bridge
+  // method, so it runs on the pywebview thread -- the same thread that
+  // would have to deliver dialog_response -- and _confirm blocks waiting
+  // for it. That is a deadlock, and it is why `Reset keybinds` uses the
+  // overlay too (DESIGN.md's table of the three mechanisms).
+  //
+  // The dialog names WHICH webhook, because the field cannot: it is
+  // masked, and webhook-status is the only description of what is stored
+  // (ui/copy.py's webhook_status, which omits the token by construction).
+  // A confirm that says "the webhook" on a screen showing a row of dots
+  // asks the user to approve something they still cannot identify.
   WM.el('btn-webhook-remove').addEventListener('click', function () {
-    commit('msg-discord', ['clear_discord_webhook']);
+    // webhook_status() renders a PARSE ERROR for a stored value it cannot
+    // read, not only a description, so the line is interpolated as a name
+    // only when it is one. Dropping to "this webhook" loses nothing the
+    // dots on screen were telling the user anyway.
+    var status = WM.el('webhook-status');
+    var line = (status && status.textContent) || '';
+    var which = (line.indexOf('/api/webhooks/') !== -1) ? line : 'this webhook';
+    WM.confirm('Remove webhook',
+               'Combat logs stop being posted to ' + which + ' — and '
+             + 'Wingman cannot get the URL back. You would create a new '
+             + 'webhook in Discord and paste it here.')
+      .then(function (ok) {
+        if (!ok) { return; }
+        commit('msg-discord', ['clear_discord_webhook'], null,
+               function (res) {
+                 current.discord_webhook = '';
+                 setField('f-webhook', '');
+                 renderWebhook(res.webhook_status, false);
+               });
+      });
   });
+
+  // Both callers of this render the SAME two facts -- what is stored, and
+  // whether the two buttons can act -- so they share one function rather
+  // than one of them doing half of it. `status` is Python's
+  // copy.webhook_status and is never reconstructed here; a caller with
+  // nothing to say passes undefined and the line is left alone.
+  function renderWebhook(status, configured) {
+    if (status !== undefined) {
+      WM.el('webhook-status').textContent = status
+        || (configured ? '' : 'not configured');
+    }
+    // X1 / Settings 14. Show reveals nothing and Remove removes nothing
+    // when there is no webhook stored, and both rendered at full strength.
+    // The app already KNOWS neither can act from the state it is holding,
+    // which is exactly WM.setEnabled's rule.
+    //
+    // The FIELD stays live -- it is the only route back out of the state
+    // that disabled these two, which the helper's own comment forbids
+    // closing off.
+    WM.setEnabled('btn-webhook-show', configured);
+    WM.setEnabled('btn-webhook-remove', configured);
+    // A revealed webhook that is then removed would leave `Hide` on a
+    // disabled button over an empty field.
+    if (!configured) { remask(); }
+  }
 
   function remask() {
     webhook.type = 'password';
@@ -479,10 +566,17 @@
   //
   // What is actually wrong is that a dependent option is rendered as a
   // peer of the switch it depends on, with nothing saying so. So the row
-  // says so, in the same voice as INERT_NOTES' previews_off sentence one
-  // card below -- and only while it is true.
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
+  // says so, and only while it is true.
+  //
+  // Round 3, R4's finding 3: "Previews are off, so..." opened three
+  // sentences in one view, and the unticked switch two rows above says it
+  // a fourth time. This one is rendered ONLY while previews are off, so
+  // the state clause was carrying nothing the reader did not already have
+  // on screen -- what it has to say is when the setting starts mattering.
+  // The middle of the three is INERT_NOTES' previews_off, in ui/copy.py,
+  // which is not this lane's file; it is the one that still opens that
+  // way, deliberately left as the single statement of the state.
+  var DEPENDS = 'Applies when you turn previews back on.';
 
   // Read from the switch itself rather than cached from the payload. The
   // Enable checkbox lives in the block above and commits through its own

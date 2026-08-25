@@ -31,3 +31,10 @@ the decisions, the plan is the ordered task list that implemented them.
 
 Live documentation — the smoke checklist, UI walkthroughs, work lanes, branch
 protection — stays in `docs/`.
+
+One record is still read as a roadmap: `eve-preview-design.md` carries a
+"Deferred, in rough priority order" list, and previews are the one effort here
+that is not finished. Six of its statements have since gone stale — two of the
+features it lists as shipped were removed again in #31, and one it lists as
+deferred shipped in #65. **`docs/preview-roadmap.md` is the live list**; the
+record stays as written, per the rule above.

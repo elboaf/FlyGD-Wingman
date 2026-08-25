@@ -23,6 +23,7 @@ import itertools
 import pathlib
 import re
 
+from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
 
 WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
@@ -43,7 +44,7 @@ CSS = re.sub(r"/\*.*?\*/", "", CSS_RAW, flags=re.DOTALL)
 # Column order, as index.html's header spans declare it and list.js's
 # rowNode() builds it. The grid template is shared by both, so a track
 # count that disagrees with this wraps every row onto a second line.
-COLUMNS = ["c-check", "c-name", "c-date", "c-size", "c-len", "c-link"]
+COLUMNS = ["c-check", "c-name", "c-size", "c-len", "c-link"]
 
 
 def _media_blocks():
@@ -129,8 +130,36 @@ def _floor(track, name_floor):
     return int(track.rstrip("px"))
 
 
+# Custom properties resolved rather than re-declared: round 3 moved the
+# scrollbar width and .grid-row's padding into :root tokens, because three
+# rules have to agree on them (the scrollbar itself, .list-scroll's reserved
+# gutter and .list-head's matching padding) and a literal in any one of them
+# is how the header stops lining up with its data. This file's whole point
+# is deriving the geometry from the sheet, so it follows them there instead
+# of pinning a second copy of the number.
+_ROOT_VARS = dict(
+    re.findall(
+        r"(--[\w-]+)\s*:\s*([^;]+);",
+        re.search(r":root\s*\{(.*?)\}", BASE_CSS, re.DOTALL).group(1),
+    )
+)
+
+
+def _resolve(value):
+    """Substitute every var(--x) in a declaration with its :root value."""
+    seen = 0
+    while "var(" in value and seen < 10:
+        value = re.sub(
+            r"var\((--[\w-]+)\)",
+            lambda m: _ROOT_VARS[m.group(1)].strip(),
+            value,
+        )
+        seen += 1
+    return value
+
+
 def _px(value):
-    return int(value.rstrip("px"))
+    return int(_resolve(value).strip().rstrip("px"))
 
 
 def _int_in(text):
@@ -247,9 +276,15 @@ def test_the_layout_that_renders_at_the_floor_needs_exactly_the_floor():
         if ceiling is None or ceiling >= min_width
     ][-1]
     assert _viewport_needed(*at_floor) == min_width
-    # And the wider layout really is wider, so the tier above is a tier
-    # rather than a duplicate of this one.
-    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) > min_width
+    # And it is the BASE layout that lands there, not a tier stepping down
+    # to it. Round 3's finding 8 dropped Modified at every width, which
+    # removed the six-column layout that used to sit above this one -- so
+    # the widest thing the screen can render is also the thing that has to
+    # fit at MIN_WIDTH, and no width-driven column drop happens above the
+    # floor at all. If a wider tier is ever reintroduced, this is the
+    # assertion that has to be reconsidered rather than deleted.
+    assert at_floor == (BASE_TEMPLATE, BASE_PANEL)
+    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) == min_width
 
 
 def test_every_breakpoint_sits_where_the_filename_would_be_squeezed():
@@ -445,9 +480,20 @@ def test_stitch_is_inert_rather_than_absent_below_two_selected():
     that was declined: a control appearing and disappearing under the
     pointer is a new hazard on the one screen with a recorded mis-click,
     and the height it would have saved is paid for by the card merge and
-    the Delete move instead. Disabled says the same thing and stays put."""
+    the Delete move instead. Disabled says the same thing and stays put.
+
+    The two-line hint that used to sit under it is a separate question and
+    a separate answer: round 3's finding 3 deleted it, because it stated
+    the mechanism ("select two or more...") in the approach corridor to the
+    primary button, where with 0 or 1 selected it merely named the
+    precondition the greyed-out label already shows, and with 2 or more it
+    was redundant. The CONTROL stays put; the sentence beside it goes."""
     assert re.search(r"WM\.setEnabled\('f-stitch', selected > 1\)", PANEL_JS)
-    assert 'id="stitch-hint"' in HTML
+    assert 'id="stitch-hint"' not in HTML, (
+        "the stitch hint was deleted in round 3 (finding 3); a new one "
+        "needs its own reasoning, not this one's"
+    )
+    assert "stitch-hint" not in PANEL_JS
     # A box left ticked while inert would still be read at send time.
     assert re.search(r"selected < 2\) WM\.el\('f-stitch'\)\.checked = false", PANEL_JS)
 
@@ -531,37 +577,181 @@ def test_a_card_heading_no_longer_claims_the_brand_accent():
     assert re.search(r"\.list-row\.sel \.box\s*\{[^}]*var\(--brand\)", CSS)
 
 
-def test_modified_sheds_at_a_width_the_window_can_actually_reach():
-    """Uploader 6 and 11 as one fact. The timestamp is printed twice -- in
-    the filename and in Modified -- and it was the wider copy that got
-    destroyed, because the name track sat on a 120px floor while an OBS
-    filename needs 205px.
+def test_modified_is_gone_at_every_width():
+    """Uploader 6 and 11 as one fact, finished in round 3 (finding 8).
 
-    The tiers that would have dropped Modified sat at 767px and 607px,
-    which the floor correction puts permanently out of reach, so the
-    six-column layout was the only one that ever rendered. The drop now
-    happens above the floor, which means Modified is absent AT the floor
-    and present on any window wider than 931px.
+    The timestamp was printed twice -- in the filename and in Modified --
+    and it was the wider copy that got destroyed, because the name track
+    sat on a 120px floor while an OBS filename needs 205px. Round 2 widened
+    the track and dropped Modified at the floor; the A/B that shipped
+    reported nothing lost, because every recording OBS names embeds its own
+    timestamp, so round 3 dropped it everywhere.
 
-    Guarded by width rather than by tier index because the first attempt
-    got this wrong in a way only a render caught: the drop was written
-    against 839, which is the floor at 200% scaling ONLY, so 100% -- the
-    ordinary case on the ordinary machine -- still rendered six columns
-    with the filename truncated.
+    Asserted as an ABSENCE across all three surfaces rather than as a
+    hidden column, because that is what changed: there is no width at which
+    the app renders Modified, so a tier hiding it would be a tier hiding
+    something that does not exist. The column's own CSS rule went with it,
+    and so did the media query whose only job was to shed it.
+
+    What this deliberately does NOT assert: that `date` is gone from
+    list.js's comparator. It is reachable only through a header that no
+    longer exists, but Python still delivers rows in date order and the
+    comparator's `date` branch is what defines that order, so removing it
+    would change the default sort rather than retire a control.
     """
-    min_width = int(re.search(r"(?m)^MIN_WIDTH = (\d+)", WINDOW_PY).group(1))
-    tiers = _tiers()
+    assert "c-date" not in HTML
+    assert "c-date" not in LIST_JS
+    assert "c-date" not in CSS
+    # Five columns everywhere, and the header agrees with the row template.
+    assert len(_tracks(BASE_TEMPLATE)) == 5
+    for _, template, _, _ in _tiers():
+        assert len(_tracks(template)) <= 5
 
-    def hidden_at(width):
-        applying = [t for t in tiers if t[0] is None or t[0] >= width]
-        return applying[-1][3]
 
-    assert "c-date" in hidden_at(min_width), (
-        "Modified must be gone at the floor, which is where it destroys "
-        "the filename beside it"
+def _duration_regex():
+    """parseDuration's own regex, read out of list.js.
+
+    Scoped to the function body: parseSize four lines above it is also a
+    `var m = /^...$/.exec(String(text` and matched first when this was
+    written against the file as a whole.
+    """
+    source = re.search(r"/(\^.*?\$)/\.exec", _duration_body())
+    assert source, "parseDuration no longer parses its cell with a regex"
+    return re.compile(source.group(1))
+
+
+def _duration_body():
+    """parseDuration's body text, scoped so the two tests read one thing."""
+    body = re.search(
+        r"function parseDuration\(text\) \{(.*?)\n  \}", LIST_JS, re.DOTALL
     )
-    assert "c-date" not in hidden_at(1280), (
-        "and present at any comfortable width, where both fit"
+    assert body, "parseDuration is no longer where this test reads it"
+    return body.group(1)
+
+
+def test_the_length_sort_parses_every_string_the_duration_format_emits():
+    """list.js sorts Length by parsing its own rendered cell back out.
+
+    That coupling is the whole hazard: a format emitting a field the regex
+    rejects does not raise anywhere -- parseDuration returns -1, those rows
+    all compare equal at the bottom, and the column silently stops
+    sorting. Nothing renders the page in this suite, so this is the only
+    place it would be noticed.
+
+    Round 3 gave library.format_duration an hours field (a two-hour
+    recording used to render "127:07"), which the m:ss-only regex would
+    have rejected for exactly the recordings most worth sorting.
+
+    The regex is read out of list.js rather than restated here, and the
+    expected seconds come from format_duration's own input, so this fails
+    if either side moves alone.
+    """
+    pattern = _duration_regex()
+
+    for seconds in (0, 5, 65, 599, 1027, 3599, 3600, 3661, 7627, 360000):
+        rendered = library.format_duration(seconds)
+        m = pattern.match(rendered)
+        assert m, f"list.js cannot parse {rendered!r} ({seconds}s)"
+        hours, minutes, secs = m.groups()
+        parsed = (int(hours) * 3600 if hours else 0) + int(minutes) * 60 + int(secs)
+        assert parsed == seconds, f"{rendered!r} sorts as {parsed}s, not {seconds}s"
+
+
+def test_the_length_sort_weights_each_field_by_what_it_means():
+    """The arithmetic, not just the regex.
+
+    The test above transcribes parseDuration's sum into Python to check
+    it, which cannot catch a bug in the JS sum itself: simplify
+    `m[1] * 3600` to `m[1] * 60` -- an easy slip, since the next line
+    multiplies by 60 -- and the regex is untouched, the Python side does
+    its own correct arithmetic, every assertion passes, and 2:07:07 sorts
+    as 527 seconds, below a nine-minute recording.
+
+    So the multipliers are read out of the JS and checked against what
+    each captured field means. Group 3 is seconds and carries none.
+    """
+    body = _duration_body()
+    weights = {
+        int(group): int(mult)
+        for group, mult in re.findall(r"parseInt\(m\[(\d)\], 10\) \* (\d+)", body)
+    }
+    assert weights == {1: 3600, 2: 60}, (
+        "group 1 is hours and group 2 is minutes; group 3 is seconds and "
+        f"takes no multiplier. Found {weights}"
     )
-    # Nothing else is sacrificed to make room for it at the floor.
-    assert hidden_at(min_width) == {"c-date"}
+    assert "m[3]" in body, "the seconds group is no longer summed at all"
+
+
+def test_the_two_glyph_cells_still_sort_to_the_bottom():
+    """The widened regex must not start accepting "…", "?" or "—" as
+    measurements -- they are the absence of one, and parseDuration's -1 is
+    what they have to keep falling through to."""
+    pattern = _duration_regex()
+    for glyph in ("…", "?", "—", "", "1:2:3:4"):
+        assert not pattern.match(glyph), f"{glyph!r} is not a duration"
+
+
+def test_the_header_measures_its_columns_in_the_rows_own_font():
+    """Round 3, finding 1's second cause, and the subtler of the two.
+
+    `ch` in grid-template-columns resolves against the GRID CONTAINER's own
+    font, and the shared template caps the name track at 52ch. With
+    font-size on .list-head itself the header computed a 52ch that was
+    --fs-muted/--fs-body of the rows', so the moment the track reached that
+    cap the header's columns parted company with their data -- measured at
+    1280 CSS: name track 377.25 against 426.45, putting Size and Length
+    51.20px out.
+
+    Sharing one declaration is therefore NOT enough to make the header and
+    the rows agree; they must also measure it in the same font. The size
+    lives on the spans, which keeps the muted header text 2.2.0 chose while
+    leaving the box that measures the columns in the rows' own font.
+    """
+    assert "ch" in BASE_TEMPLATE, (
+        "if the name track stops being measured in ch, this whole invariant "
+        "is moot and the test should go rather than be worked around"
+    )
+    assert _decl(BASE_CSS, ".list-head", "font-size") == "var(--fs-body)"
+    assert _decl(BASE_CSS, ".list-head > span", "font-size") == "var(--fs-muted)"
+
+
+def test_the_header_reserves_exactly_the_gutter_the_scroller_reserves():
+    """Round 3, finding 1's first cause. The scrollbar is drawn inside
+    .list-scroll, so an overflowing list has a content box narrower than
+    .list-head, which sits outside it -- and .grid-row's name track is
+    elastic (52ch is a maximum it does not reach at these widths), so it
+    absorbed the difference and carried every column after it 10px left.
+    Measured on merged main with the list overflowing: +10.00 on Modified,
+    Size and Length at 1027, 900 and 836 CSS; 0.00 with the scrollbar
+    suppressed and the same rows in place.
+
+    Both halves are asserted because either alone re-breaks it: the gutter
+    must be reserved whether or not the list overflows, and the header must
+    reserve the same width as padding.
+    """
+    assert _decl(BASE_CSS, ".list-scroll", "scrollbar-gutter") == "stable"
+    reserved = _decl(BASE_CSS, ".list-head", "padding-right")
+    assert reserved == "calc(var(--row-pad) + var(--scrollbar-w))", (
+        "the header's reservation must be built from the same two tokens "
+        "the scrollbar and the row padding use, not from a third copy of 10"
+    )
+    # And the tokens really do resolve, so this is not two names agreeing
+    # on nothing.
+    assert _px("var(--scrollbar-w)") == SCROLLBAR == GRID_PAD
+
+
+def test_stopping_an_upload_shares_the_slot_it_cannot_be_live_beside():
+    """D5. Cancel and Retry are never live together -- Retry recovers from
+    a failure, Cancel stops a job still running, and no state is both. The
+    page enforces it by hiding each while the other shows, so an inert
+    Cancel never sits beside an inert Retry describing two states the panel
+    is not in."""
+    actions = HTML[
+        HTML.index('class="actions"') : HTML.index(
+            "</div>", HTML.index('class="actions"')
+        )
+    ]
+    assert 'id="btn-cancel"' in actions and 'id="btn-retry"' in actions
+    assert "hidden" in actions[actions.index('id="btn-cancel"') :]
+    assert re.search(r"onCancelAvailable", PANEL_JS)
+    assert re.search(r"btn-retry'\)\.hidden = on", PANEL_JS)

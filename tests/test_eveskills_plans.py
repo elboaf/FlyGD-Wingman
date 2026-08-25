@@ -341,3 +341,28 @@ def test_non_text_content_is_a_whole_file_diagnostic():
     raising AttributeError into the bridge thread."""
     result = plans.parse(None)
     assert not result.ok and result.diagnostics[0].line == 0
+
+
+def test_format_lines_round_trips_through_the_parser():
+    """S7 puts a plan on the clipboard, and the formatter lives in this
+    module so the text it emits is text this parser reads back. Asserted as
+    a round trip rather than against a literal, which is what stops the two
+    halves drifting apart."""
+    source = "Navigation 4\n# a comment\nShield Operation V\n\nMechanics 1\n"
+    parsed = plans.parse(source)
+    assert parsed.ok
+
+    text = plans.format_lines(parsed.requirements)
+
+    assert text == "Navigation IV\nShield Operation V\nMechanics I\n"
+    assert plans.parse(text).requirements == parsed.requirements
+
+
+def test_format_lines_writes_roman_levels():
+    """EVE writes levels in roman numerals and so do the plan files the
+    user authored -- this text is pasted straight into the game's skill
+    plan import, so it has to arrive in the notation that import expects.
+    Every level, because the table is hand-kept."""
+    parsed = plans.parse("A 1\nB 2\nC 3\nD 4\nE 5\n")
+
+    assert plans.format_lines(parsed.requirements) == ("A I\nB II\nC III\nD IV\nE V\n")

@@ -30,6 +30,52 @@ def format_size(size_bytes: float) -> str:
     return f"{size_bytes:.1f} TB"
 
 
+def format_duration(total_seconds: float) -> str:
+    """The one duration format in the app: "17:07", "2:07:07".
+
+    There is exactly one of these because there were three. Round 3's
+    finding 17 caught one recording rendering as "17:07" in the list's
+    Length column, "0:17:07" in the panel summary and "0:17:07" again in
+    Confirm Upload's Total -- three surfaces a user sees at once, two of
+    them building the string inline six lines apart in ui/copy.py. That is
+    how they were free to drift. CLAUDE.md: anything derived is derived,
+    not retyped.
+
+    The hour is omitted when it is zero, which is how the upload target
+    itself writes durations, and it keeps the list's 76px Length column
+    carrying the common case rather than a leading "0:". Long recordings
+    gain a field they never had: duration_str divided by 60 alone, so a
+    two-hour fight read "127:07".
+
+    NOTE the coupling this format has outside Python. list.js sorts the
+    Length column by parsing its own rendered cell back out, so its regex
+    has to accept the hours field this can now emit. Its comment names
+    this function; keep the two in step.
+
+    Negative input is not a state this has: durations come from ffprobe and
+    from sums of them.
+    """
+    hours, remainder = divmod(int(total_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+# Relative ("10h ago") versus absolute ("2026-08-25 08:31") is a decision
+# about the QUESTION the column answers, not about the screen it sits on:
+#
+#   * Relative when the reader is asking "is this recent?" and nothing
+#     outside the app has to be matched against the answer. format_date
+#     below is the whole of this case -- the recording list.
+#   * Absolute when the timestamp IDENTIFIES the thing, so the reader has
+#     to tell two of them apart or match one against something we do not
+#     render (a file on disk, an EVE session, a fight they remember). The
+#     Profiles backup rows are that case: "restore the 08:31 one" is a
+#     sentence, "restore the 10h ago one" is not.
+#
+# It was a per-screen accident until round 3's P5 found the two vocabularies
+# side by side and asked which was right. Both are; this is why.
 def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
     """How long ago the file was last written, not when.
 
@@ -134,8 +180,11 @@ class VideoInfo:
             # the install. See `answered` above for what shipped while
             # these shared one glyph.
             return "?" if self.answered else "—"
-        minutes, seconds = divmod(int(self.duration), 60)
-        return f"{minutes}:{seconds:02d}"
+        # Delegates for the same reason date_str does: one definition of
+        # the format, testable without a VideoInfo. Before round 3 this
+        # was the app's third duration format AND its only one with no
+        # hours field, so a two-hour recording read "127:07".
+        return format_duration(self.duration)
 
 
 def discover(directory: Path) -> list[Path]:

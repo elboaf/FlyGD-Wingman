@@ -58,10 +58,20 @@
   }
 
   function parseDuration(text) {
-    // "12:31" -> 751. "?" and the ellipsis are not measurements and sort
-    // to the bottom, exactly as app._sort_by's -1.0 does.
-    var m = /^(\d+):(\d{2})$/.exec(String(text || '').trim());
-    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : -1;
+    // "12:31" -> 751, "2:07:07" -> 7627. "?", the dash and the ellipsis
+    // are not measurements: -1 sorts them together at the bottom rather
+    // than letting a non-answer claim a position among real lengths.
+    //
+    // The hours group is optional because library.format_duration omits a
+    // zero hour. It is NOT decoration: this sort reads the cell back out
+    // of its own rendered text, so a format that emits a field this regex
+    // rejects does not fail here, it returns -1 for those rows and the
+    // column silently stops sorting. Round 3 landed the hours field; this
+    // is the other half of that change.
+    var m = /^(?:(\d+):)?(\d+):(\d{2})$/.exec(String(text || '').trim());
+    if (!m) return -1;
+    return (m[1] ? parseInt(m[1], 10) * 3600 : 0)
+      + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
   }
 
   function compareRows(a, b, key) {
@@ -121,7 +131,6 @@
     name.title = row.name;   // the elastic column ellipsises at narrow widths
     node.appendChild(name);
 
-    node.appendChild(WM.make('span', 'c-date', row.date));
     node.appendChild(WM.make('span', 'c-size', row.size));
 
     var dur = WM.make('span', 'c-len', row.duration);
@@ -405,6 +414,26 @@
   });
   window.addEventListener('blur', hideMenu);
 
+  // Round 3, finding 7 (and round 2's Settings 14, the same species one
+  // screen over): all three of these were live at `0 recordings`, so three
+  // of the four footer controls could not do anything and said nothing
+  // about it. WM.setEnabled's rule is that a control whose object is
+  // ABSENT is inert -- Select all's object is the list, and Select none's
+  // and Delete's is the selection.
+  //
+  // Open folder is deliberately NOT here: its object is the folder, which
+  // exists whether or not it holds recordings, and it is the one control
+  // that helps when the list is empty. Nor does this disable the list
+  // itself, which is the only route out of the state that disabled these.
+  function refreshFooter() {
+    var any = rows.length > 0;
+    var picked = WM.list.selectedIds().length > 0;
+    WM.setEnabled('btn-select-all', any);
+    WM.setEnabled('btn-select-none', picked);
+    WM.setEnabled('btn-delete', picked);
+  }
+  document.addEventListener('wm:selection', refreshFooter);
+
   WM.el('btn-select-all').addEventListener('click', function () {
     rows.forEach(function (r) { selected[r.id] = true; });
     render();
@@ -494,6 +523,15 @@
       return order.map(byId).filter(function (r) { return r && selected[r.id]; });
     },
     rowCount: function () { return rows.length; },
+    // For the panel's completion state (round 3, finding 5). Selection is
+    // list.js's own state and no other module touches `selected` directly;
+    // this is the one operation the panel needs and it goes through
+    // render(), so the drawn boxes, the footer's enabled rule and the
+    // panel's summary all settle from the same dispatch.
+    clearSelection: function () {
+      rows.forEach(function (r) { selected[r.id] = false; });
+      render();
+    },
     // Exposed for console verification of the pure logic.
     parseSize: parseSize,
     parseDuration: parseDuration,

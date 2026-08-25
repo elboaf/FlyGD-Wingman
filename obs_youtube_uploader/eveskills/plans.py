@@ -175,3 +175,27 @@ def parse(contents: str) -> ParseResult:
         # message naming the file.
         return ParseResult((), (Diagnostic(0, "Plan contains no skill requirements."),))
     return ParseResult(tuple(ordered.values()), ())
+
+
+# The reverse of parse(), and it lives here because the grammar does: a
+# formatter kept anywhere else is a second, unchecked opinion about what a
+# plan line looks like. test_eveskills_plans.py round-trips it through
+# parse() rather than asserting a literal, which is what keeps the two
+# halves from drifting.
+#
+# Roman rather than 1-5, on both counts that matter: EVE writes levels that
+# way, and so do the plan files the user authored -- S7's whole point is
+# that this text is pasted straight into the game.
+_LEVEL_ROMAN = ("", "I", "II", "III", "IV", "V")
+
+
+def format_lines(requirements) -> str:
+    """Render *requirements* back into plan-file text.
+
+    Trailing newline included: the text is destined for a clipboard and
+    then for EVE's skill-plan import, and a final newline costs nothing
+    there while its absence makes the last line awkward to append to.
+    """
+    return "".join(
+        f"{req.skill_name} {_LEVEL_ROMAN[req.level]}\n" for req in requirements
+    )

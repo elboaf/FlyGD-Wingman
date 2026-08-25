@@ -87,7 +87,7 @@ for _i in range(1, 25):
 _NAMES = {vk: name for name, vk in _KEYS.items()}
 
 # DOM event.code -> our key name. Same US-layout assumption bookmarks.py
-# documents, and mitigated the same way: a Type... escape hatch in the UI.
+# documents, and mitigated the same way: an Edit... escape hatch in the UI.
 _CODES = {
     "Space": "Space",
     "Enter": "Enter",

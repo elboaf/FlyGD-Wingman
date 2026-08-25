@@ -17,7 +17,7 @@
   };
 
   var api = {};
-  ['delete_selected', 'start_upload', 'retry',
+  ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
@@ -47,13 +47,36 @@
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
-      return Promise.resolve({applied: true, persisted: true, error: null});
+      var res = {applied: true, persisted: true, error: null};
+      // The two webhook endpoints carry the new summary line back on their
+      // own return, because nothing repaints the Settings route after page
+      // load. A double without it leaves the harness showing the stale
+      // line this fixes -- which is the bug, not the fix.
+      if (name === 'set_discord_webhook') {
+        res.webhook_status = 'discord.com/api/webhooks/1…';
+      } else if (name === 'clear_discord_webhook') {
+        res.webhook_status = 'not configured';
+      }
+      return Promise.resolve(res);
     };
   });
 
+  // The one endpoint that returns a fourth key. `note` is set_folder's
+  // post-commit report (round 3, B11): the count only exists once the
+  // rebind has walked the folder, so the page cannot be checked against a
+  // three-key double here -- the slot it fills would simply never appear.
+  // Recording folder only, like the real one. The unchanged-path early
+  // return is NOT doubled: it is Python's branch and has its own test,
+  // and reproducing it here would only make the slot harder to reach in
+  // the harness that exists to show it.
   api.set_folder = function (which, path) {
     console.log('DEV api.set_folder(', which, ',', path, ')');
-    return Promise.resolve({applied: true, persisted: true, error: null});
+    var res = {applied: true, persisted: true, error: null};
+    if (which === 'recording' && path) {
+      res.note = 'Now watching ' + path
+               + '. 12 recordings already there were not announced.';
+    }
+    return Promise.resolve(res);
   };
 
   // Same tier as the block above: set_alert_event and test_alert both
@@ -113,6 +136,19 @@
     });
     setTimeout(function () { window.onSkills(skills); }, 0);
     return Promise.resolve(true);
+  };
+
+  // NOT a generic stub, for the same reason skills_select_plan is not: the
+  // page guards on the returned text and writes it to the clipboard, so a
+  // null would make `Copy plan` look dead in the browser while working
+  // under Python. Roman numerals and a trailing newline, because that is
+  // what plans.format_lines emits -- the harness has to show the text the
+  // user would actually paste into EVE.
+  api.skills_plan_text = function (name) {
+    console.log('DEV api.skills_plan_text(', name, ')');
+    return Promise.resolve('Amarr Cruiser V\nGallente Cruiser V\n'
+                           + 'Energy Grid Upgrades IV\n'
+                           + 'Heavy Assault Cruisers I\n');
   };
 
   api.skills_state = function () {
@@ -258,7 +294,7 @@
         + ids.length + ')';
     return Promise.resolve({
       summary: ids.length
-        ? ids.length + ' selected \u00b7 1.4 GB \u00b7 0:12:31'
+        ? ids.length + ' selected \u00b7 1.4 GB \u00b7 12:31'
         : 'Nothing selected',
       title_hint: hint
     });
@@ -306,8 +342,15 @@
             }
           }
         }, patch || {}),
+      // discord.describe()'s shape for the fake webhook stored above, not
+      // a prose invention: it is host/api/webhooks/<id>… by construction,
+      // and settings.js reads that shape to tell a description apart from
+      // a parse error before naming the webhook in the Remove confirm. A
+      // fixture in a different shape made that branch untestable by hand
+      // -- the dialog said "this webhook" in the harness and named it in
+      // the app. tests/test_settings_page.py holds the two in step.
       webhook_status: statusLine === undefined
-        ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
+        ? 'discord.com/api/webhooks/1…' : statusLine,
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
       destination: 'Uploads go to FlyGD \u00b7 unlisted',
@@ -481,16 +524,18 @@
       // `characters`, so listing the same two names again here is
       // harmless and matches what the real bridge sends. Four distinct
       // rows total, not three: a three-row fixture never has to prove
-      // `.settings-pane`'s vertical scroller (overflow-y: auto,
-      // style.css:1009) actually does anything at the 625px floor, and
-      // never puts an offline (dim) row next to an online one so both
-      // render at once.
+      // `.settings-pane`'s vertical scroller (overflow-y: auto, style.css)
+      // actually does anything at the 625px floor, and never puts an
+      // offline (dim) row next to an online one so both render at once.
       //
-      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays for the
-      // same reason it was added in the prior fix round: a fixture of
-      // short names hides a name-column clip/overflow bug, since
-      // #preview-binds's first grid column (`minmax(0, max-content)`) is
-      // the only one of six tracks that can shrink.
+      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays, though
+      // not for the reason it was added. It was added when the name was
+      // #preview-binds's own first column and the only track that could
+      // shrink; the name now takes a full-width line of its own
+      // (`.lab { grid-column: 1 / -1 }`), so it cannot be squeezed by the
+      // control tracks at all. What it still proves is the other half:
+      // that a name wider than the control line neither wraps badly nor
+      // pushes the card into horizontal overflow at the 840px floor.
       roster: [
         'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
         'Aleksandrina Shadowbanes Voidstriders'
@@ -533,28 +578,48 @@
       window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
                          destination: 'Uploads go to FlyGD \u00b7 unlisted' });
       window.onAuthState({ state: 'connected', message: 'Connected' });
-      window.onStatus({ text: 'Idle', kind: 'FG' });
+      window.onStatus({ text: 'Idle', kind: 'FG', busy: false });
     }, 0);
     return Promise.resolve(null);
   };
 
   // Manual drivers for the pushes no click can produce in a browser.
   // Typed into the devtools console during verification.
+  //
+  // `busy` is carried here exactly as Python carries it, because it is the
+  // flag that decides whether a route change clears the strip: without it
+  // the harness cannot show that a LIVE upload survives a trip to Skills
+  // and a finished one does not, which is the whole of round 3's
+  // finding 14.
   window.DEV = {
     determinate: function (pct) {
       window.onProgress({ mode: 'determinate', pct: pct,
                           text: 'Uploading file 1 of 3\u2026 ' + pct + '%',
-                          kind: 'FG' });
+                          kind: 'FG', busy: true });
     },
     stitching: function () {
       window.onProgress({ mode: 'indeterminate', pct: 0,
-                          text: 'Stitching with FFmpeg\u2026', kind: 'FG' });
+                          text: 'Stitching with FFmpeg\u2026',
+                          kind: 'FG', busy: true });
     },
-    status: function (text, kind) {
-      window.onStatus({ text: text, kind: kind });
+    status: function (text, kind, busy) {
+      window.onStatus({ text: text, kind: kind, busy: !!busy });
     },
     retry: function (available) {
       window.onRetryAvailable({ available: available });
+    },
+    // D5's control. Drives the same slot as `retry` above, and the two are
+    // never armed together in the app -- so this is also the way to check
+    // by hand that the page honours that rather than stacking both.
+    cancel: function (available) {
+      window.onCancelAvailable({ available: available });
+    },
+    // The completion event the panel clears its selection on (finding 5).
+    // Worth driving on its own: in the app it arrives with a success strip
+    // and a row link, and the panel's half of the change is only visible
+    // if the selection actually drops.
+    done: function () {
+      window.onUploadDone({});
     },
     channel: function (title) {
       window.onChannel({ channel_id: 'UC123', channel_title: title,

@@ -169,9 +169,14 @@
       label.title = title;
       label.prepend(WM.make('span', 'box'));
       label.prepend(box);
-      if (live.indexOf(title) === -1) {
-        label.appendChild(WM.make('span', 'hint', ' (not running)'));
-      }
+      // Round 3, R4's finding 5: only the negative was annotated, so
+      // "running" had to be inferred from silence -- on a screen the
+      // maintainer sets once and never revisits, where every visit is a
+      // first visit and there is no muscle memory to infer it from. Both
+      // states now say which they are, in the same dim treatment.
+      label.appendChild(WM.make(
+        'span', 'hint',
+        live.indexOf(title) === -1 ? ' (not running)' : ' (running)'));
       row.appendChild(label);
       host.appendChild(row);
     });
@@ -215,20 +220,33 @@
 
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { setBind(id, ''); });
+      // Round 3, B2 and L5's disabled rule: the app already knows there is
+      // nothing to clear from a bind reading `Not set`, which is exactly
+      // when a control is disabled. The way back out of the state stays
+      // open -- the bind button and Edit... both set a value -- so this
+      // does not close off its own precondition (WM.setEnabled's rule).
+      WM.setEnabled(clear, !!state.displays[id]);
       row.appendChild(clear);
 
       // Manual entry: the escape hatch for non-US layouts, where the
       // event.code table maps a physical key to the wrong character. The
       // typed string is validated by the same Python rules as capture, so
       // the two cannot disagree.
-      var typed = WM.make('button', 'linkbtn', 'Type…');
+      //
+      // Named for what it does, not for what the user must do. `Type…`
+      // was the one control in the app whose label was an instruction
+      // (round 3, B6) while every other one is a verb for its effect --
+      // Clear, Restore, Detect, Refresh. The ellipsis is the app's own
+      // "this opens something" mark, shared with Browse…, Change… and
+      // Choose folder…, which is exactly what this does.
+      var typed = WM.make('button', 'linkbtn', 'Edit…');
       typed.addEventListener('click', function () {
         // Disarm first, as previews.js already did. This did not matter
         // while the prompt was window.prompt: a native OS dialog takes
         // input outside the page entirely. WM.prompt is an in-page field,
         // and an armed capture's document-level keydown handler
         // preventDefault()s EVERY key -- so arming a capture on one bind
-        // and pressing Type… on another opened a prompt that could not be
+        // and pressing Edit… on another opened a prompt that could not be
         // typed into.
         endCapture();
         // The app's own dialog, not window.prompt: WebView2 captions that

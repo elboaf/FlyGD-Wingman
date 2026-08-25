@@ -43,19 +43,58 @@
      LIGHT scheme and paints a near-black ring on a near-black page. */
   color-scheme: dark;
 
-  /* ---- colour ---- */
+  /* ---- colour ----
+     EVERY colour in this sheet is decided here. That was already the
+     stated rule and it was already broken: the vermilion-to-purple
+     retheme moved --brand and left 72 hex literals sitting in rules
+     further down, so the tokens went violet and the surfaces they were
+     supposed to describe did not. The visible result was .list-head --
+     a #101216 blue-grey band welded to the top of a violet list, on the
+     first screen the app opens. Finding 7.
+
+     The neutral ramp below is HUE-ROTATED, not re-picked: each grey was
+     taken from hue ~220 to hue 259 -- the hue the shipped purple
+     surfaces (#191426, #1b1528, #14101c) already sat at -- keeping its
+     saturation, and its HSL lightness re-solved so RELATIVE LUMINANCE is
+     preserved to within 2.3%. That is the whole reason the AA figures
+     quoted throughout this file survive the retheme unchanged: nothing
+     got lighter or darker, only warmer. Re-tint anything here the same
+     way, or the measurements below stop being true. */
+
+  /* The one token that is MIRRORED OUTSIDE THIS FILE: ui/window.py's
+     BACKGROUND paints the native frameless surface before the first
+     frame of HTML exists, and tests/test_window.py pins the two
+     together. It is therefore the one neutral left un-rotated -- at
+     rgb(12,13,16) the blue lean is below the threshold of vision anyway,
+     so rotating it would buy nothing and cost a three-file change. If it
+     ever does move, window.py and its test move in the same commit. */
   --bg: #0c0d10;
-  --panel: #14161b;
-  --panel-border: #1e2128;
-  --field: #0a0b0e;
-  --field-border: #23262e;
+  --panel: #17151c;
+  --panel-border: #231f2a;
+  --field: #0c0a0f;
+  --field-border: #282430;
   --text: #e8eaed;
   --text-dim: #9aa2b1;
-  /* 4.82:1 on --panel, 5.17:1 on --bg. Was #6f7681, which measured
-     3.88-4.24:1 -- below AA for normal text on every surface it is used
-     on, including all five nav tabs and all three window buttons in
-     their resting state. */
+  /* 4.81:1 on --panel (was 4.82 before the retint), 5.17:1 on --bg. Was
+     #6f7681, which measured 3.88-4.24:1 -- below AA for normal text on
+     every surface it is used on, including all five nav tabs and all
+     three window buttons in their resting state. */
   --text-faint: #7d8492;
+  /* A fourth text step, between --text-dim and --text-faint, and it is
+     not a rounding error: it is the colour of the two uppercase tracked
+     section labels (.card > h2 and .rail-head), which sit above
+     --text-faint because they are headings and below --text-dim because
+     they are not the content. 5.80:1 at worst. */
+  --text-label: #8b93a1;
+  /* The resting label on a .btn. Below --text and above --text-dim: a
+     button that is not the accent still has to look pressable without
+     competing with the body text beside it. 9.23:1 at worst, hovered. */
+  --text-btn: #c8cdd6;
+  /* The label ON a saturated fill -- the accent gradient, the close
+     button's red, a destructive hover, the drawn checkbox's tick. All
+     six sites were a bare `#fff`. See button.btn.acc for why white and
+     not near-black. */
+  --on-accent: #fff;
   /* Purple needs TWO tokens where vermilion needed one. --brand is a
      SURFACE colour: things are filled with it and something sits on top.
      --brand-text is a TEXT/GLYPH colour: it sits on a dark surface and has
@@ -65,14 +104,85 @@
      got away with one token because it sits high in luminance already. */
   --brand: #8430d9;
   --brand-deep: #4a0083;
-  /* 4.86:1 at worst across all four surfaces it lands on (--panel, --bg,
-     and the gradient-tinted variants of both). #a952ff was the value the
-     mockups used and measures 4.56 -- a pass, but with so little headroom
-     that any later tint change breaks it silently. */
+  /* 4.86:1 at worst across the four PAGE surfaces it lands on (--panel,
+     --bg, and the gradient-tinted variants of both). #a952ff was the value
+     the mockups used and measures 4.56 -- a pass, but with so little
+     headroom that any later tint change breaks it silently.
+
+     That sentence was the whole claim until finding 7 re-measured it, and
+     it enumerates the wrong set: --brand-text also lands on CONTROL
+     surfaces, where it does not pass. .winbtn.gear.active, .glyph-link on
+     hover and .bindbtn.capturing all put it on --hover, which measures
+     4.16:1, and a hovered .bindbtn.capturing reaches --control-hover at
+     3.99:1. Both figures are PRE-EXISTING and untouched here: the neutral
+     retint preserved luminance, so the same pair measured 4.15 and 3.99
+     against the cold greys they replaced. Fixing it means changing a
+     control surface or this token's lightness, and the control blocks are
+     L5's region -- reported, not reached into. */
   --brand-text: #ad5aff;
+  /* The accent gradient's two stops, and the rim that rings it. Held here
+     rather than in button.btn.acc because .list-row.sel's checkbox and
+     .check's checked box take the same rim, so it was three copies of one
+     decision. */
+  --acc-top: #9438e8;
+  --acc-bottom: #7a1fc8;
+  --brand-edge: #a95cf0;
+  /* THE focus indicator. 8.3-9.0:1 against every surface in the app,
+     well over the 3:1 1.4.11 asks of a non-text indicator. */
+  --focus-ring: #c99cff;
+
+  /* ---- severity ----
+     Four rungs and they mean four different things. --err used to mean
+     three of them at once, which is finding S3: it painted an error, it
+     painted a destructive control, and it painted `Not trained` /
+     `Missing` -- states that are the entire reason the Skills screen
+     exists. C2 already settled that those are facts about a character,
+     not failures. One colour cannot say "this went wrong", "this button
+     destroys something" and "this is what you asked to find out". */
   --ok: #4ade80;
   --warn: #d29922;
+  /* Something went wrong: #status.ERROR, .dialog.error, .row-error, a
+     dead token (.reauth), two keybinds on one key (.bindbtn.clash). */
   --err: #f85149;
+  /* This control destroys something. Deliberately the SAME VALUE as --err
+     today -- red is right for both, and the token split is what lets the
+     two be told apart later without a sweep. What it buys immediately is
+     that `Forget character` no longer shares a colour with the `Missing`
+     row 130 CSS px above it, because that row moved to --unmet below.
+     L5/S4 owns the treatment (button vs bare red text); this owns only
+     the colour. */
+  --danger: #f85149;
+  /* The filled state of a destructive control -- hover on .btn.danger,
+     .linkbtn.danger and .winbtn.close. Darker than --danger so
+     --on-accent clears AA on top of it: 4.90:1. */
+  --danger-solid: #d9291c;
+  /* A requirement this character does not meet: `Missing`, `Missing 2`,
+     `Not trained`, and the group swatches for both. The worst rung of
+     the readiness ramp and NOT an error -- the distinction S3 asked for.
+
+     Orange, and the hue is the whole point: 18deg, between --err at 4deg
+     and --warn at 41deg, with a lightness step (HSL L .70) that --err
+     (.63) does not have, so the two reds do not have to be told apart by
+     saturation alone. 7.89:1 at worst, on a hovered row.
+
+     This retires the note in .skills-key that said "there is no fourth
+     severity token to reach for and minting one is a :root edit this
+     block may not make". This is that edit. Missing and Unknown still
+     share a rung -- the WORD carries that distinction, exactly as that
+     note argued -- but the rung is no longer the error colour. */
+  --unmet: #ff9668;
+  /* In progress: `Training`, `Queued - 13h 25m`. Was a bare #7aa2f7,
+     which after the retheme was EXACTLY --link, so blue meant both
+     "follow this out of the app" and "this skill is in the queue", and
+     the queued one is not clickable. Finding S5.
+
+     --link is the token that could not move: its own note below explains
+     that it is a declared exemption carrying a legal obligation. So this
+     one moved instead, to teal -- 186deg, which is the only slot the
+     ramp leaves: 32deg off --link's blue and 44deg off --ok's green,
+     and adjacent to green in a ramp where Training IS the rung before
+     Ready. 8.41:1 at worst, on a hovered row. */
+  --training: #45c8d4;
   /* The one blue in the palette, and the only colour here that is not
      near-black, brand, or a severity. It marks a link OUT of the app --
      today just YouTube's terms -- and it stays blue on purpose: a link
@@ -82,8 +192,70 @@
      place colour is decided, and so a second outbound link cannot invent
      a different blue. Measured against the surfaces it actually lands on
      after the purple retheme: 7.13:1 on a card's tinted top stop
-     (#191426), 7.19:1 on flat --panel, 7.72:1 on --bg. */
+     (--card-top), 7.19:1 on flat --panel, 7.72:1 on --bg. Unmoved by
+     the neutral retint, which preserved luminance. */
   --link: #7aa2f7;
+
+  /* ---- surfaces ----
+     Everything below was a hex literal in a rule until finding 7. The
+     names describe the ROLE, because that is what a later reader needs
+     in order to pick the right one rather than the nearest value. */
+
+  /* The tinted top stop every card, list pane and rail gradient starts
+     from. Tinted sideways into violet, NOT lightened -- see .card. */
+  --card-top: #191426;
+  /* Recessed bands: the list header and footer, .pill, .badge-stale,
+     Skills' notices and issues blocks, .reauth. This is the token that
+     was #101216, and the one the finding could see. */
+  --sunken: #131117;
+  /* The title bar's gradient, its hard bottom edge, and the 1px highlight
+     inset along its top. */
+  --titlebar-top: #1b1528;
+  --titlebar-bottom: #121016;
+  --titlebar-edge: #000;
+  --titlebar-inset: #292530;
+  /* The status strip's gradient -- deeper than the title bar's, so the
+     window reads as lit from above. */
+  --statusbar-top: #14101c;
+  --statusbar-bottom: #0f0c14;
+  /* The two radial washes on html. See the html rule for why they cannot
+     live on body. */
+  --wash-top: #1d1030;
+  --wash-bottom: #170f26;
+
+  /* ---- controls ----
+     Three hover surfaces at three weights, and they are deliberately not
+     one token: --hover is for controls with NO resting fill (nav tabs,
+     window buttons, menu items, .linkbtn), --control-hover is the lift
+     applied to one that already has a fill, and --scrollbar-hover sits
+     on top of the page rather than on a control. Collapsing them would
+     make an unfilled control jump further on hover than a filled one. */
+  --hover: #27232e;
+  --control: #211d28;
+  --control-border: #302c39;
+  --control-hover: #2a2634;
+  /* The rim of a control the CSS draws itself: .box and .ring. Lighter
+     than --control-border because it has to read as an outline at 14px
+     with nothing inside it. */
+  --control-edge: #413c4c;
+  --field-focus-border: #433c52;
+  --scrollbar: #2c2835;
+  --scrollbar-hover: #3b3548;
+  /* The progress groove. Derived, not retyped: it is the panel border
+     weight, and the two have never been meant to differ. */
+  --track: var(--panel-border);
+
+  /* ---- rows ----
+     One vocabulary shared by the recording list, the Skills roster and
+     both rails, so a row cannot mean one thing on one screen and another
+     elsewhere. --row-ring is the inset ring on the FOCUSED row (what
+     Space acts on); --row-ring-focus is the same ring once the scroller
+     itself holds focus, so the two states are distinguishable. */
+  --row-line: #1d1a24;
+  --row-hover: #1b1822;
+  --row-active: #1f1b27;
+  --row-ring: #383244;
+  --row-ring-focus: #554e65;
 
   /* ---- type scale ----
      Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
@@ -103,6 +275,15 @@
   --radius: 8px;
   --radius-sm: 6px;
   --row-h: 30px;
+  /* The list's own two lengths, defined once because three rules have to
+     agree on them or the header stops lining up with its data (R1
+     finding 1). --scrollbar-w is the width ::-webkit-scrollbar draws AND
+     the width .list-scroll reserves AND the extra right padding
+     .list-head needs to match it; --row-pad is .grid-row's own padding,
+     which that last sum is built on. Retyping any of them is how the
+     three drift apart. */
+  --scrollbar-w: 10px;
+  --row-pad: 10px;
   --titlebar-h: 44px;
 }
 
@@ -119,8 +300,8 @@
    to ship by accident, but is not the token and is not ours to rely on. */
 html {
   background:
-    radial-gradient(1100px 620px at 88% -8%, #1d1030 0%, rgba(29, 16, 48, 0) 62%),
-    radial-gradient(760px 520px at -6% 108%, #170f26 0%, rgba(23, 15, 38, 0) 60%),
+    radial-gradient(1100px 620px at 88% -8%, var(--wash-top) 0%, rgba(29, 16, 48, 0) 62%),
+    radial-gradient(760px 520px at -6% 108%, var(--wash-bottom) 0%, rgba(23, 15, 38, 0) 60%),
     var(--bg);
 }
 body { background-color: transparent; }
@@ -142,9 +323,9 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .titlebar {
   display: flex; align-items: center; gap: 10px;
   height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
-  background: linear-gradient(180deg, #1b1528, #121016);
-  border-bottom: 1px solid #000;
-  box-shadow: inset 0 1px 0 #24272e;
+  background: linear-gradient(180deg, var(--titlebar-top), var(--titlebar-bottom));
+  border-bottom: 1px solid var(--titlebar-edge);
+  box-shadow: inset 0 1px 0 var(--titlebar-inset);
 }
 /* pywebview's documented drag handle for frameless windows. Only this
    element drags: the buttons must stay clickable. */
@@ -184,10 +365,10 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   color: var(--text-faint); font-size: 13px; cursor: pointer;
   border-radius: 5px; font-family: inherit; flex: none;
 }
-.winbtn:hover { background: #22252c; color: var(--text); }
-.winbtn.close:hover { background: #d9291c; color: #fff; }
+.winbtn:hover { background: var(--hover); color: var(--text); }
+.winbtn.close:hover { background: var(--danger-solid); color: var(--on-accent); }
 .winbtn.gear { font-size: 15px; }
-.winbtn.gear.active { background: #22252c; color: var(--brand-text); }
+.winbtn.gear.active { background: var(--hover); color: var(--brand-text); }
 
 /* Peer destinations, visually distinct from the window actions on the
    right. Every pixel here is drag surface given up, so this stays tight;
@@ -204,8 +385,8 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   font: inherit; font-size: 12px; letter-spacing: .04em;
   padding: 5px 10px; border-radius: 5px; cursor: pointer;
 }
-.navbtn:hover { color: var(--text); background: #22252c; }
-.navbtn.active { color: var(--text); background: #22252c; }
+.navbtn:hover { color: var(--text); background: var(--hover); }
+.navbtn.active { color: var(--text); background: var(--hover); }
 /* Author rule, for the same reason .routenav[hidden] carries one: .navbtn
    sets no display, but the buttons live in a flex row and [hidden] must
    still remove them from it. */
@@ -223,15 +404,15 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 /* ---- shared primitives ---------------------------------------------- */
 .card {
   /* Tinted sideways into violet, NOT lightened: --text-faint has just
-     4.82:1 on flat --panel and #191426 holds 4.78:1. A lighter panel puts
+     4.81:1 on flat --panel and --card-top holds 4.78:1. A lighter panel puts
      the faintest text role under AA on every card in the app. */
-  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 14px 16px;
 }
 .card > h2 {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: #8b93a1; margin-bottom: 12px; font-weight: 600;
+  color: var(--text-label); margin-bottom: 12px; font-weight: 600;
   display: flex; align-items: center; gap: 9px;
 }
 /* The short rule preceding every section label. NOT the brand any more.
@@ -274,18 +455,74 @@ input.field.mono, span.field.mono, textarea.field.mono {
 }
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 input.field:focus, textarea.field:focus, select.field:focus {
-  border-color: #39404d;
+  border-color: var(--field-focus-border);
   box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
 }
 textarea.field { resize: none; line-height: 1.5; }
 
+/* ====================== the control vocabulary =======================
+   Round 3's B3 counted FIVE treatments for "clickable" with no rule about
+   which meant what -- accent button, neutral button, red-outlined button,
+   red text, dim text -- and the destructive actions were where it hurt:
+   the same verb was red-outlined on Profiles, a plain button identical to
+   `Select all` on the Uploader, and bare red text on Skills. Three screens
+   each invented an answer because nothing here stated one.
+
+   There are FOUR action treatments and this is the whole list. The rule
+   for each is what it MEANS, not what it looks like:
+
+     .btn.acc   the one action the screen exists to perform. One per
+                screen or none -- DESIGN.md's existing rule, unchanged.
+     .btn       every other action. The default; reaching past it needs a
+                reason from this list.
+     .btn.danger  the action destroys something the user cannot get back
+                by clicking again. Below.
+     .linkbtn   the quiet tier, and it takes a stated reason -- not
+                "small", and not "I would rather this were quiet". Two
+                reasons are admissible, both already load-bearing:
+                (a) the action is SUBORDINATE to the control or field it
+                trails and as a .btn would compete with it -- `Clear` /
+                `Edit…` beside a .bindbtn, `Clear filter` beside the
+                filter field, `Set this up later` beside `Continue`;
+                (b) a full-width .btn would put its own label into a
+                rail's width floor, which is why Skills' `Open plans
+                folder` and `Reload plans` are linkbtns -- reasoned out
+                at index.html:774-781.
+                Neither reason applies and it is a .btn: `Change…` on
+                Profiles is one because nothing else on its row acts, so
+                link-styling made the only control the least
+                control-like thing present (index.html:632-638).
+
+   The four cover actions ON A SURFACE. Three other clickable families
+   exist and are placed here rather than left to be discovered, because
+   "this is the whole list" is only useful if it says what it excludes:
+
+     chrome            .navbtn, .winbtn, .rail-item, .rail-plan -- these
+                       navigate rather than act.
+     value controls    .bindbtn, input.field, .check/.radio -- these hold
+                       or display a value rather than performing one.
+     menu and link     .ctxmenu button is a menu item, which takes its
+                       shape from the menu it is in; .linkish and
+                       .glyph-link LEAVE the application, and --link's own
+                       note is what makes that a family rather than a
+                       style. Menu items are still action controls for the
+                       disabled rule below -- being outside this table is
+                       about shape, not about behaviour.
+
+   `red text, no button` is not in the vocabulary. A destructive action is
+   a .btn.danger everywhere, with no exceptions left: L5 tolerated
+   .linkbtn.danger at exactly one site -- skills.js's `Forget character` --
+   and round 3's R3 converted it, so both that control and the pair of
+   rules behind it are gone. The rule was stated here first precisely so
+   the conversion had something to convert TO, as did the two plain-.btn
+   destructive sites named at .btn.danger below. */
 button.btn {
-  background: #1c1f26; border: 1px solid #2a2e37; border-radius: var(--radius-sm);
-  padding: 7px 12px; font-size: var(--fs-mono); color: #c8cdd6; flex: none;
+  background: var(--control); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: var(--fs-mono); color: var(--text-btn); flex: none;
   cursor: pointer; font-family: inherit;
 }
-button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
-button.btn:disabled { opacity: .45; cursor: default; }
+button.btn:hover:not(:disabled) { background: var(--control-hover); color: var(--text); }
 /* The ONE brand-accent control on any screen. */
 /* White ON the brand -- the exact inverse of what vermilion needed, and
    for the same reason. The near-black label was worth 6.31:1 on vermilion
@@ -298,12 +535,24 @@ button.btn.acc {
   /* Held in a custom property because the hover rule below has to restate
      the fill to win, and two hand-kept copies of a gradient are exactly the
      kind of pair that drifts. Declared once, referenced twice. */
-  --acc-fill: linear-gradient(180deg, #9438e8, #7a1fc8);
+  --acc-fill: linear-gradient(180deg, var(--acc-top), var(--acc-bottom));
   background: var(--acc-fill);
-  border-color: #a95cf0; color: #fff; font-weight: 600;
+  border-color: var(--brand-edge); color: var(--on-accent); font-weight: 600;
   box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
 /* Restates the fill AND the label, and neither line is redundant.
+
+   CORRECTION, round 3 (L5): the arithmetic below is off by one class and
+   the conclusion it draws from it is wrong. `:not()` carries the
+   specificity of its argument, so this rule is (0,4,1), not (0,3,1), and
+   it beats the generic hover on SPECIFICITY -- source order is not what
+   saves it and moving it would not break it. What the incident actually
+   proves is the paragraph after next: a rule that declares only some of
+   the properties lets the generic rule supply the rest, at any
+   specificity. Left in place rather than rewritten, because the incident
+   and the `color` trap are both real and are the reason this rule looks
+   the way it does.
+
    `button.btn:hover:not(:disabled)` above is (0,3,1) and beats
    `button.btn.acc` at (0,2,1), so through two accent colours hovering the
    app's most prominent button REPLACED the brand gradient with the plain
@@ -330,15 +579,52 @@ button.btn.acc {
    the :not(:disabled) here keeps a disabled accent button on its gradient,
    so grayscale(.5) below acts on the brand rather than on grey. */
 button.btn.acc:hover:not(:disabled) {
-  background: var(--acc-fill); color: #fff; filter: brightness(1.08);
+  background: var(--acc-fill); color: var(--on-accent); filter: brightness(1.08);
 }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+/* ONE disabled state, for every action control.
+   "Every action control" means the four selectors below, not every
+   disabled thing in the app -- #lab-stitch.disabled and the three
+   #es-*:disabled dropdowns keep their own scoped rules, each for a reason
+   its own comment states, and button.btn.acc:disabled adds grayscale on
+   top of this one rather than replacing it.
+
+   The rule for WHEN to disable is WM.setEnabled's comment in app.js and is
+   not restated here. This is only what disabled LOOKS like, and among the
+   four it looked like two things and two omissions: .btn dimmed to .45, a
+   context-menu item swapped its colour, and .linkbtn and .bindbtn had no
+   disabled state at all -- which is worse than inconsistent, because both
+   still lit up under the pointer. Round 3's B2 wants `Clear` disabled on a
+   keybind reading `Not set`; that is a .linkbtn, so without this it would
+   have gone dead while still looking and hovering like a live control.
+
+   .45 is the number the sheet already uses for a disabled control --
+   .btn:disabled had it, and #lab-stitch.disabled cites it as "same .45
+   button.btn:disabled uses". (Not for dimming generally: .evestat.degraded
+   is .5 and the watermark is .18.)
+
+   The menu item is the one place this is a visible change, and it is a
+   small darkening rather than a wash: --text at .45 over --panel resolves
+   to #75757a, against the #7d8492 the swapped --text-faint gave it, and
+   3.95:1 against 4.81:1. Taken deliberately, and it is a real trade: the
+   #es-*:disabled block below uses that same --text-faint-at-full-opacity
+   treatment on purpose, so the menu item was not an outlier so much as a
+   member of the smaller family. Disabled text carries no contrast
+   requirement under 1.4.3, which exempts an inactive component, and one
+   answer for the four action classes was the thing B2 asked for. */
+button.btn:disabled,
+.linkbtn:disabled,
+.bindbtn:disabled,
+.ctxmenu button:disabled { opacity: .45; cursor: default; }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
    in the app fell back to the UA ring -- which, before `color-scheme: dark`
    above, resolved for a light scheme and drew near-black on a near-black
-   page. #c99cff measures 8.3-9.0:1 against every surface here, well over
-   the 3:1 that 1.4.11 asks of a non-text indicator.
+   page. --focus-ring measures 8.28-8.96:1 against every surface it lands
+   on -- outline-offset puts it OUTSIDE the control, so those surfaces are
+   the page's, not the button's -- well over the 3:1 that 1.4.11 asks of a
+   non-text indicator.
 
    :focus-visible, not :focus: a mouse click on a button must not leave a
    ring behind, which is the reason the ring was removed rather than
@@ -354,7 +640,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
-  outline: 2px solid #c99cff;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 /* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
@@ -372,12 +658,12 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* ---- scrollbar ------------------------------------------------------
    Tk cannot restyle this at all; the classic Windows scrollbar is one of
    the most visible tells in newest-version.png and disappears here. */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #262a33; border-radius: 5px; border: 2px solid var(--bg);
+  background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg);
 }
-::-webkit-scrollbar-thumb:hover { background: #333845; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* The ship, in the empty lower-right of the Uploader only. Scoped to one
@@ -412,12 +698,35 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .list-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius); overflow: hidden;
 }
 
-.list-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* scrollbar-gutter, and why the header pays for it too (R1 finding 1).
+   The scrollbar is drawn INSIDE this box, so an overflowing list has a
+   content box 10px narrower than .list-head, which sits outside it. That
+   difference does not land at the right edge as slack: .grid-row's name
+   track is minmax(212px, 52ch), 52ch is a MAXIMUM the column never reaches
+   at any width this window can be, so the track is elastic at every width
+   and absorbs the whole 10px -- carrying Modified, Size and Length 10px
+   left of their own headers. Measured on merged main with 40 rows at 1027,
+   900 and 836 CSS: +10.00 on all three, 0.00 with the scrollbar
+   suppressed and the same rows in place. Filename is immune because its
+   left edge is pinned by the 34px check column; its residual 2px is
+   .list-row's transparent left border, not an inset.
+
+   `stable` reserves the gutter whether or not the list overflows, and
+   .list-head reserves the same width as padding. Two consequences, both
+   wanted: the header and its data agree unconditionally, and the columns
+   no longer jump 10px sideways the moment a folder grows past the fold.
+   It also makes the layout match the width budget below, which has
+   charged the pane for a 10px scrollbar since round 2 whether one was
+   showing or not. */
+.list-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
 
 /* One grid template shared by the header and every row, so the two can
    never disagree. Column order matches the header spans in index.html and
@@ -450,25 +759,52 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
      No 1fr anywhere is deliberate: with nothing elastic the grid packs to
      content width and the slack collects at the right edge, keeping the
-     name and its metadata legible as one group. The header uses this same
-     rule, so the two can never disagree. */
-  grid-template-columns: 34px minmax(212px, 52ch) 92px 84px 76px 46px;
+     name and its metadata legible as one group.
+
+     The header uses this same rule, and sharing the declaration is NOT by
+     itself enough to make the two agree -- which is what this comment used
+     to claim. `52ch` resolves against each grid container's own font, so
+     the header computed a different maximum until its font-size moved off
+     the box and onto the spans. See the note at .list-head. */
+  grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
-  padding: 0 10px;
+  padding: 0 var(--row-pad);
 }
 
 .list-head {
   position: sticky; top: 0; z-index: 2;
-  background: #101216;
+  /* .grid-row's own padding plus the gutter .list-scroll reserves, so this
+     header's content box matches a row's. Both halves are variables: the
+     sum is the whole point of the rule, and a literal here would be the
+     third place the 10px is written down. */
+  padding-right: calc(var(--row-pad) + var(--scrollbar-w));
+  background: var(--sunken);
   border-bottom: 1px solid var(--panel-border);
-  /* --fs-muted, not --fs-body: headers label the data, they are not the
-     data. This is the deliberate ordering carried over from 2.2.0. */
-  font-size: var(--fs-muted);
+  /* The FONT SIZE SITS ON THE SPANS, not here, and that is load-bearing
+     rather than tidiness. `ch` in grid-template-columns resolves against
+     the GRID CONTAINER's own font, and the shared template caps the name
+     track at 52ch -- so a header set in --fs-muted computed a 52ch that
+     was 11.5/13 of the rows' 52ch, and the moment the track reached that
+     cap the header's columns parted company with their data. Measured
+     before the fix: name track 377.25 in the header against 426.45 in the
+     rows at 1280 CSS, putting Size and Length 51.20px out; 0.00 after.
+
+     It stayed hidden until round 3 because the cap was only reached on a
+     very wide window -- dropping Modified (finding 8) handed the name
+     track another 92px, which brought the cap down into ordinary widths
+     and turned a latent unit bug into a visible one.
+
+     --fs-muted, not --fs-body, is still the intent: headers label the
+     data, they are not the data. That is the deliberate ordering carried
+     over from 2.2.0, and it is unchanged -- it just belongs on the text
+     rather than on the box that measures the columns. */
+  font-size: var(--fs-body);
   color: var(--text-dim);
   height: 30px;
 }
 .list-head > span {
+  font-size: var(--fs-muted);
   cursor: pointer; user-select: none; padding: 0 4px;
   display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
@@ -479,13 +815,24 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    (Uploader 3.)
 
    The walkthrough reported headers sitting ~16px right of their data on
-   every column, and blamed the scroll container's gutter. Re-measured in
-   the ?dev=1 harness with 30 rows, comparing text ranges rather than
-   boxes: unsorted, every header agrees with its column to within 2px --
-   which is .list-row's own 2px transparent left border, not an inset --
-   and the gutter cannot move anything anyway, because .grid-row has no
-   1fr, so the tracks are left-packed and a narrower body only eats slack
-   at the right edge.
+   every column, and blamed the scroll container's gutter.
+
+   That gutter half was CORRECT and this comment used to deny it. It said
+   the gutter "cannot move anything anyway, because .grid-row has no 1fr,
+   so the tracks are left-packed and a narrower body only eats slack at
+   the right edge". No 1fr is not the same as no elasticity: the name
+   track is minmax(212px, 52ch) and never reaches its 52ch maximum at any
+   width this window can be, so it is elastic at every width and absorbs
+   the gutter. Round 3 re-measured with the list actually overflowing --
+   the earlier 30-row check did not produce a scrollbar -- and found
+   Modified, Size and Length +10.00 at 1027, 900 and 836 CSS, going to
+   0.00 with the scrollbar suppressed and the same rows in place. The fix
+   is at .list-scroll's scrollbar-gutter above. Two real causes, then, and
+   only the arrow below was ever fixed; the correction that fixed it also
+   wrote off the other one.
+
+   The 2px that remains is .list-row's own transparent left border, not an
+   inset.
 
    What does move is this arrow. On a flex-end header it takes the right
    end of the column and pushes the LABEL off it: measured, "Size" landed
@@ -529,24 +876,25 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* 1px separators, NOT zebra striping: with a card surface and adequate row
    height, zebra is compensation for a flat list. */
 .list-row {
-  border-bottom: 1px solid #191c22;
+  border-bottom: 1px solid var(--row-line);
   border-left: 2px solid transparent;
   cursor: default;
 }
 .list-row:last-child { border-bottom: 0; }
-.list-row:hover { background: #171a20; }
+.list-row:hover { background: var(--row-hover); }
 /* Selected rows take a left brand rule and a slightly lifted surface. */
-.list-row.sel { background: #191d24; border-left-color: var(--brand); }
+.list-row.sel { background: var(--row-active); border-left-color: var(--brand); }
 /* Row focus is a real concept, not styling: it is what Space acts on. */
-.list-row.focused { box-shadow: inset 0 0 0 1px #2f3540; }
+.list-row.focused { box-shadow: inset 0 0 0 1px var(--row-ring); }
 .list-scroll:focus { outline: none; }
-.list-scroll:focus .list-row.focused { box-shadow: inset 0 0 0 1px #4a5260; }
+.list-scroll:focus .list-row.focused {
+  box-shadow: inset 0 0 0 1px var(--row-ring-focus);
+}
 
 .c-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 4px;
 }
-.c-date { color: var(--text-dim); font-size: var(--fs-muted); padding: 0 4px; }
 .c-size, .c-len {
   text-align: right; color: var(--text-dim);
   font-size: var(--fs-muted); font-variant-numeric: tabular-nums; padding: 0 4px;
@@ -558,15 +906,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .c-check { display: flex; justify-content: center; }
 .box {
   width: 14px; height: 14px; border-radius: 3px;
-  border: 1.5px solid #3a3f49; background: var(--field);
+  border: 1.5px solid var(--control-edge); background: var(--field);
   display: grid; place-items: center; flex: none;
 }
 .list-row.sel .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #a95cf0;
+  border-color: var(--brand-edge);
 }
 .box::after {
-  content: "\2713"; font-size: 10px; line-height: 1; color: #fff;
+  content: "\2713"; font-size: 10px; line-height: 1; color: var(--on-accent);
   opacity: 0; font-weight: 700;
 }
 .list-row.sel .box::after { opacity: 1; }
@@ -578,7 +926,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 22px; height: 22px; border-radius: 5px;
   color: var(--text-faint); cursor: pointer;
 }
-.glyph-link:hover { background: #22252c; color: var(--brand-text); }
+.glyph-link:hover { background: var(--hover); color: var(--brand-text); }
 .dur-unknown, .dur-pending { color: var(--text-faint); cursor: help; }
 
 .list-foot {
@@ -591,7 +939,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
      it the footer ran 34px past the pane at 608px, with no scrollbar. */
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 8px 10px; border-top: 1px solid var(--panel-border);
-  background: #101216;
+  background: var(--sunken);
 }
 .list-foot .count {
   margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
@@ -632,7 +980,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* ---- context menu (replaces the Tk tk_popup menu) ------------------- */
 .ctxmenu {
   position: fixed; z-index: 40; min-width: 168px; padding: 4px;
-  background: var(--panel); border: 1px solid #2a2e37;
+  background: var(--panel); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
 }
@@ -643,8 +991,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text); font-family: inherit; font-size: var(--fs-mono);
   cursor: pointer;
 }
-.ctxmenu button:hover:not(:disabled) { background: #22252c; }
-.ctxmenu button:disabled { color: var(--text-faint); cursor: default; }
+.ctxmenu button:hover:not(:disabled) { background: var(--hover); }
 
 /* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
    DELAY_MS 450 is preserved as a transition-delay: long enough not to fire
@@ -655,7 +1002,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   content: attr(data-tip);
   position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px);
   z-index: 50; pointer-events: none;
-  background: var(--panel); border: 1px solid #2a2e37; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--control-border); border-radius: 6px;
   padding: 6px 8px; color: var(--text);
   font-size: var(--fs-muted); line-height: 1.45;
   /* attr() preserves the literal newlines in CELL_HELP's copy. */
@@ -683,6 +1030,24 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   margin-bottom: 5px;
 }
 
+/* Round 3, finding 6. The empty-folder note is a .hint, whose only spacing
+   is margin-top -- so the distance from its last line to the `Title` label
+   below was exactly its own line pitch (measured: 35 physical px of pitch,
+   35 physical px to the label), and `Title` read as the paragraph's third
+   line. Round 2's Uploader 13 was right that the panel had to say the
+   folder was empty; the message was inserted above the form without a gap
+   that distinguishes it from the form, and this is that gap.
+
+   1.5em, not a round pixel count: 1.5 is this paragraph's own line-height,
+   so the rule reads "one blank line of its own text" and stays true if the
+   hint's size changes. That puts the label two line pitches below the last
+   line instead of one, which is what makes it read as a new block.
+
+   D6 settled the larger question: the form STAYS rendered on an empty
+   folder (panel.js states the reason), so this is a spacing fix and
+   nothing else. */
+#panel-empty-note { margin-bottom: 1.5em; }
+
 /* A sensible fixed height. NOT flex:1 — today the Description box consumes
    all remaining vertical space and reads as an empty void. */
 #f-desc { height: 96px; }
@@ -695,7 +1060,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .check .box { width: 15px; height: 15px; }
 .check input:checked + .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #a95cf0;
+  border-color: var(--brand-edge);
 }
 .check input:checked + .box::after { opacity: 1; }
 .check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
@@ -815,26 +1180,33 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    route spends 24px on padding plus 12px on the gap. So a tier needs the
    sum of its track floors, plus 68px, plus the panel:
 
-     six    212+34+92+84+76+46 = 544 + 32 + 36 + 320 = 932
      five   212+34+   84+76+46 = 452 + 32 + 36 + 320 = 840   <- the floor
      five   the same, with the 248px panel            = 768
      three    0+34+         46 =  80 + 32 + 36 + 248 = 396
 
+   The six-column row that used to head this table is gone with Modified
+   (finding 8). Five columns is now the base layout rather than the first
+   step down, and it still lands exactly on MIN_WIDTH -- so the check
+   below survives the change that removed the tier above it.
+
    Each ceiling is one pixel under what the tier above it needs, so a tier
    never fires while the wider layout still fitted.
 
-   The five-column tier landing EXACTLY on MIN_WIDTH is the check on all
+   The five-column layout landing EXACTLY on MIN_WIDTH is the check on all
    of it, and it moved there in round 2. The six-column tier used to hold
    that position, on a 120px name floor -- which is why six columns
    rendered at the floor with the filename truncated, and why the two
    tiers that would have dropped Modified sat at 767px and 607px, below a
    floor the window can never reach. Widening the name track to what a
-   filename actually needs moves the agreement one tier down and puts the
-   drop where it can happen. */
-@media (max-width: 931px) {
-  .grid-row { grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px; }
-  .grid-row > .c-date { display: none; }
-}
+   filename actually needs moved the agreement one tier down; round 3
+   then dropped Modified outright, which is what makes the five-column
+   figure the BASE rather than a tier that has to fire. */
+/* The six-column tier and the 931px query that shed Modified are both
+   gone: round 3's finding 8 dropped that column at EVERY width, so five
+   columns is the base and there is no wider layout to step down from.
+   The arithmetic that put the shed at 931 is kept above as the record of
+   why the drop is safe -- it is the same reasoning, now applied
+   unconditionally. */
 
 /* The panel step, and the one query on this screen that was never dead.
    It fires at 200% scaling and not at 100%: at 100% the floor viewport is
@@ -868,7 +1240,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .statusbar {
   flex: none; display: flex; align-items: center; gap: 14px;
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
-  background: linear-gradient(180deg, #14101c, #0f0c14);
+  background: linear-gradient(180deg, var(--statusbar-top), var(--statusbar-bottom));
 }
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
@@ -884,7 +1256,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #status.ERROR { color: var(--err); }
 
 .track {
-  flex: 1; height: 4px; border-radius: 2px; background: #1e2128;
+  flex: 1; height: 4px; border-radius: 2px; background: var(--track);
   overflow: hidden; position: relative;
 }
 .bar {
@@ -951,7 +1323,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .dialog {
   width: min(460px, 100%);
-  background: var(--panel); border: 1px solid #2a2e37;
+  background: var(--panel); border: 1px solid var(--control-border);
   border-radius: var(--radius); padding: 18px 20px 16px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
 }
@@ -1020,10 +1392,10 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    eighteen keybind rows and Previews holds one row per known character,
    and either exceeds the window height. */
 
-/* Character names, like bookmarks' action names, are not short field
-   labels, so they do not take the stacked label treatment every other
-   settings row gets -- see the #eve-binds block below, which carries the
-   reasoning and the measurements for both lists. */
+/* Character names, like bookmarks' action names, are long -- but they take
+   the stacked label treatment anyway, like every other settings row on the
+   route. They did not until round 3's B1; the #eve-binds block below
+   carries the reasoning and the measurements for both lists. */
 /* ABOUT is the one card on this route that states facts BEFORE it offers a
    control -- every other card leads with the control and explains it
    underneath. Without this the licence line and the login switch touch,
@@ -1045,15 +1417,26 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #preview-binds-off { color: var(--text-dim); }
 
 #preview-binds {
-  display: grid; gap: 10px; align-items: center; justify-content: start;
-  /* Was repeat(3, ...): button, clear, typed. Task 11 added Lock and Never
-     minimize as two more per-row children (previews.js's makeRow always
-     appends exactly one of {both checkboxes} or {two filler spans}, so
-     every row -- including cycle-forward/back, which have no character --
-     still contributes the same column count). Drop this to repeat(3, ...)
-     again and the two new columns bleed into whatever sits below them,
-     since .row is display:contents and the grid does not know rows apart. */
-  grid-template-columns: minmax(0, max-content) repeat(5, max-content);
+  display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
+  justify-content: start;
+  /* Five fixed tracks, then one flexible one. The character name takes a
+     line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
+     size the CONTROLS on the line beneath it: bind button, Clear, Edit…,
+     Lock, Never minimize -- exactly the five children previews.js's
+     makeRow appends after the label. The trailing minmax(0, 1fr) absorbs
+     the leftover width so the five stay packed at the start instead of
+     spreading.
+
+     The count is load-bearing rather than cosmetic. `.row` is
+     display:contents, so the grid sees one flat stream of cells and cannot
+     tell one row from the next; a row that contributed fewer children
+     would pull the following row's children up into its empty columns.
+     That is why makeRow always appends exactly one of {both checkboxes} or
+     {two filler spans} -- cycle forward/back have no character, and
+     without the fillers those two rows would misalign every row after
+     them. Change the number of per-row children and this number changes
+     with it. */
+  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -1061,11 +1444,28 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    children with the row itself gone. */
 #preview-binds .row[hidden] { display: none; }
 #preview-binds .row > .lab {
+  grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
+/* 4px row-gap holds the name to its own controls; this restores the space
+   BETWEEN items. One gap cannot do both jobs here, because display:contents
+   flattens every row into the same grid, so the grid cannot tell "the line
+   under a name" from "the next name". Same reason .settings .row carries
+   its own 4px row-gap: a label equidistant from its field and from the row
+   above belongs to neither.
 
-/* The name takes the whole line at narrow widths -- the grid equivalent of
-   the flex `flex: 0 0 100%`, and the same reason. See #eve-binds below. */
+   Applied to every .lab rather than skipping the first with
+   :not(:first-child): rows here are hidden individually (previews.js hides
+   a row per character), so "first child" is not "first visible row", and
+   12px above the leading name is right anyway -- it follows the card's
+   prose. */
+#preview-binds .row > .lab { margin-top: 8px; }
+
+/* Redundant since B1 collapsed the column unconditionally above, and kept
+   deliberately: tests/test_page_conventions.py requires every id override
+   of the shared label column to restore the collapse inside this block,
+   and that rule protects the NEXT override, which will not have collapsed
+   itself. See #eve-binds below. */
 @media (max-width: 720px) {
   #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
@@ -1097,6 +1497,57 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    Copy button and the whole Backups card fall below the window with no
    scrollbar, exactly as the bookmarks binds did. */
 #route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
+
+/* P10 / D1 -- the roster is the one thing on this route that the 620px
+   measure is wrong for.
+
+   THE MECHANISM, which the walkthrough left as a measurement. This route
+   wraps itself in `.settings` (index.html), and `.settings` is
+   `max-width: 620px; margin: 0 auto` -- the same wrapper the eight Settings
+   sections use. So a 32-name roster meant to be SCANNED inherited the
+   measure that is right for a label/field pair, with no separate decision
+   behind it. That is what P10 measured: window 838 -> 969 CSS moved every
+   control right by exactly 133 physical px and widened none of them,
+   because nothing inside is permitted past 620.
+
+   D1 answered it: deliberate for prose and form rows, accidental for the
+   roster. So the cap is lifted for exactly one card -- the one holding the
+   roster -- and re-applied inside it to everything that is not the roster.
+   The folder card above keeps 620 and keeps its centring, which is why the
+   cap is restored on `> .card` rather than left off .settings.
+
+   `:has()` rather than a new id, because this reaches the card by the one
+   thing that makes it the exception. Same evergreen-Chromium argument the
+   .settings hint rules make: if a runtime ever lacks :has(), every rule
+   here drops and the route renders exactly as it does on main.
+
+   No cap on the wide card on purpose. .es-roster is already
+   `columns: 170px`, so the extra width becomes extra roster columns with no
+   layout code. Measured in the ?dev=1 harness with its 34 names, against
+   three columns at every width before: 4 at the 840 floor, 4 at 969 (wider
+   ones -- 229px against 197), 7 at 1400. The number that matters is not the
+   column count though: `Copy to selected` now sits at y=611 in a 625 floor,
+   i.e. ABOVE the fold, where P10 found it below the fold at 969 with
+   widening the window unable to help. That is the gesture the screen was
+   failing to reward.
+
+   .settings itself is untouched: Settings' eight sections share that rule
+   and their 620 is correct. */
+#route-evesettings > .settings { max-width: none; }
+/* margin-inline: 0, not auto. The cards used to centre because .settings
+   centred, and the folder card kept centring after the wrapper was lifted
+   -- which put a 620px card in the middle of the page above a full-width
+   one starting at the route's own padding, two left edges on one screen.
+   Left-aligned, the folder card keeps its 620 measure exactly and simply
+   shares the copy card's edge. */
+#route-evesettings > .settings > .card { max-width: 620px; margin-inline: 0; }
+#route-evesettings > .settings > .card:has(> .es-roster) { max-width: none; }
+/* The card grew; its form rows and its prose did not. 586px, not 620:
+   inside the card the 620 wrapper only ever gave them 586, and this is
+   holding that measure rather than restoring a number from one level up. */
+#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster) {
+  max-width: 586px;
+}
 
 /* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
    anything, and .card is not one -- so the list takes content height and
@@ -1182,13 +1633,44 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font-weight: 400;
 }
 
+/* P4 -- the folder path is a VALUE, not a field.
+
+   Both paths were span.field.mono, and .field is the input treatment:
+   --field fill, --field-border, radius, input padding. The walkthrough
+   sampled #es-root at #0A0B0E and read it as identical to the real
+   Filter... input below it; the sample is a shade off -- the computed fill
+   was rgb(12, 10, 15), --field since L1's retheme -- but the conclusion is
+   exact, and it is stronger than "these two look alike". Settings >
+   Folders renders a genuinely EDITABLE path (#f-recdir) in this same
+   class, and it computes the same fill, border and padding. One route
+   apart the identical box was a text field and here it was not, with
+   nothing but a click to tell them apart.
+
+   Everything .field was carrying for a reason is kept, because none of it
+   was about looking like an input:
+     - the mono face, so a path reads as a path (and it is not a bare
+       `mono` class: there is no such rule -- see #es-backups .bk-when);
+     - flex/min-width, which is what stops a long root pushing Change... or
+       Detect off the right of the row (Profiles 7's row);
+     - the end ellipsis, for the same long root;
+     - user-select, because a path is a thing people copy out by hand.
+   What goes is the fill, the border, the radius and the horizontal
+   padding -- the padding too, so the value now starts on the same left
+   edge as the stacked .lab above it rather than 10px inside it. */
+.es-path {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: var(--fs-mono); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 7px 0; user-select: text;
+}
+
 /* Neither half of the folder card overrides [hidden]: #es-folder-detail sets
    no display of its own, and #es-folder-summary is a .row, which carries the
    override already. Said out loud because an absent override is what the
    trap looks like, and this is the one place on the screen it is deliberate.
 
    The server and profile are their OWN element rather than part of the
-   path, because span.field's ellipsis truncates from the end and those two
+   path, because .es-path's ellipsis truncates from the end and those two
    change often enough to be worth reading. Given one line, the path is the
    half that may be cut. */
 #es-folder-set {
@@ -1233,6 +1715,33 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    it anyway. */
 #es-eve-state-commit { margin-left: auto; }
 #es-eve-state-commit[hidden] { display: none; }
+
+/* P3 -- the most consequential control on the screen was the smallest.
+
+   The walkthrough measured `Copy from` at ~149 CSS px against the
+   `Filter...` box's ~432, at the floor, with the roster the tallest thing
+   on screen; re-measured here the select's box is a flat 150 at every
+   width and the filter 432.64, so the figures were text against box and
+   both stand. The
+   source decides WHAT CONTENT overwrites every ticked character, and the
+   maintainer's flow sharpens that rather than softening it -- the source is
+   the one thing they know going in, and the targets are "all the others"
+   reached with one Select all. So the screen was giving its area to the
+   gesture that barely varies.
+
+   The mechanism is one shared rule, not this screen's: `.settings .row >
+   select.field` is `flex: 0 0 150px`, written for the Server/Profile pair
+   that shares a row. `Copy from` is alone on its row and inherited a cap
+   meant for two-up. An id override rather than an edit to that rule --
+   Server and Profile still want the fixed track, and the rule is L6's
+   block.
+
+   Widened to the row, not past it: D1 keeps the copy card's form rows at
+   the 586 measure while the roster below spans the card, so this is the
+   whole width the source is allowed and it is now the widest control in
+   the card. `.settings .row > .field`'s own flex is what a full-measure
+   field is; this only stops the select opting out of it. */
+#es-source { flex: 1; }
 
 /* Profiles 6 -- an empty Server or Profile rendered exactly like a working
    one: blank, un-placeholdered and undimmed before a folder exists, so it
@@ -1283,39 +1792,88 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #eve-bind-warning { color: var(--err); }
 
 /* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
-   "Finisher: C13 (shattered)"), not short field labels like the rest of
-   this route's cards, so they opt out of the stacked label above every
-   other settings row and keep the name beside its binding.
+   "Finisher: C13 (shattered)") and character names, not short field labels.
+   They used to answer that by keeping the name BESIDE its binding in a
+   column sized to the widest name. Round 3's B1 is why they no longer do.
 
-   THE COLUMN IS SIZED TO THE WIDEST NAME, NOT TO THE ROW. Measured in the
-   ?dev=1 harness at the 840 floor, with the eighteen real BIND_LABELS: the
-   row is 586px, the widest name's ink is 190px, and the old `flex: 1` gave
-   the label a 316px box regardless. That surplus became a void between
-   each name and its binding -- 137px on the longest name and 274px on
-   "Set Root", eighteen times down the card. The walkthrough called it
-   ~600px, which is not reachable inside a 620px-max-width .settings; the
-   real figures are the ones above.
+   WHAT B1 MEASURED. Bookmarks and Previews build the same row from the
+   same four elements, and rendered it at two geometries, because each
+   grid's first track was max-content over ITS OWN list. Re-measured in the
+   ?dev=1 harness with the eighteen real BIND_LABELS seeded into #eve-binds
+   (dev.js leaves it empty -- get_bookmarks is unstubbed):
 
-   The rule, which Skills' plan rail shares (walkthrough Skills 6) and is
-   recorded for it in docs/r2-handoffs.md: a full-width row does not
-   stretch its label to fill. The value column sits at the widest label
-   plus one gap, and the width left over stays unused at the right rather
-   than becoming a gap in the middle.
+     Bookmarks  column 189.6px ("Convert EvE-Scout Bookmarks")  bind at 200.6
+     Previews   column  86.2px ("Cycle forward")                bind at  97.2
+
+   103.4 CSS px apart, from a 586px row in both. The walkthrough measured
+   79 CSS on the live app; the difference is not a discrepancy but the
+   point -- Previews' column tracks whichever characters are logged in, so
+   it does not agree with Bookmarks OR with itself between sessions. A
+   geometry that no capture can pin down cannot be made to match by
+   choosing a number.
+
+   WHAT THE ALTERNATIVES COST, all measured, none hypothetical:
+
+   - A shared explicit column has to be at least the widest BIND_LABEL, so
+     Previews gets the void back: 104px on "Cycle forward", 130px on a
+     short character name. It is also a derived figure retyped into CSS,
+     which CLAUDE.md forbids and no test could assert without rendering.
+   - Stretching the name (`minmax(0, 1fr)`) and right-aligning the controls
+     puts every control at the same x in both sections and uses the width,
+     and it reproduces the exact defect this block was written to fix:
+     328.3px of control column leaves 138.7px between the longest name and
+     its binding and 276px after "Set Root". Those are the same two figures
+     the old `flex: 1` produced, to within a pixel.
+   - Per-row max-content unaligns the bindings: eighteen buttons at
+     eighteen x-positions, worse than any void.
+
+   So the name takes its own line and the controls take the next, which is
+   the stacked full-width .lab every other section on this route already
+   uses, and which THIS FILE ALREADY IMPLEMENTED below 720px as the narrow
+   form of these same rows. It is the only shape that depends on no
+   content: both sections now put the bind button at x=1 on line two, at
+   every width, whoever is logged in.
+
+   IT COSTS HEIGHT, and the figure is here so the trade can be reversed
+   knowingly rather than rediscovered. Measured at the 840 floor, both trees
+   under one protocol: #eve-binds goes 710px -> 1112px for eighteen rows
+   (39.4 -> 61.8 per row) and #preview-binds 190 -> 306 for five. The card
+   already scrolled inside .settings-pane at the 625 floor; it now scrolls
+   about 2.2 screens instead of 1.4.
+
+   Measure it with the list settled, not straight after building the rows.
+   Freshly injected .bindbtns report 28px before the webfont applies to them
+   and 30px after, which is 36px across eighteen rows -- enough to look like
+   a width-dependent layout difference when it is only a paint that has not
+   happened yet. `document.fonts.ready` alone does not cover it.
+
+   The rule this block still keeps, which Skills' plan rail shares
+   (walkthrough Skills 6) and is recorded for it in docs/r2-handoffs.md: a
+   full-width row does not stretch its label to fill. The width left over
+   stays unused at the right rather than becoming a gap in the middle --
+   which is now true of the control line too, at 254.3px used of 588.
 
    Grid on the CONTAINER with `display: contents` on the rows, because that
-   is the only way the column can be one column: max-content on a per-row
-   grid sizes each row separately and the bindings stop aligning, which is
-   worse than the void -- eighteen buttons at eighteen x-positions. The
-   rows keep no box of their own, so .row's 10px gap and 10px margin-bottom
-   are re-stated here as the grid's own gap.
+   is the only way the three control columns can be three columns rather
+   than one per row. The rows keep no box of their own, so .row's spacing is
+   re-stated here: 10px across as the column-gap, and 12px down as 4px of
+   row-gap plus the .lab's 8px margin (see #preview-binds for why those are
+   two numbers and not one).
 
-   minmax(0, max-content) rather than max-content on the name: a
-   pathologically long character name must be able to shrink rather than
-   push the buttons out of the card, which is what `min-width: 0` did
-   under flex. */
+   The trailing `minmax(0, 1fr)` track holds no control and exists so that
+   `grid-column: 1 / -1` reaches the CARD's width rather than the three
+   control tracks' 253.3px. Without it a character name longer than the
+   control line wraps at 253.3 with 335px of empty card beside it. The
+   controls do not move: they are max-content tracks packed at the start,
+   and the 1fr only absorbs what is left.
+
+   The 253.3 is .bindbtn's 150 plus Clear and Edit… at their own widths, so
+   it moves when a control is renamed -- B6's Type… -> Edit… took 6.4px off
+   it. Re-measure rather than adjusting the figure by hand. */
 #eve-binds {
-  display: grid; gap: 10px; align-items: center; justify-content: start;
-  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+  display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
+  justify-content: start;
+  grid-template-columns: repeat(3, max-content) minmax(0, 1fr);
 }
 #eve-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity -- the
@@ -1323,8 +1881,12 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    note about. */
 #eve-binds .row[hidden] { display: none; }
 #eve-binds .row > .lab {
+  grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
+/* See #preview-binds for why this is a margin and not the grid's row-gap,
+   and why it is not skipped on the first row. */
+#eve-binds .row > .lab { margin-top: 8px; }
 
 /* Settings 1's third case, kept in its grid form. Lane 0's
    `max-width: 720px` block collapses the shared label column above its
@@ -1333,35 +1895,54 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    SHRANK instead, which is the failure the collapse exists to prevent.
    #preview-binds carries the same override and the same repair.
 
-   `grid-column: 1 / -1` is the grid equivalent of the flex `flex: 0 0
-   100%` this used to be: the name takes the whole line and the controls
-   take the next one at their natural widths.
-
-   By C1 this can never fire in the app window -- the CSS floor is 840x625
-   at every scaling, so 720px is below it. It is kept because it still
-   fires in the ?dev=1 harness, it is the guard that would make lowering
-   MIN_WIDTH safe, and tests/test_page_conventions.py requires every id
-   override of the shared label column to restore its collapse. */
+   Since B1 the override above collapses the column unconditionally, so
+   this block now restates it and changes nothing. It is kept for the rule
+   rather than for its effect: tests/test_page_conventions.py requires
+   every id override of the shared label column to restore the collapse
+   here, and the next override to be written will not have collapsed
+   itself. It is also still the guard that would make lowering MIN_WIDTH
+   safe. By C1 it cannot fire in the app window regardless -- the CSS floor
+   is 840x625 at every scaling, so 720px is below it. */
 @media (max-width: 720px) {
   #eve-binds .row > .lab { grid-column: 1 / -1; }
 }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture
-   target; .linkbtn is the secondary Clear / Type… affordance. Both follow
+   target; .linkbtn is the secondary Clear / Edit… affordance. Both follow
    button.btn and .winbtn rather than introducing new colour literals. */
 .bindbtn {
   min-width: 150px; text-align: left;
-  background: #1c1f26; border: 1px solid #2a2e37;
+  background: var(--control); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); padding: 6px 10px;
   font-family: var(--mono); font-size: var(--fs-mono);
   color: var(--text); cursor: pointer; flex: none;
 }
-.bindbtn:hover { background: #242832; }
+.bindbtn:hover:not(:disabled) { background: var(--control-hover); }
 
 /* Capturing: the label already changes to "Press a key…", but without a
-   visual state the row does not read as waiting for input. */
+   visual state the row does not read as waiting for input.
+
+   The LABEL is not purple, and that is a measurement rather than a taste
+   call. L1 handed this block over with the numbers: --brand-text (#ad5aff)
+   clears 4.5:1 on the PAGE surfaces it was measured against (4.90:1 on
+   --panel) but not on the CONTROL surfaces this rule paints -- 4.16:1 on
+   --hover, and 3.99:1 once the pointer lifts it to --control-hover. Every
+   control surface fails it: even the resting --control reaches only
+   4.47:1, so there is no background in this family that rescues a purple
+   label. Fixing the token is a :root edit and :root is L1's.
+
+   So the brand signal moves to the BORDER, where 1.4.11 asks 3:1 of a
+   non-text indicator and 4.16:1 clears it comfortably, and the label takes
+   --text: 12.75:1 on --hover. The state still reads as armed -- purple ring,
+   lifted background, and the label itself already says "Press a key…".
+
+   One caveat, pre-existing and left alone: .bindbtn.clash below is equal
+   specificity and later, so a row that is both clashing and armed takes
+   the clash red for BOTH border and label. Nobody has reported it and the
+   clash warning is arguably the one that should win; the smoke step for
+   this state says to pick a non-clashing row. */
 .bindbtn.capturing {
-  border-color: var(--brand-text); color: var(--brand-text); background: #22252c;
+  border-color: var(--brand-text); color: var(--text); background: var(--hover);
 }
 
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
@@ -1398,7 +1979,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
-.linkbtn:hover { color: var(--text); background: #22252c; }
+.linkbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
 .settings {
   display: flex; flex-direction: column; gap: 12px;
@@ -1465,6 +2046,19 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
 
+/* Round 3, B13. The webhook field renders ~430 CSS px of dots that carry
+   no information at all, while this line -- ui/copy.py's webhook_status,
+   the only thing on the card answering WHICH webhook is configured -- sat
+   in the faintest tone the sheet has, beneath the loudest control on the
+   row. Masking the token is right; the weight was inverted.
+
+   One step up, to the tone .field-msg already uses for a line the reader
+   is meant to actually read. Not a new size and not a new token: the
+   informative element only has to stop being quieter than its neighbours,
+   and the dots cannot be made quieter without narrowing a field whose job
+   is holding a URL. */
+#webhook-status { color: var(--text-dim); }
+
 /* A hint that follows a checkbox explains the checkbox's SENTENCE, not its
    box. The sentence starts 24px in -- .check's 15px .box plus its 9px gap
    -- so a hint left at the card's own edge begins 24px to the LEFT of the
@@ -1518,7 +2112,7 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   display: inline-flex; align-items: center; gap: 7px; flex: none;
   font-size: var(--fs-muted); color: var(--text-faint);
   padding: 3px 10px 3px 8px; border-radius: 999px;
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .led {
   width: 7px; height: 7px; border-radius: 50%; flex: none;
@@ -1539,7 +2133,7 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .radio input { position: absolute; opacity: 0; width: 0; height: 0; }
 .ring {
   width: 15px; height: 15px; border-radius: 50%;
-  border: 1.5px solid #3a3f49; flex: none;
+  border: 1.5px solid var(--control-edge); flex: none;
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
@@ -1758,7 +2352,7 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .rail-head {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: #8b93a1; font-weight: 600;
+  color: var(--text-label); font-weight: 600;
 }
 /* A column header for .rail-ratio, so it sits over the numbers it names.
    Below body size and dim on purpose: it labels the data and is not the
@@ -1808,9 +2402,9 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   cursor: pointer; text-align: left;
 }
 .rail-item[hidden] { display: none; }
-.rail-plan:hover, .rail-item:hover { background: #22252c; color: var(--text); }
+.rail-plan:hover, .rail-item:hover { background: var(--hover); color: var(--text); }
 .rail-plan.active, .rail-item.active {
-  background: #191d24; border-left-color: var(--brand); color: var(--text);
+  background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
 .rail-plan-name { flex: 1; min-width: 0;
                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1821,7 +2415,14 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-main {
   display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0;
 }
+/* The `Copy plan` button (S7) is the third child and sits at the far end:
+   the heading and its requirement count are one statement and the control
+   acts on both, so it is separated from them rather than trailing the
+   count as a fourth word. align-items stays `baseline` for the two text
+   children; the button carries `align-self: center` below, because a .btn
+   baselined against an h1 hangs its border below the text. */
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
+#skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
 
 /* Collapses when empty, so the roster sits directly under the heading on
@@ -1831,14 +2432,14 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-notices {
   flex: none; display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .skills-notices[hidden] { display: none; }
 .notice { color: var(--text-dim); font-size: var(--fs-muted); }
 
 .skills-issues {
   flex: none; padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .skills-issues[hidden] { display: none; }
 .skills-issues summary {
@@ -1854,7 +2455,36 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
 .skills-filterbar .field { flex: 1; }
 
-.skills-roster { flex: 1; min-height: 0; overflow-y: auto; }
+/* S8 -- the pane is elastic and its content is not, so every extra pixel of
+   window used to become RULED emptiness.
+
+   Measured on main: window 833 -> 976 CSS moved the pane's right edge +276
+   physical while `Not trained`'s right edge moved +12, leaving 239 -> 371
+   CSS px of empty pane to the right of every answer. The separators below
+   ruled all of it, so the emptiness read as an unfinished table rather than
+   as margin -- which is the walkthrough's own diagnosis and names the fix.
+
+   NOT by widening the name column. --name-col is 240 because that is the
+   width the longest EVE skill and character names need and no more; the
+   block below records that 320 was tried and reserved 80px nothing could
+   fill. The status column is right where it belongs. What was wrong is
+   only that the rule under each row kept going.
+
+   width: max-content, so the figure is DERIVED from the row rather than
+   chosen: the list is as wide as a chevron, the 240px name cap, a gap and
+   the widest status, and the separators stop there. max-width: 100% keeps
+   the 840 floor unaffected -- below the content width the list shrinks as
+   it always did, and the names ellipsise rather than overflow.
+
+   This is NOT P10's fix and must not be merged with it. Profiles wasted
+   width OUTSIDE a fixed card and had a roster that could use it; Skills
+   wastes it INSIDE an elastic pane and has content that cannot. So
+   Profiles turns the width into columns and Skills turns it into honest
+   margin. Same symptom, opposite mechanisms. */
+.skills-roster {
+  flex: 1; min-height: 0; overflow-y: auto;
+  width: max-content; max-width: 100%;
+}
 .skills-group { margin-bottom: 12px; }
 .skills-group-head {
   display: flex; align-items: center; gap: 8px;
@@ -1865,15 +2495,14 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
 /* The colour key.
-   `#7aa2f7` is a literal and this comment used to claim otherwise ("every
-   value is an existing token; this route introduces no new colour
-   literals"). It appears three times below -- .key-Training,
-   .status-Training and .state-Queued -- and since the purple retheme it is
-   also, exactly, the value of `--link`. It is NOT that concept: --link is
-   the declared exemption for a link OUT of the app, and pointing these at
-   it would say a training state leaves the application. A token of its own
-   belongs in `:root`, which this block does not own. Left as a literal
-   deliberately, with the collision recorded rather than laundered.
+   This block used to hold `#7aa2f7` three times over -- .key-Training,
+   .status-Training and .state-Queued -- and carried a note saying so,
+   because after the purple retheme that literal was EXACTLY the value of
+   `--link`, and pointing them at --link would have said a training state
+   leaves the application. The note ended "a token of its own belongs in
+   `:root`, which this block does not own". L1 owns `:root`; the token is
+   `--training`, teal rather than blue, and the collision is gone rather
+   than recorded. Finding S5.
 
    THE ORDER OF THESE IS THE SEVERITY RAMP, and it used to invert itself
    at the last rung. `Unknown` outranks `Missing` as a problem -- Python
@@ -1883,13 +2512,19 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    painted --text-dim: the more severe state, dimmer than the milder one,
    which is the opposite of what a severity colour is for.
 
-   Both now carry --err, and the WORD carries the distinction ("Missing
+   Both now carry --unmet, and the WORD carries the distinction ("Missing
    requirements" / "Untrained requirements"). Not a swap: --warn is already
    Locked's, and Missing genuinely outranks Locked, so demoting Missing to
-   make room would collide two states that are not equal. There is no
-   fourth severity token to reach for and minting one is a `:root` edit
-   this block may not make -- so the ramp ends in one bucket of two
-   equally-actionable reds rather than a fifth colour.
+   make room would collide two states that are not equal.
+
+   The rung was --err until finding S3, and the note here used to explain
+   that as forced: "there is no fourth severity token to reach for and
+   minting one is a `:root` edit this block may not make". That is what
+   L1 minted. It matters beyond tidiness, because --err was also painting
+   `Forget character` -- the control that deletes the character -- about
+   130 CSS px below a `Missing` row in identical red. A state this screen
+   exists to report is not a failure and must not wear the failure
+   colour; C2 settled the same point for `Unknown skill`.
 
    --text-faint stays on Unscored, and that is not an oversight: Unscored
    is the ABSENCE of a judgement, not a bad one. Grey is right for exactly
@@ -1899,27 +2534,27 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   background: currentColor;
 }
 .key-Ready { color: var(--ok); }
-.key-Training { color: #7aa2f7; }
+.key-Training { color: var(--training); }
 .key-Locked { color: var(--warn); }
-.key-Missing { color: var(--err); }
-.key-Unknown { color: var(--err); }
+.key-Missing { color: var(--unmet); }
+.key-Unknown { color: var(--unmet); }
 .key-Unscored { color: var(--text-faint); }
 /* The catch-all bucket. Brand-coloured on purpose: a readiness this page
    has never heard of is worth looking at, not worth hiding. */
 .key-Other { color: var(--brand-text); }
 
 .skills-row {
-  border-bottom: 1px solid #191c22;
+  border-bottom: 1px solid var(--row-line);
   border-left: 2px solid transparent;
 }
-.skills-row.open { background: #171a20; border-left-color: #2f3540; }
+.skills-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
 .skills-row-top {
   display: flex; align-items: center; gap: 9px; width: 100%;
   background: none; border: 0; padding: 7px 10px;
   color: var(--text); font: inherit; font-size: var(--fs-body);
   cursor: pointer; text-align: left;
 }
-.skills-row-top:hover { background: #171a20; }
+.skills-row-top:hover { background: var(--row-hover); }
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
 /* max-width is what closes the ~1000px gap between a row's subject and
    its answer. `flex: 1` alone let the name box eat every spare pixel and
@@ -1942,25 +2577,48 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    sets ~228 at --fs-body. 240 is the smallest cap that truncates neither,
    and anything longer than that ellipsises as it always did. Do not round
    it up for comfort: 320 was the first value tried and reserved 80px that
-   nothing on the screen could ever fill. */
+   nothing on the screen could ever fill.
+
+   S8 changed HOW the 240 is stated, not the number. `flex: 1` plus
+   `max-width` grew the name to 240 only while the row happened to be wider
+   than 240 plus the status; the cap did the aligning by accident of there
+   always being room. Once S8 sized the list to its content that stopped
+   being true and the statuses went ragged in exactly the way this note
+   predicts -- on `Training - timing unknown` the leftover was under 240, so
+   the cap never bound and each status landed at its own x.
+
+   An explicit `width` is what fixes it, and flex-basis is not: measured in
+   the harness, `flex: 0 1 var(--name-col)` still contributed each name's
+   TEXT to the list's intrinsic width (roster 268px, statuses at six
+   different x), while `width: var(--name-col)` contributes 240 (roster
+   447.8px, every status at 280). Shrink stays 1, so at the floor the
+   column still gives way and the names ellipsise as before. */
 .skills-main { --name-col: 240px; }
 
 .skills-name {
-  flex: 1; min-width: 0; max-width: var(--name-col);
+  width: var(--name-col); flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Three of these rules are DELETED, not lost: .status-Ready,
+   .status-Locked and .status-Unknown painted words the row no longer
+   says. S2 took the status column down to what the group header cannot
+   carry -- a Missing row's count and a Training row's ETA -- and every
+   other row is now a name under a heading, with the severity carried by
+   the group's own swatch (.skills-key above, which still has its full
+   ramp). Two selectors, two states, and adding a rule here again means a
+   row has started restating its group.
+
+   Unscored and the catch-all never had a rule and still do not. The class
+   is built from the raw readiness string, so both have always fallen
+   through to --text-dim: Unscored is the ABSENCE of a judgement rather
+   than a bad one (the same reason .key-Unscored is grey), and a state this
+   page has never heard of has no place on a severity ramp at all. */
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
-.status-Ready { color: var(--ok); }
-.status-Training { color: #7aa2f7; }
-.status-Locked { color: var(--warn); }
-.status-Missing { color: var(--err); }
-/* New rule, not a changed one: there was no .status-Unknown at all, so the
-   row that reads `Not trained` fell through to .skills-status' --text-dim
-   while its own group key beside it was coloured. See the ramp above. */
-.status-Unknown { color: var(--err); }
+.status-Training { color: var(--training); }
+.status-Missing { color: var(--unmet); }
 .badge-stale {
   flex: none; padding: 1px 7px; border-radius: 999px;
-  background: #101216; border: 1px solid var(--warn);
+  background: var(--sunken); border: 1px solid var(--warn);
   color: var(--warn); font-size: 10px; letter-spacing: .04em;
 }
 
@@ -1971,38 +2629,92 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .reauth {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--err);
+  background: var(--sunken); border: 1px solid var(--err);
   color: var(--text-dim); font-size: var(--fs-muted);
 }
 .row-error { color: var(--err); font-size: var(--fs-muted); user-select: text; }
 .row-fetched { color: var(--text-faint); font-size: var(--fs-muted); }
+/* S6's affordance. Same shape as .reauth above and deliberately NOT its
+   border: a character whose skills have never been read is an ordinary
+   state -- every character is in it between authorisation and its first
+   refresh -- and --err would say something went wrong. The neutral field
+   border is what the notices strip at the top of this pane already uses
+   for a statement of fact. */
+.row-note {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--sunken); border: 1px solid var(--field-border);
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
 
 .req-list { display: flex; flex-direction: column; gap: 3px; }
 .req { display: flex; align-items: baseline; gap: 10px; }
-/* Same cap, same reason, and deliberately the same value: a requirement
+/* Same column, same reason, and deliberately the same value: a requirement
    row is the character row's answer one level down, and two different
-   caps would put the two state columns at two different offsets in a
-   block the eye reads as one list. */
+   widths would put the two state columns at two different offsets in a
+   block the eye reads as one list. It follows .skills-name from cap to
+   explicit width for the same S8 reason -- an expanded row is inside the
+   list whose intrinsic width S8 now derives, so a name that contributed
+   its text here would widen the list for every collapsed row too. */
 .req-name {
-  flex: 1; min-width: 0; max-width: var(--name-col);
+  width: var(--name-col); flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--fs-muted);
 }
 .req-state { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
-.state-Missing { color: var(--err); }
+.state-Missing { color: var(--unmet); }
 .state-TrainedInactive { color: var(--warn); }
-.state-Queued { color: #7aa2f7; }
+.state-Queued { color: var(--training); }
 /* Was --text-faint, the faintest colour in the palette, on the state this
    list's own sort ranks second and the evaluator ranks worst. Same fix and
    same reasoning as .key-Unknown above. */
-.state-Unknown { color: var(--err); }
+.state-Unknown { color: var(--unmet); }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
-.linkbtn.danger { color: var(--err); }
-.linkbtn.danger:hover { color: #fff; background: #d9291c; }
-button.btn.danger { border-color: var(--err); color: var(--err); }
-button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
+/* THE destructive treatment, and the only one. See the vocabulary banner
+   above button.btn.
+
+   WHEN: the action destroys something the user cannot get back by clicking
+   again -- a recording, a backup, a stored credential, a character's
+   refresh token. Not "the action is important", and not "the action is
+   hard to undo by hand".
+
+   THE RULE WAS AHEAD OF THE SITES, on purpose: the primitive landed in
+   its own lane so three screen lanes would convert to one thing instead
+   of inventing a third answer between them -- which is how the app got
+   five treatments. `Remove` on Settings > Discord has converted (R4).
+   `Delete selected` on the Uploader (index.html, R1's) and `Forget
+   character` on Skills (below, R3's) are the two still to come.
+
+   WHEN IT ASKS FIRST is a separate question with a separate answer, and
+   conflating the two is how `Restore` nearly got red-outlined. A
+   destructive action confirms; a confirm does NOT imply this treatment.
+   `Restore` on Profiles confirms because it overwrites a live profile --
+   but it backs the profile up first and the dialog says so (the text is in
+   ui/api.py's eve_settings_restore, not in evesettings.js), so nothing is
+   destroyed and it stays a plain .btn. WHICH confirm mechanism is a third
+   question again, decided by the thread the action runs on; DESIGN.md
+   holds that table.
+
+   Every destructive action now confirms, through three different
+   mechanisms. `Remove` on Settings > Discord was the last gap -- one
+   click, no undo, on a masked value the user could not read first -- and
+   round 3's R4 closed it with WM.confirm, naming the webhook in the
+   dialog because the field cannot.
+
+   The hover fills rather than brightening, so the resting state is an
+   outline the eye can skip and the committed state is unmistakable.
+   --danger-solid rather than --danger because --on-accent has to clear AA
+   on top of it: 4.90:1. */
+button.btn.danger { border-color: var(--danger); color: var(--danger); }
+button.btn.danger:hover:not(:disabled) {
+  background: var(--danger-solid); color: var(--on-accent);
+}
+/* `.linkbtn.danger` STOOD HERE and is deleted, not moved. It survived L5
+   for one site -- skills.js's `Forget character` -- and R3 converted that
+   control to .btn.danger, which is what this pair was kept for. There is
+   one destructive treatment and it is a button. Do not mint this again. */
 
 /* The 168px rail step that used to live here has been DELETED, not moved.
    It narrowed the rail to the Settings rail's width below 720px, to buy

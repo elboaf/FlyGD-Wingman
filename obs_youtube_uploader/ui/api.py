@@ -79,6 +79,13 @@ FIRST_RUN_PUSH_S = 1.5
 # reached the page, which _push swallows silently.
 EVE_CONFIRM_TIMEOUT_S = 300.0
 
+# Much shorter than EVE_CONFIRM_TIMEOUT_S, and for the opposite reason. That
+# one bounds a worker holding a lock; this one bounds the PYSTRAY thread,
+# which services the whole tray menu -- so a page that never answers takes
+# the tray with it until this expires. Long enough to read two sentences
+# and click, short enough that a wedged page does not make Quit look broken.
+QUIT_CONFIRM_TIMEOUT_S = 60.0
+
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
 # set_alert_event's writable fields. Kept as a set to check against rather
@@ -192,6 +199,36 @@ def _close_media(media) -> None:
         logger.warning("Could not close upload stream", exc_info=True)
 
 
+def _folder_note(folder: Path, suppressed: int) -> str:
+    """What just happened to the recording folder, with the real number.
+
+    Round 3's B11: the two fields with a data-loss history said nothing
+    about how they commit. The answer settled on was not a confirm and not
+    an Apply button -- Browse and Detect rebind in one click and would
+    bypass both -- but a report, written after the commit, where the count
+    is knowable.
+
+    The cost is deliberately stated as what it is and no worse. Those
+    recordings are not announced and arrive unticked, but they are still
+    listed: list_rows() rebuilds from the folder and only the watcher's
+    poll result is preselected (__main__.py's poll_tick). Calling it data
+    loss would be the same overstatement DESIGN.md carried for a release.
+
+    Zero says nothing about announcements, because there was nothing to
+    suppress and a "0 recordings were not announced" is a sentence the
+    reader has to parse twice to learn nothing.
+    """
+    where = f"Now watching {folder}."
+    if suppressed == 0:
+        return where
+    # Singular by hand rather than a pluralise helper: this is the only
+    # counted noun on the Settings route, and copy.py's number formatting
+    # is another lane's region.
+    if suppressed == 1:
+        return f"{where} 1 recording already there was not announced."
+    return f"{where} {suppressed} recordings already there were not announced."
+
+
 @dataclass
 class UploadJob:
     """Every value the upload worker needs, captured before dispatch.
@@ -217,6 +254,37 @@ class UploadJob:
     # user has since unchecked the box.
     logs: bool = False
     start_index: int = 0
+
+
+def _upload_summary(job: UploadJob) -> str:
+    """What the strip says when the video half has succeeded.
+
+    Round 3's finding 13: the old line was "Upload complete!", which the
+    combat-log tail then overwrote outright, so the terminal feedback for
+    the primary action read "Posted combatlogs-....zip (15 KB)." -- the
+    words *uploaded*, the video's title and *YouTube* appeared nowhere,
+    and the only other change on screen was a 14px grey arrow in the
+    narrowest column. The task completed and the interface did not say so.
+
+    Deliberately built the same way format_upload_confirm builds its
+    `Title:` line -- through uploader.build_body -- so the name on the
+    strip is the name that is actually on YouTube, numbering included, and
+    not the raw field. Same branch, too: stitching collapses a batch into
+    one video, so it takes the single-title form.
+
+    No period. Callers that have a second half to report append their own
+    sentence (see _skip_logs), which keeps the primary action first in
+    every variant instead of behind the side-effect.
+    """
+    count = 1 if job.stitch else len(job.items)
+    if count == 1:
+        shown = uploader.build_body(job.title, "", job.privacy, "", 0, 1)["snippet"][
+            "title"
+        ]
+        return f'Uploaded "{shown}" to YouTube'
+    # The noun is "recordings", matching the confirm the user just read.
+    # The titles are numbered per item, so there is no one name to give.
+    return f"Uploaded {count} recordings to YouTube"
 
 
 @dataclass
@@ -342,6 +410,12 @@ class Api:
         self._retry_state: RetryState | None = None
         self._links: dict[str, str] = {}
         self._last_pct: float = 0.0
+        # D5's stop signal. An Event rather than a bool because it is set on
+        # the UI thread (cancel_upload, a bridge method) and read on the
+        # upload thread once per 4 MiB chunk, and because `.is_set` is
+        # exactly the zero-argument predicate uploader.upload wants -- no
+        # lambda closing over self on a worker.
+        self._cancel = threading.Event()
         self._watcher = None
         self._auth_thread: threading.Thread | None = None
         self._on_recording_dir_ready = None
@@ -402,6 +476,106 @@ class Api:
             self._window.evaluate_js(script)
         except Exception:
             logger.debug("Push of %s failed", handler, exc_info=True)
+
+    def _push_skills(self, handler: str, payload) -> None:
+        """The skills subsystem's push, with presentation labels added.
+
+        D3/S6. `_with_fetch_labels` was applied by the `skills_state`
+        METHOD and nowhere else, while eveskills.controller pushed
+        `state_payload()` raw. skills.js asks for state on first entry only
+        (it says so at skills.js:76-79 -- after that every mutation
+        pushes), and both payloads land in the same renderer, so the first
+        render of the route was labelled and EVERY render after it was not.
+        The page's own fallback then printed "Never fetched" for every
+        character however recently fetched, beside queue timing drawn from
+        the same payload -- which is the contradiction the maintainer
+        reported.
+
+        This is the failure class CLAUDE.md warns about and it is why the
+        fix is here: a missing KEY crossing the bridge is a silent no-op,
+        test_bridge_contract.py checks handler names rather than payload
+        shape, and nothing in the suite renders the page.
+
+        Label-building deliberately stays in ui/ rather than moving into
+        controller.state_payload -- _with_fetch_labels' own docstring gives
+        the reason (the controller is the only writer of the skills
+        document, the label is presentation, and state_payload may hand
+        back structures the document still references, so a key written
+        there is one save away from being persisted). Wrapping the push
+        callback keeps that boundary and closes the gap it created.
+
+        Passed to the controller as this bound method, so onSkillsProgress
+        and any later event go through unchanged -- a name resolved lazily
+        in a lambda is what tests/test_skills_wiring.py forbids.
+        """
+        if handler == "onSkills":
+            payload = _with_fetch_labels(payload)
+        self._push(handler, payload)
+
+    # The status strip is global chrome: it is the same strip on every
+    # route, and app.js deliberately never tells Python which route is
+    # showing. So the page cannot work out on its own whether what the
+    # strip holds is still true -- and round 3's finding 14 caught exactly
+    # that: a green "Posted combatlogs-...zip (15 KB)." and a bar at 100%
+    # still on screen in a capture of a DIFFERENT folder with zero
+    # recordings, and again on the Profiles and Skills routes. The
+    # completion state of one upload outlived everything it was about.
+    #
+    # `busy` is the missing fact, and only Python has it: True means the
+    # strip is describing something that is STILL RUNNING, False means it
+    # is describing a result. The page clears a settled strip when the
+    # route changes and never clears a busy one -- during an upload the
+    # strip is the only feedback there is (finding 12), so it has to
+    # survive a user wandering off to Skills and back.
+    #
+    # Every strip push goes through these two, so a new one cannot forget
+    # the flag and silently inherit "settled". test_api_upload.py walks this
+    # module's AST and asserts that the only _push calls naming onStatus or
+    # onProgress are the two below.
+    #
+    # The DEFAULT is `None`, not False, and that is load-bearing. The strip
+    # is one shared surface and the upload is not its only writer: Delete,
+    # Copy link, Open folder and the whole Profiles half are reachable while
+    # an upload runs, and each of them ends on a line of its own. Written as
+    # a plain False those lines would settle the strip on behalf of an
+    # upload that is still going, and the next route change would blank it.
+    # Harmless mid-transfer, where the next chunk repaints within a second;
+    # NOT harmless mid-stitch, which reports no progress this code can read
+    # and can go minutes with nothing to repaint it. So `None` means "not
+    # mine to say" and defers to _busy(), and only the upload's own
+    # lifecycle states the flag outright.
+
+    def _status(self, text: str, kind: str = "FG", *, busy: bool | None = None) -> None:
+        """Push one status-strip line. See the note above on `busy`."""
+        self._push(
+            "onStatus",
+            {
+                "text": text,
+                "kind": kind,
+                "busy": self._busy() if busy is None else busy,
+            },
+        )
+
+    def _progress(
+        self,
+        pct: float,
+        text: str = "",
+        kind: str = "FG",
+        *,
+        mode: str = "determinate",
+        busy: bool | None = None,
+    ) -> None:
+        """Push one progress-bar state. See the note above on `busy`."""
+        self._push(
+            "onProgress",
+            {
+                "mode": mode,
+                "pct": pct,
+                "text": text,
+                "kind": kind,
+                "busy": self._busy() if busy is None else busy,
+            },
+        )
 
     def _alert(self, kind: str, title: str, body: str) -> None:
         """Non-blocking message box: info, error, or warning."""
@@ -599,7 +773,7 @@ class Api:
         message = f"Deleted {deleted} file(s)."
         if failures:
             message += f" {len(failures)} failed."
-        self._push("onStatus", {"text": message, "kind": "FG"})
+        self._status(message)
 
     def copy_path(self, row_id: str) -> str:
         """Return the row's link for the page to put on the clipboard.
@@ -612,7 +786,7 @@ class Api:
         url = self._links.get(row_id, "")
         if not url:
             return ""
-        self._push("onStatus", {"text": "Link copied to clipboard", "kind": "SUCCESS"})
+        self._status("Link copied to clipboard", "SUCCESS")
         return url
 
     def open_path(self, row_id: str) -> None:
@@ -638,22 +812,15 @@ class Api:
         """
         folder = self._state.recording_dir
         if folder is None:
-            self._push(
-                "onStatus",
-                {
-                    "text": "No recording folder is set. Choose one in Settings.",
-                    "kind": "WARNING",
-                },
+            self._status(
+                "No recording folder is set. Choose one in Settings.", "WARNING"
             )
             return False
         if not Path(folder).is_dir():
             # The same case __main__ treats as first run at launch: a
             # folder that was configured and has since gone. Naming it
             # beats "an error occurred", per PRODUCT.md's tone rule.
-            self._push(
-                "onStatus",
-                {"text": f"That folder is gone: {folder}", "kind": "WARNING"},
-            )
+            self._status(f"That folder is gone: {folder}", "WARNING")
             return False
         try:
             # os.startfile exists only on Windows, so it is reached through
@@ -665,10 +832,7 @@ class Api:
                 os.startfile(str(folder))
         except OSError:
             logger.exception("Could not open the recording folder")
-            self._push(
-                "onStatus",
-                {"text": "That folder could not be opened.", "kind": "WARNING"},
-            )
+            self._status("That folder could not be opened.", "WARNING")
             return False
         return True
 
@@ -761,6 +925,54 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
+    def _confirm_quit_if_busy(self) -> bool:
+        """Answer "may the app exit now?" for the tray's Quit item.
+
+        Quit destroys the window, which returns from the GUI loop and ends
+        the process. `_upload_thread` is a daemon, so an upload in flight
+        dies mid-chunk: no message, no log line, and a multi-gigabyte
+        transfer discarded by one menu click. This is the only thing
+        standing between that click and the discard.
+
+        Private, and called from `__main__.on_quit` -- the same reach
+        `__main__` already makes for `_busy`, `_push` and `_alert`. It may
+        NOT be public: pywebview builds its JS proxy from public attributes,
+        so a public name here would hand the page a way to ask the user to
+        quit.
+
+        Three things this gets right that the obvious version does not.
+
+        It raises the window BEFORE asking. This is a tray app whose window
+        is usually hidden -- `--hidden` is how the login entry starts it --
+        and `_push` into a hidden window is swallowed, so the dialog would
+        never be seen and the wait would run to its timeout. Quit would
+        look broken.
+
+        It uses a BOUNDED wait. `_confirm` blocks forever by design, which
+        is right for a worker and wrong here: this runs on the pystray
+        thread, and parking it stops the whole tray menu.
+
+        Silence means DO NOT QUIT. A page that crashed or is mid-reload
+        never answers, and the two failures are not symmetric -- reading
+        silence as "stay running" costs a second click, reading it as
+        "quit" costs the upload.
+        """
+        if not self._busy():
+            return True
+        window = self._window
+        if window is None:
+            # No page to ask and no way to warn. Refusing here would make
+            # Quit inert with nothing on screen explaining why, which is a
+            # worse failure than the discard this guard exists to prevent.
+            logger.warning("Quit requested with an upload running and no window.")
+            return True
+        window.show()
+        return self._ask(
+            "Upload in progress",
+            copy_mod.format_quit_confirm(self._last_pct),
+            timeout=QUIT_CONFIRM_TIMEOUT_S,
+        )
+
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
         # state -- "there is no scenario where I don't want to upload logs
@@ -816,6 +1028,11 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
+        # Cleared per dispatch, not per process: a stop answered by the
+        # PREVIOUS job would otherwise abort this one before its first chunk
+        # and report "Stopped. Nothing was uploaded." for a job the user
+        # just started. Retry clears it for the same reason.
+        self._cancel.clear()
         self._upload_thread = threading.Thread(
             target=self._confirm_then_upload, args=(job,), daemon=True
         )
@@ -856,12 +1073,27 @@ class Api:
 
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
-        self._push("onStatus", {"text": "Upload complete!", "kind": "SUCCESS"})
-        self._push(
-            "onProgress",
-            {"mode": "determinate", "pct": 100.0, "text": "", "kind": "SUCCESS"},
-        )
+        # Disarmed HERE and not left to _upload_worker's finally: the video
+        # half is over, but the combat-log half below still runs on this
+        # thread and can take seconds. The finally is several frames away,
+        # so a Cancel left armed across the log post would be a live button
+        # with nothing polling its flag -- a click that does nothing, which
+        # is the state D5 exists to remove rather than relocate.
+        self._push("onCancelAvailable", {"available": False})
+        summary = _upload_summary(job)
+        # Explicit False on both: this runs ON the upload thread, so
+        # _busy() is still true here and the default would refuse to settle
+        # the very line that says the job is over.
+        self._status(f"{summary}.", "SUCCESS", busy=False)
+        self._progress(100.0, kind="SUCCESS", busy=False)
         self._push("onRetryAvailable", {"available": False})
+        # Round 3's finding 5, panel half. A SEMANTIC event -- the job
+        # finished -- not an instruction: the page decides that this means
+        # dropping the selection, because selection is client state and
+        # never crosses this bridge. Pushed here rather than from the two
+        # call sites so the resume tail reports completion the same way a
+        # plain job does.
+        self._push("onUploadDone", {})
         # The single point at which the video half is known to have
         # succeeded -- both the plain worker and the resume tail arrive
         # here -- so it is where the log half hangs. Retry therefore posts
@@ -875,16 +1107,23 @@ class Api:
             # and linked by now, so that message would send the user to
             # re-upload something already on their channel.
             try:
-                self._post_combat_logs(job)
+                self._post_combat_logs(job, summary)
             except Exception as exc:
                 logger.warning("Combat log upload failed", exc_info=True)
-                self._skip_logs(str(exc))
+                self._skip_logs(summary, str(exc))
 
     def _upload_worker(self, job: UploadJob) -> None:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
 
         index = job.start_index
+        # Reset per job, not per process. `_last_pct` is only ever written
+        # by a progress callback, so without this a job carries the PREVIOUS
+        # job's number until its first chunk lands -- reaching on_retry's
+        # bar, and the quit confirm, both of which state it as fact. Not
+        # reset on the resume path: there the last value belongs to the same
+        # job and is still true.
+        self._last_pct = 0.0
         try:
             creds = uploader.load_credentials(paths.token_file())
             if uploader.needs_reauth(creds):
@@ -905,22 +1144,20 @@ class Api:
                 # on_progress does it: start_upload writes no status before
                 # dispatching, so a red error from the previous attempt
                 # would otherwise survive into this message.
-                self._push(
-                    "onProgress",
-                    {
-                        "mode": "indeterminate",
-                        "pct": 0.0,
-                        "text": "Stitching with FFmpeg…",
-                        "kind": "FG",
-                    },
+                self._progress(
+                    0.0, "Stitching with FFmpeg…", mode="indeterminate", busy=True
                 )
                 with stitch.stitched(
                     sources, self._state.ffmpeg_bin, paths.tmp_dir()
                 ) as merged:
-                    self._push(
-                        "onProgress",
-                        {"mode": "determinate", "pct": 0.0, "text": "", "kind": "FG"},
-                    )
+                    self._progress(0.0, busy=True)
+                    # Armed HERE, inside the context manager and after the
+                    # join, not at the top of the branch: D5 scopes cancel
+                    # to the upload phase only. stitch.stitched() runs a
+                    # bundled ffmpeg with no interruption seam, and a
+                    # Cancel that did nothing for the minutes a join takes
+                    # is worse than no Cancel at all.
+                    self._push("onCancelAvailable", {"available": True})
                     vid = self._upload_one(
                         youtube, MediaFileUpload, merged, job, 0, 1, close_media=True
                     )
@@ -928,6 +1165,7 @@ class Api:
                     self._link(row_id, vid)
             else:
                 total = len(job.items)
+                self._push("onCancelAvailable", {"available": True})
                 for index in range(job.start_index, total):
                     vid = self._upload_one(
                         youtube,
@@ -939,6 +1177,25 @@ class Api:
                     )
                     self._link(job.ids[index], vid)
             self._upload_done(job)
+        except uploader.UploadCancelled:
+            # `index` is the item that was interrupted, so items 0..index-1
+            # finished and were _link()ed -- on the plain path those videos
+            # are public on the channel right now, which is exactly what
+            # format_upload_cancelled refuses to let the message hide. The
+            # stitch path never advances `index`, and it is one video, so it
+            # reports the zero case.
+            done = 0 if job.stitch else index
+            text = copy_mod.format_upload_cancelled(done, len(job.items))
+            # No _retry_state and no onRetryAvailable, per D5: Retry exists
+            # to recover from a failure, and a stop is not one. Offering it
+            # here would also re-arm the slot the Cancel button was just
+            # occupying.
+            self._retry_state = None
+            # Not ERROR: the user asked for this. The bar keeps the ground
+            # the job actually covered rather than resetting to 0, which
+            # would contradict a sentence saying two of four are up.
+            self._status(text, "WARNING", busy=False)
+            self._progress(self._last_pct, kind="WARNING", busy=False)
         except uploader.UploadFailed as exc:
             # Stitched failures cannot resume: the context manager has
             # already deleted the merged file the session points at, which
@@ -965,7 +1222,7 @@ class Api:
                 request=exc.request if resumable else None,
             )
             self._alert("error", "Upload Failed", str(exc))
-            self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
+            self._status(str(exc), "ERROR", busy=False)
             if exc.outcome is uploader.Outcome.RETRY:
                 self._push("onRetryAvailable", {"available": True})
         except Exception as exc:  # noqa: BLE001 - reported to the user, never raised
@@ -973,12 +1230,14 @@ class Api:
             # Covers a stitch failure too (StitchError isn't an
             # UploadFailed): if the bar was left indeterminate above, put it
             # back rather than leaving it animating behind the error.
-            self._push(
-                "onProgress",
-                {"mode": "determinate", "pct": 0.0, "text": "", "kind": "FG"},
-            )
+            self._progress(0.0, busy=False)
             self._alert("error", "Upload Failed", str(exc))
-            self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
+            self._status(f"Error: {exc}", "ERROR", busy=False)
+        finally:
+            # Every exit, including the success one: the slot is shared with
+            # Retry and the two are never live at once, so a Cancel left
+            # armed would sit beside the Retry a failure just enabled.
+            self._push("onCancelAvailable", {"available": False})
 
     def _upload_one(
         self,
@@ -1002,29 +1261,21 @@ class Api:
 
         def on_progress(fraction: float) -> None:
             self._last_pct = ((index + fraction) / total) * 100
-            self._push(
-                "onProgress",
-                {
-                    "mode": "determinate",
-                    "pct": self._last_pct,
-                    "text": copy_mod.format_progress(index, total, fraction),
-                    "kind": "FG",
-                },
+            self._progress(
+                self._last_pct,
+                copy_mod.format_progress(index, total, fraction),
+                busy=True,
             )
 
         def on_retry(attempt: int, delay: float) -> None:
             # Carries the last percentage rather than zero: the upload has
             # not lost the ground it covered, and a bar snapping backwards
             # while the text says "retrying" reads as a restart.
-            self._push(
-                "onProgress",
-                {
-                    "mode": "determinate",
-                    "pct": self._last_pct,
-                    "text": f"Network problem — retrying in {delay:.0f}s "
-                    f"(attempt {attempt})",
-                    "kind": "WARNING",
-                },
+            self._progress(
+                self._last_pct,
+                f"Network problem — retrying in {delay:.0f}s (attempt {attempt})",
+                "WARNING",
+                busy=True,
             )
 
         try:
@@ -1033,6 +1284,7 @@ class Api:
                 on_progress=on_progress,
                 on_retry=on_retry,
                 on_response=self._remember_channel,
+                should_cancel=self._cancel.is_set,
             )
         finally:
             if close_media:
@@ -1095,6 +1347,26 @@ class Api:
         # authenticated.
         self._push_auth("connected")
 
+    def cancel_upload(self) -> None:
+        """Ask the upload thread to stop after the chunk it is sending.
+
+        Sets a flag and returns: the bridge thread must not block, and the
+        worker is the only thread that may touch the strip, _retry_state or
+        the row links. Everything the user sees about the stop is composed
+        where the stop is noticed (_upload_worker's UploadCancelled branch).
+
+        Idempotent and safe when nothing is running -- the flag is cleared
+        at every dispatch, so a set left behind by a click that raced the
+        end of a job cannot reach the next one.
+
+        No confirm. The action is not destructive: it stops something the
+        user started, the videos already up are named in the message, and a
+        dialog asking "are you sure you want to stop?" over a running
+        transfer is the modal PRODUCT.md's "state cost before an
+        irreversible action" rule is not about.
+        """
+        self._cancel.set()
+
     def retry(self) -> None:
         state = self._retry_state
         if state is None:
@@ -1102,6 +1374,7 @@ class Api:
         # Disabled immediately, not by the worker: the click that got here
         # must not be repeatable while the resume is being set up.
         self._push("onRetryAvailable", {"available": False})
+        self._cancel.clear()
         self._upload_thread = threading.Thread(
             target=self._retry_worker, args=(state,), daemon=True
         )
@@ -1120,20 +1393,41 @@ class Api:
 
             def on_progress(fraction: float) -> None:
                 self._last_pct = ((state.resume_index + fraction) / total) * 100
-                self._push(
-                    "onProgress",
-                    {
-                        "mode": "determinate",
-                        "pct": self._last_pct,
-                        "text": copy_mod.format_progress(
-                            state.resume_index, total, fraction
-                        ),
-                        "kind": "FG",
-                    },
+                self._progress(
+                    self._last_pct,
+                    copy_mod.format_progress(state.resume_index, total, fraction),
+                    busy=True,
                 )
 
-            vid = uploader.upload(state.request, on_progress=on_progress)
+            # Armed for the resumed file too, not just for the tail that
+            # _upload_worker picks up below. Without it the button would be
+            # absent for one file and then appear part-way through the same
+            # job, which is a control blinking in and out under the pointer
+            # -- the hazard index.html's stitch note already records for
+            # this screen.
+            self._push("onCancelAvailable", {"available": True})
+            vid = uploader.upload(
+                state.request,
+                on_progress=on_progress,
+                should_cancel=self._cancel.is_set,
+            )
             self._link(state.job.ids[state.resume_index], vid)
+        except uploader.UploadCancelled:
+            # Everything before resume_index finished on the earlier
+            # attempt and is on the channel, so the count is about the job,
+            # not about this resume. Retry is deliberately NOT re-offered:
+            # a stop is not a failure (D5).
+            self._retry_state = None
+            self._status(
+                copy_mod.format_upload_cancelled(
+                    state.resume_index, len(state.job.items)
+                ),
+                "WARNING",
+                busy=False,
+            )
+            self._progress(self._last_pct, kind="WARNING", busy=False)
+            self._push("onCancelAvailable", {"available": False})
+            return
         except uploader.UploadFailed as exc:
             # Same gate as _upload_worker, for the same two reasons: only a
             # RETRY outcome re-enables Retry, so keeping the request for any
@@ -1149,36 +1443,40 @@ class Api:
             self._retry_state = replace(
                 state, request=exc.request if retryable else None
             )
-            self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
+            self._status(str(exc), "ERROR", busy=False)
+            self._push("onCancelAvailable", {"available": False})
             if retryable:
                 self._push("onRetryAvailable", {"available": True})
             return
         # The resumed file is done; continue with whatever followed it.
         if state.resume_index + 1 < len(state.job.items):
+            # _upload_worker arms and disarms the control itself, in its own
+            # finally, so this hands the slot straight over rather than
+            # disarming between the two halves of one job.
             self._upload_worker(replace(state.job, start_index=state.resume_index + 1))
         else:
             self._upload_done(state.job)
+            self._push("onCancelAvailable", {"available": False})
 
     # ----- combat logs --------------------------------------------------------
 
-    def _skip_logs(self, reason: str) -> None:
+    def _skip_logs(self, summary: str, reason: str) -> None:
         """Report a log half that could not run, without unwinning the video.
 
         A status line rather than a dialog, and deliberately not an ERROR:
         the upload the user asked for DID happen, and a modal apologising
         for the half that did not would read as though the whole thing had
-        failed. It replaces "Upload complete!" on the strip rather than
+        failed. It replaces the success line on the strip rather than
         following it, so the last thing said never overstates what was done.
-        """
-        self._push(
-            "onStatus",
-            {
-                "text": f"Upload complete — combat logs skipped: {reason}",
-                "kind": "WARNING",
-            },
-        )
 
-    def _post_combat_logs(self, job: UploadJob) -> None:
+        `summary` is _upload_summary's sentence, threaded down rather than
+        parked on self: the strip's terminal line has to name the upload
+        first and the side-effect second (round 3's finding 13), and the
+        upload is the caller's fact, not this method's.
+        """
+        self._status(f"{summary}. Combat logs skipped: {reason}", "WARNING", busy=False)
+
+    def _post_combat_logs(self, job: UploadJob, summary: str) -> None:
         """The log half of a combined upload. Best-effort, by design.
 
         Every refusal here was a blocking warning dialog when this ran from
@@ -1212,14 +1510,14 @@ class Api:
                 return
             # Configured and unusable IS worth a strip: the user set
             # something, it does not parse, and nothing else will say so.
-            self._skip_logs(f"{error} Set it up in Settings.")
+            self._skip_logs(summary, f"{error} Set it up in Settings.")
             return
 
         gamelogs = cfg.get("gamelogs_dir")
         gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
         if gamelogs_dir is None or not gamelogs_dir.is_dir():
             self._skip_logs(
-                "your EVE Gamelogs folder was not found. Set it in Settings."
+                summary, "your EVE Gamelogs folder was not found. Set it in Settings."
             )
             return
 
@@ -1232,10 +1530,11 @@ class Api:
         missing = [i.path.name for _, i in pairs if i.duration is None]
         if missing:
             self._skip_logs(
+                summary,
                 "no readable duration for "
                 + ", ".join(missing)
                 + ", so the time window cannot be worked out (this usually "
-                "means ffprobe is unavailable)."
+                "means ffprobe is unavailable).",
             )
             return
 
@@ -1250,7 +1549,7 @@ class Api:
             datetime.datetime.fromtimestamp(i.mtime, datetime.UTC) for i in infos
         )
 
-        self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc)
+        self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc, summary)
 
     def _probe_now(self, pairs) -> None:
         """Resolve a selection's durations synchronously, in place.
@@ -1275,10 +1574,7 @@ class Api:
         total = len(unprobed)
         measured = 0
         for index, (row_id, info) in enumerate(unprobed, start=1):
-            self._push(
-                "onStatus",
-                {"text": f"Reading recording lengths… ({index}/{total})", "kind": "FG"},
-            )
+            self._status(f"Reading recording lengths… ({index}/{total})", busy=True)
             duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
             if definitive:
                 durations.remember(
@@ -1293,16 +1589,26 @@ class Api:
         if measured:
             durations.save(self._durations_file, self._cache)
 
-    def _combat_log_worker(self, hook, gamelogs_dir, start_utc, end_utc) -> None:
+    def _combat_log_worker(
+        self, hook, gamelogs_dir, start_utc, end_utc, summary: str
+    ) -> None:
         """Collect, zip, and post the logs. Runs on the upload thread.
 
         No longer a thread target of its own: it is the tail of the upload
         the user confirmed, which is what keeps one busy guard covering both
         halves.
+
+        Every line this leaves BEHIND leads with `summary`, the sentence
+        naming the upload that succeeded. Round 3's finding 13 caught the
+        version that did not: the last thing the strip said after a
+        successful upload was "Posted combatlogs-....zip (15 KB)." -- the
+        secondary side-effect standing in for the primary action. The
+        in-flight lines below do not, because they are not terminal: they
+        are replaced within seconds by one that is.
         """
         archive = None
         try:
-            self._push("onStatus", {"text": "Collecting combat logs…", "kind": "FG"})
+            self._status("Collecting combat logs…", busy=True)
             selection = combatlog.select_logs(gamelogs_dir, start_utc, end_utc)
             if not selection.logs:
                 self._alert(
@@ -1316,16 +1622,19 @@ class Api:
                         "UTC too."
                     ),
                 )
-                self._push("onStatus", {"text": "No combat logs found.", "kind": "FG"})
+                # SUCCESS, where the bare "No combat logs found." was
+                # neutral: the sentence now leads with an upload that did
+                # work, and leaving it FG would repaint a success grey.
+                self._status(f"{summary}. No combat logs found.", "SUCCESS", busy=False)
                 return
 
             stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
             out = paths.tmp_dir() / f"combatlogs-{stamp}.zip"
-            self._push("onStatus", {"text": "Building archive…", "kind": "FG"})
+            self._status("Building archive…", busy=True)
             archive = combatlog.build_archive(selection, out, start_utc, end_utc)
 
             content = combatlog.summarize_archive(archive, start_utc, end_utc)
-            self._push("onStatus", {"text": "Posting to Discord…", "kind": "FG"})
+            self._status("Posting to Discord…", busy=True)
             result = discord.post_archive(hook, archive.path, content)
 
             if result.ok:
@@ -1339,7 +1648,7 @@ class Api:
                 note = combatlog.dropped_note(archive.dropped)
                 if note:
                     status_text += f" ({note})"
-                self._push("onStatus", {"text": status_text, "kind": "SUCCESS"})
+                self._status(f"{summary}. {status_text}", "SUCCESS", busy=False)
             else:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told
@@ -1352,7 +1661,11 @@ class Api:
                         f"upload it by hand:\n{archive.path}"
                     ),
                 )
-                self._push("onStatus", {"text": result.message, "kind": "ERROR"})
+                # Still ERROR, unlike _skip_logs' WARNING: this half was
+                # attempted and failed with an archive left on disk for the
+                # user to act on, which is a different thing from a half
+                # that never ran. The upload still gets said first.
+                self._status(f"{summary}. {result.message}", "ERROR", busy=False)
         except Exception as exc:  # noqa: BLE001 - reported, and the archive is kept on disk
             # post_archive never raises, but build_archive and
             # summarize_archive can -- and by then the archive may already be
@@ -1366,7 +1679,7 @@ class Api:
                     f"by hand:\n{archive.path}"
                 )
             self._alert("error", "Combat log upload failed", detail)
-            self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
+            self._status(f"{summary}. Error: {exc}", "ERROR", busy=False)
 
     # ----- settings and account ------------------------------------------
 
@@ -1652,11 +1965,42 @@ class Api:
         webhook, error = discord.parse_webhook(text)
         if webhook is None:
             return self._field_refused(error)
-        return self._write_setting("discord_webhook", text)
+        return self._with_webhook_status(self._write_setting("discord_webhook", text))
 
     def clear_discord_webhook(self) -> dict:
         """Remove the webhook: the explicit counterpart to the above."""
-        return self._write_setting("discord_webhook", "")
+        return self._with_webhook_status(self._write_setting("discord_webhook", ""))
+
+    def _with_webhook_status(self, result: dict) -> dict:
+        """Carry the new summary line back on the commit's own return.
+
+        The per-field endpoints deliberately do not push a settings
+        payload -- a whole-document delivery rewrites the field the user
+        is still typing in -- and `get_settings` is fetched exactly once,
+        at page load (app.js). Between those two facts, setting a webhook
+        persisted while the page went on saying `not configured` and kept
+        `Show` and `Remove` DISABLED for the rest of the session, which is
+        the state WM.setEnabled is supposed to describe rather than
+        outlive. Found by opening the real window; nothing in the suite
+        renders the page, so it could not have been caught here.
+
+        Returned rather than pushed, and only this one derived value
+        rather than the document, so the fix cannot reintroduce the
+        rewrite-while-typing bug the no-push rule exists to prevent.
+
+        Only on an applied commit: a refusal changed nothing, so the line
+        already on screen is still correct, and overwriting it would
+        replace a description of what IS stored with one of what the user
+        typed.
+        """
+        if not result["applied"]:
+            return result
+        return dict(
+            result,
+            webhook_status=copy_mod.webhook_status(
+                self._state.settings.get("discord_webhook", "") or ""
+            ),
+        )
 
     def set_show_eve_tools(self, enabled) -> dict:
         """Show or hide the EVE destinations and sections.
@@ -1756,7 +2100,25 @@ class Api:
             # rebind() marks every file already in the folder as seen, so
             # switching folders does not announce a backlog as though it
             # had just been recorded.
+            #
+            # Counted BEFORE the rebind and only on this branch. Round 3's
+            # B11 asked for the commit cost to be stated, and PRODUCT.md
+            # wants the real number in it -- which no hint written before
+            # the click can have, because it depends on what is in the
+            # folder the user is about to name. This is the first moment
+            # the number exists, so the disclosure is a report rather than
+            # a warning. The other branch below cannot say the same thing:
+            # start_watching() calls Watcher.baseline(), which silently
+            # baselines only on a first-ever run and otherwise announces
+            # what it finds, so "were not announced" would be a guess.
+            #
+            # A second walk of the folder rather than a count out of
+            # rebind(): watcher.py is not this lane's file, and discover()
+            # over one directory is the same work list_rows() does a few
+            # lines below.
+            suppressed = len(library.discover(folder))
             self._watcher.rebind(folder)
+            result = dict(result, note=_folder_note(folder, suppressed))
         elif self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
         self.list_rows()
@@ -2641,6 +3003,25 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
+    def _eve_label(self, path) -> str:
+        """The name the Profiles roster shows for one settings file.
+
+        One producer, because two of them would be free to disagree in the
+        one place that must not: Confirm Copy names the source and the
+        targets, and it has to name them in the words the user just read
+        off the roster. Derived from the path rather than passed in, so the
+        dialog cannot be handed a label the screen never rendered.
+        """
+        kind = evesettings_tree.file_kind(path)
+        ident = evesettings_tree.file_id(path)
+        if kind == "character" and ident.isdigit():
+            return self._eve_names.label(int(ident))
+        if kind == "account" and ident:
+            return f"Account {ident}"
+        # discover() only ever yields the two kinds above, so this is the
+        # bridge-reachable case: a path the page was never offered.
+        return Path(path).stem
+
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
         thread: scandir over a few dozen files, and listing backups is one
@@ -2657,12 +3038,11 @@ class Api:
         store = paths.eve_settings_backup_dir()
 
         def describe(record):
-            name = (
-                self._eve_names.label(int(record.file_id))
-                if record.kind == "character" and record.file_id.isdigit()
-                else f"Account {record.file_id}"
-            )
-            return {"path": str(record.path), "id": record.file_id, "name": name}
+            return {
+                "path": str(record.path),
+                "id": record.file_id,
+                "name": self._eve_label(record.path),
+            }
 
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         return {
@@ -2994,7 +3374,10 @@ class Api:
             if not self._eve_confirm(
                 "Confirm Copy",
                 copy_mod.format_eve_copy_confirm(
-                    len(targets), kind, self._eve_client_running()
+                    [self._eve_label(t) for t in targets],
+                    kind,
+                    self._eve_client_running(),
+                    source_name=self._eve_label(source),
                 ),
             ):
                 return
@@ -3017,15 +3400,7 @@ class Api:
                     f"{len(report.outcomes)}.\n\n{names}",
                 )
             else:
-                self._push(
-                    "onStatus",
-                    {
-                        "text": copy_mod.format_eve_copy_done(
-                            len(report.succeeded), kind
-                        ),
-                        "kind": "FG",
-                    },
-                )
+                self._status(copy_mod.format_eve_copy_done(len(report.succeeded), kind))
                 ok = True
         except Exception as error:
             logger.exception("EVE settings copy failed")
@@ -3060,7 +3435,7 @@ class Api:
                 made = evesettings_backup.create_file_backup(
                     store, path, origin="manual"
                 )
-            self._push("onStatus", {"text": f"Backed up to {made.name}.", "kind": "FG"})
+            self._status(f"Backed up to {made.name}.")
             ok = True
         except Exception as error:
             logger.exception("EVE settings backup failed")
@@ -3087,9 +3462,7 @@ class Api:
             written = evesettings_backup.restore(store, archive, root)
             keep = int(self._eve_section().get("auto_keep", 10))
             evesettings_backup.prune(store, keep)
-            self._push(
-                "onStatus", {"text": f"Restored into {written.name}.", "kind": "FG"}
-            )
+            self._status(f"Restored into {written.name}.")
             ok = True
         except Exception as error:
             logger.exception("EVE settings restore failed")
@@ -3110,7 +3483,7 @@ class Api:
             ):
                 return
             evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
-            self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
+            self._status("Backup deleted.")
             ok = True
         except Exception as error:
             logger.exception("EVE settings backup delete failed")
@@ -3140,6 +3513,28 @@ class Api:
                 "requirements": [],
             }
         return self._skills.character_detail(character_id, plan_name)
+
+    def skills_plan_text(self, plan_name) -> str:
+        """The selected plan as text, for the page to put on the clipboard.
+
+        S7. The write itself is the page's job for the same reason
+        copy_path's is: with Tk gone there is no toolkit clipboard and
+        navigator.clipboard is right there.
+
+        "" means the plan could not be read -- the page holds a plan list
+        that a reload may have invalidated, exactly as skills_select_plan
+        documents. A listed plan always has at least one requirement
+        (plans.parse rejects a file with none), so "" never means "an empty
+        plan" and the page can treat it as the failure it is.
+        """
+        if self._skills is None:
+            return ""
+        text = self._skills.plan_text(plan_name)
+        if not text:
+            self._status("That plan is no longer available. Reload plans.", "WARNING")
+            return ""
+        self._status("Skill plan copied to clipboard", "SUCCESS")
+        return text
 
     def skills_add_character(self) -> bool:
         """Start an interactive EVE sign-in. Returns before it finishes.

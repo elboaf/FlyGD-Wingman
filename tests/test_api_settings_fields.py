@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import paths
+from obs_youtube_uploader import discord, paths
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.test_api_settings import settings_api
@@ -168,6 +168,50 @@ def test_clearing_a_webhook_is_its_own_explicit_action(monkeypatch, tmp_path):
     assert saved["discord_webhook"] == ""
 
 
+def test_setting_a_webhook_returns_the_new_summary_line(monkeypatch, tmp_path):
+    """The page cannot derive this line -- copy.webhook_status is the only
+    description of what is stored and settings.js is forbidden to rebuild
+    it -- and nothing repaints the Settings route after page load:
+    get_settings is fetched once at startup and the per-field endpoints
+    deliberately never push. Without the line on the commit's own return,
+    a webhook persisted while the card kept saying `not configured` and
+    Show/Remove stayed disabled for the rest of the session.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    url = "https://discord.com/api/webhooks/1538615213203656754/abcdefGHIJ"
+
+    result = api.set_discord_webhook(url)
+
+    assert result["applied"] is True
+    assert result["webhook_status"] == discord.describe(discord.parse_webhook(url)[0])
+
+
+def test_clearing_a_webhook_returns_the_not_configured_line(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(
+        tmp_path,
+        monkeypatch,
+        settings={
+            "discord_webhook": (
+                "https://discord.com/api/webhooks/1538615213203656754/abcdefGHIJ"
+            )
+        },
+    )
+
+    assert api.clear_discord_webhook()["webhook_status"] == "not configured"
+
+
+def test_a_refused_webhook_does_not_restate_the_summary(monkeypatch, tmp_path):
+    """Nothing changed, so the line already on screen still describes what
+    is stored. Overwriting it would replace a description of the STORED
+    value with one derived from what the user typed and had rejected."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_discord_webhook("")
+
+    assert result["applied"] is False
+    assert "webhook_status" not in result
+
+
 # ---- folders ----------------------------------------------------------
 
 
@@ -194,6 +238,83 @@ def test_recommitting_the_same_folder_never_rebinds(monkeypatch, tmp_path):
     api.set_folder("recording", str(tmp_path))
 
     assert watcher.rebound == []
+
+
+def test_a_rebind_reports_how_many_recordings_it_silenced(monkeypatch, tmp_path):
+    """Round 3's B11 answer. A hint written before the click cannot carry
+    the number -- it depends on the folder the user is about to name -- so
+    the disclosure is a report the endpoint sends back, and the page shows
+    it in the same .field-msg slot a refusal uses.
+
+    The count is the recordings rebind() has just marked as seen: they are
+    still listed, they simply arrive unannounced and unticked.
+    """
+    new_dir = tmp_path / "elsewhere"
+    new_dir.mkdir()
+    for name in ("a.mp4", "b.mp4", "c.mp4"):
+        (new_dir / name).write_bytes(b"x")
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    result = api.set_folder("recording", str(new_dir))
+
+    assert watcher.rebound == [new_dir]
+    assert result["note"] == (
+        f"Now watching {new_dir}. 3 recordings already there were not announced."
+    )
+
+
+def test_an_empty_new_folder_reports_the_move_and_no_count(monkeypatch, tmp_path):
+    """ "0 recordings were not announced" is a sentence the reader has to
+    parse twice to learn nothing happened."""
+    new_dir = tmp_path / "empty"
+    new_dir.mkdir()
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert (
+        api.set_folder("recording", str(new_dir))["note"] == f"Now watching {new_dir}."
+    )
+
+
+def test_one_silenced_recording_is_singular(monkeypatch, tmp_path):
+    new_dir = tmp_path / "one"
+    new_dir.mkdir()
+    (new_dir / "a.mp4").write_bytes(b"x")
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert (
+        "1 recording already there was not announced"
+        in (api.set_folder("recording", str(new_dir))["note"])
+    )
+
+
+def test_a_first_folder_reports_no_suppression_it_cannot_vouch_for(
+    monkeypatch, tmp_path
+):
+    """The other branch. With no watcher yet, start_watching() calls
+    Watcher.baseline(), which silently baselines only on a first-EVER run
+    and otherwise announces what it finds -- so "were not announced" would
+    be a guess. No note rather than a wrong one.
+    """
+    new_dir = tmp_path / "elsewhere"
+    new_dir.mkdir()
+    (new_dir / "a.mp4").write_bytes(b"x")
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=None)
+    api._on_recording_dir_ready = lambda folder: None
+
+    assert "note" not in api.set_folder("recording", str(new_dir))
+
+
+def test_recommitting_the_same_folder_reports_nothing(monkeypatch, tmp_path):
+    """The early return is the whole point: nothing was rebound, so there
+    is nothing to report, and a note would tell the user a cost they did
+    not pay."""
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, _saved = settings_api(tmp_path, monkeypatch, watcher=watcher)
+
+    assert "note" not in api.set_folder("recording", str(tmp_path))
 
 
 def test_a_folder_that_does_not_exist_leaves_the_watcher_alone(monkeypatch, tmp_path):

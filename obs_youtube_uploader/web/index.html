@@ -43,15 +43,22 @@
              select-all checkbox this column does not offer. -->
         <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
         <span class="c-name"   data-sort="filename">Filename</span>
-        <!-- "Modified", not "Date": the cell holds the file's mtime rendered
-             as relative time ("3h ago"), and "Date" both mislabelled that
-             and invited the reader to match it against the recording
-             timestamp already in the filename. Naming the mtime is what
-             explains why the two legitimately differ for a recording that
-             was copied or remuxed. The data-sort key stays "date" -- it is
-             list.js's internal branch name, not a label. -->
-        <span class="c-date"   data-sort="date"
-              title="Sort by when the file last changed">Modified</span>
+        <!-- No "Modified" column (round 3, finding 8; round 2's Uploader 6
+             deferred). It printed the same fact Filename already carries:
+             every recording OBS names embeds its own timestamp, and the
+             maintainer's account of the loop names Filename and Length as
+             the two columns it runs on. The window floor has dropped this
+             column since round 2 and kept Size, and nothing was reported
+             lost -- that A/B is what settled it for every width.
+
+             What goes with it, stated because it is a real cost and not an
+             oversight: the mtime itself, which legitimately differs from
+             the filename for a recording that was copied or remuxed, and
+             the `date` sort control. That control only ever restored the
+             list's DEFAULT order (list.js sorts `date` by delivery index,
+             and Python delivers newest-first), so what is lost is a way
+             back to an order the list already opens in -- and the floor
+             layout has shipped that same loss since round 2. -->
         <span class="c-size"   data-sort="size">Size</span>
         <span class="c-len"    data-sort="duration">Length</span>
         <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
@@ -83,7 +90,18 @@
              Moving it also took 43px out of the panel, which is what
              Uploader 9 needed -- but the reason is the seam, not the
              pixels. -->
-        <button class="btn" id="btn-delete">Delete selected</button>
+        <!-- .btn.danger, L5's one destructive treatment, applied at the
+             site L5's own banner names as R1's. This deletes recordings
+             from disk and was pixel-identical to `Select all` beside it:
+             four footer buttons of equal weight, one of which destroys
+             files. Profiles' red-outlined `Delete` is the reference.
+
+             TREATMENT ONLY -- it already confirms, and must not grow a
+             second one. Api._delete_worker raises Api._confirm and names
+             every file; that confirm runs on a worker thread, which is the
+             case _confirm exists for, so it must not be converted to
+             WM.confirm either (DESIGN.md, "Which confirmation"). -->
+        <button class="btn danger" id="btn-delete">Delete selected</button>
         <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
@@ -116,12 +134,28 @@
             recordings in this folder yet, so there is nothing to
             upload.</p>
 
+          <!-- No placeholders on either field (round 3, finding 2). The
+               Title field named itself three times over: the card heading
+               "This upload", the label "Title", and a placeholder reading
+               "Title for this upload" that added nothing to either.
+               PRODUCT.md: "There is no room for a sentence that only
+               restates a heading."
+
+               Description's placeholder carried one real fact -- that it
+               is optional -- so the fact moved to the label rather than
+               being deleted with the rest. A placeholder is the wrong
+               place for it either way: it is gone at exactly the moment
+               the user is filling the field in, and it is the label a
+               screen reader announces.
+
+               The Title LABEL is not static: panel.js replaces it with
+               format_title_hint's text, which discloses that a batch gets
+               numbered titles. That is the label doing real work, and it
+               is the reason the placeholder had none left to do. -->
           <label class="lab" for="f-title" id="lab-title">Title</label>
-          <input class="field" id="f-title" type="text" spellcheck="false"
-                 placeholder="Title for this upload">
-          <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
-          <textarea class="field" id="f-desc" spellcheck="false"
-                    placeholder="Optional description"></textarea>
+          <input class="field" id="f-title" type="text" spellcheck="false">
+          <label class="lab" for="f-desc" style="margin-top:10px">Description (optional)</label>
+          <textarea class="field" id="f-desc" spellcheck="false"></textarea>
 
           <!-- Uploader 15 was "two adjacent checkboxes are too close to
                distinguish by aim", and the maintainer hit the wrong one.
@@ -139,8 +173,21 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <p class="hint" id="stitch-hint" hidden>Select two or more
-            recordings to stitch them into one video.</p>
+          <!-- The two-line hint that used to sit here is gone (round 3,
+               finding 3). It read "Select two or more recordings to stitch
+               them into one video", which is the mechanism, not the
+               decision: with 0 or 1 selected it named a precondition the
+               greyed-out checkbox above already states, and with 2 or more
+               it was redundant. The question actually being asked at this
+               moment is "does this fight fit in one file", and the Length
+               column is what answers it.
+
+               Deleting rather than rewording is the point: this is the
+               approach corridor to the primary button, which round 2's
+               Uploader 7 emptied of one checkbox only for the survivor to
+               grow a two-line hint in the space. The disabled treatment on
+               #lab-stitch is the whole explanation, and DESIGN.md's "one
+               disabled state" does not ask for a sentence beside it. -->
 
           <!-- Uploader 8's sentence, which outlives the control it used to
                footnote. With no checkbox this is a fact about the install
@@ -166,9 +213,22 @@
                card: it is a standing fact about the account, read once,
                and it was occupying the position directly above the
                most-pressed control in the app. -->
+          <!-- Cancel and Retry share one slot and are never live at once
+               (D5): Retry recovers from a failure, Cancel stops a job that
+               is still running, and no state is both. Cancel is hidden
+               rather than disabled because an inert Cancel beside an inert
+               Retry is two dead controls describing states the panel is
+               not in; Retry keeps the disabled treatment it already had,
+               being the resting member of the pair.
+
+               Not .btn.danger. DESIGN.md reserves that for destroying
+               something the user cannot get back, and stopping an upload
+               destroys nothing -- the videos already sent stay on the
+               channel, which is what the message says in as many words. -->
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
             <button class="btn" id="btn-retry" disabled>Retry</button>
+            <button class="btn" id="btn-cancel" hidden>Cancel</button>
           </div>
           <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>
@@ -298,7 +358,15 @@
     <div class="settings" id="section-folders">
 
       <section class="card">
-        <h2>Where your recordings and gamelogs live</h2>
+        <!-- Round 3, B10. This and Discord's below were the only two
+             card headings in the app that were second-person sentences
+             rather than noun phrases, and at 310 and 225 CSS px the two
+             longest -- set in a uppercase letter-spaced treatment meant
+             for short labels. 31a14ca's "headings that stop echoing the
+             rail" was right (a section named Folders should not head its
+             card FOLDERS); these two over-corrected past the noun. The
+             noun that does not echo the rail is what the rows hold. -->
+        <h2>Recordings and gamelogs</h2>
         <div class="row">
           <span class="lab">Recordings</span>
           <input class="field mono" id="f-recdir" type="text" spellcheck="false">
@@ -312,9 +380,15 @@
           <button class="btn" data-detect="gamelogs">Detect</button>
         </div>
         <p class="field-msg" id="msg-folders" hidden></p>
+        <!-- Pre-payload text only; settings.js's render() rewrites this
+             slot, and FOLDER_COST there is the source of the sentence.
+             Kept in step by hand is exactly what this used to be and how
+             it drifted, so the two are asserted equal in
+             tests/test_settings_page.py rather than trusted. -->
         <p class="sub-hint" id="detect-note">
-          Detect reads the recording folder from OBS's own config, and the gamelogs
-          folder from your EVE Online documents folder.
+          Changing the recording folder starts watching it. Recordings
+          already there won’t be announced, and arrive unticked in the
+          list.
         </p>
       </section>
 
@@ -323,7 +397,10 @@
     <div class="settings" id="section-discord">
 
       <section class="card">
-        <h2>Where combat logs are posted</h2>
+        <!-- The other half of B10. Names the two things the card is
+             about -- what is posted, and the control that posts it -- and
+             leaves "Discord" to the rail entry that already says it. -->
+        <h2>Combat log webhook</h2>
         <div class="row">
           <span class="lab">Webhook URL</span>
           <!-- Masked by default. A webhook URL is a credential: anyone
@@ -334,7 +411,13 @@
                  autocomplete="off">
           <button class="btn toggle" id="btn-webhook-show"
                   aria-pressed="false">Show</button>
-          <button class="btn" id="btn-webhook-remove">Remove</button>
+          <!-- Round 3, B12 and L5's destructive rule: this destroys a
+               stored credential that nothing can get back, so it wears
+               THE destructive treatment rather than looking exactly like
+               `Show` beside it, which merely reveals one. The confirm is
+               a separate question with a separate answer and lives in
+               settings.js. -->
+          <button class="btn danger" id="btn-webhook-remove">Remove</button>
         </div>
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
@@ -350,7 +433,20 @@
          the app on one of its least-visited screens. -->
     <div class="settings" id="section-bookmarks">
       <section class="card">
-        <h2>EVE bookmarks</h2>
+        <!-- Round 2's finding 7: three card headings in this section
+             all opened with the same word, in a section already named
+             Bookmarks. This one now leads with what distinguishes it --
+             the feature this card switches on, named as the rest of the
+             app names it (General's hint, PRODUCT.md, CLAUDE.md all say
+             "bookmark keybinds").
+
+             The other two keep EVE first ON PURPOSE, and the finding is
+             wrong about them: `EVE windows` led by `Windows` reads as the
+             operating system, and `EVE-focused` is precisely the fact
+             that separates that card from the global set under Previews.
+             Two of the three lead with their distinguishing word already;
+             it just happens to be EVE. -->
+        <h2>Bookmark keybinds</h2>
         <div class="row">
           <span class="lab">Enable</span>
           <!-- The .check/.box pattern is not decoration: .check input is
@@ -393,10 +489,26 @@
 
       <section class="card">
         <h2>EVE-focused keybinds</h2>
-        <p class="hint">Previews have a second set, registered globally
-          rather than only in EVE &mdash; Settings &rsaquo; Previews. A
-          keybind used there takes one of these while a client is
-          focused.</p>
+        <!-- Round 3, R4's finding 4. This and the matching hint under
+             Previews &rsaquo; Global keybinds pointed at each other and
+             left the reader to work out what `takes` meant: precedence,
+             consumption, or disabling. It is precedence, and the app
+             already knows which way it runs -- Api._bookmark_chords: a
+             preview chord is a global RegisterHotKey and a bookmark chord
+             is an AHK hotkey scoped with #HotIf WinActive, so where they
+             collide the preview wins while EVE is focused and the
+             bookmark simply does not fire. Windows reports nothing,
+             because the scoped hotkey is not a registration to collide
+             with.
+
+             Both sections now state that one rule in the same words, so
+             it is learned once rather than assembled from two halves. The
+             cross-reference stays: PRODUCT.md asks for it, and a user who
+             cannot find the other set is the worse outcome. -->
+        <p class="hint">Previews have a second set that fires anywhere, not
+          only in EVE &mdash; Settings &rsaquo; Previews. Where both use
+          the same keys the Previews one wins, and the bookmark does not
+          fire.</p>
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
@@ -462,11 +574,15 @@
 
       <section class="card">
         <h2>Global keybinds</h2>
+        <!-- The other half of finding 4. Same rule, same words as the
+             hint under Bookmarks &rsaquo; Bookmark keybinds; the reasoning
+             is there. -->
         <div class="row"><span class="lab"></span>
           <span class="hint">These work from any application, including a
             browser, and are released while previews are switched off.
             Bookmarks have a second set that fires only in EVE &mdash;
-            Settings &rsaquo; Bookmarks. A keybind the two share is marked
+            Settings &rsaquo; Bookmarks. Where both use the same keys this
+            set wins and the bookmark does not fire; those are marked
             below.</span></div>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
@@ -507,9 +623,15 @@
             &mdash; useful for a client that is not the one you are
             looking at.</span></div>
         <div class="row"><span class="lab"></span>
+          <!-- Round 3, R4's finding 3. Opened "Previews are off, so"
+               like the two sentences above it, in a view where the
+               unticked switch says it as well. Rendered only while it is
+               true, so the state clause was the one part carrying nothing
+               new; what is left is the consequence and the way out, which
+               is the shape ui/copy.py's INERT_NOTES keeps. -->
           <span class="hint" id="alerts-previews-off" style="display:none">
-            Previews are off, so alerts have nothing to draw on. Turn on
-            client previews above to use them.</span></div>
+            Alerts pulse a preview, so they need previews switched on. The
+            switch is in the card above.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-no-folder" style="display:none">
             Your EVE Gamelogs folder is not set. Alerts cannot run without
@@ -650,7 +772,17 @@
              used to share is the half of this card that collapses away, and
              "EVE running" is the hazard the copy below is guarded against,
              so it may not disappear with the controls. -->
-        <h2>Settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
+        <!-- "EVE settings folder", not "Settings folder" (round 2's Profiles 8).
+             DESIGN.md renamed the TAB away from "EVE Settings" because a tab
+             of that name beside a gear named "Settings" describes the
+             implementation; the cards kept the word, so the gear's own name
+             went on appearing twice inside the screen renamed to avoid it.
+             The word itself is the user's -- "a settings change in one
+             character that I want to propagate" -- and PRODUCT.md says to
+             name things the way they do, so it is QUALIFIED rather than
+             removed. Settings > Folders already disambiguates the same way:
+             "EVE gamelogs" beside "Recordings". -->
+        <h2>EVE settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
         <!-- Two faces of one card. Folder, server and profile are set on the
              first visit and rarely again, while the copy card below is why
              the screen exists; five controls above it pushed the target list
@@ -664,15 +796,18 @@
              the number it was argued against. -->
         <div class="row" id="es-folder-summary" hidden>
           <span class="lab">Folder</span>
-          <span id="es-folder-root" class="field mono"></span>
+          <span id="es-folder-root" class="es-path"></span>
           <span id="es-folder-set"></span>
-          <!-- Profiles 7: a .btn, not a .linkbtn. This row is a mono boxed
-               path that looks interactive and is not, dim static text, and
+          <!-- Profiles 7: a .btn, not a .linkbtn. This row was a mono BOXED
+               path that looked interactive and is not, dim static text, and
                then the one thing on it that acts -- which was link-styled,
                borderless, and no more prominent than the text beside it.
                The one control was the least control-like element present.
                .linkbtn's own box model is not touched; the class is simply
-               the wrong one for a row where nothing else is a control. -->
+               the wrong one for a row where nothing else is a control.
+               (The box is gone too now -- see .es-path, round 3's P4 -- so
+               the row no longer offers a second thing that looks clickable
+               for this button to lose against.) -->
           <button id="es-folder-edit" class="btn">Change…</button>
         </div>
         <div id="es-folder-detail">
@@ -684,9 +819,19 @@
                  nothing to stop a long root pushing the button out. (That
                  treatment is a stacked full-width .lab now, not the 118px
                  right-aligned column this comment used to name -- see
-                 style.css's `.settings .row > .lab`.) -->
+                 style.css's `.settings .row > .lab`.)
+
+                 .es-path, NOT .field.mono, since round 3's P4: .field is the
+                 INPUT treatment -- fill, border, radius -- and this value
+                 cannot be typed into. The same treatment sits on a genuinely
+                 editable path one route away (#f-recdir, Settings >
+                 Folders), so the two were identical and only one of them
+                 could be clicked into. .es-path keeps everything the
+                 treatment was carrying for a reason: the mono face, the
+                 ellipsis, and the flex that stops a long root pushing the
+                 buttons off the row. -->
             <span class="lab">Folder</span>
-            <span id="es-root" class="field mono">No folder selected</span>
+            <span id="es-root" class="es-path">No folder selected</span>
             <button id="es-pick" class="btn">Choose folder…</button>
             <!-- Profiles 4. Detect existed in Settings > Folders and on the
                  first-run screen, for a folder shallower and better known
@@ -711,7 +856,7 @@
       </section>
 
       <section class="card">
-        <h2>Copy settings</h2>
+        <h2>Copy EVE settings</h2>
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
              opacity:0 and the styled .ring is the visible control, so a
              bare radio here rendered as a native white Windows dot against
@@ -851,6 +996,22 @@
       <header class="skills-head">
         <h1 id="skills-plan-name">No plan selected</h1>
         <span class="skills-plan-count" id="skills-plan-count"></span>
+        <!-- S7. The maintainer's answer to "what do you end up doing
+             twice": retyping a character's missing skills into EVE. It
+             sits on the PLAN heading rather than in a character's row
+             because the plan is what it copies -- they supplied that
+             version themselves ("the full skill plan being copyable would
+             be fine, the game removes already-trained skills from an
+             import"), and it is the one that needs no per-character
+             diffing.
+
+             A .btn and not a .linkbtn: nothing else on this row acts, and
+             link-styling the only control present makes it the least
+             control-like thing there -- the same reasoning that decided
+             `Change…` on Profiles, at #es-folder-edit. Disabled rather
+             than hidden when no plan is selected, per the control
+             vocabulary's disabled-when-the-object-is-absent rule. -->
+        <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
 
       <!-- Collapses entirely when empty rather than reserving a blank

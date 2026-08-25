@@ -143,8 +143,11 @@ def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
     assert bars[0] == {
         "mode": "determinate",
         "pct": 25.0,
-        "text": "Uploading file 1 of 2… 50.0%",
+        "text": "Uploading file 1 of 2… 50%",
         "kind": "FG",
+        # An upload in flight. The page never clears a busy strip: it is
+        # the only feedback there is while this runs (round 3, finding 12).
+        "busy": True,
     }
 
 
@@ -185,6 +188,15 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
 
 
 def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
+    """Round 3, finding 13: the terminal line names the action, the title
+    and the destination. It used to say "Upload complete!", which the
+    combat-log tail then overwrote outright -- so the last word on the
+    app's one irreversible action was about the side-effect.
+
+    The title comes through uploader.build_body, the same route
+    format_upload_confirm takes, so the strip names the video the way
+    YouTube does rather than echoing the raw field.
+    """
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
     fakes.stub_auth(monkeypatch)
@@ -194,9 +206,12 @@ def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert {"text": "Upload complete!", "kind": "SUCCESS"} in fakes.payloads(
-        sent, "onStatus"
-    )
+    assert {
+        "text": 'Uploaded "Fight" to YouTube.',
+        "kind": "SUCCESS",
+        # Terminal, so the page may clear it when the route changes.
+        "busy": False,
+    } in fakes.payloads(sent, "onStatus")
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
     assert api._retry_state is None
 
@@ -507,8 +522,14 @@ def test_one_upload_publishes_the_video_and_then_posts_the_logs(monkeypatch, tmp
 
 
 def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_path):
-    """ "Upload complete!" must not be the last thing said while the log half
-    is still running, or a user reads the app as finished and closes it."""
+    """The upload summary must not be the last thing said while the log half
+    is still running, or a user reads the app as finished and closes it.
+
+    And the line that DOES land last still leads with the upload: round 3's
+    finding 13 caught the version where "Posted combatlogs-....zip (15 KB)."
+    replaced it outright and the words uploaded / YouTube / the title
+    appeared nowhere on a successful upload.
+    """
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     sent = fakes.record_pushes(api)
     monkeypatch.setattr(
@@ -523,8 +544,10 @@ def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_
     join(api)
 
     texts = [p["text"] for p in fakes.payloads(sent, "onStatus")]
-    assert "Posted combatlogs.zip." in texts[-1]
-    assert texts.index("Upload complete!") < len(texts) - 1
+    assert texts[-1] == 'Uploaded "Fight" to YouTube. Posted combatlogs.zip.'
+    assert texts.index('Uploaded "Fight" to YouTube.') < len(texts) - 1
+    # Every line left behind is settled; nothing is still running.
+    assert fakes.payloads(sent, "onStatus")[-1]["busy"] is False
 
 
 def test_logs_are_posted_without_being_asked_for(monkeypatch, tmp_path):
@@ -613,7 +636,10 @@ def test_a_webhook_that_does_not_parse_still_warns(monkeypatch, tmp_path):
 
     assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
     final = fakes.payloads(sent, "onStatus")[-1]
-    assert "combat logs skipped" in final["text"]
+    # Finding 13's invariant on the skip path too: whatever went wrong with
+    # the logs, the sentence still opens with the upload that worked.
+    assert final["text"].startswith('Uploaded "Fight" to YouTube. ')
+    assert "Combat logs skipped" in final["text"]
     assert "Settings" in final["text"]
     # Not an ERROR: the upload the user asked for did happen.
     assert final["kind"] == "WARNING"
@@ -635,7 +661,7 @@ def test_a_missing_gamelogs_folder_skips_the_logs_and_keeps_the_video(
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
-    assert "combat logs skipped" in final["text"]
+    assert "Combat logs skipped" in final["text"]
     assert "Gamelogs" in final["text"]
     assert api._alert.raised == []
 
@@ -654,7 +680,7 @@ def test_an_unreadable_duration_skips_the_logs_and_names_the_file(
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
-    assert "combat logs skipped" in final["text"]
+    assert "Combat logs skipped" in final["text"]
     assert "r1.mkv" in final["text"]
     assert api._alert.raised == []
 
@@ -872,3 +898,387 @@ def test_the_busy_guard_still_holds_while_the_logs_are_posting(monkeypatch, tmp_
     finally:
         release.set()
     join(api)
+
+
+# ----- the status strip's `busy` flag, and what it is for --------------------
+# Round 3, lane L7. The strip is global chrome and app.js deliberately never
+# tells Python which route is showing, so `busy` on the payload is the only
+# thing that lets the page tell a RESULT (clearable when the route changes --
+# finding 14) from something STILL RUNNING (never clearable -- finding 12).
+
+
+def test_every_strip_push_goes_through_the_two_helpers():
+    """A raw _push("onStatus") anywhere else ships a payload with no `busy`
+    key, which the page reads as falsy -- i.e. as a finished job -- and the
+    strip then clears itself out from under a live operation. Nothing
+    executes the page, so this is the only thing that catches a new push
+    site forgetting the flag.
+
+    Walks the AST rather than counting substrings. A count is satisfied by
+    the wrong two lines: the comment above the helpers quotes both literals,
+    so reword the comment and the build goes red for no reason, while
+    deleting the comment AND adding a raw push leaves the count untouched
+    and ships the bug. The tree cannot be fooled either way.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(api_mod))
+    helpers = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in ("_status", "_progress")
+    }
+    assert set(helpers) == {"_status", "_progress"}
+
+    def strip_pushes(node):
+        return {
+            call.lineno
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "_push"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+            and call.args[0].value in ("onStatus", "onProgress")
+        }
+
+    everywhere = strip_pushes(tree)
+    inside = strip_pushes(helpers["_status"]) | strip_pushes(helpers["_progress"])
+    assert everywhere == inside, (
+        f"strip pushes outside _status/_progress at lines {sorted(everywhere - inside)}"
+    )
+    assert len(inside) == 2
+
+
+def test_an_upload_in_flight_is_marked_busy_and_its_result_is_not(
+    monkeypatch, tmp_path
+):
+    """The whole of finding 14 in one assertion: everything the strip is
+    left holding after the job is settled, and nothing during it is."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok(fractions=(0.5,)))
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    strip = fakes.payloads(sent, "onStatus") + fakes.payloads(sent, "onProgress")
+    assert strip, "the upload said nothing at all"
+    assert all("busy" in p for p in strip)
+    # Mid-flight progress is busy...
+    live = [p for p in fakes.payloads(sent, "onProgress") if p["text"]]
+    assert live and all(p["busy"] is True for p in live)
+    # ...and the last word on the job is not.
+    assert fakes.payloads(sent, "onStatus")[-1]["busy"] is False
+    assert fakes.payloads(sent, "onProgress")[-1]["busy"] is False
+
+
+def test_a_stitch_is_busy_so_a_route_change_cannot_blank_it(monkeypatch, tmp_path):
+    """The case that rules out "just clear the strip on every route change":
+    ffmpeg reports no progress this code can read, so a multi-gigabyte join
+    can go minutes between pushes. Cleared, the app would look idle while it
+    was working, with nothing due to repaint it.
+    """
+    import contextlib
+
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        yield tmp_path / "merged.mkv"
+
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
+    join(api)
+
+    (indeterminate,) = [
+        p for p in fakes.payloads(sent, "onProgress") if p["mode"] == "indeterminate"
+    ]
+    assert indeterminate["busy"] is True
+
+
+def test_a_failed_upload_leaves_a_settled_strip(monkeypatch, tmp_path):
+    """An error is a result too. Left busy, the page would preserve a red
+    line about a job that ended across every route for the rest of the
+    session -- which is finding 14 again, in the other colour."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(
+        uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
+    )
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    final = fakes.payloads(sent, "onStatus")[-1]
+    assert final["kind"] == "ERROR"
+    assert final["busy"] is False
+
+
+def test_a_batch_names_the_count_rather_than_one_title(monkeypatch, tmp_path):
+    """build_body numbers a batch, so there is no single name to give and
+    claiming one would be false. The noun matches the confirm the user just
+    read ("3 recordings"), per the derived-not-retyped rule."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
+    join(api)
+
+    assert (
+        fakes.payloads(sent, "onStatus")[-1]["text"]
+        == "Uploaded 2 recordings to YouTube."
+    )
+
+
+def test_a_stitched_batch_is_one_video_and_takes_the_title_form(monkeypatch, tmp_path):
+    """Stitching collapses a batch into ONE video, so the summary branches
+    the same way format_upload_confirm does."""
+    import contextlib
+
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        yield tmp_path / "merged.mkv"
+
+    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
+    join(api)
+
+    assert (
+        fakes.payloads(sent, "onStatus")[-1]["text"] == 'Uploaded "Fight" to YouTube.'
+    )
+
+
+def test_an_unrelated_worker_cannot_settle_the_strip_mid_upload(monkeypatch, tmp_path):
+    """The strip is one shared surface with more than one writer.
+
+    Delete, Copy link, Open folder and the Profiles half are all reachable
+    while an upload runs, and each ends on a line of its own. Written as a
+    plain busy=False those lines settle the strip on behalf of a job that is
+    still going, and the next route change blanks it -- finding 14 in
+    reverse, reached through a door the upload path does not control. So
+    `busy` defaults to _busy() rather than to False.
+
+    The case that makes it matter is a stitch: it reports no progress this
+    code can read, so nothing is due to repaint the strip for minutes.
+    """
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    gate = threading.Event()
+    api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._upload_thread.start()
+    try:
+        assert api._busy()
+        api._links["r1"] = "https://www.youtube.com/watch?v=abc"
+        api.copy_path("r1")
+        assert fakes.payloads(sent, "onStatus")[-1]["busy"] is True
+    finally:
+        gate.set()
+        api._upload_thread.join(timeout=5)
+
+    # And with nothing running it settles, as it always did.
+    api.copy_path("r1")
+    assert fakes.payloads(sent, "onStatus")[-1]["busy"] is False
+
+
+# ---- stopping an upload (D5) --------------------------------------------
+# The rule these exist to hold: a stop is not a failure, and it never
+# reports that nothing happened. The plain path links each video as it
+# lands, so a batch stopped part-way leaves finished, public videos on the
+# channel -- and the message is the only thing on screen that says so.
+
+
+def cancelling_upload(api, cancel_before_index):
+    """uploader.upload's contract, plus the cancel poll the real one runs.
+
+    Mirrors the real loop's ORDER deliberately: the predicate is checked
+    before the chunk is sent, so a stop requested during item N leaves
+    items 0..N-1 uploaded and N not.
+    """
+    seen = {"index": 0}
+
+    def _upload(request, *, on_progress=None, should_cancel=None, **kw):
+        index = seen["index"]
+        seen["index"] += 1
+        if index == cancel_before_index:
+            api.cancel_upload()
+        if should_cancel is not None and should_cancel():
+            raise uploader.UploadCancelled()
+        if on_progress is not None:
+            on_progress(1.0)
+        return f"vid{index}"
+
+    return _upload
+
+
+def test_stopping_a_batch_reports_what_actually_reached_the_channel(
+    monkeypatch, tmp_path
+):
+    """The card's worked example: two of four, and the two are still up."""
+    api, _window, rows = api_with(tmp_path, ids=("r1", "r2", "r3", "r4"))
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 2))
+
+    api.start_upload("Fight", "d", False, ["r1", "r2", "r3", "r4"])
+    join(api)
+
+    # Two finished and were linked; the stop did not un-upload them.
+    assert [link["id"] for link in fakes.payloads(sent, "onLink")] == ["r1", "r2"]
+    assert set(rows.links) == {"r1", "r2"}
+    statuses = fakes.payloads(sent, "onStatus")
+    assert statuses[-1]["text"] == "Stopped. 2 of 4 uploaded."
+    # Not an error -- the user asked for it.
+    assert statuses[-1]["kind"] == "WARNING"
+    assert statuses[-1]["busy"] is False
+
+
+def test_stopping_before_anything_lands_says_nothing_was_uploaded(
+    monkeypatch, tmp_path
+):
+    api, _window, rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 0))
+
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
+    join(api)
+
+    assert rows.links == {}
+    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
+        "Stopped. Nothing was uploaded."
+    )
+
+
+def test_a_stop_never_offers_retry(monkeypatch, tmp_path):
+    """D5, and the reason is the shared slot: Retry recovers from a
+    failure, and a stop is not one. Offering it would also re-arm the slot
+    the Cancel button was occupying a moment earlier."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 0))
+
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
+    join(api)
+
+    assert api._retry_state is None
+    assert {"available": True} not in fakes.payloads(sent, "onRetryAvailable")
+
+
+def test_the_cancel_control_is_disarmed_however_the_job_ends(monkeypatch, tmp_path):
+    """Armed for the upload phase, and off again on every exit -- success
+    included, because the slot is shared with Retry."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    armed = fakes.payloads(sent, "onCancelAvailable")
+    assert armed[0] == {"available": True}
+    assert armed[-1] == {"available": False}
+
+
+def test_the_cancel_control_goes_before_the_combat_log_half_runs(monkeypatch, tmp_path):
+    """The video is up and nothing polls the flag any more, but the log
+    post still runs on this thread and can take seconds. A Cancel left
+    armed across it is a live button that does nothing."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    names = [name for name, _ in sent]
+    done_at = names.index("onUploadDone")
+    disarms = [
+        i
+        for i, (name, payload) in enumerate(sent)
+        if name == "onCancelAvailable" and payload == {"available": False}
+    ]
+    # A disarm lands BEFORE the completion event, not only in the worker's
+    # finally afterwards. The trailing one is the backstop for the paths
+    # that never reach _upload_done, and it is allowed to be there too.
+    assert any(i < done_at for i in disarms), (
+        "the cancel control is still armed while the combat-log half runs"
+    )
+
+
+def test_a_stop_left_over_from_one_job_cannot_abort_the_next(monkeypatch, tmp_path):
+    """The flag is cleared per dispatch. A click that raced the end of a
+    job would otherwise make the NEXT upload report a stop before its first
+    chunk."""
+    api, _window, rows = api_with(tmp_path)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    api.cancel_upload()
+    assert api._cancel.is_set()
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    assert rows.links == {"r1": "vid123"}
+
+
+def test_a_finished_upload_tells_the_page_the_job_is_over(monkeypatch, tmp_path):
+    """Round 3's finding 5. A semantic event, not an instruction: the page
+    is what decides that this means dropping the selection."""
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    assert fakes.payloads(sent, "onUploadDone") == [{}]
+
+
+def test_a_stopped_job_never_claims_completion(monkeypatch, tmp_path):
+    """The other half of finding 5, and the reason the panel clears its
+    selection on onUploadDone alone: a stopped batch leaves some files up
+    and some not, and dropping the selection there would hide which is
+    which at exactly the moment the distinction matters."""
+    api, _window, _rows = api_with(tmp_path, ids=("r1", "r2", "r3"))
+    sent = fakes.record_pushes(api)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 1))
+
+    api.start_upload("Fight", "d", False, ["r1", "r2", "r3"])
+    join(api)
+
+    assert fakes.payloads(sent, "onUploadDone") == []
+    assert fakes.payloads(sent, "onStatus")[-1]["text"] == "Stopped. 1 of 3 uploaded."

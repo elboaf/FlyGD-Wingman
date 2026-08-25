@@ -29,7 +29,9 @@ than an error.
 
 So: a broken screen looks like an empty screen. Assume any new screen is
 broken until it has been opened by hand, and treat `docs/smoke-checklist.md`
-as part of the change rather than as paperwork after it.
+as part of the change rather than as paperwork after it. **Crossing the
+bridge**, below, has the whole of that contract — the allowlist, both ways
+it can be broken, and what the test that guards it cannot see.
 
 
 ## Destinations vs. configuration
@@ -242,11 +244,96 @@ current and passing** — they forbid a bare `<label>` in a settings row and
 require a restore per override, both of which still hold. Only the prose
 is stale. Nothing is broken; do not go hunting.
 
+**Four treatments, and this is the whole list.** Round 3 counted five
+vocabularies for "clickable" — accent button, neutral button, red-outlined
+button, red text, dim text — with no rule about which meant what, so three
+screens each invented an answer for the same destructive verb. What a
+control looks like is decided by what it *means*:
+
+| treatment | means |
+|---|---|
+| `.btn.acc` | the one action the screen exists to perform — one per screen or none, per the rule below |
+| `.btn` | every other action; the default, and reaching past it needs a reason from this table |
+| `.btn.danger` | the action destroys something the user cannot get back by clicking again |
+| `.linkbtn` | the quiet tier, which takes a stated reason — see below |
+
+`.linkbtn` is not a volume knob. Two reasons are admissible, and both are
+already load-bearing in the app:
+
+1. The action is **subordinate** to the control or field it trails and as
+   a `.btn` would compete with it — `Clear` and `Edit…` belong to the
+   `.bindbtn`, `Clear filter` to the filter field, `Set this up later` to
+   `Continue`.
+2. A full-width `.btn` would put **its own label into a rail's width
+   floor**. Skills' `Open plans folder` and `Reload plans` are `.linkbtn`
+   for this reason and `index.html:774-781` reasons it out.
+
+Neither reason and it is a `.btn`, however minor it feels: `Change…` on
+Profiles is one because nothing else on its row acts, so link-styling made
+the only control the least control-like element present
+(`index.html:632-638`).
+
+The four cover actions **on a surface**. Three other clickable families sit
+outside the table and are not exceptions to it: **chrome** (`.navbtn`,
+`.winbtn`, `.rail-item`, `.rail-plan`) navigates rather than acts; **value
+controls** (`.bindbtn`, `input.field`, `.check`/`.radio`) hold a value
+rather than performing one; and **menu items and outbound links**
+(`.ctxmenu button`, `.linkish`, `.glyph-link`) take their shape from the
+menu they sit in or from `--link`'s own rule about leaving the application.
+A menu item is still an action control for the disabled rule below — that
+exclusion is about shape, not behaviour.
+
+"Red text with no button" is not a treatment; `.linkbtn.danger` survives at
+one site pending its conversion and must not gain a second.
+
+**The rule is ahead of its sites, deliberately.** Round 3 landed the
+primitive in its own lane so that three screen lanes would convert to one
+thing rather than invent a third answer between them. Until they do,
+`Delete selected` on the Uploader and `Remove` on Settings › Discord are
+still plain `.btn`s that destroy something, and `Forget character` on
+Skills is still red text.
+
+**Destructive treatment, confirmation, and mechanism are three questions,
+not one.** Conflating them is how `Restore` nearly got red-outlined:
+
+- **`.btn.danger` when** the action destroys something unrecoverable — a
+  recording, a backup, a stored credential, a refresh token. Not "this is
+  important", and not "this is tedious to undo".
+- **A destructive action confirms, but a confirmation does not imply the
+  treatment.** `Restore` overwrites a live profile and confirms, yet stays
+  a plain `.btn`, because it backs the profile up first and the dialog says
+  so — nothing is destroyed. (The dialog text is in `ui/api.py`'s
+  `eve_settings_restore`; `evesettings.js` reasons out the *treatment* at
+  the site, not the backup.) One site does not meet the rule yet: `Remove`
+  on Settings › Discord destroys the webhook credential on a single click
+  with no confirmation at all. The other five destructive actions all
+  confirm, through three different mechanisms.
+- **Which confirmation** is decided by the thread the action runs on, and
+  that is the table under *Which confirmation, and why* below.
+
+**One disabled state.** A control whose object is absent is disabled —
+`WM.setEnabled` in `app.js` carries the rule for *when*, including the
+constraint that nothing may disable the only route out of the state that
+disabled it. What disabled *looks* like is one declaration in `style.css`
+covering `.btn`, `.linkbtn`, `.bindbtn` and context-menu items, and every
+one of their `:hover` rules excludes `:disabled`. Among those four it had
+been two answers and two omissions: `.linkbtn` and `.bindbtn` had no
+disabled state at all, so a dead control still lit up under the pointer. A
+few controls outside the four keep scoped rules of their own for stated
+reasons — `#lab-stitch`, the three `#es-*` dropdowns — and the accent
+button adds `grayscale` on top of the shared one rather than replacing it.
+
 **One accent per screen, or none.** `.btn.acc` is the single brand-accent
 control. Zero is fine — a screen that applies immediately has no commit
 action to accent. Two is two things claiming to be primary. Its label is
-near-black on the brand, not white: white measures 3.08:1 on the gradient's
-top stop.
+white on the brand: `#fff` on `--acc-fill`'s stops measures 5.26:1 at the
+top and 7.35:1 at the bottom. The near-black label this file asked for
+until 3.3.0 was measured against the retired vermilion brand, where white
+managed only 3.08:1; the purple retheme inverted that, and the button has
+shipped white-on-purple since. Re-measure from `style.css`, not from a
+screenshot — a capture of this button samples the top stop as `#9034E3`
+and the label as `(244,236,251)`, which is antialiasing and the accent
+glow, not what the sheet declares.
 
 **Accent marks what is selected and what will happen. A card heading is
 neither.** The rule above is written about *controls*, so the Uploader's
@@ -260,19 +347,60 @@ generally and not about one screen — the heading-bar treatment is not
 confined to the Uploader, and whichever screen owns a card heading
 inherits the rule.
 
-**Never use `window.confirm`, `window.prompt` or `window.alert`.** WebView2
-renders them as browser chrome captioned with the page origin — a grey box
-mentioning localhost, in a frameless dark app. Use `WM.confirm` /
-`WM.prompt`, which raise the app's own overlay. Python's `_confirm` cannot
-serve a page-initiated dialog: it blocks the calling thread until
-`dialog_response` arrives, so calling it from a bridge method deadlocks the
-thread that has to deliver the answer.
-
 **`hidden` needs an author rule.** An author rule beats the UA
 stylesheet's `[hidden] { display: none }` regardless of specificity, so any
 selector that sets a display needs its own `[hidden]` override or the
 element stays visible. Six rules in `style.css` carry a note about this and
 one shipped without it anyway.
+
+
+## Crossing the bridge
+
+Two mechanics here are enforced — or punished — somewhere other than where
+you would look for them. Both were derivable only by reading four or five
+call sites, and both have been stated wrongly in planning documents written
+by people who had read this file — which is why they are in it now.
+
+**A handler name is a three-way contract.** `web/app.js` keeps the
+`WM.HANDLERS` allowlist, `ui/api.py` pushes into it, and each screen module
+registers out of it with `WM.handle()`. All three have to agree, and the two
+ways they can disagree do not fail alike:
+
+| mismatch | what happens |
+|---|---|
+| `_push("x")` where `x` is not in `WM.HANDLERS` | **Silent no-op.** The push renders as `window.x && window.x(…)`, and `_push` swallows `evaluate_js` failures at debug level. Nothing happens and nothing says so. |
+| `WM.handle('x')` where `x` is not in `WM.HANDLERS` | **Throws at registration** — and every handler declared below it in the same file never registers. |
+
+The second row is the mechanism behind this file's opening rule: it is *why*
+a broken screen looks like an empty screen. It has happened —
+`onEveSettingsRunning` was pushed from `ui/api.py` and registered in
+`evesettings.js` without being added to `WM.HANDLERS`, and the whole EVE
+Settings route broke while every test still passed.
+
+`tests/test_bridge_contract.py` now asserts both directions, and it is
+purely lexical, so know where it stops looking before trusting it: it reads
+only `self._push("literal", …)` calls and only the `WM.HANDLERS = [...]`
+array literal, so a name built or appended at runtime is invisible to it;
+and an allowlist entry that nothing registers is deliberately not an error,
+because it may be pushed from somewhere other than `ui/api.py`.
+
+**Which confirmation, and why.** Never `window.confirm`, `window.prompt` or
+`window.alert`: WebView2 renders them as browser chrome captioned with the
+page origin — a grey box mentioning localhost, in a frameless dark app. Four
+mechanisms ship in their place, and the thread the action runs on picks
+between them:
+
+| the action runs… | use | why |
+|---|---|---|
+| page-side, page-owned | `WM.confirm` (`panel.js:280`) | the app's own overlay, and the only one safe on the bridge thread |
+| on a Python worker | `Api._confirm` (`api.py:412`) | blocks the calling thread until `dialog_response` arrives — from a bridge method that deadlocks the very thread that has to deliver the answer |
+| on a worker **holding the mutation lock** | `Api._eve_confirm` (`api.py:2851`) | `_confirm` bounded by `EVE_CONFIRM_TIMEOUT_S`, with a missing answer read as **no** |
+| where the row is the only surface for the action | inline two-step (`skills.js:717`) | a dialog would cover the thing being acted on |
+
+The third row's bound is not caution. `_push` swallows every `evaluate_js`
+failure, so a confirmation whose push never reached the page would park its
+worker forever *holding the lock* — permanently refusing every later copy,
+backup, restore and delete.
 
 
 ## Saving
@@ -295,12 +423,20 @@ Folders and the webhook commit on Enter, or via an explicit affordance
 
 - Committing a half-typed path that happens to name a real directory
   rebinds the watcher, and `Watcher.rebind` marks every file already in
-  that folder as seen — silently suppressing the announcement for every
-  recording that arrived this session, then doing it again to the right
-  folder on the corrective commit. Not undoable from the UI.
+  that folder as seen. The cost is specific, and smaller than this file
+  used to claim: those recordings are not *announced* and arrive unticked,
+  but they are still listed — `list_rows` rebuilds from the folder and only
+  the watcher's poll result is preselected (`__main__.py:249-266`). A
+  corrective commit does it again only for a genuinely different folder;
+  `api.py:1743-1748` returns early when the path is unchanged, so
+  re-committing the same path is a no-op, added for exactly this reason.
 - An empty webhook used to mean "clear it", so select-all, Delete and look
-  away destroyed a credential. There is no Cancel and no pre-edit snapshot
-  anywhere on the page.
+  away destroyed a credential. **That hazard is retired, and the rule
+  outlived it:** `api.py:1644-1648` refuses an empty value outright, so
+  even a blur commit could not clear one, and removing a webhook is its own
+  explicit action. The rule stands because the reasoning does — there is
+  still no Cancel and no pre-edit snapshot anywhere on the page, so a free
+  text field that commits on blur has no way back.
 
 **Nothing commits before the first payload has rendered.** `get_settings`
 resolves asynchronously and every field is blank until it does; a commit
@@ -351,6 +487,21 @@ A screen may not repeat its own tab name as its first card heading.
 Say what a control does, not what it configures. A tab named "EVE
 Settings" beside a gear named "Settings" describes the implementation and
 confuses the reader; "Profiles" is what the thing is called.
+
+Same rule pointed the other way: name a control for its effect, not for
+the user's next move. `Clear`, `Restore`, `Detect`, `Refresh`, `Edit…`.
+`Type…` was the one control *name* in the app that was an instruction, and
+it sat beside `Clear` in the same treatment, so the pair read as two
+options rather than as a value-clearer and an editor.
+
+A trailing `…` on a control name means *this opens something* — `Browse…`,
+`Change…`, `Choose folder…`, `Edit…`. It is not decoration, and a control
+that opens nothing may not wear one.
+
+Both rules are about the name a control *rests* at. A transient state
+label may be an instruction and may trail an ellipsis, because that is what
+it is for: an armed `.bindbtn` reads `Press a key…` for as long as the
+capture is live, and the ellipsis there means *waiting*, not *opens*.
 
 
 ## State that must not be retyped

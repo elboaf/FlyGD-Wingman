@@ -47,7 +47,9 @@
   // so a typo'd name is caught at registration and every Python push has
   // one visible owner.
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
-                 'onRetryAvailable', 'onLink', 'onSettings', 'onChannel',
+                 'onRetryAvailable', 'onCancelAvailable',
+                 'onUploadDone',
+                 'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
                  'onEveSettingsNames',

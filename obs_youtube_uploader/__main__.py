@@ -509,7 +509,12 @@ def build_skills_controller(api):
             # lazily inside a lambda is not checked when this function
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
-            push=api._push,
+            #
+            # _push_skills, not _push: the skills payload carries a rendered
+            # `fetched_label` that only ui/ knows how to build, and the raw
+            # _push is what left every render after the first one unlabelled
+            # (D3/S6). Its docstring holds the whole account.
+            push=api._push_skills,
             alert=api._alert,
         )
     except Exception:
@@ -605,8 +610,17 @@ def main() -> int:
             window.show()
 
     def on_quit() -> None:
-        if window is not None:
-            window.destroy()  # unblocks window_mod.run() below
+        if window is None:
+            return
+        # An upload runs on a daemon thread, so destroying the window here
+        # kills it mid-chunk with nothing on screen -- a multi-gigabyte
+        # transfer discarded by one menu click. The decision lives on Api
+        # because it has to raise the hidden window and bound its own wait;
+        # see _confirm_quit_if_busy. A refusal leaves the app running,
+        # which is the recoverable half of the two failures.
+        if not api._confirm_quit_if_busy():
+            return
+        window.destroy()  # unblocks window_mod.run() below
 
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()

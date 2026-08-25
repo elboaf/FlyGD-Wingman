@@ -124,6 +124,16 @@ BASE_BACKOFF = 1.0
 MAX_BACKOFF = 32.0
 
 
+class UploadCancelled(Exception):
+    """The caller's should_cancel predicate asked to stop between chunks.
+
+    Not an UploadFailed: nothing went wrong, so it must not reach the retry
+    classifier, must not offer Retry, and must not be reported as a failure.
+    The caller is the only thing that knows how many items of a batch had
+    already finished, so this carries no count of its own.
+    """
+
+
 class UploadFailed(Exception):
     """An upload failed. `outcome` says whether retrying could ever help.
 
@@ -189,6 +199,7 @@ def upload(
     max_attempts: int = 5,
     sleep=time.sleep,
     jitter=random.random,
+    should_cancel=None,
 ) -> str:
     """Drive a resumable upload to completion, retrying transient failures.
 
@@ -197,6 +208,15 @@ def upload(
 
     on_retry(attempt_number, delay_seconds) fires before each backoff sleep
     so the UI can show "retrying" rather than appearing frozen.
+
+    should_cancel() is polled once per chunk, before the chunk is sent, and
+    raises UploadCancelled the first time it answers True. Between chunks is
+    the only safe place to stop: next_chunk() is one blocking HTTP request
+    and there is nothing to interrupt it with, so the granularity of a
+    cancel is CHUNK_SIZE (4 MiB) of transfer, not instant. The poll sits at
+    the top of the loop rather than after next_chunk() so a cancel arriving
+    during a backoff sleep is honoured on the next pass instead of sending
+    one more chunk first.
 
     on_response(response) fires once, on success only, with the whole
     decoded insert response. It exists so callers can read the destination
@@ -211,6 +231,8 @@ def upload(
     attempts = 0
     response = None
     while response is None:
+        if should_cancel is not None and should_cancel():
+            raise UploadCancelled()
         try:
             status, response = request.next_chunk()
         except Exception as exc:
