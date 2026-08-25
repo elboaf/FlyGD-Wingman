@@ -323,8 +323,13 @@ upload again.
 python -m pip install -e ".[dev]"
 python -m pytest tests/
 uv run --extra dev ruff check .
+uv run --extra dev ruff format --check .
 python -m obs_youtube_uploader
 ```
+
+CI gates on all three: the suite, `ruff check`, and `ruff format --check`.
+Running the format check locally is worth the second it takes — otherwise
+the first you hear of it is a red pull request.
 
 ### After cloning
 
