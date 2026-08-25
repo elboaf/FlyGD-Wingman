@@ -94,6 +94,21 @@ DEFAULTS = {
     # start_previews_if_enabled. See Api.set_show_eve_tools for the guard
     # that keeps this from hiding a running feature's off switch.
     "show_eve_tools": True,
+    # Whether the user dismissed the first-run folder screen without
+    # choosing a folder. A recording folder is the UPLOADER half's
+    # configuration, and PRODUCT.md makes the two halves independent -- so
+    # someone who installed Wingman for previews and bookmark keybinds has
+    # to be able to get past it. Without this key that choice cannot
+    # survive a restart: __main__ shows the screen whenever no folder
+    # RESOLVES, so the skip would be re-asked on every launch.
+    #
+    # It records a DISMISSAL, not a folder state, which is why it is not
+    # derived from recording_dir. The two cases __main__ cannot otherwise
+    # tell apart are "never configured, and said so" and "configured once,
+    # folder has since disappeared" -- the second still deserves the
+    # screen. Api.set_folder clears it, so choosing a folder later returns
+    # the install to the ordinary path.
+    "first_run_skipped": False,
     # Nested, unlike every other key. save() projects onto DEFAULTS keys, so
     # this whole section travels as one value; load() rebuilds the inner
     # dicts rather than copying them, because dict(DEFAULTS) below is
@@ -253,12 +268,18 @@ def _normalize(data: dict) -> dict:
         "channel_id",
         "channel_title",
         "show_eve_tools",
+        "first_run_skipped",
     ):
         data.setdefault(key, DEFAULTS[key])
     # Coerced rather than defaulted: a hand-edited file with a string here
     # would otherwise make every truthy string mean "shown" and the empty
     # string mean "hidden", which is not a distinction anyone intended.
     data["show_eve_tools"] = bool(data["show_eve_tools"])
+    # Coerced for the same reason show_eve_tools is: a hand-edited file
+    # with a string here would leave a non-bool in a value the rest of the
+    # app tests with `is True`. The truthy/empty split this settles on is
+    # the same one show_eve_tools accepts.
+    data["first_run_skipped"] = bool(data["first_run_skipped"])
     if data["privacy"] not in VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
     if data["notify_mode"] not in VALID_NOTIFY:

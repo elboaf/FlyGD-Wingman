@@ -66,3 +66,90 @@ def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
 def test_summary_uses_a_middle_dot_separator():
     summary = copy_mod.format_selection_summary([_info()])
     assert " · " in summary and "|" not in summary
+
+
+# --- format_eve_copy_confirm ----------------------------------------------
+
+
+def test_the_copy_confirm_counts_what_the_user_actually_ticked():
+    """It said "3 other file(s)" at someone who had just ticked three
+    character names. Wrong noun, and the "(s)" is exactly the padding
+    PRODUCT.md's tone rule rules out -- in the last thing shown before an
+    irreversible write."""
+    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=False)
+    assert "3 other characters" in body
+    assert "file(s)" not in body
+    assert "(s)" not in body
+
+
+def test_the_copy_confirm_does_not_pluralise_a_single_target():
+    body = copy_mod.format_eve_copy_confirm(1, "character", eve_running=False)
+    assert "1 other character?" in body
+
+
+def test_the_copy_confirm_uses_the_word_the_screen_uses_for_accounts():
+    """The page offers a Characters / Accounts switch. DESIGN.md's "one
+    name per concept" makes the dialog use the same two words."""
+    body = copy_mod.format_eve_copy_confirm(2, "account", eve_running=False)
+    assert "2 other accounts" in body
+
+
+def test_an_unrecognised_selection_falls_back_to_naming_files():
+    """Degraded, not wrong: it is what the dialog said for every selection
+    before it could tell the difference. Reached when the targets are mixed
+    or are not EVE settings files at all."""
+    body = copy_mod.format_eve_copy_confirm(2, None, eve_running=False)
+    assert "2 other settings files" in body
+
+
+def test_the_copy_confirm_repeats_the_running_client_hazard():
+    """The screen renders a warn-toned "EVE running" pill precisely because
+    copying into a profile while a client is open is the hazard -- EVE
+    rewrites its own settings on exit. The pill is advisory and the dialog
+    is modal, so the warning was on the wrong one of the two."""
+    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=True)
+    assert "EVE is running" in body
+    # Says what to do, not only what is wrong (PRODUCT.md's tone rule).
+    assert "Close every client first" in body
+
+
+def test_the_copy_confirm_stays_quiet_about_eve_when_nothing_is_running():
+    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=False)
+    assert "EVE is running" not in body
+
+
+def test_the_copy_confirm_always_states_the_cost():
+    """PRODUCT.md: state cost before an irreversible action. The backup and
+    the irreversibility are true in every branch above."""
+    for running in (True, False):
+        body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=running)
+        assert "backed up first" in body
+        assert "cannot be undone" in body
+
+
+def test_the_completion_line_uses_the_same_noun_as_the_confirm():
+    """These two sentences are a second apart on the same screen. A dialog
+    saying "3 other characters" followed by a strip saying "Copied to 3
+    file(s)." is a worse disagreement than the one the confirm fixed, and
+    it is one this change would have introduced by fixing only the dialog.
+    """
+    for kind, expected in (
+        ("character", "characters"),
+        ("account", "accounts"),
+        (None, "settings files"),
+    ):
+        confirm = copy_mod.format_eve_copy_confirm(3, kind, eve_running=False)
+        done = copy_mod.format_eve_copy_done(3, kind)
+        assert f"3 other {expected}?" in confirm
+        assert done == f"Copied to 3 {expected}."
+
+
+def test_the_completion_line_does_not_pluralise_a_single_target():
+    assert copy_mod.format_eve_copy_done(1, "character") == "Copied to 1 character."
+    assert copy_mod.format_eve_copy_done(1, "account") == "Copied to 1 account."
+
+
+def test_the_completion_line_drops_the_padded_plural():
+    """ "(s)" is the padding PRODUCT.md's tone rule rules out, and it
+    survived here after the confirm stopped using it."""
+    assert "(s)" not in copy_mod.format_eve_copy_done(2, "character")

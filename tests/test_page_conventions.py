@@ -255,6 +255,50 @@ def test_every_destination_and_section_is_reachable_and_exists():
     )
 
 
+def test_the_landing_section_is_one_fact_not_three():
+    """`WM.current_section` and the visibly active section must agree.
+
+    Settings' landing section is written in three places: the initial value
+    of WM.current_section (web/app.js), the `active` class on a rail item,
+    and the `active` class on a pane. They disagreed -- markup painted
+    General while app.js announced `account` -- and nothing noticed, because
+    no current listener acts on a section name other than its own.
+
+    Latent rather than live, which is exactly why it needs a test. DESIGN.md
+    makes section entry the FETCHING contract ("Route and section entry is
+    how screens fetch"), so the first section that fetches on entry and is
+    not Bookmarks or Previews would fetch for a pane the user is not looking
+    at, or fail to fetch for the one they are. DESIGN.md's own remedy for a
+    fact written more than once is this: "Derive it, or assert it in a test."
+    """
+    body = _strip_html_comments(HTML)
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    declared = re.findall(r"WM\.current_section\s*=\s*'([\w-]+)'", app)
+    assert declared, "app.js no longer declares an initial WM.current_section"
+    landing = declared[0]
+
+    rail = re.findall(r'rail-item active" data-section="([\w-]+)"', body)
+    pane = re.findall(r'settings active" id="section-([\w-]+)"', body)
+
+    # Exactly one of each: two active rail items paint two selected tabs,
+    # and two active panes stack both groups' cards in one column.
+    assert rail == [landing], f"app.js lands on {landing!r}, the rail marks {rail!r}"
+    assert pane == [landing], f"app.js lands on {landing!r}, the panes mark {pane!r}"
+
+
+def test_settings_does_not_land_on_the_switch_that_removes_the_product():
+    """General's entire content is one checkbox for turning the EVE half
+    off. It is a legitimate control and a poor landing: the least-used
+    switch on the screen, in the most prominent pane of the app's
+    configuration surface, framing Settings as "here is how to remove
+    things". Pinned so it is not quietly moved back.
+    """
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    declared = re.findall(r"WM\.current_section\s*=\s*'([\w-]+)'", app)
+    assert declared[0] != "general"
+
+
 def test_opening_a_dialog_disarms_an_armed_keybind_capture():
     """A module that captures keystrokes must disarm before raising an
     in-page dialog.

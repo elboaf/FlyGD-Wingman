@@ -22,6 +22,12 @@ def test_defaults_are_the_documented_values():
         # an upgrading user's file predates the key, so defaulting it off
         # would silently remove four things they already use.
         "show_eve_tools": True,
+        # FALSE, and it records a dismissal rather than a folder state.
+        # __main__ shows the first-run screen whenever no folder RESOLVES,
+        # so "never configured, and said so" has to be distinguishable from
+        # "configured once, folder has since gone" -- only the first is a
+        # skip, and the second still deserves the screen.
+        "first_run_skipped": False,
         "eve_bookmarks": {
             "enabled": False,
             "keybinds": bookmarks.DEFAULT_BINDS,

@@ -125,3 +125,85 @@ def test_open_on_an_unknown_row_does_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
     api.open_path("gone")
     assert opened == []
+
+
+# --- opening the watched folder -------------------------------------------
+#
+# The Uploader is the screen about that folder's contents and had no way to
+# reach it: double-click and both context-menu entries act on the YouTube
+# link, not the file. open_path resolves a row to a URL despite its name.
+
+
+def opens(monkeypatch):
+    """Pretend to be Windows and record what the shell was asked to open."""
+    opened = []
+    monkeypatch.setattr(api_mod.sys, "platform", "win32")
+    monkeypatch.setattr(api_mod.os, "startfile", opened.append, raising=False)
+    return opened
+
+
+def test_opening_the_recording_folder_asks_the_shell_for_it(tmp_path, monkeypatch):
+    api, _window, _rows = api_with(tmp_path)
+    opened = opens(monkeypatch)
+
+    assert api.open_recording_dir() is True
+    assert opened == [str(tmp_path)]
+
+
+def test_opening_says_so_when_no_folder_is_configured(tmp_path, monkeypatch):
+    """Reachable now that first run can be skipped: the Uploader is exactly
+    where a skipped install lands, so this button is live with nothing
+    behind it. Named rather than silently doing nothing."""
+    api, _window, _rows = api_with(tmp_path)
+    api._state.recording_dir = None
+    opened = opens(monkeypatch)
+    sent = fakes.record_pushes(api)
+
+    assert api.open_recording_dir() is False
+    assert opened == []
+    (status,) = fakes.payloads(sent, "onStatus")
+    assert status["kind"] == "WARNING"
+    assert "Settings" in status["text"]
+
+
+def test_opening_a_folder_that_has_gone_names_it(tmp_path, monkeypatch):
+    """PRODUCT.md's tone rule: "That folder does not exist." -- not "An
+    error occurred." The same case __main__ treats as first run at launch."""
+    api, _window, _rows = api_with(tmp_path)
+    missing = tmp_path / "gone"
+    api._state.recording_dir = missing
+    opened = opens(monkeypatch)
+    sent = fakes.record_pushes(api)
+
+    assert api.open_recording_dir() is False
+    assert opened == []
+    (status,) = fakes.payloads(sent, "onStatus")
+    assert str(missing) in status["text"]
+
+
+def test_a_shell_that_refuses_reports_rather_than_raising(tmp_path, monkeypatch):
+    """It crosses the bridge, so an OSError here would surface as a dead
+    button and a logged traceback nobody reads."""
+    api, _window, _rows = api_with(tmp_path)
+    monkeypatch.setattr(api_mod.sys, "platform", "win32")
+
+    def boom(_path):
+        raise OSError("no association")
+
+    monkeypatch.setattr(api_mod.os, "startfile", boom, raising=False)
+    sent = fakes.record_pushes(api)
+
+    assert api.open_recording_dir() is False
+    assert fakes.payloads(sent, "onStatus")[0]["kind"] == "WARNING"
+
+
+def test_off_windows_it_is_a_deliberate_no_op(tmp_path, monkeypatch):
+    """Same posture as eveskills.controller._default_open_folder: a dev box
+    has no shell to ask, and raising would turn a cosmetic button into an
+    alert. The folder exists, so nothing is reported."""
+    api, _window, _rows = api_with(tmp_path)
+    monkeypatch.setattr(api_mod.sys, "platform", "linux")
+    sent = fakes.record_pushes(api)
+
+    assert api.open_recording_dir() is True
+    assert fakes.payloads(sent, "onStatus") == []

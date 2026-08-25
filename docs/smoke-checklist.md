@@ -96,6 +96,21 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       practice the people who install this play EVE. Someone who wants the
       plain uploader turns them off in Settings > General, which is checked
       under The Settings rail.
+- [ ] **A skipped first run is not asked again.** There is no Skip link on
+      the screen yet — it lands with the first-run screen work — so check
+      the half that ships here by hand: quit the app, set
+      `"first_run_skipped": true` in settings.json, clear the stored
+      recording folder, point `APPDATA` at an empty folder as the recipe
+      above describes, and start the app.
+      Expected: the first-run screen does NOT appear, and the Uploader
+      shows its empty state rather than a blank list — an empty list with
+      no rows and no empty state is the inert screen that reads as broken.
+      Then choose a folder in Settings > Folders and confirm
+      `first_run_skipped` returns to `false` in settings.json: choosing a
+      folder answers the question the skip deferred.
+      A recording folder configures the UPLOADER half, and the two halves
+      are meant to be independent — someone here for previews and bookmark
+      keybinds must not be gated on it every launch.
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to
@@ -195,6 +210,28 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       logical) to check this — before resizing existed, "minimum" was the
       only size the window ever had and this was free; now a user can
       actually get here.
+- [ ] **Settings rows stay usable at the window floor.** At 150% scaling,
+      with the window at its floor (560 CSS px), open Settings > Folders
+      and Settings > Discord. Expected: each label sits ABOVE its field on
+      its own line, left-aligned, and the field takes the full row width
+      with its buttons still beside it. The path and the masked webhook
+      must both be wide enough to read.
+      Measured in CSS px, not logical: MIN_WIDTH is 840 PHYSICAL pixels
+      and the app is system-DPI-aware, so the floor is 840/scale. At 840
+      logical — the width this file used to check — the layout is fine and
+      the check catches nothing. Above 720 CSS px the labels return to
+      their shared 118px column; confirm that too, by widening the window.
+- [ ] **The same collapse reaches Profiles.** Still at the floor, open
+      Profiles. Its rows carry `class="settings"` as well, so they must
+      collapse identically — the shared label column exists so the two
+      screens line up, and a rule that fired on only one of them would be
+      worse than not firing at all. Check the inline hint under a field
+      and any refusal message line up with the field, not with a label
+      column that is no longer there.
+      Known gap, NOT a regression: the Bookmarks keybind rows do not
+      collapse. Their label carries an id-specificity override
+      (`#eve-binds .row > .lab`) that this rule cannot reach, and it is
+      owned by the Settings screen lane.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
@@ -649,6 +686,19 @@ behavior that only shows up at size.
       is the only disclosure that one press publishes to two places. Choose No and confirm nothing uploads. This is the app's
       only irreversible action, and deleting local files — which are
       recoverable — already confirmed.
+- [ ] **With the logs box ticked and NO webhook configured, the confirm
+      says the logs will be SKIPPED.** Clear the webhook in
+      Settings > Discord, tick the combat-log box, and press Upload.
+      Expected: the "Logs:" line reads "skipped — no Discord webhook is
+      configured (set one in Settings)", and the closing line names
+      YouTube ONLY. It must not promise a Discord post.
+      This is the fresh-install state, and the dialog used to promise the
+      post regardless — so every upload ended on a WARNING strip reading
+      "combat logs skipped: …", which looks like a recurring failure
+      rather than an unconfigured option. Also try a webhook that is
+      not a valid Discord URL: the confirm parses it with the same
+      function the upload half gates on, so a typo must read as skipped
+      too, not as configured.
 - [ ] **The confirm is honest before the first upload.** With no upload ever
       completed, confirm the Channel line reads "not known yet (learned from
       this upload)" rather than being blank. The app holds only the
@@ -826,6 +876,16 @@ Bookmarks and Previews stopped being top-level destinations and became
 sections here. Nothing in pytest executes the page, so the wiring below is
 only ever checked by hand.
 
+- [ ] **Settings opens on Account, not General.** Press the gear from any
+      destination. Expected: the Account pane is showing and Account is the
+      highlighted rail entry, on the FIRST open of a session.
+      General's whole content is one checkbox for turning the EVE half off;
+      it is a legitimate control and a poor first impression of the app's
+      configuration surface. This is also the fact `WM.current_section`
+      declares in app.js — the two disagreed, silently, and
+      tests/test_page_conventions.py now holds them in step. If the pane
+      and the highlight ever disagree with each other, that test has been
+      bypassed rather than the markup being wrong.
 - [ ] **Eight rail entries** — General, Account, Uploads, Notifications,
       Folders, Discord, Bookmarks, Previews — and clicking each shows its
       content with exactly one entry highlighted. If that count is wrong,
@@ -1249,6 +1309,24 @@ so these are the checks that matter and only a Windows machine can run them.
       recreated and the files come back.
 - [ ] Start a copy and immediately try a second one. The second is refused
       with the busy message rather than interleaving.
+- [ ] **The copy confirmation counts what you ticked.** Select two
+      characters and press Copy. Expected: "Copy these settings onto 2
+      other characters?" — not "2 other file(s)". Switch the mode to
+      Accounts, select one, and confirm it reads "1 other account?" with
+      no "(s)". The noun is derived from the selected files, so the dialog
+      cannot disagree with the switch.
+      **Then let the copy finish and read the status strip**: it must say
+      "Copied to 2 characters.", not "2 file(s)". The two sentences are a
+      second apart on the same screen and share one noun deliberately —
+      fixing only the dialog would have made them disagree.
+- [ ] **The copy confirmation repeats the running-client warning.** With an
+      EVE client OPEN (the "EVE running" pill is showing), start a copy.
+      Expected: the dialog itself says EVE is running and to close every
+      client first, above the "cannot be undone" line. The pill is
+      advisory and easy to miss; this dialog is modal and is the last
+      thing before the write. Close every client and confirm the sentence
+      disappears — it is probed fresh each time the dialog is raised, not
+      read from the pill.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
       Ten auto-backups remain; the manual ones are untouched.
 - [ ] Check the packaged build: the Profiles route appears and the

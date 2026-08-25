@@ -523,3 +523,91 @@ def test_the_probe_releases_its_lock_even_when_it_raises(tmp_path, monkeypatch):
     api._eve_refresh_running()
     assert api._eve_probe.acquire(blocking=False) is True
     api._eve_probe.release()
+
+
+# --- the copy confirmation, and the payload behind the backups card -------
+
+
+def confirms(api):
+    """Capture confirm bodies and decline, so nothing is written."""
+    asked = []
+
+    def ask(title, body):
+        asked.append((title, body))
+        return False
+
+    api._eve_confirm = ask
+    return asked
+
+
+def test_the_copy_confirm_names_characters_rather_than_files(tmp_path, monkeypatch):
+    """The noun is derived from the target paths (evesettings.tree.
+    file_kind), not passed by the page: the Characters / Accounts switch
+    already decides which files are offered, so a mode argument on the
+    bridge would be the same fact written twice."""
+    api = build(tmp_path, monkeypatch)
+    asked = confirms(api)
+    profile = eve_tree(tmp_path)
+    api._eve_client_running = lambda: False
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
+
+    ((title, body),) = asked
+    assert title == "Confirm Copy"
+    assert "1 other character" in body
+    assert "file(s)" not in body
+
+
+def test_the_copy_confirm_names_accounts_when_accounts_were_selected(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    asked = confirms(api)
+    profile = eve_tree(tmp_path, files=("core_user_1.dat", "core_user_2.dat"))
+    api._eve_client_running = lambda: False
+
+    api.eve_settings_copy(
+        str(profile / "core_user_1.dat"), [str(profile / "core_user_2.dat")]
+    )
+
+    ((_title, body),) = asked
+    assert "1 other account" in body
+
+
+def test_the_copy_confirm_warns_when_a_client_is_open(tmp_path, monkeypatch):
+    """Probed fresh here rather than read from the cached pill value: the
+    cache exists so eve_settings_state stays cheap on the bridge thread,
+    and this sentence is about what is true at the moment of committing."""
+    api = build(tmp_path, monkeypatch)
+    asked = confirms(api)
+    profile = eve_tree(tmp_path)
+    api._eve_running = False  # The stale pill value; must not be the source.
+    api._eve_client_running = lambda: True
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
+
+    ((_title, body),) = asked
+    assert "EVE is running" in body
+
+
+def test_the_state_payload_carries_the_backup_prune_depth(tmp_path, monkeypatch):
+    """So the page can say how many backups are kept without typing the
+    number into itself. Four places once carried the bookmark-keybind count
+    and three of them drifted; DESIGN.md's "state that must not be retyped"
+    is the rule this avoids."""
+    api = build(tmp_path, monkeypatch)
+
+    assert api.eve_settings_state()["auto_keep"] == 10
+
+
+def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch):
+    """A payload that always said 10 while the copy pruned to something
+    else would be worse than no number at all."""
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["auto_keep"] = 3
+
+    assert api.eve_settings_state()["auto_keep"] == 3
