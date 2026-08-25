@@ -340,6 +340,22 @@ somewhere stale and nothing on that screen is worth reviewing.
       `durations.json`, launch against a large folder, click Length while
       rows read "…". Pending rows sort together and each fills in where it
       sits — rows do NOT re-order under the cursor as results arrive.
+- [ ] **Sorting by Length puts an hour-long recording above a 59-minute
+      one.** Needs at least one recording over an hour, so it renders
+      `1:03:09` rather than `17:07`. list.js sorts this column by parsing
+      its own rendered cell, so a format it cannot parse does not fail
+      loudly — those rows silently sort as "not measured", down with the
+      `?` and `…` ones. Round 3 gave the format its hours field and
+      widened the parser in the same change; this is what notices if they
+      ever come apart again.
+
+      **Run this on a folder that has been opened before**, i.e. with
+      `durations.json` already holding these recordings — the opposite of
+      the item above. It is not a convenience: a cell filled in by a
+      probe completing during this run does not carry the format at all
+      (`onDuration` pushes a raw float, so the cell reads `3789`), and
+      that is a separate open defect. On a cold folder this item would
+      pass or fail on cache warmth rather than on what it means to check.
 - [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
       move with ↑/↓, press Space. Focus is visibly distinct from "checked",
       Space toggles exactly the focused row, and Space does NOT scroll. Then
@@ -369,7 +385,7 @@ somewhere stale and nothing on that screen is worth reviewing.
       accused every recording in the folder of being unreadable.
       **To see `—` on purpose:** run from a source checkout with no
       `packaging/bin/ffprobe.exe` fetched and no ffprobe on PATH. Every row
-      shows `—`, and the selection summary reads `0:00:00+` — the `+` is
+      shows `—`, and the selection summary reads `0:00+` — the `+` is
       required, because without it the line states a confident zero for a
       108.8 MB recording.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
@@ -652,7 +668,7 @@ behavior that only shows up at size.
       Run from a source checkout with no `packaging/bin/ffprobe.exe` and no
       ffprobe on PATH. Expected: every row shows `—`, NOT `?`, and hovering
       one says ffprobe was not found and that reinstalling restores
-      lengths. Select a row: the summary must read `0:00:00+` — with the
+      lengths. Select a row: the summary must read `0:00+` — with the
       `+`. Both halves shipped wrong until round 2, because a probe that
       reached no verdict was rendered identically to one that read the
       file and failed: every row accused its own recording, and the

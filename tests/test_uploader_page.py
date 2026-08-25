@@ -23,6 +23,7 @@ import itertools
 import pathlib
 import re
 
+from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
 
 WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
@@ -565,3 +566,89 @@ def test_modified_sheds_at_a_width_the_window_can_actually_reach():
     )
     # Nothing else is sacrificed to make room for it at the floor.
     assert hidden_at(min_width) == {"c-date"}
+
+
+# --- the duration format crosses into JS -----------------------------------
+
+
+def _duration_regex():
+    """parseDuration's own regex, read out of list.js.
+
+    Scoped to the function body: parseSize four lines above it is also a
+    `var m = /^...$/.exec(String(text` and matched first when this was
+    written against the file as a whole.
+    """
+    source = re.search(r"/(\^.*?\$)/\.exec", _duration_body())
+    assert source, "parseDuration no longer parses its cell with a regex"
+    return re.compile(source.group(1))
+
+
+def _duration_body():
+    """parseDuration's body text, scoped so the two tests read one thing."""
+    body = re.search(
+        r"function parseDuration\(text\) \{(.*?)\n  \}", LIST_JS, re.DOTALL
+    )
+    assert body, "parseDuration is no longer where this test reads it"
+    return body.group(1)
+
+
+def test_the_length_sort_parses_every_string_the_duration_format_emits():
+    """list.js sorts Length by parsing its own rendered cell back out.
+
+    That coupling is the whole hazard: a format emitting a field the regex
+    rejects does not raise anywhere -- parseDuration returns -1, those rows
+    all compare equal at the bottom, and the column silently stops
+    sorting. Nothing renders the page in this suite, so this is the only
+    place it would be noticed.
+
+    Round 3 gave library.format_duration an hours field (a two-hour
+    recording used to render "127:07"), which the m:ss-only regex would
+    have rejected for exactly the recordings most worth sorting.
+
+    The regex is read out of list.js rather than restated here, and the
+    expected seconds come from format_duration's own input, so this fails
+    if either side moves alone.
+    """
+    pattern = _duration_regex()
+
+    for seconds in (0, 5, 65, 599, 1027, 3599, 3600, 3661, 7627, 360000):
+        rendered = library.format_duration(seconds)
+        m = pattern.match(rendered)
+        assert m, f"list.js cannot parse {rendered!r} ({seconds}s)"
+        hours, minutes, secs = m.groups()
+        parsed = (int(hours) * 3600 if hours else 0) + int(minutes) * 60 + int(secs)
+        assert parsed == seconds, f"{rendered!r} sorts as {parsed}s, not {seconds}s"
+
+
+def test_the_length_sort_weights_each_field_by_what_it_means():
+    """The arithmetic, not just the regex.
+
+    The test above transcribes parseDuration's sum into Python to check
+    it, which cannot catch a bug in the JS sum itself: simplify
+    `m[1] * 3600` to `m[1] * 60` -- an easy slip, since the next line
+    multiplies by 60 -- and the regex is untouched, the Python side does
+    its own correct arithmetic, every assertion passes, and 2:07:07 sorts
+    as 527 seconds, below a nine-minute recording.
+
+    So the multipliers are read out of the JS and checked against what
+    each captured field means. Group 3 is seconds and carries none.
+    """
+    body = _duration_body()
+    weights = {
+        int(group): int(mult)
+        for group, mult in re.findall(r"parseInt\(m\[(\d)\], 10\) \* (\d+)", body)
+    }
+    assert weights == {1: 3600, 2: 60}, (
+        "group 1 is hours and group 2 is minutes; group 3 is seconds and "
+        f"takes no multiplier. Found {weights}"
+    )
+    assert "m[3]" in body, "the seconds group is no longer summed at all"
+
+
+def test_the_two_glyph_cells_still_sort_to_the_bottom():
+    """The widened regex must not start accepting "…", "?" or "—" as
+    measurements -- they are the absence of one, and parseDuration's -1 is
+    what they have to keep falling through to."""
+    pattern = _duration_regex()
+    for glyph in ("…", "?", "—", "", "1:2:3:4"):
+        assert not pattern.match(glyph), f"{glyph!r} is not a duration"

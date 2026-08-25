@@ -143,7 +143,7 @@ def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
     assert bars[0] == {
         "mode": "determinate",
         "pct": 25.0,
-        "text": "Uploading file 1 of 2… 50.0%",
+        "text": "Uploading file 1 of 2… 50%",
         "kind": "FG",
     }
 
