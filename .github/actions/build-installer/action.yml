@@ -9,6 +9,15 @@
 # Secrets are inputs here, never read via GitHub's secrets context directly.
 # A composite action has no access to the calling repository's secrets;
 # the caller must pass them.
+#
+# REQUIRED OF THE CALLER, and not enforceable from here:
+#   * actions/checkout, before this runs.
+#   * actions/setup-python with 3.11. Most of this action runs through
+#     `uv run` and does not need it, but the three packaging/fetch_*.py
+#     scripts are invoked with a bare `python` on purpose -- they are
+#     stdlib-only and want no venv -- so they use whatever PATH provides.
+#     Remove setup-python from a caller and those three steps break, in
+#     that caller only.
 name: Build installer
 description: Fetch dependencies, freeze with PyInstaller, verify the bundle, and build the Inno Setup installer.
 
@@ -35,24 +44,63 @@ runs:
       shell: pwsh
       run: choco install innosetup --no-progress -y
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
     - name: Install dependencies
       shell: pwsh
       run: |
         # $ErrorActionPreference alone does NOT catch a native command's
         # non-zero exit, and a multi-line run: block keeps going after one.
-        # That is how a failed `pip install -e .` previously produced a
-        # green step, no pystray in the environment, and a frozen app that
-        # crashed on launch. Check every exit code explicitly.
-        python -m pip install --upgrade pip
-        if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-        python -m pip install -e .
-        if ($LASTEXITCODE -ne 0) { throw "editable install failed - the app's dependencies are missing" }
-        # Pinned: packaging/uploader.spec and packaging/installer.iss both
-        # assume PyInstaller 6.x's one-folder layout (exe at the top of the
-        # dist folder, dependencies under _internal/). Bumping this means
-        # re-checking installer.iss's {app}\{#AppExe} assumption.
-        python -m pip install "pyinstaller>=6,<7"
+        # That is how a failed install previously produced a green step, no
+        # pystray in the environment, and a frozen app that crashed on
+        # launch. Check every exit code explicitly.
+        uv sync --locked
+        if ($LASTEXITCODE -ne 0) { throw "uv sync failed - the app's dependencies are missing" }
+        # PyInstaller goes INTO the synced environment, not alongside it.
+        # `uv pip install` without --python would target a different prefix.
+        #
+        # Pinned to 6.x, and the pin is load-bearing: packaging/uploader.spec
+        # and packaging/installer.iss both assume 6.x's one-folder layout
+        # (executable at the top of dist/, dependencies under _internal/). A
+        # 7.x release with a changed layout would produce an installer whose
+        # shortcuts point at nothing while the build still reports success.
+        # If you widen this, re-check installer.iss's {app}\{#AppExe}
+        # assumption at the same time.
+        uv pip install --python .venv "pyinstaller>=6,<7"
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
+
+    - name: Verify uv run reaches the synced environment, on the right Python
+      # Two assertions, both for failures that are otherwise silent.
+      #
+      # First: that `uv sync` actually took, and `uv run` reaches an
+      # environment with the app's dependencies in it.
+      #
+      # Note what this does NOT do, since an earlier version of this comment
+      # claimed otherwise: it cannot catch a LATER step dropping its
+      # `uv run` prefix. It runs before those steps and asserts nothing
+      # about them. The protection against a dropped prefix is grepping the
+      # action for a bare `python`/`pyinstaller`, which is a review step,
+      # not something CI enforces.
+      #
+      # Second, and the reason this asserts rather than prints: uv's default
+      # python-preference is "managed", so it picks its OWN downloaded
+      # CPython over anything on PATH. With only requires-python = ">=3.11"
+      # to go on it takes its current default -- observed locally choosing
+      # 3.13.12 while PATH held 3.14.3. That would silently change the
+      # interpreter frozen into the installer users download, with no commit
+      # and no failure: the wheels exist for those versions, so the build
+      # would just go green and ship something different.
+      #
+      # .python-version pins the choice. This asserts the pin actually took,
+      # because a config file that stops being read is exactly the kind of
+      # thing nobody notices.
+      shell: pwsh
+      run: |
+        uv run python -c "import sys, pystray, webview; print(sys.version); assert sys.version_info[:2] == (3, 11), f'expected 3.11, got {sys.version_info[:2]} -- check .python-version'"
+        if ($LASTEXITCODE -ne 0) { throw "uv run reached the wrong interpreter, or cannot import the app's dependencies" }
 
     - name: Verify the app's dependencies are importable
       # PyInstaller only reports "Hidden import not found" as an ERROR line
@@ -65,14 +113,14 @@ runs:
       # assertion below for that.
       shell: pwsh
       run: |
-        python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, webview; print('runtime deps importable')"
+        uv run python -c "import pystray, PIL, googleapiclient, google_auth_oauthlib, webview; print('runtime deps importable')"
         if ($LASTEXITCODE -ne 0) { throw "the app's runtime dependencies are not installed" }
         # Checked separately because it is the hiddenimports= entry, not an
         # ordinary import: nothing in the source imports this module by
         # name, so a rename or a broken pythonnet install would otherwise
         # surface only as a frozen app that opens no window and exits 0
         # (spike Q7). Named on its own line so the failure says which one.
-        python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
+        uv run python -c "import webview.platforms.edgechromium; print('edgechromium backend importable')"
         if ($LASTEXITCODE -ne 0) { throw "webview.platforms.edgechromium is not importable - the hiddenimports entry in uploader.spec would resolve to nothing and the frozen app would exit 0 with no window" }
         # Same silent-failure shape as edgechromium above, for the
         # TriffSkills port: eveskills/ is a plain package import, not a
@@ -80,7 +128,7 @@ runs:
         # dependency, a typo surviving a rename) would otherwise surface
         # only once the Skills route is opened in the frozen app, not
         # here where the failure is actually actionable.
-        python -c "from obs_youtube_uploader.eveskills.controller import SkillsController; print('SkillsController importable')"
+        uv run python -c "from obs_youtube_uploader.eveskills.controller import SkillsController; print('SkillsController importable')"
         if ($LASTEXITCODE -ne 0) { throw "obs_youtube_uploader.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the frozen app" }
 
     - name: Inject OAuth credentials
@@ -109,48 +157,23 @@ runs:
       # provided client secret is invalid" -- with no CI signal at all.
       #
       # Prints only shapes and lengths, never the values.
-      shell: python
+      #
+      # This was previously inline under the "python" shell keyword, which
+      # runs the runner's PATH interpreter. That worked while the workflow
+      # did `pip install -e .` into that same interpreter -- verified in
+      # run 32783647689, which printed the expected shapes. It stops
+      # working the moment the dependencies live in uv's .venv instead,
+      # which is why the body moved to a real file invoked through
+      # `uv run`.
+      #
+      # The script lives under .github/scripts/ rather than packaging/
+      # because packaging/ is excluded from ruff; putting it there would
+      # have made it the only unlinted Python on the release path. Moving
+      # it here immediately surfaced two real findings.
+      shell: pwsh
       run: |
-        import sys
-        from obs_youtube_uploader import credentials as c
-
-        cfg = c.CLIENT_CONFIG["installed"]
-        cid, sec = cfg["client_id"], cfg["client_secret"]
-        bad = []
-
-        if c.is_placeholder():
-            bad.append("is_placeholder() is still True -- the replace did not take")
-        if cid != cid.strip():
-            bad.append("client_id has leading or trailing whitespace")
-        if sec != sec.strip():
-            bad.append("client_secret has leading or trailing whitespace")
-        if not cid.endswith(".apps.googleusercontent.com"):
-            bad.append("client_id does not end with .apps.googleusercontent.com")
-        if chr(10) in cid or chr(10) in sec:
-            bad.append("a value contains a newline")
-        if not sec:
-            bad.append("client_secret is empty")
-        if " " in sec:
-            # Observed for real: the stored secret was the text of a
-            # `gh secret set ...` command rather than the value it was
-            # meant to set. Google then rejects sign-in with "the provided
-            # client secret is invalid" and nothing upstream notices,
-            # because a shell command is a perfectly valid Python string.
-            bad.append("client_secret contains a space -- it looks like a "
-                       "command line or a pasted phrase, not a secret")
-        if not sec.startswith("GOCSPX-"):
-            # Google issues desktop-app secrets with this prefix. A value
-            # without it is not necessarily wrong, but it has never been
-            # right here, so fail loudly rather than ship it.
-            bad.append("client_secret does not start with GOCSPX- , which "
-                       "every Google desktop-app secret does")
-
-        print("client_id: %d chars, ends %r" % (len(cid), cid[-30:]))
-        print("client_secret: %d chars, starts %r" % (len(sec), sec[:7]))
-
-        for b in bad:
-            print("::error::" + b)
-        sys.exit(1 if bad else 0)
+        uv run python .github/scripts/verify_credentials.py
+        if ($LASTEXITCODE -ne 0) { throw "injected credentials failed verification" }
 
     - name: Warn that credentials are placeholders
       if: ${{ inputs.inject-credentials != 'true' }}
@@ -201,7 +224,7 @@ runs:
 
     - name: Build executable
       shell: pwsh
-      run: python -m PyInstaller packaging/uploader.spec --noconfirm
+      run: uv run python -m PyInstaller packaging/uploader.spec --noconfirm
 
     - name: Show what PyInstaller produced
       # The layout is the thing that cannot be verified off-Windows.
