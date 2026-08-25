@@ -899,6 +899,16 @@ behavior that only shows up at size.
       not a valid Discord URL: the confirm parses it with the same
       function the upload half gates on, so a typo must read as skipped
       too, not as configured.
+- [ ] **The confirm's five values line up.** Same dialog. Expected: the
+      values after `Channel:`, `Privacy:`, `Title:`, `Total:` and `Logs:`
+      all start at the SAME x, and the `(set one in Settings)` second line
+      of the no-webhook branch starts there too. The separator is a tab,
+      not spaces, so this is also the check that Inter actually loaded: the
+      alignment rides on `tab-size` stops measured in the current font's
+      space width, and under a fallback face `Channel:` crosses into the
+      next stop and its value sits ~27 px right of the other four. A
+      staircase here means the bundled font is missing (the failure #72
+      fixed), not that the string is wrong.
 - [ ] **The confirm is honest before the first upload.** With no upload ever
       completed, confirm the Channel line reads "not known yet (learned from
       this upload)" rather than being blank. The app holds only the
@@ -1653,6 +1663,16 @@ so these are the checks that matter and only a Windows machine can run them.
       a settings set. It must be refused as outside the configured folder --
       containment resolves symlinks and junctions, and this is the one path
       Linux CI cannot exercise.
+- [ ] **Confirm Copy names both ends of the copy.** Select a source and one
+      target and press Copy, then read the dialog before answering.
+      Expected: the first line names the SOURCE character — "Copy Guarzo
+      Opper's settings onto 1 other character?" — and the line under it
+      names the target. Check the names match what the roster shows for
+      those two rows (both come from `Api._eve_label`, so a disagreement
+      means two producers have grown back). Then select more than six
+      targets: the dialog names the first six and says "and N more" — the
+      overflow must be stated, never a truncated list that reads as
+      complete. Choose No.
 - [ ] Copy one character onto three others with EVE closed. All three
       update; three auto-backups appear.
 - [ ] Copy with EVE running. It fails with "The file is in use. Close EVE

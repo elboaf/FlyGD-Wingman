@@ -100,6 +100,62 @@ def test_stitched_single_selection_is_still_plain():
 # --- format_upload_confirm -------------------------------------------------
 
 
+def _fact_lines(body: str) -> list[str]:
+    """The label:value rows, which are exactly the lines carrying a tab."""
+    return [
+        line for line in body.split("\n") if "\t" in line and not line.startswith("\t")
+    ]
+
+
+def test_every_fact_carries_the_same_separator():
+    """Round 3's finding 11. The five labels were padded to ten CHARACTERS
+    (two, two, four, four and five spaces), which in the dialog's
+    proportional face put the values at five different x positions -- a
+    16.7 CSS px rag, measured in the page. One tab each lands them on one
+    `tab-size` stop. Asserted here because pytest never renders the page,
+    so the only thing a test can hold is that the separator is uniform and
+    that no run of literal spaces has crept back in."""
+    body = copy_mod.format_upload_confirm(
+        [info()],
+        title="Fight",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        discord_webhook="",
+    )
+    rows = _fact_lines(body)
+    # Derived from the labels the dialog actually names, not a retyped 5.
+    assert [row.split(":", 1)[0] for row in rows] == [
+        "Channel",
+        "Privacy",
+        "Title",
+        "Total",
+        "Logs",
+    ]
+    for row in rows:
+        assert row.split(":", 1)[1].startswith(copy_mod._FACT_SEP)
+        assert "  " not in row, f"literal-space padding is back in {row!r}"
+
+
+def test_a_wrapped_fact_is_indented_to_the_value_column():
+    """The Logs line's second row used to be ten spaces, which in the page
+    landed at 327.6 while the values ran 335.9-352.6 -- an indent aligned
+    with nothing. It has to reach the same stop the values sit on."""
+    body = copy_mod.format_upload_confirm(
+        [info()],
+        title="Fight",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        discord_webhook="",
+    )
+    continuation = [ln for ln in body.split("\n") if ln.startswith(copy_mod._FACT_SEP)]
+    assert continuation, "the no-webhook branch still carries a second line"
+    for line in continuation:
+        assert line.startswith(copy_mod._CONTINUATION)
+        assert not line.startswith(copy_mod._CONTINUATION + copy_mod._FACT_SEP)
+
+
 def test_confirm_names_channel_privacy_and_totals():
     body = copy_mod.format_upload_confirm(
         [

@@ -2600,6 +2600,25 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
+    def _eve_label(self, path) -> str:
+        """The name the Profiles roster shows for one settings file.
+
+        One producer, because two of them would be free to disagree in the
+        one place that must not: Confirm Copy names the source and the
+        targets, and it has to name them in the words the user just read
+        off the roster. Derived from the path rather than passed in, so the
+        dialog cannot be handed a label the screen never rendered.
+        """
+        kind = evesettings_tree.file_kind(path)
+        ident = evesettings_tree.file_id(path)
+        if kind == "character" and ident.isdigit():
+            return self._eve_names.label(int(ident))
+        if kind == "account" and ident:
+            return f"Account {ident}"
+        # discover() only ever yields the two kinds above, so this is the
+        # bridge-reachable case: a path the page was never offered.
+        return Path(path).stem
+
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
         thread: scandir over a few dozen files, and listing backups is one
@@ -2616,12 +2635,11 @@ class Api:
         store = paths.eve_settings_backup_dir()
 
         def describe(record):
-            name = (
-                self._eve_names.label(int(record.file_id))
-                if record.kind == "character" and record.file_id.isdigit()
-                else f"Account {record.file_id}"
-            )
-            return {"path": str(record.path), "id": record.file_id, "name": name}
+            return {
+                "path": str(record.path),
+                "id": record.file_id,
+                "name": self._eve_label(record.path),
+            }
 
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         return {
@@ -2953,7 +2971,10 @@ class Api:
             if not self._eve_confirm(
                 "Confirm Copy",
                 copy_mod.format_eve_copy_confirm(
-                    len(targets), kind, self._eve_client_running()
+                    [self._eve_label(t) for t in targets],
+                    kind,
+                    self._eve_client_running(),
+                    source_name=self._eve_label(source),
                 ),
             ):
                 return
