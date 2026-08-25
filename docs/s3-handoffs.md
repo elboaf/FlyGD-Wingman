@@ -76,8 +76,11 @@ that nothing is registered yet.
 `set_category` is unchanged and still validates digits-only. The finding
 collapses into your copy; nothing is waiting on S3.
 
-**M2 / M3 — the `General` section.** Two payload keys are ready and have
-no renderer:
+**M2 / M3 — the `General` section. The `ABOUT` card is confirmed: build
+it.** The maintainer settled this after S3 merged — the version is
+deliberately in two places, the titlebar (#53) and `ABOUT`, and `ABOUT` is
+also where the licence and start-on-login live. Two payload keys are ready
+and have no renderer:
 
 - `payload.version` — the string from `__version__`. **S1 has already put
   this in the titlebar**, so read the open question below before building
@@ -141,27 +144,36 @@ Nothing from S3.
 
 ---
 
-## Two questions S3 could not answer from inside its boundary
+## Both open questions are now answered
 
-**1. Where does the version actually live — and does the `ABOUT` card
-still exist?** The walkthrough records M2 as decided: *"Version and licence
-go in `General` as a second card headed `ABOUT`, alongside start-on-login;
-version rendered as selectable text."* S1 shipped it in the **titlebar**
-instead (#53, dimmed after the wordmark). Both are reasonable and the
-payload serves either, but they are different decisions and only one of
-them was written down.
+**1. The `ABOUT` card is confirmed.** R2 builds it, and the version is
+deliberately rendered in two places — the titlebar from #53, and `ABOUT`
+alongside the licence and start-on-login, neither of which the titlebar can
+hold. See the R2 section above.
 
-This matters beyond the version: the recorded decision also gave `ABOUT` a
-home for the licence (`THIRD-PARTY-NOTICES.md` still has no UI surface at
-all, and GPL-3.0 attribution usually wants one) and for start-on-login.
-The titlebar can hold none of that. **If the `ABOUT` card is still wanted,
-R2 builds it and the version is deliberately in two places; if it is not,
-start-on-login needs a home in `General` anyway and the licence question
-goes back on the shelf.** Needs the maintainer, not a lane.
+**2. Nobody owns `packaging/installer.iss`'s version, because nobody has to
+touch it any more.** It `#include`s a generated `version.iss` written from
+`__version__` immediately before `iscc` runs. The bash check in `ci.yml` is
+gone with the literals it compared; `tests/test_packaging_version.py`
+asserts the derivation chain instead, on both platforms.
 
-**2. `packaging/installer.iss` is the last hand-typed version, and it is
-unowned.** `pyproject.toml` now derives from `__init__.py`; `uv.lock`
-turned out to be carrying a fourth copy and now records none. Inno Pascal
-cannot import Python, so `installer.iss` cannot be derived. It is guarded
-twice — `ci.yml`'s check and a pytest — but no lane owns the file, so a
-future version bump has no obvious owner for that edit.
+## One thing S3 got wrong, and the follow-up that fixed it
+
+`packaging/installer.iss` **already had a start-on-login mechanism** when
+M3 was built — a `[Tasks] startup` entry writing a shortcut into
+`{userstartup}` with no arguments. M3 added a second one (`HKCU\...\Run`,
+with `--hidden`) without knowing, so on any install where that box was
+ticked the app started at login *with its window raised*, while the new
+Settings checkbox read the registry, found nothing, and reported "off".
+
+The follow-up collapses it to one mechanism: the installer writes the same
+Run value, and `autostart.py` reports either, removes both on disable, and
+migrates the shortcut onto the Run value on enable.
+
+**The lesson worth keeping, because it will recur in wave 2:** the
+walkthrough framed M3's mechanism as a free choice — *"either a `.lnk` in
+the Startup folder or an `HKCU\...\Run` value"* — and that framing was
+taken at face value. `packaging/` is unowned by every lane in
+`docs/ui-work-lanes-2.md`, which made it easy to treat as out of scope
+rather than as territory to check. **A finding that says "add X" is not
+evidence that X does not already exist somewhere no lane owns.**
