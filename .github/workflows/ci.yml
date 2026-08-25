@@ -21,22 +21,32 @@ jobs:
         with:
           python-version: "3.11"
       - name: Check version consistency
-        # Three files declare the version independently: pyproject.toml,
-        # obs_youtube_uploader/__init__.py, and packaging/installer.iss. Nothing
-        # else enforces that they agree, so a bump to one that misses the others
-        # would ship an installer whose filename claims one version while the
-        # app reports another. Fail loud, print all three on mismatch.
+        # TWO files declare the version now, not three. pyproject.toml used to
+        # carry a third hand-typed copy; it reads
+        # `obs_youtube_uploader.__version__` through setuptools' dynamic
+        # metadata since M2, so it can no longer disagree and there is nothing
+        # to compare it against -- `grep '^version = '` finds nothing there on
+        # purpose. Do not "fix" that by reinstating a literal.
+        #
+        # packaging/installer.iss is the copy that cannot be derived: Inno
+        # Pascal has no way to import Python. So it stays hand-typed and this
+        # check is the only thing standing between a bump that misses it and an
+        # installer whose FILENAME claims one version while the app it installs
+        # reports another. Fail loud, print both on mismatch.
         run: |
-          PYPROJECT_VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
           INIT_VERSION=$(grep -m1 '^__version__ = ' obs_youtube_uploader/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
           ISS_VERSION=$(grep -m1 '#define AppVersion' packaging/installer.iss | sed -E 's/.*AppVersion "(.*)".*/\1/')
 
-          echo "pyproject.toml:                  $PYPROJECT_VERSION"
           echo "obs_youtube_uploader/__init__.py: $INIT_VERSION"
-          echo "packaging/installer.iss:         $ISS_VERSION"
+          echo "packaging/installer.iss:          $ISS_VERSION"
 
-          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ] || [ "$PYPROJECT_VERSION" != "$ISS_VERSION" ]; then
-            echo "::error::Version mismatch across pyproject.toml ($PYPROJECT_VERSION), __init__.py ($INIT_VERSION), and installer.iss ($ISS_VERSION)"
+          if [ -z "$INIT_VERSION" ]; then
+            echo "::error::Could not read __version__ from obs_youtube_uploader/__init__.py -- pyproject.toml derives from it, so an unreadable value breaks the build's metadata too."
+            exit 1
+          fi
+
+          if [ "$INIT_VERSION" != "$ISS_VERSION" ]; then
+            echo "::error::Version mismatch between __init__.py ($INIT_VERSION) and installer.iss ($ISS_VERSION)"
             exit 1
           fi
       - name: Check the WebView2 detection predicate agrees

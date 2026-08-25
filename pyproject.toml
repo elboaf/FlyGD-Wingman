@@ -12,7 +12,13 @@ build-backend = "setuptools.build_meta"
 # rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
 # entry point, and the release workflow's credential-injection step.
 name = "obs-youtube-uploader"
-version = "3.2.1"
+# Derived from obs_youtube_uploader.__version__, not retyped. M2 found the
+# version was carried by hand here AND in __init__.py, which is exactly the
+# drift DESIGN.md's "State that must not be retyped" exists to stop -- and it
+# started mattering the moment the page began showing the value to users.
+# packaging/installer.iss is the one remaining hand-typed copy (Inno Pascal
+# cannot import Python); ci.yml still asserts that pair agrees.
+dynamic = ["version"]
 description = "FlyGD Wingman - Windows companion for OBS recordings: review, stitch, and upload to YouTube."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -75,6 +81,12 @@ packages = [
     "obs_youtube_uploader.evesettings",
     "obs_youtube_uploader.eveskills",
 ]
+
+[tool.setuptools.dynamic]
+# attr=, so the build reads the literal without importing the package --
+# obs_youtube_uploader/__init__.py must stay import-light for this to hold,
+# and today it is a single assignment.
+version = { attr = "obs_youtube_uploader.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

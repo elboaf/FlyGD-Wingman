@@ -173,8 +173,15 @@ def _silence_pywebview_logging() -> None:
     log.propagate = True
 
 
-def create(api) -> "webview.Window":
+def create(api, hidden: bool = False) -> "webview.Window":
     """Build the main window and hand *api* its back-reference.
+
+    `hidden` builds the window without showing it, for the login launch
+    (M3): the app is tray-resident, and a start-on-login that raises a
+    window at every boot is worse than no setting at all. The window is
+    fully constructed either way -- only its visibility differs -- so the
+    tray's Open item (__main__.on_open, which calls window.show()) needs no
+    special case for it.
 
     The `api._window = window` assignment MUST use the underscore name and
     MUST stay a separate step:
@@ -211,6 +218,7 @@ def create(api) -> "webview.Window":
         # (winforms.py:210), and now that the window can be resized a user
         # can drag it down to a size the layout cannot render at all.
         min_size=(MIN_WIDTH, MIN_HEIGHT),
+        hidden=hidden,
     )
     api._window = window
 

@@ -256,3 +256,28 @@ def test_placement_survives_a_scale_of_zero():
     assert window_mod._placement(
         1000, 600, metrics=lambda: (1920, 1080), scale=lambda: 0.0
     ) == (460, 240)
+
+
+# --- the login launch (M3) --------------------------------------------------
+
+
+def test_the_window_is_shown_by_default(fake_webview):
+    """Every launch except the login one raises its window. A default of
+    hidden would make the Start menu shortcut look like it did nothing."""
+    window_mod.create(_bare_api())
+    assert fake_webview["kwargs"]["hidden"] is False
+
+
+def test_the_login_launch_builds_the_window_without_showing_it(fake_webview):
+    """M3: the app is tray-resident, and a start-on-login that raises a
+    window at every boot is worse than no setting at all.
+
+    Built, not skipped -- only its visibility differs, which is what lets
+    the tray's Open item call show() with no special case for this path.
+    """
+    window_mod.create(_bare_api(), hidden=True)
+    kwargs = fake_webview["kwargs"]
+    assert kwargs["hidden"] is True
+    # Everything else about the window is unchanged by starting hidden.
+    assert kwargs["min_size"] == (840, 625)
+    assert kwargs["frameless"] is True

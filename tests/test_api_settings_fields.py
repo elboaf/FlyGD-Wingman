@@ -342,3 +342,94 @@ def test_a_failed_write_leaves_state_and_disk_agreeing(monkeypatch, tmp_path):
     # The rollback is what matters: the live dict must not be left holding
     # a value that never reached disk.
     assert api._state.settings["privacy"] == before
+
+
+# --- start on login (M3) ----------------------------------------------------
+
+
+class FakeAutostart:
+    """Stands in for the autostart module's three entry points."""
+
+    def __init__(self, enabled=False, denied=False):
+        self.enabled = enabled
+        self.denied = denied
+        self.calls = []
+
+    def is_enabled(self):
+        return self.enabled
+
+    def enable(self):
+        self.calls.append("enable")
+        if self.denied:
+            raise OSError("access is denied by policy")
+        self.enabled = True
+
+    def disable(self):
+        self.calls.append("disable")
+        if self.denied:
+            raise OSError("access is denied by policy")
+        self.enabled = False
+
+
+def test_start_on_login_is_read_from_the_registry_not_from_settings(
+    monkeypatch, tmp_path
+):
+    """The login entry IS the state. A settings.json copy would go stale the
+    first time a user deletes the entry from Task Manager's Startup tab, and
+    the checkbox would then describe a world that no longer exists."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod, "autostart", FakeAutostart(enabled=True))
+
+    payload = api.get_settings()
+
+    assert payload["start_on_login"] is True
+    # Derived, top level, and never written back as a setting.
+    assert "start_on_login" not in payload["settings"]
+    assert "start_on_login" not in api._state.settings
+
+
+def test_turning_start_on_login_on_and_off_reaches_the_registry(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    fake = FakeAutostart()
+    monkeypatch.setattr(api_mod, "autostart", fake)
+
+    assert api.set_start_on_login(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api.get_settings()["start_on_login"] is True
+
+    assert api.set_start_on_login(False)["applied"] is True
+    assert api.get_settings()["start_on_login"] is False
+    assert fake.calls == ["enable", "disable"]
+
+
+def test_a_refused_registry_write_is_reported_not_swallowed(monkeypatch, tmp_path):
+    """A managed machine can deny the Run key by policy. A checkbox that
+    assumed success would silently do nothing at every boot, which is what
+    the commit contract exists to prevent."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod, "autostart", FakeAutostart(denied=True))
+
+    result = api.set_start_on_login(True)
+
+    assert result["applied"] is False
+    assert result["persisted"] is False
+    assert "login entry" in result["error"]
+    # Says WHY, carrying the OS's own words -- "it did not work" alone is
+    # not diagnosable from a bug report.
+    assert "policy" in result["error"]
+
+
+def test_a_non_boolean_is_refused_rather_than_coerced(monkeypatch, tmp_path):
+    """Coercion would let a stray truthy value register a login entry the
+    user never ticked -- and this one writes outside the app's own config."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    fake = FakeAutostart()
+    monkeypatch.setattr(api_mod, "autostart", fake)
+
+    result = api.set_start_on_login("yes")
+
+    assert result["applied"] is False
+    assert fake.calls == []

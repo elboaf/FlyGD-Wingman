@@ -110,7 +110,6 @@ def test_confirm_names_channel_privacy_and_totals():
         privacy="unlisted",
         channel_title="Zoolanders",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
     assert "Zoolanders" in body
@@ -127,7 +126,6 @@ def test_confirm_shows_the_numbering_the_batch_will_actually_get():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
     assert "Fight (1/3)" in body
@@ -141,7 +139,6 @@ def test_confirm_shows_the_untitled_fallback_rather_than_an_empty_quote():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
     assert "Untitled" in body
@@ -154,7 +151,6 @@ def test_confirm_for_a_stitch_describes_one_video():
         privacy="unlisted",
         channel_title="Z",
         stitch=True,
-        logs=False,
         discord_webhook="",
     )
     assert "one video" in body
@@ -168,7 +164,6 @@ def test_confirm_flags_an_unknown_channel_rather_than_leaving_it_blank():
         privacy="unlisted",
         channel_title="",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
     assert "not known yet" in body
@@ -181,7 +176,6 @@ def test_confirm_says_it_is_public_and_irreversible():
         privacy="public",
         channel_title="Z",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
     assert "cannot be undone" in body.lower()
@@ -197,7 +191,6 @@ def test_confirm_says_when_combat_logs_will_follow_the_upload():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=True,
         discord_webhook=HOOK,
     )
     assert "combat logs" in body.lower()
@@ -214,7 +207,6 @@ def test_the_irreversibility_warning_covers_the_discord_half_too():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=True,
         discord_webhook=HOOK,
     )
     closing = body.rsplit("\n\n", 1)[-1]
@@ -222,36 +214,42 @@ def test_the_irreversibility_warning_covers_the_discord_half_too():
     assert "Discord" in closing
 
 
-def test_confirm_stays_silent_about_logs_when_the_box_is_unchecked():
+def test_confirm_states_the_no_webhook_case_as_a_fact_not_as_a_refusal():
+    """Uploader 8 removed the checkbox, so there is no request to refuse.
+
+    The line has to stay -- this is a cost summary and the reader needs to
+    know the Discord half will not happen -- but it can no longer imply the
+    user asked for something and was denied. "not posted", not "skipped".
+    """
     body = copy_mod.format_upload_confirm(
         [info()],
         title="x",
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=False,
         discord_webhook="",
     )
-    assert "combat" not in body.lower()
-    assert "Discord" not in body
+    assert "not posted" in body
+    assert "skipped" not in body.lower()
+    # Still says what to do about it (PRODUCT.md's tone rule).
+    assert "Settings" in body
 
 
 def test_confirm_does_not_promise_discord_when_no_webhook_is_configured():
-    """The checkbox can be ticked on an install with no webhook, and the
-    post is gated on one that parses. The confirm used to promise the post
-    anyway, so a fresh install paid a cost it was told about and never
-    incurred -- then ended on a WARNING strip that read like a failure."""
+    """Logs are unconditional since Uploader 8, and the post is gated on a
+    webhook that parses. The confirm used to promise the post anyway, so a
+    fresh install paid a cost it was told about and never incurred -- then
+    ended on a WARNING strip that read like a failure."""
     body = copy_mod.format_upload_confirm(
         [info()],
         title="x",
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=True,
         discord_webhook="",
     )
     assert "posted to Discord" not in body
-    assert "skipped" in body
+    assert "not posted" in body
     # Says what to do, not just what will not happen (PRODUCT.md's tone rule).
     assert "Settings" in body
 
@@ -265,7 +263,6 @@ def test_the_irreversibility_line_drops_discord_when_nothing_will_be_posted():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=True,
         discord_webhook="",
     )
     closing = body.rsplit("\n\n", 1)[-1]
@@ -283,8 +280,13 @@ def test_an_unparseable_webhook_is_treated_as_no_webhook_by_the_confirm():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        logs=True,
         discord_webhook="https://example.com/nope",
     )
     assert "posted to Discord" not in body
-    assert "skipped" in body
+    assert "not posted" in body
+    # But NOT with the never-configured wording. This user set a webhook and
+    # got it wrong; telling them none is configured sends them to Settings
+    # to look at a populated field with no idea what the dialog meant.
+    # Api._post_combat_logs draws the same line, and the two must agree.
+    assert "no Discord webhook is configured" not in body
+    assert "not valid" in body
