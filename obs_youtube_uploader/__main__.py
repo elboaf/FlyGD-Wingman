@@ -377,6 +377,38 @@ def build_preview_host(state, api_box):
                 state.settings.get("preview", {}).get("restore_preview_positions", True)
             )
 
+        def show_labels():
+            # Same reasoning as restore_positions above: read through
+            # `state` on every call, never captured. Absent means on --
+            # it is what shipped, and defaulting off would silently
+            # restyle every existing install's previews.
+            return bool(state.settings.get("preview", {}).get("show_labels", True))
+
+        def opacity():
+            return int(state.settings.get("preview", {}).get("opacity", 235))
+
+        def minimize_inactive_clients():
+            # Absent means off: minimizing a real EVE client window must
+            # be asked for, never assumed by an upgrading install.
+            return bool(
+                state.settings.get("preview", {}).get(
+                    "minimize_inactive_clients", False
+                )
+            )
+
+        def never_minimize():
+            # A character-name list, not a per-character flag -- see
+            # PreviewHost._is_never_minimize. Read live for the same
+            # reason as restore_positions: the roster is edited while
+            # previews are running.
+            return list(state.settings.get("preview", {}).get("never_minimize", []))
+
+        def locked():
+            # Same shape as never_minimize, and for the same reason: a
+            # per-character callable would need the character key at
+            # construction time, which this function does not have.
+            return list(state.settings.get("preview", {}).get("locked", []))
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
@@ -389,6 +421,11 @@ def build_preview_host(state, api_box):
             on_clients_changed=on_clients_changed,
             on_hotkey_status=on_hotkey_status,
             restore_positions=restore_positions,
+            show_labels=show_labels,
+            opacity=opacity,
+            minimize_inactive_clients=minimize_inactive_clients,
+            never_minimize=never_minimize,
+            locked=locked,
         )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to

@@ -425,6 +425,111 @@ def test_the_host_restores_positions_when_the_key_is_absent(monkeypatch):
     assert main_mod.build_preview_host(state, {})._restoring() is True
 
 
+def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
+    """Same reasoning as test_the_host_reads_the_position_setting_live:
+    Settings has no Save button, so build_preview_host must hand the host
+    callables that re-read state.settings on every call, not the values
+    captured at app start."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(
+        settings={
+            "preview": {
+                "enabled": False,
+                "width": 320,
+                "height": 210,
+                "layouts": {},
+                "show_labels": False,
+                "opacity": 180,
+            }
+        }
+    )
+    host = main_mod.build_preview_host(state, {})
+    assert host._labels_shown() is False
+    assert host._current_opacity() == 180
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {"show_labels": True, "opacity": 90}
+    assert host._labels_shown() is True
+    assert host._current_opacity() == 90
+
+
+def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
+    monkeypatch,
+):
+    """An upgrading user's file predates these keys. Absent must mean the
+    behaviour that shipped before the toggle existed, or every existing
+    install's previews would silently restyle on first launch. 235 is
+    settings.py's own _preview_defaults() opacity, not host.py's 255
+    fallback -- that one only applies when the callable itself is absent
+    or raises, never through build_preview_host's live read."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._labels_shown() is True
+    assert host._current_opacity() == 235
+
+
+def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
+    """Same reasoning again: a roster edit or a minimize toggle happens
+    while previews are already running."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(
+        settings={
+            "preview": {
+                "enabled": False,
+                "width": 320,
+                "height": 210,
+                "layouts": {},
+                "minimize_inactive_clients": True,
+                "never_minimize": ["Alice"],
+                "locked": ["Bravo"],
+            }
+        }
+    )
+    host = main_mod.build_preview_host(state, {})
+    assert host._minimizing_inactive() is True
+    assert host._is_never_minimize("Alice") is True
+    assert host._is_locked("Bravo") is True
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {
+        "minimize_inactive_clients": False,
+        "never_minimize": [],
+        "locked": [],
+    }
+    assert host._minimizing_inactive() is False
+    assert host._is_never_minimize("Alice") is False
+    assert host._is_locked("Bravo") is False
+
+
+def test_the_host_defaults_to_no_minimizing_and_empty_rosters_when_absent(monkeypatch):
+    """Absent must mean off for minimize_inactive_clients: minimizing a
+    real EVE client window must be asked for, never assumed by an
+    upgrading install. The rosters default to empty for the same reason."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._minimizing_inactive() is False
+    assert host._is_never_minimize("Alice") is False
+    assert host._is_locked("Alice") is False
+
+
 def test_the_client_window_machinery_is_gone():
     """It moved the GAME windows: EVE read the resize as a resolution
     change and rewrote its own configuration, costing three characters'

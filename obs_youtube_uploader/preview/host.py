@@ -97,6 +97,11 @@ class PreviewHost:
         on_clients_changed=None,
         on_hotkey_status=None,
         restore_positions=None,
+        show_labels=None,
+        opacity=None,
+        minimize_inactive_clients=None,
+        never_minimize=None,
+        locked=None,
     ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
@@ -114,6 +119,22 @@ class PreviewHost:
         # the app started with is not the value that should apply. None
         # means "always restore" -- the behaviour that predates the toggle.
         self._restore_positions = restore_positions
+        # Read live, same reasoning as _restore_positions above: each of
+        # these can change mid-session (a Settings toggle, a lock or
+        # never-minimize edit), and a preview is created -- or restyled --
+        # long after the app started. None means "the caller has not
+        # wired this yet", not "off"; _labels_shown/_current_opacity/etc.
+        # below fall back to today's shipped behaviour in that case.
+        self._show_labels = show_labels
+        self._opacity = opacity
+        self._minimize_inactive_clients = minimize_inactive_clients
+        # Both of these are character-name LISTS (preview.never_minimize,
+        # preview.locked), not per-character booleans: a per-character
+        # callable would need the character key at construction time, and
+        # build_preview_host does not have it. _is_never_minimize/
+        # _is_locked below do the per-window membership test.
+        self._never_minimize = never_minimize
+        self._locked = locked
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -237,6 +258,20 @@ class PreviewHost:
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
 
+    def restyle(self) -> None:
+        """Ask every open preview to re-read show_labels, opacity and
+        locked. Safe from any thread, same shape as set_hotkeys() above --
+        except there is no payload to stash under the lock: the callables
+        themselves are the live state, so this only has to post the
+        signal.
+
+        The single live-update entry point for all four settings this
+        task wires (minimize_inactive_clients included): there is no
+        separate "minimize changed" message, because minimize is read per
+        switch (Task 7), not per window.
+        """
+        self._post(win32.WM_APP_RESTYLE)
+
     def hotkey_status(self) -> dict:
         """Outcome of the most recent registration pass.
 
@@ -352,6 +387,9 @@ class PreviewHost:
         if msg == win32.WM_APP_ALERT:
             self._apply_alerts(libs, self._drain_alerts())
             return 0
+        if msg == win32.WM_APP_RESTYLE:
+            self._restyle()
+            return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
             return 0
@@ -421,10 +459,16 @@ class PreviewHost:
                     w.rect for k2, w in self._windows.items() if k2 != k
                 ],
                 screen=self._screen,
-                # Restored, not defaulted: a preview locked before the last
-                # restart must come back locked, or the next drag reports
-                # locked=False and erases the flag from settings.
-                locked=bool(entry.locked) if entry else False,
+                # Resolved from the `locked` character-name list, not from
+                # entry.locked: Task 1 moved lock storage to
+                # preview.locked, so the saved layout entry is no longer
+                # the source of truth for what a NEW window opens locked
+                # as. entry.locked itself is still written by
+                # _layout_changed (layout.py's own callers still read it),
+                # just no longer consulted here.
+                locked=self._is_locked(key),
+                show_labels=self._labels_shown(),
+                opacity=self._current_opacity(),
             )
             if win is not None:
                 self._windows[key] = win
@@ -723,6 +767,103 @@ class PreviewHost:
                 "Could not read restore_preview_positions; restoring the saved position"
             )
             return True
+
+    def _labels_shown(self) -> bool:
+        """Whether preview chrome draws a label band, read live.
+
+        Runs on the preview thread -- in _sweep for a newly created
+        window, and in the WM_APP_RESTYLE handler for every open one --
+        so it must not be the thing that kills the pump. A callable that
+        raises falls back to labels-on, the behaviour that shipped before
+        this toggle existed.
+        """
+        if self._show_labels is None:
+            return True
+        try:
+            return bool(self._show_labels())
+        except Exception:
+            logger.exception("Could not read show_labels; defaulting to labels on")
+            return True
+
+    def _current_opacity(self) -> int:
+        """DWM thumbnail opacity, read live. Same guard as _labels_shown."""
+        if self._opacity is None:
+            return 255
+        try:
+            return int(self._opacity())
+        except Exception:
+            logger.exception("Could not read preview opacity; defaulting to opaque")
+            return 255
+
+    def _minimizing_inactive(self) -> bool:
+        """Whether an unfocused client's real window should be minimized,
+        read live. Same guard as _labels_shown.
+
+        Not consulted anywhere in this task -- Task 7's switching logic
+        is the first caller -- but stored and guarded now so
+        build_preview_host wires all five settings in one pass.
+        """
+        if self._minimize_inactive_clients is None:
+            return False
+        try:
+            return bool(self._minimize_inactive_clients())
+        except Exception:
+            logger.exception(
+                "Could not read minimize_inactive_clients; defaulting to no minimize"
+            )
+            return False
+
+    def _is_never_minimize(self, stable_key) -> bool:
+        """Whether *stable_key* is exempt from minimize_inactive_clients,
+        read live. Same guard as _labels_shown; see _minimizing_inactive.
+        """
+        if self._never_minimize is None:
+            return False
+        try:
+            return stable_key in (self._never_minimize() or [])
+        except Exception:
+            logger.exception("Could not read never_minimize; defaulting to not exempt")
+            return False
+
+    def _is_locked(self, stable_key) -> bool:
+        """Whether *stable_key* is locked against drag, read live.
+
+        The source of truth moved here from the saved layout entry's
+        `locked` flag when Task 1 introduced the `preview.locked`
+        character-name list -- see the comment on the _sweep call site.
+        Same guard as _labels_shown.
+        """
+        if self._locked is None:
+            return False
+        try:
+            return stable_key in (self._locked() or [])
+        except Exception:
+            logger.exception("Could not read locked; defaulting to unlocked")
+            return False
+
+    def _restyle(self) -> None:
+        """Push live show_labels/opacity/locked onto every open preview.
+
+        minimize_inactive_clients and never_minimize are read per switch
+        (Task 7), not walked here -- there is no per-window state for
+        them to update.
+        """
+        show_labels = self._labels_shown()
+        opacity = self._current_opacity()
+        label_h = window_mod.LABEL_H if show_labels else 0
+        for key, win in self._windows.items():
+            win.show_labels = show_labels
+            win.opacity = opacity
+            win.locked = self._is_locked(key)
+            win.redraw()
+            # Mirrors PreviewWindow.create/.move: opacity is a DWM
+            # thumbnail property, not a chrome pixel, so it needs its own
+            # push whether or not redraw() decided the bitmap changed.
+            if win._thumb is not None:
+                win._thumb.update(
+                    geometry.thumbnail_rect(win.rect, window_mod.BORDER, label_h),
+                    win.opacity,
+                )
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""

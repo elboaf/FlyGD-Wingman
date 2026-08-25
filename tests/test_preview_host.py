@@ -282,8 +282,9 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_SWEEP_NOW,
         host.win32.WM_APP_REBIND,
         host.win32.WM_APP_ALERT,
+        host.win32.WM_APP_RESTYLE,
     }
-    assert len(commands) == 4
+    assert len(commands) == 5
     assert all(c >= host.win32.WM_APP for c in commands)
 
 
@@ -1078,3 +1079,305 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
 
     h._sweep(libs)  # creation succeeds; the selected key is unchanged
     assert h._windows["Alice"].selected is True
+
+
+# --- live-read seams: show_labels, opacity, minimize_inactive_clients,
+# never_minimize, locked -----------------------------------------------------
+
+
+def test_show_labels_defaults_on_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._labels_shown() is True
+
+
+def test_show_labels_reads_the_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, show_labels=lambda: False)
+    assert h._labels_shown() is False
+
+
+def test_a_raising_show_labels_callable_falls_back_to_labels_on():
+    """Runs on the preview thread inside _sweep and WM_APP_RESTYLE; a raise
+    here must not be the thing that kills the pump."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, show_labels=boom)
+    assert h._labels_shown() is True
+
+
+def test_opacity_defaults_opaque_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._current_opacity() == 255
+
+
+def test_opacity_reads_the_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, opacity=lambda: 180)
+    assert h._current_opacity() == 180
+
+
+def test_a_raising_opacity_callable_falls_back_to_opaque():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, opacity=boom)
+    assert h._current_opacity() == 255
+
+
+def test_minimize_inactive_defaults_off_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._minimizing_inactive() is False
+
+
+def test_minimize_inactive_reads_the_callable():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, minimize_inactive_clients=lambda: True
+    )
+    assert h._minimizing_inactive() is True
+
+
+def test_a_raising_minimize_inactive_callable_falls_back_to_off():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, minimize_inactive_clients=boom
+    )
+    assert h._minimizing_inactive() is False
+
+
+def test_never_minimize_defaults_to_nobody_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._is_never_minimize("Alice") is False
+
+
+def test_never_minimize_checks_membership_in_the_live_list():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, never_minimize=lambda: ["Alice"]
+    )
+    assert h._is_never_minimize("Alice") is True
+    assert h._is_never_minimize("Bravo") is False
+
+
+def test_a_raising_never_minimize_callable_falls_back_to_nobody_exempt():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, never_minimize=boom)
+    assert h._is_never_minimize("Alice") is False
+
+
+def test_locked_defaults_to_nobody_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._is_locked("Alice") is False
+
+
+def test_locked_checks_membership_in_the_live_list():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, locked=lambda: ["Alice"])
+    assert h._is_locked("Alice") is True
+    assert h._is_locked("Bravo") is False
+
+
+def test_a_raising_locked_callable_falls_back_to_unlocked():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, locked=boom)
+    assert h._is_locked("Alice") is False
+
+
+# --- _sweep applies the live settings to a newly created window ------------
+
+
+def _config_sweep_host(monkeypatch, *, client_key="Alice", saved=None, **kw):
+    """A PreviewHost wired for a single-client sweep, with discovery,
+    monitor enumeration and placement stubbed the same way
+    test_the_sweep_places_a_new_preview_at_its_clamped_rect does."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, saved_layouts=saved, size=(320, 210), **kw
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient(client_key)]
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    return h
+
+
+def test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry(
+    monkeypatch,
+):
+    """R1: Task 1 moved lock storage to the preview.locked character-name
+    list. A saved layout entry that still says locked=True -- written by
+    _layout_changed, still read by layout.py's own callers -- must NOT be
+    what a new window opens locked as; only the live `locked` callable
+    governs it."""
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append(kw["locked"])
+        return
+
+    h = _config_sweep_host(
+        monkeypatch,
+        saved={"Alice": layout.Entry(geometry.Rect(0, 0, 320, 210), True)},
+        locked=list,
+    )
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [False]
+
+
+def test_the_sweep_locks_a_new_window_when_the_locked_list_says_so(monkeypatch):
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append(kw["locked"])
+        return
+
+    h = _config_sweep_host(
+        monkeypatch,
+        saved={"Alice": layout.Entry(geometry.Rect(0, 0, 320, 210), False)},
+        locked=lambda: ["Alice"],
+    )
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [True]
+
+
+def test_the_sweep_passes_show_labels_and_opacity_at_creation(monkeypatch):
+    """A preview appearing mid-session must be born with the current
+    settings, not the shipped defaults -- otherwise a client that starts
+    after a Settings change opens looking like the OLD configuration
+    until the next restyle."""
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append((kw["show_labels"], kw["opacity"]))
+        return
+
+    h = _config_sweep_host(monkeypatch, show_labels=lambda: False, opacity=lambda: 180)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [(False, 180)]
+
+
+# --- restyle(): the live-update entry point ---------------------------------
+
+
+def test_restyle_posts_only_a_signal(monkeypatch):
+    """Same shape as raise_alert()/set_hotkeys(): exercised through the
+    real _post, not a stub standing in for it."""
+    posted = []
+
+    class _RestyleUser32(_FakeUser32):
+        def PostMessageW(self, hwnd, msg, wparam, lparam):
+            posted.append((msg, wparam, lparam))
+            return 1
+
+    libs = _FakeLibs(_RestyleUser32())
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h.restyle()
+    assert posted == [(host.win32.WM_APP_RESTYLE, 0, 0)]
+
+
+def test_the_restyle_message_dispatches_to_the_handler(monkeypatch):
+    """A message with nothing routing it to _restyle() falls through to
+    DefWindowProcW and every open preview keeps whatever chrome it was
+    created with, forever."""
+    calls = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(h, "_restyle", lambda: calls.append(1))
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_FakeUser32()))
+
+    h._host_proc(0x1, host.win32.WM_APP_RESTYLE, 0, 0)
+
+    assert calls == [1]
+
+
+class _FakeRestyleThumb:
+    """Records every (rect, opacity) passed to update()."""
+
+    def __init__(self):
+        self.calls = []
+
+    def update(self, rect, opacity=255):
+        self.calls.append((rect, opacity))
+
+
+class _RestyleWindow:
+    """Duck-types just what _restyle touches: public chrome attributes,
+    redraw(), and a thumbnail. Not a real PreviewWindow -- that needs an
+    HWND, which is out of reach here."""
+
+    def __init__(self, rect, show_labels=True, opacity=255, locked=False):
+        self.rect = rect
+        self.show_labels = show_labels
+        self.opacity = opacity
+        self.locked = locked
+        self.redraws = 0
+        self._thumb = _FakeRestyleThumb()
+
+    def redraw(self, force=False):
+        self.redraws += 1
+
+
+def test_restyle_updates_every_open_window(monkeypatch):
+    """WM_APP_RESTYLE must reach every window's chrome AND its DWM
+    thumbnail: opacity is a thumbnail property, not a chrome pixel, so
+    redraw() alone would leave the mirrored video at whatever opacity the
+    preview was created with. locked is per-window, indexed by stable_key
+    (R2) -- Alice and Bravo must land on opposite sides of it."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        show_labels=lambda: False,
+        opacity=lambda: 180,
+        locked=lambda: ["Alice"],
+    )
+    alice = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    bravo = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    h._windows = {"Alice": alice, "Bravo": bravo}
+
+    h._restyle()
+
+    assert alice.show_labels is False
+    assert alice.opacity == 180
+    assert alice.locked is True
+    assert bravo.locked is False
+    assert alice.redraws == 1 and bravo.redraws == 1
+    assert alice._thumb.calls == [
+        (geometry.thumbnail_rect(alice.rect, host.window_mod.BORDER, 0), 180)
+    ]
+
+
+def test_restyle_reclaims_the_thumbnail_band_when_labels_are_off():
+    """The thumbnail must be re-inset with the CURRENT label height, not
+    the one the window was created with -- reverting to LABEL_H
+    unconditionally here would leave the mirrored video sitting behind a
+    band the chrome no longer draws once labels are turned off."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, show_labels=lambda: True, opacity=lambda: 255
+    )
+    win = _RestyleWindow(geometry.Rect(0, 0, 320, 210), show_labels=False)
+    h._windows = {"Alice": win}
+
+    h._restyle()
+
+    assert win._thumb.calls == [
+        (
+            geometry.thumbnail_rect(
+                win.rect, host.window_mod.BORDER, host.window_mod.LABEL_H
+            ),
+            255,
+        )
+    ]
