@@ -1441,6 +1441,16 @@ foreground.
       minimizes the client you were on, the new client ends up foreground
       and stays there, and a character on the never-minimize list is skipped
       entirely.
+- [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
+      Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
+      outgoing client minimizes EVERY time. A single successful switch does
+      not satisfy this item. `activate()` restores a minimized window with
+      `ShowWindowAsync` — asynchronous — and then reads its verdict from
+      `GetForegroundWindow()` a few instructions later; a False `ok`
+      correctly skips the minimize, so switching BACK to a client this
+      feature just minimized is exactly where the race lands. The
+      user-visible shape is "works the first time, then intermittently",
+      which the single-switch item above passes straight through.
 - [ ] A failed activation leaves both clients exactly where they were — no
       minimize happens. Hard to force deliberately; watch for it rather than
       staging it.

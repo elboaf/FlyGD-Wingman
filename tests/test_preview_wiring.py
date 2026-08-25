@@ -1043,3 +1043,8 @@ def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
     previews_js = _web("previews.js")
     listener = previews_js.split("wm:preview-minimize-inactive'")[1]
     assert "minimizeInactive" in listener[:200]
+    # Recording the new value is only half of it: without the repaint the
+    # already-rendered checkboxes keep their old disabled state, which IS
+    # the bug this test exists for. Deleting the requestRender() call left
+    # the assertion above green.
+    assert "requestRender" in listener[:200]

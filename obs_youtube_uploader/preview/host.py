@@ -473,9 +473,12 @@ class PreviewHost:
                 # entry.locked: Task 1 moved lock storage to
                 # preview.locked, so the saved layout entry is no longer
                 # the source of truth for what a NEW window opens locked
-                # as. entry.locked itself is still written by
-                # _layout_changed (layout.py's own callers still read it),
-                # just no longer consulted here.
+                # as. entry.locked is now written by _layout_changed and
+                # deserialized by layout.py but read by nothing -- retained
+                # rather than removed because it still round-trips through
+                # the layouts section of every existing settings file, and
+                # dropping the field would discard that data on the next
+                # save for no gain.
                 locked=self._is_locked(key),
                 show_labels=self._labels_shown(),
                 opacity=self._current_opacity(),
@@ -698,15 +701,19 @@ class PreviewHost:
             None,
         )
         if not sent:
-            # Zero means the send timed out or was abandoned (ABORTIFHUNG),
-            # so the client never processed the message and is still where
-            # it was. Nothing to re-activate around, and re-activating
-            # anyway would just be a second unexplained foreground change.
+            # Zero covers three cases the API does not separate: the send
+            # timed out, it was abandoned because the client was hung
+            # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
+            # client that exited during the settle above. In all of them
+            # the client never processed the message and is still where it
+            # was. Nothing to re-activate around, and re-activating anyway
+            # would just be a second unexplained foreground change.
             # INFO for the same reason window.py logs a refused activation
             # at INFO: the root logger runs at INFO, and this is what
             # "minimize sometimes does nothing" looks like in a user's log.
             logger.info(
-                "Minimize of 0x%x timed out after %dms; leaving it as it is",
+                "Minimize of 0x%x did not complete (timeout or abandoned) "
+                "within %dms; leaving it as it is",
                 previous.hwnd,
                 MINIMIZE_TIMEOUT_MS,
             )

@@ -132,10 +132,13 @@ def test_a_layout_change_updates_the_in_session_cache():
     assert sent == [("Pilot", Rect(10, 20, 320, 210), False)]
 
 
-def test_a_restored_lock_survives_into_the_new_window():
-    """layout.Entry carries `locked`, deserialize restores it, and the
-    window reports it back on the next drag. If the window started at
-    False regardless, that report would erase the flag from settings."""
+def test_a_saved_layout_entry_keeps_its_lock_flag():
+    """layout.Entry carries `locked` and deserialize restores it onto
+    _saved. That flag no longer decides how a window OPENS -- Task 1 moved
+    that to the preview.locked name list, and
+    test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry
+    pins it. This is only that the entry round-trips the field, which it
+    must keep doing while existing settings files still carry it."""
     from obs_youtube_uploader.preview.geometry import Rect
     from obs_youtube_uploader.preview.layout import Entry
 

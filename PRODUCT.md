@@ -110,7 +110,7 @@ checking a roster against a doctrine is something you sit and do.
   activation, already shipped, and minimize, for the opt-in
   minimize-inactive setting. Maximize is NOT exempt — `SW_SHOWMAXIMIZED`
   fills the window to the work area, the same geometry hazard in
-  show-state clothing.
+  show-state clothing. This is a hard line, not a preference.
 - **It must not upload anything the user did not select.** Nothing leaves
   the machine without an explicit action.
 - **It must not automate gameplay.** It sends keystrokes the user pressed,
