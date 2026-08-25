@@ -78,6 +78,21 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       hand, and confirm the app then starts with no reinstallation.
 
 ## First run
+
+**Check what tree the launcher points at before you check anything else.**
+`run-first-run.bat` ends with a `cd /d` to the tree it runs, and for an
+unknown period it pointed at `.claude/worktrees/nav-restructure` — six
+commits behind main — so every hand verification of the first-run screen
+through it verified the screen that had already been replaced. Fixed
+2026-08-25; the old line is kept in `run-first-run.bat.bak` with the
+reason in a comment above the replacement. The launcher's target tree is
+part of what these items depend on, so it is part of what you check.
+
+**The cheap tell:** if the card has a `Set this up later` link beside
+`Continue`, you are on main. If it does not, the launcher is pointed
+somewhere stale and nothing on that screen is worth reviewing.
+(`run-test-build.bat` points at the repository root and is unaffected.)
+
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
@@ -213,7 +228,9 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       size nothing in either pane is cut off or unreachable. Those numbers
       were measured off the real page, not derived — if the layout changes,
       they need re-measuring, and `min_size` in `ui/window.py` needs
-      updating with them.
+      updating with them. The minimum resolves in LOGICAL units, so this is
+      840x625 CSS px at every display scaling, not 840/scale — see
+      `DESIGN.md`. Verified at 200%: the floor capture is 839x621 CSS.
 - [ ] **Maximize leaves the taskbar alone.** Maximize with `Win+Up` — NOT by
       dragging the title bar to the top edge, which does not maximize and
       never has (see the snap item above). Expected: it fills the work area
@@ -246,31 +263,37 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       below 840 CSS px — 248px, then 220px — so check the longest prose in
       it wraps rather than being cut off at the panel edge: clear the
       webhook first so the two-line combat-log hint is showing, which is
-      the longest string the panel ever holds.
-- [ ] **Nothing is clipped at the minimum window size** at 150%. The
+      the longest string the panel ever holds. NOTE: the viewport floor is
+      840 CSS px at every scaling, so of the two narrower panel widths only
+      248px is reachable (`max-width: 839px`, by one pixel); 220px is not.
+      Scaling changes apparent size here, not CSS width.
+- [ ] **Nothing is clipped at the minimum window size.** The
       Description box shrinks first and **Delete selected** is still fully
       visible on its own row. Drag the window down to its floor (840x625
       logical) to check this — before resizing existed, "minimum" was the
       only size the window ever had and this was free; now a user can
       actually get here.
-- [ ] **Settings rows stay usable at the window floor.** At 150% scaling,
-      with the window at its floor (560 CSS px), open Settings > Folders
-      and Settings > Discord. Expected: each label sits ABOVE its field on
-      its own line, left-aligned, and the field takes the full row width
-      with its buttons still beside it. The path and the masked webhook
-      must both be wide enough to read.
-      Measured in CSS px, not logical: MIN_WIDTH is 840 PHYSICAL pixels
-      and the app is system-DPI-aware, so the floor is 840/scale. At 840
-      logical — the width this file used to check — the layout is fine and
-      the check catches nothing. Above 720 CSS px the labels return to
-      their shared 118px column; confirm that too, by widening the window.
-- [ ] **The same collapse reaches Profiles.** Still at the floor, open
-      Profiles. Its rows carry `class="settings"` as well, so they must
-      collapse identically — the shared label column exists so the two
-      screens line up, and a rule that fired on only one of them would be
-      worse than not firing at all. Check the inline hint under a field
-      and any refusal message line up with the field, not with a label
-      column that is no longer there.
+- [ ] **Settings rows stay usable at the window floor.** With the window at
+      its floor, open Settings > Folders and Settings > Discord. Expected:
+      the path and the masked webhook are both wide enough to read, with
+      their buttons still beside them on the row.
+      **This item used to read "at 150% scaling, with the window at its
+      floor (560 CSS px)" and could not be performed.** The floor is 840
+      CSS px at EVERY scaling, so a 560px viewport does not exist and
+      neither does the stacked-label collapse it was checking: the
+      `max-width: 720px` block that moves each label above its field
+      cannot fire through the window. The labels are always in their
+      shared 118px column. If you need to see the collapsed state, it is
+      reachable only through the `?dev=1` harness in a resizable browser
+      — and whether a rule that the window can never reach should still
+      exist is the owning lane's call, not this checklist's.
+- [ ] **Profiles matches Settings at the floor.** Still at the floor, open
+      Profiles. Its rows carry `class="settings"` as well, so whatever
+      Settings does they must do — the shared label column exists so the
+      two screens line up, and a rule that reached only one of them would
+      be worse than reaching neither. Check the inline hint under a field
+      and any refusal message line up with the field. (This item used to
+      check a stacked collapse that the window cannot reach; see above.)
 - [ ] **The bind rows collapse too.** Still at the floor, open Settings >
       Bookmarks and read the keybind list, then Settings > Previews. Expected:
       each action or character name on its own line with its keybind button,
@@ -330,18 +353,18 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       "Measuring length…" instead — the two glyphs mean opposite things.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
       appears over an empty Link cell, a filename, a header, or empty space.
-- [ ] **The list at the minimum window width, at every scaling.** This
-      item used to say "drag the window to its floor (840 logical)", which
-      is the ONE width where the layout is fine — 840 is a PHYSICAL floor,
-      so the CSS viewport is 840/scale, and every scaling above 100% put
-      the list somewhere this check never looked. Do all three:
-      **At 100%** (viewport 840): all six columns present — check,
-      Filename, Modified, Size, Length, Link.
-      **At 125%** (viewport 672): Size and Length are gone deliberately,
-      and the upload panel is narrower. Filename, Modified and Link remain.
-      **At 150%** (viewport 560): Modified is gone too. Filename and Link
-      remain, Filename is comfortably wide, and the footer takes two lines
-      rather than pushing the count off the edge.
+- [ ] **The list at the minimum window width.** Drag the window to its
+      floor. Expected: all six columns present — check, Filename, Modified,
+      Size, Length, Link — with the upload panel at its narrower 248px.
+      **This item used to demand three checks at three viewports (840 at
+      100%, 672 at 125%, 560 at 150%) and two of them do not exist.** The
+      floor is 840 CSS px at every scaling, so there is one width to
+      check, not three, and the column-dropping steps below it
+      (`max-width: 767px` drops Size and Length, `max-width: 607px` drops
+      Modified) cannot be reached by resizing the window at any scaling.
+      Do still restart at each scaling for the reasons in the Display
+      scaling item — apparent size, sharpness, clipping — but the CSS
+      width does not move.
       In every case: NO horizontal scrollbar, no column cut in half at the
       pane edge, and the header sits over the right column — a header that
       has kept a cell its rows have dropped is the specific failure the
@@ -1054,7 +1077,11 @@ pytest — the engine is AutoHotkey.
       Bookmarks and Previews are NOT here: they are sections of Settings,
       reached through the gear. This item was written when there were two
       destinations and went unchecked while three more were added; the
-      fifth pushed the bar past its width at 125% scaling.
+      fifth pushed the bar past its width at 125% scaling. NOTE: that
+      recorded reason does not survive the floor correction — at 840 CSS
+      px the arithmetic says it should have fit. `DESIGN.md` carries it as
+      an open question. The three-destination rule itself rests on
+      `PRODUCT.md`'s destination-vs-configuration test and is unaffected.
 - [ ] **The bar survives its own minimum at 150% scaling.** Set Windows
       display scaling to 150%, restart, drag the window to its floor. The
       three nav labels, the gear, minimize and close are ALL visible, and
@@ -1210,10 +1237,16 @@ pytest — the engine is AutoHotkey.
 - [ ] **Enabling with the interpreter deleted shows the reason**, not a bare
       "Stopped" — and the reason survives the next poll tick a second later
       rather than being overwritten by it
-- [ ] **At 125% and 150% Windows display scaling the EVE status segment
-      hides** rather than crowding the progress bar. The window's 840px
-      floor is physical pixels, so the CSS viewport is 672px and 560px
-      respectively. Nobody has observed this; it is reasoning only
+- [ ] ~~**At 125% and 150% Windows display scaling the EVE status segment
+      hides** rather than crowding the progress bar.~~ **Not performable —
+      do not check this.** It rested on the window's floor being 840
+      physical pixels and the viewport therefore being 672px or 560px. The
+      floor is 840 CSS px at every scaling, so `@media (max-width: 720px)
+      { .evestat { display: none; } }` cannot fire through the window and
+      the segment never hides. Nobody had observed it; it was reasoning
+      only, from the wrong premise. What the strip does when it genuinely
+      runs out of room — the EVE segment yields, upload progress does not
+      — is still the recorded intent
 - [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
       the application as **files**, not as directories containing a licence
 
@@ -1639,15 +1672,17 @@ against a placeholder id; only these items are blocked on the registration.
       fully ready for a plan shows a collapsed `<details>` listing the
       missing requirements; expanding it does not shift the rest of the
       row list, and collapsing it again restores the original height.
-- [ ] **Visual layout at the real CSS floor, not the 100%-scaling one.**
-      `min_size` is 840×625 **physical** and the app is system-DPI-aware,
-      so check this at **150% display scaling** — a 560px CSS viewport,
-      where the rail narrows to 168px and the roster keeps about 356px.
-      Then at 125% (672px) and 100% (840px, rail back at 214px). At each:
-      long character and plan names ellipsise rather than overflowing, the
-      rail's buttons do not clip their own labels, and there is no
-      horizontal scrollbar. Checking only at 840 logical checks the one
-      width where this layout was never in doubt.
+- [ ] **Visual layout at the window floor.** Drag the window to its floor
+      and check that long character and plan names ellipsise rather than
+      overflowing, the rail's buttons do not clip their own labels, and
+      there is no horizontal scrollbar. The rail is 214px and the roster
+      keeps the rest.
+      **This item used to send you to 150% scaling for "a 560px CSS
+      viewport, where the rail narrows to 168px", and to 125% for 672px.**
+      Neither viewport exists — the floor is 840 CSS px at every scaling —
+      so the narrowed-rail states are unreachable through the window and
+      840 is not "the one width where this layout was never in doubt", it
+      is the only width there is.
 - [ ] **The rail's plan-file actions still work where they now sit.**
       `Open plans folder` and `Reload plans` are link-style actions at the
       foot of the Plans block rather than buttons in a block of their own.

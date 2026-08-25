@@ -53,10 +53,60 @@ That 105px is the drag region's floor: it is the only flexible child of
 wordmark's own width. Nothing else in the bar can compress at all — the nav
 and the window buttons are both `flex: none`.
 
-`MIN_WIDTH` is **840 physical pixels**, not logical. The app is
-system-DPI-aware, so the CSS viewport floor is `840 / scale`: 672px at
-125%, 560px at 150%, both common laptop settings. Five destinations needed
-686px and clipped the close button off the right edge at 125%.
+`MIN_WIDTH` is **840 logical pixels**, and the CSS viewport floor is
+**840x625 at every display scaling**. `MIN_WIDTH` / `MIN_HEIGHT`
+(`ui/window.py`) land in WinForms `MinimumSize` and `ptMinTrackSize`, both
+of which Windows DPI-scales for a system-DPI-aware process, so the number
+is already in the same units the page sees.
+
+Measured, not derived: the floor capture is 1678x1242 physical on a
+3840x2160 display at 200%, which is **839x621 CSS** against `MIN_WIDTH`
+840 and `MIN_HEIGHT` 625. Were the floor 840 *physical*, that capture
+would be ~840px across; it is twice that. The maintainer's standing
+observation that the app cannot be resized to the CSS floors is this fact,
+observed before it was explained.
+
+> **This corrects a bold claim that stood here through four releases.**
+> This file previously said `MIN_WIDTH` is "**840 physical pixels**, not
+> logical … the CSS viewport floor is `840 / scale`: 672px at 125%, 560px
+> at 150%". That arithmetic is wrong, and `docs/ui-critique.md` and
+> `docs/smoke-checklist.md` were both written against it. **Do not size
+> anything against a 560px or 672px viewport. Neither can occur.**
+
+**Unresolved — the observation that produced the rule above.** This file
+also reported that "five destinations needed 686px and clipped the close
+button off the right edge at 125%". Both statements cannot be true as
+written: at a floor of 840 CSS, 686px of unshrinkable content fits with
+154px to spare and nothing should have clipped.
+
+| | claimed | measured |
+|---|---|---|
+| viewport at 125% | 672px | 840px |
+| unshrinkable content | 686px | unchanged |
+| result | close button clipped | fits, with 154px spare |
+
+This is **not** a claim that `#38` was wrong. Three destinations stand on
+`PRODUCT.md`'s destination-vs-configuration test, which needs no pixel
+argument, and something was evidently observed. What is suspect is the
+recorded *reason* — and the reason is the tool the next contributor will
+reach for. Reproduce the clip or establish that it cannot be reproduced
+before relying on either number. Deliberately left open rather than
+guessed at.
+
+**What this means for `style.css`.** Of its eight width media queries,
+seven can never fire:
+
+| Query | Fires at the 840 CSS floor |
+|---|---|
+| `max-width: 839px` (the `.panel` width step) | **yes**, by one pixel |
+| `max-width: 767px`, `max-width: 607px` | no |
+| `max-width: 720px` x5 (status strip, two Settings blocks, the settings row, Skills) | no |
+
+None of the seven is load-bearing today; each owning lane decides whether
+its block is a decision worth keeping or dead weight. Note that
+`docs/ui-critique.md` credited one of these queries with doing the
+scaling arithmetic "correctly" — that credit was earned against the wrong
+model, and the one query that survives does so for an unrelated reason.
 
 **Before adding a destination, do the arithmetic.** `style.css` warned at
 four; four features added one each without revisiting it, the last
@@ -85,6 +135,18 @@ control. Zero is fine — a screen that applies immediately has no commit
 action to accent. Two is two things claiming to be primary. Its label is
 near-black on the brand, not white: white measures 3.08:1 on the gradient's
 top stop.
+
+**Accent marks what is selected and what will happen. A card heading is
+neither.** The rule above is written about *controls*, so the Uploader's
+`UPLOAD` and `PUBLISH` heading bars never breached its letter — they were
+a third and fourth claim on a signal that carries exactly two meanings.
+The signal is diluted by every use that is neither. On the Uploader that
+is five accent uses down to three: the checked row's checkbox and its
+left-edge marker (what is selected), and the `Upload` button (what will
+happen); the two `.card > h2` bars lose it. This is about `.card > h2`
+generally and not about one screen — the heading-bar treatment is not
+confined to the Uploader, and whichever screen owns a card heading
+inherits the rule.
 
 **Never use `window.confirm`, `window.prompt` or `window.alert`.** WebView2
 renders them as browser chrome captioned with the page origin — a grey box
@@ -211,6 +273,22 @@ leave a ring behind.
 
 Column headers sit *below* body size deliberately: they label the data and
 are not the data. Do not "fix" this.
+
+**A header row is laid out by the same padding as the rows beneath it,
+with no separate inset.** Two screens broke this in opposite directions —
+the Uploader's headers sit ~16px right of their data, and on Skills
+`PLANS` sits ~22px left of its column while `READY` sits ~14px right of
+its own. The Skills instance has no scrollbar, which rules out a
+scrollbar gutter as the explanation for the Uploader's. A header that
+does not share its column's inset is not labelling that column. This
+licenses no change to header *size* — see the paragraph above.
+
+**The one blue is a declared exemption.** `--link` is the single colour in
+the app outside the palette, and it stays that way on purpose: an outbound
+link keeps link-blue *because* it leaves the app, and a link recoloured
+into the palette stops reading as a link. It is a token like any other —
+7.4:1 on `--panel`, 7.7:1 on `--bg` — so "tokens are the only place a
+colour is decided" holds. Do not unify it into the brand.
 
 Both infinite animations are stopped under `prefers-reduced-motion`. An
 indeterminate bar still has to say "working" without claiming a percentage.

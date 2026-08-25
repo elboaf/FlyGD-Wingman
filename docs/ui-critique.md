@@ -36,6 +36,33 @@ viewport floor is 672px at 125% scaling and **560px at 150%**
 one media query). Several of the findings below are simply that the rest
 of the page was laid out against 840.
 
+> ## ⚠ CORRECTION — the paragraph directly above is wrong
+>
+> Added by round-2 lane S4. **The floor is 840x625 CSS pixels at every
+> display scaling.** `MIN_WIDTH` / `MIN_HEIGHT` resolve in *logical*
+> units, so there is no `840 / scale`, and the 672px and 560px viewports
+> this document reasons from **cannot occur**. Measured: the floor capture
+> is 1678x1242 physical on a 3840x2160 display at 200% — 839x621 CSS,
+> against `MIN_WIDTH` 840 and `MIN_HEIGHT` 625. `DESIGN.md` carries the
+> full correction; `docs/ui-walkthrough.md` carries the evidence as C1.
+>
+> The original text is left in place because the reasoning that produced
+> the wrong version is the useful part, and because this file is a record
+> of a completed pass rather than a live specification. But **do not
+> re-derive anything from it.** Three findings below are struck out
+> entirely, each marked where it stands. Three more survive their
+> conclusions while their arithmetic fails, also marked.
+>
+> A note on the parenthetical above: `style.css:554-558` was credited with
+> doing the scaling arithmetic "correctly". That credit was earned against
+> the wrong model. The query in question — `max-width: 839px` — happens to
+> be the only one of the stylesheet's eight width queries that can fire at
+> the real floor, and it does so by a single pixel, for reasons unrelated
+> to the reasoning that praised it.
+>
+> `#47` and round-1 lane 0 did useful work. The emergency they were sized
+> against was not real.
+
 ---
 
 ## 1. Uploader — `#route-main`
@@ -51,8 +78,21 @@ a combat-log checkbox that promises something it will not do on a fresh
 install, a permanently-disabled button holding half a row, and an empty
 state that names neither the folder nor the way to change it.
 
-1. **The recording list loses Size, Length and Link at the documented
-   window floor, with no scrollbar to say so**
+1. ~~**The recording list loses Size, Length and Link at the documented
+   window floor, with no scrollbar to say so**~~
+   > **DISCARDED — S4, round 2.** Arithmetic against a viewport that
+   > cannot occur. The whole finding is computed from "at 150% scaling the
+   > viewport is 560 CSS px"; the viewport is 840 CSS px at every scaling,
+   > where this finding's own numbers give a 484px pane holding a 472px
+   > grid — it fits, with room to spare, as the text below concedes.
+   > `folder-narrow.png` at ~835 CSS is direct counter-evidence: both
+   > fields wide, both trailing buttons intact, nothing starved. The
+   > `max-width: 767px` and `max-width: 607px` blocks that drop those
+   > columns cannot be reached by resizing the window at any scaling.
+   > Note that the two Uploader findings raised against the *same* floor
+   > in `docs/ui-walkthrough.md` — the primary button below the fold, and
+   > filename truncation — survive, because they were measured at 840x625
+   > CSS rather than derived from 560.
    - **Where** — `style.css:310` (grid template), `style.css:452-455`
      (`.panel { width: 320px }`), `style.css:450` (`#panel-slot { flex:
      none }`), `style.css:279` (route padding and gap), `style.css:284`
@@ -293,7 +333,9 @@ the lockout guard at `skills.js:278-305`, the two-step forget, filtering
 outstanding requirements only — and its problems are all in the rail and
 the words. The rail is 214px, which is 38% of the window at 150% scaling,
 and its top and bottom blocks are both file management; the plan list, the
-one thing you come here to change, is sandwiched between them. And the
+one thing you come here to change, is sandwiched between them.
+[**S4:** "38% of the window at 150%" is wrong — the floor is 840 CSS at
+every scaling, so the rail is 25%. The sandwiching is unaffected.] And the
 plan rail's ratio and the plan header's count are two different quantities
 printed as similar numbers, side by side, with neither one labelled.
 
@@ -316,8 +358,18 @@ printed as similar numbers, side by side, with neither one labelled.
    - **Blast radius** — `screen-local` (a `title`, a `.rail-head`
      sub-label, or a suffix on the ratio).
 
-2. **The rail is 214px wide and only its middle third is what the user
-   came for**
+2. ~~**The rail is 214px wide and only its middle third is what the user
+   came for**~~
+   > **DISCARDED — S4, round 2.** "At 150% scaling the viewport is 560px"
+   > is false; it is 840px. The rail is 214px of 840, which is 25%, not
+   > 38%, and the roster keeps ~590px rather than 310px. The complaint
+   > about *what occupies* the rail — two of three blocks being file
+   > management, with the plan list sandwiched between them — is a real
+   > observation that does not depend on the arithmetic, and round 2 picks
+   > it up separately. What is discarded is the width emergency. The smoke
+   > item this finding faults for "measuring the rail against 626px of
+   > roster, which is the 100%-scaling case" was measuring the only case
+   > there is; S4 has corrected that item for the opposite reason.
    - **Where** — `index.html:422-436`, `style.css:845-867`
      (`grid-template-columns: 214px minmax(0, 1fr)`),
      `docs/smoke-checklist.md:1383-1385` (checks the layout at "840×625 —
@@ -392,9 +444,26 @@ buttons is a layout for an 840px window: at 560px the Folders and Discord
 rows leave a path field and a credential field roughly 30–50px wide. The
 Bookmarks section is worse, because it has three trailing controls and
 eighteen rows of them.
+[**S4:** an 840px window is the only window there is, so the second half
+of this verdict is void — see the discard note on finding 1 below. The
+first half, General as the landing section, stands.]
 
-1. **Folders, Discord and the Bookmarks binds starve their fields at the
-   window floor**
+1. ~~**Folders, Discord and the Bookmarks binds starve their fields at the
+   window floor**~~
+   > **DISCARDED — S4, round 2.** "At 560px the Folders and Discord rows
+   > leave a path field and a credential field roughly 30-50px wide" is
+   > computed from a viewport that cannot occur. At the real floor of 840
+   > CSS px those rows are not starved: `folder-narrow.png`, captured at
+   > ~835 CSS, shows both fields wide with `Browse…` and `Detect` intact.
+   > The `max-width: 720px` block this finding relies on to rescue the
+   > rows by stacking each label above its field cannot fire through the
+   > window at any scaling — which means the collapse it describes is
+   > unreachable, not that the rows need it.
+   > Round 2 raises a *different*, confirmed problem in the same rows
+   > (`docs/ui-walkthrough.md`, Settings 11 and 12): not starved fields
+   > but ~600px of dead space between a keybind's action name and its
+   > binding, and control rows starting at three different left edges.
+   > Those are S2's and R2's, and they are not this finding.
    - **Where** — `style.css:739-742` (`.lab` fixed 118px, `flex: none`),
      `style.css:746` (`.field { flex: 1; min-width: 0 }`),
      `style.css:617` (`168px` rail), `style.css:178` (`.row` gap 10px);
