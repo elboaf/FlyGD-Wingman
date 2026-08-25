@@ -1395,6 +1395,102 @@ appears, so an item that only restarts the app tests half of it.
   here reverses the hierarchy.
 - [ ] Quitting Wingman with chords bound leaves them released: the owning
   application gets them back without a reboot.
+
+## EVE preview alerts
+
+When a player shoots, scrambles or decloaks one of your logged-in
+characters, that client's preview pulses in a colour and a sound plays.
+This subsystem is window and audio-only — nothing in it can be tested
+headless.
+
+### Verifiable now
+
+- [ ] **With alerts off, no `wingman-alerts` thread exists.** Check Task
+      Manager's process detail tab or run `threading.enumerate()` in a
+      Python debug console. Expected: no thread named `wingman-alerts`.
+      Turn alerts on in Settings > General and confirm the thread appears.
+- [ ] **Turn alerts on with no Gamelogs folder set.** Open Settings >
+      General and tick Enable alerts without setting a Gamelogs folder.
+      Expected: the Alerts card reads "Gamelogs folder not set." and names
+      the Settings > Folders setting where it can be configured.
+- [ ] **Set the folder.** Browse to your EVE Gamelogs folder in Settings
+      > Folders, then return to the Alerts card. Expected: it reports which
+      characters Wingman is watching and displays the thread count beside
+      each — e.g. "Watching 3 characters (thread: alive)" or "(thread:
+      stalled)" if the thread fails to start.
+- [ ] **Change the Gamelogs folder while running.** With the Alerts card
+      open and showing a character list, change the path in Settings >
+      Folders and return. Expected: the count re-derives from the new
+      folder without restarting the app — the card updates to show the
+      characters in the new Gamelogs.
+- [ ] **Take fire from a player.** In a wormhole with your preview visible,
+      have another player shoot your character with weapons. Expected: the
+      preview pulses red and keeps pulsing while you are focused on a
+      different application (e.g. a browser). The pulsing stops when you
+      switch back to the EVE client. The sound plays each time the alert
+      fires.
+- [ ] **Click the pulsing preview to clear it.** While the preview is
+      pulsing from an alert, click anywhere on it. Expected: the ring clears
+      immediately **even if the client does not come to the foreground** —
+      clicking the preview is its own action. This is window.py:102-116's
+      expected failure mode before a click goes through to EVE.
+- [ ] **Run a Sleeper site.** In a wormhole, start a Sleeper combat site
+      with alerts active. Expected: no combat alerts fire — Sleeper kills do
+      not trigger player-fire events. Disable the Sleeper filter in the
+      Alerts card and run another site. Expected: alerts fire normally.
+- [ ] **Alt-tab between two logged-in clients repeatedly.** With both
+      previews visible and alerts armed, switch focus between them. Expected:
+      the alert ring (if any) follows the foreground client, and the switch
+      does not feel slower than it did before alerts were enabled.
+- [ ] **Alt-tab to a browser or other non-EVE window.** With previews armed
+      and possibly pulsing, switch focus away from EVE. Expected: no preview
+      has a ring, even if an alert just fired — the ring is only visible
+      when that character's client is in the foreground.
+- [ ] **Drag an alerting preview without stutter.** Start a combat that
+      generates alerts on a visible client, then drag its preview to a new
+      position. Expected: the preview moves smoothly and the ring keeps
+      pulsing with no visible lag or skipped frames.
+- [ ] **Quit an EVE client mid-alert.** Start combat that generates alerts,
+      then close that client's window while the preview is pulsing. Expected:
+      no crash, and the alert timer stops (the preview disappears within ~1s
+      as the client exits). The app remains responsive.
+- [ ] **Confirm sounds play in the frozen build.** This is the only place
+      the winsound module's packaging entry can be verified. Launch the
+      installed build, trigger an alert, and confirm you hear the sound.
+- [ ] **DPI scaling: on a 150% or 200% display, both rings are visible.**
+      With a monitor at 150% or 200% Windows display scaling, arm an alert
+      and observe the pulsing preview. Expected: both the normal 2px ring
+      outline and the 6px alert pulsing ring are clearly visible at their
+      designed size, not bleeding together or becoming indistinct.
+- [ ] **The colour input renders correctly in dark theme.** Open Settings >
+      General and scroll to the Alerts card. Each event type (player fire,
+      scramble, decloak) has a colour picker (`<input type="color">`).
+      Expected: each appears as a clickable swatch matching your Windows
+      theme (dark or light), not as a browser's native light-theme colour
+      widget. Click one to confirm the colour picker opens and works. If the
+      colour input does not render, the documented fallback is three fixed
+      swatches per event — verify that they are offered instead.
+
+### Cannot run until the render path lands
+
+The two items below depend on work not yet implemented: the conditional
+thumbnail inset, frame caching, and the pulsing-to-blinking transition
+for large previews. They are listed here so the checklist is complete for
+when that work lands, but they cannot be verified until the rendering path
+is implemented.
+
+- [ ] **Press Test on each event type.** In the Alerts card, for each of
+      the three events (player fire, scramble, decloak), click its Test
+      button. Expected: the ring pulses on a character's preview in the
+      configured colour, a sound plays, and the ring stops on its own after
+      a few seconds — a test alert is never persistent.
+- [ ] **Resize a preview past 640x480 while alerting.** Start an alert that
+      makes a preview pulse, then drag its bottom-right corner to enlarge it
+      past 640x480 pixels. Expected: the pulse transitions from a rotating
+      ring to a blinking frame border, nothing leaks outside the preview
+      bounds, and the visual effect continues until the alert clears. Resize
+      smaller than 640x480 again; the ring returns.
+
 ## Profiles (the EVE settings copier)
 
 Named **EVE Settings** until it collided with the gear's own
