@@ -149,11 +149,54 @@ bare input is a white Win32 widget on a dark card. This applies to controls
 built in JavaScript too, which is where the worst instance shipped: one per
 character, forty of them.
 
-**Field labels go through the shared column.** `.settings .row > .lab` is
-118px, right-aligned, `--text-dim`, for the whole screen. A label outside
-it renders brighter than every other label and at its own width. Prefer
-`<label class="lab" for="...">` over a `<span>`: it keeps the control
-association.
+**Field labels go through `.lab`, and `.lab` sits above its control.**
+`.settings .row > .lab` is full-width, left-aligned and `--text-dim`, for
+the whole screen; the row is `flex-wrap: wrap` with a 4px `row-gap`, so
+every label stacks above the thing it labels and every control starts at
+the card's own left edge. A label outside `.lab` renders brighter than
+every other label and at its own width — that is still the failure being
+prevented, and it is still why three labels on one screen once sat at
+47px, 84px and 71px. Prefer `<label class="lab" for="...">` over a
+`<span>`: it keeps the control association a bare span throws away. An
+empty `.lab` is hidden (`:empty { display: none }`) rather than left to
+occupy a blank line.
+
+**This replaced a 118px right-aligned column, and not because the column
+was a mistake.** The column did its job: it made labels align with each
+other across cards instead of per-card. What it could not do was reach the
+sections that have no `.lab` at all — Notifications and General hold their
+controls as direct card children. Measured at the floor from each card's
+content edge, the first control sat at three different left edges:
+
+| Section | First control |
+|---|---|
+| Account, Uploads, Folders, Discord | 128px |
+| Bookmarks, Previews | 128px, with text at 152px |
+| Notifications, General | 0, with text at 24px |
+
+Each was internally consistent, which is why no single capture showed it
+and switching rail items did. Stacking is the only answer available in CSS
+alone: the two sections without a column cannot grow one without markup.
+The column's original job is still done — labels still share one edge —
+they now share it with everything else on the card.
+
+**If you out-specify the label column, restore its collapse yourself.**
+`#eve-binds` and `#preview-binds` take the column away from their rows on
+purpose, because their labels are long action and character names. ID
+specificity also beats the `max-width: 720px` block written against
+`.settings .row > .lab`, so the collapse silently skipped exactly the rows
+that needed it most. `tests/test_page_conventions.py` enforces the general
+rule. See "What this means for `style.css`" above: those two restores are
+unreachable through the window and mandatory, which is not a
+contradiction.
+
+*Note for anyone reading the tests:* the docstrings of
+`test_settings_rows_label_through_the_shared_column` and
+`test_an_id_override_of_the_label_column_still_collapses_at_the_floor`
+still describe the 118px right-aligned column. **The assertions are
+current and passing** — they forbid a bare `<label>` in a settings row and
+require a restore per override, both of which still hold. Only the prose
+is stale. Nothing is broken; do not go hunting.
 
 **One accent per screen, or none.** `.btn.acc` is the single brand-accent
 control. Zero is fine — a screen that applies immediately has no commit
