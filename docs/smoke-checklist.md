@@ -1998,6 +1998,55 @@ against a placeholder id; only these items are blocked on the registration.
       badge (if any), a re-authenticate banner placed above the
       requirements list (not interleaved with them), and the outstanding
       requirements list with any already-Active skills absent from it.
+- [ ] **Every number on the screen says what it counts** (round 3, S1).
+      A group head reads `Missing requirements   1 character`, not
+      `Missing requirements   1`. That number counts CHARACTERS while the
+      header names REQUIREMENTS, and the row below it and the plan heading
+      above it both state requirement counts — three numbers in one
+      vocabulary, previously two of them bare. Round 2's finding 2 renamed
+      the words and left the numbers, so check the numbers.
+- [ ] **No row repeats the heading it sits under** (round 3, S2). The rows
+      are grouped BY status, so a `Ready` group's rows say only a name, and
+      an `Untrained requirements` group's rows say only a name. The two
+      that still carry a value carry something the heading cannot: a
+      `Missing` row says `2 requirements` (which is also why its group
+      sorts fewest-first) and a `Training` row says the ETA alone,
+      `13h 25m` or `timing unknown`. The catch-all bucket is the deliberate
+      exception — its rows show the raw readiness string, because the
+      heading says `Unrecognised` for all of them.
+- [ ] **`Forget character` is a red-outlined button, not red text**
+      (round 3, S3/S4). It is the app's one destructive treatment, the same
+      one Profiles' `Delete` wears. The inline two-step below it is
+      unchanged and must stay: this row is the only place a character can
+      be forgotten or re-authenticated, so a dialog would cover it.
+- [ ] **LOAD-BEARING: a character's fetch line survives a second render**
+      (round 3, D3/S6). Expand a character that HAS been refreshed and
+      confirm it reads `Last fetched 5h ago`. Then cause any mutation that
+      pushes fresh state — press `Refresh characters`, or select a
+      different plan — and look again. It must still read a time. Until
+      D3's fix, the label was added by the `skills_state` method only, the
+      page asks for that on first entry only, and every render after the
+      first push printed `Never fetched` for every character, beside queue
+      timing from the same payload. Nothing in the suite renders the page
+      and the bridge contract test checks handler names rather than payload
+      shape, so this item is what stands between that and a release.
+- [ ] **A character with no snapshot explains itself and offers the fix**
+      (round 3, S6). Authorise a character and expand its row BEFORE any
+      refresh has landed. Expected: a note saying Wingman has not read its
+      skills from EVE yet, with a `Refresh characters` button in it — not a
+      bare `Never fetched` with the nearest control 700px away in the rail.
+      The requirement list under it must say `Not scored yet`, NOT `Nothing
+      outstanding — every requirement is trained and active`: the evaluator
+      returns an empty requirement list for a character it could not score,
+      and that congratulation is what the empty list used to read as.
+- [ ] **`Copy plan` puts the plan on the clipboard** (round 3, S7). With a
+      plan selected, press `Copy plan` on the pane heading and paste into a
+      text editor. Expected: one `Skill Name IV` line per requirement, in
+      roman numerals, in plan order — and the status strip says it was
+      copied. Then paste it into EVE's skill plan import and confirm the
+      game accepts it and drops the skills already trained (that is why the
+      whole plan is enough and no per-character diffing is done). With no
+      plan selected the button is disabled rather than absent.
 - [ ] **The two-step Forget cannot be triggered by one mis-click.** First
       click arms the control (it changes to a confirm state); a second,
       separate click is required to actually forget the character;
