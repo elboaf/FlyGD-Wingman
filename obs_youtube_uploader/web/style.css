@@ -991,6 +991,31 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
 
+/* The 4px 6px padding STAYS. This is the record of that decision, because
+   from one screen it looks like a bug.
+
+   First run's `Set this up later` reads about 6 CSS px right of the h1,
+   the prose and the field, which all share the card's content edge.
+   Measured, the button's BORDER BOX is already flush with them; only its
+   ink is inset, by this padding-left. Three measurements by two methods --
+   text-range origin and computed-box arithmetic -- agree on 6.0. (A
+   walkthrough capture reported 22 physical px, i.e. 11 CSS. That does not
+   reproduce and its cause is unknown; do not size anything to it.)
+
+   So the fix is optical rather than positional, and it belongs to the one
+   screen that wants it, not to this class:
+
+     - `padding-left: 0` is WRONG. :hover paints a background, so zeroing
+       one side leaves the hover rect hugging the glyphs on the left with
+       6px still clear on the right.
+     - `margin-left: -6px`, scoped to `.firstrun-actions .linkbtn`, is the
+       shape: symmetric padding, symmetric hover, ink on the column, and
+       the box overhangs into the card's own 28px padding rather than out
+       of the card.
+
+   Changing the padding here instead would move eighteen bookmark bind
+   rows, Skills' two link buttons and Profiles' `Change...`, none of which
+   anyone reported. */
 .linkbtn {
   background: none; border: 0; color: var(--text-faint);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
@@ -1003,12 +1028,42 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 100%; max-width: 620px; margin: 0 auto;
 }
 
-/* One label column for the WHOLE screen, not per-card: label columns that
-   do not align across groups are the first thing wrong in settings.png. */
+/* Labels sit ABOVE their control, full width, on every row and at every
+   window size.
+
+   This replaces a 118px right-aligned column. That column was the fix for
+   settings.png's per-card labels and it did align every labelled row --
+   but only labelled rows. Notifications and General have no .lab at all;
+   their controls are direct children of the card. So flipping the rail
+   moved the first thing on the screen sideways, measured from the card's
+   content edge at the 840 floor:
+
+     Account / Uploads / Folders / Discord   control 128, text 128
+     Bookmarks / Previews                    control 128, text 152
+     Notifications / General                 control   0, text  24
+
+   Three edges, each internally consistent inside its own section, which is
+   why this was invisible in any single capture and obvious when switching.
+
+   Stacking is the only answer available in CSS alone that gives all three
+   the same edge: the sections without a column cannot grow one without
+   markup, and the markup is another lane's. The column's own job survives
+   -- labels still align with each other; they now align at 0 with
+   everything else as well.
+
+   row-gap, because the collapse creates a vertical relationship the column
+   never had. .row's own 10px gap applies to both axes, which would leave a
+   label exactly as far from its field as from the row above it, belonging
+   to neither. */
+.settings .row { flex-wrap: wrap; row-gap: 4px; }
 .settings .row > .lab {
-  width: 118px; flex: none; color: var(--text-dim);
-  font-size: var(--fs-body); text-align: right;
+  width: 100%; flex: none; color: var(--text-dim);
+  font-size: var(--fs-body); text-align: left;
 }
+/* An empty .lab exists only to hold the alignment -- Profiles' mode switch
+   is one, deliberately. Stacked, it would contribute a blank line of
+   line-height and nothing else. */
+.settings .row > .lab:empty { display: none; }
 /* Fields and their buttons share a baseline by sitting in the same
    align-items:center flex row at the same padding — the second thing
    wrong in settings.png. */
@@ -1018,11 +1073,59 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);
-  margin: 6px 0 0 128px;
+  margin: 6px 0 0;
 }
 .settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
 
-/* "Connected" as a status PILL, not an oversized button. */
+/* A hint that follows a checkbox explains the checkbox's SENTENCE, not its
+   box. The sentence starts 24px in -- .check's 15px .box plus its 9px gap
+   -- so a hint left at the card's own edge begins 24px to the LEFT of the
+   words it belongs to. It is aligned to a real element, which is exactly
+   why it reads as a mis-indent instead of as alignment.
+
+   Two selectors because the markup has two shapes: a hint that is the
+   checkbox's own next sibling (General), and a hint in a continuation row
+   after the checkbox's row (Previews, Bookmarks). Those continuation rows
+   exist only to carry an empty .lab, which used to align them to the field
+   column -- the column this file no longer has.
+
+   :has() is the only way to say "the row before this one holds a
+   checkbox", and it is the first use in this file. WebView2 is evergreen
+   Chromium, which has had it since 105; if a runtime ever lacks it the
+   whole rule is dropped and the hint stays exactly where it sits today, so
+   the failure mode is no improvement rather than a broken card.
+
+   Deliberately NOT applied to a continuation hint that opens a card --
+   Previews' "Global keybinds" prose is the case. It follows no control, so
+   there is no sentence for it to sit under and 24px would be a stray
+   indent with nothing above it. */
+.settings .check + .hint,
+.settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
+
+/* "Connected" as a status PILL, not an oversized button.
+
+   The two have separate jobs, stated here because they were being used as
+   if either were optional:
+
+   .pill is the READOUT -- a word, plus exactly one severity token
+   (.ok / .warn / .err / .idle). Both pills in the app set that token from
+   JS on every update, so a pill is never severity-less in practice.
+
+   .led is the same severity made SCANNABLE. It takes its colour from the
+   pill via currentColor and pulses under .warn, so it is what lets a
+   reader take the state without reading the word. It is not emphasis and
+   not decoration.
+
+   Which means: a pill that carries a severity token and omits the .led
+   spends the token on tinting text and nothing else, and asks to be read
+   rather than glanced at. Today #auth-pill (Account) has one and
+   #es-eve-state (Profiles) does not, though both set .warn / .idle at
+   runtime. That is markup, so it is R3's to reconcile -- one <span
+   class="led"> -- not a restyle here.
+
+   Skills' green/grey square group markers are a third shape for the same
+   concept and live in that route's own block; out of reach from here and
+   R4's to weigh against this rule. */
 .pill {
   display: inline-flex; align-items: center; gap: 7px; flex: none;
   font-size: var(--fs-muted); color: var(--text-faint);
@@ -1072,12 +1175,14 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    that queues (web/panel.js), so a webhook URL typed a character at a time
    used to stack a pile of dialogs on top of each other.
 
-   Indented to the field column, not the label column, so it reads as
-   belonging to the control it is about. Author [hidden] rule for the same
+   It used to be indented 128px to clear the label column and sit under
+   the control rather than under the label. With the column stacked there
+   is no such distinction and the card's own edge IS the field's edge.
+   Author [hidden] rule for the same
    reason .routenav and .evestat carry one: this sets display, and an
    author rule beats the UA stylesheet's [hidden] { display: none }. */
 .field-msg {
-  display: block; margin: 8px 0 0 128px;
+  display: block; margin: 8px 0 0;
   font-size: var(--fs-muted); line-height: 1.45; color: var(--text-dim);
 }
 .field-msg[hidden] { display: none; }
@@ -1086,52 +1191,37 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
 
-/* ---- the settings row at the window floor ----------------------------
-   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py) and the app is
-   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at 125%
-   scaling and 560px at 150%, both common laptop settings. Every rule above
-   was laid out against 840.
+/* ---- the floor this block used to be written against -----------------
+   There was a `@media (max-width: 720px)` block here that stacked the
+   label column, dropped an empty .lab, and zeroed the .sub-hint and
+   .field-msg indents at narrow widths. Every one of those rules is now
+   unconditional above, so the block is gone rather than kept as five
+   no-ops shadowing the rules they duplicate.
 
-   The arithmetic they lose at: the settings pane is
-   `viewport - 24 (route padding) - 12 (gap) - 168 (rail)`, less 32px of
-   card padding. At 560 that is 324px of row, of which the label column
-   takes 118px and three 10px gaps take 30 -- leaving roughly 30px for a
-   monospace Windows path, and about 40px for a masked webhook the user is
-   expected to verify by eye. `.field`'s `min-width: 0` guarantees it
-   shrinks rather than pushing anything out, so nothing overflows, no
-   scrollbar appears, and nothing says so.
+   Both reasons it existed were wrong, and it is worth recording which:
 
-   The lever is the label column, because it is the only 118px on the row
-   that is not a control. Below the threshold it stops being a column and
-   sits above its field, handing the whole 118px and a gap back while
-   leaving every button on the field's own line.
+   1. It derived the CSS viewport floor as MIN_WIDTH/scale, from MIN_WIDTH
+      being "840 PHYSICAL pixels" -- 672px at 125% scaling, 560px at 150%.
+      The minimum resolves in LOGICAL units. The CSS floor is 840x625 at
+      every scaling; measured at 200%, the floor capture is 839x621 CSS
+      against MIN_WIDTH = 840 / MIN_HEIGHT = 625 (ui/window.py). 720px sits
+      below the floor, so this block could never match in the app window at
+      all. DESIGN.md and PRODUCT.md repeat the same error and are corrected
+      separately.
 
-   720px rather than a second number: .evestat above already uses it as
-   this page's "anything above 100% scaling" line. It is also where the
-   arithmetic runs out -- at 672 the Folders row still leaves the path
-   about 144px, which is under half a plausible OBS output path.
+   2. Its stated purpose was to hand 118px back to a row that had run out
+      of width -- "roughly 30px for a monospace Windows path" at 560. At
+      the real floor the settings pane is 840 - 24 (route padding) - 12
+      (gap) - 168 (rail) = 636, less 32px of card padding: a 604px row.
+      There was no width crisis to solve.
 
-   This block renders on TWO screens. index.html carries class="settings"
-   on the Profiles route as well, so its folder and copy rows collapse
-   with these. That is the point of a shared column: the alternative is
-   two screens answering the same question differently. */
-@media (max-width: 720px) {
-  .settings .row { flex-wrap: wrap; }
-  /* width, not flex-basis: `.lab` is flex:none above, so a full width is
-     honoured exactly and forces the field onto the next line. */
-  .settings .row > .lab { width: 100%; text-align: left; }
-  /* An empty .lab exists only to hold the alignment -- Profiles' mode
-     switch is one, deliberately. Collapsed it would contribute a blank
-     line of line-height and nothing else. */
-  .settings .row > .lab:empty { display: none; }
-  /* Both indents are the 118px column plus its 10px gap, so with no
-     column to line up against they are a margin against nothing. The
-     .field-msg one matters most: it carries refusals, and 128px of it on
-     a 324px row leaves an explanation narrower than the control it is
-     about. */
-  .settings .sub-hint { margin-left: 0; }
-  .field-msg { margin-left: 0; }
-}
+   What still needs the 720px breakpoint is the pair of id overrides that
+   out-specify the shared label column (#eve-binds, #preview-binds). Those
+   restores live beside their own overrides, and
+   tests/test_page_conventions.py requires each of them to exist -- see the
+   note at #eve-binds. Anyone reinstating a narrow-width block here should
+   check that test first, because it brace-matches every max-width:720px
+   block in the file. */
 
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
