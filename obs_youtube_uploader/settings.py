@@ -280,10 +280,11 @@ def validated_preview(raw) -> dict:
     # and is not walked backwards into re-running this migration.
     section["defaults_version"] = max(stored_version, _PREVIEW_DEFAULTS_VERSION)
     # Round-tripped through the layout model so a corrupt entry is dropped
-    # at load rather than at draw time.
-    section["layouts"] = preview_layout.serialize(
-        preview_layout.deserialize(raw.get("layouts"))
-    )
+    # at load rather than at draw time. Kept as a local so the legacy-lock
+    # migration below can read each entry's `locked` flag without
+    # re-parsing the raw dict.
+    parsed_layouts = preview_layout.deserialize(raw.get("layouts"))
+    section["layouts"] = preview_layout.serialize(parsed_layouts)
 
     raw_hotkeys = raw.get("hotkeys")
     if isinstance(raw_hotkeys, dict):
@@ -318,7 +319,27 @@ def validated_preview(raw) -> dict:
     # hwnd: rejection: a client at character-select has no stable name to
     # exempt from minimizing or lock in place.
     section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
-    section["locked"] = preview_roster.deserialize(raw.get("locked"))
+    raw_locked = raw.get("locked")
+    combined_locked = list(raw_locked) if isinstance(raw_locked, list) else []
+    if stored_version < _PREVIEW_DEFAULTS_VERSION:
+        # One-shot carry-over of the pre-branch lock storage, on the same
+        # gate as the opacity migration above. Locking a preview used to
+        # set `locked` on its entry inside preview.layouts; this branch
+        # moved the source of truth to this top-level roster instead,
+        # because layout.deserialize (preview/layout.py) drops any entry
+        # missing a full rect, so a lock recorded against a character who
+        # had never dragged their preview had nowhere to live in the new
+        # scheme. Nothing reads Entry.locked any more -- without this,
+        # a legacy `preview.layouts.<char>.locked = true` would open
+        # unlocked, and the first drag would silently overwrite it to
+        # false. Appended after the explicit list so an already-populated
+        # preview.locked is never clobbered or duplicated; deserialize
+        # below dedups and drops it if the name is not eligible (e.g. a
+        # "hwnd:" client with no stable identity).
+        combined_locked += [
+            name for name, entry in parsed_layouts.items() if entry.locked
+        ]
+    section["locked"] = preview_roster.deserialize(combined_locked)
     return section
 
 
