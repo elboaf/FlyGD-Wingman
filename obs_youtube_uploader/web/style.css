@@ -451,6 +451,60 @@ input.field:focus, textarea.field:focus, select.field:focus {
 }
 textarea.field { resize: none; line-height: 1.5; }
 
+/* ====================== the control vocabulary =======================
+   Round 3's B3 counted FIVE treatments for "clickable" with no rule about
+   which meant what -- accent button, neutral button, red-outlined button,
+   red text, dim text -- and the destructive actions were where it hurt:
+   the same verb was red-outlined on Profiles, a plain button identical to
+   `Select all` on the Uploader, and bare red text on Skills. Three screens
+   each invented an answer because nothing here stated one.
+
+   There are FOUR action treatments and this is the whole list. The rule
+   for each is what it MEANS, not what it looks like:
+
+     .btn.acc   the one action the screen exists to perform. One per
+                screen or none -- DESIGN.md's existing rule, unchanged.
+     .btn       every other action. The default; reaching past it needs a
+                reason from this list.
+     .btn.danger  the action destroys something the user cannot get back
+                by clicking again. Below.
+     .linkbtn   the quiet tier, and it takes a stated reason -- not
+                "small", and not "I would rather this were quiet". Two
+                reasons are admissible, both already load-bearing:
+                (a) the action is SUBORDINATE to the control or field it
+                trails and as a .btn would compete with it -- `Clear` /
+                `Edit…` beside a .bindbtn, `Clear filter` beside the
+                filter field, `Set this up later` beside `Continue`;
+                (b) a full-width .btn would put its own label into a
+                rail's width floor, which is why Skills' `Open plans
+                folder` and `Reload plans` are linkbtns -- reasoned out
+                at index.html:774-781.
+                Neither reason applies and it is a .btn: `Change…` on
+                Profiles is one because nothing else on its row acts, so
+                link-styling made the only control the least
+                control-like thing present (index.html:632-638).
+
+   The four cover actions ON A SURFACE. Three other clickable families
+   exist and are placed here rather than left to be discovered, because
+   "this is the whole list" is only useful if it says what it excludes:
+
+     chrome            .navbtn, .winbtn, .rail-item, .rail-plan -- these
+                       navigate rather than act.
+     value controls    .bindbtn, input.field, .check/.radio -- these hold
+                       or display a value rather than performing one.
+     menu and link     .ctxmenu button is a menu item, which takes its
+                       shape from the menu it is in; .linkish and
+                       .glyph-link LEAVE the application, and --link's own
+                       note is what makes that a family rather than a
+                       style. Menu items are still action controls for the
+                       disabled rule below -- being outside this table is
+                       about shape, not about behaviour.
+
+   `red text, no button` is not in the vocabulary. A destructive action is
+   a .btn.danger everywhere. .linkbtn.danger survives at exactly one site
+   -- skills.js's `Forget character` -- and round 3's R3 converts it; the
+   rule is stated here so that conversion has something to convert TO, and
+   so do the two plain-.btn destructive sites named at .btn.danger below. */
 button.btn {
   background: var(--control); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
@@ -458,7 +512,6 @@ button.btn {
   cursor: pointer; font-family: inherit;
 }
 button.btn:hover:not(:disabled) { background: var(--control-hover); color: var(--text); }
-button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
 /* White ON the brand -- the exact inverse of what vermilion needed, and
    for the same reason. The near-black label was worth 6.31:1 on vermilion
@@ -477,6 +530,18 @@ button.btn.acc {
   box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
 /* Restates the fill AND the label, and neither line is redundant.
+
+   CORRECTION, round 3 (L5): the arithmetic below is off by one class and
+   the conclusion it draws from it is wrong. `:not()` carries the
+   specificity of its argument, so this rule is (0,4,1), not (0,3,1), and
+   it beats the generic hover on SPECIFICITY -- source order is not what
+   saves it and moving it would not break it. What the incident actually
+   proves is the paragraph after next: a rule that declares only some of
+   the properties lets the generic rule supply the rest, at any
+   specificity. Left in place rather than rewritten, because the incident
+   and the `color` trap are both real and are the reason this rule looks
+   the way it does.
+
    `button.btn:hover:not(:disabled)` above is (0,3,1) and beats
    `button.btn.acc` at (0,2,1), so through two accent colours hovering the
    app's most prominent button REPLACED the brand gradient with the plain
@@ -506,6 +571,41 @@ button.btn.acc:hover:not(:disabled) {
   background: var(--acc-fill); color: var(--on-accent); filter: brightness(1.08);
 }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+/* ONE disabled state, for every action control.
+   "Every action control" means the four selectors below, not every
+   disabled thing in the app -- #lab-stitch.disabled and the three
+   #es-*:disabled dropdowns keep their own scoped rules, each for a reason
+   its own comment states, and button.btn.acc:disabled adds grayscale on
+   top of this one rather than replacing it.
+
+   The rule for WHEN to disable is WM.setEnabled's comment in app.js and is
+   not restated here. This is only what disabled LOOKS like, and among the
+   four it looked like two things and two omissions: .btn dimmed to .45, a
+   context-menu item swapped its colour, and .linkbtn and .bindbtn had no
+   disabled state at all -- which is worse than inconsistent, because both
+   still lit up under the pointer. Round 3's B2 wants `Clear` disabled on a
+   keybind reading `Not set`; that is a .linkbtn, so without this it would
+   have gone dead while still looking and hovering like a live control.
+
+   .45 is the number the sheet already uses for a disabled control --
+   .btn:disabled had it, and #lab-stitch.disabled cites it as "same .45
+   button.btn:disabled uses". (Not for dimming generally: .evestat.degraded
+   is .5 and the watermark is .18.)
+
+   The menu item is the one place this is a visible change, and it is a
+   small darkening rather than a wash: --text at .45 over --panel resolves
+   to #75757a, against the #7d8492 the swapped --text-faint gave it, and
+   3.95:1 against 4.81:1. Taken deliberately, and it is a real trade: the
+   #es-*:disabled block below uses that same --text-faint-at-full-opacity
+   treatment on purpose, so the menu item was not an outlier so much as a
+   member of the smaller family. Disabled text carries no contrast
+   requirement under 1.4.3, which exempts an inactive component, and one
+   answer for the four action classes was the thing B2 asked for. */
+button.btn:disabled,
+.linkbtn:disabled,
+.bindbtn:disabled,
+.ctxmenu button:disabled { opacity: .45; cursor: default; }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
    in the app fell back to the UA ring -- which, before `color-scheme: dark`
@@ -821,7 +921,6 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   cursor: pointer;
 }
 .ctxmenu button:hover:not(:disabled) { background: var(--hover); }
-.ctxmenu button:disabled { color: var(--text-faint); cursor: default; }
 
 /* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
    DELAY_MS 450 is preserved as a transition-delay: long enough not to fire
@@ -1508,7 +1607,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture
-   target; .linkbtn is the secondary Clear / Type… affordance. Both follow
+   target; .linkbtn is the secondary Clear / Edit… affordance. Both follow
    button.btn and .winbtn rather than introducing new colour literals. */
 .bindbtn {
   min-width: 150px; text-align: left;
@@ -1517,12 +1616,32 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font-family: var(--mono); font-size: var(--fs-mono);
   color: var(--text); cursor: pointer; flex: none;
 }
-.bindbtn:hover { background: var(--control-hover); }
+.bindbtn:hover:not(:disabled) { background: var(--control-hover); }
 
 /* Capturing: the label already changes to "Press a key…", but without a
-   visual state the row does not read as waiting for input. */
+   visual state the row does not read as waiting for input.
+
+   The LABEL is not purple, and that is a measurement rather than a taste
+   call. L1 handed this block over with the numbers: --brand-text (#ad5aff)
+   clears 4.5:1 on the PAGE surfaces it was measured against (4.90:1 on
+   --panel) but not on the CONTROL surfaces this rule paints -- 4.16:1 on
+   --hover, and 3.99:1 once the pointer lifts it to --control-hover. Every
+   control surface fails it: even the resting --control reaches only
+   4.47:1, so there is no background in this family that rescues a purple
+   label. Fixing the token is a :root edit and :root is L1's.
+
+   So the brand signal moves to the BORDER, where 1.4.11 asks 3:1 of a
+   non-text indicator and 4.16:1 clears it comfortably, and the label takes
+   --text: 12.75:1 on --hover. The state still reads as armed -- purple ring,
+   lifted background, and the label itself already says "Press a key…".
+
+   One caveat, pre-existing and left alone: .bindbtn.clash below is equal
+   specificity and later, so a row that is both clashing and armed takes
+   the clash red for BOTH border and label. Nobody has reported it and the
+   clash warning is arguably the one that should win; the smoke step for
+   this state says to pick a non-clashing row. */
 .bindbtn.capturing {
-  border-color: var(--brand-text); color: var(--brand-text); background: var(--hover);
+  border-color: var(--brand-text); color: var(--text); background: var(--hover);
 }
 
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
@@ -1559,7 +1678,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
-.linkbtn:hover { color: var(--text); background: var(--hover); }
+.linkbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
 .settings {
   display: flex; flex-direction: column; gap: 12px;
@@ -2154,11 +2273,52 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
-.linkbtn.danger { color: var(--danger); }
-.linkbtn.danger:hover { color: var(--on-accent); background: var(--danger-solid); }
+/* THE destructive treatment, and the only one. See the vocabulary banner
+   above button.btn.
+
+   WHEN: the action destroys something the user cannot get back by clicking
+   again -- a recording, a backup, a stored credential, a character's
+   refresh token. Not "the action is important", and not "the action is
+   hard to undo by hand".
+
+   THE RULE IS AHEAD OF THE SITES, on purpose. Two of them still wear a
+   plain .btn and both are named in round 3's B3: `Delete selected` on the
+   Uploader (index.html, R1's) and `Remove` on Settings > Discord (R4's).
+   `Forget character` on Skills is the third, below. The primitive lands
+   first so three screen lanes convert to one thing instead of inventing a
+   third answer between them -- which is how the app got five treatments.
+
+   WHEN IT ASKS FIRST is a separate question with a separate answer, and
+   conflating the two is how `Restore` nearly got red-outlined. A
+   destructive action confirms; a confirm does NOT imply this treatment.
+   `Restore` on Profiles confirms because it overwrites a live profile --
+   but it backs the profile up first and the dialog says so (the text is in
+   ui/api.py's eve_settings_restore, not in evesettings.js), so nothing is
+   destroyed and it stays a plain .btn. WHICH confirm mechanism is a third
+   question again, decided by the thread the action runs on; DESIGN.md
+   holds that table.
+
+   One site does not confirm at all: `Remove` on Settings > Discord
+   destroys the webhook credential on a single click. That is R4's, and it
+   is the only gap -- the other five destructive actions all confirm,
+   through three different mechanisms.
+
+   The hover fills rather than brightening, so the resting state is an
+   outline the eye can skip and the committed state is unmistakable.
+   --danger-solid rather than --danger because --on-accent has to clear AA
+   on top of it: 4.90:1. */
 button.btn.danger { border-color: var(--danger); color: var(--danger); }
 button.btn.danger:hover:not(:disabled) {
   background: var(--danger-solid); color: var(--on-accent);
+}
+/* The last site of the retired `red text, no button` treatment: skills.js
+   builds `Forget character` as `.linkbtn danger`. Round 3's R3 converts
+   that one control to .btn.danger, and this pair dies with it -- it is
+   kept only so the control does not go faint grey in the gap between the
+   two lanes merging. Do not add a second user. */
+.linkbtn.danger { color: var(--danger); }
+.linkbtn.danger:hover:not(:disabled) {
+  color: var(--on-accent); background: var(--danger-solid);
 }
 
 /* The 168px rail step that used to live here has been DELETED, not moved.
