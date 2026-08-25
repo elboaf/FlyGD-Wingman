@@ -1,6 +1,20 @@
 # Useful only because uv.lock is enforced (see ci-hardening-design.md);
 # before that there was no pinned version for anything to bump.
 #
+# TWO THINGS ABOUT THIS FILE FAIL SILENTLY, so both are worth knowing
+# before editing it:
+#
+#   1. It does nothing until it is on the DEFAULT BRANCH. On a feature
+#      branch it is inert, and no CI check here validates it.
+#   2. A config error invalidates the WHOLE FILE, not the offending
+#      block. If the `uv` ecosystem below were ever rejected, the
+#      github-actions half would stop running too -- and nothing goes
+#      red. There is no workflow failure and no notification.
+#
+# So after this lands on the default branch, check
+# Insights -> Dependency graph -> Dependabot for a config error. That is
+# the only thing standing between this file and silence.
+#
 # No auto-merge, either ecosystem. For runtime dependencies this is not a
 # close call: they are frozen into an installer and shipped, and the
 # automated gate cannot validate them. docs/smoke-checklist.md states that
