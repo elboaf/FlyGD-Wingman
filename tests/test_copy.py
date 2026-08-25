@@ -5,6 +5,7 @@ cover the copy module directly rather than the Tk window that used to be
 their only harness.
 """
 
+import pathlib
 from pathlib import Path
 
 from obs_youtube_uploader import library
@@ -245,3 +246,21 @@ def test_the_progress_text_carries_the_percent_the_bar_can_show():
     text = copy_mod.format_progress(0, 1, 0.699)
     assert text == "Uploading… 70%"
     assert "." not in text.split("…")[1]
+
+    # Same MODE, not merely the same precision. Read out of panel.js so
+    # this notices if the bar stops rounding half-up: "{:.0f}" is
+    # round-half-even, which at an exact tie prints 0% beside a bar
+    # reading 1% -- the disagreement this whole change removes, back one
+    # value at a time.
+    panel = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "obs_youtube_uploader"
+        / "web"
+        / "panel.js"
+    ).read_text(encoding="utf-8")
+    assert "Math.round(value)" in panel, (
+        "the bar no longer rounds half-up; format_progress's int(x + 0.5) "
+        "was chosen to match it and has to move with it"
+    )
+    assert copy_mod.format_progress(0, 1, 0.005) == "Uploading… 1%"
+    assert copy_mod.format_progress(0, 1, 0.025) == "Uploading… 3%"

@@ -348,6 +348,14 @@ somewhere stale and nothing on that screen is worth reviewing.
       `?` and `…` ones. Round 3 gave the format its hours field and
       widened the parser in the same change; this is what notices if they
       ever come apart again.
+
+      **Run this on a folder that has been opened before**, i.e. with
+      `durations.json` already holding these recordings — the opposite of
+      the item above. It is not a convenience: a cell filled in by a
+      probe completing during this run does not carry the format at all
+      (`onDuration` pushes a raw float, so the cell reads `3789`), and
+      that is a separate open defect. On a cold folder this item would
+      pass or fail on cache warmth rather than on what it means to check.
 - [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
       move with ↑/↓, press Space. Focus is visibly distinct from "checked",
       Space toggles exactly the focused row, and Space does NOT scroll. Then

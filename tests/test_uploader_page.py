@@ -578,13 +578,18 @@ def _duration_regex():
     `var m = /^...$/.exec(String(text` and matched first when this was
     written against the file as a whole.
     """
+    source = re.search(r"/(\^.*?\$)/\.exec", _duration_body())
+    assert source, "parseDuration no longer parses its cell with a regex"
+    return re.compile(source.group(1))
+
+
+def _duration_body():
+    """parseDuration's body text, scoped so the two tests read one thing."""
     body = re.search(
         r"function parseDuration\(text\) \{(.*?)\n  \}", LIST_JS, re.DOTALL
     )
     assert body, "parseDuration is no longer where this test reads it"
-    source = re.search(r"/(\^.*?\$)/\.exec", body.group(1))
-    assert source, "parseDuration no longer parses its cell with a regex"
-    return re.compile(source.group(1))
+    return body.group(1)
 
 
 def test_the_length_sort_parses_every_string_the_duration_format_emits():
@@ -613,6 +618,31 @@ def test_the_length_sort_parses_every_string_the_duration_format_emits():
         hours, minutes, secs = m.groups()
         parsed = (int(hours) * 3600 if hours else 0) + int(minutes) * 60 + int(secs)
         assert parsed == seconds, f"{rendered!r} sorts as {parsed}s, not {seconds}s"
+
+
+def test_the_length_sort_weights_each_field_by_what_it_means():
+    """The arithmetic, not just the regex.
+
+    The test above transcribes parseDuration's sum into Python to check
+    it, which cannot catch a bug in the JS sum itself: simplify
+    `m[1] * 3600` to `m[1] * 60` -- an easy slip, since the next line
+    multiplies by 60 -- and the regex is untouched, the Python side does
+    its own correct arithmetic, every assertion passes, and 2:07:07 sorts
+    as 527 seconds, below a nine-minute recording.
+
+    So the multipliers are read out of the JS and checked against what
+    each captured field means. Group 3 is seconds and carries none.
+    """
+    body = _duration_body()
+    weights = {
+        int(group): int(mult)
+        for group, mult in re.findall(r"parseInt\(m\[(\d)\], 10\) \* (\d+)", body)
+    }
+    assert weights == {1: 3600, 2: 60}, (
+        "group 1 is hours and group 2 is minutes; group 3 is seconds and "
+        f"takes no multiplier. Found {weights}"
+    )
+    assert "m[3]" in body, "the seconds group is no longer summed at all"
 
 
 def test_the_two_glyph_cells_still_sort_to_the_bottom():

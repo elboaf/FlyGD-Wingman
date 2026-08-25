@@ -198,7 +198,13 @@ def format_progress(index: int, total: int, fraction: float) -> str:
     # disagreement rather than as rounding. Mid-batch they legitimately
     # differ in VALUE (this tracks the file, the bar tracks the batch);
     # that is the point of the wording below, and it survives here.
-    pct = f"{fraction * 100:.0f}%"
+    #
+    # int(x + 0.5) rather than "{:.0f}", which is round-HALF-EVEN: at an
+    # exact tie it would print 0% beside a bar reading 1%, reintroducing
+    # the same disagreement one value at a time. Math.round is half-up and
+    # this has to match it, not merely share its precision. Fraction is
+    # never negative, so truncation toward zero is a floor.
+    pct = f"{int(fraction * 100 + 0.5)}%"
     if total <= 1:
         return f"Uploading… {pct}"
     return f"Uploading file {index + 1} of {total}… {pct}"
