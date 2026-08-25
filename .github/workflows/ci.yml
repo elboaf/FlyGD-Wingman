@@ -83,6 +83,17 @@ jobs:
           uv sync --locked --extra dev
           uv run --extra dev ruff check --output-format github
 
+      - name: Format
+        # Without this the 136-file reformat decays from the first pull
+        # request that lands unformatted, and re-running it later costs
+        # the same churn all over again. --diff prints exactly what
+        # differs, so a failure tells the contributor what to run rather
+        # than only that something is wrong.
+        #
+        # No `uv sync` here: the Lint step above already synced, and both
+        # steps run in the same job on the same runner.
+        run: uv run --extra dev ruff format --check --diff
+
   test:
     # windows-latest is not redundant with ubuntu. Seven modules bind
     # windll/winreg, and tests/test_preview_win32.py -- which asserts every
