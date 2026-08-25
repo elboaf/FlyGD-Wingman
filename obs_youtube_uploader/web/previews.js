@@ -99,17 +99,17 @@
     else if (clash === 'unknown') { button.classList.add('unknown'); }
     else if (shadow === 'latent') { button.classList.add('dim'); }
     if (clash === 'refused') {
-      button.title = 'Another application already owns this chord.';
+      button.title = 'Another application already owns this keybind.';
     } else if (clash === 'duplicate') {
-      button.title = 'This chord is bound twice here.';
+      button.title = 'This keybind is bound twice here.';
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
-                     'Windows has not reported on this chord yet.';
+                     'Windows has not reported on this keybind yet.';
     } else if (shadow === 'active') {
-      button.title = 'An EVE bookmark uses this chord. This binding takes ' +
+      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
                      'it while an EVE client is focused.';
     } else if (shadow === 'latent') {
-      button.title = 'An EVE bookmark is configured with this chord. ' +
+      button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';
     }
     button.addEventListener('click', function () {
@@ -124,21 +124,22 @@
     var typed = WM.make('button', 'linkbtn', 'Type…');
     typed.addEventListener('click', function () {
       endCapture();
-      var text = window.prompt(
-        'Hotkey for "' + label + '"\n' +
-        'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
-        gesture || '');
-      if (text === null) { return; }
-      if (text === '') { onSet(''); return; }
-      WM.send('parse_preview_bind', text).then(function (result) {
-        if (!result) { return; }
-        if (result.error) {
-          WM.send('alert_bookmarks',
-                  'That is not a hotkey Windows can register. It needs at ' +
-                  'least one of Ctrl, Alt, Shift or Win, plus a key.');
-          return;
-        }
-        onSet(result.gesture);
+      // The app's own dialog -- see the matching comment in bookmarks.js.
+      WM.prompt('Keybind for "' + label + '"',
+                'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
+                gesture || '').then(function (text) {
+        if (text === null) { return; }
+        if (text === '') { onSet(''); return; }
+        WM.send('parse_preview_bind', text).then(function (result) {
+          if (!result) { return; }
+          if (result.error) {
+            WM.send('alert_bookmarks',
+                    'That is not a keybind Windows can register. It needs at '
+                    + 'least one of Ctrl, Alt, Shift or Win, plus a key.');
+            return;
+          }
+          onSet(result.gesture);
+        });
       });
     });
     row.appendChild(typed);
@@ -246,7 +247,7 @@
         // backend with nothing said looks exactly like the click never
         // registering, which is how the same chord gets tried twice.
         WM.send('alert_bookmarks',
-                'That binding was not saved. Another chord may already ' +
+                'That binding was not saved. Another keybind may already ' +
                 'use it, or the settings file could not be written.');
         return;
       }
@@ -305,9 +306,9 @@
         endCapture();
         WM.send('alert_bookmarks',
                 result.error === 'no-modifier'
-                  ? 'A preview hotkey needs at least one of Ctrl, Alt, ' +
+                  ? 'A preview keybind needs at least one of Ctrl, Alt, ' +
                     'Shift or Win, or it would fire in every application.'
-                  : 'That key cannot be used as a hotkey.');
+                  : 'That key cannot be used as a keybind.');
         return;
       }
       var apply = session.onSet;
@@ -337,19 +338,23 @@
   // open and close, which is not something worth a timer. `wm:settings`
   // (dispatched only when the global settings payload changes) would not
   // fire on a plain tab switch and was the wrong event to listen for here.
-  document.addEventListener('wm:route', function (event) {
+  // wm:section, not wm:route -- see the matching comment in bookmarks.js.
+  document.addEventListener('wm:section', function (event) {
     if (event.detail === 'previews') {
       refresh();
       return;
     }
-    // Leaving this route must disarm an in-progress capture. bookmarks.js
-    // now installs its own document-level keydown listener too;
-    // stopPropagation() only stops OTHER listeners further along the same
-    // dispatch, not a sibling listener already attached to the same
-    // document node, so an armed capture left running here would still
-    // consume the next keystroke typed on the Bookmarks route -- writing
-    // a chord meant for a bookmark bind into this one instead, off-screen
-    // and silently persisted.
+    // Leaving must disarm an in-progress capture. bookmarks.js installs
+    // its own document-level keydown listener too; stopPropagation() only
+    // stops OTHER listeners further along the same dispatch, not a sibling
+    // listener already attached to the same document node, so an armed
+    // capture left running here would still consume the next keystroke
+    // typed anywhere else -- writing a keybind meant for a bookmark bind
+    // into this one instead, off-screen and silently persisted.
+    //
+    // Now that the neighbours are Folders and Discord rather than another
+    // route, an escaped capture would swallow a path or a webhook mid-type:
+    // its handler preventDefault()s every key, Tab included.
     endCapture();
   });
 

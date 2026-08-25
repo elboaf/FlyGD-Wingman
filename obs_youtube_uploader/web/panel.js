@@ -125,6 +125,7 @@
   var dlg = WM.el('dialog');
   var btnOk = WM.el('dlg-ok');
   var btnCancel = WM.el('dlg-cancel');
+  var dlgInput = WM.el('dlg-input');
 
   function show(item) {
     active = item;
@@ -132,13 +133,19 @@
     WM.el('dlg-title').textContent = item.title || '';
     WM.el('dlg-body').textContent = item.body || '';
     var isConfirm = item.kind === 'confirm';
-    btnCancel.hidden = !isConfirm;
-    btnOk.textContent = isConfirm ? 'Confirm' : 'OK';
+    var isPrompt = item.kind === 'prompt';
+    dlgInput.hidden = !isPrompt;
+    if (isPrompt) { dlgInput.value = item.value || ''; }
+    // A prompt is answerable too, so it needs the same way out.
+    btnCancel.hidden = !(isConfirm || isPrompt);
+    btnOk.textContent = isConfirm ? 'Confirm' : (isPrompt ? 'Set' : 'OK');
     // Upload is the app's only irreversible action, so the accent stays on
     // the affirming button of a confirm and on nothing else in the dialog.
     btnOk.className = isConfirm ? 'btn acc' : 'btn';
     overlay.hidden = false;
-    btnOk.focus();
+    // The field, not the button: a prompt exists to be typed into, and
+    // landing on OK means every user starts with a Tab.
+    if (isPrompt) { dlgInput.focus(); dlgInput.select(); } else { btnOk.focus(); }
   }
 
   function next() {
@@ -149,12 +156,50 @@
 
   function answer(ok) {
     if (!active) return;
-    if (active.kind === 'confirm' && active.request_id !== undefined
-        && active.request_id !== null) {
+    // A page-raised confirm resolves its own promise; a Python-raised one
+    // answers across the bridge. Never both: Python is not waiting on a
+    // dialog it did not ask for, and a spurious dialog_response would
+    // answer somebody else's question.
+    if (active.resolve) {
+      // A prompt answers with its text, or null for cancel -- matching
+      // window.prompt, so the call sites' `=== null` guards still hold.
+      active.resolve(active.kind === 'prompt'
+                     ? (ok ? dlgInput.value : null)
+                     : ok);
+    } else if (active.kind === 'confirm' && active.request_id !== undefined
+               && active.request_id !== null) {
       WM.send('dialog_response', active.request_id, ok);
     }
     next();
   }
+
+  // The page's own confirm, for a destructive action the page owns.
+  //
+  // Python's _confirm cannot serve these: it BLOCKS the calling thread
+  // until dialog_response arrives, so it must run on a worker -- calling
+  // it from a bridge method would deadlock the very thread that has to
+  // deliver the answer. That is why reset_binds reached for
+  // window.confirm, which WebView2 renders as browser chrome captioned
+  // with the page's origin.
+  //
+  // Same queue, same styling, same Escape-is-No rule as a Python dialog.
+  WM.confirm = function (title, body) {
+    return new Promise(function (resolve) {
+      var item = { kind: 'confirm', title: title, body: body,
+                   resolve: resolve };
+      if (active) { queue.push(item); } else { show(item); }
+    });
+  };
+
+  // Resolves with the typed text, or null if cancelled -- the same
+  // contract window.prompt had, so callers keep their `=== null` guard.
+  WM.prompt = function (title, body, value) {
+    return new Promise(function (resolve) {
+      var item = { kind: 'prompt', title: title, body: body,
+                   value: value, resolve: resolve };
+      if (active) { queue.push(item); } else { show(item); }
+    });
+  };
 
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
@@ -164,8 +209,11 @@
     if (ev.key === 'Escape') {
       ev.preventDefault();
       // Escape on a confirm is a No, never a silent dismissal: Python is
-      // blocked on an answer and must get one.
-      answer(active && active.kind === 'confirm' ? false : true);
+      // blocked on an answer and must get one. A prompt cancels the same
+      // way -- answering true would set whatever happened to be in the
+      // field.
+      answer(active && (active.kind === 'confirm' || active.kind === 'prompt')
+             ? false : true);
     } else if (ev.key === 'Enter') {
       ev.preventDefault();
       answer(true);

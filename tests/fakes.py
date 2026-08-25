@@ -11,6 +11,7 @@ import types
 from pathlib import Path
 
 from obs_youtube_uploader import library, uploader
+from obs_youtube_uploader import settings as settings_mod
 from obs_youtube_uploader.ui import api as api_mod
 
 
@@ -132,6 +133,11 @@ def build_api(tmp_path, rows=None, settings=None, watcher=None):
         "channel_title": "",
     }
     cfg.update(settings or {})
+    # Through the real normaliser, so this fake cannot drift from the
+    # schema. Hand-listing the keys above meant every new setting was
+    # absent here until someone remembered, and a test reading it got a
+    # KeyError for a key the product always has.
+    cfg = settings_mod._normalize(cfg)
     state = api_mod.AppState(
         recording_dir=Path(tmp_path),
         settings=cfg,

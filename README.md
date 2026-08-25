@@ -4,7 +4,7 @@
 
 <h1 align="center">FlyGD Wingman</h1>
 
-<p align="center"><strong>Your OBS recording wingman.</strong></p>
+<p align="center"><strong>Your wormhole multiboxing wingman.</strong></p>
 
 <p align="center">
   <a href="https://wingman.zoolanders.vip/">Website</a> ·
@@ -13,19 +13,30 @@
   <a href="https://wingman.zoolanders.vip/terms">Terms of Service</a>
 </p>
 
-FlyGD Wingman is a free, open-source Windows desktop application. It sits in
-your system tray, watches the folder OBS Studio saves recordings to, and gives
-you one window to review what you just recorded, optionally stitch several
-clips into one video, and upload the ones you choose to your own YouTube
-channel. Nothing is uploaded until you select it and press the button.
+FlyGD Wingman is a free, open-source Windows desktop application for flying
+several EVE Online accounts at once in wormhole space. It sits in your system
+tray and gives you one window for the things that surround a fleet: bookmark
+keybinds for mapping and rolling, live previews of your running clients, and a
+way to get the footage you just recorded onto YouTube.
 
-It was built for EVE Online fight footage — so it can also bundle the EVE
-combat logs covering a recording and post them to a Discord webhook you
-configure — but the OBS-to-YouTube workflow works with any OBS recording.
+Three things it does, in no particular order:
+
+- **Bookmark keybinds** for wormhole mapping — Set Root, Grab Sig ID, class
+  finishers, lifecycle tags, EvE-Scout conversion.
+- **Live previews** of every running EVE client, so you can watch and switch
+  between accounts without alt-tabbing.
+- **Uploads your OBS recordings to YouTube**, optionally stitched, optionally
+  with the EVE combat logs covering them posted to Discord.
+
+Nothing is uploaded until you select it and press the button, and Wingman never
+touches a running client's window.
+
+The upload half works with any OBS recording and needs no EVE install; the EVE
+half needs no Google account. Neither requires the other.
 
 <p align="center">
   <img src="docs/assets/wingman-screenshot.png" width="850"
-       alt="The FlyGD Wingman window: a two-pane layout with a dark, frameless title bar. The left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
+       alt="The FlyGD Wingman window: a dark, frameless title bar carrying three destinations — Uploader, Profiles and Skills — and a settings gear. The Uploader is a two-pane layout: the left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
 </p>
 
 ## What Wingman does
@@ -43,11 +54,36 @@ configure — but the OBS-to-YouTube workflow works with any OBS recording.
 - **Shows the resulting YouTube link** in the list, with Copy and Open buttons.
 - **Deletes recordings from your local disk** after an explicit confirmation.
   This only ever touches local recording files, never anything on YouTube.
-- **Bundles EVE Online combat logs to Discord** — secondary, entirely optional,
-  and unrelated to your Google account. See
+- **Bundles EVE Online combat logs to Discord** — optional, and unrelated to
+  your Google account. See
   [Discord & EVE combat logs](#discord--eve-combat-logs).
 
+### The EVE tools
+
+- **Bookmark keybinds.** Eighteen actions for wormhole mapping and rolling —
+  Set Root, Grab Sig ID, a finisher per class (C1–C6, C13 shattered, HS/LS/NS),
+  the lifecycle tags (end of life, half mass, critical, frig hole), and
+  EvE-Scout bookmark conversion. Registered globally but scoped to the EVE
+  windows you enable, so they do nothing in your browser. Runs on a bundled
+  AutoHotkey engine.
+- **Live client previews.** A small always-on-top mirror of each running EVE
+  client. Click one to switch to that client; drag to move, drag the corner to
+  resize, and positions are remembered per character. Per-character keybinds
+  and cycle-forward / cycle-back chords work from any application. Wingman
+  never moves or resizes the game window itself — EVE reads a resize as a
+  resolution change and rewrites its own configuration.
+- **Profiles.** Copy one character's or account's EVE settings onto others,
+  with a backup taken first and restore available.
+- **Skills.** Per-character readiness against skill plans you keep in a folder,
+  read through EVE SSO and ESI. Shows what is trained, training, or missing.
+
+The EVE tools are on by default. If you only want the uploader, turn them off in
+**Settings → General** and the window drops to a single screen.
+
 ## Typical workflow
+
+This is the upload path. The bookmark keybinds and client previews are set up
+once in Settings and then used in-game; they need nothing from this flow.
 
 1. You record something in OBS Studio.
 2. Wingman notices the finished recording and notifies you.
@@ -211,14 +247,23 @@ about code signing, and is unrelated to Google sign-in.
 
 ## Settings
 
+Settings open from the gear in the title bar and are grouped down the left.
+There is no Save button: every field applies as you set it. Folder paths and
+the webhook apply on **Enter** or from their own buttons, so a half-typed path
+is never acted on.
+
 | Setting | Default | Notes |
 |---|---|---|
+| Show the EVE tools | on | Off hides Profiles, Skills, and the two EVE sections. Only switchable off while both EVE features are off, so it can never hide a running feature's off switch. |
 | Privacy | `unlisted` | `private`, `unlisted`, or `public` |
 | Category ID | `20` (Gaming) | [YouTube category IDs](https://developers.google.com/youtube/v3/docs/videoCategories/list) |
 | When a recording finishes | Tray notification | Or open the uploader window immediately |
-| Discord webhook | *(none)* | Channel → Integrations → Webhooks → Copy URL. Treat it like a password. |
-| Gamelogs folder | auto-detected | Usually `Documents\EVE\logs\Gamelogs` |
 | Recording folder | auto-detected from OBS | Browse or re-detect at any time |
+| Gamelogs folder | auto-detected | Usually `Documents\EVE\logs\Gamelogs` |
+| Discord webhook | *(none)* | Channel → Integrations → Webhooks → Copy URL. Treat it like a password. |
+| Bookmark keybinds | off, one bound | Enabling starts the AutoHotkey engine. Only EvE-Scout conversion ships bound; the rest are yours to set. |
+| Client previews | off | Enabling starts a discovery sweep and a foreground hook. |
+| Reopen previews in place | on | Off opens each preview in a default stack instead. Positions are remembered either way. |
 
 Settings are stored at `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json`.
 

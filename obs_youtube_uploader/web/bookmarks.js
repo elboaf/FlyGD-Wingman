@@ -59,7 +59,7 @@
     // Named in full rather than "check your settings": the whole point is
     // that the user cannot see which of the two is missing.
     el.textContent = parts.length
-      ? 'No hotkeys are registered — ' + parts.join(', and ') + '.'
+      ? 'No keybinds are registered — ' + parts.join(', and ') + '.'
       : '';
   }
 
@@ -167,20 +167,32 @@
       // the two cannot disagree.
       var typed = WM.make('button', 'linkbtn', 'Type…');
       typed.addEventListener('click', function () {
-        var text = window.prompt(
-          'AutoHotkey hotkey for "' + state.labels[id] + '"\n' +
-          '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
-          state.settings.keybinds[id] || '');
+        // Disarm first, as previews.js already did. This did not matter
+        // while the prompt was window.prompt: a native OS dialog takes
+        // input outside the page entirely. WM.prompt is an in-page field,
+        // and an armed capture's document-level keydown handler
+        // preventDefault()s EVERY key -- so arming a capture on one bind
+        // and pressing Type… on another opened a prompt that could not be
+        // typed into.
+        endCapture();
+        // The app's own dialog, not window.prompt: WebView2 captions that
+        // with the page origin, so entering a keybind in a frameless dark
+        // app raised a grey box mentioning localhost.
+        WM.prompt('Keybind for "' + state.labels[id] + '"',
+                  '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
+                  state.settings.keybinds[id] || '')
+          .then(function (text) {
         if (text === null) return;
         WM.send('parse_bind', text).then(function (result) {
           if (!result) return;
           if (result.error) {
             WM.send('alert_bookmarks',
-                    'That is not a hotkey AutoHotkey can register.');
+                    'That is not a keybind AutoHotkey can register.');
             return;
           }
           setBind(id, result.ahk);
         });
+          });
       });
       row.appendChild(typed);
 
@@ -279,13 +291,22 @@
   });
 
   WM.el('eve-reset-binds').addEventListener('click', function () {
-    // Overwrites all 21, so it is confirmed. window.confirm is what the
-    // rest of the page uses for a destructive action.
-    if (!window.confirm(
-        'Replace all 21 keybinds with the recommended defaults?')) {
-      return;
-    }
-    WM.send('reset_binds').then(render);
+    // Overwrites all 18 (bookmarks.py BIND_IDS), so it is confirmed.
+    //
+    // NOT window.confirm, which is what this used to call under a comment
+    // claiming it was "what the rest of the page uses for a destructive
+    // action" -- it was the only window.confirm in the app, and WebView2
+    // renders it as browser chrome captioned with the page's origin, so a
+    // destructive prompt in a frameless dark app appeared as a grey box
+    // mentioning localhost. Every other destructive action here goes
+    // through the styled overlay; skills.js:624 records deliberately
+    // avoiding window.confirm for the same reason.
+    WM.confirm('Reset keybinds',
+               'Replace all 18 keybinds with the recommended defaults?')
+      .then(function (ok) {
+        if (!ok) { return; }
+        WM.send('reset_binds').then(render);
+      });
   });
 
   WM.el('eve-import').addEventListener('click', function () {
@@ -338,7 +359,8 @@
     var failed = payload.failed_binds || [];
     warn.hidden = failed.length === 0;
     warn.title = failed.length
-      ? failed.length + ' hotkey(s) failed to register — see Bookmarks'
+      ? failed.length + ' keybind(s) failed to register — see Settings › '
+        + 'Bookmarks'
       : '';
 
     var label = { stopped: 'Stopped', stale: 'Not responding',
@@ -357,21 +379,30 @@
     host.classList.toggle('degraded', !live);
   });
 
-  document.addEventListener('wm:route', function (event) {
+  // wm:section, not wm:route: this is a section of the Settings route now,
+  // so switching to Folders is a leave and fires no route change at all.
+  // WM.route dispatches wm:section('') whenever it leaves Settings, so one
+  // listener still covers BOTH ways of leaving -- see app.js.
+  document.addEventListener('wm:section', function (event) {
     // Refreshed on entry rather than polled: the EVE window list changes
     // when clients open and close, which is not something worth a timer.
     if (event.detail === 'bookmarks') {
       WM.send('get_bookmarks').then(render);
       return;
     }
-    // Leaving this route must disarm an in-progress capture. Both this
-    // file and previews.js now install their own document-level keydown
-    // listener; stopPropagation() only stops OTHER listeners further
-    // along the same dispatch, not a sibling listener already attached to
-    // the same document node, so an armed capture left running here would
-    // still consume the next keystroke typed on the OTHER route -- for
-    // example writing a chord meant for a preview bind into this bind
-    // instead, off-screen and silently persisted.
+    // Leaving must disarm an in-progress capture. Both this file and
+    // previews.js install their own document-level keydown listener;
+    // stopPropagation() only stops OTHER listeners further along the same
+    // dispatch, not a sibling listener already attached to the same
+    // document node, so an armed capture left running here would still
+    // consume the next keystroke typed anywhere else -- writing a keybind
+    // meant for a preview bind into this one instead, off-screen and
+    // silently persisted.
+    //
+    // The neighbours are now Folders and Discord rather than another
+    // route, which makes this strictly worse if it ever regresses: the
+    // capture handler preventDefault()s EVERY key, Tab included, so an
+    // escaped capture would swallow a path or a webhook being typed.
     endCapture();
   });
 }());

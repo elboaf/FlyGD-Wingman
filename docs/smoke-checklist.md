@@ -81,7 +81,21 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
-      Settings > Folder dialogs for the full check
+      Settings > Folder dialogs for the full check.
+      **How to actually get here**, since deleting settings.json is not
+      enough: `resolve_recording_dir` tries the stored setting, then OBS's
+      OWN config, and only returns None when BOTH fail. On a machine with
+      OBS installed, detection succeeds and first run is skipped — which is
+      correct, and is why this item goes unchecked unless it says how.
+      Clear the stored setting and point `APPDATA` at an empty folder;
+      `obsconfig.profiles_root` reads `%APPDATA%\obs-studio\basic\profiles`
+      and finds nothing. Both are per-process, so a real install is
+      untouched.
+- [ ] **The first-run screen asks ONLY for the recording folder.** It does
+      not ask about the EVE tools: those are on for everyone, because in
+      practice the people who install this play EVE. Someone who wants the
+      plain uploader turns them off in Settings > General, which is checked
+      under The Settings rail.
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to
@@ -371,6 +385,10 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       return. Expected: masked again. A revealed credential that survives
       navigation is a leak — the mockup's cleartext webhook is exactly the
       regression this port must not reintroduce.
+- [ ] **…and after a SECTION change.** Same, but instead of leaving
+      Settings, click **Folders** in the rail and come back to Discord.
+      Expected: masked again. Leaving the section fires no route change at
+      all, so this is a separate path from the one above.
 - [ ] **The account control tracks state through the route.** Start a
       sign-in, navigate away mid-flow, return. Expected: still reads
       **Waiting for browser…** and still disabled — `onAuthState` is the
@@ -386,18 +404,37 @@ automated reaches them; the bridge tests can only assert the call was made.
       is still draggable and responsive afterwards.
 - [ ] **Browse picks the Gamelogs folder,** same expectations.
 - [ ] **Cancelling a Browse changes nothing** — the field keeps its previous
-      value, not blank and not the dialog's starting directory.
+      value, not blank and not the dialog's starting directory, and nothing
+      is written.
+- [ ] **Browse and Detect COMMIT the folder.** There is no Save button;
+      picking a folder applies it. Confirm `settings.json` has the new path
+      before touching anything else.
+- [ ] **Typing a folder does NOT commit on blur.** Type a path into
+      Recordings and click away WITHOUT pressing Enter. Expected: the text
+      stays, and a line appears saying to press Enter. Nothing is written.
+      This is deliberate and load-bearing: committing a half-typed path
+      that happens to name a real directory rebinds the watcher, and
+      `Watcher.rebind` marks every file already in that folder as seen —
+      silently suppressing the announcement for every recording that
+      arrived this session, then doing it again to the right folder on the
+      corrective commit. It cannot be undone from the UI.
+- [ ] **Enter commits it.** Press Enter in the same field. Expected: the
+      message clears and the path is written.
 - [ ] **Detect fills in the recording folder from OBS's own config,** and a
       second press with the field already at that path says it is already
       set rather than silently re-filling it.
 - [ ] **Detect fills in the Gamelogs folder,** with the same already-set
       behaviour. With no EVE install, Detect says so rather than leaving the
       field blank with no explanation.
-- [ ] **Saving a changed recording folder rebinds the live watcher.** Change
-      it and Save without restarting. New recordings in the NEW folder are
-      announced and the old folder is ignored. Persisting without rebinding
-      is the specific failure to watch for — it looks correct until the next
-      recording.
+- [ ] **A changed recording folder rebinds the live watcher.** Change it
+      (Browse, or type and press Enter) without restarting. New recordings
+      in the NEW folder are announced and the old folder is ignored.
+      Persisting without rebinding is the specific failure to watch for —
+      it looks correct until the next recording.
+- [ ] **Re-committing the SAME folder does not rebind.** Press Enter in the
+      Recordings field without changing it. Expected: nothing happens.
+      A rebind here would re-baseline `seen` and swallow anything recorded
+      since launch that has not yet been polled.
 - [ ] **LOAD-BEARING: the first-run folder screen.** Delete
       `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` and launch with OBS
       absent. Expected: the window opens and shows an in-app "choose your
@@ -442,9 +479,12 @@ behavior that only shows up at size.
 - [ ] **A second launch is instant.** Restart the app without changing the
       folder. Expected: durations are already filled in on first paint, no
       "…" at all, and no visible ffprobe activity.
-- [ ] **Saving Settings does not re-freeze the list.** With the same large
-      folder, open Settings, change privacy, Save. Expected: the list
-      refreshes instantly with durations still shown; no pause.
+- [ ] **Changing a setting does not re-freeze the list.** With the same
+      large folder, open Settings and change privacy. Expected: the list
+      refreshes instantly with durations still shown; no pause. Each field
+      writes only its own key now, so nothing here should trigger the
+      ffprobe sweep that the whole-document save used to run on every
+      Save.
 - [ ] **A new recording probes alone.** Record a short clip and let the
       watcher announce it. Expected: only the new row shows "…" briefly;
       every existing row keeps its duration without re-probing.
@@ -481,16 +521,27 @@ behavior that only shows up at size.
       Settings." There is NO dialog, and the video half is never blocked by
       the Discord half being unconfigured — that regression is the whole
       reason the two buttons could be merged.
-- [ ] **An invalid webhook URL is refused on Save.** In Settings, paste a
-      URL that is not a Discord webhook (e.g. `https://example.com/hook`,
-      or `https://discord.com.evil.example/api/webhooks/1/x`) and click
-      **Save**. Expected: a warning naming the problem, the dialog stays
-      open, and NOTHING is written to `settings.json` — reopen Settings and
-      confirm the old value is still there. Then clear the field entirely
-      and Save: that must succeed, since an empty webhook simply means the
-      feature is unconfigured. `parse_webhook` itself has unit tests, but
-      the dialog wiring that calls it does not, so this is the only check
-      that the Save path honors the validator's rejection.
+- [ ] **An invalid webhook URL is refused.** In Settings > Discord, paste
+      a URL that is not a Discord webhook (e.g. `https://example.com/hook`,
+      or `https://discord.com.evil.example/api/webhooks/1/x`) and press
+      **Enter**. Expected: an INLINE message under the field naming the
+      problem — not a modal dialog — and NOTHING written to
+      `settings.json`. Reopen Settings and confirm the old value is still
+      there. `parse_webhook` has unit tests; the wiring that calls it does
+      not, so this is the only check that a refusal is honored.
+- [ ] **The message is inline, and does not stack.** Type a partial URL and
+      press Enter several times. Expected: one message that updates in
+      place. The old path routed refusals through the modal dialog QUEUE,
+      so repeated failures piled dialogs on top of each other.
+- [ ] **Clearing the field does NOT wipe a configured webhook.** With a
+      webhook saved, select all, Delete, then click away. Expected: nothing
+      is written and the stored webhook survives — reopen and confirm. This
+      is the guard that replaced the old "empty means unconfigured"
+      behaviour: with no Cancel button and no pre-edit copy anywhere on the
+      page, a stray edit used to destroy a credential with no way back.
+- [ ] **Remove clears it.** Press **Remove** next to the field. Expected:
+      the webhook is cleared and the status line says not configured.
+      Removal is an explicit action now, never a side effect.
 - [ ] **The webhook summary label tracks what you type.** In Settings, with
       a webhook already configured, paste a *different* valid webhook URL
       over it. Expected: the summary line underneath updates immediately to
@@ -558,18 +609,17 @@ behavior that only shows up at size.
       the archive's path so it can be uploaded by hand. Confirm the file at
       that path still exists after the dialog — a failed post must never
       delete the archive.
-- [ ] **Settings dialog at 100% and 150% Windows display scaling.** Open
-      Settings at each scale factor and confirm all six packed frames
-      (Google account, Upload defaults, When a recording finishes, Discord
-      (combat logs), Recording folder, and the Save/Cancel row) are fully
-      visible with nothing clipped, and that Save/Cancel are reachable
-      without resizing. A previous release shipped with a section clipped
-      off the bottom of the dialog at high DPI, and the Discord
-      webhook/Gamelogs fields are exactly the kind of addition that could
-      reintroduce it. See the "Look and feel > Display scaling" items above
-      for the general scaling checks (125%, narrow/short screens, checkbox
-      clipping); this item only covers the Discord (combat logs) section
-      specifically, not a duplicate of those.
+- [ ] **Settings at 100% and 150% Windows display scaling.** Open Settings
+      at each scale factor and walk every rail entry — Account, Uploads,
+      Notifications, Folders, Discord, Bookmarks, Previews. Confirm each
+      section's content is fully visible with nothing clipped, and that the
+      rail itself is never pushed off the top by a long section. A previous
+      release shipped with a section clipped off the bottom at high DPI,
+      back when this screen was one long column; the rail is what replaced
+      that column, and the pane is the only thing that scrolls. See the
+      "Look and feel > Display scaling" items above for the general scaling
+      checks — this item covers the rail specifically, not a duplicate of
+      those.
 - [ ] **One upload at a time, both halves included.** Start an upload with
       the logs box ticked, and while the Discord half is still posting press
       **Upload** again. Expected: the "An upload is already in progress"
@@ -770,13 +820,61 @@ response leaves a worker waiting forever, which presents as a hung upload.
       icon rather than a generic exe icon, since `installer.iss`'s
       `UninstallDisplayIcon` reads the icon embedded by `uploader.spec`.
 
+## The Settings rail
+
+Bookmarks and Previews stopped being top-level destinations and became
+sections here. Nothing in pytest executes the page, so the wiring below is
+only ever checked by hand.
+
+- [ ] **Eight rail entries** — General, Account, Uploads, Notifications,
+      Folders, Discord, Bookmarks, Previews — and clicking each shows its
+      content with exactly one entry highlighted. If that count is wrong,
+      trust the rail and fix this line: it said seven for exactly as long
+      as it took to add General one commit later, which is the drift this
+      checklist exists to catch elsewhere.
+- [ ] **Bookmarks and Previews render their real data**, not empty shells:
+      the keybind rows, the EVE window list, the per-character preview
+      keybinds. Both used to load on entering their own route; they load on
+      entering their SECTION now, and a mis-wired listener shows an empty
+      pane with no error anywhere. That silence is the failure mode: a
+      handler that throws mid-module takes every registration below it with
+      it, and the route loads as an inert copy of itself.
+- [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
+      section.** Go to Settings > Bookmarks, click a keybind button so it
+      reads "Press a key…", then WITHOUT pressing a key click **Folders** in
+      the rail. Now type into the Recordings field. Expected: your text
+      appears normally.
+      If it is swallowed, the capture is still armed: its handler
+      preventDefault()s EVERY key including Tab, and stopPropagation() does
+      not stop previews.js's sibling listener on the same node. An escaped
+      capture eats what you type and persists it as a keybind, off-screen.
+      This used to be covered by leaving the ROUTE; switching sections
+      fires no route change, which is why `wm:section` exists.
+- [ ] **Same check leaving Settings entirely.** Arm a capture in Bookmarks,
+      then click **Uploader** in the title bar. Return to Bookmarks: no
+      capture is armed.
+- [ ] **The gear returns you to where you were.** From Skills, open the
+      gear, then press it again. Expected: back on Skills, not the
+      Uploader.
+
 ## EVE bookmark hotkeys
 
 Requires a Windows machine with EVE running. None of this is covered by
 pytest — the engine is AutoHotkey.
 
-- [ ] Bookmarks appears in the title bar; the window still drags by the
-      wordmark area
+- [ ] **The title bar holds exactly three destinations** — Uploader,
+      Profiles, Skills — and the window still drags by the wordmark area.
+      Bookmarks and Previews are NOT here: they are sections of Settings,
+      reached through the gear. This item was written when there were two
+      destinations and went unchecked while three more were added; the
+      fifth pushed the bar past its width at 125% scaling.
+- [ ] **The bar survives its own minimum at 150% scaling.** Set Windows
+      display scaling to 150%, restart, drag the window to its floor. The
+      three nav labels, the gear, minimize and close are ALL visible, and
+      the wordmark area still drags. Nothing in the bar shrinks: the nav
+      and the window buttons are flex:none and the drag region cannot go
+      below the wordmark's own width, so an overflow here clips the close
+      button off the right edge rather than compressing anything.
 - [ ] With the feature off, the status bar shows no EVE segment
 - [ ] Enabling starts the engine; the status bar segment appears
 - [ ] Hotkeys fire in an enabled EVE window and do nothing in an unenabled one
@@ -862,7 +960,7 @@ pytest — the engine is AutoHotkey.
       so an existing binding for it still works
 - [ ] **Re-tagging a bookmark that already carries a legacy ` S` replaces
       it with ` f`** rather than leaving both on the line
-- [ ] **There is no Bookmark naming card in the route** — home holes, the
+- [ ] **There is no Bookmark naming card in the section** — home holes, the
       return-bookmark toggle and the preface field are all gone
 - [ ] **The generated INI has no `[Settings]` section at all.** Open
       `%LOCALAPPDATA%\OBSYouTubeUploader\eve_bookmark_helper.ini`: it should
@@ -874,7 +972,7 @@ pytest — the engine is AutoHotkey.
 - [ ] **Return bookmarks are NOT prefaced** — no `!`. There is no preface
       anywhere any more: not in the UI, not in settings.json, not in the
       INI, and not in the engine
-- [ ] **There is no Root card on the route.** Root mode, the Set root box
+- [ ] **There is no Root card in the section.** Root mode, the Set root box
       and the Clear button are gone. The status bar's ROOT / NEXT readouts
       are the only root display, and they still update as you use the
       hotkeys — check they do.
@@ -902,9 +1000,11 @@ pytest — the engine is AutoHotkey.
       existing keybinds untouched
 - [ ] Importing a config with `Mode=1` says Protean naming is not supported;
       one with `Mode=2` says nothing about it
-- [ ] **Reset to defaults** replaces all 21 binds after confirmation
+- [ ] **Reset to defaults** replaces all 18 binds after confirmation,
+      and the confirmation says 18 — bookmarks.py's BIND_IDS is the
+      count, and three places used to disagree with it
 - [ ] **Refresh** on the EVE windows card picks up a client launched while
-      the route was already open
+      the section was already open
 - [ ] Config changes apply within 10s without losing root or used slots
 - [ ] No console window flashes when the engine starts
 - [ ] Killing Wingman via Task Manager leaves the engine running; restarting
@@ -1111,12 +1211,16 @@ appears, so an item that only restarts the app tests half of it.
   here reverses the hierarchy.
 - [ ] Quitting Wingman with chords bound leaves them released: the owning
   application gets them back without a reboot.
-## EVE Settings
+## Profiles (the EVE settings copier)
+
+Named **EVE Settings** until it collided with the gear's own
+"Settings". The route id is still `evesettings`, matching
+evesettings.js and the `eve_settings_*` bridge methods.
 
 The suite cannot exercise Windows file locking or a real `os.replace` retry,
 so these are the checks that matter and only a Windows machine can run them.
 
-- [ ] Choose the EVE folder. Servers and settings sets populate; characters
+- [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
@@ -1144,10 +1248,10 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Delete a settings set entirely, then restore its backup. The folder is
       recreated and the files come back.
 - [ ] Start a copy and immediately try a second one. The second is refused
-      with "EVE Settings busy" rather than interleaving.
+      with the busy message rather than interleaving.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
       Ten auto-backups remain; the manual ones are untouched.
-- [ ] Check the packaged build: the EVE Settings route appears and the
+- [ ] Check the packaged build: the Profiles route appears and the
       folder picker opens.
 
 ## EVE skill plan readiness

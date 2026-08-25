@@ -36,11 +36,25 @@
   });
 
   WM.el('btn-firstrun-continue').addEventListener('click', function () {
-    // Python validates, persists, starts the watcher, and pushes onRows.
-    // It returns false if the folder is not usable, in which case we stay
-    // put rather than dropping the user into an empty list.
-    WM.send('set_recording_dir', chosen).then(function (ok) {
-      if (ok !== false) WM.route('main');
+    // set_folder, the same endpoint Settings uses. There used to be two:
+    // set_recording_dir could only CREATE a watcher and save_settings could
+    // only REPOINT one, so whichever was called in the wrong state left the
+    // folder persisted with nothing polling it. One endpoint handles both.
+    //
+    // WM.send resolves to null on a bridge failure, and a refusal is a dict
+    // with applied:false, so both have to be checked before navigating --
+    // dropping the user into an empty list with no explanation is exactly
+    // what this guard prevents.
+    WM.send('set_folder', 'recording', chosen).then(function (res) {
+      if (!res) { return; }
+      if (!res.applied) {
+        // No inline slot on this screen, so the note under the field
+        // carries it. It already explains Detect; a real error outranks
+        // that until the user tries again.
+        WM.el('firstrun-note').textContent = res.error;
+        return;
+      }
+      WM.route('main');
     });
   });
 

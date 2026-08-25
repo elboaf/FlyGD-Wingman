@@ -176,12 +176,15 @@ def test_main_tears_previews_down():
     assert "shutdown_previews()" in src
 
 
-def test_the_preview_card_lives_in_its_own_route():
+def test_the_preview_card_lives_in_its_own_section():
     """It was first added to the Bookmarks route, between 'EVE bookmark
     hotkeys' and 'Root' -- under the wrong feature, and splitting the
-    bookmarks flow in half. Previews get their own destination: the
-    deferred work (labels, opacity, size, hotkeys, cycle groups, alerts)
-    is roughly the volume of the Bookmarks tab.
+    bookmarks flow in half. Previews keep their own container.
+
+    That container is a Settings SECTION now rather than a top-level
+    route: previews are configuration, visited twice ever, producing
+    nothing on their own screen. What this test guards is unchanged --
+    the card must not drift back into the bookmarks flow.
     """
     import pathlib
     import re
@@ -195,30 +198,55 @@ def test_the_preview_card_lives_in_its_own_route():
 
     starts = {}
     for i, line in enumerate(lines):
-        m = re.search(r'id="route-(\w+)"', line)
+        m = re.search(r'id="(?:route|section)-(\w+)"', line)
         if m:
             starts[m.group(1)] = i
     card = next(i for i, line in enumerate(lines) if "EVE client previews" in line)
     ordered = sorted(starts.items(), key=lambda kv: kv[1])
     owner = [name for name, at in ordered if at < card][-1]
-    assert owner == "previews", f"the preview card is in route-{owner}"
+    assert owner == "previews", f"the preview card is in {owner}"
 
 
-def test_the_previews_route_is_registered_and_reachable():
-    """A route div with no entry in app.js's routes map never shows, and a
-    nav button with no matching div throws on click. Both halves have to
-    exist, and nothing else in the suite reads the page."""
+def test_the_previews_section_is_registered_and_reachable():
+    """A section div with no rail item is unreachable, and a rail item with
+    no matching div shows an empty pane. Both halves have to exist, and
+    nothing else in the suite reads the page.
+
+    This replaced the route-and-nav-button pair: WM.section toggles
+    `.active` on `#section-<name>` and on the `.rail-item` whose
+    data-section matches, so those two spellings are the contract.
+    """
     import pathlib
 
     web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="section-previews"' in html
+    assert 'data-section="previews"' in html
+    # And it must NOT have come back as a top-level destination.
+    assert 'id="route-previews"' not in html
+    assert 'data-route="previews"' not in html
+
+
+def test_previews_disarms_its_capture_on_a_section_change():
+    """The capture handler preventDefault()s EVERY key, Tab included, and
+    stopPropagation() does not stop bookmarks.js's sibling listener on the
+    same node. While Previews was a route, leaving it fired wm:route and
+    disarmed the capture. As a section, switching to Folders or Discord
+    fires NO route change -- so listening on wm:route alone would let an
+    armed capture escape and swallow a path or a webhook being typed."""
+    import pathlib
+
+    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    js = (web / "previews.js").read_text(encoding="utf-8")
     app = (web / "app.js").read_text(encoding="utf-8")
 
-    assert 'id="route-previews"' in html
-    assert 'data-route="previews"' in html
-    assert "previews: 'route-previews'" in app
-    # Peer destination, so the gear returns here rather than to Uploader.
-    assert "name === 'previews'" in app
+    assert "addEventListener('wm:section'" in js
+    block = js.split("addEventListener('wm:section'")[1]
+    assert "endCapture()" in block, "the leave branch no longer disarms"
+    # And WM.route must keep firing a section change, or leaving Settings
+    # entirely would never reach that branch.
+    assert "WM.notify_section(" in app
 
 
 def test_an_unchanged_toggle_still_reports_success(tmp_path):
@@ -496,7 +524,7 @@ def test_the_position_checkbox_sits_with_the_preview_settings():
     """It is a preview setting now, not a card of its own about clients,
     and nothing it says may still read as being about a game window."""
     html = _web("index.html")
-    route = html.split('id="route-previews"')[1].split('id="route-')[0]
+    route = html.split('id="section-previews"')[1].split('id="section-')[0]
     card = route.split("EVE client previews")[1].split("<section")[0]
     assert 'id="restore-preview-positions"' in card
     label = card.split('id="restore-preview-positions"')[1].split("</label>")[0]

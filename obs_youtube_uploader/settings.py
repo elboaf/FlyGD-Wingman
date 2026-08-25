@@ -80,6 +80,20 @@ DEFAULTS = {
     # compared so a changed destination can be called out.
     "channel_id": "",
     "channel_title": "",
+    # Whether the EVE destinations and sections are offered at all. TRUE
+    # for everyone, and nothing asks: in practice the people who install
+    # this play EVE, so a first-run question about it was noise on the one
+    # screen that has to stay short. It also keeps an upgrading user's file
+    # -- which predates this key -- from silently losing four things they
+    # already use. Someone who wants the plain uploader turns it off in
+    # Settings > General.
+    #
+    # This governs VISIBILITY ONLY. It never starts or stops anything --
+    # eve_bookmarks.enabled and preview.enabled remain the sole runtime
+    # switches, read at launch by start_engine_if_enabled and
+    # start_previews_if_enabled. See Api.set_show_eve_tools for the guard
+    # that keeps this from hiding a running feature's off switch.
+    "show_eve_tools": True,
     # Nested, unlike every other key. save() projects onto DEFAULTS keys, so
     # this whole section travels as one value; load() rebuilds the inner
     # dicts rather than copying them, because dict(DEFAULTS) below is
@@ -97,8 +111,8 @@ DEFAULTS = {
     "eve_settings": _eve_settings_defaults(),
 }
 
-_VALID_PRIVACY = {"private", "unlisted", "public"}
-_VALID_NOTIFY = {"toast", "popup"}
+VALID_PRIVACY = {"private", "unlisted", "public"}
+VALID_NOTIFY = {"toast", "popup"}
 
 
 def _fresh_defaults() -> dict:
@@ -238,11 +252,16 @@ def _normalize(data: dict) -> dict:
         "gamelogs_dir",
         "channel_id",
         "channel_title",
+        "show_eve_tools",
     ):
         data.setdefault(key, DEFAULTS[key])
-    if data["privacy"] not in _VALID_PRIVACY:
+    # Coerced rather than defaulted: a hand-edited file with a string here
+    # would otherwise make every truthy string mean "shown" and the empty
+    # string mean "hidden", which is not a distinction anyone intended.
+    data["show_eve_tools"] = bool(data["show_eve_tools"])
+    if data["privacy"] not in VALID_PRIVACY:
         data["privacy"] = DEFAULTS["privacy"]
-    if data["notify_mode"] not in _VALID_NOTIFY:
+    if data["notify_mode"] not in VALID_NOTIFY:
         data["notify_mode"] = DEFAULTS["notify_mode"]
     if not isinstance(data["category"], str) or not data["category"].isdigit():
         data["category"] = DEFAULTS["category"]
