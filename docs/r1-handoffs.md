@@ -95,6 +95,42 @@ you add a `CELL_HELP`-style table, `tests/test_tooltip.py`'s cross-check
 between `ui/copy.py` and `web/list.js` is the pattern, and it is what
 caught the copy staying in step here.
 
+## To R4 — `.linkbtn`'s padding now has two compensators, not one
+
+Relayed from R5, who found it building F3 and asked that it not stay in a
+chat thread. `.linkbtn`'s `padding: 4px 6px` is load-bearing in two
+directions, and there are now **two** scoped `margin-left: -6px` rules
+correcting for it:
+
+- `.rail-plan-actions > .linkbtn` — Skills, pre-existing, **yours**
+- `.firstrun-actions > .linkbtn` — R5's, PR #62
+
+Change the padding on the class and both silently become wrong offsets,
+and nothing in the suite catches it. `docs/ui-work-lanes-2.md` already
+scopes R4 to `.linkbtn.danger`'s **colour only**; this is the concrete
+reason, and it is now stronger than when that scope was written, because
+the second compensator did not exist yet.
+
+## The walkthrough's bad figures are bad in one particular way
+
+Worth stating once, because there are now three instances across three
+lanes and they are the same failure, not three unrelated errors:
+
+| Finding | Reported | Actual |
+|---|---|---|
+| Uploader 3 | ~16px, "the scrollbar gutter" | 14px, the sort arrow, sorted column only |
+| Uploader 4 | right-aligned over left-aligned | left over left; does not reproduce |
+| F3 (R5) | 11 CSS px | 6px, entirely `.linkbtn`'s `padding-left` |
+
+In every case **the box was fine and something inside it moved** — padding
+on the control, an `::after` on the header, ink versus border box. So the
+figure was measuring something that was not the defect, which is why
+correcting the *units* does not rescue these: the mechanism was
+misidentified first. `DESIGN.md` carries the standing instruction; the
+practical form of it is **find the mechanism before you trust the number,
+and measure text ranges rather than boxes.**
+
+
 ## Findings this lane declined, with the reason
 
 **Uploader 17 — reveal `Stitch` only above one selection. Declined.** The
@@ -141,3 +177,24 @@ renders **at** the floor needs exactly `MIN_WIDTH`, which is the same
 check on the same arithmetic and survives a tier being inserted above it.
 The agreement between the stylesheet and `ui/window.py` is intact and is
 still the thing that makes that file trustworthy.
+
+## A `dev.js` conflict to expect, from outside round 2
+
+The **preview-alerts** lane (`worktree-preview-alerts`, unmerged — a
+feature branch rather than a round-2 lane) also edits `web/dev.js`: a
+`preview` key with an `alerts` subtree in `settingsPayload`, and a
+`get_alert_state` stub. R1 added `inert_notes` to the same object literal.
+
+The two keys are additive and merge cleanly in meaning, but
+`settingsPayload` will conflict **textually**. Whoever merges second should
+expect that rather than discover it.
+
+That branch also adds a third `<section class="card">` inside
+`#section-previews`, which is **R2's markup** — worth R2 knowing before it
+lands, since `docs/ui-work-lanes-2.md` puts the Previews alert
+functionality explicitly out of round 2's scope but does not say another
+branch is editing the same block concurrently.
+
+Neither branch touches `get_preview_hotkey_state`; both looked at it and
+both left it as out of scope, so the harness warning above is still
+unowned by anyone.
