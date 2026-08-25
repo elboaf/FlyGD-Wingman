@@ -1,0 +1,40 @@
+# Useful only because uv.lock is enforced (see ci-hardening-design.md);
+# before that there was no pinned version for anything to bump.
+#
+# No auto-merge, either ecosystem. For runtime dependencies this is not a
+# close call: they are frozen into an installer and shipped, and the
+# automated gate cannot validate them. docs/smoke-checklist.md states that
+# the UI is untested by pytest and the checklist is the only verification
+# it gets, so green CI on a pywebview bump means the headless bridge tests
+# passed -- not that the application renders. pyproject.toml already
+# records the rule: an upgrade is "a change requiring a full smoke pass,
+# not a routine bump."
+#
+# "uv" is a documented package-ecosystem value (github/docs,
+# data/reusables/dependabot/supported-package-managers.md), distinct from
+# "pip" which covers pip/pipenv/poetry.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One pull request a week, not five.
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+    # pywebview is NOT ignored, deliberately. The pin is exact and an
+    # upgrade needs a full smoke pass, but a security fix nobody hears
+    # about is worse than a pull request nobody merges.
