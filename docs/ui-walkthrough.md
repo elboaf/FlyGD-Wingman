@@ -66,6 +66,24 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 > Treat every unlabelled `~Npx` below as physical unless the finding shows
 > its conversion. C1's floor measurement is unaffected — it states both
 > units explicitly and was the one figure converted with care.
+>
+> **The general form, learned the expensive way during round 2: trust a
+> relayed rule, re-measure a relayed number.** Of the substantive claims
+> that crossed between lanes in this round, the ones that arrived wrong
+> were, without exception, numbers — a set of line offsets grepped from a
+> branch that predated the purple retheme, a conversion factor applied to
+> a figure that did not need it, and a block count that was true of one
+> merge order and false of another. The *rules* travelled intact every
+> time. So: a rule from another lane can be taken as given; a figure from
+> another lane, or from this document, is unverified until you have
+> rendered it yourself — regardless of who is passing it on or how many
+> lanes it has passed through. Arriving twice by different routes makes a
+> number look more authoritative and changes nothing about whether it is
+> right.
+>
+> Measuring costs one CDP call against `?dev=1` at 840x625. The app window
+> cannot be driven to arbitrary CSS widths, which is why the harness
+> exists.
 
 Each finding is marked `sure` or `worth trying`, and tagged `screen-local`
 or `shared`. **Shared** means `style.css` above the "recording list"
