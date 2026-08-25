@@ -104,7 +104,13 @@ ring is drawn whether the preview is selected or not.
 A live alert of higher severity is never replaced by a lower one — the lower
 event **extends the expiry** and leaves the colour alone. A higher-severity
 event arriving over a live lower one **replaces it outright**, which rebuilds
-the frame cache mid-pulse. Ranks are `warp_scramble` 3, `combat` 2, `decloak` 1.
+the frame cache mid-pulse. An **equal-severity** event — the common case, since
+a fight produces a combat line every server tick — restarts the pulse from phase
+zero and re-stamps the expiry, leaving the colour and the frame cache untouched.
+With a 1 s combat cooldown against a 1200 ms pulse that means a sustained fight
+pulses continuously without ever completing a cycle, which is the intended
+reading of "still being shot". Ranks are `warp_scramble` 3, `combat` 2,
+`decloak` 1.
 
 Note that under the shipped default the extend half of that rule is inert: with
 `persist_until_selected` on there is no expiry to extend, so a lower-severity
@@ -129,11 +135,20 @@ gesture the user will try. Clicking is the signal that you looked.
 An alert armed on a client that is *already* selected is not persistent, because
 you are looking at it.
 
-**Cooldowns** are keyed `(character, event)`. A suppressed event is invisible
-everywhere — no state change, no sound, no history. The cooldown is stamped when
-an alert is actually **dispatched**, not when a line matches: an event that
-fires while the host is stopped or a preview is being recreated must not burn
-the window and silence the follow-up a second later.
+**Cooldowns** are keyed `(character, event)` and stamped **in the service, when
+the line matches**, before the alert is handed to the preview thread. A
+suppressed event is invisible everywhere — no state change, no sound, no
+history.
+
+An earlier draft had the cooldown stamped only once an alert was actually
+applied to a preview. That is not implementable across this boundary: the
+service posts to the pump and learns nothing about delivery, and whether a
+preview exists is knowable only on the pump thread. Making it work would need a
+delivery acknowledgement travelling back, and would have to move sound onto the
+pump thread to keep it gated — which the design deliberately avoids. So the
+cooldown stays wholly inside the service, and the accepted cost is that an event
+arriving when no preview can show it still burns the window. The cases where
+that happens are narrow: the host mid-restart, or a client that has just closed.
 
 | Event | Cooldown | Severity | Colour | Sound |
 |---|---|---|---|---|
@@ -266,20 +281,63 @@ avoid. Fixing the font path is out of scope here but worth a follow-up.
 An unknown sound id normalises to `"none"` and logs; a dropdown entry with no
 file behind it is indistinguishable from a broken alert.
 
-Dispatch is `PostMessageW` to the existing `HWND_MESSAGE` host window
-(`preview/host.py:242-287`), which exists precisely so there is always a valid
-target.
+**Dispatch is a mailbox plus a signal, not a message payload.** `PostMessageW`
+is bound `[HWND, UINT, WPARAM, LPARAM]` (`preview/win32.py:301-305`) and carries
+integers only. The existing hotkey handoff is the shape to copy and says so in
+its own comment (`preview/host.py:122-130`): the value travels in a
+lock-protected field on the host and only the signal is posted, exactly as
+`set_hotkeys` does (`:186-192`). So an alert is appended to a lock-protected
+queue on the host and a bare `WM_APP_ALERT` is posted; the pump drains the queue
+on receipt.
 
-**Lifecycle.** Built in `__main__.py` alongside `build_preview_host`
-(`:321-397`), which is the model. It must be startable and stoppable from the
-same three places the host is: `start_previews_if_enabled`
-(`ui/api.py:1633-1648`), `set_preview_enabled` (`:1650-1686`) and
-`shutdown_previews` (`:1689-1701`). None of those currently touch it, and
-without that wiring the design's claim that the tailer only runs when previews
-are enabled has no code behind it — turning previews off would leave it polling
-and `winsound` firing with nothing on screen to explain it. `host.start()` is
-idempotent and the service must be too. The thread is non-daemon with an
-explicit stop signal, so exit does not kill it mid-read holding open handles.
+**Startup ordering.** `host.start()` returns before the preview thread has
+created `_hwnd` (`:139-147`, `:219-235`), so there is a window in which there is
+no post target. The queue accepts writes at any time and the post is guarded on
+`_hwnd` being set — again the `set_hotkeys` pattern — and the pump drains
+whatever is queued when it comes up, so nothing raised during startup is lost.
+
+**Lifecycle: one reconciliation path, not several start/stop calls.** The
+service exposes a single idempotent `reconcile()` that computes the desired
+state — running if and only if previews are enabled **and** alerts are enabled
+**and** `gamelogs_dir` resolves to a real directory — and starts, stops or
+repoints the tailer to match. It is called from every setting that can change
+that answer:
+
+- `start_previews_if_enabled` (`ui/api.py:1633-1648`)
+- `set_preview_enabled` (`:1650-1686`)
+- `shutdown_previews` (`:1689-1701`)
+- `set_alert_enabled` (new)
+- `set_folder` when `which == "gamelogs"` (`:1527-1549`)
+
+That last one is the important one and the repository already carries the scar.
+`set_folder`'s own comment records that the gamelogs branch "drives no watcher",
+and the docstring above it describes the bug that made the endpoint necessary:
+a folder that persisted and a window that "looked healthy" while nothing ever
+started polling. Wiring alerts to preview enablement alone would reproduce that
+exactly — change the Gamelogs folder mid-session and the tailer keeps reading
+the old path until restart, with the card cheerfully reporting a folder it is
+not watching.
+
+Driving on alert enablement as well as preview enablement also settles a
+resource question: alerts default off, so a user with previews on and alerts off
+gets no polling thread at all.
+
+The service is built in `__main__.py` alongside `build_preview_host`
+(`:321-397`), which is the model, and its thread is non-daemon with an explicit
+stop signal so exit does not kill it mid-read holding open handles.
+
+**Health is readable state, not an event.** The service records and exposes for
+polling: whether the thread is alive, the timestamp of the last successful poll,
+the last error if any, and the set of characters currently watched. The polling
+loop is guarded so one exception cannot kill the thread, and a terminal exit is
+recorded rather than swallowed.
+
+This is not optional decoration. The design's own position is that silence is
+the worst failure mode here, and a dead tailer is indistinguishable from a quiet
+system unless something says so. The preview host already surfaces its startup
+and hook failures rather than swallowing them (`preview/host.py:219-225`,
+`:329-333`); the tailer gets the same treatment, and the UI renders it beside
+the character count.
 
 ### `preview/host.py` — modified
 
@@ -332,28 +390,49 @@ area grows 3 px on each side and its label shifts. Expected, and worth stating
 so the hand pass is not surprised by it.
 
 **The thumbnail inset is conditional after all, changing on arm and clear.**
-The thumbnail composites *over* the window and contributes nothing to its alpha
-(`chrome.py:22-30`), and its rect is inset by the border width
-(`geometry.py:76-87`) — so **the visible ring width is capped at the inset**.
-A 6 px alert ring inside a 2 px inset renders as 2 px, indistinguishable from
-the selection ring it must be told apart from.
+Two different things clip a ring drawn wider than `border`, and between them
+they cover all four sides:
 
-So the inset is 6 px while alerting and 2 px otherwise. This costs two
-`DwmUpdateThumbnailProperties` calls per alert lifecycle — on arm and on clear —
-not one per tick. An earlier draft ruled this out on churn grounds using the
-per-tick figure, which was wrong by the whole pulse rate and would have shipped
-a feature whose central visual signal did not render. The cost that remains is
-real and visible: the game video shrinks 4 px a side for the duration of an
-alert.
+- On the **left, right and bottom**, the DWM thumbnail. It composites *over* the
+  window and contributes nothing to its alpha (`chrome.py:22-30`), and its rect
+  starts at `x = border`, `y = border + label_h` (`geometry.py:78-89`).
+- Across the **top**, the label band. `chrome.py:84` fills
+  `[border, border, w - border - 1, band_bottom]` with `LABEL_BG` *after* the
+  ring is drawn, overpainting exactly the part of a wide top ring that the
+  thumbnail does not reach.
+
+So a 6 px ring inside a 2 px inset does not render as a 6 px ring anywhere along
+an edge. What survives is four 6 px corner blocks — at `x < border` and
+`x > w - border - 1`, outside the label band's span — joined by 2 px edges. That
+reads as corner brackets, not as a thicker border, and it would be a worse
+signal than the 2 px selection ring it is meant to outrank.
+
+The inset therefore goes to 6 px while alerting and back to 2 px on clear. This
+costs two `DwmUpdateThumbnailProperties` calls per alert lifecycle — on arm and
+on clear — not one per tick. An earlier draft ruled this out on churn grounds
+using the per-tick figure, which was wrong by the whole pulse rate and would
+have shipped a feature whose central visual signal did not render. The cost that
+remains is real and visible: the game video shrinks 4 px a side for the duration
+of an alert.
 
 ### The alert render path
 
-`SetLayeredWindowAttributes` cannot be the vehicle, despite
+`SetLayeredWindowAttributes` is rejected as the vehicle, despite
 `eve-preview-design.md:468-471` naming it and `preview/win32.py:292-297` binding
-it for the purpose with no call site anywhere. It and `UpdateLayeredWindow` are
-documented as mutually exclusive modes, and per-pixel alpha is load-bearing
-rather than cosmetic (`chrome.py:22-30`). It also cannot express colour, only
-opacity. **Probe this before building on it** — see Risks.
+it for the purpose with no call site anywhere.
+
+The two APIs are not flatly incompatible, and an earlier draft overstated that.
+Calling `SetLayeredWindowAttributes` blocks subsequent `UpdateLayeredWindow`
+calls until `WS_EX_LAYERED` is cleared and restored, so it *can* be made to
+operate over an existing ULW surface at the cost of a style reset and a repush.
+
+It is rejected on what it can express, not on whether it can be called: it sets
+one constant alpha for the whole window. It cannot tint, and it cannot pulse the
+ring alone — it would fade the entire preview, chrome and label together, in a
+colour it has no way to choose. Per-pixel alpha is also load-bearing rather than
+cosmetic here (`chrome.py:22-30`). **The probe below should still settle the
+interaction** rather than leave the parent design's stated vehicle contradicted
+by prose alone.
 
 Dirty-rect narrowing via `UpdateLayeredWindowIndirect` was considered and
 rejected: `prcDirty` is a single rect and an alert ring is hollow, so its
@@ -362,8 +441,11 @@ bounding box is the whole window.
 So: **a per-window pre-rendered frame cache.** Not a shared or module-level
 cache — it is owned by the `PreviewWindow`, allocated on arm and freed on clear,
 so the "zero cost when not alerting" property actually holds. Its key is
-`(w, h, selected, event)`; `label` is not needed because the cache cannot
-outlive the window it belongs to.
+`(w, h, selected, event, color)`; `label` is not needed because the cache cannot
+outlive the window it belongs to. **`color` is in the key deliberately** — the
+service reads settings live at event time and the UI can change an event's
+colour while a persistent alert is still armed, so a cache keyed on `event`
+alone would keep pulsing the old colour indefinitely.
 
 On arm, render six alpha steps of chrome-plus-ring into six DIBs and hold one
 memory DC. The per-tick work is `SelectObject` of the next DIB plus
@@ -413,11 +495,11 @@ two renders and not N, and the smoke pass should judge whether it is felt.
 ## Settings
 
 Nested under `preview`, because the border is the primary channel and cannot
-exist without a preview to draw on. Nesting also means the tailer runs only when
-previews are enabled — given the lifecycle wiring above — which matches the
-reasoning already in `_preview_defaults`'s docstring (`settings.py:22-24`) for
-why previews default off: it costs a thread, a 700 ms sweep and a foreground
-hook.
+exist without a preview to draw on. Nesting also keeps the tailer's existence
+tied to previews being on — through the `reconcile()` path above, which gates on
+alerts being enabled as well — matching the reasoning already in
+`_preview_defaults`'s docstring (`settings.py:22-24`) for why previews default
+off: it costs a thread, a 700 ms sweep and a foreground hook.
 
 `gamelogs_dir` is **not** duplicated. Alerts read the top-level key the uploader
 already reads.
@@ -552,6 +634,12 @@ not pretend the three agree. `host.characters()` comes from window titles,
 just relogged is in the first two but not the third. The count reported is the
 tailer's, because that is the set that can actually produce an alert.
 
+The count is **paired with the tailer's health**, never shown alone. A count on
+its own is worse than no indicator: it would keep reporting "watching 4
+characters" after the thread had died, putting a healthy-looking card above a
+feature that had silently stopped alerting. So the card renders the service's
+health state — thread alive, last successful poll, last error — alongside it.
+
 Tone per PRODUCT.md: "Your EVE Gamelogs folder is not set. Alerts cannot run
 without it." Not "Configuration incomplete."
 
@@ -584,14 +672,17 @@ partial-line buffering, rotation reset, the 12 h cutoff, `Listener: EVE`
 rejection, newest-session-wins, and the cap's ordering and post-filter
 application.
 
-`alerts/service.py`: cooldown suppression per `(character, event)`, cooldown
-*not* burned when dispatch is impossible, filter scope across the three events,
-unknown sound id normalisation, and that config is read live rather than
-captured. Sound playback is mocked.
+`alerts/service.py`: cooldown suppression per `(character, event)`, filter scope
+across the three events, unknown sound id normalisation, that config is read
+live rather than captured, and that `reconcile()` is idempotent and reaches the
+right state for each combination of preview-enabled, alert-enabled and
+folder-resolves. Health state — thread death recorded, last-poll timestamp
+advancing — is testable on Linux with a stubbed clock. Sound playback is mocked.
 
-Alert state — arm, both severity directions, expiry, acknowledgement by
-selection and by click — is pure and belongs in its own tests, following
-`preview/geometry.py`'s precedent of keeping decisions out of the Win32 module.
+Alert state — arm, all three severity directions including equal rank, expiry,
+acknowledgement by selection and by click — is pure and belongs in its own
+tests, following `preview/geometry.py`'s precedent of keeping decisions out of
+the Win32 module.
 
 Settings: defaults, every clamp, both fallback tiers, and specifically a
 regression test that a `LayoutStore` write does not reset the alerts subtree.
@@ -609,14 +700,17 @@ buttons, an alt-tab feel check, and a real alert observed on a real client.
 
 ## Risks and open questions
 
-**The `SetLayeredWindowAttributes` question is unprobed.** The claim that it and
-`UpdateLayeredWindow` are mutually exclusive is from documentation, not from
-this hardware. The design does not depend on it working — the frame cache is the
-plan precisely because it does not — but the parent design names it as the
-intended vehicle and binds it at `win32.py:292-297` for that purpose, so the
+**The `SetLayeredWindowAttributes` interaction is unprobed.** The design rejects
+it on expressiveness — one constant alpha for the whole window, no colour, no
+way to pulse the ring alone — which does not depend on hardware. What is
+unprobed is the interaction itself: whether it can operate over an existing
+`UpdateLayeredWindow` surface with a `WS_EX_LAYERED` reset, and what that does
+to the per-pixel alpha the hit region depends on. The parent design names it as
+the intended vehicle and binds it at `win32.py:292-297` for that purpose, so the
 record should be settled rather than left contradicting itself. A throwaway
 probe, matching the five that preceded the parent design, and the same probe
-should confirm the ring-occlusion geometry above.
+should confirm the ring-occlusion geometry above — that a ring wider than the
+inset renders as corner brackets rather than a thicker edge.
 
 **The frame cache may still be too expensive.** The parent design warns against
 putting a ~67k-pixel push on a timer because that is "the cost that made
