@@ -199,6 +199,36 @@ def _close_media(media) -> None:
         logger.warning("Could not close upload stream", exc_info=True)
 
 
+def _folder_note(folder: Path, suppressed: int) -> str:
+    """What just happened to the recording folder, with the real number.
+
+    Round 3's B11: the two fields with a data-loss history said nothing
+    about how they commit. The answer settled on was not a confirm and not
+    an Apply button -- Browse and Detect rebind in one click and would
+    bypass both -- but a report, written after the commit, where the count
+    is knowable.
+
+    The cost is deliberately stated as what it is and no worse. Those
+    recordings are not announced and arrive unticked, but they are still
+    listed: list_rows() rebuilds from the folder and only the watcher's
+    poll result is preselected (__main__.py's poll_tick). Calling it data
+    loss would be the same overstatement DESIGN.md carried for a release.
+
+    Zero says nothing about announcements, because there was nothing to
+    suppress and a "0 recordings were not announced" is a sentence the
+    reader has to parse twice to learn nothing.
+    """
+    where = f"Now watching {folder}."
+    if suppressed == 0:
+        return where
+    # Singular by hand rather than a pluralise helper: this is the only
+    # counted noun on the Settings route, and copy.py's number formatting
+    # is another lane's region.
+    if suppressed == 1:
+        return f"{where} 1 recording already there was not announced."
+    return f"{where} {suppressed} recordings already there were not announced."
+
+
 @dataclass
 class UploadJob:
     """Every value the upload worker needs, captured before dispatch.
@@ -1935,11 +1965,42 @@ class Api:
         webhook, error = discord.parse_webhook(text)
         if webhook is None:
             return self._field_refused(error)
-        return self._write_setting("discord_webhook", text)
+        return self._with_webhook_status(self._write_setting("discord_webhook", text))
 
     def clear_discord_webhook(self) -> dict:
         """Remove the webhook: the explicit counterpart to the above."""
-        return self._write_setting("discord_webhook", "")
+        return self._with_webhook_status(self._write_setting("discord_webhook", ""))
+
+    def _with_webhook_status(self, result: dict) -> dict:
+        """Carry the new summary line back on the commit's own return.
+
+        The per-field endpoints deliberately do not push a settings
+        payload -- a whole-document delivery rewrites the field the user
+        is still typing in -- and `get_settings` is fetched exactly once,
+        at page load (app.js). Between those two facts, setting a webhook
+        persisted while the page went on saying `not configured` and kept
+        `Show` and `Remove` DISABLED for the rest of the session, which is
+        the state WM.setEnabled is supposed to describe rather than
+        outlive. Found by opening the real window; nothing in the suite
+        renders the page, so it could not have been caught here.
+
+        Returned rather than pushed, and only this one derived value
+        rather than the document, so the fix cannot reintroduce the
+        rewrite-while-typing bug the no-push rule exists to prevent.
+
+        Only on an applied commit: a refusal changed nothing, so the line
+        already on screen is still correct, and overwriting it would
+        replace a description of what IS stored with one of what the user
+        typed.
+        """
+        if not result["applied"]:
+            return result
+        return dict(
+            result,
+            webhook_status=copy_mod.webhook_status(
+                self._state.settings.get("discord_webhook", "") or ""
+            ),
+        )
 
     def set_show_eve_tools(self, enabled) -> dict:
         """Show or hide the EVE destinations and sections.
@@ -2039,7 +2100,25 @@ class Api:
             # rebind() marks every file already in the folder as seen, so
             # switching folders does not announce a backlog as though it
             # had just been recorded.
+            #
+            # Counted BEFORE the rebind and only on this branch. Round 3's
+            # B11 asked for the commit cost to be stated, and PRODUCT.md
+            # wants the real number in it -- which no hint written before
+            # the click can have, because it depends on what is in the
+            # folder the user is about to name. This is the first moment
+            # the number exists, so the disclosure is a report rather than
+            # a warning. The other branch below cannot say the same thing:
+            # start_watching() calls Watcher.baseline(), which silently
+            # baselines only on a first-ever run and otherwise announces
+            # what it finds, so "were not announced" would be a guess.
+            #
+            # A second walk of the folder rather than a count out of
+            # rebind(): watcher.py is not this lane's file, and discover()
+            # over one directory is the same work list_rows() does a few
+            # lines below.
+            suppressed = len(library.discover(folder))
             self._watcher.rebind(folder)
+            result = dict(result, note=_folder_note(folder, suppressed))
         elif self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
         self.list_rows()

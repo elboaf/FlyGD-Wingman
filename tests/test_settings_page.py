@@ -162,6 +162,39 @@ def test_the_previews_inert_note_is_not_typed_into_the_page():
     )
 
 
+def test_the_folder_cost_sentence_is_written_once():
+    """#detect-note has TWO authors: the markup paints it before the first
+    settings payload lands, and settings.js's render() rewrites it on every
+    payload. The slot's previous occupant proved what that costs -- the
+    markup said "OBS's" with a straight apostrophe and settings.js said it
+    with a typographic one, two spellings of one sentence that no reader
+    could see and nothing held in step.
+
+    The sentence itself is round 3's B11 answer: what changing the
+    recording folder costs, stated before the click. The number belongs to
+    set_folder's report afterwards, because it depends on the folder.
+
+    Compared on words, since the markup wraps and indents and the JS is
+    split across string concatenations.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    literal = re.search(r"var FOLDER_COST = (.+?);\n", settings_js, re.DOTALL)
+    assert literal, "settings.js no longer declares FOLDER_COST"
+    js = re.sub(r"'\s*\+\s*'", "", literal.group(1)).strip().strip("'")
+    js = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), js)
+    js = " ".join(js.split())
+
+    pane = dict(_panes())["folders"]
+    slot = re.search(r'<p class="sub-hint" id="detect-note">(.*?)</p>', pane, re.DOTALL)
+    assert slot, "index.html no longer carries the #detect-note slot"
+    markup = " ".join(re.sub(r"<[^>]+>", " ", slot.group(1)).split())
+
+    assert markup == js, (
+        "index.html's #detect-note and settings.js's FOLDER_COST have "
+        f"drifted:\n  markup: {markup!r}\n  js:     {js!r}"
+    )
+
+
 def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
     """dev.js is the one file allowed to fabricate data, and it fabricates
     this table so the Previews card can be verified in ?dev=1 at all. A
@@ -188,6 +221,52 @@ def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
         assert note in flat, (
             f"dev.js's inert_notes[{key!r}] has drifted from ui/copy.py"
         )
+
+
+def test_the_remove_confirm_recognises_a_real_webhook_description():
+    """Round 3, B12. The Remove dialog names WHICH webhook, because the
+    field is masked and cannot -- but webhook_status() returns a PARSE
+    ERROR for a stored value it cannot read, and interpolating that into
+    "Combat logs stop being posted to ..." produces nonsense. settings.js
+    tells the two apart by the one thing discord.describe() guarantees.
+
+    Asserted rather than trusted, because that guard is a Python format
+    typed into JavaScript: if describe() ever stops rendering the path,
+    the confirm degrades silently to "this webhook" with nothing failing.
+    """
+    from obs_youtube_uploader import discord as discord_mod
+
+    described = discord_mod.describe(
+        discord_mod.parse_webhook("https://discord.com/api/webhooks/1/tok")[0]
+    )
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    guard = re.search(r"line\.indexOf\('([^']+)'\)", settings_js)
+    assert guard, "settings.js no longer guards the Remove confirm's name"
+    assert guard.group(1) in described, (
+        f"settings.js looks for {guard.group(1)!r}, which discord.describe() "
+        f"does not put in {described!r}"
+    )
+
+
+def test_the_dev_harness_shows_the_webhook_line_the_app_shows():
+    """dev.js is the only file allowed to fabricate data, and this is the
+    line round 3's B13 is about -- the only element on the Discord card
+    that says which webhook is configured. Its fixture had drifted into a
+    prose shape the app never renders, which made the Remove confirm's
+    naming branch untestable by hand: the harness said "this webhook"
+    while the app named it.
+    """
+    from obs_youtube_uploader import discord as discord_mod
+
+    dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
+    stored = re.search(r"discord_webhook: '([^']+)'", dev_js)
+    assert stored, "dev.js no longer stores a fake webhook"
+    fixture = re.search(r"\? '([^']*)' : statusLine", dev_js)
+    assert fixture, "dev.js no longer defaults webhook_status"
+    expected = discord_mod.describe(discord_mod.parse_webhook(stored.group(1))[0])
+    assert fixture.group(1) == expected, (
+        f"dev.js renders {fixture.group(1)!r} where the app renders {expected!r}"
+    )
 
 
 def test_the_dev_harness_declares_each_payload_key_once():

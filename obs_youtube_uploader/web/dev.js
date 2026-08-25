@@ -40,13 +40,36 @@
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
-      return Promise.resolve({applied: true, persisted: true, error: null});
+      var res = {applied: true, persisted: true, error: null};
+      // The two webhook endpoints carry the new summary line back on their
+      // own return, because nothing repaints the Settings route after page
+      // load. A double without it leaves the harness showing the stale
+      // line this fixes -- which is the bug, not the fix.
+      if (name === 'set_discord_webhook') {
+        res.webhook_status = 'discord.com/api/webhooks/1…';
+      } else if (name === 'clear_discord_webhook') {
+        res.webhook_status = 'not configured';
+      }
+      return Promise.resolve(res);
     };
   });
 
+  // The one endpoint that returns a fourth key. `note` is set_folder's
+  // post-commit report (round 3, B11): the count only exists once the
+  // rebind has walked the folder, so the page cannot be checked against a
+  // three-key double here -- the slot it fills would simply never appear.
+  // Recording folder only, like the real one. The unchanged-path early
+  // return is NOT doubled: it is Python's branch and has its own test,
+  // and reproducing it here would only make the slot harder to reach in
+  // the harness that exists to show it.
   api.set_folder = function (which, path) {
     console.log('DEV api.set_folder(', which, ',', path, ')');
-    return Promise.resolve({applied: true, persisted: true, error: null});
+    var res = {applied: true, persisted: true, error: null};
+    if (which === 'recording' && path) {
+      res.note = 'Now watching ' + path
+               + '. 12 recordings already there were not announced.';
+    }
+    return Promise.resolve(res);
   };
 
   // Same tier as the block above: set_alert_event and test_alert both
@@ -295,8 +318,15 @@
             }
           }
         }, patch || {}),
+      // discord.describe()'s shape for the fake webhook stored above, not
+      // a prose invention: it is host/api/webhooks/<id>… by construction,
+      // and settings.js reads that shape to tell a description apart from
+      // a parse error before naming the webhook in the Remove confirm. A
+      // fixture in a different shape made that branch untestable by hand
+      // -- the dialog said "this webhook" in the harness and named it in
+      // the app. tests/test_settings_page.py holds the two in step.
       webhook_status: statusLine === undefined
-        ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
+        ? 'discord.com/api/webhooks/1…' : statusLine,
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
       destination: 'Uploads go to FlyGD \u00b7 unlisted',

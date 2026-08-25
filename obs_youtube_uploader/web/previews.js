@@ -123,6 +123,11 @@
 
     var clear = WM.make('button', 'linkbtn', 'Clear');
     clear.addEventListener('click', function () { endCapture(); onSet(''); });
+    // Round 3, B2. The site the walkthrough actually measured: `Clear`
+    // was live beside a bind reading `Not set`. Same reasoning as the
+    // matching control in bookmarks.js -- the two lists build the same
+    // row and cannot disagree about when a control is live.
+    WM.setEnabled(clear, !!gesture);
     row.appendChild(clear);
 
     // `Edit…`, not `Type…` -- round 3's B6; the reasoning is on the

@@ -2009,6 +2009,19 @@ button.btn:disabled,
 }
 .settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
 
+/* Round 3, B13. The webhook field renders ~430 CSS px of dots that carry
+   no information at all, while this line -- ui/copy.py's webhook_status,
+   the only thing on the card answering WHICH webhook is configured -- sat
+   in the faintest tone the sheet has, beneath the loudest control on the
+   row. Masking the token is right; the weight was inverted.
+
+   One step up, to the tone .field-msg already uses for a line the reader
+   is meant to actually read. Not a new size and not a new token: the
+   informative element only has to stop being quieter than its neighbours,
+   and the dots cannot be made quieter without narrowing a field whose job
+   is holding a URL. */
+#webhook-status { color: var(--text-dim); }
+
 /* A hint that follows a checkbox explains the checkbox's SENTENCE, not its
    box. The sentence starts 24px in -- .check's 15px .box plus its 9px gap
    -- so a hint left at the card's own edge begins 24px to the LEFT of the
@@ -2630,12 +2643,12 @@ button.btn:disabled,
    refresh token. Not "the action is important", and not "the action is
    hard to undo by hand".
 
-   THE RULE IS AHEAD OF THE SITES, on purpose. Two of them still wear a
-   plain .btn and both are named in round 3's B3: `Delete selected` on the
-   Uploader (index.html, R1's) and `Remove` on Settings > Discord (R4's).
-   `Forget character` on Skills is the third, below. The primitive lands
-   first so three screen lanes convert to one thing instead of inventing a
-   third answer between them -- which is how the app got five treatments.
+   THE RULE WAS AHEAD OF THE SITES, on purpose: the primitive landed in
+   its own lane so three screen lanes would convert to one thing instead
+   of inventing a third answer between them -- which is how the app got
+   five treatments. `Remove` on Settings > Discord has converted (R4).
+   `Delete selected` on the Uploader (index.html, R1's) and `Forget
+   character` on Skills (below, R3's) are the two still to come.
 
    WHEN IT ASKS FIRST is a separate question with a separate answer, and
    conflating the two is how `Restore` nearly got red-outlined. A
@@ -2647,10 +2660,11 @@ button.btn:disabled,
    question again, decided by the thread the action runs on; DESIGN.md
    holds that table.
 
-   One site does not confirm at all: `Remove` on Settings > Discord
-   destroys the webhook credential on a single click. That is R4's, and it
-   is the only gap -- the other five destructive actions all confirm,
-   through three different mechanisms.
+   Every destructive action now confirms, through three different
+   mechanisms. `Remove` on Settings > Discord was the last gap -- one
+   click, no undo, on a masked value the user could not read first -- and
+   round 3's R4 closed it with WM.confirm, naming the webhook in the
+   dialog because the field cannot.
 
    The hover fills rather than brightening, so the resting state is an
    outline the eye can skip and the committed state is unmistakable.
