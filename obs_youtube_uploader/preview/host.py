@@ -259,13 +259,13 @@ class PreviewHost:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
 
     def restyle(self) -> None:
-        """Ask every open preview to re-read show_labels, opacity and
-        locked. Safe from any thread, same shape as set_hotkeys() above --
-        except there is no payload to stash under the lock: the callables
-        themselves are the live state, so this only has to post the
-        signal.
+        """Ask every open preview to re-read show_labels, opacity, locked
+        and never_minimize. Safe from any thread, same shape as
+        set_hotkeys() above -- except there is no payload to stash under
+        the lock: the callables themselves are the live state, so this
+        only has to post the signal.
 
-        The single live-update entry point for all four settings this
+        The single live-update entry point for all five settings this
         task wires (minimize_inactive_clients included): there is no
         separate "minimize changed" message, because minimize is read per
         switch (Task 7), not per window.

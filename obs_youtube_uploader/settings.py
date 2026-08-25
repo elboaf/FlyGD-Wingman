@@ -81,7 +81,15 @@ def _preview_defaults() -> dict:
         "enabled": False,
         "width": 320,
         "height": 210,
-        "opacity": 235,
+        # Fully opaque -- it is what shipped. opacity was validated and
+        # clamped from the day it was added but read by nothing, so every
+        # preview has in practice always rendered at PreviewWindow's own
+        # 255 default. Task 4 wires this key through to the DWM thumbnail,
+        # which turns the stored default into a value users actually see;
+        # anything less than 255 would silently make every existing
+        # install's previews translucent on first launch after the update.
+        # Translucency stays available, opt-in through the Previews slider.
+        "opacity": 255,
         "layouts": {},
         # Flat cycle chords, not a group table. When named cycle groups
         # land these become the default group's, so the schema grows

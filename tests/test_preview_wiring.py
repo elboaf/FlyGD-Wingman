@@ -462,10 +462,12 @@ def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
 ):
     """An upgrading user's file predates these keys. Absent must mean the
     behaviour that shipped before the toggle existed, or every existing
-    install's previews would silently restyle on first launch. 235 is
-    settings.py's own _preview_defaults() opacity, not host.py's 255
-    fallback -- that one only applies when the callable itself is absent
-    or raises, never through build_preview_host's live read."""
+    install's previews would silently restyle on first launch. 255 here
+    is __main__'s own fallback for a missing key, matching settings.py's
+    _preview_defaults() opacity now that both mean "fully opaque, as
+    shipped" -- not host.py's separate 255 fallback, which only applies
+    when the callable itself is absent or raises, never through
+    build_preview_host's live read."""
     from types import SimpleNamespace
 
     from obs_youtube_uploader import __main__ as main_mod
@@ -474,7 +476,7 @@ def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
     state = SimpleNamespace(settings={"preview": {}})
     host = main_mod.build_preview_host(state, {})
     assert host._labels_shown() is True
-    assert host._current_opacity() == 235
+    assert host._current_opacity() == 255
 
 
 def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):

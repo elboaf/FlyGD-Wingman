@@ -385,7 +385,7 @@ def build_preview_host(state, api_box):
             return bool(state.settings.get("preview", {}).get("show_labels", True))
 
         def opacity():
-            return int(state.settings.get("preview", {}).get("opacity", 235))
+            return int(state.settings.get("preview", {}).get("opacity", 255))
 
         def minimize_inactive_clients():
             # Absent means off: minimizing a real EVE client window must

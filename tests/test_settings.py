@@ -40,7 +40,7 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
             "width": 320,
             "height": 210,
-            "opacity": 235,
+            "opacity": 255,
             "layouts": {},
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
