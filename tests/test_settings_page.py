@@ -47,7 +47,9 @@ def _rail() -> list[tuple[str, str]]:
 def _panes() -> list[tuple[str, str]]:
     """(section name, markup) in document order."""
     route = _settings_route()
-    marks = list(re.finditer(r'<div class="settings[^"]*" id="section-([\w-]+)">', route))
+    marks = list(
+        re.finditer(r'<div class="settings[^"]*" id="section-([\w-]+)">', route)
+    )
     out = []
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(route)
