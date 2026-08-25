@@ -1,0 +1,19 @@
+# Mechanical reformats. Configure once with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# This repository squash-merges PRs (confirmed against PRs #33-#37 on
+# main), which rewrites every commit's SHA. The entry below MUST be the
+# SHA the "Apply ruff format" commit gets on `main` after this PR merges
+# -- not its SHA on this branch. Recording the pre-merge SHA would be
+# silently ignored by `git blame` (no error, no warning) and every one
+# of the 136 reformatted files would stay attributed to the reformat.
+#
+# TODO(post-merge): after this PR lands, run:
+#   git fetch origin
+#   git log origin/main --format='%H %s' -20 | grep 'Apply ruff format'
+# and uncomment the line below with that commit's real SHA, in a small
+# follow-up commit. Until that follow-up lands, this file has no active
+# entries and `git blame` behaves exactly as it does without it.
+
+# Adopt ruff format across the tree (136 Python files, no behaviour change)
+# REPLACE_WITH_POST_MERGE_SHA_OF_APPLY_RUFF_FORMAT_ON_MAIN

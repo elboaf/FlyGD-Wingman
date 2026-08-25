@@ -281,6 +281,16 @@ uv run --extra dev ruff check .
 python -m obs_youtube_uploader
 ```
 
+### After cloning
+
+```
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+Without this, `git blame` attributes 136 files to the ruff-format commit
+rather than to whoever wrote the code. The setting is per-clone and
+cannot be committed.
+
 Official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which injects
 the project's own Google OAuth desktop-client configuration from repository
