@@ -19,6 +19,22 @@ def test_an_unknown_id_resolves_to_none():
     assert service.sound_path("airhorn") is None
 
 
+def test_sound_path_prefers_the_frozen_bundle(tmp_path, monkeypatch):
+    """The frozen layout: bundle_dir()/assets/sounds/<id>.wav.
+
+    Nothing else exercises this branch -- CI is unfrozen ubuntu-latest, so
+    without this test a destination string that drifted out of sync
+    between uploader.spec and sound_path's frozen candidate (chrome.py's
+    exact failure mode) would pass every other test in this file.
+    """
+    sounds = tmp_path / "assets" / "sounds"
+    sounds.mkdir(parents=True)
+    (sounds / "chime.wav").write_bytes(b"")
+    monkeypatch.setattr(service.paths, "bundle_dir", lambda: tmp_path)
+
+    assert service.sound_path("chime") == sounds / "chime.wav"
+
+
 def test_the_spec_collects_the_sounds_folder():
     """chrome.py's font is collected to a destination that does not match
     where it looks (assets/fonts vs obs_youtube_uploader/assets/fonts), so
