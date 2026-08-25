@@ -28,7 +28,13 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 > |---|---|---|---|
 > | Settings 11 | ~600px | x=593 → x=1230 | **~318px** |
 > | Skills 6 | ~1000px | x=870 → x=1900 | **~515px** |
+> | Settings 12 | ~255px | x=600 → x=860 (a 260px jump) | **~128px** |
+> | Settings 3 | ~48px | hint vs. label offset | **~24px** |
 > | F3 | ~11 CSS px | 568 → 590 physical | **11px — already correct** |
+>
+> Settings 12 and Settings 3 halve to 128 and 24 CSS, both of which the
+> stylesheet predicts exactly — the strongest corroboration available that
+> the halving is real and not a coincidence of two findings.
 >
 > **F3 is the exception and must not be halved.** It states its
 > measurement in physical pixels and converts, correctly, to 11 CSS. A
@@ -42,6 +48,12 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 > Independent corroboration for the halving: `.settings` is
 > `max-width: 620px`, so a 600 *CSS* px void inside a settings row cannot
 > exist. 318 fits. The geometry only works in CSS once the figures halve.
+>
+> **The safe form is: re-measure before sizing anything to a number in
+> this document.** The figures are good enough to establish that a problem
+> exists and its rough scale; they are not good enough to be a target. F3
+> is the proof — its physical measurement of 22 is itself disputed against
+> a direct measurement of 12, so halving was never the whole question.
 >
 > Treat every unlabelled `~Npx` below as physical unless the finding shows
 > its conversion. C1's floor measurement is unaffected — it states both
