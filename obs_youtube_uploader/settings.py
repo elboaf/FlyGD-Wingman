@@ -20,7 +20,7 @@ from .preview import roster as preview_roster
 # Sounds that ship. An id present in the UI dropdown but missing here
 # normalises to silence, which is indistinguishable from a broken alert --
 # so the two lists are checked against the assets folder in the sound task.
-VALID_SOUNDS = {"none", "chime", "bell"}
+VALID_SOUNDS = {"none", "alarm", "ring", "notify"}
 
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -28,9 +28,15 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # glance on a small tile: red for damage, yellow for "you cannot leave",
 # cyan for a decloak.
 _ALERT_EVENT_DEFAULTS = {
-    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "chime"},
-    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "bell"},
-    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "chime"},
+    # Sounds are assigned by LENGTH against each event's cooldown, then by
+    # urgency. combat re-alerts every 1s, so it gets the only sound short
+    # enough to finish (0.77s); a longer one would be cut off by its own
+    # next alert, since PlaySound replaces whatever is still playing.
+    # scram and decloak have 8s to play with. Pitch falls with severity:
+    # alarm is 1342 Hz, ring 1046 Hz, notify 523 Hz.
+    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "alarm"},
+    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "ring"},
+    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "notify"},
 }
 
 

@@ -77,7 +77,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#ff4d4d",
-                "sound": "chime",
+                "sound": "alarm",
             },
             "warp_scramble": {
                 "enabled": True,
@@ -85,7 +85,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#ffd24d",
-                "sound": "bell",
+                "sound": "ring",
             },
             "decloak": {
                 "enabled": True,
@@ -93,7 +93,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#4dd2ff",
-                "sound": "chime",
+                "sound": "alarm",
             },
         },
     }
@@ -296,7 +296,7 @@ def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_pa
 
     api.test_alert("combat")
 
-    assert played == ["chime"]
+    assert played == ["alarm"]
     assert len(host.raised) == 3
 
 
@@ -314,7 +314,7 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
     assert result["applied"] is True
     assert result["persisted"] is False
     assert result["error"] == "Previews are off, so only the sound played."
-    assert played == ["chime"]
+    assert played == ["alarm"]
 
 
 def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
@@ -334,7 +334,7 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
 
     assert result["applied"] is True
     assert result["error"] == "No EVE clients are open, so only the sound played."
-    assert played == ["chime"]
+    assert played == ["alarm"]
     assert host.raised == []
 
 

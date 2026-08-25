@@ -24,7 +24,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 1,
                 "color": "#ff4d4d",
-                "sound": "chime",
+                "sound": "alarm",
                 "duration_ms": 1200,
                 "pulses": 3,
             },
@@ -32,7 +32,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#ffd24d",
-                "sound": "bell",
+                "sound": "ring",
                 "duration_ms": 1200,
                 "pulses": 3,
             },
@@ -40,7 +40,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#4dd2ff",
-                "sound": "chime",
+                "sound": "alarm",
                 "duration_ms": 1200,
                 "pulses": 3,
             },
@@ -126,7 +126,7 @@ def test_a_suppressed_event_plays_no_sound():
     ev = tailer.Event("Alice", "combat", PLAYER)
     s._handle([ev], 0.0)
     s._handle([ev], 0.5)
-    assert sounds == ["chime"]
+    assert sounds == ["alarm"]
 
 
 def test_a_sound_of_none_is_not_played():
