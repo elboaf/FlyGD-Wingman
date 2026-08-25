@@ -14,6 +14,39 @@ and #39, lanes 0-5, anything `tests/test_page_conventions.py` enforces,
 the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 `alert_bookmarks` identifiers.
 
+> ## ⚠ UNITS — most pixel figures below are PHYSICAL, not CSS
+>
+> Added by lane S4, after lane S2 hit it while measuring F3. Every capture
+> was taken on a 3840x2160 display at **200% scaling**, so a coordinate
+> read off a crop is twice its CSS value. Most findings below quote those
+> raw numbers in their headings without saying so.
+>
+> Verified, by re-deriving each from the coordinates the finding itself
+> gives:
+>
+> | Finding | Heading says | Its own coordinates | In CSS |
+> |---|---|---|---|
+> | Settings 11 | ~600px | x=593 → x=1230 | **~318px** |
+> | Skills 6 | ~1000px | x=870 → x=1900 | **~515px** |
+> | F3 | ~11 CSS px | 568 → 590 physical | **11px — already correct** |
+>
+> **F3 is the exception and must not be halved.** It states its
+> measurement in physical pixels and converts, correctly, to 11 CSS. A
+> report reached S4 that F3 "is 6 in CSS" because `.linkbtn`'s
+> `padding: 4px 6px` predicts 6 — but that is a re-derivation from the
+> stylesheet, not a units correction, and it disagrees with the rendered
+> measurement by 5 CSS px. **R5 owns F3 and should resolve that
+> disagreement at the page rather than inherit either number.** The two
+> are not measuring the same thing if the offset has a second component.
+>
+> Independent corroboration for the halving: `.settings` is
+> `max-width: 620px`, so a 600 *CSS* px void inside a settings row cannot
+> exist. 318 fits. The geometry only works in CSS once the figures halve.
+>
+> Treat every unlabelled `~Npx` below as physical unless the finding shows
+> its conversion. C1's floor measurement is unaffected — it states both
+> units explicitly and was the one figure converted with care.
+
 Each finding is marked `sure` or `worth trying`, and tagged `screen-local`
 or `shared`. **Shared** means `style.css` above the "recording list"
 banner, `app.js`, `panel.js`'s status-strip and dialog halves, the

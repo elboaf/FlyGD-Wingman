@@ -461,8 +461,10 @@ first half, General as the landing section, stands.]
    > unreachable, not that the rows need it.
    > Round 2 raises a *different*, confirmed problem in the same rows
    > (`docs/ui-walkthrough.md`, Settings 11 and 12): not starved fields
-   > but ~600px of dead space between a keybind's action name and its
+   > but ~318 CSS px of dead space between a keybind's action name and its
    > binding, and control rows starting at three different left edges.
+   > (That walkthrough finding is headed "~600px"; its own coordinates are
+   > physical — see the units note at the head of the walkthrough.)
    > Those are S2's and R2's, and they are not this finding.
    - **Where** — `style.css:739-742` (`.lab` fixed 118px, `flex: none`),
      `style.css:746` (`.field { flex: 1; min-width: 0 }`),
