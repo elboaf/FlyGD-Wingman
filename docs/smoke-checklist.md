@@ -96,21 +96,50 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       practice the people who install this play EVE. Someone who wants the
       plain uploader turns them off in Settings > General, which is checked
       under The Settings rail.
-- [ ] **A skipped first run is not asked again.** There is no Skip link on
-      the screen yet — it lands with the first-run screen work — so check
-      the half that ships here by hand: quit the app, set
-      `"first_run_skipped": true` in settings.json, clear the stored
-      recording folder, point `APPDATA` at an empty folder as the recipe
-      above describes, and start the app.
-      Expected: the first-run screen does NOT appear, and the Uploader
-      shows its empty state rather than a blank list — an empty list with
-      no rows and no empty state is the inert screen that reads as broken.
-      Then choose a folder in Settings > Folders and confirm
-      `first_run_skipped` returns to `false` in settings.json: choosing a
-      folder answers the question the skip deferred.
+- [ ] **Set this up later leaves the screen.** With the first-run screen
+      showing (the recipe above), click **Set this up later**. Expected:
+      the Uploader opens, the title-bar destinations and the gear are back,
+      and the Uploader shows its empty state rather than a blank list — an
+      empty list with no rows and no empty state is the inert screen that
+      reads as broken. Confirm `"first_run_skipped": true` is in
+      settings.json before doing anything else.
       A recording folder configures the UPLOADER half, and the two halves
       are meant to be independent — someone here for previews and bookmark
       keybinds must not be gated on it every launch.
+- [ ] **…and the EVE half genuinely works from there.** After skipping,
+      open Settings > Bookmarks and Settings > Previews and confirm both
+      are usable with no recording folder configured. This is the whole
+      reason the skip exists; a skip that reaches an unusable app is the
+      same gate one screen further in.
+- [ ] **A skipped first run is not asked again.** Quit and relaunch with
+      `APPDATA` still pointing at the empty folder. Expected: the first-run
+      screen does NOT appear.
+      Then choose a folder in Settings > Folders and confirm
+      `first_run_skipped` returns to `false` in settings.json: choosing a
+      folder answers the question the skip deferred.
+- [ ] **The screen says what Wingman is.** Read the two paragraphs above
+      the field as a new user would. They must name the EVE half — previews
+      and bookmark keybinds — before asking for an OBS folder, and say the
+      folder can be set up later. This is the only place in the app that
+      introduces the product, and it is what makes the skip read as an
+      offer rather than as a way to break the setup.
+- [ ] **Detect says so when it finds nothing.** With `APPDATA` pointed at
+      an empty folder, press **Detect**. Expected: the note under the field
+      changes to say Detect could not find a recording folder and to use
+      Browse. It must not sit there unchanged — a silent Detect and a dead
+      button look identical, and this is the screen with no way out.
+- [ ] **The note comes back after an error.** Type a path that does not
+      exist and press **Continue**. Expected: the note is replaced by the
+      refusal, in the error colour. Now type one more character in the
+      field. Expected: the note returns to explaining Detect. Losing that
+      explanation for the rest of the session is the behaviour this
+      replaces.
+- [ ] **Cancelling Browse keeps the path already found.** Press Detect or
+      Browse until the field holds a path, then press **Browse…** again and
+      cancel the picker. Expected: the field still holds the path and
+      Continue is still enabled.
+- [ ] **The placeholder is an example.** With the field empty, it reads
+      like a Windows path rather than reporting that no folder is chosen.
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to
@@ -517,8 +546,10 @@ automated reaches them; the bridge tests can only assert the call was made.
       recording folder" screen, from which Browse opens the native picker
       and choosing proceeds to the normal list. This is a deliberate
       behaviour change: there is no longer a bare OS dialog before any
-      window exists. Confirm the screen cannot be skipped past into an
-      unusable empty list.
+      window exists. It CAN be left without choosing — "Set this up later"
+      is deliberate, and is checked under First run — but confirm that
+      leaving it that way lands on the Uploader's empty state and not on a
+      blank list.
 
 ## Video list and durations
 These cover the duration cache and the background probe. Do them against a

@@ -1011,13 +1011,32 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   border-radius: var(--radius); padding: 26px 28px;
 }
 .firstrun h1 { margin-bottom: 10px; }
+/* Two paragraphs now -- what the app is, then what this screen wants --
+   so the gap between them is a paragraph gap and the gap before the field
+   is the one that separates prose from the control. Putting the larger
+   margin on .firstrun .row rather than on the last paragraph keeps it out
+   of :last-of-type's way: .firstrun-note is a <p> too, and would have
+   been the one to match. */
 .firstrun-body {
-  color: var(--text-dim); line-height: 1.55; margin-bottom: 18px;
+  color: var(--text-dim); line-height: 1.55; margin-bottom: 10px;
 }
+.firstrun .row { margin-top: 18px; }
 .firstrun-note {
   color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
 }
-.firstrun-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+/* The note carries a failed detection and a refused folder as well as its
+   standing explanation, and severity is a token, not a local colour --
+   the same two .field-msg and the status strip use. */
+.firstrun-note.warn { color: var(--warn); }
+.firstrun-note.err { color: var(--err); }
+/* Skip on the left, Continue on the right: they are opposite answers to
+   the same question, and stacking the quiet one beside the accent reads
+   as two commit buttons. gap, not just space-between, because the note
+   above can push the row narrow enough for them to meet. */
+.firstrun-actions {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-top: 20px;
+}
 
 /* ====================== skills route ================================
    NOT the .settings form the previews and bookmarks routes use: a fixed
