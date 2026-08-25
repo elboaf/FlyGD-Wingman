@@ -283,22 +283,43 @@ button.btn:disabled { opacity: .45; cursor: default; }
    5.26:1 at the top stop and 7.35:1 at the bottom. Do not "restore" the
    dark label from git history -- it was never a matter of taste. */
 button.btn.acc {
-  background: linear-gradient(180deg, #9438e8, #7a1fc8);
+  /* Held in a custom property because the hover rule below has to restate
+     the fill to win, and two hand-kept copies of a gradient are exactly the
+     kind of pair that drifts. Declared once, referenced twice. */
+  --acc-fill: linear-gradient(180deg, #9438e8, #7a1fc8);
+  background: var(--acc-fill);
   border-color: #a95cf0; color: #fff; font-weight: 600;
   box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
-/* PRE-EXISTING, predates the purple retheme and is left alone by it:
+/* Restates the fill AND the label, and neither line is redundant.
    `button.btn:hover:not(:disabled)` above is (0,3,1) and beats
-   `button.btn.acc` at (0,2,1), so hovering REPLACES the accent gradient
-   with the plain #242832 button fill. The rule below therefore brightens
-   that flat grey, not the brand -- and .acc:disabled's grayscale(.5) has
-   nothing coloured left to act on either. Both read as dead intent.
-   Verified against HEAD: the vermilion button behaved identically, so this
-   is not new. Not fixed here because making the gradient persist changes
-   how the most prominent button in the app looks on hover, which is a
-   product call rather than a retheme one. No contrast issue either way:
-   the hover state is --text on #242832, 12.2:1. */
-button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
+   `button.btn.acc` at (0,2,1), so through two accent colours hovering the
+   app's most prominent button REPLACED the brand gradient with the plain
+   #242832 fill -- a grey slab still ringed by the accent's purple border
+   and glow, with the brightness() below brightening the grey. This
+   selector is (0,3,1) too, so it wins on ORDER: it must stay below the
+   generic rule. Excluding .acc from that rule instead would lift it to
+   (0,4,1), where it would beat `button.btn.danger:hover` at (0,3,1) and
+   put the same bug on the destructive button.
+
+   `color` is the trap. Drop it and the generic rule's --text wins the
+   property at equal specificity: #e8eaed on the brightened top stop is
+   3.84:1, a fail introduced by fixing the fill. White holds at 4.63:1.
+
+   brightness(1.08) is a ceiling, not a taste setting. The label is white
+   ON the gradient, so brightening the fill spends label contrast -- 1.09
+   is the last passing step and 1.10 measures 4.48:1. Going brighter needs
+   the near-black label back, which purple rejected above for its own
+   measured reason. 1.08 moves the top stop 1.136:1 rest-to-hover; a plain
+   .btn moves 1.119:1, so the accent hovers by the same amount as every
+   other button. It is louder at rest, not louder in its transitions.
+
+   :disabled was never affected, contrary to what this note used to claim:
+   the :not(:disabled) here keeps a disabled accent button on its gradient,
+   so grayscale(.5) below acts on the brand rather than on grey. */
+button.btn.acc:hover:not(:disabled) {
+  background: var(--acc-fill); color: #fff; filter: brightness(1.08);
+}
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
