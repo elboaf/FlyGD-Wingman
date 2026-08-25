@@ -201,6 +201,32 @@ def test_set_preview_enabled_true_actually_starts_the_tailer(tmp_path):
         api._alerts.stop()
 
 
+def test_start_previews_if_enabled_actually_starts_the_tailer(tmp_path):
+    """The launch-path sibling of the test above.
+
+    start_previews_if_enabled (not set_preview_enabled) is what runs on
+    every app launch. If reconcile() there were ever reordered ahead of
+    host.start(), alerts would never start on launch -- only once the user
+    toggled the previews checkbox by hand -- and the failure would be
+    silent, with the settings all reading correct. Same real AlertService,
+    same live-is_running FakePreviewHost as the sibling test.
+    """
+    from obs_youtube_uploader.__main__ import build_alert_service
+
+    host = FakePreviewHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._alerts = build_alert_service(api._state, host)
+    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
+    api._state.settings["gamelogs_dir"] = str(tmp_path)
+
+    try:
+        api.start_previews_if_enabled()
+        assert host.is_running
+        assert api._alerts.health().running
+    finally:
+        api._alerts.stop()
+
+
 # ---- a test alert is never persistent --------------------------------------
 
 
