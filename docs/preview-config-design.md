@@ -37,6 +37,14 @@ done.
 | --- | --- | --- |
 | `show_labels` | `render()` already skips the band when `label_h` is 0 | `chrome.py:107-108` |
 | `locked` | `layout.Entry.locked` persists, is restored, and is honoured | `layout.py:15`, `host.py:427`, `window.py:416` |
+
+**But `preview.layouts` cannot store a lock on its own.** `layout.deserialize`
+requires `x`, `y`, `w` and `h` and `continue`s past any entry missing one
+(`layout.py:44-52`), and `validated_preview` rebuilds the section through it on
+every write (`settings.py:413`). A lock written against a character who has
+never dragged their preview is therefore discarded by the very next save — the
+checkbox would appear to work and silently forget. This is why decision 5 puts
+`locked` in its own list rather than in the layout entry.
 | `opacity` | key validated and clamped 20–255; `DWM_TNP_OPACITY` already set | `settings.py:211-215`, `thumbnail.py:38,43` |
 
 `chrome.py` needs no edit at all. `band_bottom = min(h - 1, border + label_h)`
@@ -78,6 +86,19 @@ clients, `roster.seen`, and any character carrying a binding, with an
 `Object.create(null)` guard against a character named `__proto__`. The
 never-minimize list and the lock control reuse it rather than inventing a
 control.
+
+**The click path activates before the host hears about it.** `PreviewWindow`
+calls `activate(self._libs, self.client.hwnd)` and *then* `self._on_activate`
+(`window.py:468-469`), and the host passes `on_activate=lambda c: None`
+(`host.py:418`). By the time any host code runs, the foreground has already
+moved and the previous client is unrecoverable. Minimize-inactive needs that
+value, so activation ownership has to move — see decision 2a.
+
+**A hand pass is a release gate, not a nicety.** `PRODUCT.md:143-144` — "Nothing
+in the repository executes the page, so every UI change needs a hand pass
+against `docs/smoke-checklist.md`" — and `CLAUDE.md:104-106` says to treat the
+checklist as part of the change. Adding items to the checklist is not the same
+as running them.
 
 **Settings commit per field.** No Save button; every field returns
 `{applied, persisted, error}` and the page distinguishes refused / applied-not-
@@ -151,18 +172,53 @@ a poll. A posted delayed message would avoid the stall at the cost of splitting
 one atomic switch across two pump turns, where a second switch can interleave.
 Not worth it for 10 ms.
 
-### 3. `PostMessageW`, not `SendMessageW`
+### 2a. Activation moves into the host
 
-TriffView uses `SendMessage`. Wingman uses `PostMessageW`, which is already
-bound. `SendMessage` blocks until the target window processes the message; a
-hung or loading EVE client would stall the preview thread indefinitely, taking
-hotkeys, alerts and the sweep with it. `PostMessage` queues and returns.
+`PreviewWindow` currently owns the click-path activation: it calls `activate()`
+itself and then fires a callback the host has stubbed out
+(`window.py:468-469`, `host.py:418`). The window therefore decides *and*
+performs the switch, while the host — which knows the foreground, the roster
+and the settings — learns nothing until it is over.
 
-The tradeoff: with `PostMessage` the minimize is not guaranteed to have
-happened before the re-activation at step 5. In practice both land on the
-client's own queue in order, so the client processes the minimize first. If
-hardware shows the re-activation racing the minimize, the fallback is
-`SendMessageTimeoutW` with a short timeout — not bare `SendMessage`.
+`PreviewWindow` stops calling `activate()`. `on_activate` becomes a real host
+callback that owns the whole sequence below, matching the hotkey path, which
+already runs in the host (`host.py:576`). The window's job narrows to
+classifying the gesture, which is what `drag_result()` already does
+(`window.py:35-45`).
+
+Rejected: having the window capture `GetForegroundWindow()` before activating
+and pass it out. Smaller, but it leaves two activation call sites to keep in
+step and puts a policy decision — whether to minimize — behind a value the
+window has no other use for. The host already owns the hotkey path; one owner
+is worth the move.
+
+This is the largest structural change in the slice and the one most likely to
+regress click-to-focus, which is the preview subsystem's primary interaction.
+
+### 3. `SendMessageTimeoutW`, not `PostMessageW` and not `SendMessageW`
+
+TriffView uses bare `SendMessage` (`TriffViewSubsystem.cs:956`). Wingman cannot:
+`SendMessage` blocks until the target processes the message, so a hung or
+loading EVE client would stall the preview thread indefinitely, taking hotkeys,
+alerts and the sweep with it.
+
+`PostMessageW` — already bound (`win32.py:306`) — avoids the stall but does not
+order against step 5. An earlier draft of this design claimed the two "land on
+the client's own queue in order"; that is wrong. The minimize is posted to the
+*previous client's* queue, while `activate()` calls `SetForegroundWindow`
+directly from Wingman's thread (`window.py:77-98`). They share no queue and
+there is no ordering between them, so the re-activation can land before the
+minimize is processed — exactly the foreground-theft that step 5 exists to
+prevent.
+
+`SendMessageTimeoutW` with `SMTO_ABORTIFHUNG` and a short timeout (100 ms) gets
+the ordering without the unbounded stall: it returns when the client has
+processed the minimize, or gives up. A timeout is treated as "the minimize did
+not happen" and logged; the client stays where it is, which is the safe
+outcome.
+
+Cost: a new bind in `preview/win32.py`, and up to 100 ms on the preview thread
+on top of the 10 ms settle, on an explicit user switch only.
 
 ### 4. Opacity dims the video only, and this differs from TriffView
 
@@ -182,7 +238,7 @@ a share of its clicks to whatever is behind it. The whole-window alternative
 Consequence to state in the UI: a user arriving from TriffView will find their
 labels no longer fade. Worth a word in the hint text.
 
-### 5. Lock is per-character; the other three are global
+### 5. Lock is per-character, stored in its own list
 
 `layout.Entry.locked` is keyed by character and there is no per-character row
 on the Previews card except the keybind table. Lock therefore joins that table
@@ -190,8 +246,25 @@ as a second column rather than becoming a global checkbox, and never-minimize
 joins it as a third. One table, three columns — keybind, lock, never-minimize
 — against the existing `rows()` merge.
 
-Rejected: a global "lock all previews" checkbox. It would be simpler and it
-would discard the per-character flag that already persists and already works.
+**Lock does not write to `preview.layouts`.** As recorded in the constraints
+above, `layout.deserialize` drops any entry without a full rect
+(`layout.py:44-52`), so a lock on a character who has never dragged their
+preview would not survive the next save. `locked` becomes its own list under
+`preview`, alongside `never_minimize`, deserialized by `roster.deserialize`
+like the other two character lists.
+
+`layout.Entry.locked` stays as it is and keeps being honoured — the host
+resolves a window's lock from the list at creation and hands it to
+`PreviewWindow` exactly as it does today (`host.py:427`). Nothing in the drag
+path changes.
+
+Rejected: synthesizing the character's current rect on a lock write so the
+layout entry validates. It would work for a running client and fail for an
+offline one, which is precisely the case the roster exists to serve
+(`roster.py:3-5`) — a user binding an alt that flies on weekends.
+
+Rejected: a global "lock all previews" checkbox. Simpler, and it would discard
+the per-character flag that already persists and already works.
 
 ### 6. Live re-apply gets one new pump message
 
@@ -208,9 +281,13 @@ adding it to the key would force pointless re-renders.
 ### 7. Failure handling
 
 - A failed `activate()` aborts the minimize entirely (decision 2).
-- A raise while reading any of the four settings on the preview thread falls
+- A `SendMessageTimeoutW` timeout is treated as "the minimize did not happen",
+  logged at INFO, and changes nothing else — the client stays where it is.
+- A raise while reading any of the settings on the preview thread falls
   back to the shipped behaviour — labels on, unlocked, opaque, no minimize —
-  and logs, per `_restoring()`'s contract (`host.py:709-726`).
+  and logs, per `_restoring()`'s contract (`host.py:709-726`). This covers all
+  five live-read callables, `minimize_inactive_clients` and `never_minimize`
+  included, not only the two that affect chrome.
 - A failed persist returns `{applied: True, persisted: False}` where the change
   took effect for the session, and `{applied: False}` where `update()` rolled
   the live document back, following `set_restore_preview_positions`
@@ -237,12 +314,19 @@ the suite, which is the same position every preview slice has shipped from.
   with a note that `SC_MINIMIZE` is deliberately present.
 
 **Hardware checks** (`docs/smoke-checklist.md`), none of which the suite can
-stand in for:
+stand in for. **These are a release gate, not documentation.** `PRODUCT.md:143`
+requires a hand pass for every UI change, and this slice cannot ship on a green
+suite alone:
 
 - Labels off reclaims the band and the video grows into it; labels on restores
   it; both take effect on already-open previews without a restart.
 - Opacity dims the mirror and leaves border and label at full strength.
-- A locked preview refuses a left drag and accepts a right drag.
+- A locked preview refuses a left drag and accepts a right drag — **including
+  a character who has never dragged their preview**, which is the case the
+  layout-keyed storage could not serve.
+- **Click-to-focus still works**, on every preview, after activation moved into
+  the host (decision 2a). This is a regression check on the subsystem's primary
+  interaction, not a new-feature check.
 - Minimize-inactive: switching minimizes the previous client, the new client
   ends up foreground and stays there, and a never-minimize character is
   skipped.
@@ -251,7 +335,9 @@ stand in for:
   visible motion — undocked, drones out, or the camera spinning — not a docked
   ship on a static scene, which looks identical whether the thumbnail is live
   or frozen on its last frame. This is the check that decides whether
-  minimize-inactive is compatible with the previews it sits next to.
+  minimize-inactive is compatible with the previews it sits next to, and it
+  blocks the merge: a frozen result sends the feature back to the user for a
+  decision, per the plan's adaptation points.
 
 ## Explicit exclusions
 
