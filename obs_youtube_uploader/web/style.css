@@ -56,8 +56,20 @@
      on, including all five nav tabs and all three window buttons in
      their resting state. */
   --text-faint: #7d8492;
-  --brand: #ff5a4d;
-  --brand-deep: #c81e12;
+  /* Purple needs TWO tokens where vermilion needed one. --brand is a
+     SURFACE colour: things are filled with it and something sits on top.
+     --brand-text is a TEXT/GLYPH colour: it sits on a dark surface and has
+     to clear 4.5:1. No single purple does both -- light enough to read as
+     text on --panel puts white on the Upload button below 4.5:1, and dark
+     enough for white puts the accent text near 3:1. Vermilion only ever
+     got away with one token because it sits high in luminance already. */
+  --brand: #8430d9;
+  --brand-deep: #4a0083;
+  /* 4.86:1 at worst across all four surfaces it lands on (--panel, --bg,
+     and the gradient-tinted variants of both). #a952ff was the value the
+     mockups used and measures 4.56 -- a pass, but with so little headroom
+     that any later tint change breaks it silently. */
+  --brand-text: #ad5aff;
   --ok: #4ade80;
   --warn: #d29922;
   --err: #f85149;
@@ -83,9 +95,26 @@
   --titlebar-h: 44px;
 }
 
+/* The wash lives on html and the base --bg layer must stay UNDER it in the
+   same shorthand. body is transparent on purpose: #route-main::after below
+   is a z-index -1 pseudo-element, and a negative-z child paints beneath its
+   OWN parent's background, so any background on body hides the watermark
+   completely.
+
+   Do not fold this back into the `html, body` rule. background-color there
+   would override the var(--bg) layer here, leaving the page with only two
+   fading radial gradients over the UA's color-scheme canvas -- which looks
+   nearly right in Chromium (#121212 vs #0c0d10) and is therefore very easy
+   to ship by accident, but is not the token and is not ours to rely on. */
+html {
+  background:
+    radial-gradient(1100px 620px at 88% -8%, #1d1030 0%, rgba(29, 16, 48, 0) 62%),
+    radial-gradient(760px 520px at -6% 108%, #170f26 0%, rgba(23, 15, 38, 0) 60%),
+    var(--bg);
+}
+body { background-color: transparent; }
 html, body {
   height: 100%;
-  background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: var(--fs-body);
@@ -102,7 +131,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .titlebar {
   display: flex; align-items: center; gap: 10px;
   height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
-  background: linear-gradient(180deg, #16181d, #101216);
+  background: linear-gradient(180deg, #1b1528, #121016);
   border-bottom: 1px solid #000;
   box-shadow: inset 0 1px 0 #24272e;
 }
@@ -111,11 +140,22 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .pywebview-drag-region {
   flex: 1; height: 100%; display: flex; align-items: center; gap: 10px;
 }
+/* A roundel, not a glyph. Two rounds of hand-drawn cobra marks were tried
+   here first and every one of them read as something else at this size --
+   airplane, pause button, map pin -- because a cobra head reduces to a
+   silhouette and the badge it comes from relies on outlines separating
+   purple masses. The ring is what survives reduction; whatever sits inside
+   it does not have to be legible for the mark to read as a mark.
+   24px, not 20px: below ~22px the ring closes up into a dot. */
 .mark {
-  width: 20px; height: 20px; border-radius: 5px; flex: none;
-  background: linear-gradient(150deg, var(--brand), var(--brand-deep));
-  display: grid; place-items: center; font-size: 9px; color: #fff;
-  box-shadow: 0 0 12px rgba(230, 50, 45, .45);
+  width: 24px; height: 24px; border-radius: 50%; flex: none;
+  /* Decorative, and it sits INSIDE .pywebview-drag-region. An <img> is
+     natively draggable, so without this, dragging the window by its own
+     logo starts an image drag instead of moving the frameless window --
+     the one spot on the title bar where dragging would appear to be dead.
+     The span this replaced could not have this problem. */
+  pointer-events: none; -webkit-user-drag: none; user-select: none;
+  box-shadow: 0 0 12px rgba(132, 48, 217, .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
 .winbtn {
@@ -126,7 +166,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .winbtn:hover { background: #22252c; color: var(--text); }
 .winbtn.close:hover { background: #d9291c; color: #fff; }
 .winbtn.gear { font-size: 15px; }
-.winbtn.gear.active { background: #22252c; color: var(--brand); }
+.winbtn.gear.active { background: #22252c; color: var(--brand-text); }
 
 /* Peer destinations, visually distinct from the window actions on the
    right. Every pixel here is drag surface given up, so this stays tight;
@@ -161,7 +201,11 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 
 /* ---- shared primitives ---------------------------------------------- */
 .card {
-  background: var(--panel); border: 1px solid var(--panel-border);
+  /* Tinted sideways into violet, NOT lightened: --text-faint has just
+     4.82:1 on flat --panel and #191426 holds 4.78:1. A lighter panel puts
+     the faintest text role under AA on every card in the app. */
+  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 14px 16px;
 }
 .card > h2 {
@@ -198,7 +242,7 @@ input.field.mono, span.field.mono, textarea.field.mono {
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 input.field:focus, textarea.field:focus, select.field:focus {
   border-color: #39404d;
-  box-shadow: 0 0 0 2px rgba(255, 90, 77, .14);
+  box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
 }
 textarea.field { resize: none; line-height: 1.5; }
 
@@ -210,28 +254,36 @@ button.btn {
 button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
 button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
-/* Near-black ON the brand, not white on it. White measured 3.08:1 against
-   the old gradient's top stop -- a fail for 12px/600 normal text over
-   roughly the upper half of every primary button in the app. Darkening the
-   fill enough for white text needs ~#cf3b28, which visibly dulls the
-   brand; inverting keeps the vermilion at FULL strength and measures
-   6.31:1. The gradient is narrowed to stay inside the range where the dark
-   label holds: 6.96:1 at the top stop, 5.32:1 at the bottom. */
+/* White ON the brand -- the exact inverse of what vermilion needed, and
+   for the same reason. The near-black label was worth 6.31:1 on vermilion
+   BECAUSE vermilion is a light colour; on purple it measures 2.64-3.69:1
+   and fails outright. Purple is dark enough to carry white directly, so
+   the label flips back and the fill keeps full strength: white measures
+   5.26:1 at the top stop and 7.35:1 at the bottom. Do not "restore" the
+   dark label from git history -- it was never a matter of taste. */
 button.btn.acc {
-  background: linear-gradient(180deg, #ff6b5e, #f04a3c);
-  border-color: #ff8a80; color: #0c0d10; font-weight: 600;
-  box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
+  background: linear-gradient(180deg, #9438e8, #7a1fc8);
+  border-color: #a95cf0; color: #fff; font-weight: 600;
+  box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
-/* brightness(1.08) used to make this button HARDER to read -- it lightened
-   the fill under white text, 3.08 -> 2.96. With a dark label the same
-   gesture improves it, 6.31 -> 6.56. */
+/* PRE-EXISTING, predates the purple retheme and is left alone by it:
+   `button.btn:hover:not(:disabled)` above is (0,3,1) and beats
+   `button.btn.acc` at (0,2,1), so hovering REPLACES the accent gradient
+   with the plain #242832 button fill. The rule below therefore brightens
+   that flat grey, not the brand -- and .acc:disabled's grayscale(.5) has
+   nothing coloured left to act on either. Both read as dead intent.
+   Verified against HEAD: the vermilion button behaved identically, so this
+   is not new. Not fixed here because making the gradient persist changes
+   how the most prominent button in the app looks on hover, which is a
+   product call rather than a retheme one. No contrast issue either way:
+   the hover state is --text on #242832, 12.2:1. */
 button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
    in the app fell back to the UA ring -- which, before `color-scheme: dark`
    above, resolved for a light scheme and drew near-black on a near-black
-   page. #ff8a80 measures 7.2-8.5:1 against every surface here, well over
+   page. #c99cff measures 8.3-9.0:1 against every surface here, well over
    the 3:1 that 1.4.11 asks of a non-text indicator.
 
    :focus-visible, not :focus: a mouse click on a button must not leave a
@@ -248,7 +300,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
-  outline: 2px solid #ff8a80;
+  outline: 2px solid #c99cff;
   outline-offset: 2px;
 }
 /* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
@@ -274,13 +326,40 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 ::-webkit-scrollbar-thumb:hover { background: #333845; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
+/* The ship, in the empty lower-right of the Uploader only. Scoped to one
+   route deliberately: Skills' content area is transparent and full-width,
+   so the same watermark there lands directly behind live rows and reads as
+   clutter rather than as fill. Uploader has real dead space below the
+   panel; that is the whole reason it works.
+
+   background-image, NOT mask-image, and the tint is baked into the PNG at
+   --brand-text (#ad5aff). This is deliberate and it is a downgrade forced
+   by the platform: masking white line art would have taken the colour from
+   the token automatically, but mask-image is a CORS-restricted resource and
+   window.py hands create_window() a filesystem path, so the page runs on
+   file:// -- where Chromium/WebView2 refuses the mask and the element
+   renders as NOTHING, with no error anywhere in the app. background-image
+   is not CORS-checked and loads fine. If --brand-text ever changes, this
+   PNG has to be regenerated to match; there is no way to make it follow.
+
+   z-index -1 puts it under every opaque card and the list pane, so it is
+   visible ONLY in genuinely empty space. See the html/body note above for
+   why the page wash cannot live on body. */
+#route-main::after {
+  content: ""; position: fixed; z-index: -1; pointer-events: none;
+  right: -40px; bottom: 26px; width: 640px; height: 550px;
+  opacity: .18;
+  background: url("assets/ship.png") no-repeat right bottom / contain;
+}
+
 /* ====================== recording list ============================== */
 /* Two panes, preserving today's split: list left, upload panel right. */
 #route-main { padding: 12px; gap: 12px; align-items: stretch; }
 
 .list-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: var(--panel); border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius); overflow: hidden;
 }
 
@@ -328,7 +407,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
 .list-head > span:hover { color: var(--text); }
-.list-head > span.sorted { color: var(--brand); }
+.list-head > span.sorted { color: var(--brand-text); }
 /* Direction indicator on the active column only. */
 .list-head > span.sorted::after { content: "\25B2"; font-size: 8px; }
 .list-head > span.sorted.desc::after { content: "\25BC"; }
@@ -376,7 +455,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .list-row.sel .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #ff7a6f;
+  border-color: #a95cf0;
 }
 .box::after {
   content: "\2713"; font-size: 10px; line-height: 1; color: #fff;
@@ -391,7 +470,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 22px; height: 22px; border-radius: 5px;
   color: var(--text-faint); cursor: pointer;
 }
-.glyph-link:hover { background: #22252c; color: var(--brand); }
+.glyph-link:hover { background: #22252c; color: var(--brand-text); }
 .dur-unknown, .dur-pending { color: var(--text-faint); cursor: help; }
 
 .list-foot {
@@ -493,10 +572,10 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .check .box { width: 15px; height: 15px; }
 .check input:checked + .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #ff7a6f;
+  border-color: #a95cf0;
 }
 .check input:checked + .box::after { opacity: 1; }
-.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
 /* Scoped to this one label by id: .check is the shared wrapper Settings,
    Bookmarks and Previews all build on, and an opacity on it would dim
    every checkbox in the app. Same .45 button.btn:disabled uses, so an
@@ -589,7 +668,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .statusbar {
   flex: none; display: flex; align-items: center; gap: 14px;
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
-  background: #101216;
+  background: linear-gradient(180deg, #14101c, #0f0c14);
 }
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
@@ -611,7 +690,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .bar {
   height: 100%; width: 0%; border-radius: 2px;
   background: linear-gradient(90deg, var(--brand-deep), var(--brand));
-  box-shadow: 0 0 10px rgba(255, 90, 77, .6);
+  box-shadow: 0 0 10px rgba(132, 48, 217, .6);
   transition: width .12s linear;
 }
 /* Indeterminate: an ffmpeg stitch reports no readable progress, so the bar
@@ -678,7 +757,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
 .dialog.confirm h3::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  box-shadow: 0 0 9px rgba(255, 90, 77, .5);
+  box-shadow: 0 0 9px rgba(132, 48, 217, .5);
 }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
@@ -874,7 +953,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* Capturing: the label already changes to "Press a key…", but without a
    visual state the row does not read as waiting for input. */
 .bindbtn.capturing {
-  border-color: var(--brand); color: var(--brand); background: #22252c;
+  border-color: var(--brand-text); color: var(--brand-text); background: #22252c;
 }
 
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
@@ -942,9 +1021,9 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
-  box-shadow: 0 0 10px rgba(255, 90, 77, .5);
+  box-shadow: 0 0 10px rgba(132, 48, 217, .5);
 }
-.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
 
 /* Radios laid out INLINE in a .row, rather than stacked down a card: the
    8px stacked margin applies to the first of the pair and not the last
@@ -1219,7 +1298,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .key-Unscored { color: var(--text-faint); }
 /* The catch-all bucket. Brand-coloured on purpose: a readiness this page
    has never heard of is worth looking at, not worth hiding. */
-.key-Other { color: var(--brand); }
+.key-Other { color: var(--brand-text); }
 
 .skills-row {
   border-bottom: 1px solid #191c22;

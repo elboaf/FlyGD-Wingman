@@ -183,6 +183,15 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       minimize and close in turn and move the pointer a few pixels.
       Expected: none of them drags the window; each still activates on
       release.
+- [ ] **The window drags by its logo.** Press and hold on the round emblem
+      at the far left of the title bar and move the pointer. Expected: the
+      window moves, exactly as it does from the empty space beside
+      "WINGMAN". The mark is an `<img>` inside the drag region and images
+      are natively draggable, so the failure mode is that dragging there
+      picks up a ghost of the image instead of the window -- making the one
+      spot users aim at most look like dead surface. `style.css` sets
+      `pointer-events: none` and `-webkit-user-drag: none` to prevent it;
+      this is the only check that would catch either being dropped.
 - [ ] **The title-bar controls do what they say.** The gear opens the
       Settings route in the same window (not a second OS window), minimize
       minimizes to the taskbar, and close HIDES to the tray rather than
