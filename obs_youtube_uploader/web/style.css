@@ -904,10 +904,47 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
 
 /* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
-   anything, and .card is not one -- so both lists take content height and
-   grow the route instead of scrolling. Capped the same way the dialog body
-   is, so forty characters scroll inside the card. */
-#es-targets, #es-backups { max-height: 38vh; }
+   anything, and .card is not one -- so the list takes content height and
+   grows the route instead of scrolling. Capped the same way the dialog body
+   is, so a long backup history scrolls inside the card.
+
+   Backups only, now. #es-targets used to share this cap and no longer does
+   -- see .es-roster below. The two lists look alike and are not: backups
+   are a history you consult one row of, and the roster is the record of
+   who a single irreversible press is about to overwrite. Capping the
+   second is what put a name half-drawn above the accent button. */
+#es-backups { max-height: 38vh; }
+
+/* Profiles 2 -- the roster, in columns, uncapped.
+
+   Measured from the walkthrough's captures, which are PHYSICAL pixels at
+   200%: a ~1180px card holding a ~250px column of names is 590 CSS and 125
+   CSS, so every row spent about 450 CSS px on nothing. The names were in a
+   single column inside a card wide enough for three, and then that column
+   was capped at 38vh -- 237px at the 840x625 floor -- so ~35 characters
+   scrolled inside a scroller inside a scrolling page.
+
+   column-width, not column-count: the count then follows the width the card
+   actually has, which is 586px inside .settings' 620px cap today and would
+   be more if that cap ever moves. At 586 this is three columns, which is
+   what the finding asked for, and ~35 names become ~12 rows.
+
+   Columns rather than a grid because the reading order is the point. A
+   grid fills row-wise, so an alphabetical roster reads across; multi-column
+   fills column-wise, so it reads DOWN each column the way a name list is
+   scanned. DOM order is column order, so the tab order agrees with the eye.
+
+   No max-height on purpose. The route already sets overflow-y: auto, so the
+   page is the one scrollbar; a cap here is what produced the nested pair
+   and the rows clipped mid-name at both edges. A very large roster makes a
+   long page, which is the honest rendering of "here is everyone about to be
+   overwritten". */
+.es-roster { columns: 170px; column-gap: 16px; }
+/* A name split across a column break is worse than an uneven column. */
+.es-roster > .check { break-inside: avoid; padding: 2px 0; }
+/* The empty state is a statement about the whole list, not an entry in it,
+   so it spans rather than sitting in column one. */
+.es-roster > .empty { column-span: all; }
 
 /* Accented, unlike a plain .hint: "couldn't read that folder" is a warning
    rather than an error (the root may simply not exist yet), following
@@ -934,6 +971,64 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    half that may be cut. */
 #es-folder-set {
   flex: none; color: var(--text-dim); font-size: var(--fs-muted);
+}
+
+/* Profiles 1 -- the commit row. The button keeps the left edge every other
+   control on this screen starts at; the cost and the hazard follow it, in
+   that order, and the pill is pushed to the right edge so it reads as a
+   condition of the screen rather than as a third word in the sentence.
+   Nothing here is accent: the one accent on this screen is the button, and
+   a warning that competed with it would be arguing about which is primary.
+
+   flex-wrap, because three things on one row at the 840 floor is the case
+   this screen has been caught by before -- at 586px of card the count and
+   the pill drop to their own line rather than squeezing the button.
+
+   The top margin is the other half of Profiles 2's collision. .row has a
+   bottom margin and no top one, so with the roster's inner scroller gone
+   the last name sat directly on the accent button -- which is what the
+   walkthrough saw through the clipped scroll boundary, minus the clipping.
+   Uncapping the list removed the half-drawn name; this is what stops the
+   whole one from touching the button. */
+#es-commit { flex-wrap: wrap; row-gap: 8px; margin-top: 14px; }
+
+/* The quantity, stated before the irreversible action (PRODUCT.md). Body
+   size, not muted: it is the number the user is meant to check, and the
+   Uploader's own "1 selected - 108.8 MB" line is not whispered either.
+   It goes dim, not hidden, when nothing is selected -- an empty slot beside
+   a disabled button would read as a layout gap rather than as an answer. */
+.es-count { color: var(--text); font-size: var(--fs-body); }
+.es-count.none { color: var(--text-faint); }
+
+/* Right edge, so the hazard is the last thing before the eye leaves the
+   row -- and so it lands in the same place whether or not the count wrapped.
+
+   The [hidden] override is REQUIRED, not decorative: .pill sets
+   display: inline-flex, and an author rule beats the UA stylesheet's
+   [hidden] { display: none } regardless of specificity, so without this the
+   pill evesettings.js hides stays on screen. DESIGN.md names this trap and
+   six rules in this file already carry the same note; one shipped without
+   it anyway. */
+#es-eve-state-commit { margin-left: auto; }
+#es-eve-state-commit[hidden] { display: none; }
+
+/* Profiles 6 -- an empty Server or Profile rendered exactly like a working
+   one: blank, un-placeholdered and undimmed before a folder exists, so it
+   read as broken rather than as not-yet-applicable. evesettings.js disables
+   the select and gives it a placeholder option; this is what makes the
+   disabled state visible, since nothing in style.css styles a disabled
+   select and the UA's own treatment is a light-scheme grey.
+
+   #es-source is here too. The finding names Server and Profile, and `Copy
+   from` is the same control with the same failure -- once its two
+   neighbours carry a placeholder, the one blank dropdown left beside them
+   states the finding more loudly than before rather than less.
+
+   Scoped to these three ids rather than added to .field: every other .field
+   on the page is disabled by setBusy for the length of a copy, and dimming
+   those would make a two-second mutation look like a broken form. */
+#es-server:disabled, #es-profile:disabled, #es-source:disabled {
+  color: var(--text-faint); opacity: 1; cursor: default;
 }
 
 /* Ten backups produced ten different button positions, because the whole
