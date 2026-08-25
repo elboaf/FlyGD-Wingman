@@ -368,11 +368,24 @@
     label.classList.toggle('none', !count);
     WM.setEnabled('es-copy', !busy && count > 0);
     // The hazard is about what this button is ABOUT to do, so it appears
-    // only while the button can do it. Without this, the one state where
-    // both pills are on screen together -- no folder chosen, which forces
-    // the folder card open -- shows "EVE running" twice, six inches apart,
-    // about a copy that cannot happen. The pill in the heading is the
-    // screen's standing answer; this one is the commit's.
+    // only while the button can do it: with nothing selected it would say
+    // "EVE running" about a copy that cannot happen.
+    //
+    // It does NOT stop the two pills sharing a viewport, and this comment
+    // used to claim it did ("the one state where both are on screen
+    // together -- no folder chosen"). False: the heading pill lives in the
+    // h2 precisely so it survives the folder card collapsing, so with a
+    // folder chosen and a character selected a tall window shows both,
+    // about 545 CSS px apart (round 3, P8).
+    //
+    // That overlap is accepted. The two answer different questions -- the
+    // heading pill is the screen's standing answer, this one is the
+    // commit's -- and outside the overlap their coverage is complementary:
+    // while choosing, only the heading pill is up; scrolled to the button,
+    // the heading pill has left the viewport and only this one is (which is
+    // why the second was added at all, see paintPill). Neither is
+    // removable, and closing the overlap by weakening this guard would
+    // drop the hazard in the state where it is the only warning.
     WM.el('es-eve-state-commit').hidden = count === 0;
   }
 
