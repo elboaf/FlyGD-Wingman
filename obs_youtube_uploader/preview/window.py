@@ -8,7 +8,8 @@ import logging
 import os
 import time
 
-from . import chrome, geometry, layered, win32
+from ..alerts import state as alerts_state
+from . import alertframes, chrome, geometry, layered, win32
 from .thumbnail import Thumbnail
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,16 @@ class PreviewWindow:
         self._screen = screen
         self.hwnd = None
         self._thumb = None
+        # The thumbnail's inset from the window edge. Normally BORDER, but
+        # an armed alert widens it to ALERT_BORDER for the duration: the
+        # thumbnail overpaints the ring everywhere it covers, so a 6px ring
+        # inside a 2px inset renders as corner brackets (measured; see
+        # docs/preview-roadmap.md). Stored rather than passed, so the two
+        # existing thumbnail_rect call sites cannot drift from it.
+        self._inset = BORDER
+        self._alert = None
+        self._frames = None
+        self._frames_dirty = False
         self._mode = None
         self._start = None
         self._start_rect = None
@@ -339,7 +350,7 @@ class PreviewWindow:
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
             self._thumb.update(
-                geometry.thumbnail_rect(self.rect, BORDER, self._label_h()),
+                geometry.thumbnail_rect(self.rect, self._inset, self._label_h()),
                 self.opacity,
             )
         return self
@@ -398,8 +409,155 @@ class PreviewWindow:
         if selected == self.selected:
             return
         self.selected = selected
+        # Selecting the client is what acknowledges a persistent alert, and
+        # this is the ONLY place that catches every route to selection:
+        # clicking the preview, a cycle keybind, and plain alt-tab all end
+        # up here through the foreground hook. Acknowledging in the click
+        # handler alone would leave a ring pulsing forever for anyone who
+        # switched clients any other way.
+        if selected:
+            self.acknowledge_alert()
         # Already part of _chrome_key() above, so this repaints.
         self.redraw()
+
+    # -- alerts ----------------------------------------------------------
+    def _set_inset(self, px: int) -> None:
+        """Move the thumbnail's edge. Two calls per alert -- arm and clear
+        -- never one per tick."""
+        if px == self._inset:
+            return
+        self._inset = px
+        if self._thumb is not None:
+            self._thumb.update(
+                geometry.thumbnail_rect(self.rect, px, self._label_h()), self.opacity
+            )
+
+    def _rebuild_frames(self) -> None:
+        """Drop any cached frames and render the current alert's."""
+        if self._frames is not None:
+            self._frames.close(self._libs)
+            self._frames = None
+        self._frames_dirty = False
+        if self._alert is None:
+            return
+        self._frames = alertframes.FrameCache.build(
+            self._libs,
+            (self.rect.w, self.rect.h),
+            self.client.character or self.client.title,
+            self._alert.color,
+            # Not the constant: labels can be switched off (#87), and a
+            # frame rendered with a band the live chrome does not have
+            # would flash a label into existence for the pulse's duration.
+            self._label_h(),
+        )
+
+    def _invalidate_frames(self) -> None:
+        """Free the frames and ask the next tick to rebuild them.
+
+        Distinct from `_frames is None` meaning "build failed": that must
+        NOT be retried every 80ms, since the way it fails is GDI handle
+        exhaustion and the retry is six Pillow renders. This flag is the
+        only thing that asks for a rebuild.
+        """
+        if self._frames is not None:
+            self._frames.close(self._libs)
+            self._frames = None
+        self._frames_dirty = True
+
+    def arm_alert(self, event: str, spec: dict, now: float) -> None:
+        self._alert = alerts_state.arm(
+            self._alert,
+            event,
+            spec.get("color", "#ff4d4d"),
+            now,
+            duration_ms=spec.get("duration_ms", 1200),
+            pulses=spec.get("pulses", 3),
+            # Global, not per-event: persist_until_selected lives beside
+            # `events` in the alerts section, and AlertService merges it
+            # into the spec it dispatches so this stays one dict.
+            persist=bool(spec.get("persist_until_selected")),
+            target_is_selected=self.selected,
+        )
+        # Size, label and label height as well as colour: the frames ARE a
+        # bitmap, and _chrome_key already treats (w, h, label, show_labels)
+        # as a bitmap's identity. A client that reaches character-select
+        # and then names a character changes its label mid-alert, and
+        # #87's label toggle changes the band height under one. `arm` can
+        # also return the EXISTING alert unchanged (a lower-severity event
+        # extends the expiry without repainting), in which case nothing has
+        # changed and the cache stands.
+        label = self.client.character or self.client.title
+        stale = self._frames is None or (
+            self._frames.colour != self._alert.color
+            or self._frames.size != (self.rect.w, self.rect.h)
+            or self._frames.label != label
+            or self._frames.label_h != self._label_h()
+        )
+        if stale:
+            self._rebuild_frames()
+        # Outside the `if`: the inset must widen on every arm, not only on
+        # the arms that happen to rebuild. The two were coupled by
+        # coincidence (frames are None exactly when the inset is BORDER)
+        # with nothing asserting the coupling.
+        self._set_inset(alertframes.ALERT_BORDER)
+
+    def tick_alert(self, now: float) -> bool:
+        """Push the current phase. Returns False when the alert is done."""
+        self._alert = alerts_state.clear_expired(self._alert, now)
+        if self._alert is None:
+            self.clear_alert()
+            return False
+        if self._frames_dirty:
+            self._rebuild_frames()
+        if self._frames is None:
+            # Frames failed to build (GDI exhaustion). Nothing can be
+            # drawn, so stop claiming to be armed rather than spinning the
+            # 80ms timer forever on a window that will never flash. Not
+            # retried: the retry is six Pillow renders against the
+            # resource that just ran out.
+            logger.warning(
+                "Alert frames unavailable for %s; clearing the alert",
+                self.client.stable_key,
+            )
+            self.clear_alert()
+            return False
+        self._frames.push(
+            self._libs, self.hwnd, self.rect, alerts_state.frame_index(self._alert, now)
+        )
+        return True
+
+    def _free_frames(self) -> None:
+        """Release the DIBs without repainting. Split out for close(),
+        which is about to destroy the window: a redraw and a thumbnail
+        update there would be work on a surface nobody will see again."""
+        if self._frames is not None:
+            self._frames.close(self._libs)
+            self._frames = None
+        self._frames_dirty = False
+        self._alert = None
+
+    def clear_alert(self) -> None:
+        if self._alert is None and self._frames is None:
+            return
+        self._free_frames()
+        self._set_inset(BORDER)
+        # force=True: pushing alert frames does not change _chrome_key, so
+        # redraw() would early-return and the last alert frame would stay
+        # on screen for the life of the preview.
+        self.redraw(force=True)
+
+    def alert_is_armed(self) -> bool:
+        return self._alert is not None
+
+    def acknowledge_alert(self) -> bool:
+        """Clear a PERSISTENT alert. A timed one is left to expire, so
+        selecting a client does not cut short a ring that just appeared."""
+        if self._alert is None:
+            return False
+        if alerts_state.acknowledge(self._alert) is None:
+            self.clear_alert()
+            return True
+        return False
 
     def move(self, rect) -> None:
         """Reposition and, only if the size changed, re-render.
@@ -421,9 +579,21 @@ class PreviewWindow:
             self.redraw()
             if self._thumb is not None:
                 self._thumb.update(
-                    geometry.thumbnail_rect(rect, BORDER, self._label_h()),
+                    geometry.thumbnail_rect(rect, self._inset, self._label_h()),
                     self.opacity,
                 )
+            # The cached alert frames are sized to the OLD rect, and
+            # UpdateLayeredWindow takes its size from the image -- so a
+            # stale frame does not merely look wrong, it snaps the window
+            # back to the armed size, fighting the drag at 12Hz.
+            #
+            # Invalidated, NOT rebuilt here: this runs once per
+            # WM_MOUSEMOVE, and a rebuild is up to six Pillow renders --
+            # "the cost that made dragging stutter" all over again. The
+            # next tick rebuilds once, so a drag costs one rebuild per
+            # 80ms instead of one per mouse event.
+            if self._alert is not None:
+                self._invalidate_frames()
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):
@@ -509,6 +679,13 @@ class PreviewWindow:
                     self._start, _cursor_pos(self._libs), self._start_rect, self.locked
                 )
                 if action == "activate":
+                    # Acknowledged BEFORE the handoff, and regardless of
+                    # whether the switch that follows succeeds: Windows
+                    # refuses a foreground change from a process without
+                    # recent input, so acknowledging only on a successful
+                    # swap would leave the ring pulsing forever with
+                    # clicking it doing nothing.
+                    self.acknowledge_alert()
                     # Classify, then hand off: the window does NOT call
                     # activate() itself. The host owns the switch because
                     # it is the only thing that knows the previous
@@ -535,6 +712,10 @@ class PreviewWindow:
     def close(self) -> None:
         """Thumbnail first: its destination is this window, and
         unregistering after DestroyWindow leaves DWM holding a dead HWND."""
+        # Before anything is destroyed: a client that quits mid-alert
+        # otherwise leaks one DC and up to six DIBs for the life of the
+        # process, and a fleet-wide aggression arms every preview at once.
+        self._free_frames()
         self._release_thumb()
         if self.hwnd:
             _WINDOWS.pop(int(self.hwnd), None)

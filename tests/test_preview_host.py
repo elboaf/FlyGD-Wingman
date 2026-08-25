@@ -573,10 +573,11 @@ def test_teardown_clears_the_client_and_registration_reports():
 
 def test_teardown_clears_pending_alerts_and_selection():
     """_teardown clears _clients and _hotkey_status but had left
-    _pending_alerts, _selected_key, and _foreground behind. Today
-    _apply_alerts is a no-op, but the queue still grows between stop()
-    and the next reconcile (ui/api.py's set_preview_enabled(False) calls
-    host.stop() before alerts.reconcile()), and _apply_selection's
+    _pending_alerts, _selected_key, and _foreground behind. The queue
+    grows between stop() and the next reconcile (ui/api.py's
+    set_preview_enabled(False) calls host.stop() before
+    alerts.reconcile()), so an hour-old batch would arm every preview at
+    once on the next enable; and _apply_selection's
     `if key == self._selected_key: return` would leave a fresh window
     unselected forever across a stop/start if this were not cleared."""
 

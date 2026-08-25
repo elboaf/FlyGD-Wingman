@@ -17,7 +17,7 @@ than it should be. Six of its statements no longer hold:
 | --- | --- |
 | Second slice items 7 and 8 shipped (client window placement, the placing watcher) | **Removed in #31.** Only item 9, `settings.update()`, survived — and it is now the boundary every settings writer in the package uses |
 | `gestures.py` and `cycle.py` are *(deferred)* in the module table | Shipped in #26, which the same document states twelve lines later |
-| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped except the render path** in #65 — see below |
+| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped** — everything but the render path in #65, the render path since — see below |
 | `PreviewWindow.selected` is never set | `PreviewHost` tracks `_selected_key` from the foreground hook and calls `set_selected` (#65) |
 | "Every one of the thirteen client-window-layout items is also unwalked" | That checklist section was deleted with the feature in #31. Two of its three weighted items asked whether EVE accepts a forced rect — the question that destroyed three characters' settings. They are answered by deletion |
 | The rebind regression test covers `save_settings` only | `save_settings` and `set_recording_dir` no longer exist. `_write_setting` is the single writer and `ui/api.py` contains no rebind at all. `save_bookmarks` is the one writer still outside the test's reach |
@@ -30,29 +30,32 @@ section of `docs/smoke-checklist.md`, not a number.
 
 ### The alert render path — the last mile of item 9
 
-**Highest priority, because the feature is currently inert.** #65 built
-detection, parsing and configuration: `preview/alerts/{patterns,tailer,service,state}.py`,
-a validated `preview.alerts` section with per-event colour, sound, duration and
-pulse count, PvE filtering, persist-until-selected, the Previews-tab card, and
-`PreviewHost.raise_alert` with a bounded queue drained on the pump.
+**Built.** #65 delivered detection, parsing and configuration:
+`preview/alerts/{patterns,tailer,service,state}.py`, a validated
+`preview.alerts` section with per-event colour, sound, duration and pulse
+count, PvE filtering, persist-until-selected, the Previews-tab card, and
+`PreviewHost.raise_alert` with a bounded queue drained on the pump. What was
+missing was the drawing, and `PreviewHost._apply_alerts` was a no-op — a user
+could enable alerts, configure colours, and observe no difference whatsoever,
+which is worse than unshipped because everything reported success.
 
-`PreviewHost._apply_alerts` is a no-op. It drains the queue so `raise_alert`
-cannot back up unbounded, and draws nothing. A user can enable alerts,
-configure per-event colours, and observe no difference whatsoever — which is a
-worse state than unshipped, because everything reports success.
-
-`docs/smoke-checklist.md` already carries a "Cannot run until the render path
-lands" section for it.
+`preview/alertframes.py` now pre-renders one DIB per pulse phase and the host
+pushes them on an 80ms timer that runs only while something is armed.
+**Nothing in the suite renders a pixel, so this is verified by
+`docs/smoke-checklist.md`'s "The alert render path" section and not by CI.**
 
 Two constraints, both load-bearing:
 
 - **Do not re-render the Pillow bitmap at flash frequency.** `redraw()` is keyed
   and a flash would defeat the key, putting a ~67k-pixel push back on a timer —
   the cost that made dragging stutter. (The record states this at
-  `eve-preview-design.md:468-471`, cited from three other documents.)
+  `eve-preview-design.md:468-471`, cited from three other documents.) The same
+  rule is why a resize mid-alert *invalidates* the frame cache and lets the
+  next tick rebuild it, rather than rebuilding per `WM_MOUSEMOVE`.
 - **Pre-rendered frames are the only remaining option.** The alternative this
   file used to offer — "pulse `SetLayeredWindowAttributes` alpha" — was probed
   on 2026-08-25 and does not work. See below.
+
 
 Not verifiable by the suite — no test renders a pixel. Needs hands-on testing
 against real clients.

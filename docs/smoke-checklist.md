@@ -1798,28 +1798,41 @@ headless.
       render, the documented fallback is three fixed swatches per event —
       verify that they are offered instead.
 
-### Cannot run until the render path lands
+### The alert render path
 
-The eight items below depend on work not yet implemented: the rendering
-path that draws alert rings on previews, the pulsing-to-blinking transition
-for large previews, frame caching, and the alert timer. `PreviewHost._apply_alerts`
-is currently a no-op that drains the queue and logs at debug level. They
-are listed here so the checklist is complete for when that work lands.
+`PreviewHost._apply_alerts` arms the named character's preview and starts an
+80ms tick timer that runs only while something is armed. The eight items below
+were blocked on that and are now live.
+
+Two things decide what you should see, and they are easy to conflate:
+
+- **Persistent alerts** (`Persist` on, the default) clear when you *select*
+  that client — by clicking its preview, by a cycle keybind, or by plain
+  alt-tab. All three land in `PreviewWindow.set_selected`.
+- **Timed alerts** (`Persist` off) run their configured duration and are
+  **not** cut short by selecting the client. That is deliberate:
+  `alerts/state.py:75-83` refuses to acknowledge a timed alert so selecting a
+  client cannot kill a ring that has only just appeared.
 
 - [ ] **Take fire from a player.** In a wormhole with your preview visible,
       have another player shoot your character with weapons. Expected: the
       preview pulses in the configured colour and keeps pulsing while you are
-      focused on a different application (e.g. a browser). The pulsing stops
-      when you switch back to the EVE client.
+      focused on a different application (e.g. a browser). With `Persist` on,
+      it stops when you switch back to that EVE client; with `Persist` off it
+      stops on its own after the configured duration.
 - [ ] **Click the pulsing preview to clear it.** While the preview is
-      pulsing from an alert, click anywhere on it. Expected: the ring clears
-      immediately **even if the client does not come to the foreground** —
-      clicking the preview is its own action. This is window.py:102-116's
-      expected failure mode before a click goes through to EVE.
-- [ ] **Drag an alerting preview without stutter.** Start a combat that
-      generates alerts on a visible client, then drag its preview to a new
-      position. Expected: the preview moves smoothly and the alert ring keeps
-      pulsing with no visible lag or skipped frames.
+      pulsing from a **persistent** alert, click anywhere on it. Expected: the
+      ring clears immediately **even if the client does not come to the
+      foreground** — clicking the preview is its own action. This is
+      window.py:102-116's expected failure mode before a click goes through
+      to EVE.
+- [ ] **Drag an alerting preview.** Start a combat that generates alerts on a
+      visible client, then drag its preview to a new position. Expected: the
+      preview moves smoothly. **The pulse is expected to hold one frame for
+      the duration of the drag** and resume in phase on release — `WM_TIMER`
+      is synthesized only when the thread queue is empty, and a drag keeps it
+      full at a measured 320 mouse-moves/s. A frozen ring here is correct
+      behaviour, not a bug; a stuttering *window* is a bug.
 - [ ] **Quit an EVE client mid-alert.** Start combat that generates alerts,
       then close that client's window while the preview is pulsing. Expected:
       no crash, and the alert timer stops (the preview disappears within ~1s
@@ -1830,13 +1843,13 @@ are listed here so the checklist is complete for when that work lands.
       ring (outline of the focused client) and the 6px alert pulsing ring are
       clearly visible at their designed size, not bleeding together or
       becoming indistinct.
-- [ ] **Alt-tab between clients with an active alert.** With an alert armed
-      on one client, switch focus away and back to that client. Expected: the
-      alert ring (not the selection ring) stays on the preview while any
-      other client is focused, then reappears when you return to the alerted
-      client. This is the contrast with the selection ring: a selection ring
-      only appears on the foreground client, but an alert ring pulses
-      regardless of focus until cleared.
+- [ ] **Alt-tab between clients with an active alert.** With a **timed**
+      alert armed on one client, switch focus away and back to that client.
+      Expected: the alert ring pulses regardless of which client is focused,
+      and returning to the alerted client does **not** cut it short. Repeat
+      with `Persist` on: returning to that client clears the ring, because
+      selecting it is what acknowledges it. This is the contrast with the
+      selection ring, which only ever appears on the foreground client.
 - [ ] **Press Test on each event type.** In the Alerts card, for each of
       the three events (Combat, Warp scramble, Decloak), click its Test
       button. Expected: the ring pulses on a character's preview in the
@@ -1844,10 +1857,13 @@ are listed here so the checklist is complete for when that work lands.
       a few seconds — a test alert is never persistent.
 - [ ] **Resize a preview past 640x480 while alerting.** Start an alert that
       makes a preview pulse, then drag its bottom-right corner to enlarge it
-      past 640x480 pixels. Expected: the pulse transitions from a rotating
-      ring to a blinking frame border, nothing leaks outside the preview
-      bounds, and the visual effect continues until the alert clears. Resize
-      smaller than 640x480 again; the ring returns.
+      past 640x480 pixels. Expected: the pulse transitions from a six-step
+      pulse to a two-step blink, nothing leaks outside the preview bounds,
+      the window does **not** snap back to its pre-drag size, and the effect
+      continues until the alert clears. Resize smaller than 640x480 again;
+      the six-step pulse returns. The snap-back is the specific regression to
+      watch for: `UpdateLayeredWindow` takes its size from the pushed image,
+      so a stale frame cache resizes the window under the drag.
 
 ## Profiles (the EVE settings copier)
 

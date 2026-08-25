@@ -33,6 +33,11 @@ SWITCH_SETTLE_MS = 10
 # see the SendMessageTimeoutW bind comment in win32.py.
 MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
+# Runs only while something is armed, and is killed the moment nothing is
+# -- an 80ms timer left running is a wakeup 12 times a second for the life
+# of the session, on the thread that also pumps the hotkey loop.
+ALERT_TIMER_ID = 2
+ALERT_MS = 80
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
 # Anything beyond a handful means the pump has stopped draining, not that
@@ -171,6 +176,10 @@ class PreviewHost:
         # field under the lock and only the signal is posted. A list, not
         # one slot, because two clients can be alerted between ticks.
         self._pending_alerts = []
+        # Whether the 80ms alert tick timer is currently running. Tracked
+        # rather than derived so KillTimer is called exactly once when the
+        # last alert clears, and only ever from the preview thread.
+        self._alert_timer = False
         # Recorded by the foreground hook (an arbitrary thread) and
         # resolved by _sweep, never the other way around -- see
         # _install_hook and _apply_selection.
@@ -382,6 +391,9 @@ class PreviewHost:
         libs = win32.bind()
         if msg == win32.WM_TIMER and wparam == SWEEP_TIMER_ID:
             self._sweep(libs)
+            return 0
+        if msg == win32.WM_TIMER and wparam == ALERT_TIMER_ID:
+            self._tick_alerts(libs)
             return 0
         if msg == win32.WM_APP_SWEEP_NOW:
             self._sweep(libs)
@@ -730,17 +742,64 @@ class PreviewHost:
         return ok
 
     def _apply_alerts(self, libs, pending) -> None:
-        """No-op for now -- rendering the alert on its preview window is
-        wired up by a later task. Just keep the mailbox draining so
-        raise_alert() never backs up unbounded.
+        """Arm the preview each event names, then make sure the tick timer
+        matches reality.
+
+        The lookup is direct: `_windows` is keyed by `Client.stable_key`,
+        which discovery sets to the character name for any client past
+        character-select (`discovery.py:71`), and the character an alert
+        names comes from that client's own gamelog. An alert for a
+        character with no preview -- previews off for that client, or it
+        quit between the log line and this drain -- is a no-op, and is
+        logged rather than dropped silently, because "the sound played and
+        nothing flashed" is otherwise indistinguishable from a broken
+        render path.
         """
+        now = time.monotonic()
         for character, event, spec in pending:
-            logger.debug(
-                "Alert for %s (%s, %s) received; renderer not wired yet",
-                character,
-                event,
-                spec,
+            win = self._windows.get(character)
+            if win is None:
+                logger.debug(
+                    "Alert for %s (%s): no preview open, so only the sound played",
+                    character,
+                    event,
+                )
+                continue
+            win.arm_alert(event, spec, now)
+        self._update_alert_timer(libs)
+
+    def _update_alert_timer(self, libs) -> None:
+        """Start the tick timer when anything is armed, kill it when
+        nothing is. Idempotent: SetTimer on a live id just resets it."""
+        if self._hwnd is None:
+            return
+        armed = any(w.alert_is_armed() for w in self._windows.values())
+        if armed and not self._alert_timer:
+            libs.user32.SetTimer(
+                self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID), ALERT_MS, None
             )
+            self._alert_timer = True
+        elif not armed and self._alert_timer:
+            libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
+            self._alert_timer = False
+
+    def _tick_alerts(self, libs) -> None:
+        """One pulse frame for every armed preview."""
+        now = time.monotonic()
+        for win in list(self._windows.values()):
+            if not win.alert_is_armed():
+                continue
+            try:
+                win.tick_alert(now)
+            except Exception:
+                # Guarded per window, like every other callback on this
+                # thread: an exception here unwinds into the WndProc where
+                # sys.unraisablehook swallows it, so one bad preview would
+                # silently stop every OTHER preview's pulse and keep doing
+                # so 12 times a second.
+                logger.exception("Alert tick failed for %s", win.client.stable_key)
+                win.clear_alert()
+        self._update_alert_timer(libs)
 
     def _screen(self):
         """Virtual-desktop bounds, re-read each sweep.
@@ -1005,12 +1064,11 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
-        # Same reasoning, for state the held render path will start
-        # reading: _apply_alerts is a no-op today, but once it renders,
-        # an hour-old batch queued between stop() and the next enable
-        # would arm every preview at once with a stale fight (raise_alert
-        # is safe from any thread and keeps filling this while the pump
-        # is torn down). And _apply_selection's `if key == self.
+        # Same reasoning, for the state the render path reads: an hour-old
+        # batch queued between stop() and the next enable would arm every
+        # preview at once with a stale fight (raise_alert is safe from any
+        # thread and keeps filling this while the pump is torn down). And
+        # _apply_selection's `if key == self.
         # _selected_key: return` would otherwise leave a freshly-created
         # window unselected forever across a stop/start, since nothing
         # else resets it.
@@ -1026,6 +1084,9 @@ class PreviewHost:
         self._windows.clear()
         if self._hwnd:
             libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID))
+            if self._alert_timer:
+                libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
+                self._alert_timer = False
             libs.user32.DestroyWindow(self._hwnd)  # 3. host window
             self._hwnd = None
         libs.user32.PostQuitMessage(0)  # 4. end the pump
