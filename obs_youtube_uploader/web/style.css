@@ -685,6 +685,52 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    #eve-bind-warning's precedent below. */
 #es-warning { color: var(--warn); }
 
+/* The pill sits inside .card > h2, which is already an align-items:center
+   flex row -- only the heading's own treatment has to be undone, or the
+   status reads as EVE RUNNING in letter-spaced small caps. margin-left:auto
+   rather than a spacer, so it holds the right edge whatever the heading. */
+#es-eve-state {
+  margin-left: auto; text-transform: none; letter-spacing: normal;
+  font-weight: 400;
+}
+
+/* Neither half of the folder card overrides [hidden]: #es-folder-detail sets
+   no display of its own, and #es-folder-summary is a .row, which carries the
+   override already. Said out loud because an absent override is what the
+   trap looks like, and this is the one place on the screen it is deliberate.
+
+   The server and profile are their OWN element rather than part of the
+   path, because span.field's ellipsis truncates from the end and those two
+   change often enough to be worth reading. Given one line, the path is the
+   half that may be cut. */
+#es-folder-set {
+  flex: none; color: var(--text-dim); font-size: var(--fs-muted);
+}
+
+/* Ten backups produced ten different button positions, because the whole
+   row was a single text node and Restore landed wherever the stem ended.
+   Fixed columns either side of a flexing description put both buttons on
+   one edge and let the eye scan the dates.
+
+   The date sets the monospace face here rather than borrowing .mono: that
+   class only exists as input.field.mono / span.field.mono / textarea, so a
+   bare .mono on a plain span is inert -- silently, which is this page's
+   whole failure mode. */
+#es-backups .bk-when {
+  flex: none; font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text-dim);
+}
+#es-backups .bk-what {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Wide enough for "automatic"; a column rather than a suffix so the two
+   origins line up and read as one answer to the same question. */
+#es-backups .bk-origin {
+  flex: none; width: 68px; color: var(--text-faint);
+  font-size: var(--fs-muted);
+}
+
 /* Accented, unlike a plain .hint: this warns that two actions share a key
    and AutoHotkey will silently let one win. It shares .bindbtn.clash's
    colour so the sentence and the rows it names read as one warning. */

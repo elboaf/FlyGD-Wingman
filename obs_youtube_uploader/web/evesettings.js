@@ -16,6 +16,12 @@
   // shows and what the button acts on can never disagree.
   var visible = [];
   var busy = false;
+  // The folder card's second face. Collapsed on every entry to the route
+  // rather than remembered: the point of collapsing it is that the target
+  // list is on screen at open, and a card that stayed expanded across
+  // visits would give that back. There is also nowhere to persist it --
+  // no bridge method on this screen carries page state.
+  var expanded = false;
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -36,6 +42,7 @@
     state = payload;
     WM.el('es-root').textContent = payload.root || 'No folder selected';
     paintPill(payload.eve_running);
+    paintFolder();
 
     var warning = WM.el('es-warning');
     // "Couldn't read", "too wide to be an EVE folder" and "nothing there"
@@ -59,6 +66,32 @@
     renderSource();
     renderTargets();
     renderBackups();
+  }
+
+  // No root, or a folder Python could not read through: there is nothing
+  // to summarise and the user has to act on it, so the controls open
+  // regardless of what the Change link was last told.
+  function forcedOpen() {
+    return !state || !state.root || state.unreadable || state.too_broad;
+  }
+
+  function nameOf(items, path) {
+    var match = (items || []).filter(function (item) {
+      return item.path === path;
+    })[0];
+    return match ? match.name : '';
+  }
+
+  function paintFolder() {
+    var open = forcedOpen() || expanded;
+    WM.el('es-folder-summary').hidden = open;
+    WM.el('es-folder-detail').hidden = !open;
+    if (open) return;
+    WM.el('es-folder-root').textContent = state.root;
+    WM.el('es-folder-set').textContent =
+      [nameOf(state.servers, state.server),
+       nameOf(state.profiles, state.profile)]
+        .filter(Boolean).join(' \u00b7 ');
   }
 
   // Three states, not two. null means the probe has not answered yet, and
@@ -147,6 +180,17 @@
   function renderBackups() {
     var host = WM.el('es-backups');
     host.innerHTML = '';
+    // The depth comes off the payload, never a literal. Four places once
+    // carried the bookmark-keybind count and three of them drifted, and
+    // this is the same shape: a number the page would have to keep in step
+    // with settings.json by hand. "of each" is load-bearing rather than
+    // padding -- backup.prune keys on (kind, source, stem), so eleven
+    // copies onto eleven different characters prune nothing.
+    WM.el('es-backup-note').textContent =
+      'Every copy backs up what it is about to overwrite. The newest '
+      + state.auto_keep + ' automatic backups of each character, account '
+      + 'or profile are kept; the ones you make here stay until you '
+      + 'delete them.';
     // An empty list means one of two things and only Python knows which.
     // Saying "No backups yet" about a store we were denied would invite an
     // overwrite the user believes is protected.
@@ -160,24 +204,32 @@
       if (state.backups_unreadable) return;
     }
     (state.backups || []).forEach(function (item) {
-      var line = document.createElement('div');
-      line.className = 'row';
-      line.appendChild(document.createTextNode(
-        item.created + ' · ' + item.kind + ' · ' + item.stem
-        + (item.origin === 'auto' ? ' (auto)' : '')));
+      var line = WM.make('div', 'row');
+      line.appendChild(WM.make('span', 'bk-when', item.created));
+      line.appendChild(WM.make('span', 'bk-what',
+        item.kind + ' \u00b7 ' + item.stem));
+      // Both origins named in full, rather than a bare "(auto)" on half the
+      // rows and nothing on the other half. The suffix had no key anywhere
+      // in the app; a column that says "manual" too explains it by
+      // contrast, and the note above says what "automatic" costs.
+      line.appendChild(WM.make('span', 'bk-origin',
+        item.origin === 'auto' ? 'automatic' : 'manual'));
       line.appendChild(button('Restore', function () {
         mutate('eve_settings_restore', item.path);
       }));
+      // Deleting a backup is the only irreversible action on this screen
+      // that Restore is not -- and both were the same plain .btn. The
+      // treatment is the one skills.js already uses for Forget character.
       line.appendChild(button('Delete', function () {
         mutate('eve_settings_delete_backup', item.path);
-      }));
+      }, 'danger'));
       host.appendChild(line);
     });
   }
 
-  function button(text, handler) {
+  function button(text, handler, extra) {
     var el = document.createElement('button');
-    el.className = 'btn';
+    el.className = extra ? 'btn ' + extra : 'btn';
     el.textContent = text;
     el.disabled = busy;
     el.addEventListener('click', handler);
@@ -217,6 +269,11 @@
   }
 
   function wire() {
+    WM.el('es-folder-edit').addEventListener('click', function () {
+      expanded = true;
+      paintFolder();
+    });
+
     WM.el('es-pick').addEventListener('click', function () {
       WM.send('eve_settings_pick_root').then(function () {
         selected = {};
@@ -276,6 +333,9 @@
 
     document.addEventListener('wm:route', function (event) {
       if (event.detail !== 'evesettings') return;
+      // Every visit starts collapsed. render() is what repaints it, and it
+      // runs off the refresh below.
+      expanded = false;
       refresh();
       // Names are resolved on first open, never at launch: the tray app
       // starts hidden and must not make a network call nobody asked for.
