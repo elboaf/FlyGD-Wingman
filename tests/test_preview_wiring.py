@@ -1034,17 +1034,29 @@ def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
     wm:preview-enabled-changed precedent), and previews.js must listen for
     it -- not just for wm:settings, which only ever fires once, at load."""
     settings_js = _web("settings.js")
-    block = settings_js.split("Minimize inactive clients")[1]
-    assert (
-        "wm:preview-minimize-inactive"
-        in block.split("document.addEventListener('wm:settings'")[0]
-    ), "the event must be dispatched from the write's success branch"
+    # Anchored on the checkbox's own element id rather than nearby prose,
+    # which a copy-edit could move or reword without breaking the wiring
+    # this test actually checks.
+    assert "WM.el('preview-minimize-inactive')" in settings_js
+    after_box = settings_js.split("WM.el('preview-minimize-inactive')", 1)[1]
+    assert "document.addEventListener('wm:settings'" in after_box
+    write_handler = after_box.split("document.addEventListener('wm:settings'", 1)[0]
+    assert "wm:preview-minimize-inactive" in write_handler, (
+        "the event must be dispatched from the write's success branch"
+    )
 
     previews_js = _web("previews.js")
-    listener = previews_js.split("wm:preview-minimize-inactive'")[1]
-    assert "minimizeInactive" in listener[:200]
+    assert "wm:preview-minimize-inactive'" in previews_js
+    after_event = previews_js.split("wm:preview-minimize-inactive'", 1)[1]
+    # The next addEventListener call marks the end of this listener's own
+    # body -- a real boundary, unlike a fixed character count that was
+    # measured to overrun the handler by ~90 characters and could read
+    # into code this test does not mean to check.
+    assert "document.addEventListener(" in after_event
+    listener = after_event.split("document.addEventListener(", 1)[0]
+    assert "minimizeInactive" in listener
     # Recording the new value is only half of it: without the repaint the
     # already-rendered checkboxes keep their old disabled state, which IS
     # the bug this test exists for. Deleting the requestRender() call left
     # the assertion above green.
-    assert "requestRender" in listener[:200]
+    assert "requestRender" in listener

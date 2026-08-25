@@ -188,3 +188,46 @@ def test_locked_survives_round_trip_with_no_layout_rect(tmp_path):
     assert data["preview"]["layouts"] == {}
     settings.save(data, path)
     assert settings.load(path)["preview"]["locked"] == ["NeverDragged"]
+
+
+def test_a_pre_branch_layout_lock_is_migrated_into_top_level_locked():
+    """A file saved before `preview.locked` existed recorded the lock on
+    the layout entry itself (layout.Entry.locked). Nothing reads that
+    field any more, so without this migration the character opens
+    unlocked and the first drag silently rewrites the flag to False."""
+    out = settings.validated_preview(
+        {"layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4, "locked": True}}}
+    )
+    assert out["locked"] == ["Alice"]
+    # The layout entry itself is untouched -- Entry.locked stays, it is
+    # just no longer the source of truth.
+    assert out["layouts"]["Alice"]["locked"] is True
+
+
+def test_an_explicit_locked_list_is_not_clobbered_by_a_legacy_flag():
+    """Union, not overwrite: a real preview.locked already reflects the
+    user's current choice and must win over a stale layout flag, and the
+    same name appearing in both places must not be duplicated."""
+    out = settings.validated_preview(
+        {
+            "locked": ["Bob"],
+            "layouts": {
+                "Alice": {"x": 1, "y": 2, "w": 3, "h": 4, "locked": True},
+                "Bob": {"x": 5, "y": 6, "w": 7, "h": 8, "locked": False},
+            },
+        }
+    )
+    assert out["locked"] == ["Bob", "Alice"]
+
+
+def test_the_legacy_lock_migration_does_not_run_twice():
+    """A file already carrying the current defaults_version marker is not
+    pre-branch -- its layout `locked` flags (if any survive from a
+    downgrade/re-upgrade) must not be re-migrated on every load."""
+    out = settings.validated_preview(
+        {
+            "defaults_version": 2,
+            "layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4, "locked": True}},
+        }
+    )
+    assert out["locked"] == []
