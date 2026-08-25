@@ -76,11 +76,13 @@ DEFAULTS = {
     # compared so a changed destination can be called out.
     "channel_id": "",
     "channel_title": "",
-    # Whether the EVE destinations and sections are offered at all. TRUE by
-    # default on purpose: an upgrading user's file predates this key, and
-    # defaulting it off would silently remove four things they already use.
-    # First run asks instead, so a fresh install of what the README calls
-    # an OBS-to-YouTube app does not open with three tabs of EVE tooling.
+    # Whether the EVE destinations and sections are offered at all. TRUE
+    # for everyone, and nothing asks: in practice the people who install
+    # this play EVE, so a first-run question about it was noise on the one
+    # screen that has to stay short. It also keeps an upgrading user's file
+    # -- which predates this key -- from silently losing four things they
+    # already use. Someone who wants the plain uploader turns it off in
+    # Settings > General.
     #
     # This governs VISIBILITY ONLY. It never starts or stops anything --
     # eve_bookmarks.enabled and preview.enabled remain the sole runtime

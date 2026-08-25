@@ -45,11 +45,6 @@
     // with applied:false, so both have to be checked before navigating --
     // dropping the user into an empty list with no explanation is exactly
     // what this guard prevents.
-    // Sent BEFORE the folder, and its result deliberately ignored: this is
-    // cosmetic, and a failure here must not block the one thing first run
-    // exists to do. The guard in set_show_eve_tools cannot refuse on a
-    // fresh install anyway -- both EVE features default to off.
-    WM.send('set_show_eve_tools', WM.el('firstrun-eve').checked);
     WM.send('set_folder', 'recording', chosen).then(function (res) {
       if (!res) { return; }
       if (!res.applied) {

@@ -91,11 +91,11 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       `obsconfig.profiles_root` reads `%APPDATA%\obs-studio\basic\profiles`
       and finds nothing. Both are per-process, so a real install is
       untouched.
-- [ ] **The first-run screen asks about the EVE tools, unticked.** Leaving
-      it unticked and continuing opens the app with NO nav bar at all —
-      only the Uploader. That is the single-screen app the README
-      describes, and first run is the only path that delivers it without
-      the user going looking for the setting.
+- [ ] **The first-run screen asks ONLY for the recording folder.** It does
+      not ask about the EVE tools: those are on for everyone, because in
+      practice the people who install this play EVE. Someone who wants the
+      plain uploader turns them off in Settings > General, which is checked
+      under The Settings rail.
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to

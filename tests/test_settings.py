@@ -15,9 +15,10 @@ def test_defaults_are_the_documented_values():
         "channel_title": "",
         # TRUE, unlike the two feature flags below. Those decide whether
         # something RUNS and must be opted into; this decides only whether
-        # the EVE screens are offered, and an upgrading user's file predates
-        # it -- defaulting it off would silently remove four things they
-        # already use. First run asks instead.
+        # the EVE screens are offered. In practice the people who install
+        # this play EVE, so it is on for everyone and nothing asks -- and
+        # an upgrading user's file predates the key, so defaulting it off
+        # would silently remove four things they already use.
         "show_eve_tools": True,
         "eve_bookmarks": {
             "enabled": False,
