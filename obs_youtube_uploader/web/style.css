@@ -258,12 +258,23 @@
   --row-ring-focus: #554e65;
 
   /* ---- type scale ----
-     Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
-     headings 1.2x body, body, muted 0.875x body. COLUMN HEADERS USE
-     --fs-muted DELIBERATELY — they sit BELOW body size because they label
-     the data and are not the data. Making them larger undoes a considered
-     decision. */
-  --fs-head: 15.5px;
+     Adopted from 2.2.0's sv-ttk-derived scale, not reinvented. COLUMN
+     HEADERS USE --fs-muted DELIBERATELY — they sit BELOW body size
+     because they label the data and are not the data. Making them larger
+     undoes a considered decision.
+
+     --fs-head was 15.5px, a 1.19 step over body, and that one IS changed:
+     at 1.19 the largest text on a screen was not readably larger than the
+     text beside it, so no screen had a focal point. Skills is where it
+     showed — "Core Ship Skills" sat next to "14 requirements" looking
+     like the same rank. 17px is a 1.31 step, which is the smallest value
+     that reads as a heading rather than as bold body.
+
+     Deliberately narrow blast radius: --fs-head has exactly three users
+     (h1, .dialog h3, and the skills plan title), all of them real
+     headings. The muted/mono/label steps are NOT touched — widening
+     those is what would make a compact desktop tool feel like a web page. */
+  --fs-head: 17px;
   --fs-body: 13px;
   --fs-muted: 11.5px;
   --fs-mono: 12px;
