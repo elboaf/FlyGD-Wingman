@@ -863,16 +863,46 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    and either exceeds the window height. */
 
 /* Character names, like bookmarks' action names, are not short field
-   labels -- see the #eve-binds override below for why the shared 118px
-   column is wrong here. */
+   labels, so they do not take the stacked label treatment every other
+   settings row gets -- see the #eve-binds block below, which carries the
+   reasoning and the measurements for both lists. */
+/* ABOUT is the one card on this route that states facts BEFORE it offers a
+   control -- every other card leads with the control and explains it
+   underneath. Without this the licence line and the login switch touch,
+   and the four lines read as one run instead of "this is the build you are
+   running" followed by "and here is something you can change". 12px is the
+   gap .card > h2 already uses, not a new number.
+
+   Sibling of #about-version, so it cannot reach the EVE-tools card above,
+   whose own checkbox opens its card and must not gain a top margin. */
+#about-version ~ .check { margin-top: 12px; }
+
+/* The one paragraph in this card that CHANGES. Its neighbour above is
+   permanent -- what global keybinds are, and where the other set lives --
+   and both were .hint at --text-faint, so the sentence that reports live
+   state looked exactly like the one that never moves (walkthrough Settings
+   5). One step up the same text ramp, not a severity token: previews being
+   off is a fact the user chose, not a warning. Its words come from
+   ui/copy.py's INERT_NOTES, so this is the treatment only. */
+#preview-binds-off { color: var(--text-dim); }
+
+#preview-binds {
+  display: grid; gap: 10px; align-items: center; justify-content: start;
+  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+}
+#preview-binds .row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity, which is the
+   [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
+   children with the row itself gone. */
+#preview-binds .row[hidden] { display: none; }
 #preview-binds .row > .lab {
-  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+  width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 
-/* Collapsed below 720px like every other row -- see the #eve-binds
-   override below, which carries the reason for both. */
+/* The name takes the whole line at narrow widths -- the grid equivalent of
+   the flex `flex: 0 0 100%`, and the same reason. See #eve-binds below. */
 @media (max-width: 720px) {
-  #preview-binds .row > .lab { flex: 0 0 100%; }
+  #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
 
 /* Offline is information, not an error (previews.js): dim rather than
@@ -967,27 +997,66 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
    "Finisher: C13 (shattered)"), not short field labels like the rest of
-   this route's cards -- the shared `.settings .row > .lab` column below
-   is a fixed 118px right-aligned width tuned for "Privacy" and
-   "Category" and would wrap these onto several right-ragged lines. This
-   override gives the label the row's remaining width instead. */
+   this route's cards, so they opt out of the stacked label above every
+   other settings row and keep the name beside its binding.
+
+   THE COLUMN IS SIZED TO THE WIDEST NAME, NOT TO THE ROW. Measured in the
+   ?dev=1 harness at the 840 floor, with the eighteen real BIND_LABELS: the
+   row is 586px, the widest name's ink is 190px, and the old `flex: 1` gave
+   the label a 316px box regardless. That surplus became a void between
+   each name and its binding -- 137px on the longest name and 274px on
+   "Set Root", eighteen times down the card. The walkthrough called it
+   ~600px, which is not reachable inside a 620px-max-width .settings; the
+   real figures are the ones above.
+
+   The rule, which Skills' plan rail shares (walkthrough Skills 6) and is
+   recorded for it in docs/r2-handoffs.md: a full-width row does not
+   stretch its label to fill. The value column sits at the widest label
+   plus one gap, and the width left over stays unused at the right rather
+   than becoming a gap in the middle.
+
+   Grid on the CONTAINER with `display: contents` on the rows, because that
+   is the only way the column can be one column: max-content on a per-row
+   grid sizes each row separately and the bindings stop aligning, which is
+   worse than the void -- eighteen buttons at eighteen x-positions. The
+   rows keep no box of their own, so .row's 10px gap and 10px margin-bottom
+   are re-stated here as the grid's own gap.
+
+   minmax(0, max-content) rather than max-content on the name: a
+   pathologically long character name must be able to shrink rather than
+   push the buttons out of the card, which is what `min-width: 0` did
+   under flex. */
+#eve-binds {
+  display: grid; gap: 10px; align-items: center; justify-content: start;
+  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+}
+#eve-binds .row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity -- the
+   [hidden] trap DESIGN.md names, and the one .row itself already carries a
+   note about. */
+#eve-binds .row[hidden] { display: none; }
 #eve-binds .row > .lab {
-  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+  width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 
-/* Settings 1's third case. Lane 0's `max-width: 720px` block collapses the
-   shared label column above its field, but it sets `.settings .row > .lab`
-   -- which this id-specificity override beats, so the rule never reached
-   these rows: the name kept `flex: 1; min-width: 0` and SHRANK instead,
-   which is the failure the collapse exists to prevent. At the 560px floor
-   the row is ~324px and spends 150px on .bindbtn plus Clear and Type...,
-   leaving about 60px for "Convert EvE-Scout Bookmarks", eighteen times.
+/* Settings 1's third case, kept in its grid form. Lane 0's
+   `max-width: 720px` block collapses the shared label column above its
+   field, but it sets `.settings .row > .lab` -- which this id-specificity
+   override beats, so the rule never reached these rows and the name
+   SHRANK instead, which is the failure the collapse exists to prevent.
    #preview-binds carries the same override and the same repair.
-   flex-basis, not width: `flex: 1` above sets a basis of 0%, and only a
-   full basis forces the wrap that `.settings .row`'s flex-wrap allows. The
-   controls then take their own line at their natural widths. */
+
+   `grid-column: 1 / -1` is the grid equivalent of the flex `flex: 0 0
+   100%` this used to be: the name takes the whole line and the controls
+   take the next one at their natural widths.
+
+   By C1 this can never fire in the app window -- the CSS floor is 840x625
+   at every scaling, so 720px is below it. It is kept because it still
+   fires in the ?dev=1 harness, it is the guard that would make lowering
+   MIN_WIDTH safe, and tests/test_page_conventions.py requires every id
+   override of the shared label column to restore its collapse. */
 @media (max-width: 720px) {
-  #eve-binds .row > .lab { flex: 0 0 100%; }
+  #eve-binds .row > .lab { grid-column: 1 / -1; }
 }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture

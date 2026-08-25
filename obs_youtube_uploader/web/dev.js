@@ -31,7 +31,11 @@
   // exercise. There is no Save button to exercise any more; each of these
   // is a commit on its own.
   ['set_privacy', 'set_notify_mode', 'set_category',
-   'set_discord_webhook', 'clear_discord_webhook'
+   'set_discord_webhook', 'clear_discord_webhook',
+   // M3. Same three-key shape, and it belongs in this list rather than the
+   // generic one for the same reason: the ABOUT card reverts its checkbox
+   // on anything that is not `applied`.
+   'set_start_on_login'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -216,7 +220,22 @@
       // Python sends this from __version__; the double carries a value
       // of the same SHAPE and not the real one, so a stale fake cannot
       // be mistaken for the app agreeing with itself.
-      version: '0.0.0-dev'
+      version: '0.0.0-dev',
+      // ui/copy.py's INERT_NOTES. Settings 1 renders the sentence from
+      // here rather than from markup, so without it the Previews card
+      // would fall back to the copy in index.html and the harness would
+      // verify the wrong half of the change. Worded as Python words it;
+      // if the two ever disagree the page is the one that is wrong.
+      inert_notes: {
+        previews_off: 'Previews are off, so every keybind below is '
+          + 'unregistered until you turn them back on.',
+        no_webhook: 'No Discord webhook is configured, so combat logs are '
+          + 'not posted. Set one in Settings › Discord.'
+      },
+      // Read live from the registry by autostart.is_enabled(). Default is
+      // opt-in, so an install that was never asked reads false -- which is
+      // what this shows.
+      start_on_login: false
     };
   }
 
