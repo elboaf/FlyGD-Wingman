@@ -264,7 +264,6 @@
            configuration surface. -->
       <button class="rail-item active" data-section="account">Account</button>
       <button class="rail-item" data-section="uploads">Uploads</button>
-      <button class="rail-item" data-section="notify">Notifications</button>
       <button class="rail-item" data-section="folders">Folders</button>
       <button class="rail-item" data-section="discord">Discord</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
@@ -335,10 +334,11 @@
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
-    </div>
-
-    <div class="settings" id="section-notify">
-
+      <!-- Was its own rail entry and its own pane. One radio pair -- a
+           destination in an eight-item rail for a single binary choice,
+           on ~1300px of empty pane. It is an upload behaviour: it decides
+           what happens when a recording is ready to upload, which is what
+           this section already configures. -->
       <section class="card">
         <h2>When a recording finishes</h2>
         <label class="radio">

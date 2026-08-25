@@ -2136,8 +2136,12 @@ button.btn:disabled,
 
    This replaces a 118px right-aligned column. That column was the fix for
    settings.png's per-card labels and it did align every labelled row --
-   but only labelled rows. Notifications and General have no .lab at all;
-   their controls are direct children of the card. So flipping the rail
+   but only labelled rows. Notifications and General had no .lab at all;
+   their controls are direct children of the card. (Notifications is no
+   longer a rail entry -- its radio pair is the second card under Uploads
+   now -- but the pattern it stands for here is unchanged, and the
+   measurement below is the one that decided this rule.) So flipping the
+   rail
    moved the first thing on the screen sideways, measured from the card's
    content edge at the 840 floor:
 
