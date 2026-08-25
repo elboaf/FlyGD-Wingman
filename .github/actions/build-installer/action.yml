@@ -51,19 +51,41 @@ runs:
         uv sync --locked
         if ($LASTEXITCODE -ne 0) { throw "uv sync failed - the app's dependencies are missing" }
         # PyInstaller goes INTO the synced environment, not alongside it.
-        # `uv pip install` without --active would target a different prefix.
+        # `uv pip install` without --python would target a different prefix.
+        #
+        # Pinned to 6.x, and the pin is load-bearing: packaging/uploader.spec
+        # and packaging/installer.iss both assume 6.x's one-folder layout
+        # (executable at the top of dist/, dependencies under _internal/). A
+        # 7.x release with a changed layout would produce an installer whose
+        # shortcuts point at nothing while the build still reports success.
+        # If you widen this, re-check installer.iss's {app}\{#AppExe}
+        # assumption at the same time.
         uv pip install --python .venv "pyinstaller>=6,<7"
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
 
-    - name: Verify uv run reaches the synced environment
-      # Guards the whole class of bug in the steps below: if any later step
-      # drops the `uv run` prefix it silently uses the setup-python
-      # interpreter, which has none of the app's dependencies. Fail here,
-      # where it is obvious.
+    - name: Verify uv run reaches the synced environment, on the right Python
+      # Two guards in one, both for failures that are otherwise silent.
+      #
+      # First: if any later step drops the `uv run` prefix it uses the
+      # setup-python interpreter instead, which has none of the app's
+      # dependencies. Fail here, where it is obvious.
+      #
+      # Second, and the reason this asserts rather than prints: uv's default
+      # python-preference is "managed", so it picks its OWN downloaded
+      # CPython over anything on PATH. With only requires-python = ">=3.11"
+      # to go on it takes its current default -- observed locally choosing
+      # 3.13.12 while PATH held 3.14.3. That would silently change the
+      # interpreter frozen into the installer users download, with no commit
+      # and no failure: the wheels exist for those versions, so the build
+      # would just go green and ship something different.
+      #
+      # .python-version pins the choice. This asserts the pin actually took,
+      # because a config file that stops being read is exactly the kind of
+      # thing nobody notices.
       shell: pwsh
       run: |
-        uv run python -c "import sys, pystray, webview; print(sys.executable)"
-        if ($LASTEXITCODE -ne 0) { throw "uv run cannot import the app's dependencies - the sync did not take" }
+        uv run python -c "import sys, pystray, webview; print(sys.version); assert sys.version_info[:2] == (3, 11), f'expected 3.11, got {sys.version_info[:2]} -- check .python-version'"
+        if ($LASTEXITCODE -ne 0) { throw "uv run reached the wrong interpreter, or cannot import the app's dependencies" }
 
     - name: Verify the app's dependencies are importable
       # PyInstaller only reports "Hidden import not found" as an ERROR line
