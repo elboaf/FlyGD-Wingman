@@ -377,7 +377,7 @@ somewhere stale and nothing on that screen is worth reviewing.
       accused every recording in the folder of being unreadable.
       **To see `—` on purpose:** run from a source checkout with no
       `packaging/bin/ffprobe.exe` fetched and no ffprobe on PATH. Every row
-      shows `—`, and the selection summary reads `0:00:00+` — the `+` is
+      shows `—`, and the selection summary reads `0:00+` — the `+` is
       required, because without it the line states a confident zero for a
       108.8 MB recording.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip

@@ -617,8 +617,8 @@ def test_the_length_sort_parses_every_string_the_duration_format_emits():
 
 def test_the_two_glyph_cells_still_sort_to_the_bottom():
     """The widened regex must not start accepting "…", "?" or "—" as
-    measurements -- they are the absence of one, and app._sort_by's -1.0
-    is what they have to keep matching."""
+    measurements -- they are the absence of one, and parseDuration's -1 is
+    what they have to keep falling through to."""
     pattern = _duration_regex()
     for glyph in ("…", "?", "—", "", "1:2:3:4"):
         assert not pattern.match(glyph), f"{glyph!r} is not a duration"

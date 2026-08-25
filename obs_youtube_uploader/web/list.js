@@ -58,9 +58,9 @@
   }
 
   function parseDuration(text) {
-    // "12:31" -> 751, "2:07:07" -> 7627. "?" and the ellipsis are not
-    // measurements and sort to the bottom, exactly as app._sort_by's
-    // -1.0 does.
+    // "12:31" -> 751, "2:07:07" -> 7627. "?", the dash and the ellipsis
+    // are not measurements: -1 sorts them together at the bottom rather
+    // than letting a non-answer claim a position among real lengths.
     //
     // The hours group is optional because library.format_duration omits a
     // zero hour. It is NOT decoration: this sort reads the cell back out
