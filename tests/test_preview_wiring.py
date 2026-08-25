@@ -727,6 +727,45 @@ def test_the_client_placement_win32_surface_is_not_declared():
         assert gone not in src, gone
 
 
+def test_sc_minimize_is_present_and_documented():
+    """SC_MINIMIZE is the one Win32 surface allowed to reach a live EVE
+    client's window: it changes only show state (the same transition the
+    taskbar button and Alt-Tab already send), never position or size, so it
+    cannot trigger the resolution rewrite the guard above exists to prevent.
+
+    This asserts the constant is present and explained, so a future purge
+    that sweeps up "that Win32 thing near the dangerous ones" fails a test
+    instead of silently removing the minimize-inactive-clients feature.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
+        encoding="utf-8"
+    )
+    assert "SC_MINIMIZE = 0xF020" in src
+    assert "show state" in src.lower()
+
+
+def test_sendmessagew_is_not_declared():
+    """Bare `SendMessageW` blocks until the target window's queue processes
+    the message, so a hung or still-loading EVE client would stall the
+    preview thread -- and with it hotkey dispatch, the alert pump, and the
+    sweep -- indefinitely. `SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`
+    gets the ordering guarantee `PostMessageW` can't provide without that
+    unbounded stall, so `SendMessageW` should never appear in the bind list.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
+        encoding="utf-8"
+    )
+    assert "SendMessageTimeoutW" in src
+    assert '"SendMessageW"' not in src
+    assert "user32.SendMessageW" not in src
+
+
 def _web(name):
     import pathlib
 
