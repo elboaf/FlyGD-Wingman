@@ -287,9 +287,14 @@ python -m obs_youtube_uploader
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
-Without this, `git blame` attributes 136 files to the ruff-format commit
-rather than to whoever wrote the code. The setting is per-clone and
-cannot be committed.
+The repository was reformatted with `ruff format` in one commit touching
+136 files. Without this setting, `git blame` attributes all of them to
+that reformat rather than to whoever wrote the code. The setting is
+per-clone and cannot be committed, so every clone needs it once.
+
+Note that `.git-blame-ignore-revs` has no active entry until the
+reformat's commit hash is recorded in it — see the TODO in that file.
+Until then, running the command above is harmless but changes nothing.
 
 Official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which injects

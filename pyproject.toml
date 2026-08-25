@@ -102,6 +102,14 @@ line-length = 88
 # prose. A plan's code blocks should be formatted when the plan is written,
 # not retroactively.
 extend-exclude = ["packaging", "*.md"]
+# Exclusions above are applied during directory traversal but NOT to paths
+# named explicitly on the command line, unless this is set. Without it,
+# `ruff format somefile.md`, an editor's "Format Document", or any
+# pre-commit hook (which passes filenames explicitly -- the case this
+# option exists for) reformats the plan docs anyway, and `ruff format .`
+# being safe hides that. Verified: with *.md excluded but force-exclude
+# off, `ruff format --check *.md` still reformats 10 files.
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
