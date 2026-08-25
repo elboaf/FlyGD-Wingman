@@ -91,7 +91,17 @@ line-length = 88
 # WebView2 runtime) that a separate task owns end to end, including their
 # installer-version coupling. Linting them here would mix an unrelated
 # diff into this task's hand-reviewed cleanup.
-extend-exclude = ["packaging"]
+#
+# *.md is excluded because ruff formats Python code fences inside markdown
+# by default, and this repository keeps its design and plan documents at
+# the root. Those are historical records of completed work: reformatting
+# their code blocks rewrites what was written at the time without changing
+# anything that runs. Left enabled it also doubled the reformat commit
+# (9,655 markdown lines against 9,711 Python), and the "the suite still
+# passes" argument that justifies a mechanical reformat has no purchase on
+# prose. A plan's code blocks should be formatted when the plan is written,
+# not retroactively.
+extend-exclude = ["packaging", "*.md"]
 
 [tool.ruff.lint]
 select = [
