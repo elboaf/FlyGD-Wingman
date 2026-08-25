@@ -13,6 +13,8 @@ anything failing.
 import pathlib
 import re
 
+from obs_youtube_uploader.eveskills import evaluator
+
 WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 SKILLS = (WEB / "skills.js").read_text(encoding="utf-8")
@@ -161,4 +163,60 @@ def test_the_plan_file_format_is_stated_before_the_folder_is_empty():
     text = about.group(1)
     assert ".txt" in text and "roman numerals" in text, (
         "the format statement no longer says what a plan file contains"
+    )
+
+
+# ---- state that must not be retyped ------------------------------------
+#
+# skills.js cannot ask Python for these at runtime: the payload sends one
+# character's readiness and one requirement's state at a time, never the
+# orderings behind them. So the page keeps its own copies, and DESIGN.md's
+# rule for a copy that cannot be derived is to assert it in a test. Both
+# arrays below have been hand-kept since the route shipped.
+
+
+def test_the_roster_groups_match_the_evaluator_that_produces_them():
+    """`GROUPS` is `evaluator.READINESS_ORDER`, and the comment above it
+    says so -- but nothing checked, and the failure is silent in the worst
+    way. buildRoster() puts any readiness NOT in this array into the OTHER
+    bucket, so a readiness added or renamed in Python does not break the
+    page: every character carrying it quietly lands under `Unrecognised`,
+    below every real group. The roster still renders, the rows are still
+    there, and the only symptom is a heading nobody expects.
+
+    The catch-all is deliberately not in the array -- skills.js appends
+    OTHER separately, because a bucket for states this page has never heard
+    of stops being that the moment it is listed among the known ones.
+    """
+    match = re.search(r"var\s+GROUPS\s*=\s*\[(.*?)\]", CODE, re.DOTALL)
+    assert match, "var GROUPS = [...] not found in skills.js"
+    groups = re.findall(r"'([^']+)'", match.group(1))
+    assert groups == list(evaluator.READINESS_ORDER), (
+        "the roster's group order no longer matches evaluator.READINESS_ORDER"
+    )
+
+
+def test_every_outstanding_requirement_state_has_a_rank():
+    """`STATE_RANK` orders the outstanding requirements inside an expanded
+    row. Its ORDER is deliberately not READINESS_ORDER -- the comment above
+    it explains why, and this test does not second-guess that. What it
+    checks is the key SET: every requirement state a plan can produce,
+    except Active, which requirementsNode() filters out before sorting.
+
+    A state added in Python and not here falls to stateRank()'s `9`, which
+    is the right defensive answer for a state the page has never heard of
+    and the wrong one for a state that simply was not added -- it sorts
+    below `Queued`, at the bottom of the list, which is the last place a
+    reader looks for something new.
+    """
+    match = re.search(r"var\s+STATE_RANK\s*=\s*\{(.*?)\}", CODE, re.DOTALL)
+    assert match, "var STATE_RANK = {...} not found in skills.js"
+    ranked = set(re.findall(r"(\w+)\s*:", match.group(1)))
+    outstanding = {
+        state for state in evaluator._CONTRIBUTION if state != evaluator.ACTIVE
+    }
+    assert ranked == outstanding, (
+        "STATE_RANK and the evaluator's requirement states disagree: "
+        f"only in skills.js {ranked - outstanding}, "
+        f"only in evaluator.py {outstanding - ranked}"
     )
