@@ -64,15 +64,24 @@
   }
 
   // Shared by all three top-level checkboxes. WM.send resolves to null
-  // on a bridge failure (app.js), so that is the only case that reverts
-  // the box -- a rejected {persisted: false} write really did take
-  // effect for this session, and reverting it would be the opposite lie.
-  // Mirrors set_restore_preview_positions in previews.js.
+  // on a bridge failure (app.js) -- that reverts the box, same as
+  // `applied: false`, which the bridge now also returns when a settings
+  // write raised and was rolled back (api.py's _write_alert_setting):
+  // the value genuinely never took effect, so leaving the checkbox
+  // showing it would be showing a state the app is not in. Only
+  // `applied: true, persisted: false` (a session-only write) leaves the
+  // box alone -- that one really did take effect, and reverting it
+  // would be the opposite lie. Mirrors set_restore_preview_positions in
+  // previews.js.
   function writeFlag(box, method, label) {
     box.addEventListener('change', function () {
       var wanted = box.checked;
       WM.send(method, wanted).then(function (res) {
-        if (!res) { box.checked = !wanted; return; }
+        if (!res || !res.applied) {
+          box.checked = !wanted;
+          if (res && res.error) { say(res.error); }
+          return;
+        }
         if (!res.persisted) {
           say(label + ' is ' + (wanted ? 'on' : 'off')
             + ' for this session, but could not be written to settings — '

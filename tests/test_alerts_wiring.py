@@ -498,7 +498,21 @@ def test_a_failed_alert_write_says_it_will_not_survive_a_restart():
     block = js.split("function writeFlag")[1]
     assert "res.persisted" in block, "the flag is returned but never read"
     assert "will not survive a restart" in block
-    assert "if (!res)" in block.split("box.checked = !wanted")[0]
+    assert "if (!res || !res.applied)" in block.split("box.checked = !wanted")[0]
+
+
+def test_a_rolled_back_alert_write_reverts_the_checkbox():
+    """api.py's _write_alert_setting reports a raise-and-rollback as
+    `applied: false`, not `applied: true, persisted: false` -- the value
+    genuinely never took effect this session either, so the checkbox
+    must revert instead of being left showing a state the app is not
+    in. Only a bridge failure (`res` itself null) used to be checked
+    here."""
+    js = _web("alerts.js")
+    block = js.split("function writeFlag")[1]
+    guard = block.split("box.checked = !wanted")[0]
+    assert "res.applied" in guard
+    assert "res.error" in block.split("box.checked = !wanted")[1].split("return")[0]
 
 
 def test_get_alert_state_is_a_read_not_a_push():
