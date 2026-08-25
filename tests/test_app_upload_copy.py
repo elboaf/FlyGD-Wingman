@@ -26,14 +26,14 @@ def info(name="a.mkv", size=1_000_000, duration=60.0, probed=True):
 
 
 def test_progress_for_a_single_file_does_not_invent_a_file_count():
-    assert copy_mod.format_progress(0, 1, 0.948) == "Uploading… 94.8%"
+    assert copy_mod.format_progress(0, 1, 0.948) == "Uploading… 95%"
 
 
 def test_progress_for_a_batch_names_which_file_the_percentage_belongs_to():
     """The bar tracks the batch and this text tracks one file. Before this
     was labelled, a bar at 34% sat beside the text "94.8%" and the two
     looked like a contradiction."""
-    assert copy_mod.format_progress(2, 10, 0.948) == "Uploading file 3 of 10… 94.8%"
+    assert copy_mod.format_progress(2, 10, 0.948) == "Uploading file 3 of 10… 95%"
 
 
 def test_progress_index_is_zero_based_but_displays_one_based():

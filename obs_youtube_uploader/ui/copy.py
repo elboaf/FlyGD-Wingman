@@ -49,19 +49,22 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
         return "Nothing selected"
     total_size = sum(info.size for info in infos)
     total_seconds = int(sum(info.duration or 0.0 for info in infos))
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
     partial = "+" if any(not (info.probed and info.answered) for info in infos) else ""
     return (
         f"{len(infos)} selected · {library.format_size(total_size)}"
-        f" · {hours}:{minutes:02d}:{seconds:02d}{partial}"
+        f" · {library.format_duration(total_seconds)}{partial}"
     )
 
 
 def _hms(total_seconds: int) -> str:
-    hours, remainder = divmod(int(total_seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{seconds:02d}"
+    """Confirm Upload's Total, in the app's one duration format.
+
+    Kept as a name here rather than inlined at the call site because this
+    used to BE a second implementation, six lines below a third one in
+    format_selection_summary. Both now land on library.format_duration;
+    this stays only so the dialog reads as a dialog.
+    """
+    return library.format_duration(total_seconds)
 
 
 def format_upload_confirm(
@@ -188,7 +191,14 @@ def format_progress(index: int, total: int, fraction: float) -> str:
 
     A single-file upload gets no "file 1 of 1", which would be noise.
     """
-    pct = f"{fraction * 100:.1f}%"
+    # Whole percent because the BAR is whole percent (panel.js's
+    # Math.round). On a single-file upload the two measure the same thing
+    # and sat about 500 CSS px apart reading "Uploading… 69.9%" beside a
+    # bar labelled "70%" -- one number in two precisions, which reads as a
+    # disagreement rather than as rounding. Mid-batch they legitimately
+    # differ in VALUE (this tracks the file, the bar tracks the batch);
+    # that is the point of the wording below, and it survives here.
+    pct = f"{fraction * 100:.0f}%"
     if total <= 1:
         return f"Uploading… {pct}"
     return f"Uploading file {index + 1} of {total}… {pct}"

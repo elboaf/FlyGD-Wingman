@@ -239,7 +239,7 @@
         + ids.length + ')';
     return Promise.resolve({
       summary: ids.length
-        ? ids.length + ' selected \u00b7 1.4 GB \u00b7 0:12:31'
+        ? ids.length + ' selected \u00b7 1.4 GB \u00b7 12:31'
         : 'Nothing selected',
       title_hint: hint
     });

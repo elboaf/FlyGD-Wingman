@@ -58,10 +58,20 @@
   }
 
   function parseDuration(text) {
-    // "12:31" -> 751. "?" and the ellipsis are not measurements and sort
-    // to the bottom, exactly as app._sort_by's -1.0 does.
-    var m = /^(\d+):(\d{2})$/.exec(String(text || '').trim());
-    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : -1;
+    // "12:31" -> 751, "2:07:07" -> 7627. "?" and the ellipsis are not
+    // measurements and sort to the bottom, exactly as app._sort_by's
+    // -1.0 does.
+    //
+    // The hours group is optional because library.format_duration omits a
+    // zero hour. It is NOT decoration: this sort reads the cell back out
+    // of its own rendered text, so a format that emits a field this regex
+    // rejects does not fail here, it returns -1 for those rows and the
+    // column silently stops sorting. Round 3 landed the hours field; this
+    // is the other half of that change.
+    var m = /^(?:(\d+):)?(\d+):(\d{2})$/.exec(String(text || '').trim());
+    if (!m) return -1;
+    return (m[1] ? parseInt(m[1], 10) * 3600 : 0)
+      + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
   }
 
   function compareRows(a, b, key) {

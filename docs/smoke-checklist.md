@@ -340,6 +340,14 @@ somewhere stale and nothing on that screen is worth reviewing.
       `durations.json`, launch against a large folder, click Length while
       rows read "…". Pending rows sort together and each fills in where it
       sits — rows do NOT re-order under the cursor as results arrive.
+- [ ] **Sorting by Length puts an hour-long recording above a 59-minute
+      one.** Needs at least one recording over an hour, so it renders
+      `1:03:09` rather than `17:07`. list.js sorts this column by parsing
+      its own rendered cell, so a format it cannot parse does not fail
+      loudly — those rows silently sort as "not measured", down with the
+      `?` and `…` ones. Round 3 gave the format its hours field and
+      widened the parser in the same change; this is what notices if they
+      ever come apart again.
 - [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
       move with ↑/↓, press Space. Focus is visibly distinct from "checked",
       Space toggles exactly the focused row, and Space does NOT scroll. Then
@@ -652,7 +660,7 @@ behavior that only shows up at size.
       Run from a source checkout with no `packaging/bin/ffprobe.exe` and no
       ffprobe on PATH. Expected: every row shows `—`, NOT `?`, and hovering
       one says ffprobe was not found and that reinstalling restores
-      lengths. Select a row: the summary must read `0:00:00+` — with the
+      lengths. Select a row: the summary must read `0:00+` — with the
       `+`. Both halves shipped wrong until round 2, because a probe that
       reached no verdict was rendered identically to one that read the
       file and failed: every row accused its own recording, and the

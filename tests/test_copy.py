@@ -30,7 +30,7 @@ def test_summary_of_one_recording_is_not_pluralised():
     """ "1 selected", not "1 selecteds": the noun is elided entirely, so the
     count needs no agreement at any value."""
     summary = copy_mod.format_selection_summary([_info(size=1024, duration=5.0)])
-    assert summary == "1 selected · 1.0 KB · 0:00:05"
+    assert summary == "1 selected · 1.0 KB · 0:05"
 
 
 def test_summary_totals_size_and_duration_across_recordings():
@@ -54,7 +54,7 @@ def test_summary_size_is_never_marked_partial():
     """Size comes from stat, not from a probe, so an outstanding probe says
     nothing about it -- the "+" belongs to the duration alone."""
     infos = [_info(size=1024, duration=None, probed=False)]
-    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00:00+"
+    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00+"
 
 
 def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
@@ -75,11 +75,11 @@ def test_summary_of_a_recording_that_was_never_measured_is_partial():
     failure, a timeout -- contributes 0 exactly like an outstanding one,
     but it used to be indistinguishable from a finished verdict, so the
     total came out unmarked. On an install with no ffprobe that made the
-    line read "1 selected · 108.8 MB · 0:00:00": a stated zero for a
+    line read "1 selected · 108.8 MB · 0:00": a stated zero for a
     108.8 MB recording, which is the one thing a blank never claims.
     """
     infos = [_info(size=1024, duration=None, probed=True, answered=False)]
-    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00:00+"
+    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00+"
 
     # And it still marks a total that has real content in it, rather than
     # only the degenerate all-zero case.
@@ -180,3 +180,68 @@ def test_the_completion_line_drops_the_padded_plural():
     """ "(s)" is the padding PRODUCT.md's tone rule rules out, and it
     survived here after the confirm stopped using it."""
     assert "(s)" not in copy_mod.format_eve_copy_done(2, "character")
+
+
+# --- one duration format across every surface that shows one ---------------
+
+
+def test_one_recording_reads_the_same_on_all_three_surfaces():
+    """Round 3's findings 4 and 17: one recording, three renderings.
+
+    The list's Length column said "17:07", the panel summary "0:17:07",
+    and Confirm Upload's Total "0:17:07" -- the first two visible at once
+    in a single screenshot. Two of them were built inline, six lines apart
+    in this module, which is how they were free to drift.
+
+    Asserted as equality between the surfaces rather than three literals:
+    a fourth format is only excluded if the check has no copy of its own
+    to update. The literal below is here to pin which format won, once.
+    """
+    seconds = 1027
+    one = _info(size=1024, duration=float(seconds))
+
+    column = one.duration_str
+    summary = copy_mod.format_selection_summary([one])
+    total = copy_mod.format_upload_confirm(
+        [one],
+        title="Fight",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        discord_webhook="",
+    )
+
+    assert column == library.format_duration(seconds) == "17:07"
+    assert summary.endswith("· " + column)
+    assert f"· {column}\n" in total
+
+
+def test_an_hour_long_recording_reads_the_same_on_all_three_surfaces():
+    """The case the old list column could not render at all: it divided by
+    60 alone, so this was "127:07" there and "2:07:07" in the dialog."""
+    seconds = 7627
+    one = _info(size=1024, duration=float(seconds))
+
+    assert one.duration_str == "2:07:07"
+    assert copy_mod.format_selection_summary([one]).endswith("· 2:07:07")
+    assert "· 2:07:07\n" in copy_mod.format_upload_confirm(
+        [one],
+        title="Fight",
+        privacy="unlisted",
+        channel_title="Z",
+        stitch=False,
+        discord_webhook="",
+    )
+
+
+def test_the_progress_text_carries_the_percent_the_bar_can_show():
+    """The bar rounds to whole percent (panel.js's Math.round), and on a
+    single-file upload it is measuring exactly what this text measures --
+    they read "Uploading… 69.9%" beside "70%", about 500 CSS px apart.
+
+    Precision, not value: mid-batch the two still differ, because the text
+    tracks the file and the bar tracks the batch.
+    """
+    text = copy_mod.format_progress(0, 1, 0.699)
+    assert text == "Uploading… 70%"
+    assert "." not in text.split("…")[1]
