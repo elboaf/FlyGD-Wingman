@@ -53,10 +53,85 @@ That 105px is the drag region's floor: it is the only flexible child of
 wordmark's own width. Nothing else in the bar can compress at all — the nav
 and the window buttons are both `flex: none`.
 
-`MIN_WIDTH` is **840 physical pixels**, not logical. The app is
-system-DPI-aware, so the CSS viewport floor is `840 / scale`: 672px at
-125%, 560px at 150%, both common laptop settings. Five destinations needed
-686px and clipped the close button off the right edge at 125%.
+`MIN_WIDTH` is **840 logical pixels**, and the CSS viewport floor is
+**840x625 at every display scaling**. `MIN_WIDTH` / `MIN_HEIGHT`
+(`ui/window.py`) land in WinForms `MinimumSize` and `ptMinTrackSize`, both
+of which Windows DPI-scales for a system-DPI-aware process, so the number
+is already in the same units the page sees.
+
+Measured, not derived: the floor capture is 1678x1242 physical on a
+3840x2160 display at 200%, which is **839x621 CSS** against `MIN_WIDTH`
+840 and `MIN_HEIGHT` 625. Were the floor 840 *physical*, that capture
+would be ~840px across; it is twice that. The maintainer's standing
+observation that the app cannot be resized to the CSS floors is this fact,
+observed before it was explained.
+
+> **This corrects a bold claim that stood here through four releases.**
+> This file previously said `MIN_WIDTH` is "**840 physical pixels**, not
+> logical … the CSS viewport floor is `840 / scale`: 672px at 125%, 560px
+> at 150%". That arithmetic is wrong, and `docs/ui-critique.md` and
+> `docs/smoke-checklist.md` were both written against it. **Do not size
+> anything against a 560px or 672px viewport. Neither can occur.**
+
+**Unresolved — the observation that produced the rule above.** This file
+also reported that "five destinations needed 686px and clipped the close
+button off the right edge at 125%". Both statements cannot be true as
+written: at a floor of 840 CSS, 686px of unshrinkable content fits with
+154px to spare and nothing should have clipped.
+
+| | claimed | measured |
+|---|---|---|
+| viewport at 125% | 672px | 840px |
+| unshrinkable content | 686px | unchanged |
+| result | close button clipped | fits, with 154px spare |
+
+This is **not** a claim that `#38` was wrong. Three destinations stand on
+`PRODUCT.md`'s destination-vs-configuration test, which needs no pixel
+argument, and something was evidently observed. What is suspect is the
+recorded *reason* — and the reason is the tool the next contributor will
+reach for. Reproduce the clip or establish that it cannot be reproduced
+before relying on either number. Deliberately left open rather than
+guessed at.
+
+**What this means for `style.css`.** Every width media query below the
+floor is unreachable through the window. As of the merge that carried this
+correction there were eight, of which seven could never fire — but lanes
+are deleting their own dead blocks, so treat the *rule* as the durable
+part and re-grep before quoting a count:
+
+| Query | Fires at the floor |
+|---|---|
+| `max-width: 839px` (the `.panel` 248px step) | **only at some scalings** — see below |
+| `max-width: 767px`, `max-width: 607px` (the list's column-dropping steps) | no |
+| `max-width: 720px` x5 (status strip, two Settings blocks, the settings row, Skills) | no |
+
+Six are simply unreachable. The seventh is worse than unreachable, and it
+is the one that decides how wide the Uploader's panel is:
+
+**`max-width: 839px` fires at 200% scaling and not at 100%.** At 100% the
+floor viewport is 840 CSS and the query does not match. At 200% the floor
+measures 839 CSS — the 840 logical minimum lands a client area of 1678
+physical, and 1678 / 2 is 839 — so it matches, at the floor and nowhere
+else. The Uploader's panel is therefore 248px wide on one machine and
+320px on another, at the same window size, with nothing in the stylesheet
+that predicts which. That is a rounding artefact holding a layout
+decision, not a breakpoint. **R1 owns this**; it is recorded here because
+the reason is a DPI fact rather than a CSS one and would otherwise have to
+be rediscovered at the stylesheet.
+
+A rule the window cannot currently reach is not thereby wrong, and
+unreachable is not the same as removable. Two of these blocks are
+**required by a test**: `test_page_conventions.py` brace-matches every
+`max-width: 720px` body and demands that each id override of the shared
+label column — `#eve-binds` and `#preview-binds` — restore its collapse
+inside one. They are unreachable through the window *and* mandatory, which
+is not a contradiction: the override they correct is real at every width,
+and the restore is the record of what happens if the floor ever moves.
+Delete an override and its restore together, or neither. Beyond those two,
+each owning lane decides whether its block is a decision worth keeping. Note that
+`docs/ui-critique.md` credited one of these queries with doing the
+scaling arithmetic "correctly": it is the `839px` one, and the credit was
+earned against the wrong model. It is the least correct of the eight.
 
 **Before adding a destination, do the arithmetic.** `style.css` warned at
 four; four features added one each without revisiting it, the last
@@ -74,17 +149,87 @@ bare input is a white Win32 widget on a dark card. This applies to controls
 built in JavaScript too, which is where the worst instance shipped: one per
 character, forty of them.
 
-**Field labels go through the shared column.** `.settings .row > .lab` is
-118px, right-aligned, `--text-dim`, for the whole screen. A label outside
-it renders brighter than every other label and at its own width. Prefer
-`<label class="lab" for="...">` over a `<span>`: it keeps the control
-association.
+**Field labels go through `.lab`, and `.lab` sits above its control.**
+`.settings .row > .lab` is full-width, left-aligned and `--text-dim`
+across Settings *and* Profiles — both render `class="settings"`. The row
+is `flex-wrap: wrap` with a 4px `row-gap`, so every label stacks above the
+thing it labels and every control starts at the card's own left edge.
+
+This did not invent a pattern. The Uploader's panel has always stacked its
+labels above their controls, through a separate `.panel .lab` rule that is
+not a `.settings` descendant and was never part of the column. Settings
+now agrees with the one screen that was already doing it. A label outside `.lab` renders brighter than
+every other label and at its own width — that is still the failure being
+prevented, and it is still why three labels on one screen once sat at
+47px, 84px and 71px. Prefer `<label class="lab" for="...">` over a
+`<span>`: it keeps the control association a bare span throws away. An
+empty `.lab` is hidden (`:empty { display: none }`) rather than left to
+occupy a blank line.
+
+**This replaced a 118px right-aligned column, and not because the column
+was a mistake.** The column did its job: it made labels align with each
+other across cards instead of per-card. What it could not do was reach the
+sections that have no `.lab` at all — Notifications and General hold their
+controls as direct card children. Measured at the floor from each card's
+content edge, the first control sat at three different left edges:
+
+| Section | First control |
+|---|---|
+| Account, Uploads, Folders, Discord | 128px |
+| Bookmarks, Previews | 128px, with text at 152px |
+| Notifications, General | 0, with text at 24px |
+
+Each was internally consistent, which is why no single capture showed it
+and switching rail items did. Stacking is the only answer available in CSS
+alone: the two sections without a column cannot grow one without markup.
+The column's original job is still done — labels still share one edge —
+they now share it with everything else on the card.
+
+**If you out-specify the label column, restore its collapse yourself.**
+`#eve-binds` and `#preview-binds` take the column away from their rows on
+purpose, because their labels are long action and character names. ID
+specificity also beats the `max-width: 720px` block written against
+`.settings .row > .lab`, so the collapse silently skipped exactly the rows
+that needed it most. `tests/test_page_conventions.py` enforces the general
+rule. See "What this means for `style.css`" above: those two restores are
+unreachable through the window and mandatory, which is not a
+contradiction.
+
+**Open, not decided — the two stacked treatments are 1.5px apart.**
+`.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
+`.panel .lab` is `--fs-muted` (11.5px) with a 5px `margin-bottom`. While
+one was a right-aligned column and the other a stacked block, nobody could
+confuse them. Now they read as one pattern implemented twice, a pixel and
+a half apart, and neither difference is recorded as deliberate. Whether
+they should converge — and on which — belongs to whoever owns both blocks,
+and it is in no lane's findings. Recorded here so it is not rediscovered;
+do not fix it in passing.
+
+*Note for anyone reading the tests:* the docstrings of
+`test_settings_rows_label_through_the_shared_column` and
+`test_an_id_override_of_the_label_column_still_collapses_at_the_floor`
+still describe the 118px right-aligned column. **The assertions are
+current and passing** — they forbid a bare `<label>` in a settings row and
+require a restore per override, both of which still hold. Only the prose
+is stale. Nothing is broken; do not go hunting.
 
 **One accent per screen, or none.** `.btn.acc` is the single brand-accent
 control. Zero is fine — a screen that applies immediately has no commit
 action to accent. Two is two things claiming to be primary. Its label is
 near-black on the brand, not white: white measures 3.08:1 on the gradient's
 top stop.
+
+**Accent marks what is selected and what will happen. A card heading is
+neither.** The rule above is written about *controls*, so the Uploader's
+`UPLOAD` and `PUBLISH` heading bars never breached its letter — they were
+a third and fourth claim on a signal that carries exactly two meanings.
+The signal is diluted by every use that is neither. On the Uploader that
+is five accent uses down to three: the checked row's checkbox and its
+left-edge marker (what is selected), and the `Upload` button (what will
+happen); the two `.card > h2` bars lose it. This is about `.card > h2`
+generally and not about one screen — the heading-bar treatment is not
+confined to the Uploader, and whichever screen owns a card heading
+inherits the rule.
 
 **Never use `window.confirm`, `window.prompt` or `window.alert`.** WebView2
 renders them as browser chrome captioned with the page origin — a grey box
@@ -211,6 +356,22 @@ leave a ring behind.
 
 Column headers sit *below* body size deliberately: they label the data and
 are not the data. Do not "fix" this.
+
+**A header row is laid out by the same padding as the rows beneath it,
+with no separate inset.** Two screens broke this in opposite directions —
+the Uploader's headers sit ~16px right of their data, and on Skills
+`PLANS` sits ~22px left of its column while `READY` sits ~14px right of
+its own. The Skills instance has no scrollbar, which rules out a
+scrollbar gutter as the explanation for the Uploader's. A header that
+does not share its column's inset is not labelling that column. This
+licenses no change to header *size* — see the paragraph above.
+
+**The one blue is a declared exemption.** `--link` is the single colour in
+the app outside the palette, and it stays that way on purpose: an outbound
+link keeps link-blue *because* it leaves the app, and a link recoloured
+into the palette stops reading as a link. It is a token like any other —
+7.4:1 on `--panel`, 7.7:1 on `--bg` — so "tokens are the only place a
+colour is decided" holds. Do not unify it into the brand.
 
 Both infinite animations are stopped under `prefers-reduced-motion`. An
 indeterminate bar still has to say "working" without claiming a percentage.

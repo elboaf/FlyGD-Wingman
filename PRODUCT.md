@@ -132,8 +132,10 @@ mid-fleet, on a second monitor.
 ## Constraints
 
 Windows only. A tray app that starts hidden, in one frameless window, dark
-only. Minimum 840x625 **physical** pixels — 560 CSS px at 150% scaling,
-which is where layouts break first.
+only. Minimum **840x625 CSS pixels, at every display scaling** — the
+minimum resolves in logical units, so the viewport floor is the same
+number at 100% and at 200%. `DESIGN.md` carries the measurement and the
+correction it replaces.
 
 Free and open source, GPL-3.0. No telemetry. No account except the user's
 own Google account for their own uploads, and their own Discord webhook.
