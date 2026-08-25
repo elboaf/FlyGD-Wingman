@@ -4,7 +4,14 @@
 ; watcher the user forgets to start does nothing.
 
 #define AppName "FlyGD Wingman"
-#define AppVersion "3.2.1"
+; GENERATED, not edited. packaging/write_version_iss.py writes version.iss
+; from obs_youtube_uploader.__version__ and the build runs it immediately
+; before iscc. It is gitignored on purpose: a committed copy is still a copy,
+; and this file used to carry the third hand-typed version in the tree.
+;
+; A missing version.iss is an iscc compile error naming this line, which is
+; the intended failure -- run `python packaging/write_version_iss.py` first.
+#include "version.iss"
 #define AppExe "OBSYouTubeUploader.exe"
 
 [Setup]
@@ -54,7 +61,47 @@ Source: "..\dist\OBSYouTubeUploader\*"; DestDir: "{app}"; Flags: ignoreversion r
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup
+
+[Registry]
+; Start-on-login, and the ONLY mechanism for it. This used to be a shortcut
+; in {userstartup}, which had two problems that only showed up once the app
+; grew its own setting for this:
+;
+;   * no parameters, so the login launch RAISED THE WINDOW every boot -- on
+;     a tray app whose whole point is to sit in the tray;
+;   * invisible to the app. Settings reads HKCU\...\Run, so a user who
+;     ticked the box during install saw an UNTICKED checkbox describing an
+;     app that demonstrably did start at login, and ticking it produced two
+;     login entries at once.
+;
+; Same key, same value name, same --hidden as obs_youtube_uploader/
+; autostart.py writes, so the installer and the Settings checkbox now
+; produce a byte-identical entry and cannot disagree. If you change the
+; value name here, change VALUE_NAME there in the same commit -- an orphaned
+; name keeps launching the app while the checkbox reads "off".
+;
+; uninsdeletevalue: uninstalling must not leave a login entry pointing at a
+; path that no longer exists.
+; One line deliberately: Inno's line-continuation rules differ between
+; sections and directives, and a wrapped entry that parses as two is a
+; compile error at release time, on the one build nobody wants to debug.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#AppName}"; ValueData: """{app}\{#AppExe}"" --hidden"; Tasks: startup; Flags: uninsdeletevalue
+
+[InstallDelete]
+; Both spellings of the legacy Startup-folder shortcut. The pre-rename
+; installer wrote "OBS YouTube Uploader.lnk" (AppId is still pinned to that
+; string, so those installs upgrade in place and reach this); the
+; post-rename one wrote "FlyGD Wingman.lnk". Neither can be {#AppName} in
+; both cases, so both are spelled out.
+;
+; Unconditional, NOT gated on Tasks: startup. An upgrade that leaves the
+; task unticked must still remove the old shortcut, or the app keeps
+; starting at login through a mechanism nothing in the UI can see or turn
+; off. The Registry entry above re-adds the modern equivalent when the task
+; IS ticked, and it defaults to ticked, so a default upgrade converges on
+; one mechanism rather than silently dropping the user's setting.
+Type: files; Name: "{userstartup}\FlyGD Wingman.lnk"
+Type: files; Name: "{userstartup}\OBS YouTube Uploader.lnk"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

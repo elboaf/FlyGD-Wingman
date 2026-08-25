@@ -222,3 +222,190 @@ def test_off_windows_every_read_is_off_and_every_write_refuses(monkeypatch):
         autostart.enable()
     with pytest.raises(OSError, match="only available on Windows"):
         autostart.disable()
+
+
+# --- the legacy Startup-folder shortcut -------------------------------------
+#
+# packaging/installer.iss shipped a run-at-login task long before the app had
+# a setting for it, implemented as a shortcut with no arguments. The
+# installer now writes the same Run value this module does, but the shortcut
+# exists on every machine that ever ticked that box.
+
+
+def startup_dir(monkeypatch, tmp_path):
+    """Point _startup_dir at a real directory, on any platform."""
+    d = tmp_path / "Startup"
+    d.mkdir()
+    monkeypatch.setattr(autostart, "_startup_dir", lambda: d)
+    return d
+
+
+def test_a_legacy_shortcut_alone_reads_as_on(monkeypatch, tmp_path):
+    """It starts the app at login just as effectively as the Run value. A
+    checkbox that ignored it would read "off" on a machine that
+    demonstrably does start Wingman at login."""
+    use(monkeypatch, FakeRegistry())
+    (startup_dir(monkeypatch, tmp_path) / "FlyGD Wingman.lnk").write_text("shortcut")
+
+    assert autostart.is_enabled() is True
+
+
+def test_the_pre_rename_shortcut_name_counts_too(monkeypatch, tmp_path):
+    """AppId is pinned across the rename, so pre-rename installs upgrade in
+    place and can still be carrying the old spelling."""
+    use(monkeypatch, FakeRegistry())
+    (startup_dir(monkeypatch, tmp_path) / "OBS YouTube Uploader.lnk").write_text("x")
+
+    assert autostart.is_enabled() is True
+
+
+def test_enabling_migrates_a_legacy_shortcut_onto_the_run_value(monkeypatch, tmp_path):
+    """One mechanism after the first toggle. Two login entries at once is
+    what the collision produced, and one of them raised the window."""
+    reg = use(monkeypatch, FakeRegistry())
+    d = startup_dir(monkeypatch, tmp_path)
+    legacy = d / "FlyGD Wingman.lnk"
+    legacy.write_text("shortcut")
+
+    autostart.enable()
+
+    assert reg.values[RUN][autostart.VALUE_NAME] == autostart.command()
+    assert not legacy.exists()
+    assert autostart.legacy_shortcuts() == []
+
+
+def test_disabling_removes_the_shortcut_as_well_as_the_value(monkeypatch, tmp_path):
+    """ "Off" has to mean the app does not start at login. Leaving the
+    shortcut while reporting success is the same lie in the other
+    direction."""
+    use(monkeypatch, FakeRegistry({RUN: {autostart.VALUE_NAME: "whatever"}}))
+    d = startup_dir(monkeypatch, tmp_path)
+    legacy = d / "FlyGD Wingman.lnk"
+    legacy.write_text("shortcut")
+
+    autostart.disable()
+
+    assert not legacy.exists()
+    assert autostart.is_enabled() is False
+
+
+def test_a_refused_registry_write_leaves_the_legacy_shortcut_alone(
+    monkeypatch, tmp_path
+):
+    """The migration rides along with what the user asked for. If the write
+    is refused they must keep the login entry they already had -- ticking an
+    already-ticked box must not be able to turn start-on-login OFF."""
+    use(monkeypatch, FakeRegistry(denied=True))
+    d = startup_dir(monkeypatch, tmp_path)
+    legacy = d / "FlyGD Wingman.lnk"
+    legacy.write_text("shortcut")
+
+    with pytest.raises(OSError, match="policy"):
+        autostart.enable()
+
+    assert legacy.exists()
+    assert autostart.is_enabled() is True
+
+
+def test_a_locked_shortcut_does_not_fail_the_toggle(monkeypatch, tmp_path):
+    """Failing the user's toggle because a stale .lnk is locked would report
+    the wrong thing about the wrong action."""
+    reg = use(monkeypatch, FakeRegistry())
+    startup_dir(monkeypatch, tmp_path)
+
+    def locked():
+        class Stubborn:
+            def unlink(self):
+                raise OSError("in use")
+
+        return [Stubborn()]
+
+    monkeypatch.setattr(autostart, "legacy_shortcuts", locked)
+
+    autostart.enable()  # must not raise
+
+    assert reg.values[RUN][autostart.VALUE_NAME] == autostart.command()
+
+
+def test_no_startup_folder_falls_back_to_the_registry_alone(monkeypatch):
+    """A redirected or unreadable Startup folder means the legacy shortcut
+    is not found, which is the pre-existing behaviour rather than a new
+    failure."""
+    use(monkeypatch, FakeRegistry())
+    monkeypatch.setattr(autostart, "_startup_dir", lambda: None)
+
+    assert autostart.legacy_shortcuts() == []
+    assert autostart.is_enabled() is False
+    autostart.enable()
+    assert autostart.is_enabled() is True
+
+
+# --- the installer and this module must write the same entry ----------------
+#
+# The same class of coupling ci.yml guards for the WebView2 predicate: two
+# files in two languages that cannot share code and must ask one question.
+# Here they must WRITE one value -- if they disagree, the install-time
+# checkbox and the Settings checkbox describe different login entries and
+# the user can end up with both.
+
+import pathlib  # noqa: E402 - grouped with the section that uses it
+
+_ISS = (
+    pathlib.Path(__file__).resolve().parents[1] / "packaging" / "installer.iss"
+).read_text(encoding="utf-8")
+
+
+def _directives(text: str = _ISS) -> str:
+    """installer.iss with its `;` comment lines removed.
+
+    Necessary, not tidiness: the comments in that file explain the mechanism
+    they replaced, so they legitimately contain the strings "{userstartup}"
+    and "Tasks:". A test grepping the raw text cannot tell prose about a
+    removed shortcut from a line that recreates one -- which is the same
+    trap installer.iss's own note about braced comments and "[Run]" records
+    against Inno's parser.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(";")
+    )
+
+
+def test_the_installer_writes_the_value_name_this_module_reads():
+    """installer.iss uses {#AppName}, so the define has to match VALUE_NAME.
+    An orphaned name keeps launching the app while the checkbox reads
+    "off" -- which is the bug this whole section exists to close."""
+    assert f'#define AppName "{autostart.VALUE_NAME}"' in _ISS
+    assert 'ValueName: "{#AppName}"' in _ISS
+
+
+def test_the_installer_writes_to_the_same_run_key():
+    assert (
+        r"Subkey: \"Software\Microsoft\Windows\CurrentVersion\Run\"".replace(r"\"", '"')
+        in _ISS
+    )
+    assert "Root: HKCU" in _ISS, "HKLM would need elevation and affect other users"
+
+
+def test_the_installers_login_entry_starts_hidden():
+    """The whole reason the shortcut had to go: it carried no arguments, so
+    the login launch raised the window at every boot on a tray app."""
+    assert 'ValueData: """{app}\\{#AppExe}"" --hidden"' in _ISS
+
+
+def test_the_installer_no_longer_writes_a_startup_shortcut():
+    """One mechanism. Two is what produced a checkbox that disagreed with
+    what Windows actually did at login."""
+    icons = _directives().split("[Icons]")[1].split("[Registry]")[0]
+    assert "{userstartup}" not in icons, (
+        "a {userstartup} entry in [Icons] means the second mechanism is back"
+    )
+
+
+def test_the_installer_deletes_both_legacy_shortcut_names():
+    """Unconditionally, not gated on the startup task: an upgrade that
+    leaves it unticked must still remove the old shortcut, or the app keeps
+    starting at login through something no UI can see or turn off."""
+    delete_section = _directives().split("[InstallDelete]")[1].split("[Run]")[0]
+    for name in autostart._LEGACY_SHORTCUT_NAMES:
+        assert name in delete_section, f"{name} survives an upgrade"
+    assert "Tasks:" not in delete_section, "the deletion must be unconditional"
