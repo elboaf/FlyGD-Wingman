@@ -109,6 +109,42 @@ def test_copy_declined_at_the_prompt_changes_nothing(tmp_path, monkeypatch):
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
 
 
+def test_the_copy_confirm_names_the_source_and_the_targets(tmp_path, monkeypatch):
+    """Round 3's P9. The dialog is the last screen before an irreversible
+    overwrite and it named neither end of the action. The names must be the
+    roster's own -- Api._eve_label produces both, so the dialog cannot name
+    a character by one label while the list behind it shows another."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch, answer=False)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_names.names[1] = "Guarzo Opper"
+    api._eve_names.names[2] = "Zircon Gravimeld"
+    seen = []
+    api._eve_confirm = lambda title, body: seen.append(body) or False
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
+
+    assert "Guarzo Opper's settings" in seen[0]
+    assert "Zircon Gravimeld" in seen[0]
+    roster = {c["id"]: c["name"] for c in api.eve_settings_state()["characters"]}
+    assert roster["1"] == "Guarzo Opper" and roster["2"] == "Zircon Gravimeld"
+
+
+def test_the_roster_and_the_confirm_share_one_label_producer(tmp_path, monkeypatch):
+    """Two producers would be free to disagree, and an unresolved id is
+    exactly where they would: the roster degrades to "Character 2" and a
+    second implementation could just as easily print the bare path."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    state = api.eve_settings_state()
+    for character in state["characters"]:
+        assert api._eve_label(character["path"]) == character["name"]
+    assert api._eve_label(profile / "core_char_2.dat") == "Character 2"
+
+
 def test_a_second_mutation_is_refused_while_one_holds_the_lock(tmp_path, monkeypatch):
     """_confirm parks each worker independently, so without a lock two
     approved operations can interleave over the same files."""

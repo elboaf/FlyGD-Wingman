@@ -99,26 +99,31 @@ def test_summary_uses_a_middle_dot_separator():
 # --- format_eve_copy_confirm ----------------------------------------------
 
 
+def _targets(count: int) -> list[str]:
+    """Target labels as Api._eve_label produces them for characters."""
+    return [f"Pilot {n}" for n in range(1, count + 1)]
+
+
 def test_the_copy_confirm_counts_what_the_user_actually_ticked():
     """It said "3 other file(s)" at someone who had just ticked three
     character names. Wrong noun, and the "(s)" is exactly the padding
     PRODUCT.md's tone rule rules out -- in the last thing shown before an
     irreversible write."""
-    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=False)
+    body = copy_mod.format_eve_copy_confirm(_targets(3), "character", eve_running=False)
     assert "3 other characters" in body
     assert "file(s)" not in body
     assert "(s)" not in body
 
 
 def test_the_copy_confirm_does_not_pluralise_a_single_target():
-    body = copy_mod.format_eve_copy_confirm(1, "character", eve_running=False)
+    body = copy_mod.format_eve_copy_confirm(_targets(1), "character", eve_running=False)
     assert "1 other character?" in body
 
 
 def test_the_copy_confirm_uses_the_word_the_screen_uses_for_accounts():
     """The page offers a Characters / Accounts switch. DESIGN.md's "one
     name per concept" makes the dialog use the same two words."""
-    body = copy_mod.format_eve_copy_confirm(2, "account", eve_running=False)
+    body = copy_mod.format_eve_copy_confirm(_targets(2), "account", eve_running=False)
     assert "2 other accounts" in body
 
 
@@ -126,7 +131,7 @@ def test_an_unrecognised_selection_falls_back_to_naming_files():
     """Degraded, not wrong: it is what the dialog said for every selection
     before it could tell the difference. Reached when the targets are mixed
     or are not EVE settings files at all."""
-    body = copy_mod.format_eve_copy_confirm(2, None, eve_running=False)
+    body = copy_mod.format_eve_copy_confirm(_targets(2), None, eve_running=False)
     assert "2 other settings files" in body
 
 
@@ -135,14 +140,14 @@ def test_the_copy_confirm_repeats_the_running_client_hazard():
     copying into a profile while a client is open is the hazard -- EVE
     rewrites its own settings on exit. The pill is advisory and the dialog
     is modal, so the warning was on the wrong one of the two."""
-    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=True)
+    body = copy_mod.format_eve_copy_confirm(_targets(3), "character", eve_running=True)
     assert "EVE is running" in body
     # Says what to do, not only what is wrong (PRODUCT.md's tone rule).
     assert "Close every client first" in body
 
 
 def test_the_copy_confirm_stays_quiet_about_eve_when_nothing_is_running():
-    body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=False)
+    body = copy_mod.format_eve_copy_confirm(_targets(3), "character", eve_running=False)
     assert "EVE is running" not in body
 
 
@@ -150,7 +155,9 @@ def test_the_copy_confirm_always_states_the_cost():
     """PRODUCT.md: state cost before an irreversible action. The backup and
     the irreversibility are true in every branch above."""
     for running in (True, False):
-        body = copy_mod.format_eve_copy_confirm(3, "character", eve_running=running)
+        body = copy_mod.format_eve_copy_confirm(
+            _targets(3), "character", eve_running=running
+        )
         assert "backed up first" in body
         assert "cannot be undone" in body
 
@@ -166,10 +173,84 @@ def test_the_completion_line_uses_the_same_noun_as_the_confirm():
         ("account", "accounts"),
         (None, "settings files"),
     ):
-        confirm = copy_mod.format_eve_copy_confirm(3, kind, eve_running=False)
+        confirm = copy_mod.format_eve_copy_confirm(_targets(3), kind, eve_running=False)
         done = copy_mod.format_eve_copy_done(3, kind)
         assert f"3 other {expected}?" in confirm
         assert done == f"Copied to 3 {expected}."
+
+
+def test_the_copy_confirm_names_the_source_it_is_copying_from():
+    """Round 3's P9. The dialog named neither end of the action: "these
+    settings" were some particular character's and it did not say whose.
+    That is the fact deciding whether this is the right action at all."""
+    body = copy_mod.format_eve_copy_confirm(
+        _targets(1), "character", eve_running=False, source_name="Guarzo Opper"
+    )
+    assert "Guarzo Opper's settings" in body
+    assert "these settings" not in body
+
+
+def test_the_copy_confirm_names_what_it_lands_on():
+    """The other half of P9: "1 other character" had a name, and the last
+    screen before an irreversible write did not print it."""
+    body = copy_mod.format_eve_copy_confirm(
+        ["Zircon Gravimeld"],
+        "character",
+        eve_running=False,
+        source_name="Guarzo Opper",
+    )
+    assert "Zircon Gravimeld" in body
+
+
+def test_the_copy_confirm_still_says_something_when_no_name_is_known():
+    """Degraded, not broken. An unresolved id already reaches this as
+    "Character 98123456" (evesettings.names), so an empty label means the
+    bridge was handed a path the page never offered -- which must not
+    produce "Copy 's settings"."""
+    body = copy_mod.format_eve_copy_confirm([""], "character", eve_running=False)
+    assert "these settings" in body
+    assert "'s settings" not in body
+
+
+def test_the_copy_confirm_counts_the_names_it_was_given():
+    """The count is derived, not passed. A separately-passed count could
+    say "3 other characters" over a list of four names, in the one dialog
+    whose whole job is stating what is about to be overwritten."""
+    body = copy_mod.format_eve_copy_confirm(
+        _targets(4), "character", eve_running=False, source_name="Src"
+    )
+    assert "4 other characters" in body
+
+
+def test_the_copy_confirm_states_the_targets_it_did_not_name():
+    """No silent cap: six of thirty-two names with nothing saying so reads
+    as the whole list, in a confirmation whose point is completeness."""
+    body = copy_mod.format_eve_copy_confirm(
+        _targets(32), "character", eve_running=False, source_name="Src"
+    )
+    assert "32 other characters" in body
+    assert f"Pilot {copy_mod._COPY_NAME_CAP}" in body
+    assert f"Pilot {copy_mod._COPY_NAME_CAP + 1}" not in body
+    # Derived from the cap, not retyped: the sentence has to move with it.
+    assert f"and {32 - copy_mod._COPY_NAME_CAP} more" in body
+
+
+def test_the_copy_confirm_does_not_claim_an_overflow_it_does_not_have():
+    body = copy_mod.format_eve_copy_confirm(
+        _targets(copy_mod._COPY_NAME_CAP), "character", eve_running=False
+    )
+    assert "more" not in body.split("Each one")[0]
+
+
+def test_a_target_with_no_name_is_still_counted_in_the_overflow():
+    """It is being overwritten either way. Counting the overflow against
+    the printed names instead of the targets would leave two names under
+    "3 other characters" as the only trace of the third."""
+    body = copy_mod.format_eve_copy_confirm(
+        ["Zircon Gravimeld", "", "Alva Kaas"], "character", eve_running=False
+    )
+    assert "3 other characters" in body
+    assert "and 1 more" in body
 
 
 def test_the_completion_line_does_not_pluralise_a_single_target():
