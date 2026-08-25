@@ -111,9 +111,15 @@ appears to:
 ```python
 def test_deliberate_failure_to_verify_branch_protection():
     import sys
+
     if sys.platform == "win32":
         raise AssertionError("intentional - delete this test")
 ```
+
+(The blank line after the import is not decoration — this repository gates
+CI on `ruff format --check`, and without it the `checks` job goes red too.
+You would then be looking at two red checks while trying to read one
+signal.)
 
 A test that fails on both platforms is blocked by `test (ubuntu-latest)`
 alone. You would see the merge button greyed out and conclude the
