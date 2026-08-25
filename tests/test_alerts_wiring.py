@@ -175,6 +175,32 @@ def test_a_no_op_preview_toggle_still_reconciles(tmp_path):
     assert alerts.reconciled == 0  # no-op path never reaches the write
 
 
+def test_set_preview_enabled_true_actually_starts_the_tailer(tmp_path):
+    """Regression for the ordering the is_running gate depends on.
+
+    reconcile() must run AFTER preview_host.start(), not before: while
+    FakeAlerts only counts calls, this uses the real AlertService (wired
+    the same way build_alert_service does) against a FakePreviewHost whose
+    is_running reflects real start()/stop() counts -- if reconcile() were
+    called too early, is_running would still read False, folder() would
+    return None, and the gate would stay permanently closed.
+    """
+    from obs_youtube_uploader.__main__ import build_alert_service
+
+    host = FakePreviewHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._alerts = build_alert_service(api._state, host)
+    api._state.settings["preview"] = {"enabled": False, "alerts": _alerts_section()}
+    api._state.settings["gamelogs_dir"] = str(tmp_path)
+
+    try:
+        api.set_preview_enabled(True)
+        assert host.is_running
+        assert api._alerts.health().running
+    finally:
+        api._alerts.stop()
+
+
 # ---- a test alert is never persistent --------------------------------------
 
 
