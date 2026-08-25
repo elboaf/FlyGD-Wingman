@@ -264,9 +264,12 @@ somewhere stale and nothing on that screen is worth reviewing.
       it wraps rather than being cut off at the panel edge: clear the
       webhook first so the two-line combat-log hint is showing, which is
       the longest string the panel ever holds. NOTE: the viewport floor is
-      840 CSS px at every scaling, so of the two narrower panel widths only
-      248px is reachable (`max-width: 839px`, by one pixel); 220px is not.
-      Scaling changes apparent size here, not CSS width.
+      840 CSS px at every scaling, so 220px is unreachable and 248px is
+      reachable only at SOME scalings: `max-width: 839px` matches at 200%,
+      where DPI rounding puts the floor at 839 CSS, and not at 100%, where
+      it is 840. Expect the panel at 320px at 100% and 248px at 200%, at
+      the same window size. That is a known defect (`DESIGN.md`), not
+      something to verify as correct — record which you saw.
 - [ ] **Nothing is clipped at the minimum window size.** The
       Description box shrinks first and **Delete selected** is still fully
       visible on its own row. Drag the window down to its floor (840x625

@@ -96,17 +96,32 @@ guessed at.
 **What this means for `style.css`.** Of its eight width media queries,
 seven can never fire:
 
-| Query | Fires at the 840 CSS floor |
+| Query | Fires at the floor |
 |---|---|
-| `max-width: 839px` (the `.panel` width step) | **yes**, by one pixel |
-| `max-width: 767px`, `max-width: 607px` | no |
+| `max-width: 839px` (the `.panel` 248px step) | **only at some scalings** — see below |
+| `max-width: 767px`, `max-width: 607px` (the list's column-dropping steps) | no |
 | `max-width: 720px` x5 (status strip, two Settings blocks, the settings row, Skills) | no |
 
-None of the seven is load-bearing today; each owning lane decides whether
-its block is a decision worth keeping or dead weight. Note that
+Six are simply unreachable. The seventh is worse than unreachable, and it
+is the one that decides how wide the Uploader's panel is:
+
+**`max-width: 839px` fires at 200% scaling and not at 100%.** At 100% the
+floor viewport is 840 CSS and the query does not match. At 200% the floor
+measures 839 CSS — the 840 logical minimum lands a client area of 1678
+physical, and 1678 / 2 is 839 — so it matches, at the floor and nowhere
+else. The Uploader's panel is therefore 248px wide on one machine and
+320px on another, at the same window size, with nothing in the stylesheet
+that predicts which. That is a rounding artefact holding a layout
+decision, not a breakpoint. **R1 owns this**; it is recorded here because
+the reason is a DPI fact rather than a CSS one and would otherwise have to
+be rediscovered at the stylesheet.
+
+None of the six dead blocks is load-bearing today, and each owning lane
+decides whether its block is a decision worth keeping or dead weight — a
+rule the window cannot currently reach is not thereby wrong. Note that
 `docs/ui-critique.md` credited one of these queries with doing the
-scaling arithmetic "correctly" — that credit was earned against the wrong
-model, and the one query that survives does so for an unrelated reason.
+scaling arithmetic "correctly": it is the `839px` one, and the credit was
+earned against the wrong model. It is the least correct of the eight.
 
 **Before adding a destination, do the arithmetic.** `style.css` warned at
 four; four features added one each without revisiting it, the last
