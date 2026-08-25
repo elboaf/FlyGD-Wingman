@@ -177,6 +177,19 @@
     }
   }
 
+  // Backup stamps arrive exactly as they are spelled in the filename --
+  // backup.parse_name joins its date and time groups raw, so `created` is
+  // 20260824-140300 and not the "2026-08-24 14:03" it reads as. Punctuating
+  // it is what makes the column scannable, which is the whole reason the
+  // row became columns. Guarded rather than sliced blind: a stamp that ever
+  // stops being YYYYMMDD-HHMMSS renders as itself instead of as nonsense.
+  function whenText(created) {
+    var stamp = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}$/.exec(created || '');
+    if (!stamp) return created || '';
+    return stamp[1] + '-' + stamp[2] + '-' + stamp[3]
+      + ' ' + stamp[4] + ':' + stamp[5];
+  }
+
   function renderBackups() {
     var host = WM.el('es-backups');
     host.innerHTML = '';
@@ -205,7 +218,7 @@
     }
     (state.backups || []).forEach(function (item) {
       var line = WM.make('div', 'row');
-      line.appendChild(WM.make('span', 'bk-when', item.created));
+      line.appendChild(WM.make('span', 'bk-when', whenText(item.created)));
       line.appendChild(WM.make('span', 'bk-what',
         item.kind + ' \u00b7 ' + item.stem));
       // Both origins named in full, rather than a bare "(auto)" on half the

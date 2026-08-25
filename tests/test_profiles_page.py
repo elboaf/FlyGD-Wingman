@@ -105,6 +105,20 @@ def test_every_backup_column_class_has_a_rule():
     )
 
 
+def test_the_backup_stamp_is_punctuated_but_not_sliced_blind():
+    """backup.parse_name joins its date and time groups raw, so `created`
+    is 20260824-140300. Turning the row into columns buys nothing if the
+    date column is still fifteen unbroken digits -- and a blind slice would
+    render a changed stamp as nonsense rather than as itself.
+    """
+    fn = re.search(r"function whenText\(created\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn, "the backup stamp is no longer punctuated"
+    body = fn.group(1)
+    assert "exec(" in body and "return created" in body, (
+        "whenText must fall back to the raw stamp when it does not match"
+    )
+
+
 # ---- the mode switch has a word in front of it -------------------------
 
 

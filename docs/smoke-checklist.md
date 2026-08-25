@@ -1365,9 +1365,11 @@ so these are the checks that matter and only a Windows machine can run them.
       the route must change the sentence.
 - [ ] **The backup list is columns, and Delete does not look like Restore.**
       Make several backups of different things. Expected: the dates line up
-      in a monospace column, `Restore` and `Delete` sit at the same x on
-      every row however long the name, and `Delete` carries the red outline
-      Skills uses for Forget character. Every row says `automatic` or
+      in a monospace column as `2026-08-24 14:03` — punctuated, not the
+      raw `20260824-140300` the filename carries — and `Restore` and
+      `Delete` sit at the same x on every row however long the name.
+      `Delete` carries the red outline Skills uses for Forget character,
+      and `Restore` does not. Every row says `automatic` or
       `manual` in full — no bare `(auto)` on half the rows and nothing on
       the other half.
 - [ ] Check the packaged build: the Profiles route appears and the
