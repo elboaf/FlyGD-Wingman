@@ -391,3 +391,80 @@ def test_opening_a_dialog_disarms_an_armed_keybind_capture():
             assert "endCapture()" in before, (
                 f"{name} raises WM.prompt without disarming an armed capture first"
             )
+
+
+def test_no_colour_is_decided_outside_the_root_token_block():
+    """Every hex colour in style.css lives in :root.
+
+    DESIGN.md and CLAUDE.md have both stated this all along, and it was
+    broken the whole time: the vermilion-to-purple retheme moved --brand
+    and left 72 hex literals sitting in rules further down, so the tokens
+    went violet and the surfaces they describe did not. What that looked
+    like on screen was .list-head -- a `#101216` blue-grey band welded to
+    the top of a violet list, on the first screen the app opens (round 3,
+    finding 7). Nothing caught it, because nothing was looking.
+
+    The count is DERIVED, not retyped: the assertion is "none", so a new
+    literal fails here rather than drifting a number in a docstring.
+
+    Comments are already stripped from CSS at the top of this module, so a
+    literal QUOTED IN A COMMENT is fine and several are -- the notes on
+    --brand-text and --link name the values they are explaining.
+    """
+    root = re.search(r":root\s*\{(.*?)\n\}", CSS, flags=re.DOTALL)
+    assert root, "style.css has no :root block?"
+    rules = CSS[: root.start()] + CSS[root.end() :]
+    stray = re.findall(r"#[0-9a-fA-F]{3,8}\b", rules)
+    assert not stray, (
+        "colour decided outside :root: "
+        + ", ".join(sorted(set(stray)))
+        + " -- add a token instead (L1 owns :root; see finding 7)"
+    )
+
+
+def test_a_readiness_state_is_not_painted_in_the_error_colour():
+    """`Missing` / `Not trained` are facts about a character, not failures.
+
+    C2 settled this for `Unknown skill`; round 3's S3 found the same
+    mistake still shipping on five rules, where --err painted a readiness
+    state, a group swatch AND `Forget character` -- the control that
+    deletes the character -- in one colour, about 130 CSS px apart. The
+    readiness ramp now ends in --unmet and destructive controls carry
+    --danger, so no one token means all three.
+    """
+    for cls in (
+        "key-Missing",
+        "key-Unknown",
+        "status-Missing",
+        "status-Unknown",
+        "state-Missing",
+        "state-Unknown",
+    ):
+        rule = re.search(r"\." + cls + r"\s*\{([^}]*)\}", CSS)
+        assert rule, f".{cls} is gone -- did the readiness classes move?"
+        assert "var(--err)" not in rule.group(1), (
+            f".{cls} paints a readiness state in --err; it belongs on --unmet"
+        )
+
+
+def test_the_training_states_do_not_reuse_the_outbound_link_colour():
+    """--link means "this leaves the application" and nothing else.
+
+    After the purple retheme it was the only blue left, and the three
+    training states were a bare `#7aa2f7` -- which is EXACTLY --link's
+    value, so blue meant both "follow this out of the app" and "this skill
+    is queued", and the queued one is not clickable (round 3, S5). --link
+    could not move: it carries a legal obligation to be followed and its
+    own note says so. The states moved, to --training.
+    """
+    root = re.search(r":root\s*\{(.*?)\n\}", CSS, flags=re.DOTALL)
+    values = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", root.group(1)))
+    assert values["--training"].strip() != values["--link"].strip(), (
+        "--training and --link hold the same value again; that collision is S5"
+    )
+    for cls in ("key-Training", "status-Training", "state-Queued"):
+        rule = re.search(r"\." + cls + r"\s*\{([^}]*)\}", CSS)
+        assert rule, f".{cls} is gone -- did the training classes move?"
+        assert "var(--link)" not in rule.group(1), (
+            f".{cls} paints a training state in --link, the outbound-link token"
+        )
