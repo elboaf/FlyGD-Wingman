@@ -37,6 +37,7 @@ done.
 | --- | --- | --- |
 | `show_labels` | `render()` already skips the band when `label_h` is 0 | `chrome.py:107-108` |
 | `locked` | `layout.Entry.locked` persists, is restored, and is honoured | `layout.py:15`, `host.py:427`, `window.py:416` |
+| `opacity` | key validated and clamped 20–255; `DWM_TNP_OPACITY` already set | `settings.py:211-215`, `thumbnail.py:38,43` |
 
 **But `preview.layouts` cannot store a lock on its own.** `layout.deserialize`
 requires `x`, `y`, `w` and `h` and `continue`s past any entry missing one
@@ -45,7 +46,6 @@ every write (`settings.py:413`). A lock written against a character who has
 never dragged their preview is therefore discarded by the very next save — the
 checkbox would appear to work and silently forget. This is why decision 5 puts
 `locked` in its own list rather than in the layout entry.
-| `opacity` | key validated and clamped 20–255; `DWM_TNP_OPACITY` already set | `settings.py:211-215`, `thumbnail.py:38,43` |
 
 `chrome.py` needs no edit at all. `band_bottom = min(h - 1, border + label_h)`
 guarded by `if band_bottom > border` means `label_h=0` already produces a
