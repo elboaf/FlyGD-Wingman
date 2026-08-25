@@ -1449,18 +1449,49 @@ against a placeholder id; only these items are blocked on the registration.
       means a JS call names a handler the Python `Api` does not expose —
       `WM.handle`'s try/catch keeps that from crashing the page, but it
       should never fire at all in a build that matches its own bridge.
-- [ ] **The counts line and plan ratios render as described.** With at
-      least one character and one plan, confirm the header counts line
-      (e.g. how many characters, how many ready) and that a plan shows its
-      requirement ratio as `met/total` (e.g. `1/9`, `0/9`) rather than a
-      percentage or raw list.
+- [ ] **The counts line and the plan ratio agree, and the ratio is
+      keyed.** With at least one character and one plan, confirm the rail's
+      counts line (how many characters, how many ready) and that each plan
+      row's ratio is `ready characters / all characters` — the SAME two
+      numbers the counts line just gave, not a count of the plan's skills.
+      The `READY` header sits over that column, and hovering a plan row
+      spells both numbers out. The pane header's `N requirements` beside it
+      counts the plan's skills and is a different quantity: with a roster
+      and a plan of similar size the two are easy to read as one, which is
+      what the header and the tooltip exist to prevent.
 - [ ] **The plan-issues disclosure opens and closes.** A character not
       fully ready for a plan shows a collapsed `<details>` listing the
       missing requirements; expanding it does not shift the rest of the
       row list, and collapsing it again restores the original height.
-- [ ] **Visual layout at the `min_size` floor of 840×625** — 626px beside
-      the 214px rail — including text overflow and ellipsis on long
-      character and plan names, and no horizontal overflow at that size.
+- [ ] **Visual layout at the real CSS floor, not the 100%-scaling one.**
+      `min_size` is 840×625 **physical** and the app is system-DPI-aware,
+      so check this at **150% display scaling** — a 560px CSS viewport,
+      where the rail narrows to 168px and the roster keeps about 356px.
+      Then at 125% (672px) and 100% (840px, rail back at 214px). At each:
+      long character and plan names ellipsise rather than overflowing, the
+      rail's buttons do not clip their own labels, and there is no
+      horizontal scrollbar. Checking only at 840 logical checks the one
+      width where this layout was never in doubt.
+- [ ] **The rail's plan-file actions still work where they now sit.**
+      `Open plans folder` and `Reload plans` are link-style actions at the
+      foot of the Plans block rather than buttons in a block of their own.
+      Both still do what they say; neither wraps off the rail at 150%
+      scaling.
+- [ ] **`What is a plan?` opens without moving the plan list.** Expand it
+      in the rail. It states the file format — a `.txt` of skill names with
+      roman-numeral levels — and expanding it shrinks the plan list's
+      scroll area rather than pushing anything off the bottom of the rail.
+      Collapse it again and the list returns to its height.
+- [ ] **An empty roster names the control.** With no characters
+      authorised, the roster reads `No characters yet. Press “Add
+      character” to sign one in with EVE SSO.` — the name on the button,
+      not a direction to look left.
+- [ ] **The unscored group does not blame the wrong thing.** Empty the
+      plans folder and reload plans. Every character collapses into one
+      group; its heading is `Not scored yet` and the hint beside the roster
+      says there are no local plans. The heading must NOT say the roster
+      needs refreshing — refreshing is not what is missing, and it is the
+      control the user would otherwise reach for.
 - [ ] **Typing in the filter box narrows the roster live**, and the
       `Clear filter` action appears only while a filter is active and
       removes it when clicked.

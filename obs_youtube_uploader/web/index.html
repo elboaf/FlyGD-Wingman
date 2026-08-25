@@ -428,8 +428,8 @@
   </div>
 
   <!-- NOT the .settings/.card wrapper the previews and bookmarks routes
-       use: this is a two-pane workspace, not a form. The rail is fixed at
-       214px and the main pane takes the rest; see .skills in style.css. -->
+       use: this is a two-pane workspace, not a form. The rail holds the
+       roster's controls and the plan list; see .skills in style.css. -->
   <div class="route" id="route-skills">
     <aside class="skills-rail">
       <div class="rail-block">
@@ -437,13 +437,42 @@
         <button class="btn" id="skills-add">Add character</button>
         <button class="btn" id="skills-refresh">Refresh characters</button>
       </div>
+      <!-- The plan-file actions were a third rail block BELOW this one,
+           which left the plan list -- the only thing on this rail anyone
+           comes here to change -- sandwiched between two blocks of setup.
+           They act on the folder this list is read from, so they belong to
+           it. They are .linkbtn rather than .btn for the same reason the
+           rail narrows at 720px: a full-width button makes its own label
+           part of the rail's width floor, and "Open plans folder" was one
+           of the two longest labels on the screen. -->
       <div class="rail-block rail-plans-block">
-        <h3 class="rail-head">Plans</h3>
+        <div class="rail-head-row">
+          <h3 class="rail-head">Plans</h3>
+          <!-- Keys the ratio column below it. That ratio counts
+               CHARACTERS ready for the plan; the pane header beside it
+               counts the plan's SKILLS. Unlabelled, adjacent and often
+               similar in size, the two read as one quantity -- "3/12"
+               beside "12 requirements" invites "three of twelve
+               requirements met", which is the opposite of what it says. -->
+          <span class="rail-head-key">Ready</span>
+        </div>
         <div class="rail-plans" id="skills-plans"></div>
-      </div>
-      <div class="rail-block">
-        <button class="btn" id="skills-open-folder">Open plans folder</button>
-        <button class="btn" id="skills-reload-plans">Reload plans</button>
+        <!-- The plan file format was stated in ONE place: the hint shown
+             when the folder holds no plans at all -- that is, only to
+             users who have no reason to care yet. A user with one plan and
+             a wish for a second had "Open plans folder" and nothing else.
+             A <details> keeps it one line until it is wanted, which is
+             what the rail can afford. -->
+        <details class="rail-about">
+          <summary>What is a plan?</summary>
+          <p>A <code>.txt</code> file in the plans folder. One skill per
+             line with the level you want in roman numerals, like
+             <code>Shield Operation V</code>.</p>
+        </details>
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
+          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
+        </div>
       </div>
     </aside>
 

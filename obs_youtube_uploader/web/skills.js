@@ -125,6 +125,13 @@
       // formatted string keeps the payload keys plain numbers.
       row.appendChild(WM.make('span', 'rail-ratio',
                               plan.ready_count + '/' + total));
+      // Both numbers spelled out, because the bare ratio counts CHARACTERS
+      // while the pane header two inches to its right counts the plan's
+      // SKILLS -- "3/12" beside "12 requirements". The .rail-head-key
+      // column header carries the short version for someone scanning; this
+      // is for someone who stopped on one row to check.
+      row.title = plan.name + ' — ' + plan.ready_count + ' of ' + total
+        + (total === 1 ? ' character is ready' : ' characters are ready');
       row.addEventListener('click', function () { selectPlan(plan.name); });
       host.appendChild(row);
     });
@@ -269,10 +276,17 @@
                 'Unscored'];
   var OTHER = 'Other';
 
+  // 'Unscored' is deliberately CAUSE-NEUTRAL. It was 'Not yet refreshed',
+  // which named one cause and pointed at the Refresh button -- but an
+  // empty or broken plans folder puts EVERY character in this group (see
+  // the lockout guard below), and then the label is simply false and sends
+  // the user to the wrong control. The cause is already stated where it is
+  // known: renderRoster's hint says "No local plans yet" beside the roster,
+  // and a per-character failure states itself in the expanded row.
   var GROUP_LABEL = {
     Ready: 'Ready', Training: 'Training', Locked: 'Locked',
     Missing: 'Missing requirements', Unknown: 'Unknown skills',
-    Unscored: 'Not yet refreshed', Other: 'Unrecognised'
+    Unscored: 'Not scored yet', Other: 'Unrecognised'
   };
 
   /* THE LOCKOUT GUARD.
@@ -403,8 +417,13 @@
 
     if (!characters().length) {
       empty.hidden = false;
+      // Names the control rather than where it is: "the actions on the
+      // left" is a location the rail is narrow enough to be scanned past,
+      // and PRODUCT.md's rule is to name things the way the user does --
+      // the button says "Add character", so this does too.
       empty.textContent =
-        'No characters yet. Add one from the actions on the left.';
+        'No characters yet. Press “Add character” to sign one in with '
+        + 'EVE SSO.';
       return;
     }
 

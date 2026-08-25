@@ -883,12 +883,18 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* ====================== skills route ================================
    NOT the .settings form the previews and bookmarks routes use: a fixed
-   rail beside a scrolling roster. The rail is 214px and the main pane
-   takes the rest -- min_size is (840, 625) (ui/window.py:44-45), which
-   leaves 626 CSS pixels beside the rail at 100% scaling, and less on the
-   scaled displays .evestat's media query already accounts for. minmax(0,
-   1fr) rather than 1fr: a bare 1fr floors at min-content, and one long
-   character name would push the roster wider than the window. */
+   rail beside a scrolling roster.
+
+   "626 CSS pixels beside the rail" is the 100%-scaling case and was the
+   only one this block was sized against. min_size is (840, 625) PHYSICAL
+   (ui/window.py:44-45) and the app is system-DPI-aware, so the CSS
+   viewport floor is 672px at 125% and 560px at 150% -- where a 214px rail
+   is 38% of the window and the roster keeps 310px. The media query at the
+   foot of this block is the other half of the sizing; see it for which
+   width the rail gives back and why 168.
+
+   minmax(0, 1fr) rather than 1fr: a bare 1fr floors at min-content, and
+   one long character name would push the roster wider than the window. */
 #route-skills {
   display: none;
   grid-template-columns: 214px minmax(0, 1fr);
@@ -902,16 +908,47 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   border-radius: var(--radius); padding: 12px;
 }
 .rail-block { display: flex; flex-direction: column; gap: 6px; }
-/* Only the plan list scrolls. Seven plans fit; the buttons below it must
-   not be pushed off the bottom by the eighth. */
+/* Only the plan list scrolls. Seven plans fit; the format disclosure and
+   the two plan-file actions below it must not be pushed off the bottom by
+   the eighth -- so the list takes the slack (flex: 1) and its siblings
+   keep their own height (flex: none) rather than all four children
+   shrinking proportionally. */
 .rail-plans-block { flex: 1; min-height: 0; }
-.rail-plans { overflow-y: auto; min-height: 0; }
+.rail-plans { flex: 1; overflow-y: auto; min-height: 0; }
+.rail-head-row {
+  flex: none; display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 2px;
+}
 .rail-head {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: #8b93a1; font-weight: 600; margin-bottom: 6px;
+  color: #8b93a1; font-weight: 600;
+}
+/* A column header for .rail-ratio, so it sits over the numbers it names.
+   Below body size and dim on purpose: it labels the data and is not the
+   data -- the same reason the recording list's headers do. */
+.rail-head-key {
+  margin-left: auto; font-size: var(--fs-label); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint);
 }
 .rail-count { color: var(--text-dim); font-size: var(--fs-muted); }
 .skills-rail button.btn { width: 100%; text-align: center; }
+
+.rail-about { flex: none; font-size: var(--fs-muted); }
+.rail-about summary { cursor: pointer; color: var(--text-faint); }
+.rail-about summary:hover { color: var(--text-dim); }
+.rail-about p {
+  margin-top: 5px; color: var(--text-dim); line-height: 1.5; user-select: text;
+}
+/* There is no bare `.mono` class -- the only monospace rules in this
+   stylesheet are on .field -- so the format example brings its own. */
+.rail-about code { font-family: var(--mono); color: var(--text); }
+
+/* The two plan-file actions. They wrap because at the narrow rail width
+   they do not fit on one line, and a .linkbtn that overflows its rail is
+   worse than one that takes two rows. */
+.rail-plan-actions {
+  flex: none; display: flex; flex-wrap: wrap; gap: 2px; margin: 0 -6px;
+}
 
 /* .rail-item is the Settings rail and .rail-plan is the Skills rail: the
    same affordance -- a list where exactly one entry is current -- so they
@@ -1052,6 +1089,26 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .linkbtn.danger:hover { color: #fff; background: #d9291c; }
 button.btn.danger { border-color: var(--err); color: var(--err); }
 button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
+
+/* The rail gives width back below the 100%-scaling case. What it spends
+   214px on is mostly setup -- a count line, Add character (used once per
+   account, ever), Refresh characters, then the plan list -- while the
+   roster, which is what the screen is for, is the track that has to
+   absorb every pixel the rail keeps.
+
+   168px, not a third number: it is the Settings rail's width, which
+   already survives this viewport with a list of eight entries in it. At
+   560px CSS that moves the roster from 310px to 356px.
+
+   720px, not a second one: .evestat and `.settings .row` already treat it
+   as this page's "anything above 100% scaling" line.
+
+   The rail's real width floor is its widest full-width button label,
+   which is why the plan-file actions became .linkbtn in index.html rather
+   than staying two more 100%-wide buttons. */
+@media (max-width: 720px) {
+  #route-skills { grid-template-columns: 168px minmax(0, 1fr); }
+}
 
 /* ====================== reduced motion ==============================
    Both animations below are INFINITE and long-running -- `slide` for the
