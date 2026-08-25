@@ -637,8 +637,7 @@
             Your EVE Gamelogs folder is not set. Alerts cannot run without
             it &mdash; set it under Settings &rsaquo; Folders.</span></div>
         <div class="row">
-          <span class="lab">Enable</span>
-          <label class="check">
+                    <label class="check">
             <input type="checkbox" id="alert-enabled"><span class="box"></span>
             Watch gamelogs and raise alerts
           </label>
@@ -660,8 +659,7 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-depends" style="display:none"></span></div>
         <div class="row">
-          <span class="lab">PvE filter</span>
-          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
+                    <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
                is {combat, warp_scramble}; decloak is excluded there
                because it carries no attacker source for the heuristic to
                test. Saying only "combat" while the control sits above
@@ -675,8 +673,7 @@
           </label>
         </div>
         <div class="row">
-          <span class="lab">Persist</span>
-          <label class="check">
+                    <label class="check">
             <input type="checkbox" id="alert-persist"><span class="box"></span>
             Keep pulsing until you select the preview
           </label>
@@ -689,6 +686,17 @@
              "Combat"'s. A table whose columns do not line up is not
              giving the scan it costs a table's markup to get. -->
         <div class="alert-events">
+        <!-- The grid was already a table; nothing said so. Three
+             left-aligned names in a max-content track leave trailing
+             space after the two short ones ("Combat" and "Decloak" sat
+             ~57px from their swatches, "Warp scramble" ~12px), which
+             reads as raggedness at three rows and as ordinary column
+             structure once the columns are named. A minmax() floor on the
+             name track was the other candidate and is the wrong one: it
+             widens every gap instead of equalising them. -->
+        <div class="alert-head" aria-hidden="true">
+          <span>Event</span><span>Colour</span><span>Sound</span><span></span>
+        </div>
         <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>

@@ -1642,13 +1642,24 @@ button.btn:disabled,
    colour this file does not decide: it is the user's data, painted onto a
    preview of someone else's window, not chrome. Every other pixel here is
    still tokens. */
-.swatches { display: flex; gap: 5px; align-items: center; }
-.swatch { display: inline-flex; cursor: pointer; }
+/* The dots carry the most chroma anywhere in the app: five per row, three
+   rows, at full saturation. The hues cannot move -- they are pinned to
+   settings.py's defaults by test_page_conventions and have to hold up over
+   moving game content (alerts.js) -- so the painted area is the only thing
+   that can give. 18px -> 14px is a ~40% cut.
+
+   The padding here is part of that change, not a tidy-up: .swatch had none,
+   so the dot WAS the whole hit target and 14px alone would have put it under
+   the 24px pointer minimum. gap goes to 0 to pay for the padding, so the
+   targets touch and the cluster stays about as wide as it was while showing
+   40% less colour. */
+.swatches { display: flex; gap: 0; align-items: center; }
+.swatch { display: inline-flex; padding: 5px; cursor: pointer; }
 /* Same trick .check and .radio use: the real input is invisible and the
    span beside it is what you see, so no native control ever renders. */
 .swatch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .swatch .dot {
-  width: 18px; height: 18px; border-radius: 4px;
+  width: 14px; height: 14px; border-radius: 4px;
   border: 1px solid var(--control-edge); background: var(--swatch);
 }
 /* A halo in the page's own colours rather than a tint of the swatch, so
@@ -1691,6 +1702,22 @@ button.btn:disabled,
   justify-content: start;
   gap: 10px; align-items: center;
 }
+/* The event table is a different rhythm from the three single checkboxes
+   above it -- a packed grid under three loose rows -- and at .row's 10px
+   it read as three more checkboxes in the same list. */
+.alert-events { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border); }
+.alert-head { display: contents; }
+/* The same [hidden] trap .alert-row carries below, and for the same
+   reason: display:contents beats the UA stylesheet's [hidden] outright,
+   so the header cells would keep rendering with the header gone. */
+.alert-head[hidden] { display: none; }
+.alert-head > span {
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* Every header string is narrower than the control column beneath it
+   ("Colour" ~45px against 5 swatches at 110px), so naming the columns
+   cannot grow a track and cannot reach the 840 floor's overflow. */
 .alert-events .alert-row > select.field { width: 100%; min-width: 0; }
 .alert-events .alert-row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -1714,6 +1741,11 @@ button.btn:disabled,
 @media (max-width: 720px) {
   .alert-events { grid-template-columns: max-content minmax(90px, 1fr) max-content; }
   .alert-events .alert-row > .check { grid-column: 1 / -1; }
+  /* Four header cells against three tracks below 720px, and the name is on
+     its own line here anyway -- so the headers would label the wrong
+     columns rather than merely wrap. There is nothing left for them to
+     name, which is why this hides rather than re-spans them. */
+  .alert-head { display: none; }
 }
 
 /* The pill sits inside .card > h2, which is already an align-items:center
