@@ -1284,13 +1284,22 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    NOT the .settings form the previews and bookmarks routes use: a fixed
    rail beside a scrolling roster.
 
-   "626 CSS pixels beside the rail" is the 100%-scaling case and was the
-   only one this block was sized against. min_size is (840, 625) PHYSICAL
-   (ui/window.py:44-45) and the app is system-DPI-aware, so the CSS
-   viewport floor is 672px at 125% and 560px at 150% -- where a 214px rail
-   is 38% of the window and the roster keeps 310px. The media query at the
-   foot of this block is the other half of the sizing; see it for which
-   width the rail gives back and why 168.
+   THE FLOOR ARITHMETIC THIS BLOCK WAS SIZED AGAINST WAS WRONG, and the
+   correction is why the media query that used to sit at the foot of this
+   block is gone. It said min_size was (840, 625) PHYSICAL and the app
+   system-DPI-aware, so the CSS viewport floor would be 840/scale -- 672px
+   at 125%, 560px at 150% -- "where a 214px rail is 38% of the window and
+   the roster keeps 310px", and it gave the rail back 46px at 720px to
+   repair that. MIN_WIDTH and MIN_HEIGHT resolve in LOGICAL units
+   (ui/window.py, DESIGN.md): the CSS viewport floor is 840x625 at every
+   display scaling, measured 839x621 at 200%. So the 38% case never
+   existed, no viewport this window can reach is under 720px, and the
+   query could not fire. Do not size anything here against a 560px or
+   672px viewport.
+
+   The rail is 214px at every width the window can be. At the real floor
+   that leaves the roster 590px, which is the number to check a change
+   against.
 
    minmax(0, 1fr) rather than 1fr: a bare 1fr floors at min-content, and
    one long character name would push the roster wider than the window. */
@@ -1314,8 +1323,18 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    shrinking proportionally. */
 .rail-plans-block { flex: 1; min-height: 0; }
 .rail-plans { flex: 1; overflow-y: auto; min-height: 0; }
+/* The padding is NOT decoration and must not be rounded off: it is
+   .rail-plan's own inset, restated, so the two headings land on the
+   column each one labels. A .rail-plan is `border-left: 2px` plus
+   `padding: 6px 8px`, and this row had neither -- so PLANS sat 10 CSS px
+   left of the plan names and READY sat 8 CSS px right of the ratios,
+   measured in the ?dev=1 harness at 840 and at 1600, identically. Two
+   visible errors, one cause, and DESIGN.md now states the rule: a header
+   row is laid out by the same padding as the rows beneath it, with no
+   separate inset. Change .rail-plan's padding and this has to follow. */
 .rail-head-row {
   flex: none; display: flex; align-items: baseline; gap: 8px;
+  padding: 0 8px 0 10px;
   margin-bottom: 2px;
 }
 .rail-head {
@@ -1426,8 +1445,36 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .skills-group-count {
   color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
-/* The colour key. Every value is an existing token; this route introduces
-   no new colour literals. */
+/* The colour key.
+   `#7aa2f7` is a literal and this comment used to claim otherwise ("every
+   value is an existing token; this route introduces no new colour
+   literals"). It appears three times below -- .key-Training,
+   .status-Training and .state-Queued -- and since the purple retheme it is
+   also, exactly, the value of `--link`. It is NOT that concept: --link is
+   the declared exemption for a link OUT of the app, and pointing these at
+   it would say a training state leaves the application. A token of its own
+   belongs in `:root`, which this block does not own. Left as a literal
+   deliberately, with the collision recorded rather than laundered.
+
+   THE ORDER OF THESE IS THE SEVERITY RAMP, and it used to invert itself
+   at the last rung. `Unknown` outranks `Missing` as a problem -- Python
+   says so, evaluator.READINESS_ORDER runs best-first and puts UNKNOWN
+   after MISSING -- because a skill that was never injected is further from
+   flying the plan than one trained below the level asked for. It was
+   painted --text-dim: the more severe state, dimmer than the milder one,
+   which is the opposite of what a severity colour is for.
+
+   Both now carry --err, and the WORD carries the distinction ("Missing
+   requirements" / "Untrained requirements"). Not a swap: --warn is already
+   Locked's, and Missing genuinely outranks Locked, so demoting Missing to
+   make room would collide two states that are not equal. There is no
+   fourth severity token to reach for and minting one is a `:root` edit
+   this block may not make -- so the ramp ends in one bucket of two
+   equally-actionable reds rather than a fifth colour.
+
+   --text-faint stays on Unscored, and that is not an oversight: Unscored
+   is the ABSENCE of a judgement, not a bad one. Grey is right for exactly
+   that one. */
 .skills-key {
   width: 8px; height: 8px; border-radius: 2px; flex: none;
   background: currentColor;
@@ -1436,7 +1483,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .key-Training { color: #7aa2f7; }
 .key-Locked { color: var(--warn); }
 .key-Missing { color: var(--err); }
-.key-Unknown { color: var(--text-dim); }
+.key-Unknown { color: var(--err); }
 .key-Unscored { color: var(--text-faint); }
 /* The catch-all bucket. Brand-coloured on purpose: a readiness this page
    has never heard of is worth looking at, not worth hiding. */
@@ -1455,8 +1502,32 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .skills-row-top:hover { background: #171a20; }
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
+/* max-width is what closes the ~1000px gap between a row's subject and
+   its answer. `flex: 1` alone let the name box eat every spare pixel and
+   push the status to the far edge: measured 427 CSS px of nothing between
+   the two AT THE 840 FLOOR, and 1187 at 1600 -- so this is not only a
+   wide-window problem, and the screen exists to associate a name with a
+   state.
+
+   max-width and not `flex: 0 1 auto`, because the flexed box still grows
+   to the cap on every row, which keeps the statuses in a COLUMN. Letting
+   each name size to its own text would put the status at a different x on
+   every row, and a ragged state column is harder to scan than a distant
+   one. Below the cap the flex still shrinks, so the floor is unaffected.
+
+   The number is MEASURED, not chosen: it is the width the widest realistic
+   label needs, because everything past the cap is dead space on every
+   other row. Rendered in the ?dev=1 harness, `Heavy Assault Missile
+   Specialization IV` -- 39 characters, the longest skill name EVE has --
+   sets 212 CSS px at --fs-muted, and a 37-character EVE character name
+   sets ~228 at --fs-body. 240 is the smallest cap that truncates neither,
+   and anything longer than that ellipsises as it always did. Do not round
+   it up for comfort: 320 was the first value tried and reserved 80px that
+   nothing on the screen could ever fill. */
+.skills-main { --name-col: 240px; }
+
 .skills-name {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; max-width: var(--name-col);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
@@ -1464,6 +1535,10 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .status-Training { color: #7aa2f7; }
 .status-Locked { color: var(--warn); }
 .status-Missing { color: var(--err); }
+/* New rule, not a changed one: there was no .status-Unknown at all, so the
+   row that reads `Not trained` fell through to .skills-status' --text-dim
+   while its own group key beside it was coloured. See the ramp above. */
+.status-Unknown { color: var(--err); }
 .badge-stale {
   flex: none; padding: 1px 7px; border-radius: 999px;
   background: #101216; border: 1px solid var(--warn);
@@ -1485,12 +1560,23 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .req-list { display: flex; flex-direction: column; gap: 3px; }
 .req { display: flex; align-items: baseline; gap: 10px; }
-.req-name { flex: 1; min-width: 0; font-size: var(--fs-muted); }
+/* Same cap, same reason, and deliberately the same value: a requirement
+   row is the character row's answer one level down, and two different
+   caps would put the two state columns at two different offsets in a
+   block the eye reads as one list. */
+.req-name {
+  flex: 1; min-width: 0; max-width: var(--name-col);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-muted);
+}
 .req-state { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
 .state-Missing { color: var(--err); }
 .state-TrainedInactive { color: var(--warn); }
 .state-Queued { color: #7aa2f7; }
-.state-Unknown { color: var(--text-faint); }
+/* Was --text-faint, the faintest colour in the palette, on the state this
+   list's own sort ranks second and the evaluator ranks worst. Same fix and
+   same reasoning as .key-Unknown above. */
+.state-Unknown { color: var(--err); }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
@@ -1499,25 +1585,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 button.btn.danger { border-color: var(--err); color: var(--err); }
 button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
 
-/* The rail gives width back below the 100%-scaling case. What it spends
-   214px on is mostly setup -- a count line, Add character (used once per
-   account, ever), Refresh characters, then the plan list -- while the
-   roster, which is what the screen is for, is the track that has to
-   absorb every pixel the rail keeps.
-
-   168px, not a third number: it is the Settings rail's width, which
-   already survives this viewport with a list of eight entries in it. At
-   560px CSS that moves the roster from 310px to 356px.
-
-   720px, not a second one: .evestat and `.settings .row` already treat it
-   as this page's "anything above 100% scaling" line.
-
-   The rail's real width floor is its widest full-width button label,
-   which is why the plan-file actions became .linkbtn in index.html rather
-   than staying two more 100%-wide buttons. */
-@media (max-width: 720px) {
-  #route-skills { grid-template-columns: 168px minmax(0, 1fr); }
-}
+/* The 168px rail step that used to live here has been DELETED, not moved.
+   It narrowed the rail to the Settings rail's width below 720px, to buy
+   the roster 46px back at a 560px viewport -- a viewport this window
+   cannot reach. See the correction in the banner at the top of this
+   block. It is not one of the two `max-width: 720px` bodies
+   test_page_conventions.py requires (those restore the label column for
+   #eve-binds and #preview-binds, and are mandatory precisely because the
+   override they correct is real at every width). This one corrected
+   nothing at any width the window has. */
 
 /* ====================== reduced motion ==============================
    Both animations below are INFINITE and long-running -- `slide` for the

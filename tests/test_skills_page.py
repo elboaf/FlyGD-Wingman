@@ -65,25 +65,29 @@ def test_the_plan_ratio_says_what_it_counts():
 # ---- the rail's width --------------------------------------------------
 
 
-def test_the_rail_is_not_sized_only_against_100_percent_scaling():
-    """MIN_WIDTH is 840 PHYSICAL pixels and the app is system-DPI-aware, so
-    the CSS viewport floor is 672px at 125% scaling and 560px at 150%. A
-    214px rail is 38% of the window at 560, and the roster -- the thing the
-    screen is for -- is the track that absorbs every pixel the rail keeps.
+def test_the_rail_keeps_its_measured_width():
+    """The rail is 214px at every width this window can be.
 
-    The stylesheet's own comment did this arithmetic against 626px beside
-    the rail, which is the 100% case and the one width where it is fine.
+    This test used to require a SECOND rule as well -- an
+    `@media (max-width: 720px)` block narrowing the rail to 168px -- and
+    the reason it gave was: "MIN_WIDTH is 840 PHYSICAL pixels and the app
+    is system-DPI-aware, so the CSS viewport floor is 672px at 125%
+    scaling and 560px at 150%. A 214px rail is 38% of the window at 560."
+
+    That arithmetic is wrong and the correction is now in DESIGN.md and
+    PRODUCT.md: MIN_WIDTH / MIN_HEIGHT resolve in LOGICAL units, so the CSS
+    viewport floor is 840x625 at EVERY display scaling -- measured 839x621
+    at 200%. There is no 560px viewport, the 38% case never existed, and
+    the block this test pinned could not fire at any width the window
+    reaches. Both the block and the requirement are gone.
+
+    What survives is the half that was always a real invariant: the rail's
+    width is a measured number, and moving it means re-checking the roster
+    against the 590px it leaves at the real floor.
     """
     block = re.search(r"#route-skills\s*\{(.*?)\}", CSS, re.DOTALL)
     assert block and "214px" in block.group(1), (
-        "the default rail width moved; re-check the floor arithmetic"
-    )
-    narrowed = re.search(
-        r"@media\s*\(max-width:\s*720px\)\s*\{[^}]*#route-skills[^}]*\}", CSS
-    )
-    assert narrowed, (
-        "#route-skills has no narrow-viewport rail width: the rail keeps "
-        "214px of a 560px window at 150% scaling"
+        "the default rail width moved; re-measure the roster at the 840x625 floor"
     )
 
 
