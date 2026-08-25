@@ -81,7 +81,21 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
-      Settings > Folder dialogs for the full check
+      Settings > Folder dialogs for the full check.
+      **How to actually get here**, since deleting settings.json is not
+      enough: `resolve_recording_dir` tries the stored setting, then OBS's
+      OWN config, and only returns None when BOTH fail. On a machine with
+      OBS installed, detection succeeds and first run is skipped — which is
+      correct, and is why this item goes unchecked unless it says how.
+      Clear the stored setting and point `APPDATA` at an empty folder;
+      `obsconfig.profiles_root` reads `%APPDATA%\obs-studio\basic\profiles`
+      and finds nothing. Both are per-process, so a real install is
+      untouched.
+- [ ] **The first-run screen asks about the EVE tools, unticked.** Leaving
+      it unticked and continuing opens the app with NO nav bar at all —
+      only the Uploader. That is the single-screen app the README
+      describes, and first run is the only path that delivers it without
+      the user going looking for the setting.
 - [ ] Existing recordings do NOT produce a notification on first launch
 - [ ] **Missing ffmpeg disables Stitch instead of breaking the app.**
       Rename `bin\ffmpeg.exe` inside the install directory so it fails to
