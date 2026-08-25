@@ -21,6 +21,21 @@
   var folderBanner = WM.el('alerts-no-folder');
   var healthLine = WM.el('alerts-health');
   var status = WM.el('alerts-status');
+  var depends = WM.el('alerts-depends');
+
+  // Everything below the master switch is a preference that CAN be
+  // recorded for later, so none of it is disabled -- that is S3's rule,
+  // applied one card up by settings.js's restore-preview-positions block
+  // and stated there: "Previews controls stay live, because recording a
+  // preference for later is an action that can be carried out."
+  //
+  // What was wrong here was not the controls being live. It was that
+  // twelve of them sit under a switch that turns them all off, rendered
+  // as its peers, with the only contradicting line -- "Not watching
+  // gamelogs." -- ABOVE them in the faintest text on the card. So the row
+  // says so instead, and only while it is true.
+  var DEPENDS = 'Alerts are off, so nothing below is watching yet — these '
+              + 'apply when you turn them on.';
 
   var EVENTS = [
     {id: 'combat', label: 'Combat'},
@@ -36,6 +51,12 @@
   var lastGood = {};
 
   function say(text) { if (status) { status.textContent = text || ''; } }
+
+  function showDepends(enabled) {
+    if (!depends) { return; }
+    depends.textContent = enabled ? '' : DEPENDS;
+    depends.style.display = enabled ? 'none' : '';
+  }
 
   function eventRow(id) {
     return {
@@ -149,7 +170,17 @@
       // Never persistent (api.py's test_alert docstring): nothing here
       // is looking at a preview to acknowledge it, so nothing is saved.
       WM.send('test_alert', ev.id).then(function (res) {
-        if (res && res.error) { say(res.error); }
+        if (res && res.error) { say(res.error); return; }
+        // A successful Test with the master switch off is the one way
+        // this card can actively mislead: a ring pulses, a sound plays,
+        // and nothing is watching gamelogs. The DEPENDS line says so
+        // permanently; this says it at the moment it would be believed.
+        if (!enabledBox.checked) {
+          say('That is what the alert looks like. Alerts are still off, '
+            + 'so nothing is watching gamelogs yet.');
+        } else {
+          say('');
+        }
       });
     });
   });
@@ -184,6 +215,10 @@
       folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
     }
     if (healthLine) { healthLine.textContent = healthText(state); }
+    // Read from get_alert_state's own `enabled`, not the checkbox: the box
+    // is what the user just clicked, and a refused or bridge-failed write
+    // reverts it. This must describe what the app is actually doing.
+    showDepends(!!(state.alerts && state.alerts.enabled));
     applyAlerts(state.alerts);
   }
 
@@ -201,6 +236,7 @@
     var s = (ev.detail || {}).settings || {};
     var alerts = (s.preview && s.preview.alerts) || {};
     enabledBox.checked = !!alerts.enabled;
+    showDepends(!!alerts.enabled);
     // Absent means on, matching restore-preview-positions's precedent in
     // previews.js: an upgrading user's file predates the key.
     pveBox.checked = alerts.pve_filter !== false;

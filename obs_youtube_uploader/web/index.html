@@ -650,6 +650,15 @@
           <span class="hint" id="alerts-health"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-status"></span></div>
+        <!-- The consequence of the switch above for the twelve controls
+             below, in the same voice as settings.js's DEPENDS one card up
+             and only while it is true. #alerts-health states the STATE
+             ("Not watching gamelogs."); this states what that means for
+             everything under it, which is what was missing: a dependent
+             option rendered as a peer of the switch it depends on, with
+             nothing saying so. -->
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alerts-depends" style="display:none"></span></div>
         <div class="row">
           <span class="lab">PvE filter</span>
           <label class="check">
