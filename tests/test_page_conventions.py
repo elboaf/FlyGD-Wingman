@@ -134,6 +134,48 @@ def test_settings_rows_label_through_the_shared_column():
             )
 
 
+def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
+    """Two bind lists take the shared 118px label column away from their
+    rows on purpose -- their labels are long action and character names,
+    not "Privacy" -- with an ID selector: `#eve-binds .row > .lab` and
+    `#preview-binds .row > .lab`.
+
+    ID specificity also beats the `max-width: 720px` block that collapses
+    the column above its field, and that block is written against
+    `.settings .row > .lab`. So the collapse silently skipped exactly the
+    rows that needed it most: three trailing controls on a ~324px row left
+    about 60px for "Convert EvE-Scout Bookmarks", eighteen times, and
+    `min-width: 0` made it shrink rather than overflow -- nothing said so.
+
+    Any future override of that column has the same hole, so the rule is
+    the general one: if you out-specify the shared label column, restore
+    its collapse yourself.
+    """
+    overrides = set(re.findall(r"(#[\w-]+) \.row > \.lab \{", CSS))
+    assert overrides, "no id override of the shared label column found at all"
+
+    # The BODIES of every max-width:720px block, brace-matched. Slicing from
+    # the first occurrence to the end is not enough: these rules may sit
+    # beside the override they correct, so such a slice also contains the
+    # override itself and the assertion passes on the wrong text. That is
+    # not hypothetical -- the first version of this test did exactly that
+    # and survived deleting the rule it exists to require.
+    narrow = []
+    for m in re.finditer(r"@media \(max-width: 720px\)\s*\{", CSS):
+        i, depth = m.end(), 1
+        while i < len(CSS) and depth:
+            depth += {"{": 1, "}": -1}.get(CSS[i], 0)
+            i += 1
+        narrow.append(CSS[m.end() : i - 1])
+    body = "\n".join(narrow)
+
+    for host in sorted(overrides):
+        assert f"{host} .row > .lab" in body, (
+            f"{host} out-specifies the shared label column but never "
+            f"restores its collapse below 720px"
+        )
+
+
 # ---- the [hidden] trap -------------------------------------------------
 
 
