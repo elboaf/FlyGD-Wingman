@@ -119,9 +119,16 @@ decision, not a breakpoint. **R1 owns this**; it is recorded here because
 the reason is a DPI fact rather than a CSS one and would otherwise have to
 be rediscovered at the stylesheet.
 
-None of the dead blocks is load-bearing today, and each owning lane
-decides whether its block is a decision worth keeping or dead weight — a
-rule the window cannot currently reach is not thereby wrong. Note that
+A rule the window cannot currently reach is not thereby wrong, and
+unreachable is not the same as removable. Two of these blocks are
+**required by a test**: `test_page_conventions.py` brace-matches every
+`max-width: 720px` body and demands that each id override of the shared
+label column — `#eve-binds` and `#preview-binds` — restore its collapse
+inside one. They are unreachable through the window *and* mandatory, which
+is not a contradiction: the override they correct is real at every width,
+and the restore is the record of what happens if the floor ever moves.
+Delete an override and its restore together, or neither. Beyond those two,
+each owning lane decides whether its block is a decision worth keeping. Note that
 `docs/ui-critique.md` credited one of these queries with doing the
 scaling arithmetic "correctly": it is the `839px` one, and the credit was
 earned against the wrong model. It is the least correct of the eight.
