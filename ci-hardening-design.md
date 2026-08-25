@@ -274,6 +274,25 @@ security fix that nobody hears about is worse than a PR nobody merges.
   undefined name can never be caught. Lift it in its own small change,
   where a break in the release-build path is attributable to that change
   rather than buried in a 219-finding cleanup.
+- **Vulnerability tracking for the bundled binaries.** Dependabot covers
+  the two ecosystems it understands — GitHub Actions and the Python
+  lockfile. It does not cover ffmpeg or the AutoHotkey interpreter, which
+  are not dependencies in any ecosystem: they are a URL and a hash
+  constant inside `packaging/fetch_ffmpeg.py` and
+  `packaging/fetch_autohotkey.py`, downloaded at build time and shipped
+  inside the installer.
+
+  The consequence is worth stating precisely, because it is the opposite
+  of what pinning usually implies. Those hashes guarantee the build keeps
+  fetching the **known** binary — including after that binary becomes the
+  known-*vulnerable* one. When a CVE lands in either, no pull request
+  appears and nothing goes red. `fetch_webview2.py` cannot pin at all,
+  since Microsoft rotates the bootstrapper; it verifies the Authenticode
+  signature instead, which is the stronger property available there.
+
+  This is a fair trade at this scale and almost certainly the right one —
+  but it is the actual shape of the remaining exposure, and it should be
+  a deliberate choice rather than something nobody wrote down.
 
 ## Sequencing
 

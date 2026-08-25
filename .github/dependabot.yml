@@ -1,0 +1,72 @@
+# Useful only because uv.lock is enforced (see ci-hardening-design.md);
+# before that there was no pinned version for anything to bump.
+#
+# TWO THINGS ABOUT THIS FILE FAIL SILENTLY, so both are worth knowing
+# before editing it:
+#
+#   1. It does nothing until it is on the DEFAULT BRANCH. On a feature
+#      branch it is inert, and no CI check here validates it.
+#   2. A config error invalidates the WHOLE FILE, not the offending
+#      block. If the `uv` ecosystem below were ever rejected, the
+#      github-actions half would stop running too -- and nothing goes
+#      red. There is no workflow failure and no notification.
+#
+# So after this lands on the default branch, check
+# Insights -> Dependency graph -> Dependabot for a config error. That is
+# the only thing standing between this file and silence.
+#
+# No auto-merge, either ecosystem. For runtime dependencies this is not a
+# close call: they are frozen into an installer and shipped, and the
+# automated gate cannot validate them. docs/smoke-checklist.md states that
+# the UI is untested by pytest and the checklist is the only verification
+# it gets, so green CI on a pywebview bump means the headless bridge tests
+# passed -- not that the application renders. pyproject.toml already
+# records the rule: an upgrade is "a change requiring a full smoke pass,
+# not a routine bump."
+#
+# "uv" is a documented package-ecosystem value (github/docs,
+# data/reusables/dependabot/supported-package-managers.md), distinct from
+# "pip" which covers pip/pipenv/poetry.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" is a special case for this ecosystem, and a narrow one: it means
+    # .github/workflows/ plus a ROOT-LEVEL action.yml, and nothing else. It
+    # does not recurse. Without the second path below, the setup-uv pin
+    # inside .github/actions/build-installer/action.yml would never be
+    # bumped -- frozen forever, with no update path and nothing saying so,
+    # in the file that IS the release build chain.
+    #
+    # `directories` supports globbing; `directory` does not. The glob also
+    # covers any composite action added later, which matters because the
+    # failure here is silent -- it should not depend on someone remembering
+    # to add a path.
+    #
+    # Unrelated and easy to confuse with the above: Dependabot ignores
+    # `uses: ./.github/actions/build-installer` in the workflows. Local
+    # path references are never bumped, which is correct. This is about the
+    # owner/repo@<sha> reference INSIDE the composite file.
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One pull request a week, not five.
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+    # pywebview is NOT ignored, deliberately. The pin is exact and an
+    # upgrade needs a full smoke pass, but a security fix nobody hears
+    # about is worse than a pull request nobody merges.
