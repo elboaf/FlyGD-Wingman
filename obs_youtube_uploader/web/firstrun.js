@@ -38,10 +38,16 @@
     el.className = 'firstrun-note' + (text && tone ? ' ' + tone : '');
   }
 
+  // WM.setEnabled rather than a direct .disabled assignment, at both
+  // sites: app.js owns the rule that decides when a control is inert, and
+  // it warns on an id that does not resolve. A direct property set on a
+  // typo'd id is a silent no-op that leaves the button live in exactly the
+  // state the disabled attribute exists to cover -- which is how X1
+  // happened on the other three screens.
   function setChosen(path) {
     chosen = path || '';
     WM.el('f-firstrun-dir').value = chosen;
-    WM.el('btn-firstrun-continue').disabled = !chosen;
+    WM.setEnabled('btn-firstrun-continue', !!chosen);
   }
 
   WM.el('btn-firstrun-browse').addEventListener('click', function () {
@@ -74,7 +80,7 @@
   // not have to walk a tree to it.
   WM.el('f-firstrun-dir').addEventListener('input', function (ev) {
     chosen = ev.target.value.trim();
-    WM.el('btn-firstrun-continue').disabled = !chosen;
+    WM.setEnabled('btn-firstrun-continue', !!chosen);
     // Whatever the last message was about, they are now changing the thing
     // it was about. This is the restore half of the precedence rule.
     note('');

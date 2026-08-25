@@ -1263,14 +1263,41 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-dim); line-height: 1.55; margin-bottom: 10px;
 }
 .firstrun .row { margin-top: 18px; }
+/* Right-aligned in its RESTING state only, which is F4.
+
+   The standing sentence explains Detect, and Detect is the last control in
+   the row above -- its ink at 452 in a 502px column, with the note's first
+   word at 0. The sentence names its subject first, which carries it, but
+   the eye still crosses the whole card to connect them, and a hint at the
+   field's left edge parses as the field's hint. Right-aligned, the
+   sentence ends at 502, which is exactly Detect's right edge.
+
+   Not the same complaint as F3 or Settings 4. Those are controls whose ink
+   falls a few px off a column the rest of the card holds, reading as a
+   mistake. This is a deliberate full-width shift of one line that belongs
+   to the row above it rather than to the prose column, and at that
+   distance it reads as attachment rather than as misalignment.
+
+   The two message states go back to the left, below. */
 .firstrun-note {
   color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
+  text-align: right;
 }
 /* The note carries a failed detection and a refused folder as well as its
    standing explanation, and severity is a token, not a local colour --
-   the same two .field-msg and the status strip use. */
+   the same two .field-msg and the status strip use.
+
+   They are also the two states that go back to text-align: left. A
+   refusal is about the field or about the whole screen, not about Detect
+   -- "Could not reach the app." is neither control's fault -- and these
+   are the long strings: right-aligned, the detection failure wraps to two
+   lines and leaves a ragged left edge against an otherwise straight
+   column. The alignment moving with the colour is the intended tell that
+   this is a different kind of message, not the standing one restyled. */
 .firstrun-note.warn { color: var(--warn); }
 .firstrun-note.err { color: var(--err); }
+.firstrun-note.warn,
+.firstrun-note.err { text-align: left; }
 /* Skip on the left, Continue on the right: they are opposite answers to
    the same question, and stacking the quiet one beside the accent reads
    as two commit buttons. gap, not just space-between, because the note
@@ -1279,6 +1306,31 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-top: 20px;
 }
+/* F3, and the mechanism is not the obvious one. `Set this up later` reads
+   6 CSS px right of the h1, the paragraph and the field, which all sit on
+   the card's content edge. Measured in the ?dev=1 harness at an 840
+   viewport, the content edge is 169 and the button's BORDER BOX is already
+   there -- only its ink is at 175. So the displacement is entirely
+   .linkbtn's 6px padding-left and the box is not out of line with
+   anything. (The walkthrough reported 11 CSS px. It does not reproduce;
+   see the note on .linkbtn, where S1 settled this by rendering it.)
+
+   The fix is therefore optical, and it belongs here rather than on the
+   class: .linkbtn also renders on eighteen bookmark bind rows, Skills'
+   plan-file actions and Profiles' `Change...`, none of which anyone
+   reported. Two ways it could go wrong:
+
+     - `padding-left: 0` is WRONG. :hover paints a background, so zeroing
+       one side leaves the hover rect hugging the glyphs on the left with
+       6px still clear on the right.
+     - a negative margin on .firstrun-actions itself would drag Continue
+       left too, and Continue is flush right against the card's other edge.
+
+   `margin-left: -6px` on the child keeps the padding and the hover rect
+   symmetric, lands the ink at 0, and overhangs into the card's own 28px
+   padding rather than out of the card. Same shape as
+   .rail-plan-actions > .linkbtn, which solved this once already. */
+.firstrun-actions > .linkbtn { margin-left: -6px; }
 
 /* ====================== skills route ================================
    NOT the .settings form the previews and bookmarks routes use: a fixed

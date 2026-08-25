@@ -580,20 +580,50 @@
 
   <div class="route" id="route-firstrun">
     <div class="firstrun">
-      <h1>Choose your recording folder</h1>
-      <!-- Two paragraphs, and the first one is the only place in the app
-           that says what Wingman is. The screen used to open with "Wingman
-           watches one folder for new OBS recordings", which is the
-           uploader half describing itself as the whole product to someone
-           who has seen nothing else -- PRODUCT.md calls that framing out
-           of date by name. The second paragraph's last sentence is what
-           makes the skip below legible rather than arbitrary: the folder
-           configures the uploader half, and the two halves are
-           independent. -->
+      <!-- The heading names the PRODUCT, not this screen's task.
+           `Choose your recording folder` is uploader-scoped, and it was
+           the largest text in the application: the sequence a new user
+           experienced was `this is a folder chooser`, then, one size
+           down, `actually it is a toolkit`. PRODUCT.md names that framing
+           and says it "is out of date and should not be used to decide
+           anything" -- so it cannot be the first sentence of the app at
+           its largest type size. #49 fixed the prose and left the
+           heading. The folder ask is carried by the paragraph, the
+           placeholder and the button, which is where it was doing most of
+           its work already.
+
+           `Welcome to Wingman` and not bare `Wingman`: the titlebar
+           wordmark reads WINGMAN and stays visible here (app.js hides the
+           destinations and the gear on this route, not the drag region),
+           so the bare name would repeat a word already on screen 170px
+           above it. DESIGN.md's "a screen may not repeat its own tab name
+           as its first card heading" is the same rule one surface over.
+
+           The first paragraph loses its opening "Wingman is an EVE
+           multiboxing toolkit" -- the heading now says that, and
+           PRODUCT.md's tone rule leaves "no room for a sentence that only
+           restates a heading". What survives is the appositive.
+
+           STILL TWO PARAGRAPHS, and that is a decision rather than an
+           omission. Walkthrough F5 proposed that once the heading changed
+           the two-paragraph block could become one. Rendered, it cannot:
+           merging puts "...to YouTube. Uploading is the half..." mid-line
+           in a five-line slab, which leaves the two jobs -- what this is,
+           and what to do now -- less distinguished than the blank line
+           F5 objected to, not more. The screen has one heading and no
+           other structure, so the paragraph break is the only separator
+           available.
+
+           The last sentence is what makes the skip below legible rather
+           than arbitrary: the folder configures the uploader half, and
+           PRODUCT.md holds the two halves independent. It is also checked
+           by name in docs/smoke-checklist.md -- the EVE half is named
+           before the OBS ask, and the deferral is stated. -->
+      <h1>Welcome to Wingman</h1>
       <p class="firstrun-body">
-        Wingman is an EVE multiboxing toolkit &mdash; client previews,
-        bookmark keybinds and settings profiles &mdash; that also uploads
-        your fight footage to YouTube.
+        An EVE multiboxing toolkit &mdash; client previews, bookmark
+        keybinds and settings profiles &mdash; that also uploads your
+        fight footage to YouTube.
       </p>
       <p class="firstrun-body">
         Uploading is the half that needs a folder: Wingman watches one for
