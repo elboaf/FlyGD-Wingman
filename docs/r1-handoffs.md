@@ -244,6 +244,27 @@ The preview-alerts branch makes five.
 It merged clean this round. That is luck, not design, and the file is the
 one thing every lane verifies through.
 
+**It also merged clean and WRONG, which is the sharper version.** R2 added
+`inert_notes` to `settingsPayload` independently of R1, for Settings 1's
+`previews_off`. Git merges the two without a conflict, and the result is
+one object literal with **two `inert_notes` keys five lines apart** — legal
+JS, last one wins, nothing warns, and R2's existing test asserting the
+strings against `ui/copy.py` still passes, because both copies are correct.
+Whichever of #60 and #64 lands second silently drops its own copy.
+
+Nothing is broken either way here (same two sentences, both derived from
+`copy.py`), but the *class* of failure is the one this file exists for.
+R2's `test_the_dev_harness_declares_each_payload_key_once` on `ui/r2`
+(`8e9787a`) is what makes it loud:
+
+    dev.js declares these settings-payload keys more than once, so the
+    harness renders whichever came last: ['inert_notes']
+
+**On rebase, drop the duplicate rather than merging around it.** And note
+what this means for the unowned-file problem generally: a shared file with
+no owner does not fail at merge time, it fails at render time, on whichever
+route lost the coin toss.
+
 **The concrete consequence, which nobody currently owns:** R3 test-merged
 all four wave-2 PRs with `git merge-tree --write-tree` and found no
 conflicts — but a clean textual merge is not a rendered page, and each of
