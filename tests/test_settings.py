@@ -40,7 +40,11 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
             "width": 320,
             "height": 210,
-            "opacity": 235,
+            "opacity": 255,
+            # 2, not 1: the opacity default moved from 235 once the key
+            # became visible, and validated_preview's one-shot migration
+            # is keyed off this marker.
+            "defaults_version": 2,
             "layouts": {},
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
@@ -77,6 +81,10 @@ def test_defaults_are_the_documented_values():
                     },
                 },
             },
+            "show_labels": True,
+            "minimize_inactive_clients": False,
+            "never_minimize": [],
+            "locked": [],
         },
         "eve_settings": {
             "root": None,
@@ -358,6 +366,37 @@ def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
 def test_validated_preview_cleans_the_roster():
     section = settings.validated_preview({"seen": ["Alice", "hwnd:0x1", 7]})
     assert section["seen"] == ["Alice"]
+
+
+def test_a_pre_branch_file_is_migrated_off_the_dead_opacity_default():
+    """235 in a file with no version marker is the old default, not a
+    choice: opacity had no user interface before this branch, and
+    _save_locked wrote the default into every install's file."""
+    section = settings.validated_preview({"opacity": 235})
+    assert section["opacity"] == 255
+    assert section["defaults_version"] == 2
+
+
+def test_the_opacity_migration_does_not_run_twice():
+    """Someone who picks 235 from the slider AFTER the migration keeps it.
+    The marker is the only thing separating that from the old default."""
+    section = settings.validated_preview({"opacity": 235, "defaults_version": 2})
+    assert section["opacity"] == 235
+    assert section["defaults_version"] == 2
+
+
+def test_the_opacity_migration_leaves_a_non_default_value_alone():
+    """The whole point of keying off the previous default: anything else
+    in a pre-branch file survives untouched."""
+    section = settings.validated_preview({"opacity": 180})
+    assert section["opacity"] == 180
+    assert section["defaults_version"] == 2
+
+
+def test_a_future_defaults_version_is_not_walked_backwards():
+    section = settings.validated_preview({"opacity": 235, "defaults_version": 9})
+    assert section["opacity"] == 235
+    assert section["defaults_version"] == 9
 
 
 # The two below are ported from the callable-style update(read, mutate)

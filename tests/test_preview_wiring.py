@@ -17,6 +17,7 @@ class FakeHost:
         self.flushed = 0
         self.sweeps = 0
         self.hotkeys = None
+        self.restyles = 0
 
     def start(self):
         self.started += 1
@@ -29,6 +30,9 @@ class FakeHost:
 
     def set_hotkeys(self, table):
         self.hotkeys = table
+
+    def restyle(self):
+        self.restyles += 1
 
     @property
     def is_running(self):
@@ -384,6 +388,213 @@ def test_an_unchanged_position_toggle_does_not_rewrite_the_document(
     assert len(writes) == 1
 
 
+def test_set_preview_show_labels_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    assert api.set_preview_show_labels(False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["show_labels"] is False
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_show_labels_is_a_no_op_without_restyling(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    assert api.set_preview_show_labels(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert len(writes) == 0
+    # Restyle still fires on a no-op write: the endpoint's job is "make
+    # the live state match what was asked for," not "only touch the host
+    # when the document changed" -- a stale host state after a no-op
+    # would be a silent bug the no-op guard was never meant to hide.
+    assert host.restyles == 1
+
+
+def test_set_preview_show_labels_restyles_even_without_a_host(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api._preview_host is None
+    assert api.set_preview_show_labels(False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+
+
+def test_set_preview_opacity_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"opacity": 255}
+    assert api.set_preview_opacity(180) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["opacity"] == 180
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_opacity_does_not_clamp_the_endpoint_itself(tmp_path, monkeypatch):
+    """settings.validated_preview owns the 20-255 range (settings.py:235-
+    239). The endpoint must hand the raw value to settings.update
+    untouched and let the next normalise pass do the clamping -- this
+    stores the out-of-range value verbatim so a re-owned range in the
+    endpoint would show up as a failure here."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=FakeHost())
+    api._state.settings["preview"] = {"opacity": 255}
+    api.set_preview_opacity(5)
+    assert writes[0]["preview"]["opacity"] == 5
+
+
+def test_set_minimize_inactive_clients_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"minimize_inactive_clients": False}
+    assert api.set_minimize_inactive_clients(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["minimize_inactive_clients"] is True
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_locked_adds_an_offline_character_and_restyles(
+    tmp_path, monkeypatch
+):
+    """The brief's round-trip case: a character who has never been seen
+    running (no host.characters() entry, no saved layout rect) must still
+    be lockable -- that is the entire reason Task 1 moved lock storage out
+    of preview.layouts, whose deserialize drops any entry missing a full
+    rect. `name` here appears nowhere else in api._state.settings, proving
+    the write does not depend on the character having a prior footprint."""
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {}
+    assert api.set_preview_locked("Someone Offline", True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["locked"] == ["Someone Offline"]
+    assert writes[0]["preview"]["locked"] == ["Someone Offline"]
+    assert host.restyles == 1
+
+
+def test_set_preview_locked_removes_by_name(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"locked": ["Aiga Otsolen", "Zuelo Parvi"]}
+    assert api.set_preview_locked("Aiga Otsolen", False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["locked"] == ["Zuelo Parvi"]
+    assert writes[0]["preview"]["locked"] == ["Zuelo Parvi"]
+    assert host.restyles == 1
+
+
+def test_set_preview_locked_is_a_no_op_without_a_host(tmp_path, monkeypatch):
+    """restyle() must not be called when there is no host to call it on --
+    same guard set_preview_show_labels/set_preview_opacity already use."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api.set_preview_locked("Aiga Otsolen", True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+
+
+def test_set_never_minimize_adds_and_removes_by_name(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {}
+    assert api.set_never_minimize("Zuelo Parvi", True)["applied"] is True
+    assert api._state.settings["preview"]["never_minimize"] == ["Zuelo Parvi"]
+    assert api.set_never_minimize("Zuelo Parvi", False)["applied"] is True
+    assert api._state.settings["preview"]["never_minimize"] == []
+    assert writes[-1]["preview"]["never_minimize"] == []
+    assert host.restyles == 2
+
+
+def test_get_preview_hotkey_state_reports_locked_and_never_minimize(tmp_path):
+    """The per-character table paints its two new checkboxes off this one
+    payload (ui/api.py's own comment says so) -- confirm the two keys
+    actually ride it, and default to [] rather than raising when the
+    section predates Task 1."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "locked": ["Aiga Otsolen"],
+        "never_minimize": ["Zuelo Parvi"],
+    }
+    payload = api.get_preview_hotkey_state()
+    assert payload["locked"] == ["Aiga Otsolen"]
+    assert payload["never_minimize"] == ["Zuelo Parvi"]
+
+    api._state.settings["preview"] = {}
+    payload = api.get_preview_hotkey_state()
+    assert payload["locked"] == []
+    assert payload["never_minimize"] == []
+
+
+def test_a_failed_preview_setting_write_is_refused_not_claimed(tmp_path, monkeypatch):
+    """Mirrors test_a_rolled_back_alert_write_reverts_the_checkbox's
+    Python-side counterpart: settings.update() restores the live dict on
+    OSError, so the value did NOT take effect either -- this must report
+    `applied: False`, not the `applied: True, persisted: False` shape
+    set_restore_preview_positions uses for its own, different, contract."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_data, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    result = api.set_preview_show_labels(False)
+    assert result["applied"] is False
+    assert result["persisted"] is False
+    assert result["error"]
+    # The write never landed, so the live document must still read as it
+    # did before the call -- settings.update() restores it on raise.
+    assert api._state.settings["preview"]["show_labels"] is True
+
+
+def test_write_alert_setting_still_nests_under_preview_alerts(tmp_path, monkeypatch):
+    """_write_alert_setting is now a thin wrapper over
+    _write_preview_setting, prefixing the path with "alerts" -- this
+    pins that the resulting document shape is unchanged by the refactor:
+    a regression here would silently move every alert field out from
+    under preview.alerts."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=FakeHost())
+    api._state.settings["preview"] = {}
+    api.set_alert_pve_filter(True)
+    assert writes[0]["preview"]["alerts"]["pve_filter"] is True
+
+
 def test_the_host_reads_the_position_setting_live(monkeypatch):
     """build_preview_host must hand the host something that re-reads the
     document, not the value the app started with: the toggle changes
@@ -423,6 +634,113 @@ def test_the_host_restores_positions_when_the_key_is_absent(monkeypatch):
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {}})
     assert main_mod.build_preview_host(state, {})._restoring() is True
+
+
+def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
+    """Same reasoning as test_the_host_reads_the_position_setting_live:
+    Settings has no Save button, so build_preview_host must hand the host
+    callables that re-read state.settings on every call, not the values
+    captured at app start."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(
+        settings={
+            "preview": {
+                "enabled": False,
+                "width": 320,
+                "height": 210,
+                "layouts": {},
+                "show_labels": False,
+                "opacity": 180,
+            }
+        }
+    )
+    host = main_mod.build_preview_host(state, {})
+    assert host._labels_shown() is False
+    assert host._current_opacity() == 180
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {"show_labels": True, "opacity": 90}
+    assert host._labels_shown() is True
+    assert host._current_opacity() == 90
+
+
+def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
+    monkeypatch,
+):
+    """An upgrading user's file predates these keys. Absent must mean the
+    behaviour that shipped before the toggle existed, or every existing
+    install's previews would silently restyle on first launch. 255 here
+    is __main__'s own fallback for a missing key, matching settings.py's
+    _preview_defaults() opacity now that both mean "fully opaque, as
+    shipped" -- not host.py's separate 255 fallback, which only applies
+    when the callable itself is absent or raises, never through
+    build_preview_host's live read."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._labels_shown() is True
+    assert host._current_opacity() == 255
+
+
+def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
+    """Same reasoning again: a roster edit or a minimize toggle happens
+    while previews are already running."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(
+        settings={
+            "preview": {
+                "enabled": False,
+                "width": 320,
+                "height": 210,
+                "layouts": {},
+                "minimize_inactive_clients": True,
+                "never_minimize": ["Alice"],
+                "locked": ["Bravo"],
+            }
+        }
+    )
+    host = main_mod.build_preview_host(state, {})
+    assert host._minimizing_inactive() is True
+    assert host._is_never_minimize("Alice") is True
+    assert host._is_locked("Bravo") is True
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {
+        "minimize_inactive_clients": False,
+        "never_minimize": [],
+        "locked": [],
+    }
+    assert host._minimizing_inactive() is False
+    assert host._is_never_minimize("Alice") is False
+    assert host._is_locked("Bravo") is False
+
+
+def test_the_host_defaults_to_no_minimizing_and_empty_rosters_when_absent(monkeypatch):
+    """Absent must mean off for minimize_inactive_clients: minimizing a
+    real EVE client window must be asked for, never assumed by an
+    upgrading install. The rosters default to empty for the same reason."""
+    from types import SimpleNamespace
+
+    from obs_youtube_uploader import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._minimizing_inactive() is False
+    assert host._is_never_minimize("Alice") is False
+    assert host._is_locked("Alice") is False
 
 
 def test_the_client_window_machinery_is_gone():
@@ -490,6 +808,78 @@ def test_the_client_placement_win32_surface_is_not_declared():
         "SystemParametersInfoW",
     ):
         assert gone not in src, gone
+
+
+def test_sc_minimize_is_present_and_documented():
+    """SC_MINIMIZE is the one Win32 surface allowed to reach a live EVE
+    client's window: it changes only show state (the same transition the
+    taskbar button and Alt-Tab already send), never position or size, so it
+    cannot trigger the resolution rewrite the guard above exists to prevent.
+
+    This asserts the constant is present and explained, so a future purge
+    that sweeps up "that Win32 thing near the dangerous ones" fails a test
+    instead of silently removing the minimize-inactive-clients feature.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
+        encoding="utf-8"
+    )
+    assert "SC_MINIMIZE = 0xF020" in src
+    assert "show state" in src.lower()
+
+
+def test_the_preview_window_no_longer_owns_the_switch():
+    """The window classifies the gesture; the host performs the switch.
+
+    Both owned it once -- window.py called activate() and THEN fired the
+    host's callback, which was a no-op stub. The host therefore learned of
+    a click only after the foreground had already moved, which is exactly
+    the information the minimize-inactive-clients feature needs. Restoring
+    a second owner here would activate twice per click and put the
+    outgoing foreground out of reach again, with nothing user-visible to
+    show for it until someone reports keyboard input landing in the wrong
+    client.
+    """
+    import inspect
+    import re
+
+    from obs_youtube_uploader.preview import window as window_mod
+
+    src = inspect.getsource(window_mod.PreviewWindow._on_message)
+    # Comments stripped first: the handler's remaining comment explains
+    # the handoff by naming activate(), and the guard is about what the
+    # code does, not about what it is allowed to say.
+    code = "\n".join(
+        line for line in src.splitlines() if not line.lstrip().startswith("#")
+    )
+    # Bare `activate(`, not `self._on_activate(` -- the lookbehind rejects
+    # any word character (which includes the underscore) before it.
+    assert not re.search(r"(?<![\w.])activate\(", code), (
+        "PreviewWindow._on_message calls activate() again; the host owns "
+        "the switch (see PreviewHost._activate_client)"
+    )
+    assert "self._on_activate(" in code
+
+
+def test_sendmessagew_is_not_declared():
+    """Bare `SendMessageW` blocks until the target window's queue processes
+    the message, so a hung or still-loading EVE client would stall the
+    preview thread -- and with it hotkey dispatch, the alert pump, and the
+    sweep -- indefinitely. `SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`
+    gets the ordering guarantee `PostMessageW` can't provide without that
+    unbounded stall, so `SendMessageW` should never appear in the bind list.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
+        encoding="utf-8"
+    )
+    assert "SendMessageTimeoutW" in src
+    assert '"SendMessageW"' not in src
+    assert "user32.SendMessageW" not in src
 
 
 def _web(name):
@@ -630,3 +1020,31 @@ def test_the_row_dedup_set_cannot_collide_with_object_prototype():
     js = _web("previews.js")
     block = js.split("function rows")[1].split("function clashes")[0]
     assert "Object.create(null)" in block
+
+
+def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
+    """wm:settings is never re-dispatched after a single-field write (see
+    list.js's own comment on refreshRecordingDir -- repainting the whole
+    Settings form on every field commit would clobber whatever else the
+    user is mid-edit on). Without a narrower signal, toggling "Minimize
+    inactive" off would leave every already-rendered Never-minimize
+    checkbox enabled until the next full page load, contradicting the
+    hint text next to it. settings.js's own write handler must dispatch a
+    one-field custom event on success (mirroring the existing
+    wm:preview-enabled-changed precedent), and previews.js must listen for
+    it -- not just for wm:settings, which only ever fires once, at load."""
+    settings_js = _web("settings.js")
+    block = settings_js.split("Minimize inactive clients")[1]
+    assert (
+        "wm:preview-minimize-inactive"
+        in block.split("document.addEventListener('wm:settings'")[0]
+    ), "the event must be dispatched from the write's success branch"
+
+    previews_js = _web("previews.js")
+    listener = previews_js.split("wm:preview-minimize-inactive'")[1]
+    assert "minimizeInactive" in listener[:200]
+    # Recording the new value is only half of it: without the repaint the
+    # already-rendered checkboxes keep their old disabled state, which IS
+    # the bug this test exists for. Deleting the requestRender() call left
+    # the assertion above green.
+    assert "requestRender" in listener[:200]

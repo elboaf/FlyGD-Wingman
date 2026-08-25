@@ -81,7 +81,7 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
 class _RecordingWindow(window.PreviewWindow):
     """PreviewWindow with the Win32 edges stubbed, to count renders."""
 
-    def __init__(self, rect):
+    def __init__(self, rect, opacity=255):
         class FakeUser32:
             def SetWindowPos(self, *a):
                 return True
@@ -100,6 +100,7 @@ class _RecordingWindow(window.PreviewWindow):
             lambda *a: None,
             list,
             lambda: rect,
+            opacity=opacity,
         )
         self.hwnd = 1
         self.renders = 0
@@ -182,6 +183,174 @@ def test_dragging_back_to_the_origin_restores_the_original_rect():
     assert window.drag_target(start, start, R) == R
 
 
+def test_show_labels_joins_the_chrome_key():
+    """Without this, toggling the flag on an open preview does nothing:
+    redraw() short-circuits on an unchanged key and the bitmap never
+    repaints."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    on_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=True,
+    )._chrome_key()
+    off_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=False,
+    )._chrome_key()
+    assert on_key != off_key
+
+
+def test_label_h_reclaims_the_band_when_labels_are_off():
+    """geometry.thumbnail_rect must receive the new label height, or the
+    mirrored video stays inset inside a band that chrome no longer draws."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    w = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=False,
+    )
+    assert w._label_h() == 0
+    rect = window.geometry.thumbnail_rect(R, window.BORDER, w._label_h())
+    assert rect == window.geometry.thumbnail_rect(R, window.BORDER, 0)
+    assert rect.h == R.h - window.BORDER * 2
+
+
+def test_label_h_defaults_on_and_matches_todays_behaviour():
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    w = window.PreviewWindow(
+        None, client, R, lambda c: None, lambda *a: None, list, lambda: R
+    )
+    assert w._label_h() == window.LABEL_H
+
+
+class _FakeThumb:
+    """Records every (rect, opacity) passed to update(), standing in for
+    the real Thumbnail that move() would otherwise touch."""
+
+    def __init__(self):
+        self.calls = []
+
+    def update(self, rect, opacity=255):
+        self.calls.append((rect, opacity))
+
+
+def test_a_resize_updates_the_thumbnail_rect_with_the_current_label_height():
+    """move()'s thumbnail_rect call must use _label_h(), not a hardcoded
+    LABEL_H, or the mirrored video stays inset behind a band chrome no
+    longer draws once labels are turned off.
+
+    Reverting that one call site back to `LABEL_H` must turn this test
+    red -- checked by hand while writing it."""
+    for show_labels, expected_label_h in ((True, window.LABEL_H), (False, 0)):
+        w = _RecordingWindow(Rect(100, 100, 320, 210))
+        w.show_labels = show_labels
+        thumb = _FakeThumb()
+        w._thumb = thumb
+        new_rect = Rect(100, 100, 400, 260)
+        w.move(new_rect)
+        assert thumb.calls == [
+            (
+                window.geometry.thumbnail_rect(
+                    new_rect, window.BORDER, expected_label_h
+                ),
+                255,
+            )
+        ]
+
+
+def test_a_resize_passes_the_configured_opacity_to_the_thumbnail():
+    """opacity is a DWM thumbnail property, not a bitmap one -- see the
+    comment on _chrome_key(). It must reach Thumbnail.update() on every
+    resize, or every preview stays stuck at the default full opacity no
+    matter what the user configured.
+
+    Dropping `self.opacity` from the update() call at window.py's move()
+    site turned this red (the recorded call fell back to update()'s
+    opacity=255 default instead of 180) -- checked by hand while writing
+    this test, then restored."""
+    w = _RecordingWindow(Rect(100, 100, 320, 210), opacity=180)
+    thumb = _FakeThumb()
+    w._thumb = thumb
+    w.move(Rect(100, 100, 400, 260))
+    assert thumb.calls[-1][1] == 180
+
+
+def test_opacity_does_not_join_the_chrome_key():
+    """opacity never touches the Pillow bitmap -- it's a DWM thumbnail
+    property applied separately in Thumbnail.update(). Putting it in the
+    cache key would force a ~67k-pixel re-render on every opacity change,
+    which is the exact stutter redraw()'s short-circuit exists to avoid."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    dim_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        opacity=60,
+    )._chrome_key()
+    bright_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        opacity=255,
+    )._chrome_key()
+    assert dim_key == bright_key
+
+
+def test_redraw_passes_the_current_label_height_to_chrome_render(monkeypatch):
+    """redraw()'s chrome.render(label_h=...) call must reflect show_labels
+    too -- covering the one call site the thumbnail test above does not
+    reach. Hardcoding label_h=LABEL_H here must turn this test red --
+    checked by hand while writing it."""
+    calls = []
+
+    def fake_render(size, label, **kwargs):
+        calls.append(kwargs["label_h"])
+        return type("_Img", (), {"size": size})()
+
+    monkeypatch.setattr(window.chrome, "render", fake_render)
+    monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
+
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    for show_labels, expected_label_h in ((True, window.LABEL_H), (False, 0)):
+        w = window.PreviewWindow(
+            None,
+            client,
+            R,
+            lambda c: None,
+            lambda *a: None,
+            list,
+            lambda: R,
+            show_labels=show_labels,
+        )
+        w.hwnd = 1
+        w.redraw()
+    assert calls == [window.LABEL_H, 0]
+
+
 class _FakeLibs:
     """Just enough Win32 for _on_message, with the cursor under our control."""
 
@@ -209,14 +378,23 @@ class _FakeLibs:
         self.user32 = User32()
 
 
-def _window_for_gestures(locked):
-    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+def _window_for_gestures(locked, on_activate=lambda c: None):
+    client = type(
+        "C",
+        (),
+        {
+            "character": "Pilot",
+            "title": "EVE - Pilot",
+            "hwnd": 1,
+            "stable_key": "Pilot",
+        },
+    )()
     libs = _FakeLibs()
     w = window.PreviewWindow(
         libs,
         client,
         Rect(100, 100, 320, 210),
-        lambda c: None,
+        on_activate,
         lambda *a: None,
         list,
         lambda: Rect(0, 0, 1920, 1080),
@@ -257,3 +435,60 @@ def test_an_unlocked_left_drag_still_moves():
     libs.cursor = (250, 260)
     w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
     assert w.rect == Rect(150, 160, 320, 210)
+
+
+def test_a_click_hands_the_switch_to_the_host_exactly_once(monkeypatch):
+    """The window classifies the gesture; the host performs the switch.
+
+    Both halves matter and both are plausible ways to break this. If the
+    window keeps calling activate() the switch happens twice and the host
+    reads a foreground that has already moved; if the callback is
+    dropped, clicking a preview silently does nothing at all.
+    """
+    activate_calls = []
+    monkeypatch.setattr(
+        window, "activate", lambda libs, hwnd: activate_calls.append(hwnd) or True
+    )
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == [w.client]
+    assert activate_calls == []
+
+
+def test_a_click_on_a_locked_preview_still_reaches_the_host(monkeypatch):
+    """A lock stops movement, not focus switching -- drag_result() says so
+    and the delegation must not quietly change that."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (400, 300)  # past DRAG_MIN: locked, so still a click
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == [w.client]
+
+
+def test_a_real_drag_release_reports_the_rect_instead_of_activating(monkeypatch):
+    """The other side of the classification: a moved preview must not also
+    steal the foreground on release."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+    reported = []
+    w._on_rect_changed = lambda *a: reported.append(a)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (400, 300)
+    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == []
+    assert len(reported) == 1

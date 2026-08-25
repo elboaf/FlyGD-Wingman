@@ -190,10 +190,34 @@ def test_the_two_keybind_lists_render_the_same_row():
     The fix was to stack the name above its controls in both, so the
     geometry depends on no content at all. Nothing renders the page in this
     suite, so what stops the two drifting apart again is this: the two
-    grids must declare the same columns, and both must put the name on its
-    own line. Both halves are read out of the stylesheet rather than
-    restated here, so the test cannot disagree with the file about what the
-    shared value is -- only about whether it is shared.
+    grids must declare control tracks of the same KIND and the same
+    flexible trailing track, and both must put the name on its own line.
+    Both halves are read out of the stylesheet rather than restated here,
+    so the test cannot disagree with the file about what the shared value
+    is -- only about whether it is shared.
+
+    THIS USED TO BE A BYTE-EQUALITY CHECK on the two templates, and it was
+    RELAXED DELIBERATELY -- it did not erode. Previews grew two
+    per-character controls, Lock and Never minimize, that Bookmarks has no
+    equivalent of, so the two templates now share a prefix and then
+    diverge: three control tracks against five. Byte equality could only
+    have been restored by giving Bookmarks two tracks holding nothing,
+    which would be a lie in the stylesheet about a row that has three
+    controls.
+
+    What matters is that byte equality was never the invariant, only a
+    proxy for it. B1 was the bind button sitting at two different offsets;
+    that offset is decided by `.lab { grid-column: 1 / -1 }`, asserted
+    below and untouched, which puts the name on its own line and starts
+    the control line at the container edge in both lists. Measured in the
+    ?dev=1 harness at 840x625 after the divergence: the bind button is at
+    offset 0 in BOTH, and the three shared control tracks compute
+    identically at 150 / 40.7969 / 42.4531px. So what is guarded here is
+    what is left -- the shared tracks must still be the same KIND of track
+    (a content-sized column, not one list switching to a fixed or
+    fractional one), and neither list may drop the trailing flexible track
+    that lets `grid-column: 1 / -1` reach the card's width instead of the
+    control tracks' width.
     """
     hosts = ("#eve-binds", "#preview-binds")
 
@@ -205,9 +229,44 @@ def test_the_two_keybind_lists_render_the_same_row():
         assert tracks, f"{host} declares no grid-template-columns"
         columns[host] = " ".join(tracks.group(1).split())
 
-    assert columns["#eve-binds"] == columns["#preview-binds"], (
-        "the two keybind lists declare different columns, which is round 3's "
-        f"B1 exactly: {columns}"
+    # Split each template into "how many control tracks", "of what kind",
+    # and "what trails them". Anchored and whole-string: a template this
+    # cannot parse fails here rather than being waved through, which is
+    # what stops the relaxation above from widening any further by
+    # accident.
+    shape = {}
+    for host in hosts:
+        m = re.fullmatch(r"repeat\((\d+),\s*([^)]+)\)\s+(.+)", columns[host])
+        assert m, (
+            f"{host} no longer declares its columns as `repeat(N, <kind>) "
+            f"<trailing>`, so this test can no longer tell whether the two "
+            f"lists still agree: {columns[host]!r}"
+        )
+        shape[host] = (int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+
+    bookmarks, previews = shape["#eve-binds"], shape["#preview-binds"]
+
+    assert bookmarks[1] == previews[1], (
+        "the two keybind lists size their control tracks differently, which "
+        f"puts their shared controls back at two geometries -- round 3's B1: "
+        f"{bookmarks[1]!r} vs {previews[1]!r}"
+    )
+
+    for host in hosts:
+        assert shape[host][2] == "minmax(0, 1fr)", (
+            f"{host} dropped the flexible trailing track, so its full-width "
+            f"name now reaches only as far as its control tracks instead of "
+            f"the card: {shape[host][2]!r}"
+        )
+
+    # Previews may carry MORE controls than Bookmarks -- Lock and Never
+    # minimize are per-character and Bookmarks has no character. It may not
+    # carry fewer: that would mean a control went missing from the row
+    # rather than being added to it.
+    assert previews[0] >= bookmarks[0], (
+        f"Previews declares fewer control tracks than Bookmarks "
+        f"({previews[0]} < {bookmarks[0]}), so a control its rows build has "
+        f"no column to sit in"
     )
 
     for host in hosts:

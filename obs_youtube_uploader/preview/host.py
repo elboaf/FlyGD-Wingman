@@ -14,14 +14,24 @@ the old event loop, and answers it with an owned loop.
 import ctypes
 import logging
 import threading
+import time
 
-from . import cycle, discovery, geometry, gestures, layout, win32
+from . import cycle, discovery, geometry, gestures, layout, switching, win32
 from . import window as window_mod
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
 
 SWEEP_MS = 700  # TriffView uses the same interval
+# Between activating the next client and minimizing the previous one.
+# TriffView's own constant, kept at its value: the minimize is a message
+# to another process's queue, and sending it the instant the foreground
+# moved raced the switch often enough that TriffView tuned this in.
+SWITCH_SETTLE_MS = 10
+# Upper bound on the minimize send. With SMTO_ABORTIFHUNG this is what
+# keeps a still-loading EVE client from stalling the preview thread --
+# see the SendMessageTimeoutW bind comment in win32.py.
+MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
@@ -97,6 +107,11 @@ class PreviewHost:
         on_clients_changed=None,
         on_hotkey_status=None,
         restore_positions=None,
+        show_labels=None,
+        opacity=None,
+        minimize_inactive_clients=None,
+        never_minimize=None,
+        locked=None,
     ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
@@ -114,6 +129,22 @@ class PreviewHost:
         # the app started with is not the value that should apply. None
         # means "always restore" -- the behaviour that predates the toggle.
         self._restore_positions = restore_positions
+        # Read live, same reasoning as _restore_positions above: each of
+        # these can change mid-session (a Settings toggle, a lock or
+        # never-minimize edit), and a preview is created -- or restyled --
+        # long after the app started. None means "the caller has not
+        # wired this yet", not "off"; _labels_shown/_current_opacity/etc.
+        # below fall back to today's shipped behaviour in that case.
+        self._show_labels = show_labels
+        self._opacity = opacity
+        self._minimize_inactive_clients = minimize_inactive_clients
+        # Both of these are character-name LISTS (preview.never_minimize,
+        # preview.locked), not per-character booleans: a per-character
+        # callable would need the character key at construction time, and
+        # build_preview_host does not have it. _is_never_minimize/
+        # _is_locked below do the per-window membership test.
+        self._never_minimize = never_minimize
+        self._locked = locked
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -237,6 +268,20 @@ class PreviewHost:
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
 
+    def restyle(self) -> None:
+        """Ask every open preview to re-read show_labels, opacity, locked
+        and never_minimize. Safe from any thread, same shape as
+        set_hotkeys() above -- except there is no payload to stash under
+        the lock: the callables themselves are the live state, so this
+        only has to post the signal.
+
+        The single live-update entry point for all five settings this
+        task wires (minimize_inactive_clients included): there is no
+        separate "minimize changed" message, because minimize is read per
+        switch (Task 7), not per window.
+        """
+        self._post(win32.WM_APP_RESTYLE)
+
     def hotkey_status(self) -> dict:
         """Outcome of the most recent registration pass.
 
@@ -352,6 +397,9 @@ class PreviewHost:
         if msg == win32.WM_APP_ALERT:
             self._apply_alerts(libs, self._drain_alerts())
             return 0
+        if msg == win32.WM_APP_RESTYLE:
+            self._restyle()
+            return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
             return 0
@@ -415,16 +463,25 @@ class PreviewHost:
                 libs,
                 client,
                 rect,
-                on_activate=lambda c: None,
+                on_activate=lambda c: self._activate_client(libs, c),
                 on_rect_changed=self._layout_changed,
                 neighbours=lambda k=key: [
                     w.rect for k2, w in self._windows.items() if k2 != k
                 ],
                 screen=self._screen,
-                # Restored, not defaulted: a preview locked before the last
-                # restart must come back locked, or the next drag reports
-                # locked=False and erases the flag from settings.
-                locked=bool(entry.locked) if entry else False,
+                # Resolved from the `locked` character-name list, not from
+                # entry.locked: Task 1 moved lock storage to
+                # preview.locked, so the saved layout entry is no longer
+                # the source of truth for what a NEW window opens locked
+                # as. entry.locked is now written by _layout_changed and
+                # deserialized by layout.py but read by nothing -- retained
+                # rather than removed because it still round-trips through
+                # the layouts section of every existing settings file, and
+                # dropping the field would discard that data on the next
+                # save for no gain.
+                locked=self._is_locked(key),
+                show_labels=self._labels_shown(),
+                opacity=self._current_opacity(),
             )
             if win is not None:
                 self._windows[key] = win
@@ -573,7 +630,104 @@ class PreviewHost:
             # never reaching the process at all.
             logger.debug("Preview hotkey target %r is not running", target)
             return
+        self._activate_client(libs, client)
+
+    def _activate_client(self, libs, client) -> bool:
+        """Switch the foreground to *client*. Returns whether it took.
+
+        The single owner of the switch. Both entry points land here -- a
+        hotkey, and a click on a preview (PreviewWindow classifies the
+        gesture and calls this through its on_activate callback, rather
+        than activating on its own as it used to). Keeping one sequence
+        is what lets the host read the outgoing foreground before it
+        moves; a later step in the switch added here applies to both.
+
+        The bool is window_mod.activate's verdict, read from
+        GetForegroundWindow -- callers that do more work after the switch
+        need to know it actually happened.
+
+        The whole sequence runs synchronously on the preview thread --
+        the same thread that pumps hotkeys, alerts and the sweep -- and
+        it is the one place that blocks it: SWITCH_SETTLE_MS of sleep
+        plus up to MINIMIZE_TIMEOUT_MS waiting on another process's
+        message queue, so ~110ms worst case with nothing else dispatched.
+        That is per switch, never per sweep, and SMTO_ABORTIFHUNG is what
+        bounds the second half; a bare SendMessageW there would not be
+        bounded at all (win32.py records why it is not bound).
+        """
+        # Read BEFORE activating: once the foreground has moved there is
+        # nothing left to identify the outgoing client by. This ordering
+        # is the reason the switch has a single owner -- the click path
+        # used to activate inside window.py and tell the host afterwards,
+        # by which point this read was already too late.
+        previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
+        previous_key, previous = next(
+            ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
+            (None, None),
+        )
+
+        ok = window_mod.activate(libs, client.hwnd)
+
+        # Every decision about *whether* to minimize lives in switching.py
+        # so it can be tested off Windows; this function owns only the
+        # Win32 calls and their order.
+        #
+        # `activated=ok` is the safety property, ported from TriffView,
+        # which returns early on the same condition: minimizing after a
+        # refused switch takes away the client the user was looking at
+        # and gives them nothing in return -- an empty desktop with no
+        # window focused, strictly worse than the switch simply not
+        # working.
+        if not switching.should_minimize(
+            enabled=self._minimizing_inactive(),
+            activated=ok,
+            previous_key=previous_key,
+            next_key=client.stable_key,
+            # should_minimize only asks whether previous_key is in the
+            # roster, so the guarded per-key reader answers it exactly;
+            # there is no guarded reader for the whole list.
+            never=[previous_key] if self._is_never_minimize(previous_key) else [],
+        ):
+            return ok
+
+        time.sleep(SWITCH_SETTLE_MS / 1000.0)
+        sent = libs.user32.SendMessageTimeoutW(
+            previous.hwnd,
+            win32.WM_SYSCOMMAND,
+            win32.SC_MINIMIZE,
+            0,
+            win32.SMTO_ABORTIFHUNG,
+            MINIMIZE_TIMEOUT_MS,
+            None,
+        )
+        if not sent:
+            # Zero covers three cases the API does not separate: the send
+            # timed out, it was abandoned because the client was hung
+            # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
+            # client that exited during the settle above. In all of them
+            # the client never processed the message and is still where it
+            # was. Nothing to re-activate around, and re-activating anyway
+            # would just be a second unexplained foreground change.
+            # INFO for the same reason window.py logs a refused activation
+            # at INFO: the root logger runs at INFO, and this is what
+            # "minimize sometimes does nothing" looks like in a user's log.
+            logger.info(
+                "Minimize of 0x%x did not complete (timeout or abandoned) "
+                "within %dms; leaving it as it is",
+                previous.hwnd,
+                MINIMIZE_TIMEOUT_MS,
+            )
+            return ok
+
+        # Re-activate. Minimizing the outgoing window makes Windows hand
+        # the foreground to whatever it picks next, which is not the
+        # client just switched to -- without this line the minimize
+        # steals focus straight back off the target and the switch looks
+        # like it half-worked. TriffView's README calls the tuned result
+        # "no more dropping to desktop or lagging when cycling"; both
+        # halves of that sentence are load-bearing lines here.
         window_mod.activate(libs, client.hwnd)
+        return ok
 
     def _apply_alerts(self, libs, pending) -> None:
         """No-op for now -- rendering the alert on its preview window is
@@ -723,6 +877,103 @@ class PreviewHost:
                 "Could not read restore_preview_positions; restoring the saved position"
             )
             return True
+
+    def _labels_shown(self) -> bool:
+        """Whether preview chrome draws a label band, read live.
+
+        Runs on the preview thread -- in _sweep for a newly created
+        window, and in the WM_APP_RESTYLE handler for every open one --
+        so it must not be the thing that kills the pump. A callable that
+        raises falls back to labels-on, the behaviour that shipped before
+        this toggle existed.
+        """
+        if self._show_labels is None:
+            return True
+        try:
+            return bool(self._show_labels())
+        except Exception:
+            logger.exception("Could not read show_labels; defaulting to labels on")
+            return True
+
+    def _current_opacity(self) -> int:
+        """DWM thumbnail opacity, read live. Same guard as _labels_shown."""
+        if self._opacity is None:
+            return 255
+        try:
+            return int(self._opacity())
+        except Exception:
+            logger.exception("Could not read preview opacity; defaulting to opaque")
+            return 255
+
+    def _minimizing_inactive(self) -> bool:
+        """Whether an unfocused client's real window should be minimized,
+        read live. Same guard as _labels_shown.
+
+        Not consulted anywhere in this task -- Task 7's switching logic
+        is the first caller -- but stored and guarded now so
+        build_preview_host wires all five settings in one pass.
+        """
+        if self._minimize_inactive_clients is None:
+            return False
+        try:
+            return bool(self._minimize_inactive_clients())
+        except Exception:
+            logger.exception(
+                "Could not read minimize_inactive_clients; defaulting to no minimize"
+            )
+            return False
+
+    def _is_never_minimize(self, stable_key) -> bool:
+        """Whether *stable_key* is exempt from minimize_inactive_clients,
+        read live. Same guard as _labels_shown; see _minimizing_inactive.
+        """
+        if self._never_minimize is None:
+            return False
+        try:
+            return stable_key in (self._never_minimize() or [])
+        except Exception:
+            logger.exception("Could not read never_minimize; defaulting to not exempt")
+            return False
+
+    def _is_locked(self, stable_key) -> bool:
+        """Whether *stable_key* is locked against drag, read live.
+
+        The source of truth moved here from the saved layout entry's
+        `locked` flag when Task 1 introduced the `preview.locked`
+        character-name list -- see the comment on the _sweep call site.
+        Same guard as _labels_shown.
+        """
+        if self._locked is None:
+            return False
+        try:
+            return stable_key in (self._locked() or [])
+        except Exception:
+            logger.exception("Could not read locked; defaulting to unlocked")
+            return False
+
+    def _restyle(self) -> None:
+        """Push live show_labels/opacity/locked onto every open preview.
+
+        minimize_inactive_clients and never_minimize are read per switch
+        (Task 7), not walked here -- there is no per-window state for
+        them to update.
+        """
+        show_labels = self._labels_shown()
+        opacity = self._current_opacity()
+        label_h = window_mod.LABEL_H if show_labels else 0
+        for key, win in self._windows.items():
+            win.show_labels = show_labels
+            win.opacity = opacity
+            win.locked = self._is_locked(key)
+            win.redraw()
+            # Mirrors PreviewWindow.create/.move: opacity is a DWM
+            # thumbnail property, not a chrome pixel, so it needs its own
+            # push whether or not redraw() decided the bitmap changed.
+            if win._thumb is not None:
+                win._thumb.update(
+                    geometry.thumbnail_rect(win.rect, window_mod.BORDER, label_h),
+                    win.opacity,
+                )
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""

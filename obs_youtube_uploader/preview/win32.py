@@ -48,11 +48,29 @@ WM_HOTKEY = 0x0312
 PM_REMOVE = 0x0001
 WM_APP = 0x8000
 
+# WM_SYSCOMMAND/SC_MINIMIZE only change a window's SHOW STATE -- the same
+# transition the taskbar button and Alt-Tab already send. That is the whole
+# reason this pair may reach a live EVE client while the placement surface
+# a few sections down (see the removed-forever list, and
+# tests/test_preview_wiring.py::
+# test_the_client_placement_win32_surface_is_not_declared) may not: SetWindow-
+# Placement/SetWindowPos change POSITION or SIZE, which EVE reads as a
+# resolution change and rewrites its own config over -- the 2026-08-24
+# incident that destroyed three characters' settings. Minimizing cannot alter
+# a resolution. Do not add this pair's constants to that guard test's list.
+WM_SYSCOMMAND = 0x0112
+SC_MINIMIZE = 0xF020
+
+# SMTO_ABORTIFHUNG: used with SendMessageTimeoutW below so a hung/loading
+# client can't stall the send.
+SMTO_ABORTIFHUNG = 0x0002
+
 # Host commands, marshalled in from other threads.
 WM_APP_SHUTDOWN = WM_APP + 1
 WM_APP_SWEEP_NOW = WM_APP + 2
 WM_APP_REBIND = WM_APP + 3
 WM_APP_ALERT = WM_APP + 4
+WM_APP_RESTYLE = WM_APP + 5
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02
@@ -304,6 +322,34 @@ def bind() -> Libs:
         (user32, "TranslateMessage", BOOL, [ctypes.c_void_p]),
         (user32, "DispatchMessageW", LRESULT, [ctypes.c_void_p]),
         (user32, "PostMessageW", BOOL, [HWND, UINT, WPARAM, LPARAM]),
+        # SendMessageTimeoutW, not the bare SendMessageW, sends WM_SYSCOMMAND/
+        # SC_MINIMIZE to a client window (see the minimize constants above).
+        # PostMessageW doesn't block, but it also gives no ordering against
+        # the SetForegroundWindow re-activation that follows a minimize --
+        # the minimize is delivered through the client's own message queue
+        # while SetForegroundWindow is a direct call on Wingman's thread, so
+        # nothing here guarantees the client finishes minimizing first.
+        # Bare SendMessageW would fix the ordering but blocks the calling
+        # thread until the target's queue processes the message; a hung or
+        # still-loading EVE client would then stall the preview thread
+        # indefinitely, along with the hotkey dispatch, alert pump and sweep
+        # that share it. SendMessageTimeoutW + SMTO_ABORTIFHUNG gets the
+        # ordering without the unbounded stall. SendMessageW is intentionally
+        # never bound here -- see the assertion in test_preview_wiring.py.
+        (
+            user32,
+            "SendMessageTimeoutW",
+            LRESULT,
+            [
+                HWND,
+                UINT,
+                WPARAM,
+                LPARAM,
+                UINT,
+                UINT,
+                ctypes.POINTER(WPARAM),
+            ],
+        ),
         (user32, "PostQuitMessage", None, [ctypes.c_int]),
         (
             user32,

@@ -132,10 +132,13 @@ def test_a_layout_change_updates_the_in_session_cache():
     assert sent == [("Pilot", Rect(10, 20, 320, 210), False)]
 
 
-def test_a_restored_lock_survives_into_the_new_window():
-    """layout.Entry carries `locked`, deserialize restores it, and the
-    window reports it back on the next drag. If the window started at
-    False regardless, that report would erase the flag from settings."""
+def test_a_saved_layout_entry_keeps_its_lock_flag():
+    """layout.Entry carries `locked` and deserialize restores it onto
+    _saved. That flag no longer decides how a window OPENS -- Task 1 moved
+    that to the preview.locked name list, and
+    test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry
+    pins it. This is only that the entry round-trips the field, which it
+    must keep doing while existing settings files still carry it."""
     from obs_youtube_uploader.preview.geometry import Rect
     from obs_youtube_uploader.preview.layout import Entry
 
@@ -282,8 +285,9 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_SWEEP_NOW,
         host.win32.WM_APP_REBIND,
         host.win32.WM_APP_ALERT,
+        host.win32.WM_APP_RESTYLE,
     }
-    assert len(commands) == 4
+    assert len(commands) == 5
     assert all(c >= host.win32.WM_APP for c in commands)
 
 
@@ -1078,3 +1082,552 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
 
     h._sweep(libs)  # creation succeeds; the selected key is unchanged
     assert h._windows["Alice"].selected is True
+
+
+# --- live-read seams: show_labels, opacity, minimize_inactive_clients,
+# never_minimize, locked -----------------------------------------------------
+
+
+def test_show_labels_defaults_on_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._labels_shown() is True
+
+
+def test_show_labels_reads_the_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, show_labels=lambda: False)
+    assert h._labels_shown() is False
+
+
+def test_a_raising_show_labels_callable_falls_back_to_labels_on():
+    """Runs on the preview thread inside _sweep and WM_APP_RESTYLE; a raise
+    here must not be the thing that kills the pump."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, show_labels=boom)
+    assert h._labels_shown() is True
+
+
+def test_opacity_defaults_opaque_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._current_opacity() == 255
+
+
+def test_opacity_reads_the_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, opacity=lambda: 180)
+    assert h._current_opacity() == 180
+
+
+def test_a_raising_opacity_callable_falls_back_to_opaque():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, opacity=boom)
+    assert h._current_opacity() == 255
+
+
+def test_minimize_inactive_defaults_off_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._minimizing_inactive() is False
+
+
+def test_minimize_inactive_reads_the_callable():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, minimize_inactive_clients=lambda: True
+    )
+    assert h._minimizing_inactive() is True
+
+
+def test_a_raising_minimize_inactive_callable_falls_back_to_off():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, minimize_inactive_clients=boom
+    )
+    assert h._minimizing_inactive() is False
+
+
+def test_never_minimize_defaults_to_nobody_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._is_never_minimize("Alice") is False
+
+
+def test_never_minimize_checks_membership_in_the_live_list():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, never_minimize=lambda: ["Alice"]
+    )
+    assert h._is_never_minimize("Alice") is True
+    assert h._is_never_minimize("Bravo") is False
+
+
+def test_a_raising_never_minimize_callable_falls_back_to_nobody_exempt():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, never_minimize=boom)
+    assert h._is_never_minimize("Alice") is False
+
+
+def test_locked_defaults_to_nobody_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._is_locked("Alice") is False
+
+
+def test_locked_checks_membership_in_the_live_list():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, locked=lambda: ["Alice"])
+    assert h._is_locked("Alice") is True
+    assert h._is_locked("Bravo") is False
+
+
+def test_a_raising_locked_callable_falls_back_to_unlocked():
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, locked=boom)
+    assert h._is_locked("Alice") is False
+
+
+# --- _sweep applies the live settings to a newly created window ------------
+
+
+def _config_sweep_host(monkeypatch, *, client_key="Alice", saved=None, **kw):
+    """A PreviewHost wired for a single-client sweep, with discovery,
+    monitor enumeration and placement stubbed the same way
+    test_the_sweep_places_a_new_preview_at_its_clamped_rect does."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, saved_layouts=saved, size=(320, 210), **kw
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient(client_key)]
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    return h
+
+
+def test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry(
+    monkeypatch,
+):
+    """R1: Task 1 moved lock storage to the preview.locked character-name
+    list. A saved layout entry that still says locked=True -- written by
+    _layout_changed, still read by layout.py's own callers -- must NOT be
+    what a new window opens locked as; only the live `locked` callable
+    governs it."""
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append(kw["locked"])
+        return
+
+    h = _config_sweep_host(
+        monkeypatch,
+        saved={"Alice": layout.Entry(geometry.Rect(0, 0, 320, 210), True)},
+        locked=list,
+    )
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [False]
+
+
+def test_the_sweep_locks_a_new_window_when_the_locked_list_says_so(monkeypatch):
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append(kw["locked"])
+        return
+
+    h = _config_sweep_host(
+        monkeypatch,
+        saved={"Alice": layout.Entry(geometry.Rect(0, 0, 320, 210), False)},
+        locked=lambda: ["Alice"],
+    )
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [True]
+
+
+def test_the_sweep_passes_show_labels_and_opacity_at_creation(monkeypatch):
+    """A preview appearing mid-session must be born with the current
+    settings, not the shipped defaults -- otherwise a client that starts
+    after a Settings change opens looking like the OLD configuration
+    until the next restyle."""
+    seen = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.append((kw["show_labels"], kw["opacity"]))
+        return
+
+    h = _config_sweep_host(monkeypatch, show_labels=lambda: False, opacity=lambda: 180)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert seen == [(False, 180)]
+
+
+# --- restyle(): the live-update entry point ---------------------------------
+
+
+def test_restyle_posts_only_a_signal(monkeypatch):
+    """Same shape as raise_alert()/set_hotkeys(): exercised through the
+    real _post, not a stub standing in for it."""
+    posted = []
+
+    class _RestyleUser32(_FakeUser32):
+        def PostMessageW(self, hwnd, msg, wparam, lparam):
+            posted.append((msg, wparam, lparam))
+            return 1
+
+    libs = _FakeLibs(_RestyleUser32())
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h.restyle()
+    assert posted == [(host.win32.WM_APP_RESTYLE, 0, 0)]
+
+
+def test_the_restyle_message_dispatches_to_the_handler(monkeypatch):
+    """A message with nothing routing it to _restyle() falls through to
+    DefWindowProcW and every open preview keeps whatever chrome it was
+    created with, forever."""
+    calls = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(h, "_restyle", lambda: calls.append(1))
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_FakeUser32()))
+
+    h._host_proc(0x1, host.win32.WM_APP_RESTYLE, 0, 0)
+
+    assert calls == [1]
+
+
+class _FakeRestyleThumb:
+    """Records every (rect, opacity) passed to update()."""
+
+    def __init__(self):
+        self.calls = []
+
+    def update(self, rect, opacity=255):
+        self.calls.append((rect, opacity))
+
+
+class _RestyleWindow:
+    """Duck-types just what _restyle touches: public chrome attributes,
+    redraw(), and a thumbnail. Not a real PreviewWindow -- that needs an
+    HWND, which is out of reach here."""
+
+    def __init__(self, rect, show_labels=True, opacity=255, locked=False):
+        self.rect = rect
+        self.show_labels = show_labels
+        self.opacity = opacity
+        self.locked = locked
+        self.redraws = 0
+        self._thumb = _FakeRestyleThumb()
+
+    def redraw(self, force=False):
+        self.redraws += 1
+
+
+def test_restyle_updates_every_open_window(monkeypatch):
+    """WM_APP_RESTYLE must reach every window's chrome AND its DWM
+    thumbnail: opacity is a thumbnail property, not a chrome pixel, so
+    redraw() alone would leave the mirrored video at whatever opacity the
+    preview was created with. locked is per-window, indexed by stable_key
+    (R2) -- Alice and Bravo must land on opposite sides of it."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        show_labels=lambda: False,
+        opacity=lambda: 180,
+        locked=lambda: ["Alice"],
+    )
+    alice = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    bravo = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    h._windows = {"Alice": alice, "Bravo": bravo}
+
+    h._restyle()
+
+    assert alice.show_labels is False
+    assert alice.opacity == 180
+    assert alice.locked is True
+    assert bravo.locked is False
+    assert alice.redraws == 1 and bravo.redraws == 1
+    assert alice._thumb.calls == [
+        (geometry.thumbnail_rect(alice.rect, host.window_mod.BORDER, 0), 180)
+    ]
+
+
+def test_restyle_reclaims_the_thumbnail_band_when_labels_are_off():
+    """The thumbnail must be re-inset with the CURRENT label height, not
+    the one the window was created with -- reverting to LABEL_H
+    unconditionally here would leave the mirrored video sitting behind a
+    band the chrome no longer draws once labels are turned off."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, show_labels=lambda: True, opacity=lambda: 255
+    )
+    win = _RestyleWindow(geometry.Rect(0, 0, 320, 210), show_labels=False)
+    h._windows = {"Alice": win}
+
+    h._restyle()
+
+    assert win._thumb.calls == [
+        (
+            geometry.thumbnail_rect(
+                win.rect, host.window_mod.BORDER, host.window_mod.LABEL_H
+            ),
+            255,
+        )
+    ]
+
+
+def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
+    """Sweep once and return the on_activate the host handed the window,
+    alongside a log of the window_mod.activate calls it makes.
+
+    Goes through _sweep rather than calling _activate_client directly:
+    the wiring at the create() call site is the half that breaks. A
+    dropped or stubbed kwarg there leaves clicking a preview doing
+    nothing, and nothing else in the suite looks at it.
+    """
+    calls = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: calls.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    captured = {}
+
+    def fake_create(cls, *a, **k):
+        # Returns no window, as the other _sweep fakes in this file do:
+        # only the kwargs the host hands the window are under test.
+        captured.update(k)
+
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=client_hwnd)]
+    )
+    h._sweep(_FakeLibs(_FakeUser32()))
+    return captured["on_activate"], calls
+
+
+def test_the_host_performs_the_switch_a_clicked_preview_asks_for(monkeypatch):
+    """The window no longer activates; it reports the gesture. If the host
+    keeps handing it the old no-op stub, click-to-focus is dead and no
+    other test notices -- window.py's own tests only see the callback
+    fire, not what it does."""
+    on_activate, calls = _captured_on_activate(monkeypatch)
+
+    on_activate(_FakeClient("Alice", hwnd=0x1000))
+
+    assert calls == [0x1000]
+
+
+def test_the_hosts_activation_callback_switches_to_the_client_it_is_given(monkeypatch):
+    """It must follow its argument rather than anything captured at
+    creation: the roster is re-read every sweep, and the client record for
+    a key is replaced whenever it reappears on a new hwnd."""
+    on_activate, calls = _captured_on_activate(monkeypatch)
+
+    on_activate(_FakeClient("Bravo", hwnd=0x2222))
+
+    assert calls == [0x2222]
+
+
+def test_the_hosts_activation_callback_reports_whether_it_took(monkeypatch):
+    """window_mod.activate's verdict comes from GetForegroundWindow, and a
+    switch can be refused. Anything the host does after a switch has to be
+    able to tell -- dropping the bool here would make a refused switch
+    indistinguishable from one that worked."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: False)
+    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is False
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is True
+
+
+def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
+    """Both entry points must converge on _activate_client, or a step
+    added to the switch silently applies to only one of them."""
+    seen = []
+    monkeypatch.setattr(
+        host.PreviewHost,
+        "_activate_client",
+        lambda self, libs, client: seen.append(client.hwnd) or True,
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32(foreground=0)
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert seen == [0x1234]
+
+
+class _SwitchUser32(_FakeUser32):
+    """Records the foreground reads and the minimize sends into a shared
+    order log, so a test can assert the SEQUENCE and not just the calls --
+    the ordering is the whole feature here."""
+
+    def __init__(self, order, foreground=0, send_result=1):
+        super().__init__(foreground=foreground)
+        self._order = order
+        self._send_result = send_result
+
+    def GetForegroundWindow(self):
+        self._order.append(("foreground", self._foreground))
+        return self._foreground
+
+    def SendMessageTimeoutW(self, hwnd, msg, wparam, lparam, flags, timeout, result):
+        self._order.append(("send", hwnd, msg, wparam, lparam, flags, timeout))
+        return self._send_result
+
+
+def _switching_host(
+    monkeypatch,
+    *,
+    foreground,
+    activated=True,
+    send_result=1,
+    minimize=True,
+    never=(),
+):
+    """A host with two clients, Alice on 0x1111 and Bravo on 0x2222, whose
+    activation, sleep and minimize send are all recorded in one log."""
+    order = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: order.append(("activate", hwnd)) or activated,
+    )
+    monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
+    user32 = _SwitchUser32(order, foreground=foreground, send_result=send_result)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        minimize_inactive_clients=lambda: minimize,
+        never_minimize=lambda: list(never),
+    )
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    return h, _FakeLibs(user32), order
+
+
+def test_the_switch_reads_the_foreground_activates_settles_minimizes_reactivates(
+    monkeypatch,
+):
+    """The order is the feature. Reading the foreground after activating
+    identifies the wrong client; minimizing before the settle races the
+    switch; and skipping the second activation hands the foreground to
+    whatever Windows picks after the minimize."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [
+        ("foreground", 0x1111),
+        ("activate", 0x2222),
+        ("sleep", host.SWITCH_SETTLE_MS / 1000.0),
+        (
+            "send",
+            0x1111,
+            host.win32.WM_SYSCOMMAND,
+            host.win32.SC_MINIMIZE,
+            0,
+            host.win32.SMTO_ABORTIFHUNG,
+            host.MINIMIZE_TIMEOUT_MS,
+        ),
+        ("activate", 0x2222),
+    ]
+
+
+def test_a_refused_switch_minimizes_nothing(monkeypatch):
+    """The safety property, ported from TriffView. Minimizing after an
+    activation that did not take leaves the user on an empty desktop with
+    nothing focused -- their old client gone and the new one never
+    arrived, which is strictly worse than the switch failing quietly."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is False
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_a_timed_out_minimize_does_not_reactivate(monkeypatch):
+    """A zero return means the client never processed the message, so it
+    is still exactly where it was. There is no foreground theft to undo,
+    and a second activation would be an unexplained focus change."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    kinds = [entry[0] for entry in order]
+    assert kinds == ["foreground", "activate", "sleep", "send"]
+
+
+def test_a_never_minimize_character_is_left_alone(monkeypatch):
+    """The roster names the client being switched AWAY from -- the one
+    that would be minimized."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, never=("Alice",))
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, minimize=False)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
+    monkeypatch,
+):
+    """window_mod.activate returns True EARLY when the target is already
+    foreground, without touching anything -- so this arrives here as a
+    successful activation whose previous and next client are the same.
+    Minimizing on it would minimize the very client just clicked."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x2222)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x2222), ("activate", 0x2222)]
+
+
+def test_the_switch_reports_the_activation_verdict_even_when_it_minimizes(monkeypatch):
+    """The bool is window_mod.activate's, not the minimize send's: the
+    minimize is a side effect, and a caller asking whether the switch took
+    must not be told 'no' because a client was slow to minimize."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+
+def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
+    """A browser, Discord, or Wingman itself. Nothing in the roster owns
+    that hwnd, so there is no previous client to minimize -- and sending
+    SC_MINIMIZE to whatever happened to be foreground would minimize the
+    user's other application on every switch."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0xDEAD)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0xDEAD), ("activate", 0x2222)]

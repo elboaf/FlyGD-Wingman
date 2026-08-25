@@ -70,6 +70,13 @@ def _alerts_defaults() -> dict:
     }
 
 
+# The preview opacity default from previews shipping through v3.3.0, when
+# the key was validated but read by nothing.
+_PREVIEW_V1_OPACITY = 235
+_PREVIEW_DEFAULT_OPACITY = 255
+_PREVIEW_DEFAULTS_VERSION = 2
+
+
 def _preview_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global.
 
@@ -81,7 +88,23 @@ def _preview_defaults() -> dict:
         "enabled": False,
         "width": 320,
         "height": 210,
-        "opacity": 235,
+        # Fully opaque -- it is what every preview has in practice always
+        # rendered at, from PreviewWindow's own 255 default: opacity was
+        # validated and clamped from the day it was added but read by
+        # nothing. Task 4 wires this key through to the DWM thumbnail,
+        # which turns stored config into something users actually see.
+        #
+        # Changing this default is NOT what protects existing installs --
+        # a default only applies to an absent key, and _save_locked
+        # projects the complete document from DEFAULTS, so every install
+        # that has ever saved settings already has the old 235 written in
+        # its file. The one-shot migration in validated_preview is what
+        # delivers the guarantee. Translucency stays available, opt-in
+        # through the Previews slider.
+        "opacity": _PREVIEW_DEFAULT_OPACITY,
+        # Bumped to 2 when opacity became a value users can see. See
+        # validated_preview for the migration it gates.
+        "defaults_version": _PREVIEW_DEFAULTS_VERSION,
         "layouts": {},
         # Flat cycle chords, not a group table. When named cycle groups
         # land these become the default group's, so the schema grows
@@ -96,6 +119,22 @@ def _preview_defaults() -> dict:
         # alternative silently discards existing layouts.
         "restore_preview_positions": True,
         "alerts": _alerts_defaults(),
+        # On by default -- it is what shipped, and turning it off would
+        # silently restyle every existing install's previews.
+        "show_labels": True,
+        # Off by default: it changes what happens to a real game window
+        # (minimizing it), which must be asked for rather than assumed.
+        "minimize_inactive_clients": False,
+        # Character names exempt from minimize_inactive_clients. A plain
+        # roster list like `seen`, not a per-preview flag.
+        "never_minimize": [],
+        # Character names whose preview position is locked against drag.
+        # Deliberately a top-level list, NOT a flag inside a layouts entry:
+        # layout.deserialize drops any entry missing a full rect
+        # (layout.py:44-52), so a lock recorded against a character who has
+        # never dragged their preview -- and so has no layouts entry --
+        # would be silently discarded on the very next save.
+        "locked": [],
     }
 
 
@@ -213,6 +252,33 @@ def validated_preview(raw) -> dict:
         # Clamped, not rejected: a fully transparent preview is
         # indistinguishable from a broken one.
         section["opacity"] = max(20, min(255, opacity))
+    # One-shot migration to the v2 opacity default, on TriffView's pattern
+    # (see _alerts_defaults): rewrite only a value that still equals the
+    # previous default, so a customised setting is never overwritten.
+    #
+    # It exists because the default change alone protects nobody.
+    # _save_locked projects the complete document from DEFAULTS and
+    # _normalize runs validated_preview on every write, so 235 is already
+    # materialised in the file of every install that has ever saved
+    # settings; a default only applies to an ABSENT key. Without this,
+    # existing installs would render at 235 while new ones rendered at
+    # 255.
+    #
+    # Safe precisely because preview.opacity had no user interface before
+    # this branch: a stored 235 cannot be a deliberate choice, only the
+    # old default. A missing marker identifies such a pre-branch file --
+    # the key did not exist to be written.
+    stored_version = raw.get("defaults_version")
+    if not isinstance(stored_version, int) or isinstance(stored_version, bool):
+        stored_version = 1
+    if (
+        stored_version < _PREVIEW_DEFAULTS_VERSION
+        and section["opacity"] == _PREVIEW_V1_OPACITY
+    ):
+        section["opacity"] = _PREVIEW_DEFAULT_OPACITY
+    # max(), so a file written by a future version keeps its own marker
+    # and is not walked backwards into re-running this migration.
+    section["defaults_version"] = max(stored_version, _PREVIEW_DEFAULTS_VERSION)
     # Round-tripped through the layout model so a corrupt entry is dropped
     # at load rather than at draw time.
     section["layouts"] = preview_layout.serialize(
@@ -244,6 +310,15 @@ def validated_preview(raw) -> dict:
     # _normalize -- which every update() runs -- so any writer touching any
     # preview key silently reverts the user's alert configuration.
     section["alerts"] = validated_alerts(raw.get("alerts"))
+    if isinstance(raw.get("show_labels"), bool):
+        section["show_labels"] = raw["show_labels"]
+    if isinstance(raw.get("minimize_inactive_clients"), bool):
+        section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
+    # Both lists have exactly the roster's constraints, including the
+    # hwnd: rejection: a client at character-select has no stable name to
+    # exempt from minimizing or lock in place.
+    section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
+    section["locked"] = preview_roster.deserialize(raw.get("locked"))
     return section
 
 

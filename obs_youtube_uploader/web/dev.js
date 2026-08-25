@@ -36,7 +36,14 @@
    // M3. Same three-key shape, and it belongs in this list rather than the
    // generic one for the same reason: the ABOUT card reverts its checkbox
    // on anything that is not `applied`.
-   'set_start_on_login'
+   'set_start_on_login',
+   // Task 6: same shape again, and set_preview_show_labels/set_preview_
+   // opacity revert their control on a refused write just like the rest
+   // of this list.
+   'set_preview_show_labels', 'set_preview_opacity',
+   // Task 10: same shape; settings.js reverts the checkbox on anything
+   // that is not `applied`, same as every entry above.
+   'set_minimize_inactive_clients'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -76,6 +83,18 @@
   // return {applied, persisted, error} and the page reads all three.
   api.set_alert_event = function (event, field, value) {
     console.log('DEV api.set_alert_event(', event, field, value, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  // Task 11: same tier -- previews.js reverts the row's checkbox on
+  // anything that is not `applied`, same as the rest of this file.
+  api.set_preview_locked = function (name, locked) {
+    console.log('DEV api.set_preview_locked(', name, locked, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  api.set_never_minimize = function (name, enabled) {
+    console.log('DEV api.set_never_minimize(', name, enabled, ')');
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
@@ -304,6 +323,11 @@
           // ships preview.alerts for free (a shallow dict(cfg)), so this
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
+            show_labels: true, opacity: 255,
+            // Task 10: read here by settings.js's own wm:settings listener
+            // AND by previews.js's (previews.js needs it to decide whether
+            // each row's Never-minimize checkbox is enabled).
+            minimize_inactive_clients: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
               events: {
@@ -462,20 +486,19 @@
     // failure this file's own comment warns about: a double that models a
     // shape the bridge does not produce.
     //
-    // `enabled: false`, and everything downstream of it honest about that.
-    // The real method gates on `host.is_running`, so a stopped host
-    // returns characters [] and registration {} -- there is no state in
-    // which previews are off and Windows is holding chords. A fixture
-    // showing registered chords beside an unticked Enable box would be
-    // more complete than the thing it doubles, which is how a harness
-    // starts hiding the bug it exists to catch. Off is also what the
-    // settings payload says, since it carries no `preview` key at all.
-    //
-    // The rows are therefore the offline kind: bound characters whose
-    // client is not running, which is a real and under-looked-at state --
-    // the binding is saved and works the moment they log in.
+    // `enabled: true`, not false. This fixture originally shipped with
+    // previews OFF -- deliberately, to exercise the under-looked-at
+    // offline-binding path -- but that meant every row went through
+    // `makeRow`'s `online === null` branch (previews.js: `state.enabled ?
+    // entry.online : null`), and `.dim` never got added to a single row.
+    // Previews being ON is the normal state for anyone using this
+    // feature, so an always-off fixture left the branch users actually
+    // see unrendered and unverified. `characters` (below) now lists who
+    // is running -- Windows genuinely cannot hold chords with the host
+    // stopped, so `enabled: true` requires this to be non-empty, unlike
+    // the old `enabled: false` + `characters: []` pair.
     return Promise.resolve({
-      enabled: false,
+      enabled: true,
       // Preview gestures are stored as preview/gestures.py display()
       // strings -- "Ctrl+Alt+Right" -- and NOT as AHK. Bookmarks use AHK
       // and send a separate `displays` table; previews render the stored
@@ -492,9 +515,46 @@
         cycle_next: 'Ctrl+Alt+Right',
         cycle_prev: ''
       },
-      roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Kaska Rin'],
-      characters: [],
-      registration: {},
+      // Running (online) characters. Both are also owed a row by
+      // `hotkeys.characters` above, so this is what flips them from the
+      // offline/dim branch to the online one now that `enabled: true`.
+      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
+      // `roster` is every character previews knows about, running or
+      // not -- `rows()` (previews.js) already de-dupes against
+      // `characters`, so listing the same two names again here is
+      // harmless and matches what the real bridge sends. Four distinct
+      // rows total, not three: a three-row fixture never has to prove
+      // `.settings-pane`'s vertical scroller (overflow-y: auto, style.css)
+      // actually does anything at the 625px floor, and never puts an
+      // offline (dim) row next to an online one so both render at once.
+      //
+      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays, though
+      // not for the reason it was added. It was added when the name was
+      // #preview-binds's own first column and the only track that could
+      // shrink; the name now takes a full-width line of its own
+      // (`.lab { grid-column: 1 / -1 }`), so it cannot be squeezed by the
+      // control tracks at all. What it still proves is the other half:
+      // that a name wider than the control line neither wraps badly nor
+      // pushes the card into horizontal overflow at the 840px floor.
+      roster: [
+        'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
+        'Aleksandrina Shadowbanes Voidstriders'
+      ],
+      // Windows holding all three configured chords -- the normal case
+      // once the host is actually running, unlike the old `{}` that
+      // matched `enabled: false`'s "nothing can be registered" state.
+      registration: {
+        'Ctrl+Alt+1': true,
+        'Ctrl+Alt+2': true,
+        'Ctrl+Alt+Right': true
+      },
+      // One lock and one never-minimize, split across the online/offline
+      // divide on purpose: 'Aiga Otsolen' is running (Lock on an online
+      // row), 'Tanuki Solette' is not (Never-minimize on an offline/dim
+      // row) -- so both checkboxes are proven against both branches
+      // rather than only the offline one the prior fix round covered.
+      locked: ['Aiga Otsolen'],
+      never_minimize: ['Tanuki Solette'],
       // Latent rather than active, for the same consistency: bookmarks
       // register nothing while this chord could still be taken later.
       bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }

@@ -102,11 +102,15 @@ checking a roster against a doctrine is something you sit and do.
 
 ## What it must not become
 
-- **It must not touch a running EVE client's window.** Not moved, not
+- **It must not set a running EVE client's position or size.** Not moved, not
   resized, not repositioned. EVE reads a resize as a resolution change and
   rewrites its own configuration; a test once destroyed three characters'
   settings that way. Previews are separate windows that mirror a client.
-  This is a hard line, not a preference.
+  Exactly two show-state calls are exempt, and no others: `SW_RESTORE` on
+  activation, already shipped, and minimize, for the opt-in
+  minimize-inactive setting. Maximize is NOT exempt — `SW_SHOWMAXIMIZED`
+  fills the window to the work area, the same geometry hazard in
+  show-state clothing. This is a hard line, not a preference.
 - **It must not upload anything the user did not select.** Nothing leaves
   the machine without an explicit action.
 - **It must not automate gameplay.** It sends keystrokes the user pressed,

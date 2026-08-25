@@ -1074,6 +1074,15 @@ button.btn:disabled,
    with a precondition the app can check for itself (two rows selected). */
 #lab-stitch.disabled { opacity: .45; cursor: default; }
 
+/* Same rationale as #lab-stitch.disabled above, but there is no single
+   static id to scope to: Never-minimize is one checkbox PER character row
+   (previews.js's makeNeverMinimizeCheck), built and torn down as the
+   roster changes. `.check.nm` is a class used nowhere else, so this stays
+   just as narrow as the id form -- it dims only the row-level Never-
+   minimize label previews.js adds `.disabled` to while minimize-inactive
+   is off, not every `.check` in the app. */
+.check.nm.disabled { opacity: .45; cursor: default; }
+
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
@@ -1410,7 +1419,24 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  grid-template-columns: repeat(3, max-content) minmax(0, 1fr);
+  /* Five fixed tracks, then one flexible one. The character name takes a
+     line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
+     size the CONTROLS on the line beneath it: bind button, Clear, Edit…,
+     Lock, Never minimize -- exactly the five children previews.js's
+     makeRow appends after the label. The trailing minmax(0, 1fr) absorbs
+     the leftover width so the five stay packed at the start instead of
+     spreading.
+
+     The count is load-bearing rather than cosmetic. `.row` is
+     display:contents, so the grid sees one flat stream of cells and cannot
+     tell one row from the next; a row that contributed fewer children
+     would pull the following row's children up into its empty columns.
+     That is why makeRow always appends exactly one of {both checkboxes} or
+     {two filler spans} -- cycle forward/back have no character, and
+     without the fillers those two rows would misalign every row after
+     them. Change the number of per-row children and this number changes
+     with it. */
+  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -2002,6 +2028,17 @@ button.btn:disabled,
 .settings .row > .field { flex: 1; min-width: 0; }
 .settings .row > select.field { flex: 0 0 150px; }
 .settings .row > input#f-category { flex: 0 0 90px; }
+
+/* No wrapper convention exists for input[type=range] the way .check/.radio
+   exist for checkboxes/radios -- `color-scheme: dark` above already gets a
+   dark-themed native track and thumb from WebView2's Chromium, so the only
+   thing left off-brand is the thumb's default blue. accent-color is enough
+   to fix that without a bespoke track/thumb build. */
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
+.range-value {
+  flex: none; min-width: 2.5em; text-align: right;
+  color: var(--text-dim); font-size: var(--fs-mono); font-family: var(--mono);
+}
 
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);

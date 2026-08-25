@@ -2337,6 +2337,14 @@ class Api:
             "characters": host.characters() if live else [],
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
+            # Character-name lists, not per-character booleans -- see
+            # PreviewHost._is_locked/_is_never_minimize and
+            # set_preview_locked/set_never_minimize below. The per-character
+            # table needs these to paint its two new checkboxes; riding this
+            # payload (rather than a second round trip) keeps row state in
+            # the one place previews.js already reads it from.
+            "locked": list(section.get("locked") or []),
+            "never_minimize": list(section.get("never_minimize") or []),
         }
 
     def _bookmark_chords(self) -> dict:
@@ -2381,37 +2389,37 @@ class Api:
             payload["registration"] = status
         self._push("onPreviewHotkeys", payload)
 
-    # ---- Gamelog alerts --------------------------------------------------
+    # ---- Preview settings, generic writer --------------------------------
 
-    def _write_alert_setting(self, path: tuple, value) -> dict:
-        """Persist one value under preview.alerts, no-op guarded.
+    def _write_preview_setting(self, path: tuple, value) -> dict:
+        """Persist one value under `preview`, no-op guarded.
 
         `_write_setting` (above) cannot reach here: it only ever does
-        `doc[key] = value` against the top-level document, and
-        `preview.alerts` is nested two levels below that. This instead
-        follows set_restore_preview_positions's shape for the write itself
-        -- descend through `doc.setdefault(...)` inside `settings_mod.
-        update`, so the mutation happens under `_SAVE_LOCK` -- generalised
-        to an arbitrary path so it covers all six alert fields instead of
-        being copied six times.
+        `doc[key] = value` against the top-level document, and this needs
+        to land under `preview` (or, via `_write_alert_setting` below,
+        `preview.alerts`) instead. This follows set_restore_preview_
+        positions's shape for the write itself -- descend through `doc.
+        setdefault(...)` inside `settings_mod.update`, so the mutation
+        happens under `_SAVE_LOCK` -- generalised to an arbitrary path so
+        one writer covers every preview field instead of being copied for
+        each.
 
-        Unlike set_restore_preview_positions, a raise here is reported as
-        refused (`applied: False`), not as `applied: True, persisted:
-        False`: settings_mod.update restores the live dict on OSError, so
-        the value genuinely did NOT take effect for this session either --
-        `applied: True` would tell the page a change is live that never
-        happened, and a checkbox or select left showing it would be
-        showing a state the app is not in.
+        A raise here is reported as refused (`applied: False`), not as
+        `applied: True, persisted: False`: settings_mod.update restores
+        the live dict on OSError, so the value genuinely did NOT take
+        effect for this session either -- `applied: True` would tell the
+        page a change is live that never happened, and a checkbox or
+        select left showing it would be showing a state the app is not
+        in.
 
         `path` is walked fresh against `self._state.settings` both for the
         no-op check and inside the `update()` block, never against a
-        `preview` or `alerts` reference held across the call: `_normalize`
-        reassigns both wholesale on every write (settings.py:373-378), so
-        a reference captured before `update()` is stale by the time it
+        `preview` reference held across the call: `_normalize` reassigns
+        `preview` wholesale on every write (settings.py:373-378), so a
+        reference captured before `update()` is stale by the time it
         returns.
         """
-        alerts = self._state.settings.get("preview", {}).get("alerts", {})
-        node = alerts
+        node = self._state.settings.get("preview", {})
         for key in path[:-1]:
             node = node.get(key, {})
         if node.get(path[-1]) == value:
@@ -2421,14 +2429,109 @@ class Api:
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
-                node = doc.setdefault("preview", {}).setdefault("alerts", {})
+                node = doc.setdefault("preview", {})
                 for key in path[:-1]:
                     node = node.setdefault(key, {})
                 node[path[-1]] = value
         except OSError:
-            logger.exception("Could not persist alert setting %s", ".".join(path))
+            logger.exception("Could not persist preview setting %s", ".".join(path))
             return self._field_refused("Could not save this to settings.")
         return self._field_ok()
+
+    def set_preview_show_labels(self, enabled) -> dict:
+        """Persist whether preview thumbnails show their character-name
+        label, then push it live onto every open preview via
+        PreviewHost.restyle() -- the page must not wait for the next
+        placement or restart to see it."""
+        result = self._write_preview_setting(("show_labels",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_opacity(self, value) -> dict:
+        """Persist the DWM thumbnail opacity, then push it live.
+
+        Deliberately does NOT clamp here: settings.validated_preview
+        already owns the 20-255 range (settings.py:235-239), and letting
+        update()'s normalise pass apply it keeps that the one place the
+        range is defined -- same reasoning as set_alert_event's docstring
+        for cooldown_s/duration_ms/pulses. A value outside the range is
+        silently coerced by normalise rather than refused here.
+        """
+        result = self._write_preview_setting(("opacity",), value)
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_minimize_inactive_clients(self, enabled) -> dict:
+        """Persist whether an inactive EVE client's preview minimizes
+        itself, then push it live via restyle() -- read per switch, not
+        per window (host.py's restyle() docstring), but the flag itself
+        still has to reach the host before the next switch sees it."""
+        result = self._write_preview_setting(
+            ("minimize_inactive_clients",), bool(enabled)
+        )
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def _toggle_preview_roster(self, key: str, name: str, member: bool) -> dict:
+        """Add or remove *name* from the character-name list at
+        preview.<key> (locked or never_minimize), then persist through
+        _write_preview_setting.
+
+        A list, not a per-character flag: Task 1 moved lock storage out of
+        preview.layouts precisely because that entry is dropped whenever it
+        is missing a full rect (preview/layout.py's deserialize), which is
+        exactly what a character who has never dragged their preview looks
+        like. never_minimize needs the same shape for the same reason --
+        both are read by PreviewHost as membership tests
+        (_is_locked/_is_never_minimize), never by key lookup.
+
+        Shared by set_preview_locked and set_never_minimize below rather
+        than duplicated: the add/remove-by-name logic is identical, only
+        the settings key differs.
+        """
+        current = list(self._state.settings.get("preview", {}).get(key) or [])
+        if member:
+            if name not in current:
+                current.append(name)
+        else:
+            current = [n for n in current if n != name]
+        return self._write_preview_setting((key,), current)
+
+    def set_preview_locked(self, name, locked) -> dict:
+        """Persist whether *name*'s preview is locked against drag, then
+        push it live via PreviewHost.restyle() -- lock is read per drag
+        (preview/window.py), so the live PreviewWindow.locked has to be
+        refreshed or the checkbox would do nothing until restart."""
+        result = self._toggle_preview_roster("locked", name, bool(locked))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_never_minimize(self, name, enabled) -> dict:
+        """Persist whether *name* is exempt from minimize_inactive_clients,
+        then push it live via restyle() -- same reasoning as
+        set_preview_locked above."""
+        result = self._toggle_preview_roster("never_minimize", name, bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    # ---- Gamelog alerts --------------------------------------------------
+
+    def _write_alert_setting(self, path: tuple, value) -> dict:
+        """Persist one value under preview.alerts, no-op guarded.
+
+        A thin wrapper over `_write_preview_setting`, prefixing the path
+        with `alerts` so there is one writer for everything nested under
+        `preview`, not two. See that docstring for the no-op guard, the
+        `_SAVE_LOCK` mutation shape, the `applied: False` rationale on a
+        raise, and why `path` must be walked fresh rather than against a
+        `preview`/`alerts` reference held across the call.
+        """
+        return self._write_preview_setting(("alerts", *path), value)
 
     def set_alert_enabled(self, enabled) -> dict:
         """Turn the gamelog alert poller on or off."""

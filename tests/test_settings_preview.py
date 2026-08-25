@@ -130,3 +130,61 @@ def test_restore_preview_positions_survives_a_load_round_trip(tmp_path):
     data["preview"]["restore_preview_positions"] = False
     settings.save(data, path)
     assert settings.load(path)["preview"]["restore_preview_positions"] is False
+
+
+def test_show_labels_defaults_on():
+    """On preserves the behaviour that shipped: labels have always drawn."""
+    assert settings._preview_defaults()["show_labels"] is True
+
+
+def test_show_labels_accepts_only_a_bool():
+    out = settings.validated_preview({"show_labels": False})
+    assert out["show_labels"] is False
+    out = settings.validated_preview({"show_labels": "no"})
+    assert out["show_labels"] is True
+
+
+def test_minimize_inactive_clients_defaults_off():
+    """Off by default: it changes what happens to a real game window,
+    which must be asked for."""
+    assert settings._preview_defaults()["minimize_inactive_clients"] is False
+
+
+def test_minimize_inactive_clients_accepts_only_a_bool():
+    out = settings.validated_preview({"minimize_inactive_clients": True})
+    assert out["minimize_inactive_clients"] is True
+    out = settings.validated_preview({"minimize_inactive_clients": "yes"})
+    assert out["minimize_inactive_clients"] is False
+
+
+def test_never_minimize_and_locked_default_empty():
+    defaults = settings._preview_defaults()
+    assert defaults["never_minimize"] == []
+    assert defaults["locked"] == []
+
+
+def test_never_minimize_and_locked_run_through_roster_deserialize():
+    """Same constraints as `seen`: malformed entries drop, hwnd: keys are
+    rejected because a client at character-select has no stable name."""
+    out = settings.validated_preview(
+        {
+            "never_minimize": ["Alice", "hwnd:123", 5, "Alice"],
+            "locked": ["Bob", "hwnd:456"],
+        }
+    )
+    assert out["never_minimize"] == ["Alice"]
+    assert out["locked"] == ["Bob"]
+
+
+def test_locked_survives_round_trip_with_no_layout_rect(tmp_path):
+    """The exact case layout-keyed storage could not handle:
+    layout.deserialize drops any entry missing a full rect
+    (layout.py:44-52), so a lock stored there for a character who has
+    never dragged their preview would vanish on the very next save.
+    Storing `locked` as its own top-level list avoids that entirely."""
+    path = tmp_path / "settings.json"
+    data = settings._fresh_defaults()
+    data["preview"]["locked"] = ["NeverDragged"]
+    assert data["preview"]["layouts"] == {}
+    settings.save(data, path)
+    assert settings.load(path)["preview"]["locked"] == ["NeverDragged"]
