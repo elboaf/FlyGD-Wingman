@@ -110,3 +110,56 @@ def test_a_source_without_a_version_fails_the_build_rather_than_guessing(tmp_pat
     empty.write_text("# no version here\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="Could not find __version__"):
         write_version_iss.read_version(empty)
+
+
+# --- the bare-python allowlist ----------------------------------------------
+
+
+def test_every_allowlisted_packaging_script_is_stdlib_only():
+    """ci.yml lets a few packaging/ scripts run without `uv run`.
+
+    That exception is safe only while they import nothing outside the
+    standard library: a bare `python` sees setup-python's interpreter, not
+    .venv, so a third-party import in one of these fails at the very last
+    step of the release build -- after PyInstaller, after every verification
+    step, on the one build nobody wants to debug.
+
+    The list is parsed out of ci.yml rather than retyped here. A hand-kept
+    copy is what this repo's conventions forbid, and this particular list
+    has already demonstrated it drifts: adding write_version_iss.py failed
+    the check precisely because the allowlist had not been told about it.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    pattern = re.search(r"grep -vE 'python packaging/\(([^)]*\))?([^']*)'", workflow)
+    assert pattern is not None, (
+        "could not find the bare-python allowlist in ci.yml -- if the check "
+        "was restructured, update this test with it"
+    )
+
+    names = set(re.findall(r"[a-z_]+(?:_[a-z0-9]+)*", pattern.group(0)))
+    scripts = [
+        path
+        for path in (ROOT / "packaging").glob("*.py")
+        if any(part in path.stem for part in ("fetch_", "write_version"))
+    ]
+    assert scripts, "no packaging scripts found to check"
+
+    stdlib = sys.stdlib_module_names
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        imported = set(
+            re.findall(r"^\s*(?:import|from)\s+([a-zA-Z_][\w.]*)", text, re.MULTILINE)
+        )
+        for module in imported:
+            root = module.split(".")[0]
+            if root == "__future__":
+                continue
+            assert root in stdlib, (
+                f"{script.name} imports {root!r}, which is not in the standard "
+                "library. It is invoked with a bare `python` in "
+                ".github/actions/build-installer/action.yml, so that import "
+                "will fail at release time. Either drop the dependency or "
+                "move the step onto `uv run` and remove it from ci.yml's "
+                "allowlist."
+            )
+    assert names, "the allowlist regex parsed to nothing"

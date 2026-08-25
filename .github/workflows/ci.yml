@@ -108,11 +108,20 @@ jobs:
         # A protection nobody runs is not a protection, and this whole
         # effort is about turning silent failures into loud ones.
         #
-        # The three packaging/fetch_*.py scripts are the deliberate
-        # exception: stdlib-only, no venv wanted, invoked as
-        # `python packaging/fetch_*.py`. They are excluded by name so the
-        # exception has to stay explicit -- adding a fourth bare `python`
-        # will fail this check rather than quietly joining them.
+        # A few packaging/ scripts are the deliberate exception, and the
+        # CRITERION is what matters rather than the count: stdlib-only, so
+        # there is nothing in .venv they could want, and invoked as a bare
+        # `python packaging/....py`. They are excluded by name so the
+        # exception stays explicit -- a new bare `python` fails this check
+        # rather than quietly joining them, which is exactly what happened
+        # when write_version_iss.py was added and is why it is listed here
+        # deliberately rather than by accident.
+        #
+        # Before adding a name below, check the script imports nothing
+        # third-party. tests/test_packaging_version.py asserts that for
+        # every name in this list, by parsing this file -- so a script
+        # allowlisted here that grows a `requests` import fails the suite
+        # rather than the release build.
         # Two forms count as a bypass and the pattern must catch both: an
         # indented `python ...` inside a `run: |` block, and a single-line
         # `run: python ...`. An earlier version of this check only matched
@@ -121,7 +130,7 @@ jobs:
         run: |
           offenders=$(grep -nE '^[[:space:]]+(python|pyinstaller)\b|run:[[:space:]]*(python|pyinstaller)\b' \
               .github/actions/build-installer/action.yml \
-              | grep -vE 'python packaging/fetch_(ffmpeg|autohotkey|webview2)\.py' \
+              | grep -vE 'python packaging/(fetch_(ffmpeg|autohotkey|webview2)|write_version_iss)\.py' \
               || true)
           if [ -n "$offenders" ]; then
             echo "::error::A step in build-installer/action.yml bypasses 'uv run'."
