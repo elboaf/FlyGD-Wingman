@@ -17,6 +17,7 @@ class FakeHost:
         self.flushed = 0
         self.sweeps = 0
         self.hotkeys = None
+        self.restyles = 0
 
     def start(self):
         self.started += 1
@@ -29,6 +30,9 @@ class FakeHost:
 
     def set_hotkeys(self, table):
         self.hotkeys = table
+
+    def restyle(self):
+        self.restyles += 1
 
     @property
     def is_running(self):
@@ -382,6 +386,130 @@ def test_an_unchanged_position_toggle_does_not_rewrite_the_document(
     api.set_restore_preview_positions(False)
     api.set_restore_preview_positions(False)
     assert len(writes) == 1
+
+
+def test_set_preview_show_labels_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    assert api.set_preview_show_labels(False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["show_labels"] is False
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_show_labels_is_a_no_op_without_restyling(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    assert api.set_preview_show_labels(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert len(writes) == 0
+    # Restyle still fires on a no-op write: the endpoint's job is "make
+    # the live state match what was asked for," not "only touch the host
+    # when the document changed" -- a stale host state after a no-op
+    # would be a silent bug the no-op guard was never meant to hide.
+    assert host.restyles == 1
+
+
+def test_set_preview_show_labels_restyles_even_without_a_host(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api._preview_host is None
+    assert api.set_preview_show_labels(False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+
+
+def test_set_preview_opacity_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"opacity": 255}
+    assert api.set_preview_opacity(180) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["opacity"] == 180
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_opacity_does_not_clamp_the_endpoint_itself(tmp_path, monkeypatch):
+    """settings.validated_preview owns the 20-255 range (settings.py:235-
+    239). The endpoint must hand the raw value to settings.update
+    untouched and let the next normalise pass do the clamping -- this
+    stores the out-of-range value verbatim so a re-owned range in the
+    endpoint would show up as a failure here."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=FakeHost())
+    api._state.settings["preview"] = {"opacity": 255}
+    api.set_preview_opacity(5)
+    assert writes[0]["preview"]["opacity"] == 5
+
+
+def test_set_minimize_inactive_clients_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"minimize_inactive_clients": False}
+    assert api.set_minimize_inactive_clients(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["minimize_inactive_clients"] is True
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_a_failed_preview_setting_write_is_refused_not_claimed(tmp_path, monkeypatch):
+    """Mirrors test_a_rolled_back_alert_write_reverts_the_checkbox's
+    Python-side counterpart: settings.update() restores the live dict on
+    OSError, so the value did NOT take effect either -- this must report
+    `applied: False`, not the `applied: True, persisted: False` shape
+    set_restore_preview_positions uses for its own, different, contract."""
+    from obs_youtube_uploader.ui import api as api_mod
+
+    def boom(_data, path=None):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_labels": True}
+    result = api.set_preview_show_labels(False)
+    assert result["applied"] is False
+    assert result["persisted"] is False
+    assert result["error"]
+    # The write never landed, so the live document must still read as it
+    # did before the call -- settings.update() restores it on raise.
+    assert api._state.settings["preview"]["show_labels"] is True
+
+
+def test_write_alert_setting_still_nests_under_preview_alerts(tmp_path, monkeypatch):
+    """_write_alert_setting is now a thin wrapper over
+    _write_preview_setting, prefixing the path with "alerts" -- this
+    pins that the resulting document shape is unchanged by the refactor:
+    a regression here would silently move every alert field out from
+    under preview.alerts."""
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=FakeHost())
+    api._state.settings["preview"] = {}
+    api.set_alert_pve_filter(True)
+    assert writes[0]["preview"]["alerts"]["pve_filter"] is True
 
 
 def test_the_host_reads_the_position_setting_live(monkeypatch):

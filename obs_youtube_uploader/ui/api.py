@@ -2019,37 +2019,37 @@ class Api:
             payload["registration"] = status
         self._push("onPreviewHotkeys", payload)
 
-    # ---- Gamelog alerts --------------------------------------------------
+    # ---- Preview settings, generic writer --------------------------------
 
-    def _write_alert_setting(self, path: tuple, value) -> dict:
-        """Persist one value under preview.alerts, no-op guarded.
+    def _write_preview_setting(self, path: tuple, value) -> dict:
+        """Persist one value under `preview`, no-op guarded.
 
         `_write_setting` (above) cannot reach here: it only ever does
-        `doc[key] = value` against the top-level document, and
-        `preview.alerts` is nested two levels below that. This instead
-        follows set_restore_preview_positions's shape for the write itself
-        -- descend through `doc.setdefault(...)` inside `settings_mod.
-        update`, so the mutation happens under `_SAVE_LOCK` -- generalised
-        to an arbitrary path so it covers all six alert fields instead of
-        being copied six times.
+        `doc[key] = value` against the top-level document, and this needs
+        to land under `preview` (or, via `_write_alert_setting` below,
+        `preview.alerts`) instead. This follows set_restore_preview_
+        positions's shape for the write itself -- descend through `doc.
+        setdefault(...)` inside `settings_mod.update`, so the mutation
+        happens under `_SAVE_LOCK` -- generalised to an arbitrary path so
+        one writer covers every preview field instead of being copied for
+        each.
 
-        Unlike set_restore_preview_positions, a raise here is reported as
-        refused (`applied: False`), not as `applied: True, persisted:
-        False`: settings_mod.update restores the live dict on OSError, so
-        the value genuinely did NOT take effect for this session either --
-        `applied: True` would tell the page a change is live that never
-        happened, and a checkbox or select left showing it would be
-        showing a state the app is not in.
+        A raise here is reported as refused (`applied: False`), not as
+        `applied: True, persisted: False`: settings_mod.update restores
+        the live dict on OSError, so the value genuinely did NOT take
+        effect for this session either -- `applied: True` would tell the
+        page a change is live that never happened, and a checkbox or
+        select left showing it would be showing a state the app is not
+        in.
 
         `path` is walked fresh against `self._state.settings` both for the
         no-op check and inside the `update()` block, never against a
-        `preview` or `alerts` reference held across the call: `_normalize`
-        reassigns both wholesale on every write (settings.py:373-378), so
-        a reference captured before `update()` is stale by the time it
+        `preview` reference held across the call: `_normalize` reassigns
+        `preview` wholesale on every write (settings.py:373-378), so a
+        reference captured before `update()` is stale by the time it
         returns.
         """
-        alerts = self._state.settings.get("preview", {}).get("alerts", {})
-        node = alerts
+        node = self._state.settings.get("preview", {})
         for key in path[:-1]:
             node = node.get(key, {})
         if node.get(path[-1]) == value:
@@ -2059,14 +2059,65 @@ class Api:
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
-                node = doc.setdefault("preview", {}).setdefault("alerts", {})
+                node = doc.setdefault("preview", {})
                 for key in path[:-1]:
                     node = node.setdefault(key, {})
                 node[path[-1]] = value
         except OSError:
-            logger.exception("Could not persist alert setting %s", ".".join(path))
+            logger.exception("Could not persist preview setting %s", ".".join(path))
             return self._field_refused("Could not save this to settings.")
         return self._field_ok()
+
+    def set_preview_show_labels(self, enabled) -> dict:
+        """Persist whether preview thumbnails show their character-name
+        label, then push it live onto every open preview via
+        PreviewHost.restyle() -- the page must not wait for the next
+        placement or restart to see it."""
+        result = self._write_preview_setting(("show_labels",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_opacity(self, value) -> dict:
+        """Persist the DWM thumbnail opacity, then push it live.
+
+        Deliberately does NOT clamp here: settings.validated_preview
+        already owns the 20-255 range (settings.py:235-239), and letting
+        update()'s normalise pass apply it keeps that the one place the
+        range is defined -- same reasoning as set_alert_event's docstring
+        for cooldown_s/duration_ms/pulses. A value outside the range is
+        silently coerced by normalise rather than refused here.
+        """
+        result = self._write_preview_setting(("opacity",), value)
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_minimize_inactive_clients(self, enabled) -> dict:
+        """Persist whether an inactive EVE client's preview minimizes
+        itself, then push it live via restyle() -- read per switch, not
+        per window (host.py's restyle() docstring), but the flag itself
+        still has to reach the host before the next switch sees it."""
+        result = self._write_preview_setting(
+            ("minimize_inactive_clients",), bool(enabled)
+        )
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    # ---- Gamelog alerts --------------------------------------------------
+
+    def _write_alert_setting(self, path: tuple, value) -> dict:
+        """Persist one value under preview.alerts, no-op guarded.
+
+        A thin wrapper over `_write_preview_setting`, prefixing the path
+        with `alerts` so there is one writer for everything nested under
+        `preview`, not two. See that docstring for the no-op guard, the
+        `_SAVE_LOCK` mutation shape, the `applied: False` rationale on a
+        raise, and why `path` must be walked fresh rather than against a
+        `preview`/`alerts` reference held across the call.
+        """
+        return self._write_preview_setting(("alerts", *path), value)
 
     def set_alert_enabled(self, enabled) -> dict:
         """Turn the gamelog alert poller on or off."""
