@@ -9,6 +9,15 @@
 # Secrets are inputs here, never read via GitHub's secrets context directly.
 # A composite action has no access to the calling repository's secrets;
 # the caller must pass them.
+#
+# REQUIRED OF THE CALLER, and not enforceable from here:
+#   * actions/checkout, before this runs.
+#   * actions/setup-python with 3.11. Most of this action runs through
+#     `uv run` and does not need it, but the three packaging/fetch_*.py
+#     scripts are invoked with a bare `python` on purpose -- they are
+#     stdlib-only and want no venv -- so they use whatever PATH provides.
+#     Remove setup-python from a caller and those three steps break, in
+#     that caller only.
 name: Build installer
 description: Fetch dependencies, freeze with PyInstaller, verify the bundle, and build the Inno Setup installer.
 
@@ -64,11 +73,17 @@ runs:
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
 
     - name: Verify uv run reaches the synced environment, on the right Python
-      # Two guards in one, both for failures that are otherwise silent.
+      # Two assertions, both for failures that are otherwise silent.
       #
-      # First: if any later step drops the `uv run` prefix it uses the
-      # setup-python interpreter instead, which has none of the app's
-      # dependencies. Fail here, where it is obvious.
+      # First: that `uv sync` actually took, and `uv run` reaches an
+      # environment with the app's dependencies in it.
+      #
+      # Note what this does NOT do, since an earlier version of this comment
+      # claimed otherwise: it cannot catch a LATER step dropping its
+      # `uv run` prefix. It runs before those steps and asserts nothing
+      # about them. The protection against a dropped prefix is grepping the
+      # action for a bare `python`/`pyinstaller`, which is a review step,
+      # not something CI enforces.
       #
       # Second, and the reason this asserts rather than prints: uv's default
       # python-preference is "managed", so it picks its OWN downloaded
