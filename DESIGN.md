@@ -96,17 +96,15 @@ guessed at.
 **What this means for `style.css`.** Every width media query below the
 floor is unreachable through the window. As of the merge that carried this
 correction there were eight, of which seven could never fire — but lanes
-are deleting their own dead blocks, so treat the *rule* as the durable
-part and re-grep before quoting a count:
+are deleting their own dead blocks and adding reachable ones, so treat the
+*rule* as the durable part and re-grep before quoting a count:
 
 | Query | Fires at the floor |
 |---|---|
+| `max-width: 931px`, `max-width: 840px` (the list's column tiers, added by R1) | **yes** — both are above the floor |
 | `max-width: 839px` (the `.panel` 248px step) | **only at some scalings** — see below |
-| `max-width: 767px`, `max-width: 607px` (the list's column-dropping steps) | no |
+| `max-width: 767px` (the list's narrowest tier) | no |
 | `max-width: 720px` x5 (status strip, two Settings blocks, the settings row, Skills) | no |
-
-Six are simply unreachable. The seventh is worse than unreachable, and it
-is the one that decides how wide the Uploader's panel is:
 
 **`max-width: 839px` fires at 200% scaling and not at 100%.** At 100% the
 floor viewport is 840 CSS and the query does not match. At 200% the floor
@@ -114,10 +112,31 @@ measures 839 CSS — the 840 logical minimum lands a client area of 1678
 physical, and 1678 / 2 is 839 — so it matches, at the floor and nowhere
 else. The Uploader's panel is therefore 248px wide on one machine and
 320px on another, at the same window size, with nothing in the stylesheet
-that predicts which. That is a rounding artefact holding a layout
-decision, not a breakpoint. **R1 owns this**; it is recorded here because
-the reason is a DPI fact rather than a CSS one and would otherwise have to
-be rediscovered at the stylesheet.
+that predicts which.
+
+**R1 settled this, and the answer was not to delete it.** It is a real
+viewport — it is what the floor measures at 200% — so it is now the
+narrower of two known floors and the panel is what gives there. What R1
+did delete was the assumption underneath: the list's column tiers used to
+sit at 767px and 607px, *below* a floor the window can never reach, so the
+six-column layout was the only one that ever rendered. That is what made
+`docs/ui-walkthrough.md`'s Uploader 11 possible — at 840 the Filename
+track sat on a 120px floor while an OBS filename measures 205px, so the
+column carrying the row's identity truncated away the seconds while
+`Modified` sat intact beside it carrying the same timestamp.
+
+**The lesson generalises past that screen: 839 is the floor at 200% only.**
+A query written against it leaves 100% — the ordinary machine — unchanged.
+R1 shipped exactly that mistake once and only a render caught it. If a tier
+must fire *at* the floor, it is `max-width: 840px`.
+
+**And a tier's floor is a measurement, not a round number.** The name track
+is 212px now because that is what the window floor affords once `Modified`
+gives way, and it clears the 205px a filename actually needs. 120px
+measured nothing. The check that the whole chain still hangs together is
+that the tier rendering **at** the floor needs exactly `MIN_WIDTH` —
+`tests/test_uploader_page.py` asserts it, and it used to be the six-column
+tier that held that position.
 
 A rule the window cannot currently reach is not thereby wrong, and
 unreachable is not the same as removable. Two of these blocks are
@@ -131,7 +150,7 @@ Delete an override and its restore together, or neither. Beyond those two,
 each owning lane decides whether its block is a decision worth keeping. Note that
 `docs/ui-critique.md` credited one of these queries with doing the
 scaling arithmetic "correctly": it is the `839px` one, and the credit was
-earned against the wrong model. It is the least correct of the eight.
+earned against the wrong model, and the credit was misplaced.
 
 **Before adding a destination, do the arithmetic.** `style.css` warned at
 four; four features added one each without revisiting it, the last
@@ -358,13 +377,58 @@ Column headers sit *below* body size deliberately: they label the data and
 are not the data. Do not "fix" this.
 
 **A header row is laid out by the same padding as the rows beneath it,
-with no separate inset.** Two screens broke this in opposite directions —
-the Uploader's headers sit ~16px right of their data, and on Skills
-`PLANS` sits ~22px left of its column while `READY` sits ~14px right of
-its own. The Skills instance has no scrollbar, which rules out a
-scrollbar gutter as the explanation for the Uploader's. A header that
-does not share its column's inset is not labelling that column. This
-licenses no change to header *size* — see the paragraph above.
+with no separate inset.** A header that does not share its column's inset
+is not labelling that column. This licenses no change to header *size* —
+see the paragraph above.
+
+**And a sort indicator is laid out so that it cannot move the label. On a
+right-aligned column that means ordering it before the label, not after.**
+This is the second half of the same rule and it is the half that was
+actually broken on the Uploader, which is worth recording because the
+first half was written from a wrong diagnosis.
+
+`docs/ui-walkthrough.md` reported the Uploader's headers ~16px right of
+their data and blamed the scroll container's gutter, and reported `PLANS`
+~22px left of its column and `READY` ~14px right of its own on Skills.
+R1 re-measured its instance in the `?dev=1` harness at 1280x800 with 30
+rows, comparing text ranges rather than boxes:
+
+- **Padding was never the difference.** Unsorted, every Uploader header
+  agrees with its column to within 2px — and that 2px is `.list-row`'s own
+  `border-left: 2px solid transparent`, which the header does not carry.
+  Matching it would mean giving the header a fake border, so it stays.
+- **The gutter could not have been the cause anywhere.** `.grid-row`
+  declares no `1fr`, so the tracks are left-packed and a narrower body only
+  eats slack at the right edge. It cannot shift a column.
+- **What moved was the arrow.** `.list-head > span.sorted::after` on a
+  `flex-end` header takes the right end of the column and pushes the label
+  off it — measured at 14px the moment that column was sorted, and back in
+  line the moment another was. One column at a time, changing under the
+  pointer, which is how it read as "every column, on every visit".
+
+**Skills' instance is not yet re-measured, and R4 owns it.** `READY`'s
+"~14px right" is the same figure R1 measured for `Size`, from the same
+pass, on a header row that also has no scrollbar. Measure the arrow before
+measuring anything else there.
+
+Reserving the arrow's width is **not** the fix on its own, and shipping
+that was R1's first attempt: an `::after` at the right end still owns the
+column's right edge, so the label sits inboard whether or not the arrow is
+drawn — consistently misaligned instead of intermittently. Order it before
+the label and reserve the width on every header, so the label holds the
+edge and nothing moves when the sort changes. Centred headers need the
+reservation mirrored with a `::before` or it decentres them by half its box.
+
+**Uploader 4 — `Modified` right-aligned over a left-aligned column — does
+not reproduce and is not a rule here.** Measured, the header's ink begins
+at x=477 and the data's at x=479; `justify-content` computes to the flex
+default and the cell's `text-align` is `start`. Both left, since the
+replatform. Recorded so it is not re-derived from the walkthrough.
+
+**Treat that file's pixel figures as unverified until re-measured in CSS
+px.** Some are physical pixels read off 200% captures and halve cleanly;
+some are simply wrong. Both kinds are in it, and the two above are the
+second kind.
 
 **The one blue is a declared exemption.** `--link` is the single colour in
 the app outside the palette, and it stays that way on purpose: an outbound
