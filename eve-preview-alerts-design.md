@@ -492,6 +492,13 @@ alt-tabbing between clients, and the preview hotkeys feature exists to make that
 faster, so this is a regression on the interaction the subsystem is for. It is
 two renders and not N, and the smoke pass should judge whether it is felt.
 
+**Deviation: selection resolves in `_sweep`, not on the 80 ms alert tick.**
+`_sweep` is the only place `_clients` is refreshed, and the foreground hook
+already posts a sweep on every focus change, so resolving there is one message
+rather than two whose relative order would decide whether a just-launched
+client's first focus resolves at all. It also keeps selection working while
+the alert timer is stopped.
+
 ## Settings
 
 Nested under `preview`, because the border is the primary channel and cannot
