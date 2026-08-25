@@ -402,3 +402,97 @@ def test_get_alert_state_tolerates_no_alert_service(tmp_path):
     assert state["running"] is False
     assert state["last_error"] is None
     assert state["characters"] == []
+
+
+# ---- The Alerts card itself -------------------------------------------------
+#
+# No JS test harness exists (test_preview_wiring.py's comment above
+# test_an_absent_registration_entry_is_its_own_state explains why), so these
+# assert on source text like that file does. That is a real limit: they pin
+# the mechanism, not the rendered result.
+
+
+def _web(name):
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    return (root / "obs_youtube_uploader" / "web" / name).read_text(encoding="utf-8")
+
+
+def test_the_alerts_card_is_a_third_card_in_the_previews_section():
+    """After the second card, not inside the first: splitting the first
+    card's HTML on '<section' (test_preview_wiring.py's own technique for
+    the position checkbox) would otherwise pick up whatever came next."""
+    html = _web("index.html")
+    route = html.split('id="section-previews"')[1].split('id="section-')[0]
+    assert "<h2>Alerts</h2>" in route
+    first_card = route.split("EVE client previews")[1].split("<section")[0]
+    assert "Alerts" not in first_card
+    second_card = route.split("Global keybinds")[1].split("<section")[0]
+    assert "Alerts" not in second_card
+
+
+def test_the_alerts_script_is_loaded():
+    html = _web("index.html")
+    assert '<script src="alerts.js"></script>' in html
+
+
+def test_previews_off_state_is_reachable():
+    """Alerts cannot draw with no preview to pulse. Named, not merely
+    styled, so a rename of the mechanism breaks this loudly."""
+    js = _web("alerts.js")
+    assert "alerts-previews-off" in js
+    assert "previews_enabled" in js
+
+
+def test_no_gamelogs_folder_state_is_reachable():
+    """The important one: without a folder, alerts silently do nothing,
+    indistinguishable from nothing happening in game."""
+    js = _web("alerts.js")
+    assert "alerts-no-folder" in js
+    assert "gamelogs_folder" in js
+    html = _web("index.html")
+    assert "Gamelogs folder is not set" in html
+
+
+def test_health_and_character_count_render_together():
+    """A count with no liveness beside it keeps reading "watching N
+    characters" after the tailer thread has died -- get_alert_state's
+    `running` flag must appear in the same rendered sentence as the
+    character count, never the count alone."""
+    js = _web("alerts.js")
+    block = js.split("function healthText")[1].split("\n\n")[0]
+    assert "state.running" in block
+    assert "characters" in block
+
+
+def test_a_failed_alert_write_says_it_will_not_survive_a_restart():
+    """Mirrors test_the_position_toggle_says_when_the_choice_will_not_
+    survive in test_preview_wiring.py -- a failed write must say so
+    rather than silently reverting a checkbox that really did change for
+    this session."""
+    js = _web("alerts.js")
+    block = js.split("function writeFlag")[1]
+    assert "res.persisted" in block, "the flag is returned but never read"
+    assert "will not survive a restart" in block
+    assert "if (!res)" in block.split("box.checked = !wanted")[0]
+
+
+def test_get_alert_state_is_a_read_not_a_push():
+    """Constraint from the brief: a new push handler is a two-file edit
+    (WM.HANDLERS in app.js and a WM.handle registration) that
+    tests/test_bridge_contract.py checks agree -- this card must not add
+    one."""
+    js = _web("alerts.js")
+    assert "WM.handle(" not in js
+    app_js = _web("app.js")
+    assert "onAlert" not in app_js
+
+
+def test_dev_harness_can_render_the_alerts_card():
+    """dev.js's settingsPayload had no `preview` key at all and there was
+    no get_alert_state stub -- without both, the card renders blank under
+    ?dev=1 regardless of whether the real wiring is correct."""
+    dev_js = _web("dev.js")
+    assert "get_alert_state" in dev_js
+    assert "preview:" in dev_js.split("function settingsPayload")[1].split("\n\n")[0]

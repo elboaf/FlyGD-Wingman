@@ -1,0 +1,163 @@
+// ---- Gamelog alerts --------------------------------------------------
+// Third card in Settings > Previews, alongside previews.js and the
+// keybind block in settings.js. Not folded into either: this owns none
+// of the win32/AutoHotkey machinery those files do, and gets its own
+// bridge endpoints for the same reason set_preview_enabled does --
+// toggling `enabled` here starts or stops a polling thread (the gamelog
+// tailer), not merely a settings write.
+//
+// A READ, not a push: get_alert_state exists precisely so this can ask
+// on wm:section, the same reasoning get_preview_hotkey_state documents --
+// the tailer can start before the webview exists (start_previews_if_
+// enabled runs before window_mod.run()), so a health change discovered
+// at launch would be pushed into a window that is not there yet.
+(function () {
+  var enabledBox = WM.el('alert-enabled');
+  if (!enabledBox) { return; }
+
+  var pveBox = WM.el('alert-pve-filter');
+  var persistBox = WM.el('alert-persist');
+  var offBanner = WM.el('alerts-previews-off');
+  var folderBanner = WM.el('alerts-no-folder');
+  var healthLine = WM.el('alerts-health');
+  var status = WM.el('alerts-status');
+
+  var EVENTS = [
+    {id: 'combat', label: 'Combat'},
+    {id: 'warp_scramble', label: 'Warp scramble'},
+    {id: 'decloak', label: 'Decloak'}
+  ];
+
+  function say(text) { if (status) { status.textContent = text || ''; } }
+
+  function eventRow(id) {
+    return {
+      enabled: WM.el('alert-event-' + id + '-enabled'),
+      color: WM.el('alert-event-' + id + '-color'),
+      sound: WM.el('alert-event-' + id + '-sound'),
+      test: WM.el('alert-event-' + id + '-test')
+    };
+  }
+
+  // Shared by all three top-level checkboxes. WM.send resolves to null
+  // on a bridge failure (app.js), so that is the only case that reverts
+  // the box -- a rejected {persisted: false} write really did take
+  // effect for this session, and reverting it would be the opposite lie.
+  // Mirrors set_restore_preview_positions in previews.js.
+  function writeFlag(box, method, label) {
+    box.addEventListener('change', function () {
+      var wanted = box.checked;
+      WM.send(method, wanted).then(function (res) {
+        if (!res) { box.checked = !wanted; return; }
+        if (!res.persisted) {
+          say(label + ' is ' + (wanted ? 'on' : 'off')
+            + ' for this session, but could not be written to settings — '
+            + 'it will not survive a restart.');
+        } else {
+          say('');
+        }
+        if (method === 'set_alert_enabled') { refresh(); }
+      });
+    });
+  }
+
+  writeFlag(enabledBox, 'set_alert_enabled', 'Alerts');
+  writeFlag(pveBox, 'set_alert_pve_filter', 'The PvE filter');
+  writeFlag(persistBox, 'set_alert_persist', 'Persisting alerts');
+
+  EVENTS.forEach(function (ev) {
+    var row = eventRow(ev.id);
+    if (!row.enabled) { return; }
+
+    row.enabled.addEventListener('change', function () {
+      var wanted = row.enabled.checked;
+      WM.send('set_alert_event', ev.id, 'enabled', wanted).then(function (res) {
+        // set_alert_event refuses an unknown event/field outright but a
+        // clamped value is still applied -- only a refusal or a bridge
+        // failure reverts the box.
+        if (!res || !res.applied) { row.enabled.checked = !wanted; }
+      });
+    });
+    row.color.addEventListener('change', function () {
+      WM.send('set_alert_event', ev.id, 'color', row.color.value);
+    });
+    row.sound.addEventListener('change', function () {
+      WM.send('set_alert_event', ev.id, 'sound', row.sound.value);
+    });
+    row.test.addEventListener('click', function () {
+      // Never persistent (api.py's test_alert docstring): nothing here
+      // is looking at a preview to acknowledge it, so nothing is saved.
+      WM.send('test_alert', ev.id).then(function (res) {
+        if (res && res.error) { say(res.error); }
+      });
+    });
+  });
+
+  // The health line and the character count are ALWAYS one sentence, on
+  // purpose: a count rendered on its own keeps reading "watching 4
+  // characters" after the tailer thread has died, which is a healthy-
+  // looking card sitting above a feature that stopped alerting.
+  function healthText(state) {
+    if (!state.running) {
+      return state.last_error
+        ? 'Not watching gamelogs — ' + state.last_error
+        : 'Not watching gamelogs.';
+    }
+    var n = (state.characters || []).length;
+    return 'Watching gamelogs — ' + n + ' character'
+      + (n === 1 ? '' : 's') + ' online.';
+  }
+
+  // Three states, and a card that silently shows nothing is the failure
+  // mode this feature exists to avoid:
+  //   1. Previews off -- alerts cannot draw, so say that plainly.
+  //   2. No Gamelogs folder -- the important one, since without it
+  //      alerts silently do nothing, indistinguishable from nothing
+  //      happening in game.
+  //   3. Otherwise, the health line above (running + character count).
+  function render(state) {
+    if (offBanner) {
+      offBanner.style.display = state.previews_enabled ? 'none' : '';
+    }
+    if (folderBanner) {
+      folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
+    }
+    if (healthLine) { healthLine.textContent = healthText(state); }
+  }
+
+  function refresh() {
+    WM.send('get_alert_state').then(function (state) {
+      if (!state) { return; }
+      render(state);
+    });
+  }
+
+  // panel.js owns onSettings and re-dispatches it; the three checkboxes
+  // and the per-event rows hydrate from `preview.alerts`, which
+  // _settings_payload ships for free as part of its shallow dict(cfg).
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    var alerts = (s.preview && s.preview.alerts) || {};
+    enabledBox.checked = !!alerts.enabled;
+    // Absent means on, matching restore-preview-positions's precedent in
+    // previews.js: an upgrading user's file predates the key.
+    pveBox.checked = alerts.pve_filter !== false;
+    persistBox.checked = alerts.persist_until_selected !== false;
+    var events = alerts.events || {};
+    EVENTS.forEach(function (ev2) {
+      var row = eventRow(ev2.id);
+      if (!row.enabled) { return; }
+      var spec = events[ev2.id] || {};
+      row.enabled.checked = !!spec.enabled;
+      if (spec.color) { row.color.value = spec.color; }
+      row.sound.value = spec.sound || 'none';
+    });
+  });
+
+  // Refreshed on route entry, same reasoning as previews.js and
+  // bookmarks.js: this is a read, not a push, so nothing keeps it
+  // current while the tab is not showing.
+  document.addEventListener('wm:section', function (event) {
+    if (event.detail === 'previews') { refresh(); }
+  });
+}());

@@ -783,6 +783,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    #eve-bind-warning's precedent below. */
 #es-warning { color: var(--warn); }
 
+/* Same reasoning as #es-warning: a missing Gamelogs folder is the
+   important one of the Alerts card's three states -- without it alerts
+   silently do nothing, which reads as nothing happening in game. */
+#alerts-no-folder { color: var(--warn); }
+
+/* input[type=color] has no border/background hooks of its own in most
+   browsers, so its native chrome (usually white) sits directly against
+   this dark theme unless sized and boxed to match the other row
+   controls. */
+.alert-color {
+  width: 28px; height: 24px; padding: 0; border: 1px solid var(--panel-border);
+  border-radius: 4px; background: none; cursor: pointer;
+}
+
 /* The pill sits inside .card > h2, which is already an align-items:center
    flex row -- only the heading's own treatment has to be undone, or the
    status reads as EVE RUNNING in letter-spaced small caps. margin-left:auto
