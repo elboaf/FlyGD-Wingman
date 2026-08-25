@@ -1819,11 +1819,42 @@ class Api:
         webhook, error = discord.parse_webhook(text)
         if webhook is None:
             return self._field_refused(error)
-        return self._write_setting("discord_webhook", text)
+        return self._with_webhook_status(self._write_setting("discord_webhook", text))
 
     def clear_discord_webhook(self) -> dict:
         """Remove the webhook: the explicit counterpart to the above."""
-        return self._write_setting("discord_webhook", "")
+        return self._with_webhook_status(self._write_setting("discord_webhook", ""))
+
+    def _with_webhook_status(self, result: dict) -> dict:
+        """Carry the new summary line back on the commit's own return.
+
+        The per-field endpoints deliberately do not push a settings
+        payload -- a whole-document delivery rewrites the field the user
+        is still typing in -- and `get_settings` is fetched exactly once,
+        at page load (app.js). Between those two facts, setting a webhook
+        persisted while the page went on saying `not configured` and kept
+        `Show` and `Remove` DISABLED for the rest of the session, which is
+        the state WM.setEnabled is supposed to describe rather than
+        outlive. Found by opening the real window; nothing in the suite
+        renders the page, so it could not have been caught here.
+
+        Returned rather than pushed, and only this one derived value
+        rather than the document, so the fix cannot reintroduce the
+        rewrite-while-typing bug the no-push rule exists to prevent.
+
+        Only on an applied commit: a refusal changed nothing, so the line
+        already on screen is still correct, and overwriting it would
+        replace a description of what IS stored with one of what the user
+        typed.
+        """
+        if not result["applied"]:
+            return result
+        return dict(
+            result,
+            webhook_status=copy_mod.webhook_status(
+                self._state.settings.get("discord_webhook", "") or ""
+            ),
+        )
 
     def set_show_eve_tools(self, enabled) -> dict:
         """Show or hide the EVE destinations and sections.

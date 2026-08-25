@@ -88,7 +88,7 @@
       // on purpose: it is not a warning, and it replaces any blur warning
       // still sitting in the slot.
       say(slot, res.note || '');
-      if (onOk) { onOk(); }
+      if (onOk) { onOk(res); }
     });
   }
 
@@ -173,12 +173,7 @@
     // The FIELD stays live -- it is the only route back out of the state
     // that disabled these two, which the helper's own comment forbids
     // closing off.
-    var configured = !!s.discord_webhook;
-    WM.setEnabled('btn-webhook-show', configured);
-    WM.setEnabled('btn-webhook-remove', configured);
-    // A revealed webhook that is then removed would leave `Hide` on a
-    // disabled button over an empty field.
-    if (!configured) { remask(); }
+    renderWebhook(payload.webhook_status, !!s.discord_webhook);
     // Round 3, B11 and R4's finding 1. This slot used to explain what
     // Detect READS, which is the least valuable thing on the card and was
     // occupying the space the consequence needed. All three controls on
@@ -361,8 +356,17 @@
   webhook.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Enter') { return; }
     ev.preventDefault();
+    // Applied HERE, exactly as show-eve-tools does above and for the same
+    // reason: the per-field endpoints do not push, and get_settings is
+    // fetched once at page load. Without this the webhook persisted while
+    // the summary line kept reading `not configured` and Show/Remove
+    // stayed disabled until the next launch.
     commit('msg-discord', ['set_discord_webhook', webhook.value],
-           function () { setField('f-webhook', current.discord_webhook || ''); });
+           function () { setField('f-webhook', current.discord_webhook || ''); },
+           function (res) {
+             current.discord_webhook = webhook.value;
+             renderWebhook(res.webhook_status, true);
+           });
   });
 
   webhook.addEventListener('blur', function () {
@@ -400,9 +404,39 @@
              + 'webhook in Discord and paste it here.')
       .then(function (ok) {
         if (!ok) { return; }
-        commit('msg-discord', ['clear_discord_webhook']);
+        commit('msg-discord', ['clear_discord_webhook'], null,
+               function (res) {
+                 current.discord_webhook = '';
+                 setField('f-webhook', '');
+                 renderWebhook(res.webhook_status, false);
+               });
       });
   });
+
+  // Both callers of this render the SAME two facts -- what is stored, and
+  // whether the two buttons can act -- so they share one function rather
+  // than one of them doing half of it. `status` is Python's
+  // copy.webhook_status and is never reconstructed here; a caller with
+  // nothing to say passes undefined and the line is left alone.
+  function renderWebhook(status, configured) {
+    if (status !== undefined) {
+      WM.el('webhook-status').textContent = status
+        || (configured ? '' : 'not configured');
+    }
+    // X1 / Settings 14. Show reveals nothing and Remove removes nothing
+    // when there is no webhook stored, and both rendered at full strength.
+    // The app already KNOWS neither can act from the state it is holding,
+    // which is exactly WM.setEnabled's rule.
+    //
+    // The FIELD stays live -- it is the only route back out of the state
+    // that disabled these two, which the helper's own comment forbids
+    // closing off.
+    WM.setEnabled('btn-webhook-show', configured);
+    WM.setEnabled('btn-webhook-remove', configured);
+    // A revealed webhook that is then removed would leave `Hide` on a
+    // disabled button over an empty field.
+    if (!configured) { remask(); }
+  }
 
   function remask() {
     webhook.type = 'password';

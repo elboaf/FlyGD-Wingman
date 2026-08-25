@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import paths
+from obs_youtube_uploader import discord, paths
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.test_api_settings import settings_api
@@ -166,6 +166,50 @@ def test_clearing_a_webhook_is_its_own_explicit_action(monkeypatch, tmp_path):
 
     assert api.clear_discord_webhook()["applied"] is True
     assert saved["discord_webhook"] == ""
+
+
+def test_setting_a_webhook_returns_the_new_summary_line(monkeypatch, tmp_path):
+    """The page cannot derive this line -- copy.webhook_status is the only
+    description of what is stored and settings.js is forbidden to rebuild
+    it -- and nothing repaints the Settings route after page load:
+    get_settings is fetched once at startup and the per-field endpoints
+    deliberately never push. Without the line on the commit's own return,
+    a webhook persisted while the card kept saying `not configured` and
+    Show/Remove stayed disabled for the rest of the session.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    url = "https://discord.com/api/webhooks/1538615213203656754/abcdefGHIJ"
+
+    result = api.set_discord_webhook(url)
+
+    assert result["applied"] is True
+    assert result["webhook_status"] == discord.describe(discord.parse_webhook(url)[0])
+
+
+def test_clearing_a_webhook_returns_the_not_configured_line(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(
+        tmp_path,
+        monkeypatch,
+        settings={
+            "discord_webhook": (
+                "https://discord.com/api/webhooks/1538615213203656754/abcdefGHIJ"
+            )
+        },
+    )
+
+    assert api.clear_discord_webhook()["webhook_status"] == "not configured"
+
+
+def test_a_refused_webhook_does_not_restate_the_summary(monkeypatch, tmp_path):
+    """Nothing changed, so the line already on screen still describes what
+    is stored. Overwriting it would replace a description of the STORED
+    value with one derived from what the user typed and had rejected."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_discord_webhook("")
+
+    assert result["applied"] is False
+    assert "webhook_status" not in result
 
 
 # ---- folders ----------------------------------------------------------

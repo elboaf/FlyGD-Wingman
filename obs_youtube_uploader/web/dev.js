@@ -40,7 +40,17 @@
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
-      return Promise.resolve({applied: true, persisted: true, error: null});
+      var res = {applied: true, persisted: true, error: null};
+      // The two webhook endpoints carry the new summary line back on their
+      // own return, because nothing repaints the Settings route after page
+      // load. A double without it leaves the harness showing the stale
+      // line this fixes -- which is the bug, not the fix.
+      if (name === 'set_discord_webhook') {
+        res.webhook_status = 'discord.com/api/webhooks/1…';
+      } else if (name === 'clear_discord_webhook') {
+        res.webhook_status = 'not configured';
+      }
+      return Promise.resolve(res);
     };
   });
 
