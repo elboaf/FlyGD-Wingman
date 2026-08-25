@@ -1,0 +1,6 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Torvin Wexley
+  Session Started: 2025.11.14 05:10:19
+------------------------------------------------------------
+[ 2025.11.14 06:41:08 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><color=0xffffffff><fontsize=12>Talia Renn [KVOS]</color><color=0xfff0f000> Taranis</color><color=0xffffffff></b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>you!

@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Torvin Wexley
+  Session Started: 2025.11.14 01:09:20
+------------------------------------------------------------
+[ 2025.11.14 01:15:37 ] (combat) Sleepless Patroller misses you completely
+[ 2025.11.14 01:15:43 ] (combat) <color=0xffcc0000><b>149</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>Sleepless Patroller</b><font size=10><color=0x77ffffff> - Phantasmata Missile - Hits

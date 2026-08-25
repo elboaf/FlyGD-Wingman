@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Rendik Ashvale
+  Session Started: 2026.02.02 17:56:08
+------------------------------------------------------------
+[ 2026.02.02 18:01:08 ] (combat) <color=0xffcc0000><b>1230</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>Doran Velk</b><font size=10><color=0x77ffffff> - 250mm Railgun II - Penetrates
+[ 2026.02.02 18:00:46 ] (combat) <color=0xffffffff><b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b>Doran Velk  Proteus</b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>you!
