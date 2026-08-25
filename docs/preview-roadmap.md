@@ -48,16 +48,52 @@ Two constraints, both load-bearing:
 
 - **Do not re-render the Pillow bitmap at flash frequency.** `redraw()` is keyed
   and a flash would defeat the key, putting a ~67k-pixel push back on a timer —
-  the cost that made dragging stutter. Pulse `SetLayeredWindowAttributes` alpha,
-  or pre-render a small ring of frames. (The record states this at
+  the cost that made dragging stutter. (The record states this at
   `eve-preview-design.md:468-471`, cited from three other documents.)
-- **Preview opacity wants the same alpha channel** (below). Whichever lands
-  second has to compose with the first rather than own it: a pulse writing an
-  absolute alpha erases the user's opacity for its duration, and an opacity
-  write mid-pulse cancels the flash.
+- **Pre-rendered frames are the only remaining option.** The alternative this
+  file used to offer — "pulse `SetLayeredWindowAttributes` alpha" — was probed
+  on 2026-08-25 and does not work. See below.
 
 Not verifiable by the suite — no test renders a pixel. Needs hands-on testing
 against real clients.
+
+#### What the ring probe established
+
+Run on Windows against three layered preview-shaped windows with live DWM
+thumbnails, captured with `BitBlt(CAPTUREBLT)` and measured off the pixels
+rather than judged by eye. This answers the two questions
+`eve-preview-alerts-plan.md`'s Task 1 asked, and one it did not.
+
+**A ring wider than the thumbnail inset renders as corner brackets. Confirmed —
+the conditional inset is necessary.** Measured ring width, in pixels:
+
+| variant | top edge | side, in the label band | side, beside the thumbnail | bottom |
+| --- | --- | --- | --- | --- |
+| ring 2 / inset 2 | 2 | 2 | 2 | 2 |
+| ring 6 / inset 2 | 6 | 6 | **2** | **2** |
+| ring 6 / inset 6 | 6 | 6 | 6 | 6 |
+
+The thumbnail overpaints the ring everywhere it covers, so a 6 px ring inside a
+2 px inset survives only along the top edge and beside the label band — four
+corner blocks joined by 2 px edges, exactly as the design predicted. Task 10
+keeps its inset swap on arm and clear.
+
+**`SetLayeredWindowAttributes` cannot pulse the ring, and permanently breaks
+the window if called.** All four of the plan's observations, plus the recovery
+path:
+
+- The window does not blank. It dims — chrome *and* thumbnail together and
+  uniformly, so the game content dims with the ring. That is the opposite of an
+  alert: the pulse would fade the thing it is trying to draw attention to.
+- It still receives clicks. `WindowFromPoint` at the centre returns the preview
+  before and after, so the hit region survives.
+- **A subsequent `UpdateLayeredWindow` fails**, with `ERROR_INVALID_PARAMETER`
+  (87), and the surface stays frozen at the dimmed image. One
+  `SetLayeredWindowAttributes` call ends the window's ability to draw for the
+  rest of its life.
+- It is recoverable, but only by force: dropping `WS_EX_LAYERED` and re-adding
+  it resets the window to per-pixel-alpha mode, after which `layered.push`
+  succeeds again and the ring returns to full brightness.
 
 ### 8. Label customisation
 
@@ -90,11 +126,21 @@ Lowest priority, largest pure-parsing job.
 
 - **`preview.opacity` is dead config.** Stored and clamped to 20–255
   (`settings.py`), read by nothing: `window.py` calls `self._thumb.update(rect)`
-  at both call sites, so it defaults to 255. When wired it **must** go through
-  `SetLayeredWindowAttributes` or the thumbnail's own opacity — putting it in
-  the Pillow bitmap's alpha reintroduces the click-through bug in a subtler
-  form, because a layered window is hit-tested against its alpha channel.
-  Sequence this with the alert render path; they collide.
+  at both call sites, so it defaults to 255. **This entry used to say it "must"
+  go through `SetLayeredWindowAttributes`. That is wrong, and the ring probe
+  above is why:** that call permanently disables `UpdateLayeredWindow` on the
+  window, which is the preview's only means of drawing its own chrome. Wire it
+  through the thumbnail's own opacity instead — `Thumbnail.update` already takes
+  `opacity` and already sets `DWM_TNP_OPACITY`, so this is passing a value that
+  is presently hardcoded to the default. Putting it in the Pillow bitmap's alpha
+  remains wrong for the original reason: a layered window is hit-tested against
+  its alpha channel, so that reintroduces click-through.
+
+  It also **does not** collide with the alert render path, which this file
+  previously claimed it did. They touch different surfaces — thumbnail opacity
+  dims the game content, the ring frames repaint the chrome around it — so
+  neither has to compose with the other and they can land in either order.
+
 - **Lock previews has no UI.** The plumbing is complete — `layout.Entry` carries
   `locked`, it survives a restart, right-drag overrides it — but nothing sets
   it. One checkbox, but it crosses the bridge (new `Api` method, `previews.js`,
