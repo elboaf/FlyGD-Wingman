@@ -233,10 +233,22 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       worse than not firing at all. Check the inline hint under a field
       and any refusal message line up with the field, not with a label
       column that is no longer there.
-      Known gap, NOT a regression: the Bookmarks keybind rows do not
-      collapse. Their label carries an id-specificity override
-      (`#eve-binds .row > .lab`) that this rule cannot reach, and it is
-      owned by the Settings screen lane.
+- [ ] **The bind rows collapse too.** Still at the floor, open Settings >
+      Bookmarks and read the keybind list, then Settings > Previews. Expected:
+      each action or character name on its own line with its keybind button,
+      Clear and Type... on the line below — "Convert EvE-Scout Bookmarks" and
+      "Finisher: C13 (shattered)" readable in one line each, not ragged over
+      three in a ~60px column.
+      This was a known gap for two releases. Both lists take the shared label
+      column away from their rows on purpose, with an ID selector
+      (`#eve-binds .row > .lab`, `#preview-binds .row > .lab`) — and ID
+      specificity also beat the collapse rule, which is written against
+      `.settings .row > .lab`. So the collapse skipped exactly the eighteen
+      rows with three trailing controls that needed it most, and `min-width: 0`
+      made them shrink rather than overflow, so nothing said so.
+      tests/test_page_conventions.py now requires any such override to restore
+      its own collapse. Above 720 CSS px the rows go back to name-left,
+      controls-right; widen the window and confirm that too.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.

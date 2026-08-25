@@ -738,6 +738,12 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
 }
 
+/* Collapsed below 720px like every other row -- see the #eve-binds
+   override below, which carries the reason for both. */
+@media (max-width: 720px) {
+  #preview-binds .row > .lab { flex: 0 0 100%; }
+}
+
 /* Offline is information, not an error (previews.js): dim rather than
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
@@ -836,6 +842,21 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    override gives the label the row's remaining width instead. */
 #eve-binds .row > .lab {
   width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+}
+
+/* Settings 1's third case. Lane 0's `max-width: 720px` block collapses the
+   shared label column above its field, but it sets `.settings .row > .lab`
+   -- which this id-specificity override beats, so the rule never reached
+   these rows: the name kept `flex: 1; min-width: 0` and SHRANK instead,
+   which is the failure the collapse exists to prevent. At the 560px floor
+   the row is ~324px and spends 150px on .bindbtn plus Clear and Type...,
+   leaving about 60px for "Convert EvE-Scout Bookmarks", eighteen times.
+   #preview-binds carries the same override and the same repair.
+   flex-basis, not width: `flex: 1` above sets a basis of 0%, and only a
+   full basis forces the wrap that `.settings .row`'s flex-wrap allows. The
+   controls then take their own line at their natural widths. */
+@media (max-width: 720px) {
+  #eve-binds .row > .lab { flex: 0 0 100%; }
 }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture
