@@ -83,7 +83,23 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 >
 > Measuring costs one CDP call against `?dev=1` at 840x625. The app window
 > cannot be driven to arbitrary CSS widths, which is why the harness
-> exists.
+> exists. F3's displacement is 6 CSS px, entirely `.linkbtn`'s
+> `padding-left`; the reason is recorded as a comment on `.linkbtn` in
+> `style.css`, which is a better place to read it than this document.
+>
+> **And the companion rule, which cost this round more than the numbers
+> did: the riskiest line in a file you touch is the one that was correct
+> when it was written.** Inherited prose gets *less* scrutiny than new
+> prose, precisely because someone appears to have checked it already. A
+> lane reviewing its own diff never looks at it. Both of this round's
+> largest findings are that shape — `MIN_WIDTH` as a physical floor, and
+> the 118px right-aligned label column — and both were true when written.
+> So was "`.lab` … for the whole screen", which survived a rewrite *of
+> that very rule* by two lanes reading carefully, and fell only when
+> someone read it as a claim about code rather than as context.
+>
+> The practical form: when you touch a paragraph, check the sentences
+> around it that you did not come to change.
 
 Each finding is marked `sure` or `worth trying`, and tagged `screen-local`
 or `shared`. **Shared** means `style.css` above the "recording list"
