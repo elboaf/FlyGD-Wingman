@@ -47,6 +47,7 @@ NPC_DAMAGE = (
     "<color=0xff7fffff><font size=10>from</font> "
     "<b>Sleepless Sentinel</b><font size=10> - Hits</font>"
 )
+NPC_MISS = "[ 2026.08.24 20:44:10 ] (combat) Sleepless Sentinel misses you completely"
 OUTGOING = (
     "[ 2026.08.24 20:42:50 ] (combat) <color=0xff00ffff><b>210</b> "
     "<color=0xff7fffff><font size=10>to</font> "
@@ -116,13 +117,24 @@ def test_scramble_source_is_extracted_without_markup():
     assert patterns.match_line(SCRAMBLE).source == "Bob Smith [BURN] Rifter"
 
 
-def test_miss_source_is_blank():
+def test_miss_source_is_preserved():
     """A miss line's source is a bare name whether the attacker is a
     player or an NPC -- confirmed against the real corpus, where neither
-    ever carries a corp ticket or hull. match_line does not extract it,
-    so is_likely_npc is never asked to guess at something undecidable."""
-    assert patterns.match_line(MISS).source == ""
-    assert patterns.match_line(DRONE_MISS).source == ""
+    ever carries a corp ticket or hull. That is now safe to hand to
+    is_likely_npc, because it is a closed allowlist rather than "bare
+    means NPC": see the corresponding assertions below."""
+    assert patterns.match_line(MISS).source == "Bob Smith[BURN](Rifter)"
+    assert (
+        patterns.match_line(DRONE_MISS).source == "Hammerhead II belonging to Bob Smith"
+    )
+
+
+def test_an_npc_miss_is_classified_as_npc_but_a_player_miss_is_not():
+    """The load-bearing pair for preserving the miss source: an NPC miss
+    must still be filterable, and a player's miss (bracket-less, same
+    shape as the NPC's) must not be swallowed alongside it."""
+    assert patterns.is_likely_npc(patterns.match_line(NPC_MISS).source) is True
+    assert patterns.is_likely_npc(patterns.match_line(MISS).source) is False
 
 
 def test_strip_markup_drops_the_timestamp():

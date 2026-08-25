@@ -135,8 +135,13 @@ def is_likely_npc(source: str) -> bool:
     confirmed against the real gamelog corpus, where both "Sleepless
     Patroller misses you completely" (NPC) and "Farrowmark misses you
     completely" (a player, confirmed by that same name's bracketed
-    damage lines moments later) render as a bare name. match_line does
-    not route miss sources through here for exactly that reason; see its
+    damage lines moments later) render as a bare name. That used to mean
+    a miss source could not be handed to this function at all: under the
+    old "no punctuation means NPC" reading, every miss -- Farrowmark's
+    included -- would have come back True. Under the closed allowlist
+    above it is safe: "Sleepless Patroller" matches the NPC vocabulary
+    and returns True, "Farrowmark" matches nothing and returns False, so
+    match_line DOES route miss sources through here now; see its
     docstring.
     """
     if not source:
@@ -174,11 +179,17 @@ def match_line(line: str) -> Match | None:
         if m:
             # A miss line's source is a bare name whether the attacker is
             # a player or an NPC -- confirmed against the real corpus,
-            # where neither ever carries a corp ticket or hull. Passing
-            # it to is_likely_npc would silently drop the miss for any
-            # real player, the exact false negative this feature exists
-            # to prevent, so (like decloak) it gets no source to test.
-            return Match("combat", "")
+            # where neither ever carries a corp ticket or hull. That used
+            # to mean handing it to is_likely_npc would drop every real
+            # player's miss under the old "bare means NPC" reading. The
+            # heuristic is a closed allowlist now (see is_likely_npc):
+            # only a recognised Sleeper/police/sentry prefix returns
+            # True, so preserving the source is SAFE and strictly
+            # better -- an NPC miss ("Sleepless Patroller misses you")
+            # is correctly filtered, and an unrecognised bare name (a
+            # real player, e.g. "Farrowmark misses you") still returns
+            # False and alerts.
+            return Match("combat", strip_markup(m.group("source")))
         if (
             "warp scramble attempt" in lower
             or "warp disruption attempt" in lower
