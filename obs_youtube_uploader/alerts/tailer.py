@@ -102,7 +102,15 @@ class Tailer:
         # inside the window (a client that relogged repeatedly) consume
         # the whole budget on its own, silently starving every other
         # character -- no error, no log line, they just stop alerting.
-        candidates.sort(key=lambda c: c[0].session_start, reverse=True)
+        #
+        # session_start alone is not a total order: two logs for the same
+        # character can carry an identical "Session Started" header (the
+        # same relog, or a client that copies its header verbatim), and
+        # list.sort() is stable, so a tie falls through to glob()'s
+        # enumeration order -- which is filesystem-dependent and differs
+        # between platforms. mtime as the tie-break makes the newest write
+        # win everywhere: the more recently written file is the live one.
+        candidates.sort(key=lambda c: (c[0].session_start, c[2]), reverse=True)
         best: dict[str, tuple] = {}
         for header, path, mtime in candidates:
             best.setdefault(header.listener, (path, mtime))

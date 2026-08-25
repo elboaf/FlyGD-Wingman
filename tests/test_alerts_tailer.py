@@ -108,12 +108,43 @@ def test_a_listener_of_EVE_is_not_a_character(tmp_path):
 
 def test_the_newest_session_wins_when_one_character_has_several_logs(tmp_path):
     """A relog leaves the old log on disk. Reading both would alert twice
-    for one event, and the stale one never gets new lines anyway."""
-    _log(tmp_path, "Alice", stem="20260825_100000_1")
-    newer = _log(tmp_path, "Alice", stem="20260825_113000_1")
+    for one event, and the stale one never gets new lines anyway.
+
+    Uses _log_at so the two sessions have genuinely different "Session
+    Started" values -- this must pass by the newest SESSION winning, not
+    by an accident of file enumeration order. See
+    test_a_tied_session_start_breaks_on_the_newer_mtime below for the
+    case where the two sessions genuinely tie.
+    """
+    _log_at(tmp_path, "Alice", "2026.08.25 10:00:00", stem="20260825_100000_1")
+    newer = _log_at(tmp_path, "Alice", "2026.08.25 11:30:00", stem="20260825_113000_1")
     t = tailer.Tailer(tmp_path)
     t.rescan(NOW)
     with open(newer, "a", encoding="utf-8") as fh:
+        fh.write(DAMAGE)
+    assert len(t.poll()) == 1
+
+
+def test_a_tied_session_start_breaks_on_the_newer_mtime(tmp_path):
+    """Two logs for the same character can carry an identical "Session
+    Started" header -- an exact relog, or (as here) two files stamped
+    from the same fixed HEADER template. Without an explicit tie-break,
+    list.sort()'s stability falls through to glob()'s enumeration order,
+    which is filesystem- and platform-dependent and does not agree on
+    which file that is. mtime as the tie-break makes the newest write
+    win regardless of enumeration order.
+    """
+    import os
+
+    older_path = _log(tmp_path, "Alice", stem="20260825_100000_1")
+    newer_path = _log(tmp_path, "Alice", stem="20260825_100000_2")
+    old_time = (NOW - datetime.timedelta(minutes=10)).timestamp()
+    new_time = (NOW - datetime.timedelta(minutes=1)).timestamp()
+    os.utime(older_path, (old_time, old_time))
+    os.utime(newer_path, (new_time, new_time))
+    t = tailer.Tailer(tmp_path)
+    t.rescan(NOW)
+    with open(newer_path, "a", encoding="utf-8") as fh:
         fh.write(DAMAGE)
     assert len(t.poll()) == 1
 
