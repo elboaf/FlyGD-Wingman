@@ -16,9 +16,33 @@ status-strip comment), `web/app.js`, `web/index.html` (titlebar and
 Four rules S1 settled that belong in `DESIGN.md`, which S1 does not own.
 
 **1. Column headers share the inset of the rows they label.** (Walkthrough
-Skills 7, same defect as Uploader 3.) `PLANS` sits ~22px left of its
-column and `READY` ~14px right of its own; on the Uploader the headers sit
-~16px right of their data. The Skills instance has no scrollbar, which
+Skills 7, same defect as Uploader 3.) The walkthrough records `PLANS` ~22px
+left of its column, `READY` ~14px right of its own, and the Uploader's
+headers ~16px right of their data. **Treat all three as unverified and
+re-measure in CSS px before sizing anything to them.**
+
+S2 checked several walkthrough figures against the stylesheet and found two
+distinct problems, which is why this says "unverified" rather than giving a
+correction factor. Some figures are physical pixels read off 200% captures
+and halve cleanly: Settings 12's "~255px" is 128 CSS, which is the 118px
+`.lab` plus a 10px gap exactly, and Settings 3's "about 48px" is 24 CSS,
+which is `.check`'s 15px box plus a 9px gap exactly. But F3's "11 CSS px"
+is not a unit slip at all — the walkthrough gave that one in physical units
+already (568 → 590) and converted it correctly. It is simply wrong, which
+is a different failure and needs a different response.
+
+**F3 measures 6 CSS px, and this is settled rather than open.** Rendered
+from merged `main` in the `?dev=1` harness at an 840 CSS viewport: the h1,
+both paragraphs, the field, *and the skip button's border box* all begin at
+x=169. Only the button's ink begins at 175 — text-range origin and
+border-box-plus-padding agree on that to the hundredth. So the displacement
+is 6.0 CSS px and it is entirely `.linkbtn`'s `padding-left: 6px`; nothing
+about the button's box is out of line. At 200% that is 12 physical, which
+is what S2 measured directly and independently. The walkthrough's 22
+physical does not reproduce, and R5 should build to 6 CSS.
+
+The rule rests on the direction, not the figure: headers and rows do not
+share padding. The Skills instance has no scrollbar, which
 rules out the gutter explanation for the Uploader one too — header rows
 and data rows simply do not share padding. The rule is: **a header row is
 laid out by the same padding as the rows beneath it, with no separate
@@ -32,8 +56,9 @@ to "fix" it.
 **2. The one blue is a declared exemption, not a stray hex.** (Settings
 18.) `.linkish` was `#7aa2f7` written inline; it is now `--link`, defined
 in `:root` beside the severity tokens with the reasoning attached. The
-colour did not change — 7.4:1 on `--panel`, 7.7:1 on `--bg`, both over the
-4.5:1 floor. `DESIGN.md`'s "tokens are the only place a colour is decided"
+colour did not change — 7.13:1 on a card's tinted top stop, 7.19:1 on flat
+`--panel`, 7.72:1 on `--bg`, all over the 4.5:1 floor. (Re-measured after
+the purple retheme in #52, which landed between S1's base and its merge.) `DESIGN.md`'s "tokens are the only place a colour is decided"
 is now true of it. Worth a sentence in `DESIGN.md` saying that an outbound
 link keeps link-blue *because* it leaves the app, so a future contributor
 does not "unify" it into the palette.
