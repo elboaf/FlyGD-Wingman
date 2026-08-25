@@ -945,10 +945,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* The two plan-file actions. They wrap because at the narrow rail width
    they do not fit on one line, and a .linkbtn that overflows its rail is
-   worse than one that takes two rows. */
+   worse than one that takes two rows.
+
+   The -6px pull is on the CHILDREN, not on this row. .linkbtn carries 6px
+   of horizontal padding, so without it the labels sit inset from the
+   "PLANS" heading above them -- but negative margins on the row itself
+   make the row wider than its parent by 12px, which measured as a real
+   6px overflow inside .rail-plans-block at every viewport width. On the
+   children the pull cancels against their own padding instead of adding
+   to the row's width, and it lands on the second line too when they
+   wrap. */
 .rail-plan-actions {
-  flex: none; display: flex; flex-wrap: wrap; gap: 2px; margin: 0 -6px;
+  flex: none; display: flex; flex-wrap: wrap; gap: 8px;
 }
+.rail-plan-actions > .linkbtn { margin-left: -6px; }
 
 /* .rail-item is the Settings rail and .rail-plan is the Skills rail: the
    same affordance -- a list where exactly one entry is current -- so they
