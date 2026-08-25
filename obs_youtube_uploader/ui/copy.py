@@ -259,6 +259,30 @@ def format_progress(index: int, total: int, fraction: float) -> str:
     return f"Uploading file {index + 1} of {total}… {pct}"
 
 
+def format_upload_cancelled(uploaded: int, total: int) -> str:
+    """The strip line after the user stops an upload mid-batch.
+
+    The rule this exists to enforce: **never imply that nothing happened.**
+    The plain path links each video as it lands (Api._link), so a batch
+    stopped after two of four leaves two finished, public videos on the
+    channel. A bare "Upload cancelled" would tell the user the opposite of
+    what is true on YouTube, and the two rows already carrying a link are
+    the only other evidence on screen.
+
+    "Stopped", not "Cancelled": the user asked for this, so it is not an
+    error and does not take the ERROR kind. The count is always stated,
+    including the zero case, because "Stopped." alone re-introduces exactly
+    the ambiguity above.
+
+    `uploaded` counts items of THIS job that finished, which on a resumed
+    job includes the ones an earlier attempt completed -- they are on the
+    channel, and that is what the sentence is about.
+    """
+    if uploaded <= 0:
+        return "Stopped. Nothing was uploaded."
+    return f"Stopped. {uploaded} of {total} uploaded."
+
+
 def format_destination(channel_title: str, privacy: str) -> str:
     """The line above the Upload button naming where the video will land.
 

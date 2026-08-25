@@ -43,15 +43,22 @@
              select-all checkbox this column does not offer. -->
         <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
         <span class="c-name"   data-sort="filename">Filename</span>
-        <!-- "Modified", not "Date": the cell holds the file's mtime rendered
-             as relative time ("3h ago"), and "Date" both mislabelled that
-             and invited the reader to match it against the recording
-             timestamp already in the filename. Naming the mtime is what
-             explains why the two legitimately differ for a recording that
-             was copied or remuxed. The data-sort key stays "date" -- it is
-             list.js's internal branch name, not a label. -->
-        <span class="c-date"   data-sort="date"
-              title="Sort by when the file last changed">Modified</span>
+        <!-- No "Modified" column (round 3, finding 8; round 2's Uploader 6
+             deferred). It printed the same fact Filename already carries:
+             every recording OBS names embeds its own timestamp, and the
+             maintainer's account of the loop names Filename and Length as
+             the two columns it runs on. The window floor has dropped this
+             column since round 2 and kept Size, and nothing was reported
+             lost -- that A/B is what settled it for every width.
+
+             What goes with it, stated because it is a real cost and not an
+             oversight: the mtime itself, which legitimately differs from
+             the filename for a recording that was copied or remuxed, and
+             the `date` sort control. That control only ever restored the
+             list's DEFAULT order (list.js sorts `date` by delivery index,
+             and Python delivers newest-first), so what is lost is a way
+             back to an order the list already opens in -- and the floor
+             layout has shipped that same loss since round 2. -->
         <span class="c-size"   data-sort="size">Size</span>
         <span class="c-len"    data-sort="duration">Length</span>
         <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
@@ -83,7 +90,18 @@
              Moving it also took 43px out of the panel, which is what
              Uploader 9 needed -- but the reason is the seam, not the
              pixels. -->
-        <button class="btn" id="btn-delete">Delete selected</button>
+        <!-- .btn.danger, L5's one destructive treatment, applied at the
+             site L5's own banner names as R1's. This deletes recordings
+             from disk and was pixel-identical to `Select all` beside it:
+             four footer buttons of equal weight, one of which destroys
+             files. Profiles' red-outlined `Delete` is the reference.
+
+             TREATMENT ONLY -- it already confirms, and must not grow a
+             second one. Api._delete_worker raises Api._confirm and names
+             every file; that confirm runs on a worker thread, which is the
+             case _confirm exists for, so it must not be converted to
+             WM.confirm either (DESIGN.md, "Which confirmation"). -->
+        <button class="btn danger" id="btn-delete">Delete selected</button>
         <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
@@ -116,12 +134,28 @@
             recordings in this folder yet, so there is nothing to
             upload.</p>
 
+          <!-- No placeholders on either field (round 3, finding 2). The
+               Title field named itself three times over: the card heading
+               "This upload", the label "Title", and a placeholder reading
+               "Title for this upload" that added nothing to either.
+               PRODUCT.md: "There is no room for a sentence that only
+               restates a heading."
+
+               Description's placeholder carried one real fact -- that it
+               is optional -- so the fact moved to the label rather than
+               being deleted with the rest. A placeholder is the wrong
+               place for it either way: it is gone at exactly the moment
+               the user is filling the field in, and it is the label a
+               screen reader announces.
+
+               The Title LABEL is not static: panel.js replaces it with
+               format_title_hint's text, which discloses that a batch gets
+               numbered titles. That is the label doing real work, and it
+               is the reason the placeholder had none left to do. -->
           <label class="lab" for="f-title" id="lab-title">Title</label>
-          <input class="field" id="f-title" type="text" spellcheck="false"
-                 placeholder="Title for this upload">
-          <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
-          <textarea class="field" id="f-desc" spellcheck="false"
-                    placeholder="Optional description"></textarea>
+          <input class="field" id="f-title" type="text" spellcheck="false">
+          <label class="lab" for="f-desc" style="margin-top:10px">Description (optional)</label>
+          <textarea class="field" id="f-desc" spellcheck="false"></textarea>
 
           <!-- Uploader 15 was "two adjacent checkboxes are too close to
                distinguish by aim", and the maintainer hit the wrong one.
@@ -139,8 +173,21 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <p class="hint" id="stitch-hint" hidden>Select two or more
-            recordings to stitch them into one video.</p>
+          <!-- The two-line hint that used to sit here is gone (round 3,
+               finding 3). It read "Select two or more recordings to stitch
+               them into one video", which is the mechanism, not the
+               decision: with 0 or 1 selected it named a precondition the
+               greyed-out checkbox above already states, and with 2 or more
+               it was redundant. The question actually being asked at this
+               moment is "does this fight fit in one file", and the Length
+               column is what answers it.
+
+               Deleting rather than rewording is the point: this is the
+               approach corridor to the primary button, which round 2's
+               Uploader 7 emptied of one checkbox only for the survivor to
+               grow a two-line hint in the space. The disabled treatment on
+               #lab-stitch is the whole explanation, and DESIGN.md's "one
+               disabled state" does not ask for a sentence beside it. -->
 
           <!-- Uploader 8's sentence, which outlives the control it used to
                footnote. With no checkbox this is a fact about the install
@@ -166,9 +213,22 @@
                card: it is a standing fact about the account, read once,
                and it was occupying the position directly above the
                most-pressed control in the app. -->
+          <!-- Cancel and Retry share one slot and are never live at once
+               (D5): Retry recovers from a failure, Cancel stops a job that
+               is still running, and no state is both. Cancel is hidden
+               rather than disabled because an inert Cancel beside an inert
+               Retry is two dead controls describing states the panel is
+               not in; Retry keeps the disabled treatment it already had,
+               being the resting member of the pair.
+
+               Not .btn.danger. DESIGN.md reserves that for destroying
+               something the user cannot get back, and stopping an upload
+               destroys nothing -- the videos already sent stay on the
+               channel, which is what the message says in as many words. -->
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
             <button class="btn" id="btn-retry" disabled>Retry</button>
+            <button class="btn" id="btn-cancel" hidden>Cancel</button>
           </div>
           <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>

@@ -385,3 +385,18 @@ def test_the_quit_confirm_does_not_claim_finished_uploads_are_lost():
     the upload is discarded without qualifying which part."""
     body = copy_mod.format_quit_confirm(50.0)
     assert "already uploaded" in body
+
+
+def test_a_stopped_upload_always_states_how_many_landed():
+    """The one rule this string exists for: never imply nothing happened.
+    A batch stopped after two of four leaves two finished, public videos on
+    the channel, and this sentence is the only thing on screen that says
+    so."""
+    assert copy_mod.format_upload_cancelled(2, 4) == "Stopped. 2 of 4 uploaded."
+    assert copy_mod.format_upload_cancelled(0, 4) == "Stopped. Nothing was uploaded."
+    # The zero case is spelled out rather than left as "Stopped." alone,
+    # which would re-introduce exactly the ambiguity above.
+    assert "Nothing" in copy_mod.format_upload_cancelled(0, 1)
+    # "Stopped", not "Cancelled" or "Failed": the user asked for this.
+    for uploaded in (0, 1, 3):
+        assert copy_mod.format_upload_cancelled(uploaded, 3).startswith("Stopped.")

@@ -456,6 +456,27 @@ somewhere stale and nothing on that screen is worth reviewing.
       path.
       At 150%, confirm a long path wraps inside the pane instead of running
       off the edge — a Windows path has no spaces to break at.
+- [ ] **The panel's empty-folder note reads as its own paragraph.** Same
+      empty folder, now look at the PANEL. Expected: "There are no
+      recordings in this folder yet…" with a clear blank line between it
+      and the `Title` label below. It used to sit exactly one line-pitch
+      above the label — measured 0px of margin — so `Title` read as the
+      paragraph's third line. The form stays rendered and typeable on
+      purpose (typing a title is an action that can be carried out); this
+      is spacing only.
+- [ ] **Neither field repeats its own label.** Look at `Title` and
+      `Description` with the panel empty. Expected: no placeholder text
+      inside either box. `Title` used to hold "Title for this upload"
+      under a card headed "This upload" and a label reading "Title" —
+      the same word three times. Optionality now sits on the
+      `Description (optional)` label, where it survives the field being
+      typed in.
+- [ ] **The stitch checkbox explains itself by being greyed out.** Select
+      one recording. Expected: `Stitch selected into one video` is greyed
+      and there is NO sentence under it. The old two-line hint sat between
+      the last field typed and the button clicked, stating a precondition
+      the greyed label already shows. With two selected the checkbox goes
+      live and there is still no sentence.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click
@@ -662,6 +683,31 @@ These cover the duration cache and the background probe. Do them against a
 folder with a realistic number of recordings (30+); the whole point is
 behavior that only shows up at size.
 
+- [ ] **The column headers sit over their own data — with the list long
+      enough to scroll.** Fill the folder with 30+ recordings so a
+      scrollbar appears, then compare each header's text with the column
+      under it. Expected: `Size` and `Length` right-align with their
+      numbers, and `Filename` with its names, to within about 2px (that 2
+      is `.list-row`'s own transparent left border, which is also what
+      marks a selected row).
+      **A short list is not a test of this.** The bug was the scrollbar
+      narrowing the scroller while the header, which sits outside it, kept
+      the full width — so with fewer rows than fill the pane it did not
+      reproduce at all, which is how a previous round measured it away.
+      Check both: the columns must not shift sideways as the folder grows
+      past the fold either.
+- [ ] **And at a wide window.** Same list, window dragged out to 1300px or
+      more. Expected: still aligned. This is a different cause with the
+      same symptom — the name column's cap is measured in `ch`, which
+      resolves per font, so a header set in a smaller face computed a
+      different maximum and parted company with its data only once the
+      column got wide enough to reach that cap.
+- [ ] **There is no `Modified` column at any width.** Expected: five
+      columns — the tick, `Filename`, `Size`, `Length`, `Link` — at every
+      window size, wide or at the floor. The recording's timestamp is in
+      its filename; the column printed it twice. Note what goes with it:
+      there is no longer a way to sort by file mtime, and the list's
+      default order (newest first) is what that control used to restore.
 - [ ] **Hovering an unreadable Length explains it.** Find a row showing `?`
       in the Length column and rest the pointer on that cell. Expected: a
       tooltip appears after a short delay saying ffprobe could not open the
@@ -1013,7 +1059,52 @@ behavior that only shows up at size.
       from the "kill the network" case above — confirm Retry's state
       differs between the two.
 
+- [ ] **Stopping an upload says how much of it landed.** Start a batch of
+      three or four recordings and press **Cancel** while the second or
+      third is going up. Expected: the strip reads
+      `Stopped. 2 of 4 uploaded.` in amber, the bar stays where it got to
+      rather than resetting to 0, and **Retry does not appear** — a stop is
+      not a failure. Then check YouTube: the recordings that finished are
+      still there, and their rows still carry their `↗`. This is the whole
+      point of the wording. A message implying nothing happened would be
+      the opposite of what is true on the channel, and there is nothing
+      else on screen that says otherwise.
+      The stop is noticed at a 4 MiB chunk boundary, so on a fast link a
+      small file can finish before the cancel lands — use large recordings
+      or a throttled connection, and expect a beat between the click and
+      the strip changing.
+- [ ] **Cancel appears only while the upload is actually going, and takes
+      Retry's place.** Watch the slot beside **Upload** through a whole
+      job. Expected: at rest, `Retry` (disabled) and no Cancel; during the
+      upload, `Cancel` and no Retry; when it ends — successfully, by
+      failure, or by being stopped — Cancel is gone again. The two are
+      never on screen together.
+- [ ] **Cancel is NOT offered while a stitch is running.** Select two or
+      more recordings, tick **Stitch**, and press Upload. Expected: while
+      the strip reads `Stitching with FFmpeg…` there is no Cancel; it
+      appears only once the join is done and the upload of the merged file
+      begins. ffmpeg has no interruption seam here, and a Cancel that did
+      nothing for the minutes a join takes would be worse than none.
+- [ ] **A finished upload stops looking like an armed one.** Upload a
+      single recording and watch the PANEL, not the strip. Expected: the
+      selection clears, the summary returns to `Nothing selected`, and
+      **Upload goes inert**. Before round 3 the post-success screen was
+      near-identical to the pre-upload one — same `1 selected · … · …`
+      above a live, saturated button — and the only evidence of success
+      was a 14px grey arrow in the narrowest column. A stopped job must
+      NOT do this: the selection stays, because which files went and which
+      did not is exactly what matters then.
+
 ## Delete
+- [ ] **`Delete selected` is visibly the destructive one.** Look at the
+      four footer buttons together. Expected: `Delete selected` carries the
+      red outline and label (`.btn.danger`), and the other three do not.
+      It used to be pixel-identical to `Select all` beside it — four
+      buttons of equal weight, one of which destroys recordings. Profiles'
+      `Delete` is the reference; the two must match.
+- [ ] **It still confirms exactly once.** The treatment is appearance only.
+      Expected: one confirmation, naming every file, from Python's own
+      dialog — not two, and not the page's `WM.confirm`.
 - [ ] Confirmation dialog lists the correct filenames
 - [ ] Cancelling deletes nothing
 - [ ] Confirming removes the files and refreshes the list

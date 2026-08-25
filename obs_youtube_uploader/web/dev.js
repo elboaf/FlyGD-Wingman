@@ -17,7 +17,7 @@
   };
 
   var api = {};
-  ['delete_selected', 'start_upload', 'retry',
+  ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
@@ -504,6 +504,19 @@
     },
     retry: function (available) {
       window.onRetryAvailable({ available: available });
+    },
+    // D5's control. Drives the same slot as `retry` above, and the two are
+    // never armed together in the app -- so this is also the way to check
+    // by hand that the page honours that rather than stacking both.
+    cancel: function (available) {
+      window.onCancelAvailable({ available: available });
+    },
+    // The completion event the panel clears its selection on (finding 5).
+    // Worth driving on its own: in the app it arrives with a success strip
+    // and a row link, and the panel's half of the change is only visible
+    // if the selection actually drops.
+    done: function () {
+      window.onUploadDone({});
     },
     channel: function (title) {
       window.onChannel({ channel_id: 'UC123', channel_title: title,

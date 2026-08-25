@@ -275,6 +275,15 @@
   --radius: 8px;
   --radius-sm: 6px;
   --row-h: 30px;
+  /* The list's own two lengths, defined once because three rules have to
+     agree on them or the header stops lining up with its data (R1
+     finding 1). --scrollbar-w is the width ::-webkit-scrollbar draws AND
+     the width .list-scroll reserves AND the extra right padding
+     .list-head needs to match it; --row-pad is .grid-row's own padding,
+     which that last sum is built on. Retyping any of them is how the
+     three drift apart. */
+  --scrollbar-w: 10px;
+  --row-pad: 10px;
   --titlebar-h: 44px;
 }
 
@@ -647,7 +656,7 @@ button.btn:disabled,
 /* ---- scrollbar ------------------------------------------------------
    Tk cannot restyle this at all; the classic Windows scrollbar is one of
    the most visible tells in newest-version.png and disappears here. */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg);
@@ -692,7 +701,30 @@ button.btn:disabled,
   border-radius: var(--radius); overflow: hidden;
 }
 
-.list-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* scrollbar-gutter, and why the header pays for it too (R1 finding 1).
+   The scrollbar is drawn INSIDE this box, so an overflowing list has a
+   content box 10px narrower than .list-head, which sits outside it. That
+   difference does not land at the right edge as slack: .grid-row's name
+   track is minmax(212px, 52ch), 52ch is a MAXIMUM the column never reaches
+   at any width this window can be, so the track is elastic at every width
+   and absorbs the whole 10px -- carrying Modified, Size and Length 10px
+   left of their own headers. Measured on merged main with 40 rows at 1027,
+   900 and 836 CSS: +10.00 on all three, 0.00 with the scrollbar
+   suppressed and the same rows in place. Filename is immune because its
+   left edge is pinned by the 34px check column; its residual 2px is
+   .list-row's transparent left border, not an inset.
+
+   `stable` reserves the gutter whether or not the list overflows, and
+   .list-head reserves the same width as padding. Two consequences, both
+   wanted: the header and its data agree unconditionally, and the columns
+   no longer jump 10px sideways the moment a folder grows past the fold.
+   It also makes the layout match the width budget below, which has
+   charged the pane for a 10px scrollbar since round 2 whether one was
+   showing or not. */
+.list-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
 
 /* One grid template shared by the header and every row, so the two can
    never disagree. Column order matches the header spans in index.html and
@@ -725,25 +757,52 @@ button.btn:disabled,
 
      No 1fr anywhere is deliberate: with nothing elastic the grid packs to
      content width and the slack collects at the right edge, keeping the
-     name and its metadata legible as one group. The header uses this same
-     rule, so the two can never disagree. */
-  grid-template-columns: 34px minmax(212px, 52ch) 92px 84px 76px 46px;
+     name and its metadata legible as one group.
+
+     The header uses this same rule, and sharing the declaration is NOT by
+     itself enough to make the two agree -- which is what this comment used
+     to claim. `52ch` resolves against each grid container's own font, so
+     the header computed a different maximum until its font-size moved off
+     the box and onto the spans. See the note at .list-head. */
+  grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
-  padding: 0 10px;
+  padding: 0 var(--row-pad);
 }
 
 .list-head {
   position: sticky; top: 0; z-index: 2;
+  /* .grid-row's own padding plus the gutter .list-scroll reserves, so this
+     header's content box matches a row's. Both halves are variables: the
+     sum is the whole point of the rule, and a literal here would be the
+     third place the 10px is written down. */
+  padding-right: calc(var(--row-pad) + var(--scrollbar-w));
   background: var(--sunken);
   border-bottom: 1px solid var(--panel-border);
-  /* --fs-muted, not --fs-body: headers label the data, they are not the
-     data. This is the deliberate ordering carried over from 2.2.0. */
-  font-size: var(--fs-muted);
+  /* The FONT SIZE SITS ON THE SPANS, not here, and that is load-bearing
+     rather than tidiness. `ch` in grid-template-columns resolves against
+     the GRID CONTAINER's own font, and the shared template caps the name
+     track at 52ch -- so a header set in --fs-muted computed a 52ch that
+     was 11.5/13 of the rows' 52ch, and the moment the track reached that
+     cap the header's columns parted company with their data. Measured
+     before the fix: name track 377.25 in the header against 426.45 in the
+     rows at 1280 CSS, putting Size and Length 51.20px out; 0.00 after.
+
+     It stayed hidden until round 3 because the cap was only reached on a
+     very wide window -- dropping Modified (finding 8) handed the name
+     track another 92px, which brought the cap down into ordinary widths
+     and turned a latent unit bug into a visible one.
+
+     --fs-muted, not --fs-body, is still the intent: headers label the
+     data, they are not the data. That is the deliberate ordering carried
+     over from 2.2.0, and it is unchanged -- it just belongs on the text
+     rather than on the box that measures the columns. */
+  font-size: var(--fs-body);
   color: var(--text-dim);
   height: 30px;
 }
 .list-head > span {
+  font-size: var(--fs-muted);
   cursor: pointer; user-select: none; padding: 0 4px;
   display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
@@ -754,13 +813,24 @@ button.btn:disabled,
    (Uploader 3.)
 
    The walkthrough reported headers sitting ~16px right of their data on
-   every column, and blamed the scroll container's gutter. Re-measured in
-   the ?dev=1 harness with 30 rows, comparing text ranges rather than
-   boxes: unsorted, every header agrees with its column to within 2px --
-   which is .list-row's own 2px transparent left border, not an inset --
-   and the gutter cannot move anything anyway, because .grid-row has no
-   1fr, so the tracks are left-packed and a narrower body only eats slack
-   at the right edge.
+   every column, and blamed the scroll container's gutter.
+
+   That gutter half was CORRECT and this comment used to deny it. It said
+   the gutter "cannot move anything anyway, because .grid-row has no 1fr,
+   so the tracks are left-packed and a narrower body only eats slack at
+   the right edge". No 1fr is not the same as no elasticity: the name
+   track is minmax(212px, 52ch) and never reaches its 52ch maximum at any
+   width this window can be, so it is elastic at every width and absorbs
+   the gutter. Round 3 re-measured with the list actually overflowing --
+   the earlier 30-row check did not produce a scrollbar -- and found
+   Modified, Size and Length +10.00 at 1027, 900 and 836 CSS, going to
+   0.00 with the scrollbar suppressed and the same rows in place. The fix
+   is at .list-scroll's scrollbar-gutter above. Two real causes, then, and
+   only the arrow below was ever fixed; the correction that fixed it also
+   wrote off the other one.
+
+   The 2px that remains is .list-row's own transparent left border, not an
+   inset.
 
    What does move is this arrow. On a flex-end header it takes the right
    end of the column and pushes the LABEL off it: measured, "Size" landed
@@ -823,7 +893,6 @@ button.btn:disabled,
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 4px;
 }
-.c-date { color: var(--text-dim); font-size: var(--fs-muted); padding: 0 4px; }
 .c-size, .c-len {
   text-align: right; color: var(--text-dim);
   font-size: var(--fs-muted); font-variant-numeric: tabular-nums; padding: 0 4px;
@@ -959,6 +1028,24 @@ button.btn:disabled,
   margin-bottom: 5px;
 }
 
+/* Round 3, finding 6. The empty-folder note is a .hint, whose only spacing
+   is margin-top -- so the distance from its last line to the `Title` label
+   below was exactly its own line pitch (measured: 35 physical px of pitch,
+   35 physical px to the label), and `Title` read as the paragraph's third
+   line. Round 2's Uploader 13 was right that the panel had to say the
+   folder was empty; the message was inserted above the form without a gap
+   that distinguishes it from the form, and this is that gap.
+
+   1.5em, not a round pixel count: 1.5 is this paragraph's own line-height,
+   so the rule reads "one blank line of its own text" and stays true if the
+   hint's size changes. That puts the label two line pitches below the last
+   line instead of one, which is what makes it read as a new block.
+
+   D6 settled the larger question: the form STAYS rendered on an empty
+   folder (panel.js states the reason), so this is a spacing fix and
+   nothing else. */
+#panel-empty-note { margin-bottom: 1.5em; }
+
 /* A sensible fixed height. NOT flex:1 — today the Description box consumes
    all remaining vertical space and reads as an empty void. */
 #f-desc { height: 96px; }
@@ -1082,26 +1169,33 @@ button.btn:disabled,
    route spends 24px on padding plus 12px on the gap. So a tier needs the
    sum of its track floors, plus 68px, plus the panel:
 
-     six    212+34+92+84+76+46 = 544 + 32 + 36 + 320 = 932
      five   212+34+   84+76+46 = 452 + 32 + 36 + 320 = 840   <- the floor
      five   the same, with the 248px panel            = 768
      three    0+34+         46 =  80 + 32 + 36 + 248 = 396
 
+   The six-column row that used to head this table is gone with Modified
+   (finding 8). Five columns is now the base layout rather than the first
+   step down, and it still lands exactly on MIN_WIDTH -- so the check
+   below survives the change that removed the tier above it.
+
    Each ceiling is one pixel under what the tier above it needs, so a tier
    never fires while the wider layout still fitted.
 
-   The five-column tier landing EXACTLY on MIN_WIDTH is the check on all
+   The five-column layout landing EXACTLY on MIN_WIDTH is the check on all
    of it, and it moved there in round 2. The six-column tier used to hold
    that position, on a 120px name floor -- which is why six columns
    rendered at the floor with the filename truncated, and why the two
    tiers that would have dropped Modified sat at 767px and 607px, below a
    floor the window can never reach. Widening the name track to what a
-   filename actually needs moves the agreement one tier down and puts the
-   drop where it can happen. */
-@media (max-width: 931px) {
-  .grid-row { grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px; }
-  .grid-row > .c-date { display: none; }
-}
+   filename actually needs moved the agreement one tier down; round 3
+   then dropped Modified outright, which is what makes the five-column
+   figure the BASE rather than a tier that has to fire. */
+/* The six-column tier and the 931px query that shed Modified are both
+   gone: round 3's finding 8 dropped that column at EVERY width, so five
+   columns is the base and there is no wider layout to step down from.
+   The arithmetic that put the shed at 931 is kept above as the record of
+   why the drop is safe -- it is the same reasoning, now applied
+   unconditionally. */
 
 /* The panel step, and the one query on this screen that was never dead.
    It fires at 200% scaling and not at 100%: at 100% the floor viewport is

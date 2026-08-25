@@ -81,11 +81,9 @@
 
     WM.setEnabled('btn-upload', selected > 0);
     WM.setEnabled('f-stitch', selected > 1);
-    // Only while there IS something to stitch. With an empty folder the
-    // empty note above is the whole explanation, and a second sentence
-    // telling the user to select two of nothing would be the "three
-    // statements of the same emptiness" the walkthrough counted (14).
-    WM.el('stitch-hint').hidden = empty || selected > 1;
+    // The stitch hint is gone entirely (round 3, finding 3 -- see the note
+    // where it used to live in index.html). The greyed-out label below is
+    // the whole of the explanation now.
     WM.el('lab-stitch').classList.toggle('disabled', selected < 2);
     // A box left ticked while its control is inert would still be read by
     // start_upload's caller below, so the checked state has to follow.
@@ -116,6 +114,21 @@
 
   WM.el('btn-retry').addEventListener('click', function () {
     WM.send('retry');
+  });
+
+  // D5. Cancel and Retry share the one slot beside Upload and are never
+  // live together: Python arms exactly one of them, and each of its own
+  // handlers below turns the other off implicitly by never being on at the
+  // same time. The click sends and returns -- everything the user then
+  // sees (how many of the batch made it, that they are still on the
+  // channel) is composed in Python where the stop is actually noticed,
+  // because the page cannot know how far the upload had got.
+  WM.el('btn-cancel').addEventListener('click', function () {
+    // Disabled, not hidden, the instant it is clicked: the stop is only
+    // noticed at the next 4 MiB chunk boundary, so there is a real window
+    // in which a second click would do nothing and look ignored.
+    WM.el('btn-cancel').disabled = true;
+    WM.send('cancel_upload');
   });
 
   // ---- the no-webhook fact --------------------------------------------
@@ -224,6 +237,42 @@
 
   WM.handle('onRetryAvailable', function (p) {
     WM.el('btn-retry').disabled = !p.available;
+  });
+
+  // Cancel takes Retry's place in the slot while a job is running, and
+  // hands it back when the job ends. Hidden rather than disabled, and
+  // Retry hidden while it shows: an inert Cancel beside an inert Retry is
+  // two dead controls describing states the panel is not in. Re-enabled
+  // on every arming so a previous job's click cannot leave it dead.
+  WM.handle('onCancelAvailable', function (p) {
+    var on = !!p.available;
+    WM.el('btn-cancel').hidden = !on;
+    WM.el('btn-cancel').disabled = false;
+    WM.el('btn-retry').hidden = on;
+  });
+
+  // Round 3, finding 5, the panel half. The strip says the upload
+  // succeeded (L7's _upload_summary), and the panel used to contradict it:
+  // the same `1 selected · 108.8 MB · 0:17:07` above the same saturated
+  // Upload button, so the post-success screen was near-identical to the
+  // pre-upload armed screen and the only other evidence was a 14px grey
+  // arrow in the narrowest column.
+  //
+  // Clearing the selection is what makes the screen change, and it is
+  // honest rather than cosmetic: those recordings are up, the row now
+  // carries its link, and re-sending the same files is not the next
+  // action. The summary falls back to "Nothing selected" and Upload goes
+  // inert through refreshEnabled, both by the existing path.
+  //
+  // The page clears it, not Python: selection is client state and never
+  // crosses the bridge (CLAUDE.md), so what arrives is the semantic event
+  // -- the job finished -- and the page decides what that means for it.
+  //
+  // Deliberately NOT fired on a cancel: a stopped batch leaves some files
+  // uploaded and some not, and clearing there would hide which is which
+  // at exactly the moment that distinction matters.
+  WM.handle('onUploadDone', function () {
+    WM.list.clearSelection();
   });
 
   // ---- upload destination ---------------------------------------------

@@ -380,6 +380,12 @@ class Api:
         self._retry_state: RetryState | None = None
         self._links: dict[str, str] = {}
         self._last_pct: float = 0.0
+        # D5's stop signal. An Event rather than a bool because it is set on
+        # the UI thread (cancel_upload, a bridge method) and read on the
+        # upload thread once per 4 MiB chunk, and because `.is_set` is
+        # exactly the zero-argument predicate uploader.upload wants -- no
+        # lambda closing over self on a worker.
+        self._cancel = threading.Event()
         self._watcher = None
         self._auth_thread: threading.Thread | None = None
         self._on_recording_dir_ready = None
@@ -957,6 +963,11 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
+        # Cleared per dispatch, not per process: a stop answered by the
+        # PREVIOUS job would otherwise abort this one before its first chunk
+        # and report "Stopped. Nothing was uploaded." for a job the user
+        # just started. Retry clears it for the same reason.
+        self._cancel.clear()
         self._upload_thread = threading.Thread(
             target=self._confirm_then_upload, args=(job,), daemon=True
         )
@@ -997,6 +1008,13 @@ class Api:
 
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
+        # Disarmed HERE and not left to _upload_worker's finally: the video
+        # half is over, but the combat-log half below still runs on this
+        # thread and can take seconds. The finally is several frames away,
+        # so a Cancel left armed across the log post would be a live button
+        # with nothing polling its flag -- a click that does nothing, which
+        # is the state D5 exists to remove rather than relocate.
+        self._push("onCancelAvailable", {"available": False})
         summary = _upload_summary(job)
         # Explicit False on both: this runs ON the upload thread, so
         # _busy() is still true here and the default would refuse to settle
@@ -1004,6 +1022,13 @@ class Api:
         self._status(f"{summary}.", "SUCCESS", busy=False)
         self._progress(100.0, kind="SUCCESS", busy=False)
         self._push("onRetryAvailable", {"available": False})
+        # Round 3's finding 5, panel half. A SEMANTIC event -- the job
+        # finished -- not an instruction: the page decides that this means
+        # dropping the selection, because selection is client state and
+        # never crosses this bridge. Pushed here rather than from the two
+        # call sites so the resume tail reports completion the same way a
+        # plain job does.
+        self._push("onUploadDone", {})
         # The single point at which the video half is known to have
         # succeeded -- both the plain worker and the resume tail arrive
         # here -- so it is where the log half hangs. Retry therefore posts
@@ -1061,6 +1086,13 @@ class Api:
                     sources, self._state.ffmpeg_bin, paths.tmp_dir()
                 ) as merged:
                     self._progress(0.0, busy=True)
+                    # Armed HERE, inside the context manager and after the
+                    # join, not at the top of the branch: D5 scopes cancel
+                    # to the upload phase only. stitch.stitched() runs a
+                    # bundled ffmpeg with no interruption seam, and a
+                    # Cancel that did nothing for the minutes a join takes
+                    # is worse than no Cancel at all.
+                    self._push("onCancelAvailable", {"available": True})
                     vid = self._upload_one(
                         youtube, MediaFileUpload, merged, job, 0, 1, close_media=True
                     )
@@ -1068,6 +1100,7 @@ class Api:
                     self._link(row_id, vid)
             else:
                 total = len(job.items)
+                self._push("onCancelAvailable", {"available": True})
                 for index in range(job.start_index, total):
                     vid = self._upload_one(
                         youtube,
@@ -1079,6 +1112,25 @@ class Api:
                     )
                     self._link(job.ids[index], vid)
             self._upload_done(job)
+        except uploader.UploadCancelled:
+            # `index` is the item that was interrupted, so items 0..index-1
+            # finished and were _link()ed -- on the plain path those videos
+            # are public on the channel right now, which is exactly what
+            # format_upload_cancelled refuses to let the message hide. The
+            # stitch path never advances `index`, and it is one video, so it
+            # reports the zero case.
+            done = 0 if job.stitch else index
+            text = copy_mod.format_upload_cancelled(done, len(job.items))
+            # No _retry_state and no onRetryAvailable, per D5: Retry exists
+            # to recover from a failure, and a stop is not one. Offering it
+            # here would also re-arm the slot the Cancel button was just
+            # occupying.
+            self._retry_state = None
+            # Not ERROR: the user asked for this. The bar keeps the ground
+            # the job actually covered rather than resetting to 0, which
+            # would contradict a sentence saying two of four are up.
+            self._status(text, "WARNING", busy=False)
+            self._progress(self._last_pct, kind="WARNING", busy=False)
         except uploader.UploadFailed as exc:
             # Stitched failures cannot resume: the context manager has
             # already deleted the merged file the session points at, which
@@ -1116,6 +1168,11 @@ class Api:
             self._progress(0.0, busy=False)
             self._alert("error", "Upload Failed", str(exc))
             self._status(f"Error: {exc}", "ERROR", busy=False)
+        finally:
+            # Every exit, including the success one: the slot is shared with
+            # Retry and the two are never live at once, so a Cancel left
+            # armed would sit beside the Retry a failure just enabled.
+            self._push("onCancelAvailable", {"available": False})
 
     def _upload_one(
         self,
@@ -1162,6 +1219,7 @@ class Api:
                 on_progress=on_progress,
                 on_retry=on_retry,
                 on_response=self._remember_channel,
+                should_cancel=self._cancel.is_set,
             )
         finally:
             if close_media:
@@ -1224,6 +1282,26 @@ class Api:
         # authenticated.
         self._push_auth("connected")
 
+    def cancel_upload(self) -> None:
+        """Ask the upload thread to stop after the chunk it is sending.
+
+        Sets a flag and returns: the bridge thread must not block, and the
+        worker is the only thread that may touch the strip, _retry_state or
+        the row links. Everything the user sees about the stop is composed
+        where the stop is noticed (_upload_worker's UploadCancelled branch).
+
+        Idempotent and safe when nothing is running -- the flag is cleared
+        at every dispatch, so a set left behind by a click that raced the
+        end of a job cannot reach the next one.
+
+        No confirm. The action is not destructive: it stops something the
+        user started, the videos already up are named in the message, and a
+        dialog asking "are you sure you want to stop?" over a running
+        transfer is the modal PRODUCT.md's "state cost before an
+        irreversible action" rule is not about.
+        """
+        self._cancel.set()
+
     def retry(self) -> None:
         state = self._retry_state
         if state is None:
@@ -1231,6 +1309,7 @@ class Api:
         # Disabled immediately, not by the worker: the click that got here
         # must not be repeatable while the resume is being set up.
         self._push("onRetryAvailable", {"available": False})
+        self._cancel.clear()
         self._upload_thread = threading.Thread(
             target=self._retry_worker, args=(state,), daemon=True
         )
@@ -1255,8 +1334,35 @@ class Api:
                     busy=True,
                 )
 
-            vid = uploader.upload(state.request, on_progress=on_progress)
+            # Armed for the resumed file too, not just for the tail that
+            # _upload_worker picks up below. Without it the button would be
+            # absent for one file and then appear part-way through the same
+            # job, which is a control blinking in and out under the pointer
+            # -- the hazard index.html's stitch note already records for
+            # this screen.
+            self._push("onCancelAvailable", {"available": True})
+            vid = uploader.upload(
+                state.request,
+                on_progress=on_progress,
+                should_cancel=self._cancel.is_set,
+            )
             self._link(state.job.ids[state.resume_index], vid)
+        except uploader.UploadCancelled:
+            # Everything before resume_index finished on the earlier
+            # attempt and is on the channel, so the count is about the job,
+            # not about this resume. Retry is deliberately NOT re-offered:
+            # a stop is not a failure (D5).
+            self._retry_state = None
+            self._status(
+                copy_mod.format_upload_cancelled(
+                    state.resume_index, len(state.job.items)
+                ),
+                "WARNING",
+                busy=False,
+            )
+            self._progress(self._last_pct, kind="WARNING", busy=False)
+            self._push("onCancelAvailable", {"available": False})
+            return
         except uploader.UploadFailed as exc:
             # Same gate as _upload_worker, for the same two reasons: only a
             # RETRY outcome re-enables Retry, so keeping the request for any
@@ -1273,14 +1379,19 @@ class Api:
                 state, request=exc.request if retryable else None
             )
             self._status(str(exc), "ERROR", busy=False)
+            self._push("onCancelAvailable", {"available": False})
             if retryable:
                 self._push("onRetryAvailable", {"available": True})
             return
         # The resumed file is done; continue with whatever followed it.
         if state.resume_index + 1 < len(state.job.items):
+            # _upload_worker arms and disarms the control itself, in its own
+            # finally, so this hands the slot straight over rather than
+            # disarming between the two halves of one job.
             self._upload_worker(replace(state.job, start_index=state.resume_index + 1))
         else:
             self._upload_done(state.job)
+            self._push("onCancelAvailable", {"available": False})
 
     # ----- combat logs --------------------------------------------------------
 
