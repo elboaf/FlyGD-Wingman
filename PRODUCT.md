@@ -64,7 +64,8 @@ Three things, equally:
 - **Uploading fight footage** — the original app, and the only thing that
   touches a Google account.
 - **Client previews** — what makes flying several accounts at once
-  possible.
+  possible, and the only part of the toolkit that speaks to you while you
+  are looking at something else.
 - **Bookmark keybinds** — wormhole mapping and rolling, and the only
   feature that runs continuously in the background.
 
@@ -98,6 +99,33 @@ configuration, because neither produces anything on its own screen — they
 configure keybinds that fire in EVE and windows that appear on the
 desktop. Skills is less important and is still a destination, because
 checking a roster against a doctrine is something you sit and do.
+
+### Alerts are part of previews, not a fourth primary
+
+Gamelog alerts pulse a client's preview when combat starts, your warp is
+scrambled, or you decloak. They belong to previews and are configured in
+Settings › Previews, by the rule above: they produce nothing on a screen
+of their own, and what they act on is a preview window.
+
+They are worth naming here anyway, because they are the only thing in the
+product that **interrupts**. Everything else waits to be looked at. That
+is a specific power and a specific hazard, and it decides two arguments:
+
+- **A wrong alert costs more than a missing one.** An alert that fires
+  when nothing happened trains you to ignore the next one, and the next
+  one is the fight. The PvE filter and the per-event cooldowns are not
+  tuning knobs that happened to get added; they exist because the feature
+  is worthless the moment it cries wolf. Anything that makes alerts fire
+  more readily needs to answer this.
+- **A new alert event has to change what you do in the next few seconds.**
+  That is the bar, and it is why the list is three and not thirty: a
+  gamelog carries a great deal that is interesting later and almost
+  nothing that is worth taking your eyes off a hole for. "It is in the
+  log and we could parse it" is not a reason.
+
+The corollary for the UI: an alert you configured and cannot tell is
+running is the failure mode, not a missed pulse. The card says whether it
+is watching and which characters it can see, in one sentence, on purpose.
 
 
 ## What it must not become
