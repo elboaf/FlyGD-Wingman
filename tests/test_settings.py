@@ -77,6 +77,10 @@ def test_defaults_are_the_documented_values():
                     },
                 },
             },
+            "show_labels": True,
+            "minimize_inactive_clients": False,
+            "never_minimize": [],
+            "locked": [],
         },
         "eve_settings": {
             "root": None,

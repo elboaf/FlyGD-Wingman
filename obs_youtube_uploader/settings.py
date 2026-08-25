@@ -96,6 +96,22 @@ def _preview_defaults() -> dict:
         # alternative silently discards existing layouts.
         "restore_preview_positions": True,
         "alerts": _alerts_defaults(),
+        # On by default -- it is what shipped, and turning it off would
+        # silently restyle every existing install's previews.
+        "show_labels": True,
+        # Off by default: it changes what happens to a real game window
+        # (minimizing it), which must be asked for rather than assumed.
+        "minimize_inactive_clients": False,
+        # Character names exempt from minimize_inactive_clients. A plain
+        # roster list like `seen`, not a per-preview flag.
+        "never_minimize": [],
+        # Character names whose preview position is locked against drag.
+        # Deliberately a top-level list, NOT a flag inside a layouts entry:
+        # layout.deserialize drops any entry missing a full rect
+        # (layout.py:44-52), so a lock recorded against a character who has
+        # never dragged their preview -- and so has no layouts entry --
+        # would be silently discarded on the very next save.
+        "locked": [],
     }
 
 
@@ -244,6 +260,15 @@ def validated_preview(raw) -> dict:
     # _normalize -- which every update() runs -- so any writer touching any
     # preview key silently reverts the user's alert configuration.
     section["alerts"] = validated_alerts(raw.get("alerts"))
+    if isinstance(raw.get("show_labels"), bool):
+        section["show_labels"] = raw["show_labels"]
+    if isinstance(raw.get("minimize_inactive_clients"), bool):
+        section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
+    # Both lists have exactly the roster's constraints, including the
+    # hwnd: rejection: a client at character-select has no stable name to
+    # exempt from minimizing or lock in place.
+    section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
+    section["locked"] = preview_roster.deserialize(raw.get("locked"))
     return section
 
 
