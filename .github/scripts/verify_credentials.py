@@ -42,17 +42,21 @@ if " " in sec:
     # meant to set. Google then rejects sign-in with "the provided
     # client secret is invalid" and nothing upstream notices,
     # because a shell command is a perfectly valid Python string.
-    bad.append("client_secret contains a space -- it looks like a "
-               "command line or a pasted phrase, not a secret")
+    bad.append(
+        "client_secret contains a space -- it looks like a "
+        "command line or a pasted phrase, not a secret"
+    )
 if not sec.startswith("GOCSPX-"):
     # Google issues desktop-app secrets with this prefix. A value
     # without it is not necessarily wrong, but it has never been
     # right here, so fail loudly rather than ship it.
-    bad.append("client_secret does not start with GOCSPX- , which "
-               "every Google desktop-app secret does")
+    bad.append(
+        "client_secret does not start with GOCSPX- , which "
+        "every Google desktop-app secret does"
+    )
 
-print("client_id: %d chars, ends %r" % (len(cid), cid[-30:]))
-print("client_secret: %d chars, starts %r" % (len(sec), sec[:7]))
+print(f"client_id: {len(cid)} chars, ends {cid[-30:]!r}")
+print(f"client_secret: {len(sec)} chars, starts {sec[:7]!r}")
 
 for b in bad:
     print("::error::" + b)

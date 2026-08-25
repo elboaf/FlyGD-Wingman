@@ -121,14 +121,21 @@ runs:
       #
       # Prints only shapes and lengths, never the values.
       #
-      # This used the "python" shell keyword previously, which ran the
-      # check inline against the *runner's* interpreter -- it could not
-      # have imported obs_youtube_uploader.credentials even before uv.
-      # The check is now a real file so it can run through `uv run`, which
-      # is what actually reaches the synced environment.
+      # This was previously inline under the "python" shell keyword, which
+      # runs the runner's PATH interpreter. That worked while the workflow
+      # did `pip install -e .` into that same interpreter -- verified in
+      # run 32783647689, which printed the expected shapes. It stops
+      # working the moment the dependencies live in uv's .venv instead,
+      # which is why the body moved to a real file invoked through
+      # `uv run`.
+      #
+      # The script lives under .github/scripts/ rather than packaging/
+      # because packaging/ is excluded from ruff; putting it there would
+      # have made it the only unlinted Python on the release path. Moving
+      # it here immediately surfaced two real findings.
       shell: pwsh
       run: |
-        uv run python packaging/verify_credentials.py
+        uv run python .github/scripts/verify_credentials.py
         if ($LASTEXITCODE -ne 0) { throw "injected credentials failed verification" }
 
     - name: Warn that credentials are placeholders
