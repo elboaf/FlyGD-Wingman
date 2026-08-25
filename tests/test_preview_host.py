@@ -304,19 +304,24 @@ def test_draining_returns_and_clears():
     assert h._drain_alerts() == []
 
 
-def test_raise_alert_posts_only_a_signal():
+def test_raise_alert_posts_only_a_signal(monkeypatch):
     """PostMessageW carries integers only, so wparam/lparam must stay
-    zero and the payload must travel in the field."""
+    zero and the payload must travel in the field -- exercised through
+    the real _post (not a stub standing in for it), so this actually
+    proves what reaches PostMessageW rather than just that raise_alert
+    delegates to whatever _post happens to be."""
     posted = []
 
-    class _User32:
+    class _AlertUser32(_FakeUser32):
         def PostMessageW(self, hwnd, msg, wparam, lparam):
             posted.append((msg, wparam, lparam))
             return 1
 
+    libs = _FakeLibs(_AlertUser32())
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
-    h._post = lambda msg: posted.append((msg, 0, 0))
     h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
     assert posted == [(host.win32.WM_APP_ALERT, 0, 0)]
 

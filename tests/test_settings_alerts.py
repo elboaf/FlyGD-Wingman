@@ -68,9 +68,17 @@ def test_an_unknown_sound_becomes_silence_not_a_crash():
 
 
 def test_booleans_are_not_accepted_as_numbers():
-    """bool is an int in Python; True would silently become a 1s cooldown."""
-    out = settings.validated_alerts({"events": {"combat": {"cooldown_s": True}}})
-    assert out["events"]["combat"]["cooldown_s"] == 1
+    """bool is an int in Python; True would silently become a 1s cooldown.
+
+    Uses warp_scramble (default 8s), not combat (default 1s): True == 1 as
+    an int, so asserting combat's cooldown equals 1 passes whether or not
+    the `not isinstance(value, bool)` guard exists and proves nothing.
+    warp_scramble's default is not 1, so only the guard rejecting the bool
+    can make this pass.
+    """
+    out = settings.validated_alerts({"events": {"warp_scramble": {"cooldown_s": True}}})
+    assert out["events"]["warp_scramble"]["cooldown_s"] == 8
+    assert not isinstance(out["events"]["warp_scramble"]["cooldown_s"], bool)
 
 
 def test_one_malformed_event_drops_alone():
