@@ -61,8 +61,11 @@
       warning.textContent = '';
     }
 
-    fill('es-server', payload.servers, payload.server);
-    fill('es-profile', payload.profiles, payload.profile);
+    // Short on purpose: .settings .row > select.field is a fixed 150px, and
+    // "Choose a folder first" rendered as "Choose a folder fi". A truncated
+    // placeholder is a worse answer than the blank it replaced.
+    fill('es-server', payload.servers, payload.server, 'No folder chosen');
+    fill('es-profile', payload.profiles, payload.profile, 'No folder chosen');
     renderSource();
     renderTargets();
     renderBackups();
@@ -98,22 +101,55 @@
   // rendering that as "EVE closed" would be a reassuring guess about the
   // only warning shown before a copy -- the probe runs off the bridge
   // thread precisely because its first pass is slow.
+  //
+  // Painted over BOTH mount points (Profiles 1). The pill in the folder
+  // card's heading is off-screen at the moment that matters -- `Copy to
+  // selected` sits at the bottom of the second card, and in the scrolled
+  // capture the button is visible and the pill is not. The second one rides
+  // with the button. One function over two elements rather than two
+  // renderers, so the two can never disagree about the same probe.
   function paintPill(running) {
-    var pill = WM.el('es-eve-state');
-    if (!pill) return;
+    var pills = [WM.el('es-eve-state'), WM.el('es-eve-state-commit')]
+      .filter(Boolean);
+    if (!pills.length) return;
+    var text, cls;
     if (running === null || running === undefined) {
-      pill.textContent = 'Checking for EVE\u2026';
-      pill.className = 'pill idle';
-      return;
+      text = 'Checking for EVE\u2026';
+      cls = 'pill idle';
+    } else {
+      text = running ? 'EVE running' : 'EVE closed';
+      cls = 'pill ' + (running ? 'warn' : 'idle');
     }
-    pill.textContent = running ? 'EVE running' : 'EVE closed';
-    pill.className = 'pill ' + (running ? 'warn' : 'idle');
+    pills.forEach(function (pill) {
+      pill.textContent = text;
+      pill.className = cls;
+    });
   }
 
-  function fill(id, items, current) {
+  // Profiles 6: with nothing to offer, Server and Profile rendered exactly
+  // like working dropdowns -- blank, un-placeholdered, undimmed -- so an
+  // un-chosen folder looked like a broken control rather than a control
+  // that has nothing to say yet. A disabled select with one placeholder
+  // option says which of the two it is. `empty` names the reason rather
+  // than the state ("Choose a folder first"), because the reason is the
+  // half the user can act on and the control they must act on is in the
+  // same row.
+  function fill(id, items, current, empty) {
     var el = WM.el(id);
     el.innerHTML = '';
-    (items || []).forEach(function (item) {
+    var list = items || [];
+    el.disabled = !list.length;
+    if (!list.length) {
+      var placeholder = document.createElement('option');
+      // An <option> with no value attribute reports its TEXT as .value, so
+      // without this the select's value is the placeholder sentence itself
+      // -- a string the rest of this file compares against real paths.
+      placeholder.value = '';
+      placeholder.textContent = empty;
+      el.appendChild(placeholder);
+      return;
+    }
+    list.forEach(function (item) {
       var option = document.createElement('option');
       option.value = item.path;
       option.textContent = item.name;
@@ -122,11 +158,29 @@
     });
   }
 
+  // Profiles 6 names Server and Profile. `Copy from` is the same control
+  // with the same failure -- and once the other two carry a placeholder,
+  // leaving the third blank beside them states the finding more loudly than
+  // before rather than less. Extended deliberately, not in passing.
   function renderSource() {
     var el = WM.el('es-source');
     var previous = el.value;
+    var list = rows();
     el.innerHTML = '';
-    rows().forEach(function (row) {
+    el.disabled = !list.length;
+    if (!list.length) {
+      var placeholder = document.createElement('option');
+      // Empty value for fill()'s reason, and it bites harder here:
+      // renderTargets excludes `row.path === es-source.value` from the
+      // roster, so a placeholder reporting its own text would be compared
+      // against every character's path on every keystroke of the filter.
+      placeholder.value = '';
+      placeholder.textContent =
+        'No ' + (kind() === 'accounts' ? 'accounts' : 'characters');
+      el.appendChild(placeholder);
+      return;
+    }
+    list.forEach(function (row) {
       var option = document.createElement('option');
       option.value = row.path;
       option.textContent = row.name;
@@ -157,6 +211,7 @@
       box.checked = !!selected[row.path];
       box.addEventListener('change', function () {
         selected[row.path] = box.checked;
+        paintCommit();
       });
       var label = WM.make('label', 'check', ' ' + row.name);
       label.prepend(WM.make('span', 'box'));
@@ -168,13 +223,38 @@
     // dropdown, a filter and a Copy button with a void between them.
     // Nothing distinguished "filter matched nothing" from "this folder has
     // no characters" from "not loaded yet".
-    if (!visible.length) {
-      host.appendChild(WM.make('p', 'empty', needle
-        ? 'No ' + (kind() === 'accounts' ? 'accounts' : 'characters')
-          + ' match that filter.'
-        : 'No other ' + (kind() === 'accounts' ? 'accounts' : 'characters')
-          + ' in this profile.'));
+    if (!visible.length) host.appendChild(WM.make('p', 'empty', emptyText(needle)));
+    // Every path that changes what is on screen ends here -- filter, source,
+    // Characters/Accounts, Select all, Clear, and the initial render -- so
+    // the count and the button's enabled state are decided in one place
+    // rather than at six call sites that would drift.
+    paintCommit();
+  }
+
+  // Profiles 5: with no folder chosen this said "No other characters in
+  // this profile." There is no profile. It reported a downstream condition
+  // -- true, and unactionable -- instead of the one actually stopping the
+  // user, which is the same mistake the Uploader's empty state makes
+  // (walkthrough finding 12) and wants the same instinct: name the thing
+  // that is blocking you, then what to do about it (PRODUCT.md's tone rule,
+  // "say what happened and what to do").
+  //
+  // Ordered blocking-first. The filter is last because it is the only one
+  // of the four the user reached deliberately, so it cannot be the answer
+  // while an earlier condition is still unmet.
+  function emptyText(needle) {
+    var noun = kind() === 'accounts' ? 'accounts' : 'characters';
+    if (!state || !state.root) {
+      return 'No EVE settings folder chosen yet. Choose or detect one above.';
     }
+    // #es-warning already carries the whole diagnosis and what to do about
+    // it; repeating it here would say it twice in one card. This only has
+    // to stop claiming the folder is empty when it was never read.
+    if (state.unreadable || state.too_broad) {
+      return 'Nothing could be read from that folder. See the warning above.';
+    }
+    if (needle) return 'No ' + noun + ' match that filter.';
+    return 'No other ' + noun + ' in this profile.';
   }
 
   // Backup stamps arrive exactly as they are spelled in the filename --
@@ -258,9 +338,50 @@
     }).map(function (row) { return row.path; });
   }
 
+  // Profiles 1's other half, and X1's execution on this route.
+  //
+  // The count is the cost, stated on the page before the irreversible
+  // action rather than only inside the confirm. ui/copy.py already puts a
+  // count in the dialog (Profiles 3); what the SCREEN had was no quantity
+  // at all, while the Uploader prints "1 selected - 108.8 MB" a route away.
+  //
+  // The noun is taken from the Characters/Accounts switch, which is the
+  // authority for what the user believes they ticked. ui/copy.py derives
+  // its noun from the target paths instead, and deliberately: the two can
+  // only disagree for a mixed selection, which this page cannot produce and
+  // the bridge does not forbid. Do not "fix" one to match the other.
+  //
+  // X1: the disabled treatment already existed and worked -- what was
+  // missing was the attribute, so `Copy to selected` was full-strength
+  // accent with nothing ticked, no folder chosen, and "No other characters
+  // in this profile" printed above it. Busy and empty are one decision
+  // here because they are one question: can this button act right now.
+  function paintCommit() {
+    var count = chosenTargets().length;
+    var noun = kind() === 'accounts' ? 'account' : 'character';
+    var label = WM.el('es-copy-count');
+    label.textContent = count
+      ? count + ' ' + noun + (count === 1 ? '' : 's') + ' will be overwritten'
+      : 'Nothing selected';
+    // Dimmed, not emptied: a blank slot beside a disabled button reads as a
+    // layout gap rather than as the answer to "how many".
+    label.classList.toggle('none', !count);
+    WM.setEnabled('es-copy', !busy && count > 0);
+    // The hazard is about what this button is ABOUT to do, so it appears
+    // only while the button can do it. Without this, the one state where
+    // both pills are on screen together -- no folder chosen, which forces
+    // the folder card open -- shows "EVE running" twice, six inches apart,
+    // about a copy that cannot happen. The pill in the heading is the
+    // screen's standing answer; this one is the commit's.
+    WM.el('es-eve-state-commit').hidden = count === 0;
+  }
+
   function setBusy(value) {
     busy = value;
-    WM.el('es-copy').disabled = value;
+    // Not `es-copy.disabled = value`: that is half the question. paintCommit
+    // owns the whole of it, so a copy that finishes cannot re-enable a
+    // button whose selection was cleared by the same push.
+    paintCommit();
     WM.el('es-backup-profile').disabled = value;
     Array.prototype.forEach.call(
       WM.el('es-backups').querySelectorAll('button'), function (el) {
@@ -282,18 +403,42 @@
   }
 
   function wire() {
+    // Hidden before the route is ever entered, so the gap between the page
+    // loading and the first state landing does not render "EVE closed" --
+    // a reassuring guess about the only warning shown before a copy, which
+    // is the thing paintPill's three-state handling exists to avoid.
+    WM.el('es-eve-state-commit').hidden = true;
+
     WM.el('es-folder-edit').addEventListener('click', function () {
       expanded = true;
       paintFolder();
     });
 
-    WM.el('es-pick').addEventListener('click', function () {
-      WM.send('eve_settings_pick_root').then(function () {
-        selected = {};
-        refresh();
-        WM.send('eve_settings_resolve_names');
-      });
-    });
+    // Profiles 4. Both controls answer the same question -- where is the
+    // EVE settings folder -- so they end the same way: selection dropped
+    // (a source picked in the old tree does not exist in the new one),
+    // state re-read, names re-resolved.
+    //
+    // Neither reads the return value, and Detect's is not special. The
+    // bridge writes the root itself and returns "" for all three of "the
+    // lock was held", "nothing found" and "already set to this" -- the
+    // last two having already said so through _alert -- so a page that
+    // branched on it would be second-guessing an answer Python has already
+    // given the user. refresh() is what shows the outcome, in every case.
+    function chooseRoot(method) {
+      return function () {
+        WM.send(method).then(function () {
+          selected = {};
+          refresh();
+          WM.send('eve_settings_resolve_names');
+        });
+      };
+    }
+
+    WM.el('es-pick').addEventListener('click',
+      chooseRoot('eve_settings_pick_root'));
+    WM.el('es-detect').addEventListener('click',
+      chooseRoot('eve_settings_detect_root'));
 
     ['es-server', 'es-profile'].forEach(function (id) {
       WM.el(id).addEventListener('change', function () {

@@ -483,25 +483,51 @@
         <!-- Two faces of one card. Folder, server and profile are set on the
              first visit and rarely again, while the copy card below is why
              the screen exists; five controls above it pushed the target list
-             under the fold at the 560px floor. evesettings.js chooses which
+             under the fold at the window floor. evesettings.js chooses which
              face renders and forces the controls open when there is nothing
-             to summarise. -->
+             to summarise.
+
+             The floor is 840x625 CSS at every scaling (DESIGN.md). This
+             comment used to say "the 560px floor", a viewport S4 established
+             cannot occur; the reason the card collapses is unchanged, only
+             the number it was argued against. -->
         <div class="row" id="es-folder-summary" hidden>
           <span class="lab">Folder</span>
           <span id="es-folder-root" class="field mono"></span>
           <span id="es-folder-set"></span>
-          <button id="es-folder-edit" class="linkbtn">Change…</button>
+          <!-- Profiles 7: a .btn, not a .linkbtn. This row is a mono boxed
+               path that looks interactive and is not, dim static text, and
+               then the one thing on it that acts -- which was link-styled,
+               borderless, and no more prominent than the text beside it.
+               The one control was the least control-like element present.
+               .linkbtn's own box model is not touched; the class is simply
+               the wrong one for a row where nothing else is a control. -->
+          <button id="es-folder-edit" class="btn">Change…</button>
         </div>
         <div id="es-folder-detail">
           <div class="row">
             <!-- A span, not <label for>: #es-root is a span and nothing
                  labelable sits in this row. The class is what matters --
                  this was the one path in the app rendering in the
-                 proportional face, off the shared 118px column, with
-                 nothing to stop a long root pushing the button out. -->
+                 proportional face, off the shared label treatment, with
+                 nothing to stop a long root pushing the button out. (That
+                 treatment is a stacked full-width .lab now, not the 118px
+                 right-aligned column this comment used to name -- see
+                 style.css's `.settings .row > .lab`.) -->
             <span class="lab">Folder</span>
             <span id="es-root" class="field mono">No folder selected</span>
             <button id="es-pick" class="btn">Choose folder…</button>
+            <!-- Profiles 4. Detect existed in Settings > Folders and on the
+                 first-run screen, for a folder shallower and better known
+                 than this one, while the EVE settings root -- the folder
+                 the product is named for -- got Choose folder... alone.
+                 Chooser first, then Detect, matching both existing sites.
+                 The backend half is Api.eve_settings_detect_root, which
+                 COMMITS rather than suggesting, unlike Settings' detect_folder:
+                 its neighbour here commits the moment the dialog closes, and
+                 two behaviours for one question on one screen is the class of
+                 inconsistency this round is about. -->
+            <button id="es-detect" class="btn">Detect</button>
           </div>
           <div class="row">
             <label class="lab" for="es-server">Server</label>
@@ -518,11 +544,13 @@
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
              opacity:0 and the styled .ring is the visible control, so a
              bare radio here rendered as a native white Windows dot against
-             the dark card. The .lab puts them on the same 118px column as
+             the dark card. The .lab puts them on the same left edge as
              every labelled row on the screen, and carries the word: this
              switch changes what the source dropdown, the target list and
              the filter below it all mean, and was the one unlabelled
-             control on the screen. -->
+             control on the screen. (That edge is a stacked full-width .lab
+             now; this comment used to name the 118px right-aligned column
+             it replaced.) -->
         <div class="row">
           <span class="lab">Copy</span>
           <label class="radio">
@@ -544,9 +572,45 @@
           <button id="es-all" class="btn">Select all</button>
           <button id="es-none" class="btn">Clear</button>
         </div>
-        <div id="es-targets" class="list-scroll"></div>
-        <div class="row">
+        <!-- Profiles 2: NOT .list-scroll any more. The roster is a picking
+             surface being used as a verification surface -- "select all" is
+             the normal path, so what is wanted here is to SEE who is about
+             to be overwritten, which needs everyone visible at once. A
+             capped inner scroller gave the opposite: two nested scrollbars
+             (its own and the page's) and a list clipped mid-row at BOTH
+             edges, with a half-legible name sitting directly above a
+             full-strength accent button. Columns reclaim the dead width
+             beside every name; the route's own overflow-y is now the one
+             scrollbar on the screen. See .es-roster in style.css. -->
+        <div id="es-targets" class="es-roster"></div>
+        <!-- Profiles 1. The hazard and the cost both belong AT the commit,
+             and neither was here: the "EVE running" pill lives in the
+             folder card at the top of the page, and in the scrolled capture
+             the button is on screen and the pill is not -- the card has left
+             the viewport entirely. The count is the other half of Profiles 3
+             (ui/copy.py puts it in the confirm; the page had no quantity at
+             all, while the Uploader prints "1 selected - 108.8 MB").
+
+             The pill is the SAME pill, painted by the same paintPill over
+             both mount points, not a second sentence about the same fact --
+             a hand-written copy of the hazard here would be free to drift
+             from the one ui/copy.py states in the dialog. It needs no rule
+             of its own: #es-eve-state's only job is undoing the .card > h2
+             treatment, and nothing here is a heading. -->
+        <div class="row" id="es-commit">
           <button id="es-copy" class="btn acc">Copy to selected</button>
+          <span id="es-copy-count" class="es-count">Nothing selected</span>
+          <!-- No `hidden` attribute here, and evesettings.js sets one at
+               wire() instead. Not a style choice: .pill sets a display and
+               has no [hidden] override of its own (that rule is S2's), so
+               test_page_conventions' hidden guard reads this element as
+               unhideable through its CLASS. It is hideable through its id
+               -- #es-eve-state-commit[hidden] outranks .pill on specificity
+               -- but the guard does not model that, and it is right to be
+               conservative about the trap DESIGN.md says six rules in
+               style.css nearly shipped. Handoff recorded for S2: .pill
+               wants the override, and this screen is the first to need it. -->
+          <span id="es-eve-state-commit" class="pill">EVE closed</span>
         </div>
       </section>
 

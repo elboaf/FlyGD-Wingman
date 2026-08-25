@@ -338,6 +338,24 @@
       skills.refresh_in_flight = !!busy;
       window.onSkills(skills);
     },
+    // The Profiles states a click cannot reach. eveRunning() is the hazard
+    // both pills paint; eveNoFolder() is the empty state that used to claim
+    // "No other characters in this profile" when there was no profile.
+    eveRunning: function (running) {
+      eve.eve_running = running === undefined ? true : running;
+      window.onEveSettingsRunning({ running: eve.eve_running });
+    },
+    eveNoFolder: function () {
+      eve.root = ''; eve.server = ''; eve.profile = '';
+      eve.servers = []; eve.profiles = [];
+      eve.characters = []; eve.accounts = [];
+      window.onEveSettingsNames();
+    },
+    eveUnreadable: function () {
+      eve.unreadable = true;
+      eve.characters = []; eve.accounts = [];
+      window.onEveSettingsNames();
+    },
     skillsEmpty: function () {
       skills.characters = [];
       skills.plans = [];
@@ -345,6 +363,105 @@
       window.onSkills(skills);
     }
   };
+
+  // ---- Profiles -------------------------------------------------------
+  // The Profiles route had NO stub at all, so `?dev=1` rendered it as an
+  // inert copy of itself: eve_settings_state hit "bridge: no such method",
+  // render() bailed on the null, and the screen showed empty dropdowns and
+  // no roster. That is indistinguishable from the bug this page's whole
+  // failure mode produces, and it made the one screen whose findings are
+  // about THIRTY-FIVE ROWS the one screen that could not be eyeballed.
+  //
+  // Thirty-five characters, because the number is the point: the roster's
+  // column count, the page-versus-inner scrolling and the commit row's
+  // wrapping all only misbehave at a real roster's size.
+  var eveNames = [
+    'Suartad Arsten', 'Yas Kalkoken', 'Zuelo Parvi', 'Mikan Antollare',
+    'Rhea Vestibule', 'Tovan Kuvakei', 'Ceptaris Enderas', 'Dokan Kaundur',
+    'Elsebeth Rhiannon', 'Fenrir Blackmoor', 'Gwyn Aldent', 'Hakan Ceres',
+    'Ithra Vaelor', 'Jorunn Sakkert', 'Kael Ortan', 'Liris Ostus',
+    'Marek Vetruvian', 'Nomi Sarum', 'Oren Tash-Murkon', 'Pell Kordaine',
+    'Quinn Arkaral', 'Rask Amarantine', 'Sable Ithron', 'Tarek Nadire',
+    'Uxor Kelendi', 'Vale Trystan', 'Wren Solette', 'Xander Voll',
+    'Yrsa Halvorsen', 'Zeth Karidan', 'Aria Nostrade', 'Brann Ulvsson',
+    'Corr Sevaine', 'Dain Holloway', 'Eir Sandvik'
+  ];
+
+  var eve = {
+    root: 'C:\\Users\\tng\\AppData\\Local\\CCP\\EVE',
+    default_root: 'C:\\Users\\tng\\AppData\\Local\\CCP\\EVE',
+    server: 'tq', profile: 'default',
+    unreadable: false, too_broad: false,
+    // null, not false: the real probe answers AFTER the state it triggered
+    // has already been returned, and the pill's "Checking for EVE..." face
+    // is the one a stub that guessed `false` would never show.
+    eve_running: null,
+    servers: [{ path: 'tq', name: 'Tranquility' }],
+    profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
+    characters: eveNames.map(function (name, i) {
+      return { path: 'c' + i, id: String(90000000 + i), name: name };
+    }),
+    accounts: [
+      { path: 'a0', id: '1001', name: 'Account 1001' },
+      { path: 'a1', id: '1002', name: 'Account 1002' },
+      { path: 'a2', id: '1003', name: 'Account 1003' }
+    ],
+    backups_unreadable: false,
+    auto_keep: 10,
+    backups: [
+      { path: 'b1', created: '20260824-140300', origin: 'auto',
+        kind: 'character', stem: 'core_char_90000001' },
+      { path: 'b2', created: '20260824-140300', origin: 'auto',
+        kind: 'character', stem: 'core_char_90000002' },
+      { path: 'b3', created: '20260821-091544', origin: 'manual',
+        kind: 'profile', stem: 'settings_Default' }
+    ]
+  };
+
+  api.eve_settings_state = function () {
+    console.log('DEV api.eve_settings_state()');
+    return Promise.resolve(JSON.parse(JSON.stringify(eve)));
+  };
+
+  // Returns rather than pushes, exactly as the bridge does, and returns the
+  // path so a stub cannot look more decisive than the real one: Python's
+  // detector returns "" for "already set to this folder" too, having said
+  // so through an alert the page never sees.
+  api.eve_settings_pick_root = function () {
+    console.log('DEV api.eve_settings_pick_root()');
+    return Promise.resolve(eve.root);
+  };
+  api.eve_settings_detect_root = function () {
+    console.log('DEV api.eve_settings_detect_root()');
+    return Promise.resolve(eve.root);
+  };
+  api.eve_settings_select = function (server, profile) {
+    console.log('DEV api.eve_settings_select(', server, ',', profile, ')');
+    eve.server = server; eve.profile = profile;
+    return Promise.resolve(true);
+  };
+  api.eve_settings_resolve_names = function () {
+    console.log('DEV api.eve_settings_resolve_names()');
+    return Promise.resolve(null);
+  };
+
+  // Every mutation returns "a worker started" and then pushes, because the
+  // page's `if (!accepted) setBusy(false)` branch exists for the case where
+  // one did NOT -- a stub that answered synchronously would leave the busy
+  // path, which is what disables half the screen, permanently unexercised.
+  function eveMutation(name) {
+    return function () {
+      console.log('DEV api.' + name + '(',
+                  Array.prototype.slice.call(arguments), ')');
+      setTimeout(function () {
+        window.onEveSettingsDone({ ok: true });
+      }, 600);
+      return Promise.resolve(true);
+    };
+  }
+  ['eve_settings_copy', 'eve_settings_backup', 'eve_settings_restore',
+   'eve_settings_delete_backup'
+  ].forEach(function (name) { api[name] = eveMutation(name); });
 
   window.pywebview = { api: api };
   window.dispatchEvent(new Event('pywebviewready'));
