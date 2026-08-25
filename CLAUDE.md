@@ -126,7 +126,8 @@ Hard rules from `DESIGN.md` worth knowing before you touch a screen:
   free text commits on Enter or an explicit button, never on blur. Nothing
   commits before the first payload renders.
 - Title-bar space is the scarce resource; `MIN_WIDTH`/`MIN_HEIGHT` in
-  `ui/window.py` are **physical** pixels, measured not derived. Do the
+  `ui/window.py` are **logical** pixels, measured not derived, so the CSS
+  viewport floor is 840x625 at every scaling — not 840/scale. Do the
   arithmetic before adding a destination.
 
 ## Conventions

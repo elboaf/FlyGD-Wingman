@@ -212,7 +212,11 @@
         ? 'webhook 1538615213203656754 in #combat-logs' : statusLine,
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
-      destination: 'Uploads go to FlyGD \u00b7 unlisted'
+      destination: 'Uploads go to FlyGD \u00b7 unlisted',
+      // Python sends this from __version__; the double carries a value
+      // of the same SHAPE and not the real one, so a stale fake cannot
+      // be mistaken for the app agreeing with itself.
+      version: '0.0.0-dev'
     };
   }
 
@@ -244,7 +248,7 @@
       window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
                          destination: 'Uploads go to FlyGD \u00b7 unlisted' });
       window.onAuthState({ state: 'connected', message: 'Connected' });
-      window.onStatus({ text: 'Ready', kind: 'FG' });
+      window.onStatus({ text: 'Idle', kind: 'FG' });
     }, 0);
     return Promise.resolve(null);
   };
