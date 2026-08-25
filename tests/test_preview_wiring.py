@@ -475,6 +475,89 @@ def test_set_minimize_inactive_clients_persists_and_restyles(tmp_path, monkeypat
     assert host.restyles == 1
 
 
+def test_set_preview_locked_adds_an_offline_character_and_restyles(
+    tmp_path, monkeypatch
+):
+    """The brief's round-trip case: a character who has never been seen
+    running (no host.characters() entry, no saved layout rect) must still
+    be lockable -- that is the entire reason Task 1 moved lock storage out
+    of preview.layouts, whose deserialize drops any entry missing a full
+    rect. `name` here appears nowhere else in api._state.settings, proving
+    the write does not depend on the character having a prior footprint."""
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {}
+    assert api.set_preview_locked("Someone Offline", True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["locked"] == ["Someone Offline"]
+    assert writes[0]["preview"]["locked"] == ["Someone Offline"]
+    assert host.restyles == 1
+
+
+def test_set_preview_locked_removes_by_name(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"locked": ["Aiga Otsolen", "Zuelo Parvi"]}
+    assert api.set_preview_locked("Aiga Otsolen", False) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["locked"] == ["Zuelo Parvi"]
+    assert writes[0]["preview"]["locked"] == ["Zuelo Parvi"]
+    assert host.restyles == 1
+
+
+def test_set_preview_locked_is_a_no_op_without_a_host(tmp_path, monkeypatch):
+    """restyle() must not be called when there is no host to call it on --
+    same guard set_preview_show_labels/set_preview_opacity already use."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api.set_preview_locked("Aiga Otsolen", True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+
+
+def test_set_never_minimize_adds_and_removes_by_name(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {}
+    assert api.set_never_minimize("Zuelo Parvi", True)["applied"] is True
+    assert api._state.settings["preview"]["never_minimize"] == ["Zuelo Parvi"]
+    assert api.set_never_minimize("Zuelo Parvi", False)["applied"] is True
+    assert api._state.settings["preview"]["never_minimize"] == []
+    assert writes[-1]["preview"]["never_minimize"] == []
+    assert host.restyles == 2
+
+
+def test_get_preview_hotkey_state_reports_locked_and_never_minimize(tmp_path):
+    """The per-character table paints its two new checkboxes off this one
+    payload (ui/api.py's own comment says so) -- confirm the two keys
+    actually ride it, and default to [] rather than raising when the
+    section predates Task 1."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "locked": ["Aiga Otsolen"],
+        "never_minimize": ["Zuelo Parvi"],
+    }
+    payload = api.get_preview_hotkey_state()
+    assert payload["locked"] == ["Aiga Otsolen"]
+    assert payload["never_minimize"] == ["Zuelo Parvi"]
+
+    api._state.settings["preview"] = {}
+    payload = api.get_preview_hotkey_state()
+    assert payload["locked"] == []
+    assert payload["never_minimize"] == []
+
+
 def test_a_failed_preview_setting_write_is_refused_not_claimed(tmp_path, monkeypatch):
     """Mirrors test_a_rolled_back_alert_write_reverts_the_checkbox's
     Python-side counterpart: settings.update() restores the live dict on
@@ -937,3 +1020,26 @@ def test_the_row_dedup_set_cannot_collide_with_object_prototype():
     js = _web("previews.js")
     block = js.split("function rows")[1].split("function clashes")[0]
     assert "Object.create(null)" in block
+
+
+def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
+    """wm:settings is never re-dispatched after a single-field write (see
+    list.js's own comment on refreshRecordingDir -- repainting the whole
+    Settings form on every field commit would clobber whatever else the
+    user is mid-edit on). Without a narrower signal, toggling "Minimize
+    inactive" off would leave every already-rendered Never-minimize
+    checkbox enabled until the next full page load, contradicting the
+    hint text next to it. settings.js's own write handler must dispatch a
+    one-field custom event on success (mirroring the existing
+    wm:preview-enabled-changed precedent), and previews.js must listen for
+    it -- not just for wm:settings, which only ever fires once, at load."""
+    settings_js = _web("settings.js")
+    block = settings_js.split("Minimize inactive clients")[1]
+    assert (
+        "wm:preview-minimize-inactive"
+        in block.split("document.addEventListener('wm:settings'")[0]
+    ), "the event must be dispatched from the write's success branch"
+
+    previews_js = _web("previews.js")
+    listener = previews_js.split("wm:preview-minimize-inactive'")[1]
+    assert "minimizeInactive" in listener[:200]

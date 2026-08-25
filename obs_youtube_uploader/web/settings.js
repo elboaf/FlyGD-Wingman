@@ -697,3 +697,80 @@
     else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
   }
 }());
+
+// ---- Minimize inactive clients ---------------------------------------
+// Same {applied, persisted, error} shape and revert-on-refusal posture as
+// show_labels/opacity above. One difference worth flagging: unlike those
+// two, this flag is read PER SWITCH (build_preview_host's closure in
+// __main__.py), not applied to every open preview by restyle() the moment
+// it changes -- so index.html's static hint already says "applies the
+// next time a client is switched away from, not this one." This file's
+// status line stays reserved for the states show_labels/opacity's already
+// cover (refused, persist-failed, previews-off) and does not repeat that.
+(function () {
+  var box = WM.el('preview-minimize-inactive');
+  var status = WM.el('preview-minimize-inactive-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_minimize_inactive_clients', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        box.checked = !wanted;
+        say(res && res.error);
+        return;
+      }
+      // applied is true whether or not persistence succeeded -- update.
+      // update never reverts the in-memory dict on an OSError, only on
+      // raising before that (see _write_preview_setting's own comment),
+      // so the live value really did change here and previews.js's
+      // per-row Never-minimize checkboxes need to know now, not at the
+      // next full page load. wm:settings itself cannot carry this: it is
+      // deliberately never re-dispatched after a single-field write (see
+      // list.js's refreshRecordingDir), because repainting the whole
+      // Settings form would clobber whatever else the user is mid-edit on.
+      document.dispatchEvent(new CustomEvent('wm:preview-minimize-inactive', {
+        detail: { enabled: wanted }
+      }));
+      if (!res.persisted) {
+        say('Minimizing inactive clients is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings — '
+          + 'it will not survive a restart.');
+      } else {
+        say('');
+        sayDependence();
+      }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    // Absent means off: matches build_preview_host's minimize_inactive_
+    // clients closure default (__main__.py) -- minimizing a real EVE
+    // client window must be asked for, never assumed on upgrade.
+    box.checked = !!(s.preview && s.preview.minimize_inactive_clients);
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());

@@ -478,6 +478,21 @@
              state and not a gap. -->
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-off" style="display:none"></span></div>
+        <div class="row">
+          <span class="lab">Minimize inactive</span>
+          <label class="check">
+            <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
+            Minimize a client's window while it is not the one you switched to
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Static baseline text, same DEFAULT_HINT/say() pattern as
+               preview-show-labels-status: settings.js overwrites this with
+               a persistence failure or the previews-off dependence note,
+               then restores it. -->
+          <span class="hint" id="preview-minimize-inactive-status">Applies
+            the next time a client is switched away from, not this one.
+            A character marked "Never minimize" below is exempt.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to

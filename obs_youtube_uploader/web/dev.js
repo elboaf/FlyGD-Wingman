@@ -40,7 +40,10 @@
    // Task 6: same shape again, and set_preview_show_labels/set_preview_
    // opacity revert their control on a refused write just like the rest
    // of this list.
-   'set_preview_show_labels', 'set_preview_opacity'
+   'set_preview_show_labels', 'set_preview_opacity',
+   // Task 10: same shape; settings.js reverts the checkbox on anything
+   // that is not `applied`, same as every entry above.
+   'set_minimize_inactive_clients'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -57,6 +60,18 @@
   // return {applied, persisted, error} and the page reads all three.
   api.set_alert_event = function (event, field, value) {
     console.log('DEV api.set_alert_event(', event, field, value, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  // Task 11: same tier -- previews.js reverts the row's checkbox on
+  // anything that is not `applied`, same as the rest of this file.
+  api.set_preview_locked = function (name, locked) {
+    console.log('DEV api.set_preview_locked(', name, locked, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  api.set_never_minimize = function (name, enabled) {
+    console.log('DEV api.set_never_minimize(', name, enabled, ')');
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
@@ -273,6 +288,10 @@
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
             show_labels: true, opacity: 255,
+            // Task 10: read here by settings.js's own wm:settings listener
+            // AND by previews.js's (previews.js needs it to decide whether
+            // each row's Never-minimize checkbox is enabled).
+            minimize_inactive_clients: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
               events: {
@@ -457,6 +476,12 @@
       roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Kaska Rin'],
       characters: [],
       registration: {},
+      // Task 11: one of each state, on the OFFLINE rows above (enabled:
+      // false, characters: []) -- proving locked/never_minimize render
+      // and commit for a character with no running client, not only one
+      // the harness happens to show online.
+      locked: ['Aiga Otsolen'],
+      never_minimize: ['Zuelo Parvi'],
       // Latent rather than active, for the same consistency: bookmarks
       // register nothing while this chord could still be taken later.
       bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }

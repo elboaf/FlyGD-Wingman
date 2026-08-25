@@ -1975,6 +1975,14 @@ class Api:
             "characters": host.characters() if live else [],
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
+            # Character-name lists, not per-character booleans -- see
+            # PreviewHost._is_locked/_is_never_minimize and
+            # set_preview_locked/set_never_minimize below. The per-character
+            # table needs these to paint its two new checkboxes; riding this
+            # payload (rather than a second round trip) keeps row state in
+            # the one place previews.js already reads it from.
+            "locked": list(section.get("locked") or []),
+            "never_minimize": list(section.get("never_minimize") or []),
         }
 
     def _bookmark_chords(self) -> dict:
@@ -2101,6 +2109,50 @@ class Api:
         result = self._write_preview_setting(
             ("minimize_inactive_clients",), bool(enabled)
         )
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def _toggle_preview_roster(self, key: str, name: str, member: bool) -> dict:
+        """Add or remove *name* from the character-name list at
+        preview.<key> (locked or never_minimize), then persist through
+        _write_preview_setting.
+
+        A list, not a per-character flag: Task 1 moved lock storage out of
+        preview.layouts precisely because that entry is dropped whenever it
+        is missing a full rect (preview/layout.py's deserialize), which is
+        exactly what a character who has never dragged their preview looks
+        like. never_minimize needs the same shape for the same reason --
+        both are read by PreviewHost as membership tests
+        (_is_locked/_is_never_minimize), never by key lookup.
+
+        Shared by set_preview_locked and set_never_minimize below rather
+        than duplicated: the add/remove-by-name logic is identical, only
+        the settings key differs.
+        """
+        current = list(self._state.settings.get("preview", {}).get(key) or [])
+        if member:
+            if name not in current:
+                current.append(name)
+        else:
+            current = [n for n in current if n != name]
+        return self._write_preview_setting((key,), current)
+
+    def set_preview_locked(self, name, locked) -> dict:
+        """Persist whether *name*'s preview is locked against drag, then
+        push it live via PreviewHost.restyle() -- lock is read per drag
+        (preview/window.py), so the live PreviewWindow.locked has to be
+        refreshed or the checkbox would do nothing until restart."""
+        result = self._toggle_preview_roster("locked", name, bool(locked))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_never_minimize(self, name, enabled) -> dict:
+        """Persist whether *name* is exempt from minimize_inactive_clients,
+        then push it live via restyle() -- same reasoning as
+        set_preview_locked above."""
+        result = self._toggle_preview_roster("never_minimize", name, bool(enabled))
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result

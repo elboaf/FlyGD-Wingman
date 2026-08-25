@@ -9,8 +9,16 @@
 
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
-               bookmark_chords: {active: [], latent: []}, enabled: false};
+               bookmark_chords: {active: [], latent: []}, enabled: false,
+               locked: [], never_minimize: []};
   var capturing = null;
+  // preview.minimize_inactive_clients, off the settings payload rather
+  // than the hotkey-state one: it lives in Settings' own Previews card
+  // (settings.js), not here, and this file only needs to know its CURRENT
+  // value to decide whether a row's Never-minimize box is usable. Reusing
+  // the wm:settings listener below (already read for inert_notes) avoids
+  // a second round trip for one boolean.
+  var minimizeInactive = false;
   // Bumped every time `state` is replaced wholesale, by a push or by a
   // refresh. send() samples it before its bridge call so a save that
   // resolves late can tell that a newer table has landed meanwhile.
@@ -82,7 +90,7 @@
     return known[gesture] === false ? 'refused' : null;
   }
 
-  function makeRow(label, gesture, online, onSet) {
+  function makeRow(label, gesture, online, onSet, character) {
     var row = WM.make('div', 'row');
     var lab = WM.make('span', 'lab', label);
     // Offline is information, not an error: the binding is still saved and
@@ -147,7 +155,89 @@
       });
     });
     row.appendChild(typed);
+
+    // Cycle forward/back have no `character` -- they are chords, not
+    // characters, and neither Lock nor Never-minimize means anything for
+    // them. #preview-binds is a CSS grid with `.row { display: contents }`
+    // (style.css), so every row must contribute the same number of cells
+    // or a short row's children bleed into the next row's columns. Two
+    // empty fillers keep the grid aligned instead of shrinking the column
+    // count for those two rows only.
+    if (character) {
+      row.appendChild(makeLockCheck(character));
+      row.appendChild(makeNeverMinimizeCheck(character));
+    } else {
+      row.appendChild(document.createElement('span'));
+      row.appendChild(document.createElement('span'));
+    }
     return row;
+  }
+
+  function isLocked(name) { return (state.locked || []).indexOf(name) !== -1; }
+  function isNeverMinimize(name) {
+    return (state.never_minimize || []).indexOf(name) !== -1;
+  }
+
+  // Both checkboxes follow the same shape: read the live membership list
+  // for their initial state, write back through the matching endpoint on
+  // `change` (DESIGN.md: discrete controls commit on change, never blur),
+  // and on a refusal put the box back rather than show a state the app
+  // never actually took -- same posture as settings.js's per-field
+  // checkboxes, just without a status line (there is no room for one per
+  // row, forty of them). `state` is patched in place on success instead of
+  // waiting for the next full payload, matching setCharacterBind's own
+  // shortcut for the common case; a push that lands in between (an EVE
+  // client opening or closing) still wins because it replaces `state`
+  // wholesale and this file always re-renders from it.
+  function makeLockCheck(name) {
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = isLocked(name);
+    box.addEventListener('change', function () {
+      var wanted = box.checked;
+      WM.send('set_preview_locked', name, wanted).then(function (res) {
+        if (!res || !res.applied) { box.checked = !wanted; return; }
+        state.locked = wanted
+          ? (state.locked || []).concat(name)
+          : (state.locked || []).filter(function (n) { return n !== name; });
+      });
+    });
+    var label = WM.make('label', 'check', ' Lock');
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
+    return label;
+  }
+
+  function makeNeverMinimizeCheck(name) {
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = isNeverMinimize(name);
+    // `.nm`, not the bare `.check` DESIGN.md warns against dimming
+    // wholesale (`#lab-stitch.disabled` is scoped by id for exactly that
+    // reason): this label is the only place `.check.nm` is used, so
+    // scoping the disabled treatment to it dims this one control and
+    // nothing else on the page, the same intent with a class instead of
+    // an id because there is one of these per character rather than one
+    // on the whole screen.
+    var label = WM.make('label', 'check nm', ' Never minimize');
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
+    if (!minimizeInactive) {
+      WM.setEnabled(box, false);
+      label.classList.add('disabled');
+      label.title = 'Turn on "Minimize inactive" above to use this.';
+    }
+    box.addEventListener('change', function () {
+      var wanted = box.checked;
+      WM.send('set_never_minimize', name, wanted).then(function (res) {
+        if (!res || !res.applied) { box.checked = !wanted; return; }
+        state.never_minimize = wanted
+          ? (state.never_minimize || []).concat(name)
+          : (state.never_minimize || [])
+              .filter(function (n) { return n !== name; });
+      });
+    });
+    return label;
   }
 
   function beginCapture(button, onSet) {
@@ -240,7 +330,8 @@
         // indistinguishable from one where everyone really has logged
         // out; the banner above says "off" instead.
         state.enabled ? entry.online : null,
-        function (g) { setCharacterBind(entry.name, g); }));
+        function (g) { setCharacterBind(entry.name, g); },
+        entry.name));
     });
 
     var empty = WM.el('preview-binds-empty');
@@ -302,6 +393,8 @@
       pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
+      state.locked = state.locked || [];
+      state.never_minimize = state.never_minimize || [];
       requestRender();
     });
   }
@@ -348,16 +441,39 @@
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
+    state.locked = state.locked || [];
+    state.never_minimize = state.never_minimize || [];
     requestRender();
   });
 
-  // The inert-note table, which is settings-payload state rather than
-  // hotkey state. panel.js owns the onSettings handler and re-dispatches
-  // it, so this listens on the same custom event settings.js uses rather
-  // than claiming a handler that already has an owner. A re-render is
-  // requested (not called) so it cannot detach an armed capture button.
+  // The inert-note table, and now preview.minimize_inactive_clients, both
+  // settings-payload state rather than hotkey state. panel.js owns the
+  // onSettings handler and re-dispatches it, so this listens on the same
+  // custom event settings.js uses rather than claiming a handler that
+  // already has an owner. A re-render is requested (not called) so it
+  // cannot detach an armed capture button.
   document.addEventListener('wm:settings', function (event) {
-    inertNotes = (event.detail || {}).inert_notes || {};
+    var detail = event.detail || {};
+    inertNotes = detail.inert_notes || {};
+    var s = detail.settings || {};
+    // Absent means off, matching build_preview_host's own default: turning
+    // on Never-minimize before this exists must not look possible.
+    minimizeInactive = !!(s.preview && s.preview.minimize_inactive_clients);
+    requestRender();
+  });
+
+  // wm:settings alone is not enough to keep this live: list.js's own
+  // comment on refreshRecordingDir documents why get_settings is never
+  // followed by a re-dispatch of wm:settings after a single-field write --
+  // repainting the whole form would clobber whatever the user is mid-way
+  // through typing elsewhere on the page. That means toggling "Minimize
+  // inactive" in settings.js would otherwise leave every open row's
+  // Never-minimize checkbox showing the state from page load until the
+  // next full reload. This event is the narrow exception: one boolean,
+  // dispatched only by settings.js's own successful write, touching
+  // nothing a user could be typing into.
+  document.addEventListener('wm:preview-minimize-inactive', function (event) {
+    minimizeInactive = !!(event.detail && event.detail.enabled);
     requestRender();
   });
 

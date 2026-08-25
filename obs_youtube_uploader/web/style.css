@@ -709,6 +709,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    with a precondition the app can check for itself (two rows selected). */
 #lab-stitch.disabled { opacity: .45; cursor: default; }
 
+/* Same rationale as #lab-stitch.disabled above, but there is no single
+   static id to scope to: Never-minimize is one checkbox PER character row
+   (previews.js's makeNeverMinimizeCheck), built and torn down as the
+   roster changes. `.check.nm` is a class used nowhere else, so this stays
+   just as narrow as the id form -- it dims only the row-level Never-
+   minimize label previews.js adds `.disabled` to while minimize-inactive
+   is off, not every `.check` in the app. */
+.check.nm.disabled { opacity: .45; cursor: default; }
+
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
@@ -1037,7 +1046,14 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 #preview-binds {
   display: grid; gap: 10px; align-items: center; justify-content: start;
-  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+  /* Was repeat(3, ...): button, clear, typed. Task 11 added Lock and Never
+     minimize as two more per-row children (previews.js's makeRow always
+     appends exactly one of {both checkboxes} or {two filler spans}, so
+     every row -- including cycle-forward/back, which have no character --
+     still contributes the same column count). Drop this to repeat(3, ...)
+     again and the two new columns bleed into whatever sits below them,
+     since .row is display:contents and the grid does not know rows apart. */
+  grid-template-columns: minmax(0, max-content) repeat(5, max-content);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
