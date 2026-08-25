@@ -61,7 +61,7 @@ def test_defaults_are_the_documented_values():
                         "pulses": 3,
                         "cooldown_s": 1,
                         "color": "#ff4d4d",
-                        "sound": "chime",
+                        "sound": "alarm",
                     },
                     "warp_scramble": {
                         "enabled": True,
@@ -69,7 +69,7 @@ def test_defaults_are_the_documented_values():
                         "pulses": 3,
                         "cooldown_s": 8,
                         "color": "#ffd24d",
-                        "sound": "bell",
+                        "sound": "ring",
                     },
                     "decloak": {
                         "enabled": True,
@@ -77,7 +77,7 @@ def test_defaults_are_the_documented_values():
                         "pulses": 3,
                         "cooldown_s": 8,
                         "color": "#4dd2ff",
-                        "sound": "chime",
+                        "sound": "notify",
                     },
                 },
             },

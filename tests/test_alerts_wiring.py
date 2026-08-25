@@ -7,6 +7,8 @@ make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 """
 
+import re
+
 from obs_youtube_uploader.alerts import service as alert_service
 from tests.test_api import make_api
 
@@ -75,7 +77,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#ff4d4d",
-                "sound": "chime",
+                "sound": "alarm",
             },
             "warp_scramble": {
                 "enabled": True,
@@ -83,7 +85,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#ffd24d",
-                "sound": "bell",
+                "sound": "ring",
             },
             "decloak": {
                 "enabled": True,
@@ -91,7 +93,7 @@ def _alerts_section(**over):
                 "duration_ms": 1200,
                 "pulses": 3,
                 "color": "#4dd2ff",
-                "sound": "chime",
+                "sound": "alarm",
             },
         },
     }
@@ -294,7 +296,7 @@ def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_pa
 
     api.test_alert("combat")
 
-    assert played == ["chime"]
+    assert played == ["alarm"]
     assert len(host.raised) == 3
 
 
@@ -312,7 +314,7 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
     assert result["applied"] is True
     assert result["persisted"] is False
     assert result["error"] == "Previews are off, so only the sound played."
-    assert played == ["chime"]
+    assert played == ["alarm"]
 
 
 def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
@@ -332,7 +334,7 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
 
     assert result["applied"] is True
     assert result["error"] == "No EVE clients are open, so only the sound played."
-    assert played == ["chime"]
+    assert played == ["alarm"]
     assert host.raised == []
 
 
@@ -504,15 +506,23 @@ def test_no_gamelogs_folder_state_is_reachable():
     assert "Gamelogs folder is not set" in html
 
 
-def test_health_and_character_count_render_together():
-    """A count with no liveness beside it keeps reading "watching N
-    characters" after the tailer thread has died -- get_alert_state's
-    `running` flag must appear in the same rendered sentence as the
-    character count, never the count alone."""
+def test_health_and_characters_render_together():
+    """A character list with no liveness beside it keeps reading
+    "watching Alice, Bob" after the tailer thread has died --
+    get_alert_state's `running` flag must appear in the same rendered
+    sentence as the characters, never the characters alone.
+
+    It renders NAMES rather than a count: with five clients running, "5
+    characters online" is the number you already assumed, and the fact
+    worth having is which one is missing when it says four.
+    """
     js = _web("alerts.js")
     block = js.split("function healthText")[1].split("\n\n")[0]
     assert "state.running" in block
     assert "characters" in block
+    assert "join(" in block, (
+        "the health line must render the character NAMES, not a count"
+    )
 
 
 def test_a_failed_alert_write_says_it_will_not_survive_a_restart():
@@ -577,6 +587,48 @@ def test_the_card_refreshes_when_previews_are_toggled_without_navigating():
     )[0]
     assert "wm:preview-enabled-changed" in preview_block
 
-    js = _web("alerts.js")
+    # Comments stripped first, the same way test_page_conventions.py does
+    # it. This asserts a fact about the LISTENER, but it locates it by
+    # splitting on the event's name in raw source -- so the first prose
+    # mention of that name anywhere above the registration silently became
+    # the split point, and the assertion started reading a comment. That
+    # is exactly what happened when alerts.js grew a comment explaining
+    # which events re-render the health line.
+    js = re.sub(r"(?m)^\s*//.*$", "", _web("alerts.js"))
     assert "wm:preview-enabled-changed" in js
     assert "refresh" in js.split("wm:preview-enabled-changed")[1][:80]
+
+
+def test_the_pve_filter_names_every_event_it_actually_filters():
+    """patterns.FILTERED_EVENTS decides which events the NPC heuristic is
+    applied to, and the checkbox's sentence is a hand-written claim about
+    that set.
+
+    It said "Ignore combat that looks like NPC fire" while the filter also
+    governs warp scrambles, sitting card-level above three events -- which
+    taught the reader that all three were filtered. decloak never is: it
+    carries no attacker source for the heuristic to test
+    (patterns.py:25-27), so a user reading the old sentence could believe
+    their decloak alerts were NPC-filtered when nothing had ever filtered
+    them.
+    """
+    from obs_youtube_uploader.alerts import patterns
+
+    sentence = re.search(
+        r'id="alert-pve-filter".*?</label>', _web("index.html"), re.DOTALL
+    )
+    assert sentence, "the PvE filter checkbox is gone"
+    words = " ".join(sentence.group(0).split()).lower()
+
+    # The display name each event id goes by in the card's own rows.
+    names = {"combat": "combat", "warp_scramble": "warp scramble"}
+    for event in patterns.FILTERED_EVENTS:
+        assert names[event] in words, (
+            f"the PvE filter applies to {event!r} but its sentence does "
+            f"not mention it: {words!r}"
+        )
+    for event in set(patterns.EVENTS) - set(patterns.FILTERED_EVENTS):
+        assert names.get(event, event.replace("_", " ")) not in words, (
+            f"the PvE filter does NOT apply to {event!r}, but its "
+            f"sentence names it: {words!r}"
+        )

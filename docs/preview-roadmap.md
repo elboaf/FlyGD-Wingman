@@ -17,7 +17,7 @@ than it should be. Six of its statements no longer hold:
 | --- | --- |
 | Second slice items 7 and 8 shipped (client window placement, the placing watcher) | **Removed in #31.** Only item 9, `settings.update()`, survived — and it is now the boundary every settings writer in the package uses |
 | `gestures.py` and `cycle.py` are *(deferred)* in the module table | Shipped in #26, which the same document states twelve lines later |
-| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped except the render path** in #65 — see below |
+| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped** — everything but the render path in #65, the render path since — see below |
 | `PreviewWindow.selected` is never set | `PreviewHost` tracks `_selected_key` from the foreground hook and calls `set_selected` (#65) |
 | "Every one of the thirteen client-window-layout items is also unwalked" | That checklist section was deleted with the feature in #31. Two of its three weighted items asked whether EVE accepts a forced rect — the question that destroyed three characters' settings. They are answered by deletion |
 | The rebind regression test covers `save_settings` only | `save_settings` and `set_recording_dir` no longer exist. `_write_setting` is the single writer and `ui/api.py` contains no rebind at all. `save_bookmarks` is the one writer still outside the test's reach |
@@ -30,40 +30,87 @@ section of `docs/smoke-checklist.md`, not a number.
 
 ### The alert render path — the last mile of item 9
 
-**Highest priority, because the feature is currently inert.** #65 built
-detection, parsing and configuration: `preview/alerts/{patterns,tailer,service,state}.py`,
-a validated `preview.alerts` section with per-event colour, sound, duration and
-pulse count, PvE filtering, persist-until-selected, the Previews-tab card, and
-`PreviewHost.raise_alert` with a bounded queue drained on the pump.
+**Built.** #65 delivered detection, parsing and configuration:
+`preview/alerts/{patterns,tailer,service,state}.py`, a validated
+`preview.alerts` section with per-event colour, sound, duration and pulse
+count, PvE filtering, persist-until-selected, the Previews-tab card, and
+`PreviewHost.raise_alert` with a bounded queue drained on the pump. What was
+missing was the drawing, and `PreviewHost._apply_alerts` was a no-op — a user
+could enable alerts, configure colours, and observe no difference whatsoever,
+which is worse than unshipped because everything reported success.
 
-`PreviewHost._apply_alerts` is a no-op. It drains the queue so `raise_alert`
-cannot back up unbounded, and draws nothing. A user can enable alerts,
-configure per-event colours, and observe no difference whatsoever — which is a
-worse state than unshipped, because everything reports success.
-
-`docs/smoke-checklist.md` already carries a "Cannot run until the render path
-lands" section for it.
+`preview/alertframes.py` now pre-renders one DIB per pulse phase and the host
+pushes them on an 80ms timer that runs only while something is armed.
+**Nothing in the suite renders a pixel, so this is verified by
+`docs/smoke-checklist.md`'s "The alert render path" section and not by CI.**
 
 Two constraints, both load-bearing:
 
 - **Do not re-render the Pillow bitmap at flash frequency.** `redraw()` is keyed
   and a flash would defeat the key, putting a ~67k-pixel push back on a timer —
-  the cost that made dragging stutter. Pulse `SetLayeredWindowAttributes` alpha,
-  or pre-render a small ring of frames. (The record states this at
-  `eve-preview-design.md:468-471`, cited from three other documents.)
-- **Preview opacity wants the same alpha channel** (below). Whichever lands
-  second has to compose with the first rather than own it: a pulse writing an
-  absolute alpha erases the user's opacity for its duration, and an opacity
-  write mid-pulse cancels the flash.
+  the cost that made dragging stutter. (The record states this at
+  `eve-preview-design.md:468-471`, cited from three other documents.) The same
+  rule is why a resize mid-alert *invalidates* the frame cache and lets the
+  next tick rebuild it, rather than rebuilding per `WM_MOUSEMOVE`.
+- **Pre-rendered frames are the only remaining option.** The alternative this
+  file used to offer — "pulse `SetLayeredWindowAttributes` alpha" — was probed
+  on 2026-08-25 and does not work. See below.
+
 
 Not verifiable by the suite — no test renders a pixel. Needs hands-on testing
 against real clients.
 
+#### What the ring probe established
+
+Run on Windows against three layered preview-shaped windows with live DWM
+thumbnails, captured with `BitBlt(CAPTUREBLT)` and measured off the pixels
+rather than judged by eye. This answers the two questions
+`eve-preview-alerts-plan.md`'s Task 1 asked, and one it did not.
+
+**A ring wider than the thumbnail inset renders as corner brackets. Confirmed —
+the conditional inset is necessary.** Measured ring width, in pixels:
+
+| variant | top edge | side, in the label band | side, beside the thumbnail | bottom |
+| --- | --- | --- | --- | --- |
+| ring 2 / inset 2 | 2 | 2 | 2 | 2 |
+| ring 6 / inset 2 | 6 | 6 | **2** | **2** |
+| ring 6 / inset 6 | 6 | 6 | 6 | 6 |
+
+The thumbnail overpaints the ring everywhere it covers, so a 6 px ring inside a
+2 px inset survives only along the top edge and beside the label band — four
+corner blocks joined by 2 px edges, exactly as the design predicted. Task 10
+keeps its inset swap on arm and clear.
+
+**`SetLayeredWindowAttributes` cannot pulse the ring, and permanently breaks
+the window if called.** All four of the plan's observations, plus the recovery
+path:
+
+- The window does not blank. It dims — chrome *and* thumbnail together and
+  uniformly, so the game content dims with the ring. That is the opposite of an
+  alert: the pulse would fade the thing it is trying to draw attention to.
+- It still receives clicks. `WindowFromPoint` at the centre returns the preview
+  before and after, so the hit region survives.
+- **A subsequent `UpdateLayeredWindow` fails**, with `ERROR_INVALID_PARAMETER`
+  (87), and the surface stays frozen at the dimmed image. One
+  `SetLayeredWindowAttributes` call ends the window's ability to draw for the
+  rest of its life.
+- It is recoverable, but only by force: dropping `WS_EX_LAYERED` and re-adding
+  it resets the window to per-pixel-alpha mode, after which `layered.push`
+  succeeds again and the ring returns to full brightness.
+
 ### 8. Label customisation
 
-Text override, placement (top/bottom/centre), font size, colours. `chrome.render`
+**Partly done in #87:** labels can be switched off (`preview.show_labels`,
+and `PreviewWindow._label_h()` returns 0 when they are). Still open: text
+override, placement (top/bottom/centre), font size, colours. `chrome.render`
 already takes the label; everything else is new settings and UI. `window.py`
 passes `LABEL_H = 30` and `chrome.render`'s `font_size=17` default.
+
+Anything here that changes the band's HEIGHT has to invalidate the alert
+frame cache the way the on/off toggle already does — the frames bake the
+band in, so a preview alerting while the height changes would keep flashing
+the old geometry until the alert cleared (`PreviewWindow.arm_alert`'s
+staleness check).
 
 ### 10. Switching behaviour
 
@@ -88,18 +135,28 @@ Lowest priority, largest pure-parsing job.
 
 ## Smaller gaps
 
-- **`preview.opacity` is dead config.** Stored and clamped to 20–255
-  (`settings.py`), read by nothing: `window.py` calls `self._thumb.update(rect)`
-  at both call sites, so it defaults to 255. When wired it **must** go through
-  `SetLayeredWindowAttributes` or the thumbnail's own opacity — putting it in
-  the Pillow bitmap's alpha reintroduces the click-through bug in a subtler
-  form, because a layered window is hit-tested against its alpha channel.
-  Sequence this with the alert render path; they collide.
-- **Lock previews has no UI.** The plumbing is complete — `layout.Entry` carries
-  `locked`, it survives a restart, right-drag overrides it — but nothing sets
-  it. One checkbox, but it crosses the bridge (new `Api` method, `previews.js`,
-  `index.html`), and nothing in the suite renders the page, so it lands
-  unverified until someone opens it by hand.
+- **`preview.opacity` is wired** (#87), through `Thumbnail.update`'s
+  `DWM_TNP_OPACITY` — `window.py` passes `self.opacity` at all three call
+  sites now.
+
+  This entry used to say opacity "must" go through
+  `SetLayeredWindowAttributes`. **That would have broken previews outright**,
+  and the ring probe above is why: one such call permanently disables
+  `UpdateLayeredWindow` on that window, which is the preview's only means of
+  drawing its own chrome. #87 took the thumbnail route independently and is
+  correct; the claim is recorded here because it survived in this file long
+  enough to have been followed. Putting opacity in the Pillow bitmap's alpha
+  remains wrong for the original reason: a layered window is hit-tested
+  against its alpha channel, so that reintroduces click-through.
+
+  It also never collided with the alert render path, which this file once
+  claimed it did. They touch different surfaces — thumbnail opacity dims the
+  game content, the ring frames repaint the chrome around it — which is why
+  they landed independently and in the opposite order to the one this file
+  warned about.
+
+- **Lock previews has a UI** (#87): `previews.js` drives `set_preview_locked`
+  per character.
 - **Border thickness and colour are constants.** `chrome.render` takes `border`
   and `border_color`; `window.py` passes `BORDER = 2` and a literal
   `(0, 200, 220, 255)`. The third member of this group, `selected`, is done.

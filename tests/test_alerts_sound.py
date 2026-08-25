@@ -29,10 +29,10 @@ def test_sound_path_prefers_the_frozen_bundle(tmp_path, monkeypatch):
     """
     sounds = tmp_path / "assets" / "sounds"
     sounds.mkdir(parents=True)
-    (sounds / "chime.wav").write_bytes(b"")
+    (sounds / "alarm.wav").write_bytes(b"")
     monkeypatch.setattr(service.paths, "bundle_dir", lambda: tmp_path)
 
-    assert service.sound_path("chime") == sounds / "chime.wav"
+    assert service.sound_path("alarm") == sounds / "alarm.wav"
 
 
 def test_the_spec_collects_the_sounds_folder():
@@ -44,3 +44,47 @@ def test_the_spec_collects_the_sounds_folder():
     root = pathlib.Path(__file__).resolve().parents[1]
     spec = (root / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert "assets/sounds" in spec or "assets\\\\sounds" in spec
+
+
+def test_no_orphaned_sound_files_ship():
+    """The mirror of test_every_valid_sound_has_a_file.
+
+    That one catches an id with no file. This catches a file with no id --
+    dead weight in the installer, and the specific way it arises is a
+    sound being replaced: the new file lands, the id changes, and the old
+    .wav sits there forever because nothing looks for it.
+    """
+    folder = service.sound_path(min(settings.VALID_SOUNDS - {"none"})).parent
+    shipped = {p.stem for p in folder.glob("*.wav")}
+    orphans = shipped - (settings.VALID_SOUNDS - {"none"})
+    assert not orphans, (
+        f"{sorted(orphans)} ship in assets/sounds but no VALID_SOUNDS id "
+        f"names them, so nothing can ever play them"
+    )
+
+
+def test_every_shipped_sound_is_credited():
+    """The sounds are CC BY 4.0, so shipping one without a credit is a
+    licence violation rather than an untidiness.
+
+    Attribution lives in THIRD-PARTY-NOTICES.md, which the installer
+    ships, and CC BY 4.0 also requires that modifications be disclosed --
+    every one of these was decoded from MP3, and one was truncated.
+    Derived from VALID_SOUNDS rather than listed here, so adding a fourth
+    sound fails until it is credited too.
+    """
+    import pathlib
+
+    notices = (
+        pathlib.Path(__file__).resolve().parents[1] / "THIRD-PARTY-NOTICES.md"
+    ).read_text(encoding="utf-8")
+
+    assert "notificationsounds.com" in notices, (
+        "the alert sounds' source is not credited at all"
+    )
+    assert "CC BY 4.0" in notices or "Attribution 4.0" in notices
+
+    for name in sorted(settings.VALID_SOUNDS - {"none"}):
+        assert f"`{name}.wav`" in notices, (
+            f"{name}.wav ships but THIRD-PARTY-NOTICES.md does not credit it"
+        )

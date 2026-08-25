@@ -332,12 +332,12 @@
               persist_until_selected: true,
               events: {
                 combat: { enabled: true, cooldown_s: 1, duration_ms: 1200,
-                  pulses: 3, color: '#ff4d4d', sound: 'chime' },
+                  pulses: 3, color: '#ff4d4d', sound: 'alarm' },
                 warp_scramble: { enabled: true, cooldown_s: 8,
                   duration_ms: 1200, pulses: 3, color: '#ffd24d',
-                  sound: 'bell' },
+                  sound: 'ring' },
                 decloak: { enabled: true, cooldown_s: 8, duration_ms: 1200,
-                  pulses: 3, color: '#4dd2ff', sound: 'chime' }
+                  pulses: 3, color: '#4dd2ff', sound: 'notify' }
               }
             }
           }

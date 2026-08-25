@@ -454,9 +454,20 @@ input.field.mono, span.field.mono, textarea.field.mono {
   font-family: var(--mono); font-size: var(--fs-mono);
 }
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The border change is a supporting cue, not the indicator: --field-focus-
+   border against --field is about 1.45:1 as a change of state, and the
+   glow this rule used to carry -- rgba(132,48,217,.14) over the card --
+   composited to roughly 1.11:1. Neither is near the 3:1 that 1.4.11 asks,
+   so a focused field was, in practice, unmarked. It takes the same
+   --focus-ring outline every button below uses; see "THE focus indicator".
+
+   :focus rather than :focus-visible, unlike the buttons: a text field
+   clicked with the mouse is about to be typed into, so the ring is wanted
+   there. That is the case the buttons' comment argues the other way for. */
 input.field:focus, textarea.field:focus, select.field:focus {
   border-color: var(--field-focus-border);
-  box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 textarea.field { resize: none; line-height: 1.5; }
 
@@ -1063,7 +1074,12 @@ button.btn:disabled,
   border-color: var(--brand-edge);
 }
 .check input:checked + .box::after { opacity: 1; }
-.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
+/* Same --focus-ring outline as every other control. The glow this used to
+   carry, rgba(132,48,217,.3) over the card, composites to about 1.28:1 --
+   and .box is 15px square, so that glow WAS the whole indicator. */
+.check input:focus-visible + .box {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 /* Scoped to this one label by id: .check is the shared wrapper Settings,
    Bookmarks and Previews all build on, and an opacity on it would dim
    every checkbox in the app. Same .45 button.btn:disabled uses, so an
@@ -1615,13 +1631,89 @@ button.btn:disabled,
    silently do nothing, which reads as nothing happening in game. */
 #alerts-no-folder { color: var(--warn); }
 
-/* input[type=color] has no border/background hooks of its own in most
-   browsers, so its native chrome (usually white) sits directly against
-   this dark theme unless sized and boxed to match the other row
-   controls. */
-.alert-color {
-  width: 28px; height: 24px; padding: 0; border: 1px solid var(--panel-border);
-  border-radius: 4px; background: none; cursor: pointer;
+/* The alert colour, as a small fixed palette rather than a colour input.
+   <input type="color"> opened the native Win32 ChooseColor dialog -- the
+   last unstyled system chrome reachable from this app, which restyled the
+   scrollbar (:647-649) precisely because native chrome was a tell -- and
+   offered 16.7 million answers to a question with about five. alerts.js
+   carries the palette and the reasoning.
+
+   The hex arrives as --swatch on the element, set from JS. That is the one
+   colour this file does not decide: it is the user's data, painted onto a
+   preview of someone else's window, not chrome. Every other pixel here is
+   still tokens. */
+.swatches { display: flex; gap: 5px; align-items: center; }
+.swatch { display: inline-flex; cursor: pointer; }
+/* Same trick .check and .radio use: the real input is invisible and the
+   span beside it is what you see, so no native control ever renders. */
+.swatch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.swatch .dot {
+  width: 18px; height: 18px; border-radius: 4px;
+  border: 1px solid var(--control-edge); background: var(--swatch);
+}
+/* A halo in the page's own colours rather than a tint of the swatch, so
+   "which one is selected" does not depend on the selected colour. The
+   inner ring is the card, which separates the halo from the swatch. */
+.swatch input:checked + .dot {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--text);
+}
+.swatch input:focus-visible + .dot {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+
+/* An event row reports its OWN failures. Twelve controls used to write
+   into one shared .hint at the top of the card, each message overwriting
+   the last, ~400px from the control that produced it -- so a session-only
+   colour write on Decloak announced itself above the Enable switch and
+   was gone by the time anything else was touched. */
+
+/* One grid across all three rows so the columns line up, with each row
+   display:contents -- lifted from #preview-binds, which solved the same
+   problem for the keybind table.
+
+   Three independent flex rows aligned nothing: the checkbox label is the
+   event's NAME now, so its width varies, and every control after it
+   started at a different x. max-content on the first two columns rather
+   than a px or ch width, because both of those are font-fragile and this
+   column's content is three fixed strings the CSS does not own. */
+.alert-events {
+  display: grid;
+  /* The sound column is the only one allowed to give: the name, the
+     swatch and Test are all content-sized, and four rigid max-content
+     tracks overflowed the card at the 840 floor, where the Settings rail
+     leaves this card around 500px. Grid tracks do not wrap, so an
+     overflow here is a horizontally scrolling page, which DESIGN.md
+     forbids outright. */
+  grid-template-columns: max-content max-content minmax(110px, 150px) max-content;
+  /* Pack left. Without it the tracks are spread across the card's full
+     width and the swatch ends up far from the name it belongs to, which
+     reads as four unrelated columns rather than one row per event. */
+  justify-content: start;
+  gap: 10px; align-items: center;
+}
+.alert-events .alert-row > select.field { width: 100%; min-width: 0; }
+.alert-events .alert-row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity, which is the
+   [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
+   children with the row itself gone. */
+.alert-events .alert-row[hidden] { display: none; }
+/* Its own full-width line under the row it belongs to. .field-msg carries
+   its own [hidden] override (:1845), which is what makes `hidden` alone
+   enough on the span.
+
+   `width: 0` with `min-width: 100%` is not a trick for its own sake. A
+   grid item spanning intrinsic tracks contributes its max-content width
+   to them, so this sentence -- the longest string in the card -- was
+   inflating the NAME column and pushing Test off the card's right edge at
+   the 840 floor. Zero width removes that contribution; min-width puts the
+   rendered box back. */
+.alert-events .alert-row > .field-msg {
+  grid-column: 1 / -1; margin: 0 0 4px; width: 0; min-width: 100%;
+}
+/* The name takes its own line before the controls start colliding. */
+@media (max-width: 720px) {
+  .alert-events { grid-template-columns: max-content minmax(90px, 1fr) max-content; }
+  .alert-events .alert-row > .check { grid-column: 1 / -1; }
 }
 
 /* The pill sits inside .card > h2, which is already an align-items:center
@@ -2139,7 +2231,10 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   border: 4.5px solid var(--brand); background: var(--field);
   box-shadow: 0 0 10px rgba(132, 48, 217, .5);
 }
-.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
+/* Paired with .check's, and for the same reason. */
+.radio input:focus-visible + .ring {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 
 /* Radios laid out INLINE in a .row, rather than stacked down a card: the
    8px stacked margin applies to the first of the pair and not the last

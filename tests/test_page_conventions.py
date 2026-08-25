@@ -39,6 +39,23 @@ CSS = re.sub(
     r"/\*.*?\*/", "", (WEB / "style.css").read_text(encoding="utf-8"), flags=re.DOTALL
 )
 
+# Read OFF the page rather than typed here: these two rules exist to catch
+# the page drifting from settings.py, and a third hand-kept copy in the
+# test would just be one more thing to drift. Sorted for a stable message.
+_ALERT_EVENT_IDS = sorted(set(re.findall(r'id="alert-event-([a-z_]+)-enabled"', HTML)))
+
+# The span that renders in place of a hidden native control, mapped to the
+# wrapper class whose CSS hides it. Three of them, not two: the alert
+# colour swatches are radios drawn as filled squares, so `.ring` -- a 12px
+# circle with a dot -- is the wrong shape to reuse and would have meant a
+# radio styled as something it is not just to satisfy a test.
+#
+# Adding a name here is only safe because test_every_hiding_wrapper_
+# actually_hides_its_input checks each one really does take its input out
+# of the layout. Without that, this dict is a hole in the guard.
+_WRAPPERS = {"box": "check", "ring": "radio", "dot": "swatch"}
+_WRAPPERS_FOR = {"checkbox": ("box",), "radio": ("ring", "dot")}
+
 
 def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
@@ -55,11 +72,31 @@ def _strip_js_comments(text: str) -> str:
 # ---- native form controls ---------------------------------------------
 
 
+def test_every_hiding_wrapper_actually_hides_its_input():
+    """The invariant the two tests below stand on, asserted rather than
+    assumed.
+
+    Each wrapper works the same way: the real input is taken out of the
+    layout and made invisible, and a styled sibling span is what renders.
+    Naming a third wrapper in the allowlist below is only safe if that is
+    true of it too -- otherwise the allowlist is how a native control gets
+    waved through by a test written to catch native controls.
+    """
+    for wrapper in sorted(set(_WRAPPERS.values())):
+        rule = re.search(rf"\.{wrapper} input \{{([^}}]*)\}}", CSS)
+        assert rule, f".{wrapper} has no `input` rule, so its input renders"
+        body = rule.group(1)
+        assert "opacity: 0" in body and "position: absolute" in body, (
+            f".{wrapper} input must be position:absolute and opacity:0 -- "
+            f"otherwise the native control is still on screen"
+        )
+
+
 def test_no_checkbox_or_radio_renders_as_a_native_control():
     """Nothing in style.css targets input[type=checkbox] or [type=radio].
-    The dark appearance comes ENTIRELY from the .check/.radio wrappers --
-    .check input is opacity:0 and the styled .box beside it is what you
-    see. A bare input is therefore a white Windows widget on a dark card.
+    The dark appearance comes ENTIRELY from the wrappers -- the input is
+    opacity:0 and the styled span beside it is what you see. A bare input
+    is therefore a white Windows widget on a dark card.
 
     EVE Settings shipped one per character in exactly this way, while
     bookmarks.js already carried a comment warning about it.
@@ -71,8 +108,8 @@ def test_no_checkbox_or_radio_renders_as_a_native_control():
     for match in re.finditer(r'<input[^>]*type="(checkbox|radio)"[^>]*>', body):
         tag = match.group(0)
         after = body[match.end() : match.end() + 120]
-        wrapper = "box" if match.group(1) == "checkbox" else "ring"
-        assert f'class="{wrapper}"' in after, (
+        allowed = _WRAPPERS_FOR[match.group(1)]
+        assert any(f'class="{w}"' in after for w in allowed), (
             f"bare {match.group(1)} renders as a native Windows control: {tag}"
         )
 
@@ -85,10 +122,11 @@ def test_generated_controls_use_the_wrapper_too():
         src = _strip_js_comments(path.read_text(encoding="utf-8"))
         for match in re.finditer(r"""\.type\s*=\s*['"](checkbox|radio)['"]""", src):
             window = src[match.start() : match.start() + 600]
-            wrapper = "box" if match.group(1) == "checkbox" else "ring"
-            assert f"'{wrapper}'" in window or f'"{wrapper}"' in window, (
+            allowed = _WRAPPERS_FOR[match.group(1)]
+            assert any(f"'{w}'" in window or f'"{w}"' in window for w in allowed), (
                 f"{path.name}: a generated {match.group(1)} with no "
-                f".{wrapper} wrapper renders as a native Windows control"
+                f"{' or '.join('.' + w for w in allowed)} wrapper renders "
+                f"as a native Windows control"
             )
 
 
@@ -678,4 +716,82 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
+    """index.html hand-writes nine <option>s for three events, and
+    settings.py owns the list they must match.
+
+    settings.py:20-22 states the failure this prevents: "An id present in
+    the UI dropdown but missing here normalises to silence, which is
+    indistinguishable from a broken alert." The guard it asks for existed
+    only for the ASSETS -- tests/test_alerts_sound.py checks a .wav exists
+    per VALID_SOUNDS -- and nothing tied the page's options to the same
+    set. A fourth sound, or a renamed one, shipped a card that could
+    silently select an id the backend drops.
+    """
+    from obs_youtube_uploader.settings import VALID_SOUNDS
+
+    for event in _ALERT_EVENT_IDS:
+        select = re.search(
+            rf'<select[^>]*id="alert-event-{event}-sound".*?</select>',
+            HTML,
+            re.DOTALL,
+        )
+        assert select, f"no sound select for {event!r}"
+        offered = set(re.findall(r'<option value="([^"]+)"', select.group(0)))
+        assert offered == VALID_SOUNDS, (
+            f"the {event} sound options are {sorted(offered)}, but "
+            f"settings.VALID_SOUNDS is {sorted(VALID_SOUNDS)} -- an id the "
+            f"page offers and settings drops normalises to silence"
+        )
+
+
+def test_the_alert_rows_name_the_events_settings_actually_has():
+    """The row ids are a hand-kept copy of _ALERT_EVENT_DEFAULTS' keys.
+
+    api.py's set_alert_event refuses an unknown event outright, so a
+    renamed key does not corrupt anything -- it just makes every control
+    in that row fail silently, on a card whose whole failure mode is
+    silence. alerts.js carries the same three ids for the same reason and
+    is checked here too, so the three copies cannot drift apart.
+    """
+    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+
+    expected = set(_ALERT_EVENT_DEFAULTS)
+    assert set(_ALERT_EVENT_IDS) == expected, (
+        f"index.html has alert rows for {sorted(_ALERT_EVENT_IDS)}, but "
+        f"settings defines {sorted(expected)}"
+    )
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var EVENTS = \[(.*?)\]", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a flat EVENTS list"
+    assert set(re.findall(r"'([^']+)'", listed.group(1))) == expected, (
+        "alerts.js's EVENTS has drifted from settings._ALERT_EVENT_DEFAULTS"
+    )
+
+
+def test_every_default_alert_colour_is_offered_by_the_swatches():
+    """The colour control is a fixed palette now, not <input type="color">.
+
+    A default that is not in the palette would render as an unlabelled
+    sixth swatch on every fresh install -- paintSwatches appends any stored
+    colour it does not recognise, precisely so a hand-edited settings.json
+    is not silently rewritten, and that escape hatch would quietly become
+    the normal case for a shipped default.
+    """
+    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var COLOURS = \[(.*?)\]", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a COLOURS palette"
+    palette = set(re.findall(r"'(#[0-9a-fA-F]{6})'", listed.group(1)))
+
+    defaults = {spec["color"] for spec in _ALERT_EVENT_DEFAULTS.values()}
+    missing = defaults - palette
+    assert not missing, (
+        f"settings defaults {sorted(missing)} are not in the swatch palette "
+        f"{sorted(palette)}, so a fresh install shows an extra swatch"
     )

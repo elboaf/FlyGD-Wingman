@@ -21,12 +21,55 @@
   var folderBanner = WM.el('alerts-no-folder');
   var healthLine = WM.el('alerts-health');
   var status = WM.el('alerts-status');
+  var depends = WM.el('alerts-depends');
 
-  var EVENTS = [
-    {id: 'combat', label: 'Combat'},
-    {id: 'warp_scramble', label: 'Warp scramble'},
-    {id: 'decloak', label: 'Decloak'}
-  ];
+  // Everything below the master switch is a preference that CAN be
+  // recorded for later, so none of it is disabled -- that is S3's rule,
+  // applied one card up by settings.js's restore-preview-positions block
+  // and stated there: "Previews controls stay live, because recording a
+  // preference for later is an action that can be carried out."
+  //
+  // What was wrong here was not the controls being live. It was that
+  // twelve of them sit under a switch that turns them all off, rendered
+  // as its peers, with the only contradicting line -- "Not watching
+  // gamelogs." -- ABOVE them in the faintest text on the card. So the row
+  // says so instead, and only while it is true.
+  var DEPENDS = 'Alerts are off, so nothing below is watching yet — these '
+              + 'apply when you turn them on.';
+
+  // Ids only. The display names used to be carried here as well, for
+  // messages that named their event ("Combat colour is set for this
+  // session..."). Those messages now render INSIDE the event's own row,
+  // so the name would be repeating the label six inches to its left --
+  // and a hand-kept copy of three labels that index.html already holds is
+  // exactly the drift CLAUDE.md's derive-don't-retype rule is about.
+  //
+  // These ids are still a hand-kept copy of settings.py's
+  // _ALERT_EVENT_DEFAULTS keys. That one is load-bearing and untested;
+  // see the id/option guard in tests/test_page_conventions.py.
+  var EVENTS = ['combat', 'warp_scramble', 'decloak'];
+
+  // The colours offered, and the whole reason this is not an
+  // <input type="color">. That control opened the native Win32 dialog --
+  // the only unstyled system chrome left in a frameless dark app that
+  // restyled the scrollbar precisely because native chrome was a tell --
+  // and offered 16.7 million choices for a decision with about five good
+  // answers. The ring is read in peripheral vision, on a small tile, over
+  // arbitrary game content, while you are aligned on a wormhole. Two
+  // similar purples silently destroy the one thing that makes three
+  // alerts distinguishable, and nothing ever told you.
+  //
+  // Five, well separated in hue and all bright enough to hold up over
+  // moving game content. The three settings.py defaults are among them by
+  // rule, not by luck -- tests/test_page_conventions.py pins that, since a
+  // default that is not offered would render as an unlabelled sixth
+  // swatch on every fresh install.
+  //
+  // Deliberately no second teal: the SELECTED-preview ring is
+  // (0,200,220) in window.py, and decloak's #4dd2ff already sits close
+  // enough to it that the smoke checklist has an item asking whether the
+  // two can be told apart.
+  var COLOURS = ['#ff4d4d', '#ffd24d', '#4dff7a', '#4dd2ff', '#ff4db8'];
 
   // Last-known-good color/sound per event, so a refused or bridge-
   // failed change has something to revert the control to -- by the
@@ -35,31 +78,113 @@
   // what it was before.
   var lastGood = {};
 
-  function say(text) { if (status) { status.textContent = text || ''; } }
+  // Every write below goes through this. The five text slots in this card
+  // are role="status" live regions now, and replacing a text node
+  // re-announces it even when the string is identical -- render() sets the
+  // health line unconditionally on section entry and on every
+  // wm:preview-enabled-changed, so an unguarded write would read "Not
+  // watching gamelogs." aloud again on each one.
+  //
+  // The four .field-msg slots in the other Settings cards have the same
+  // gap and are deliberately NOT changed here: they are live regions
+  // nowhere yet, and arming them without reading how their own modules
+  // write to them is how this kind of noise ships.
+  function setText(el, text) {
+    var next = text || '';
+    if (el && el.textContent !== next) { el.textContent = next; }
+  }
+
+  function say(text) { setText(status, text); }
+
+  function showDepends(enabled) {
+    if (!depends) { return; }
+    setText(depends, enabled ? '' : DEPENDS);
+    depends.style.display = enabled ? 'none' : '';
+  }
 
   function eventRow(id) {
     return {
       enabled: WM.el('alert-event-' + id + '-enabled'),
-      color: WM.el('alert-event-' + id + '-color'),
+      colors: WM.el('alert-event-' + id + '-colors'),
       sound: WM.el('alert-event-' + id + '-sound'),
-      test: WM.el('alert-event-' + id + '-test')
+      test: WM.el('alert-event-' + id + '-test'),
+      msg: WM.el('alert-event-' + id + '-msg')
     };
+  }
+
+  // Each event row reports its own outcome, beside the control that
+  // produced it. #alerts-status stays for CARD-level state only (the three
+  // top-level switches), which is the one thing it was ever right for.
+  //
+  // `hidden` alone is enough: .field-msg carries its own [hidden] override
+  // (style.css:1845), so this is not the trap DESIGN.md names.
+  function sayRow(row, text, severity) {
+    if (!row.msg) { return; }
+    setText(row.msg, text);
+    row.msg.className = 'field-msg' + (text && severity ? ' ' + severity : '');
+    row.msg.hidden = !text;
+  }
+
+  // Built here rather than typed into index.html: the page would
+  // otherwise carry fifteen colour literals, and DESIGN.md keeps colour
+  // decisions out of the markup. The hex reaches CSS as a custom property
+  // on the element, so the stylesheet still owns every other pixel of the
+  // control.
+  //
+  // A stored colour outside the palette gets its own swatch, appended and
+  // selected, instead of being silently snapped to the nearest offered
+  // one. settings.validated_alerts accepts any #rrggbb, so a hand-edited
+  // settings.json is a legitimate state -- and quietly rewriting a user's
+  // choice the moment they open the card would be the card editing
+  // settings it was only asked to display.
+  function paintSwatches(row, id, colour) {
+    if (!row.colors) { return; }
+    var wanted = COLOURS.slice();
+    if (colour && wanted.indexOf(colour) === -1) { wanted.push(colour); }
+
+    if (row.colors.getAttribute('data-built') !== wanted.join(',')) {
+      row.colors.textContent = '';
+      wanted.forEach(function (hex) {
+        var label = document.createElement('label');
+        label.className = 'swatch';
+        var input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'alert-color-' + id;
+        input.value = hex;
+        var dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.setProperty('--swatch', hex);
+        // The only text a screen reader gets for a colour: the hex is not
+        // a name, but it is honest and it distinguishes the five.
+        label.title = hex;
+        input.setAttribute('aria-label', hex);
+        label.appendChild(input);
+        label.appendChild(dot);
+        row.colors.appendChild(label);
+      });
+      row.colors.setAttribute('data-built', wanted.join(','));
+    }
+
+    var boxes = row.colors.querySelectorAll('input');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].checked = boxes[i].value === colour;
+    }
   }
 
   // Shared by the wm:settings hydration and refresh() (get_alert_state),
   // so the per-event rows repaint from the same shape either way.
   function applyAlerts(alerts) {
     var events = (alerts && alerts.events) || {};
-    EVENTS.forEach(function (ev) {
-      var row = eventRow(ev.id);
+    EVENTS.forEach(function (id) {
+      var row = eventRow(id);
       if (!row.enabled) { return; }
-      var spec = events[ev.id] || {};
+      var spec = events[id] || {};
       row.enabled.checked = !!spec.enabled;
-      var color = spec.color || row.color.value;
+      var color = spec.color || (lastGood[id] || {}).color || COLOURS[0];
       var sound = spec.sound || 'none';
-      row.color.value = color;
+      paintSwatches(row, id, color);
       row.sound.value = sound;
-      lastGood[ev.id] = {color: color, sound: sound};
+      lastGood[id] = {color: color, sound: sound};
     });
   }
 
@@ -98,75 +223,120 @@
   writeFlag(pveBox, 'set_alert_pve_filter', 'The PvE filter');
   writeFlag(persistBox, 'set_alert_persist', 'Persisting alerts');
 
-  EVENTS.forEach(function (ev) {
-    var row = eventRow(ev.id);
+  EVENTS.forEach(function (id) {
+    var row = eventRow(id);
     if (!row.enabled) { return; }
 
     row.enabled.addEventListener('change', function () {
       var wanted = row.enabled.checked;
-      WM.send('set_alert_event', ev.id, 'enabled', wanted).then(function (res) {
+      WM.send('set_alert_event', id, 'enabled', wanted).then(function (res) {
         // set_alert_event refuses an unknown event/field outright but a
         // clamped value is still applied -- only a refusal or a bridge
         // failure reverts the box.
-        if (!res || !res.applied) { row.enabled.checked = !wanted; }
-      });
-    });
-    row.color.addEventListener('change', function () {
-      var wanted = row.color.value;
-      WM.send('set_alert_event', ev.id, 'color', wanted).then(function (res) {
         if (!res || !res.applied) {
-          row.color.value = (lastGood[ev.id] || {}).color || wanted;
+          row.enabled.checked = !wanted;
+          sayRow(row, (res && res.error)
+            || 'That could not be changed, so it has been put back.', 'err');
           return;
         }
-        lastGood[ev.id] = lastGood[ev.id] || {};
-        lastGood[ev.id].color = wanted;
+        sayRow(row, '');
+      });
+    });
+    // Delegated: the swatches are rebuilt whenever a stored colour falls
+    // outside the palette, so a listener bound to each input would be lost
+    // on the rebuild that replaces them.
+    row.colors.addEventListener('change', function (event) {
+      var wanted = event.target && event.target.value;
+      if (!wanted) { return; }
+      WM.send('set_alert_event', id, 'color', wanted).then(function (res) {
+        if (!res || !res.applied) {
+          paintSwatches(row, id, (lastGood[id] || {}).color || wanted);
+          sayRow(row, (res && res.error)
+            || 'That colour could not be set, so it has been put back.', 'err');
+          return;
+        }
+        lastGood[id] = lastGood[id] || {};
+        lastGood[id].color = wanted;
         if (!res.persisted) {
-          say(ev.label + ' colour is set for this session, but could not '
-            + 'be written to settings — it will not survive a restart.');
+          sayRow(row, 'The colour is set for this session, but could not be '
+            + 'written to settings — it will not survive a restart.', 'warn');
         } else {
-          say('');
+          sayRow(row, '');
         }
       });
     });
     row.sound.addEventListener('change', function () {
       var wanted = row.sound.value;
-      WM.send('set_alert_event', ev.id, 'sound', wanted).then(function (res) {
+      WM.send('set_alert_event', id, 'sound', wanted).then(function (res) {
         if (!res || !res.applied) {
-          row.sound.value = (lastGood[ev.id] || {}).sound || wanted;
+          row.sound.value = (lastGood[id] || {}).sound || wanted;
+          sayRow(row, (res && res.error)
+            || 'That sound could not be set, so it has been put back.', 'err');
           return;
         }
-        lastGood[ev.id] = lastGood[ev.id] || {};
-        lastGood[ev.id].sound = wanted;
+        lastGood[id] = lastGood[id] || {};
+        lastGood[id].sound = wanted;
         if (!res.persisted) {
-          say(ev.label + ' sound is set for this session, but could not '
-            + 'be written to settings — it will not survive a restart.');
+          sayRow(row, 'The sound is set for this session, but could not be '
+            + 'written to settings — it will not survive a restart.', 'warn');
         } else {
-          say('');
+          sayRow(row, '');
         }
       });
     });
     row.test.addEventListener('click', function () {
       // Never persistent (api.py's test_alert docstring): nothing here
       // is looking at a preview to acknowledge it, so nothing is saved.
-      WM.send('test_alert', ev.id).then(function (res) {
-        if (res && res.error) { say(res.error); }
+      WM.send('test_alert', id).then(function (res) {
+        if (res && res.error) { sayRow(row, res.error, 'warn'); return; }
+        // A successful Test with the master switch off is the one way
+        // this card can actively mislead: a ring pulses, a sound plays,
+        // and nothing is watching gamelogs. The DEPENDS line says so
+        // permanently; this says it at the moment it would be believed.
+        if (!enabledBox.checked) {
+          sayRow(row, 'That is what the alert looks like. Alerts are still '
+            + 'off, so nothing is watching gamelogs yet.', 'warn');
+        } else {
+          sayRow(row, '');
+        }
       });
     });
   });
 
-  // The health line and the character count are ALWAYS one sentence, on
-  // purpose: a count rendered on its own keeps reading "watching 4
-  // characters" after the tailer thread has died, which is a healthy-
-  // looking card sitting above a feature that stopped alerting.
+  // The health line and the characters are ALWAYS one sentence, on
+  // purpose: a list rendered on its own keeps reading "watching Alice,
+  // Bob" after the tailer thread has died, which is a healthy-looking
+  // card sitting above a feature that stopped alerting.
+  //
+  // NAMES, not a count. "5 characters online" is the number you already
+  // assumed when you started five clients; the fact you actually need is
+  // WHICH one is missing when it says four, and get_alert_state already
+  // ships the list (api.py's `characters`) for the card to throw away.
+  // Sorted so the same five clients render in the same order every time
+  // and a gap is something you can spot rather than re-read.
+  //
+  // Capped, because this is one line in a card and a fleet is not five
+  // accounts. The overflow keeps counting, since past the cap the number
+  // is the only thing left that is useful.
+  var HEALTH_NAMES_MAX = 6;
+
   function healthText(state) {
     if (!state.running) {
       return state.last_error
         ? 'Not watching gamelogs — ' + state.last_error
         : 'Not watching gamelogs.';
     }
-    var n = (state.characters || []).length;
-    return 'Watching gamelogs — ' + n + ' character'
-      + (n === 1 ? '' : 's') + ' online.';
+    var characters = (state.characters || []).slice().sort();
+    if (!characters.length) {
+      // Running with nothing to read is a real and reachable state: the
+      // folder is set and the thread is alive, but no client is logged
+      // in yet. "0 characters online" read as a fault.
+      return 'Watching gamelogs — no characters online yet.';
+    }
+    var shown = characters.slice(0, HEALTH_NAMES_MAX);
+    var rest = characters.length - shown.length;
+    return 'Watching gamelogs — ' + shown.join(', ')
+      + (rest ? ' and ' + rest + ' more' : '') + '.';
   }
 
   // Three states, and a card that silently shows nothing is the failure
@@ -175,23 +345,71 @@
   //   2. No Gamelogs folder -- the important one, since without it
   //      alerts silently do nothing, indistinguishable from nothing
   //      happening in game.
-  //   3. Otherwise, the health line above (running + character count).
-  function render(state) {
+  //   3. Otherwise, the health line above (running + the characters).
+  //
+  // `controls` is false on the status poll below: re-applying the stored
+  // spec to the checkboxes, swatches and selects every two seconds would
+  // fight a click whose write is still in flight, snapping the control
+  // back to the old value for one frame. The poll is about what the app
+  // is DOING; the controls belong to whoever last touched them.
+  function render(state, controls) {
     if (offBanner) {
       offBanner.style.display = state.previews_enabled ? 'none' : '';
     }
     if (folderBanner) {
       folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
     }
-    if (healthLine) { healthLine.textContent = healthText(state); }
-    applyAlerts(state.alerts);
+    setText(healthLine, healthText(state));
+    // Read from get_alert_state's own `enabled`, not the checkbox: the box
+    // is what the user just clicked, and a refused or bridge-failed write
+    // reverts it. This must describe what the app is actually doing.
+    showDepends(!!(state.alerts && state.alerts.enabled));
+    if (controls) { applyAlerts(state.alerts); }
   }
 
-  function refresh() {
+  function read(controls) {
     WM.send('get_alert_state').then(function (state) {
       if (!state) { return; }
-      render(state);
+      render(state, controls);
     });
+  }
+
+  function refresh() { read(true); }
+
+  // The first setInterval in the page, so it is worth saying why.
+  //
+  // get_alert_state is deliberately a READ, not a push -- the tailer can
+  // start before the webview exists, so a health change discovered at
+  // launch would be pushed into a window that is not there. That is still
+  // right. What it left was a card that reads its state exactly three
+  // times: on section entry, on a previews toggle, and immediately after
+  // the alerts switch.
+  //
+  // That last one is the bug this fixes, and it was reported from a real
+  // session: enabling alerts refreshes AT ONCE, while AlertService has
+  // only just been reconciled and its tailer's first rescan is up to
+  // POLL_INTERVAL_S away. So the card read `running: true, characters:
+  // []`, rendered "no characters online yet", and nothing ever read
+  // again -- five characters online and the card saying none, for as long
+  // as you left it open.
+  //
+  // The same gap hid the failure the health line exists to catch: a
+  // tailer that dies at minute 40 of a sit kept reading as healthy,
+  // because nothing asked again.
+  //
+  // Only while the section is showing. Nothing needs to be current when
+  // it is not, which is the same reasoning the one-shot reads were built
+  // on.
+  var STATUS_POLL_MS = 2000;
+  var poll = null;
+
+  function startPolling() {
+    if (poll === null) { poll = window.setInterval(function () { read(false); },
+                                                   STATUS_POLL_MS); }
+  }
+
+  function stopPolling() {
+    if (poll !== null) { window.clearInterval(poll); poll = null; }
   }
 
   // panel.js owns onSettings and re-dispatches it; the three checkboxes
@@ -201,6 +419,7 @@
     var s = (ev.detail || {}).settings || {};
     var alerts = (s.preview && s.preview.alerts) || {};
     enabledBox.checked = !!alerts.enabled;
+    showDepends(!!alerts.enabled);
     // Absent means on, matching restore-preview-positions's precedent in
     // previews.js: an upgrading user's file predates the key.
     pveBox.checked = alerts.pve_filter !== false;
@@ -208,11 +427,25 @@
     applyAlerts(alerts);
   });
 
-  // Refreshed on route entry, same reasoning as previews.js and
-  // bookmarks.js: this is a read, not a push, so nothing keeps it
-  // current while the tab is not showing.
+  // Refreshed on section entry, same reasoning as previews.js and
+  // bookmarks.js. Leaving is load-bearing here, as DESIGN.md says of every
+  // enter/leave contract on this page: the poll must stop, or a card
+  // nobody is looking at keeps a bridge call running every two seconds
+  // for the life of the session.
   document.addEventListener('wm:section', function (event) {
-    if (event.detail === 'previews') { refresh(); }
+    if (event.detail === 'previews') {
+      refresh();
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
+
+  // A route change leaves Settings without dispatching wm:section at all,
+  // so the section listener above never hears about it and the poll would
+  // outlive the screen.
+  document.addEventListener('wm:route', function (event) {
+    if (event.detail !== 'settings') { stopPolling(); }
   });
 
   // #preview-enabled and this card share ONE section (#section-previews)
