@@ -303,19 +303,40 @@
     });
   });
 
-  // The health line and the character count are ALWAYS one sentence, on
-  // purpose: a count rendered on its own keeps reading "watching 4
-  // characters" after the tailer thread has died, which is a healthy-
-  // looking card sitting above a feature that stopped alerting.
+  // The health line and the characters are ALWAYS one sentence, on
+  // purpose: a list rendered on its own keeps reading "watching Alice,
+  // Bob" after the tailer thread has died, which is a healthy-looking
+  // card sitting above a feature that stopped alerting.
+  //
+  // NAMES, not a count. "5 characters online" is the number you already
+  // assumed when you started five clients; the fact you actually need is
+  // WHICH one is missing when it says four, and get_alert_state already
+  // ships the list (api.py's `characters`) for the card to throw away.
+  // Sorted so the same five clients render in the same order every time
+  // and a gap is something you can spot rather than re-read.
+  //
+  // Capped, because this is one line in a card and a fleet is not five
+  // accounts. The overflow keeps counting, since past the cap the number
+  // is the only thing left that is useful.
+  var HEALTH_NAMES_MAX = 6;
+
   function healthText(state) {
     if (!state.running) {
       return state.last_error
         ? 'Not watching gamelogs — ' + state.last_error
         : 'Not watching gamelogs.';
     }
-    var n = (state.characters || []).length;
-    return 'Watching gamelogs — ' + n + ' character'
-      + (n === 1 ? '' : 's') + ' online.';
+    var characters = (state.characters || []).slice().sort();
+    if (!characters.length) {
+      // Running with nothing to read is a real and reachable state: the
+      // folder is set and the thread is alive, but no client is logged
+      // in yet. "0 characters online" read as a fault.
+      return 'Watching gamelogs — no characters online yet.';
+    }
+    var shown = characters.slice(0, HEALTH_NAMES_MAX);
+    var rest = characters.length - shown.length;
+    return 'Watching gamelogs — ' + shown.join(', ')
+      + (rest ? ' and ' + rest + ' more' : '') + '.';
   }
 
   // Three states, and a card that silently shows nothing is the failure

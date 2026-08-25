@@ -661,9 +661,17 @@
           <span class="hint" id="alerts-depends" style="display:none"></span></div>
         <div class="row">
           <span class="lab">PvE filter</span>
+          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
+               is {combat, warp_scramble}; decloak is excluded there
+               because it carries no attacker source for the heuristic to
+               test. Saying only "combat" while the control sits above
+               three events, card-level, taught the model that all three
+               were filtered -- so a user assumed their decloak alerts
+               were NPC-filtered when nothing had ever filtered them. -->
           <label class="check">
             <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
-            Ignore combat that looks like NPC fire, not a player's
+            Ignore combat and warp scrambles that look like NPC fire, not
+            a player's
           </label>
         </div>
         <div class="row">
