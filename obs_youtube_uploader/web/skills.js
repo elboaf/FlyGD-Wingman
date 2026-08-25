@@ -90,13 +90,21 @@
   });
 
   // ---- left rail ------------------------------------------------------
+  /* The ready COUNT used to be part of this line ("2 characters - 0
+   * ready") and is deliberately gone. It was scoped to the selected plan,
+   * because `readiness` is, but it sits above `Add character` and detached
+   * from the plan list, where the only available reading is "0 of your 2
+   * characters are ready" -- a roster statement the plan list contradicts
+   * four rows down, where the selected plan's own ratio says otherwise.
+   *
+   * It was also the third copy of one number. The same fact is already
+   * under the READY column header beside the plan it belongs to, and again
+   * in the roster's `Ready N` group head, both of which say what they are
+   * counting. This line now says only the thing that IS roster-scoped. */
   function renderRail() {
     var chars = characters();
-    var ready = 0;
-    chars.forEach(function (ch) { if (ch.readiness === 'Ready') ready += 1; });
     WM.el('skills-counts').textContent = chars.length
       ? chars.length + (chars.length === 1 ? ' character' : ' characters')
-        + ' · ' + ready + ' ready'
       : 'No characters yet';
 
     renderRailButtons();
@@ -283,9 +291,18 @@
   // the user to the wrong control. The cause is already stated where it is
   // known: renderRoster's hint says "No local plans yet" beside the roster,
   // and a per-character failure states itself in the expanded row.
+  //
+  // 'Unknown' was 'Unknown skills', and the word was doing two jobs one
+  // above the other: this GROUP header counts CHARACTERS whose worst
+  // requirement was never injected, while the rows inside it labelled a
+  // REQUIREMENT in that state. Worse, "unknown" attaches in English to the
+  // speaker rather than the subject -- "unknown to us" -- so a correct
+  // statement about the character read as the app failing to look
+  // something up. It is now stated the way the readiness is derived, in
+  // the same shape as the `Missing requirements` group beside it.
   var GROUP_LABEL = {
     Ready: 'Ready', Training: 'Training', Locked: 'Locked',
-    Missing: 'Missing requirements', Unknown: 'Unknown skills',
+    Missing: 'Missing requirements', Unknown: 'Untrained requirements',
     Unscored: 'Not scored yet', Other: 'Unrecognised'
   };
 
@@ -366,7 +383,10 @@
     }
     if (ch.readiness === 'Locked') return 'Locked';
     if (ch.readiness === 'Missing') return 'Missing ' + ch.missing_count;
-    if (ch.readiness === 'Unknown') return 'Unknown';
+    // Not 'Unknown'. Same reason as GROUP_LABEL above: the state is a fact
+    // about the character -- a skill it has never injected -- and 'Unknown'
+    // reports it as something the app could not determine.
+    if (ch.readiness === 'Unknown') return 'Not trained';
     if (ch.readiness === 'Unscored') return 'Unscored';
     // The catch-all's row shows the raw string rather than inventing a
     // label for a state this page has never heard of.
@@ -388,16 +408,6 @@
     if (days) return days + 'd ' + hours + 'h';
     if (hours) return hours + 'h ' + (mins % 60) + 'm';
     return mins + 'm';
-  }
-
-  function formatFetched(iso) {
-    if (!iso) return 'Never fetched';
-    var when = new Date(iso);
-    if (isNaN(when.getTime())) return 'Never fetched';
-    // Local time, deliberately: the ISO string crosses the bridge in UTC
-    // because that is what the state document stores, but the person
-    // reading the row is not in UTC.
-    return 'Last fetched ' + when.toLocaleString();
   }
 
   function matching() {
@@ -583,7 +593,14 @@
     }
 
     if (ch.error) box.appendChild(WM.make('p', 'row-error', ch.error));
-    box.appendChild(WM.make('p', 'row-fetched', formatFetched(ch.fetched_utc)));
+    // `fetched_label` is rendered by Python (ui/api.py, through
+    // library.format_date) so this row and the Uploader's age column speak
+    // one time vocabulary: this used to print a toLocaleString() --
+    // "8/25/2026, 12:12:28 AM" -- beside an uploader that says "5h ago",
+    // with seconds precision on a value where seconds cannot matter.
+    // fetched_utc is still read below, by the staleness badge.
+    box.appendChild(WM.make('p', 'row-fetched',
+                            ch.fetched_label || 'Never fetched'));
 
     var detail = details[ch.character_id];
     if (!detail) {
@@ -599,10 +616,66 @@
     return box;
   }
 
+  /* 'Unknown' renders as 'Not trained', and this is the string the whole
+   * rename started from: on a character with nothing trained for a plan it
+   * appeared seventeen times in twenty-four rows, and reads as seventeen
+   * lookup failures rather than seventeen skills the character has never
+   * injected. `Missing` is the neighbouring state and means something
+   * genuinely different -- the skill IS trained, below the level the plan
+   * asks for -- so the two words have to stay distinguishable.
+   *
+   * The colours these two states get are the other half of the same
+   * finding; see .state-Missing / .state-Unknown in style.css. */
   var STATE_LABEL = {
     TrainedInactive: 'Trained, inactive', Queued: 'Queued',
-    Missing: 'Missing', Unknown: 'Unknown skill'
+    Missing: 'Missing', Unknown: 'Not trained'
   };
+
+  /* Outstanding requirements arrive in PLAN order, which is the order the
+   * user wrote the file in and answers nothing. On a character with 36
+   * outstanding rows that interleaves the two actionable states down the
+   * whole list, so "what do I train next" -- one of the two questions this
+   * screen exists for -- means reading every row.
+   *
+   * Ordered by what the reader would do about it, not by severity:
+   *
+   *   Missing         trained, below the level asked for. Nearest to done,
+   *                   so it is the cheapest thing to train next.
+   *   Not trained     never injected. Actionable, and more work.
+   *   Trained, inactive   not a training problem at all -- an inactive
+   *                   clone or a lapsed Omega. Fixed somewhere else.
+   *   Queued          already being trained. Nothing to decide.
+   *
+   * Note this is NOT evaluator.READINESS_ORDER, which ranks Unknown WORSE
+   * than Missing and is right to: it scores how far a character is from
+   * flying the plan. This list answers a different question, and the two
+   * orders disagree only between the first two rows, which the colour
+   * treats as one bucket anyway.
+   *
+   * The index tie-break keeps plan order inside each state and does not
+   * lean on sort stability. */
+  var STATE_RANK = {
+    Missing: 0, Unknown: 1, TrainedInactive: 2, Queued: 3
+  };
+
+  function stateRank(state) {
+    // A state this page has never heard of sorts last rather than
+    // vanishing or landing at the top -- same reasoning as the roster's
+    // OTHER bucket.
+    var rank = STATE_RANK[state];
+    return rank === undefined ? 9 : rank;
+  }
+
+  function sortByState(reqs) {
+    return reqs
+      .map(function (req, i) { return { req: req, i: i }; })
+      .sort(function (a, b) {
+        var ra = stateRank(a.req.state);
+        var rb = stateRank(b.req.state);
+        return ra === rb ? a.i - b.i : ra - rb;
+      })
+      .map(function (d) { return d.req; });
+  }
 
   function requirementsNode(detail) {
     var list = WM.make('div', 'req-list');
@@ -613,6 +686,7 @@
     var outstanding = (detail.requirements || []).filter(function (req) {
       return req.state !== 'Active';
     });
+    outstanding = sortByState(outstanding);
     if (!outstanding.length) {
       list.appendChild(WM.make('p', 'hint',
                                'Nothing outstanding — every '
