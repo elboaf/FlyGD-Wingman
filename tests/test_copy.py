@@ -11,9 +11,14 @@ from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
 
 
-def _info(name="a.mkv", size=10, duration=60.0, probed=True):
+def _info(name="a.mkv", size=10, duration=60.0, probed=True, answered=True):
     return library.VideoInfo(
-        path=Path(name), mtime=100.0, size=size, duration=duration, probed=probed
+        path=Path(name),
+        mtime=100.0,
+        size=size,
+        duration=duration,
+        probed=probed,
+        answered=answered,
     )
 
 
@@ -61,6 +66,28 @@ def test_summary_of_a_probed_recording_with_no_duration_is_not_partial():
         _info(size=1024, duration=None, probed=True),
     ]
     assert copy_mod.format_selection_summary(infos) == "2 selected · 2.0 KB · 1:00:00"
+
+
+def test_summary_of_a_recording_that_was_never_measured_is_partial():
+    """Uploader 10, and the half of it that is not the column.
+
+    A probe that reached no verdict -- no ffprobe on the machine, a launch
+    failure, a timeout -- contributes 0 exactly like an outstanding one,
+    but it used to be indistinguishable from a finished verdict, so the
+    total came out unmarked. On an install with no ffprobe that made the
+    line read "1 selected · 108.8 MB · 0:00:00": a stated zero for a
+    108.8 MB recording, which is the one thing a blank never claims.
+    """
+    infos = [_info(size=1024, duration=None, probed=True, answered=False)]
+    assert copy_mod.format_selection_summary(infos) == "1 selected · 1.0 KB · 0:00:00+"
+
+    # And it still marks a total that has real content in it, rather than
+    # only the degenerate all-zero case.
+    mixed = [
+        _info(size=1024, duration=3600.0),
+        _info(size=1024, duration=None, probed=True, answered=False),
+    ]
+    assert copy_mod.format_selection_summary(mixed) == "2 selected · 2.0 KB · 1:00:00+"
 
 
 def test_summary_uses_a_middle_dot_separator():

@@ -28,14 +28,19 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
       whose probe is still outstanding contributes 0, so an unmarked total
       would read as complete while being short. It reuses the duration
       column's own vocabulary for the same state ("…" per row) rather than
-      inventing a second one.
+      inventing a second one. A recording whose probe never reached a
+      verdict -- no ffprobe on the machine, a launch failure, a timeout --
+      contributes 0 for the same reason and is marked the same way. That
+      one was missing, and on an install with no ffprobe at all it made
+      every total read "0:00:00" with no marker: a stated zero for a
+      108.8 MB recording, which is the one thing a blank never claims.
     * Size is never marked partial: info.size comes from stat, so it is
       final from the moment the row exists, whatever the probe is doing.
 
-    A probed recording with duration None is a finished verdict (ffprobe
-    could not read it), so it also contributes 0 but leaves the total exact.
-    Its own row already shows "?"; repeating that diagnosis in an aggregate
-    would say nothing the user can act on.
+    A probed recording with duration None AND a verdict is a finished
+    answer (ffprobe ran and could not read it), so it contributes 0 and
+    leaves the total exact. Its own row already shows "?"; repeating that
+    diagnosis in an aggregate would say nothing the user can act on.
 
     The count carries no noun ("3 selected"), which sidesteps agreement at
     every value instead of special-casing 1.
@@ -46,7 +51,7 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
     total_seconds = int(sum(info.duration or 0.0 for info in infos))
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    partial = "+" if any(not info.probed for info in infos) else ""
+    partial = "+" if any(not (info.probed and info.answered) for info in infos) else ""
     return (
         f"{len(infos)} selected · {library.format_size(total_size)}"
         f" · {hours}:{minutes:02d}:{seconds:02d}{partial}"
@@ -447,6 +452,12 @@ CELL_HELP: dict[str, dict[str, str]] = {
     "duration": {
         "?": "Length could not be read. ffprobe could not open this file, so\n"
         "combat-log upload is unavailable for it.",
+        # The dash is about the INSTALL, the "?" about the file. They shared
+        # the "?" glyph until round 2, so an install with no ffprobe accused
+        # every recording in the folder of being unreadable.
+        "—": "Length was not measured: ffprobe was not found.\n"
+        "Wingman bundles it, so reinstalling restores lengths and\n"
+        "combat-log upload.",
         "…": "Measuring length…",
     },
     "link": {

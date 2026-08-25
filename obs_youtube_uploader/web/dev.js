@@ -241,6 +241,18 @@
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
       destination: 'Uploads go to FlyGD \u00b7 unlisted',
+      // S3's INERT_NOTES, shipped on every settings payload. The panel
+      // reads no_webhook from here (Uploader 8: the sentence outlived the
+      // checkbox), and Settings reads previews_off. Doubled with the real
+      // strings rather than placeholders, because what these have to prove
+      // is that the sentence FITS -- the Uploader's panel overflows its
+      // pane at the window floor and this is three lines of it.
+      inert_notes: {
+        previews_off: 'Previews are off, so every keybind below is '
+          + 'unregistered until you turn them back on.',
+        no_webhook: 'No Discord webhook is configured, so combat logs are '
+          + 'not posted. Set one in Settings \u203a Discord.'
+      },
       // Python sends this from __version__; the double carries a value
       // of the same SHAPE and not the real one, so a stale fake cannot
       // be mistaken for the app agreeing with itself.

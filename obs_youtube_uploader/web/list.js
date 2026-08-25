@@ -17,6 +17,12 @@
     duration: {
       '?': 'Length could not be read. ffprobe could not open this file, so\n'
          + 'combat-log upload is unavailable for it.',
+      // The dash is about the INSTALL, the "?" about the file. They shared
+      // the "?" glyph until round 2, so an install with no ffprobe accused
+      // every recording in the folder of being unreadable.
+      '—': 'Length was not measured: ffprobe was not found.\n'
+         + 'Wingman bundles it, so reinstalling restores lengths and\n'
+         + 'combat-log upload.',
       '…': 'Measuring length…'
     },
     link: {
@@ -122,7 +128,12 @@
     var durTip = tooltipForCell('duration', row.duration);
     if (durTip) {
       dur.setAttribute('data-tip', durTip);
-      dur.classList.add(row.duration === '?' ? 'dur-unknown' : 'dur-pending');
+      // Three glyphs, three states -- "?" the file is unreadable, "—" the
+      // measurement was never taken, "…" it is being taken now. The first
+      // two share a treatment (both are a standing non-answer); the third
+      // is the transient one. Keyed off the rendered text, like the help
+      // table above, so this cannot disagree with what is on screen.
+      dur.classList.add(row.duration === '…' ? 'dur-pending' : 'dur-unknown');
     }
     node.appendChild(dur);
 
@@ -178,6 +189,37 @@
   // payload key for something that is otherwise static. Moving it is a
   // separate change from making it true.
   var recordingDir = '';
+
+  // Uploader 12: "No recordings in D:\Videos", where D:\Videos was the
+  // folder that DID have the recordings and the configured-and-empty one
+  // was elsewhere. The next line then offered to open the wrong folder.
+  //
+  // Confirmed by S3, in Api.set_folder: it persists, rebinds the watcher
+  // and calls list_rows, but never re-delivers the settings payload -- so
+  // the cached recordingDir below kept naming the PREVIOUS folder while
+  // the scan was of the new one. Exactly the reported symptom.
+  //
+  // Fixed by re-reading rather than by asking Python to push. S3 declined
+  // to push onSettings and gave the reason: get_settings is a return and
+  // never a push, because a whole-document delivery discards unsaved edits
+  // in an open Settings form -- the trap DESIGN.md records under "an
+  // endpoint whose effect reaches outside its own control".
+  //
+  // For the same reason this does NOT re-dispatch wm:settings. The event
+  // repaints every field on the Settings route, and list_rows fires on
+  // every watcher poll; riding it would rewrite a folder path the user was
+  // still typing, several times a minute. Only the one value this module
+  // renders is taken, and only when the empty state is what is showing --
+  // which is the only time the folder is named at all.
+  function refreshRecordingDir() {
+    WM.send('get_settings').then(function (payload) {
+      if (!payload) return;
+      var dir = (payload.settings || {}).recording_dir || '';
+      if (dir === recordingDir) return;
+      recordingDir = dir;
+      renderEmpty();
+    });
+  }
 
   function renderEmpty() {
     var host = WM.el('list-empty');
@@ -380,6 +422,19 @@
     WM.send('open_recording_dir');
   });
 
+  // Uploader 2's third seam: this deletes files from disk, and it used to
+  // sit in the panel under a card headed PUBLISH, beside the button that
+  // sends them to YouTube. It acts on the same selection as Select all /
+  // Select none and on the same files the list is showing, so it lives
+  // with them and list.js owns it for the same reason it owns those.
+  //
+  // Sends unconditionally, like the rest of this footer: "select at least
+  // one video" is composed in Python (Api.delete_selected) and a page-side
+  // early return would swallow it.
+  WM.el('btn-delete').addEventListener('click', function () {
+    WM.send('delete_selected', WM.list.selectedIds());
+  });
+
   // ---- bridge handlers ----------------------------------------------
   WM.handle('onRows', function (payload) {
     var incoming = payload.rows || [];
@@ -398,6 +453,10 @@
     rows = incoming;
     if (focusId && !known[focusId]) focusId = null;
     render();
+    // Uploader 12. Only when the empty state is the thing on screen: that
+    // is the only render that names the folder, and set_folder reaches
+    // here through list_rows without the settings payload following it.
+    if (!rows.length) refreshRecordingDir();
     // Re-seed the focus item ONLY if the user is already on the list.
     // Rebuilding cleared it, and without this arrow keys go dead
     // mid-session with no focus event coming to fix them -- but seeding

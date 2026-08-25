@@ -743,20 +743,20 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
-    def start_upload(self, title, description, stitch, logs, ids) -> None:
-        # `logs` is accepted and IGNORED. Uploader 8: the checkbox had no
-        # true second state -- "there is no scenario where I don't want to
-        # upload logs also" -- so the choice moved out of one click from
-        # Upload and into whether a webhook is configured at all, which is
-        # the fact that actually decides it. PRODUCT.md backs an
-        # opinionated default here ("does not have to be neutral"), and a
-        # fork that wants logs off belongs in settings.py, not on the panel.
+    def start_upload(self, title, description, stitch, ids) -> None:
+        # No `logs` parameter. Uploader 8: the checkbox had no true second
+        # state -- "there is no scenario where I don't want to upload logs
+        # also" -- so the choice moved out of one click from Upload and
+        # into whether a webhook is configured at all, which is the fact
+        # that actually decides it. PRODUCT.md backs an opinionated default
+        # here ("does not have to be neutral"), and a fork that wants logs
+        # off belongs in settings.py, not on the panel.
         #
-        # The parameter survives the control it served because the page
-        # still passes it: R1 removes the checkbox, and until that lands a
-        # four-argument signature would break every upload. Delete it when
-        # the caller stops sending it, not before.
-        del logs
+        # S3 left the parameter accepted-and-ignored so the page could keep
+        # calling with five arguments until this lane removed the control.
+        # The control is gone (index.html #route-main), so the parameter
+        # goes with it, in the same commit -- the two are one change and a
+        # signature that outlives its caller is a trap for the next reader.
         # privacy and category are NOT parameters. They are settings, and
         # the settings are Python's -- as they were in the Tk build, which
         # read self.state.settings at dispatch time. A page that holds its

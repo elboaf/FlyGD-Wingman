@@ -234,10 +234,22 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   color: #8b93a1; margin-bottom: 12px; font-weight: 600;
   display: flex; align-items: center; gap: 9px;
 }
-/* The short brand rule preceding every section label. */
+/* The short rule preceding every section label. NOT the brand any more.
+   DESIGN.md, after Uploader 16: "Accent marks what is selected and what
+   will happen. A card heading is neither." The Uploader spent the brand in
+   five places -- the checked row's checkbox and its left-edge marker (what
+   is selected), the Upload button (what will happen), and these two card
+   heading bars, which mark neither and diluted the signal for the three
+   that do. The rule is written about `.card > h2` generally rather than
+   about one screen, so it is made here, once, in the shared primitive.
+
+   The bar survives as a neutral: it is the visual anchor for a heading
+   whose type is small, uppercase and widely tracked, and deleting it would
+   restyle five screens to settle an argument about colour. It now reads as
+   punctuation rather than as a claim, which is what a heading is. */
 .card > h2::before {
   content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
-  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  background: var(--field-border);
 }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -421,14 +433,26 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
      in the middle that reads as misalignment rather than as spacing.
 
      52ch tracks the text, not the window, so a long name still gets room
-     while a short one stops the group drifting apart. The 120px floor is
-     the same one the narrow-window smoke item checks.
+     while a short one stops the group drifting apart.
+
+     The floor is 212px, and it was 120px until round 2. 120 was not a
+     measurement of anything the column has to hold: "Fight 2026-08-24
+     17-57-37.mkv" measures 205px in this font including the cell's own
+     8px of padding, so a 120px floor truncated it to "Fight 2026-08-24
+     17-57-…" -- eating the seconds, which are the only characters that
+     tell one row from another (Uploader 11). 212 is what the window floor
+     affords once Modified gives way, and it clears the measured need by
+     7px. A materially longer scene name than this group's will still
+     ellipsise; the tail is what goes, so a prefix much longer than
+     "Fight " would reach the timestamp again. That bound is known and not
+     designed around, because OBS's default template is what the finding
+     was confirmed against.
 
      No 1fr anywhere is deliberate: with nothing elastic the grid packs to
      content width and the slack collects at the right edge, keeping the
      name and its metadata legible as one group. The header uses this same
      rule, so the two can never disagree. */
-  grid-template-columns: 34px minmax(120px, 52ch) 92px 84px 76px 46px;
+  grid-template-columns: 34px minmax(212px, 52ch) 92px 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
   padding: 0 10px;
@@ -450,15 +474,57 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .list-head > span:hover { color: var(--text); }
 .list-head > span.sorted { color: var(--brand-text); }
-/* Direction indicator on the active column only. */
-.list-head > span.sorted::after { content: "\25B2"; font-size: 8px; }
+/* Direction indicator on the active column only -- but the SLOT for it is
+   on every header, always, and that is the fix rather than a detail of it.
+   (Uploader 3.)
+
+   The walkthrough reported headers sitting ~16px right of their data on
+   every column, and blamed the scroll container's gutter. Re-measured in
+   the ?dev=1 harness with 30 rows, comparing text ranges rather than
+   boxes: unsorted, every header agrees with its column to within 2px --
+   which is .list-row's own 2px transparent left border, not an inset --
+   and the gutter cannot move anything anyway, because .grid-row has no
+   1fr, so the tracks are left-packed and a narrower body only eats slack
+   at the right edge.
+
+   What does move is this arrow. On a flex-end header it takes the right
+   end of the column and pushes the LABEL off it: measured, "Size" landed
+   14px left of the right edge of "108.8 MB" the moment that column was
+   sorted, and back in line the moment another was. One column at a time,
+   changing under the pointer, which is how it read as "every column, every
+   visit". Reserving the width unconditionally costs the label 12px it was
+   never entitled to keep and makes the header stop moving. */
+.list-head > span::after {
+  content: "\25B2"; font-size: 8px; flex: none;
+  width: 8px; visibility: hidden;
+}
+.list-head > span.sorted::after { visibility: visible; }
 .list-head > span.sorted.desc::after { content: "\25BC"; }
 /* Each header is anchored like its column — headers centred over
    right-aligned data read as misalignment, not as a choice. */
 .list-head > span.c-check { justify-content: center; padding: 0; }
 .list-head > span.c-size,
 .list-head > span.c-len  { justify-content: flex-end; }
+/* On a right-aligned header the arrow goes BEFORE the label, not after
+   it. Reserving its width was not enough on its own: an ::after at the
+   right end of a flex-end header still owns the column's right edge, so
+   the label sat 12px inboard of the number it labels whether or not the
+   arrow was drawn -- consistently misaligned instead of intermittently,
+   which is not the fix the finding asked for. Ordered first, the LABEL
+   holds the edge and the arrow hangs off its left, which is also where a
+   numeric column conventionally puts one. */
+.list-head > span.c-size::after,
+.list-head > span.c-len::after { order: -1; }
 .list-head > span.c-link { justify-content: center; padding: 0; }
+/* The two CENTRED headers need the arrow's width mirrored on the other
+   side or reserving it decentres them by half its own box. The
+   left-aligned headers need nothing: an ::after cannot move a label that
+   is anchored at the opposite edge. Only the flex-end pair was ever
+   displaced, and it is the pair the finding measured. */
+.list-head > span.c-check::before,
+.list-head > span.c-link::before {
+  content: ""; width: 8px; flex: none;
+}
 
 /* 1px separators, NOT zebra striping: with a card surface and adequate row
    height, zebra is compensation for a flat list. */
@@ -530,10 +596,25 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .list-foot .count {
   margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
 }
+/* Uploader 14. The message was centred horizontally and top-aligned
+   vertically, leaving ~750px of empty pane under it with the column
+   headers still up labelling nothing -- neither deliberate placement nor
+   natural flow. First run proves the app can centre a card, so this was an
+   omission and not a layout limit.
+
+   The scroller is the centring context rather than .empty itself: .empty
+   is the only thing in it when it shows, and #list-scroll is already the
+   full-height flex child. [hidden] is restated because this sets a display
+   (DESIGN.md) -- and #list-empty is hidden on every non-empty render, so
+   without it the list would draw 25 rows underneath a centred sentence. */
+.list-scroll:has(> #list-empty:not([hidden])) {
+  display: flex; align-items: center; justify-content: center;
+}
 .empty {
   padding: 28px 16px; text-align: center;
   color: var(--text-faint); font-size: var(--fs-muted);
 }
+#list-empty[hidden] { display: none; }
 /* The empty state names the folder it watched, so both pieces below are
    scoped to #list-empty rather than added to .empty -- Skills renders
    #skills-empty with that class and evesettings.js builds its "no match"
@@ -621,89 +702,157 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* Scoped to this one label by id: .check is the shared wrapper Settings,
    Bookmarks and Previews all build on, and an opacity on it would dim
    every checkbox in the app. Same .45 button.btn:disabled uses, so an
-   unavailable control reads the same way wherever it appears. */
-#lab-logs.disabled { opacity: .45; cursor: default; }
+   unavailable control reads the same way wherever it appears.
+
+   #lab-logs until round 2, when the combat-log checkbox went (Uploader 8)
+   and Stitch inherited the treatment: it is the one control on the panel
+   with a precondition the app can check for itself (two rows selected). */
+#lab-stitch.disabled { opacity: .45; cursor: default; }
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
 }
 /* The upload destination, learned from the videos.insert response. Always
-   visible so the user can see where uploads actually go. */
+   visible so the user can see where uploads actually go -- but BELOW the
+   button now, not above it. Uploader 1 and 9: this is a standing fact
+   about the account, read once and never acted on, and it was occupying
+   the line directly above the most-pressed control in the app while the
+   thing that actually blocks that control (the selection count) sat a
+   whole card away. They have swapped places. */
 .destination {
   color: var(--text-faint); font-size: var(--fs-muted);
-  margin-bottom: 10px; line-height: 1.4;
+  margin-top: 10px; line-height: 1.4;
 }
 .actions { display: flex; flex-direction: column; gap: 8px; }
 .actions button.btn { width: 100%; text-align: center; padding: 9px 12px; }
-.actions .secondary-row { display: flex; gap: 8px; }
-.actions .secondary-row button.btn { flex: 1; }
 /* Retry is enabled only after an upload has failed IN THIS SESSION, which
    for most users is never -- so its resting state was a dead control given
    the same weight as the one button on this screen that removes files from
-   disk. Hidden rather than greyed, and hidden from CSS rather than from
-   panel.js, because `disabled` IS the whole of "there is nothing to retry":
-   onRetryAvailable already maintains it, .secondary-row's flex:1 then gives
-   Delete the row to itself, and display:none takes it out of the tab order,
-   which greying does not. */
+   disk. That neighbour (Delete selected) has since moved to the list
+   footer, where the files it deletes are, but the reasoning holds for
+   Retry on its own: hidden rather than greyed, and hidden from CSS rather
+   than from panel.js, because `disabled` IS the whole of "there is nothing
+   to retry" -- onRetryAvailable already maintains it, and display:none
+   takes it out of the tab order, which greying does not. */
 #btn-retry[disabled] { display: none; }
 
 /* ---- the two panes at the real window floor -------------------------
-   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py:54) and the app is
-   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at
-   125%, 560px at 150%, 420px at 200%. The layout above was laid out
-   against 840 and needs every one of those to be 840 too. Both overflow
-   rules on .list-pane and .list-scroll are `hidden`, so the columns that
-   did not fit were not crowded -- they left the screen with nothing to
-   say they had ever been there.
+   MIN_WIDTH is 840 LOGICAL pixels and the CSS viewport floor is 840x625
+   at EVERY display scaling -- the minimum lands in WinForms MinimumSize
+   and ptMinTrackSize, both of which Windows DPI-scales for a
+   system-DPI-aware process, so the number is already in the units the
+   page sees. Measured: the floor capture is 839x621 CSS at 200%, which is
+   those two numbers unscaled rather than halved.
 
-   The arithmetic, which is why these breakpoints are not round numbers.
-   A pane costs 12px before a single column renders (1px of .list-pane
+   This block used to open "MIN_WIDTH is 840 PHYSICAL pixels ... so the CSS
+   viewport floor is 840/scale: 672px at 125%, 560px at 150%, 420px at
+   200%", and every breakpoint under it was derived from that. The
+   arithmetic was wrong; DESIGN.md carries the correction and the
+   measurement. **Do not size anything against a 560px or 672px viewport.
+   Neither can occur.** Both overflow rules on .list-pane and .list-scroll
+   are still `hidden`, so a column that does not fit still leaves the
+   screen with nothing to say it was ever there -- which is why the tiers
+   below exist at all.
+
+   The arithmetic that IS right, and why these numbers are not round. A
+   pane costs 12px before a single column renders (1px of .list-pane
    border each side plus the 10px scrollbar), and .grid-row adds 20px of
    its own padding:
 
      six columns    34+120+92+84+76+46 = 452 + 20 + 12 = 484
-     four columns   34+120+92+      46 = 292 + 20 + 12 = 324
+     five columns   34+120+   84+76+46 = 360 + 20 + 12 = 392
      three columns  34+120+         46 = 200 + 20 + 12 = 232
 
-   The route spends 24px on padding and 12px on the gap, so the viewport
-   a tier needs is that figure plus 36px plus the panel. Each breakpoint
-   below is one pixel under the width where the filename would be forced
-   below its 120px floor: 484+36+320 = 840, 484+36+248 = 768,
-   324+36+248 = 608. That the first lands exactly on MIN_WIDTH is the
-   check on all of it -- window.py says its floor was "read off the real
-   page", and this is the number it read.
+   The route spends 24px on padding and 12px on the gap, so the viewport a
+   tier needs is that figure plus 36px plus the panel: 484+36+320 = 840,
+   392+36+248 = 676. That the six-column tier lands exactly on MIN_WIDTH is
+   the check on all of it -- window.py says its floor was "read off the
+   real page", and this is the number it read.
 
-   WHAT GOES, AND WHY IN THIS ORDER. Size and Length are metadata nobody
-   scans to find the recording they just made. Modified is very nearly
-   redundant with the filename, because OBS names a recording after its
-   own timestamp -- the header comment in index.html makes that argument
-   at length, which is why the column is called Modified and not Date. So
+   WHAT NOW GOES, AND WHY AT THE FLOOR RATHER THAN BELOW IT. The tiers
+   under the top one used to sit at 767px and 607px, which the correction
+   above puts permanently out of reach: the window cannot be narrower than
+   840, so neither could ever fire and the six-column layout was the only
+   one that ever rendered. That is what made Uploader 11 visible. At 840
+   the name track gets exactly its 120px floor, while
+   "Fight 2026-08-24 17-57-37.mkv" needs ~200px -- so it truncates to
+   "Fight 2026-08-24 17-57-…", eating the seconds, which are the only
+   characters that tell one row from another. The column carrying the
+   identity was the one being cut, while Modified sat intact beside it
+   carrying the same timestamp in a friendlier form. That is Uploader 6 and
+   11 as one fact: the timestamp is printed twice, and the wider copy is
+   the one that gets destroyed.
+
+   So Modified sheds AT the floor instead of at a width that cannot
+   happen. The order is the one this block always argued for, and the
+   reason is unchanged: Modified is very nearly redundant with the
+   filename, because OBS names a recording after its own timestamp --
+   confirmed with the maintainer that this is OBS's default template, so it
+   holds for every user and not just this one. Dropping it returns 92px to
+   the name, which is enough for the whole filename. Size and Length go
+   next, being metadata nobody scans to find the recording they just made;
    the narrowest tier keeps identity and status (which recording, and
-   whether it is already up) and sheds the rest.
+   whether it is already up).
 
-   The name's floor becomes 0 rather than 120px in every narrow tier, so
-   below 488px -- 175% and 200% scaling -- it goes on shrinking and
-   ellipsising instead of overflowing. There is still no 1fr anywhere,
-   for the reason the base template gives.
-
-   Hidden through `.grid-row >` (0,2,0) and not `.c-size` (0,1,0),
+   Hidden through `.grid-row >` (0,2,0) and not `.c-date` (0,1,0),
    because `.list-head > span` is (0,1,1) and would otherwise keep the
    HEADER cell while the body cell went -- the header/row disagreement
    the shared template exists to make impossible. */
+
+/* WHERE EACH TIER FIRES, and the arithmetic behind it. A pane costs 12px
+   before a single column renders (1px of .list-pane border each side plus
+   the 10px scrollbar), .grid-row adds 20px of its own padding, and the
+   route spends 24px on padding plus 12px on the gap. So a tier needs the
+   sum of its track floors, plus 68px, plus the panel:
+
+     six    212+34+92+84+76+46 = 544 + 32 + 36 + 320 = 932
+     five   212+34+   84+76+46 = 452 + 32 + 36 + 320 = 840   <- the floor
+     five   the same, with the 248px panel            = 768
+     three    0+34+         46 =  80 + 32 + 36 + 248 = 396
+
+   Each ceiling is one pixel under what the tier above it needs, so a tier
+   never fires while the wider layout still fitted.
+
+   The five-column tier landing EXACTLY on MIN_WIDTH is the check on all
+   of it, and it moved there in round 2. The six-column tier used to hold
+   that position, on a 120px name floor -- which is why six columns
+   rendered at the floor with the filename truncated, and why the two
+   tiers that would have dropped Modified sat at 767px and 607px, below a
+   floor the window can never reach. Widening the name track to what a
+   filename actually needs moves the agreement one tier down and puts the
+   drop where it can happen. */
+@media (max-width: 931px) {
+  .grid-row { grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px; }
+  .grid-row > .c-date { display: none; }
+}
+
+/* The panel step, and the one query on this screen that was never dead.
+   It fires at 200% scaling and not at 100%: at 100% the floor viewport is
+   840 CSS and this does not match, while at 200% the floor measures 839
+   (a 840 logical minimum lands a 1678 physical client area, and 1678/2 is
+   839), so it matches at the floor and nowhere else. The panel was
+   therefore 248px wide on one machine and 320px on another at the same
+   window size, with nothing in the stylesheet predicting which -- a
+   rounding artefact holding a layout decision. DESIGN.md records that and
+   hands it here.
+
+   Kept, and now the narrower of two real floors rather than an accident:
+   839 is where the five-column layout above stops fitting beside a 320px
+   panel, so the panel is what gives. */
 @media (max-width: 839px) {
   .panel { width: 248px; }
 }
 
+/* Below what five columns need beside the 248px panel (768). Unreachable
+   through the window, like its predecessors -- but unlike them it is the
+   tier the name track's `minmax(0, ...)` protects, so it is what stops a
+   filename overflowing rather than ellipsising if the floor ever moves.
+   Kept as that record, per DESIGN.md's "unreachable is not the same as
+   removable"; nothing new should be sized against it. */
 @media (max-width: 767px) {
-  .grid-row { grid-template-columns: 34px minmax(0, 52ch) 92px 46px; }
-  .grid-row > .c-size, .grid-row > .c-len { display: none; }
-}
-
-@media (max-width: 607px) {
   .grid-row { grid-template-columns: 34px minmax(0, 52ch) 46px; }
-  .grid-row > .c-date { display: none; }
-  .panel { width: 220px; }
+  .grid-row > .c-size, .grid-row > .c-len { display: none; }
 }
 
 /* ====================== status strip ================================ */
