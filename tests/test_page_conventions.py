@@ -269,6 +269,33 @@ def test_no_container_offers_two_primary_actions():
         )
 
 
+def test_accent_hover_restates_its_own_fill_and_label():
+    """`button.btn.acc:hover:not(:disabled)` and
+    `button.btn:hover:not(:disabled)` are BOTH (0,3,1), so the accent's
+    hover wins only on source order and only for the properties it names.
+
+    Both halves have already failed in the shipped app. The accent rule
+    used to declare `filter` alone, so the generic rule supplied the
+    background and hovering the Upload button replaced the brand gradient
+    with the flat grey fill -- through two accent colours, because nothing
+    in this suite renders the page. Omitting `color` fails the same way
+    more quietly: the generic rule's --text lands on the brightened
+    gradient at 3.84:1, under the 4.5:1 floor.
+    """
+    generic = CSS.index("button.btn:hover:not(:disabled)")
+    accent = CSS.index("button.btn.acc:hover:not(:disabled)")
+    assert generic < accent, (
+        "the accent hover rule must stay BELOW the generic one -- equal "
+        "specificity means it wins on order alone"
+    )
+    block = CSS[accent : CSS.index("}", accent)]
+    for prop in ("background", "color"):
+        assert re.search(rf"\b{prop}\s*:", block), (
+            f"button.btn.acc:hover must restate {prop}: the generic button "
+            f"hover rule sets it at the same specificity and would win it"
+        )
+
+
 # ---- reachability ------------------------------------------------------
 
 
