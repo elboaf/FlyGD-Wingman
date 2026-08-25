@@ -30,20 +30,25 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 > | Skills 6 | ~1000px | x=870 → x=1900 | **~515px** |
 > | Settings 12 | ~255px | x=600 → x=860 (a 260px jump) | **~128px** |
 > | Settings 3 | ~48px | hint vs. label offset | **~24px** |
-> | F3 | ~11 CSS px | 568 → 590 physical | **11px — already correct** |
+> | F3 | ~11 CSS px | 568 → 590 physical | **6px — see below; not a unit slip** |
 >
 > Settings 12 and Settings 3 halve to 128 and 24 CSS, both of which the
 > stylesheet predicts exactly — the strongest corroboration available that
 > the halving is real and not a coincidence of two findings.
 >
-> **F3 is the exception and must not be halved.** It states its
-> measurement in physical pixels and converts, correctly, to 11 CSS. A
-> report reached S4 that F3 "is 6 in CSS" because `.linkbtn`'s
-> `padding: 4px 6px` predicts 6 — but that is a re-derivation from the
-> stylesheet, not a units correction, and it disagrees with the rendered
-> measurement by 5 CSS px. **R5 owns F3 and should resolve that
-> disagreement at the page rather than inherit either number.** The two
-> are not measuring the same thing if the offset has a second component.
+> **F3 is a different error, and must not be halved. The displacement is
+> 6 CSS px.** Settled by lane S1, rendered from merged `main` in the
+> `?dev=1` harness at an 840 CSS viewport, dpr 1: the card's content edge,
+> the h1, both paragraphs, the field's border box AND the skip button's
+> border box all sit at 169; only the button's *ink* sits at 175. The
+> displacement is entirely `.linkbtn`'s `padding-left: 6px`, and the
+> button's box is not out of line with anything. S2 reached 12 physical
+> independently by direct measurement, which is the same number.
+>
+> So F3 is not an instance of the unit slip — 22 physical is not a
+> doubling of 6 — but neither is its figure right. The coordinate 590 does
+> not reproduce, and nobody has established where it came from. **R5
+> builds to 6 CSS px.**
 >
 > Independent corroboration for the halving: `.settings` is
 > `max-width: 620px`, so a 600 *CSS* px void inside a settings row cannot
@@ -52,8 +57,11 @@ the status strip's SIG/ROOT/NEXT on every route, and the `gesture` /
 > **The safe form is: re-measure before sizing anything to a number in
 > this document.** The figures are good enough to establish that a problem
 > exists and its rough scale; they are not good enough to be a target. F3
-> is the proof — its physical measurement of 22 is itself disputed against
-> a direct measurement of 12, so halving was never the whole question.
+> is the proof: it survived two rounds of argument — one about units, one
+> about whether a stylesheet prediction could overturn a rendered figure —
+> and was settled in minutes by rendering the page. The harness is the
+> arbiter, not the arithmetic. (`?dev=1` in a resizable browser; the app
+> window cannot be driven to arbitrary CSS widths.)
 >
 > Treat every unlabelled `~Npx` below as physical unless the finding shows
 > its conversion. C1's floor measurement is unaffected — it states both
