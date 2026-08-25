@@ -1096,12 +1096,25 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* Profiles 2 -- the roster, in columns, uncapped.
 
-   Measured from the walkthrough's captures, which are PHYSICAL pixels at
-   200%: a ~1180px card holding a ~250px column of names is 590 CSS and 125
-   CSS, so every row spent about 450 CSS px on nothing. The names were in a
-   single column inside a card wide enough for three, and then that column
-   was capped at 38vh -- 237px at the 840x625 floor -- so ~35 characters
-   scrolled inside a scroller inside a scrolling page.
+   Measured in the ?dev=1 harness at the 840x625 floor with 34 names, NOT
+   converted from the walkthrough's figures: card box 620, content 586, the
+   widest checkbox-plus-name 139.7 and the median 105.7. So a single column
+   left 446 CSS px of nothing beside every row, in a card wide enough for
+   three columns. Height is the sharper number: 34 names in one column stack
+   680px and the 38vh cap is 237px at this floor, so the list showed about a
+   THIRD of the roster and scrolled for the rest -- inside a page that was
+   also scrolling.
+
+   The walkthrough reports "~35 names in a ~250px column inside a ~1180px
+   card. Roughly 900px of dead card". Those are physical pixels off a 200%
+   display (its own X2 says the captures are physical; DESIGN.md's floor
+   capture establishes the scaling), so they are double throughout. Halving
+   them gives 590 and 450, close enough to the measured 586 and 446 to look
+   like confirmation -- and it is not one. The unit correction is sourced,
+   but a figure that halves to something plausible has not thereby been
+   checked, and the 590 it produces disagrees with this stylesheet's own 620
+   by thirty pixels. The measurements above are the ones to trust; the
+   walkthrough's are kept so the finding stays traceable.
 
    column-width, not column-count: the count then follows the width the card
    actually has, which is 586px inside .settings' 620px cap today and would
