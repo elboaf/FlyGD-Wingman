@@ -13,6 +13,7 @@ page before run() is entered, and the work that used to run early must
 still run automatically.
 """
 
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -80,11 +81,12 @@ def startup(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "resolve_recording_dir", lambda cfg: None)
     monkeypatch.setattr(main_mod, "build_tray", lambda on_open, on_quit: FakeIcon())
 
-    def fake_create(api):
+    def fake_create(api, hidden=False):
         # The real create() hands the api its window; the ordering test
         # depends on that wiring existing, because refresh_auth pushes.
         api._window = fakes.FakeWindow()
         captured["api"] = api
+        captured["hidden"] = hidden
         order.append("create_window")
         return SimpleNamespace(show=lambda: None, destroy=lambda: None)
 
@@ -136,3 +138,34 @@ def test_the_auth_check_is_handed_to_the_gui_loop_to_run(startup):
     api = startup.captured["api"]
     assert func is not None, "run() was given no startup function"
     assert func == api.refresh_auth
+
+
+# --- the login launch (M3) --------------------------------------------------
+
+
+def test_a_normal_launch_shows_its_window(startup, monkeypatch):
+    """Everything except the login entry raises a window. A Start menu
+    shortcut that silently did nothing visible would read as a crash."""
+    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader"])
+    assert main_mod.main() == 0
+    assert startup.captured["hidden"] is False
+
+
+def test_the_hidden_flag_reaches_the_window(startup, monkeypatch):
+    """M3: autostart.command() registers `--hidden`, and this is the wiring
+    that makes it mean anything. Read from argv rather than a setting --
+    the flag describes how THIS process was started, which no stored value
+    can know: the same binary opened from the Start menu a minute later
+    must show its window."""
+    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--hidden"])
+    assert main_mod.main() == 0
+    assert startup.captured["hidden"] is True
+
+
+def test_an_unrecognised_argument_does_not_kill_a_windowed_launch(startup, monkeypatch):
+    """Deliberately not argparse. It exits(2) with a usage message on any
+    unknown argument, and in a windowed build with no console that is a
+    launch which dies with nothing on screen and nothing in the log."""
+    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--what-is-this"])
+    assert main_mod.main() == 0
+    assert startup.captured["hidden"] is False

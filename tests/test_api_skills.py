@@ -155,3 +155,80 @@ def test_the_api_still_exposes_no_public_non_method_attributes(tmp_path):
         if name.startswith("_"):
             continue
         assert callable(getattr(api, name)), f"{name} is not a method"
+
+
+# --- Skills 8: one time vocabulary ------------------------------------------
+
+
+class SkillsWithFetchTimes(FakeSkills):
+    """A controller whose payload carries the fetch stamps the real one does."""
+
+    def __init__(self, characters):
+        super().__init__()
+        self._characters = characters
+
+    def state_payload(self):
+        self.calls.append(("state_payload",))
+        return {"characters": list(self._characters), "plans": []}
+
+
+def test_each_character_carries_a_rendered_fetch_label(tmp_path):
+    """Skills rendered "8/25/2026, 12:12:28 AM" with the page's own
+    toLocaleString while the Uploader said "5h ago". The page should not be
+    inventing a time format nothing else in the app agrees with."""
+    import datetime
+
+    stamped = (
+        datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=5)
+    ).isoformat()
+    api, _ = make(
+        tmp_path,
+        SkillsWithFetchTimes(
+            [
+                {"character_id": 1, "fetched_utc": stamped},
+                {"character_id": 2, "fetched_utc": ""},
+            ]
+        ),
+    )
+
+    characters = api.skills_state()["characters"]
+
+    assert characters[0]["fetched_label"] == "Last fetched 5h ago"
+    assert characters[1]["fetched_label"] == "Never fetched"
+
+
+def test_the_raw_fetch_stamp_survives_beside_the_label(tmp_path):
+    """skills.js reads fetched_utc for its own staleness logic. The label is
+    an addition, not a replacement -- dropping the raw value would break the
+    freshness badge."""
+    api, _ = make(
+        tmp_path,
+        SkillsWithFetchTimes(
+            [{"character_id": 1, "fetched_utc": "2026-08-25T04:00:00"}]
+        ),
+    )
+
+    (character,) = api.skills_state()["characters"]
+
+    assert character["fetched_utc"] == "2026-08-25T04:00:00"
+    assert character["character_id"] == 1
+
+
+def test_labelling_does_not_mutate_the_controllers_own_dicts(tmp_path):
+    """controller.py is the only writer of the skills state document, and
+    state_payload may hand back structures the document still references. A
+    presentation key written into those would be one save away from being
+    persisted -- and a stored relative time is wrong within the hour."""
+    original = {"character_id": 1, "fetched_utc": ""}
+    api, _ = make(tmp_path, SkillsWithFetchTimes([original]))
+
+    api.skills_state()
+
+    assert "fetched_label" not in original
+
+
+def test_a_payload_without_characters_is_passed_through_untouched(tmp_path):
+    """The empty-state payload and any future shape must not throw here."""
+    api, _ = make(tmp_path, FakeSkills())
+
+    assert api.skills_state() == {"characters": [], "plans": []}

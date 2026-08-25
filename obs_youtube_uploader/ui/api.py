@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .. import __version__ as _version
 from .. import (
+    autostart,
     bookmarks,
     combatlog,
     discord,
@@ -103,6 +104,43 @@ def _open_file_dialog_kind():
     import webview
 
     return webview.FileDialog.OPEN
+
+
+def _with_fetch_labels(payload: dict) -> dict:
+    """Add a rendered `fetched_label` beside each character's fetched_utc.
+
+    Skills 8: the Skills route rendered its fetch time with the page's own
+    toLocaleString ("8/25/2026, 12:12:28 AM") while the Uploader rendered
+    the same class of fact as "5h ago". Two time vocabularies in one app,
+    and the Skills one carried seconds precision on a value where seconds
+    cannot matter.
+
+    Added HERE rather than in eveskills.controller, which builds the
+    payload: controller.py is the only writer of the skills state document
+    and this is presentation, not state. The label is derived on every read
+    and never persisted -- a stored one would be wrong within the hour,
+    which is exactly the property that makes a relative time useful.
+
+    `fetched_utc` stays untouched beside it. skills.js reads the raw value
+    for its own staleness logic, so removing it would break the freshness
+    badge; this only gives the page a string it no longer has to invent.
+
+    Copied shallowly per character so the controller's own dicts are not
+    mutated -- state_payload may hand back structures the document still
+    references, and a presentation key written into those would be one
+    save away from being persisted after all.
+    """
+    characters = payload.get("characters")
+    if not isinstance(characters, list):
+        return payload
+    out = dict(payload)
+    out["characters"] = [
+        {**ch, "fetched_label": copy_mod.format_fetched(ch.get("fetched_utc", ""))}
+        if isinstance(ch, dict)
+        else ch
+        for ch in characters
+    ]
+    return out
 
 
 def _empty_skills_state() -> dict:
@@ -1349,6 +1387,25 @@ class Api:
             # entry. Top level, beside the other derived values: it is not
             # a setting and must never be written back.
             "version": _version,
+            # Settings 1's words half. Delivered rather than templated into
+            # index.html, where the Previews one used to live: static markup
+            # is unreachable from any test and unreusable by any other
+            # screen, which is how one release ended up explaining the same
+            # situation two different ways.
+            #
+            # The whole table, not the one entry that happens to apply right
+            # now: which notes are showing is a render decision the page
+            # makes from state it already has (previews on/off, webhook
+            # configured or not), and re-deriving that here would put the
+            # predicate in two places.
+            "inert_notes": dict(copy_mod.INERT_NOTES),
+            # M3. Read from the registry on every render, not stored: the
+            # login entry IS the state, and a user can delete it from Task
+            # Manager's Startup tab at any time. A settings.json copy would
+            # be a second answer that goes stale the first time they do,
+            # and the checkbox would then describe a world that no longer
+            # exists. Derived, top level, never written back.
+            "start_on_login": autostart.is_enabled(),
         }
 
     def get_settings(self) -> dict:
@@ -1488,6 +1545,49 @@ class Api:
             # be able to say the choice is not saved.
             logger.exception("Could not persist %s", key)
             return self._field_ok(persisted=False)
+        return self._field_ok()
+
+    def set_start_on_login(self, value) -> dict:
+        """Add or remove Wingman's Windows login entry.
+
+        Not a _write_setting: nothing about this touches settings.json.
+        The registry entry is the whole state, so there is no in-memory
+        "applied" half that could succeed while the write fails -- and
+        that collapses the commit contract's three outcomes to two here,
+        honestly rather than by pretending:
+
+          refused + error -> the write was denied; nothing changed
+          applied+persisted -> the entry is now what the user asked for
+
+        `applied True, persisted False` is unreachable, and faking it
+        would tell the page a setting is "in effect but not saved" about a
+        setting whose only effect is the saving. Naming that here so the
+        next reader does not add a third branch to match the neighbours.
+
+        Refusals are real on Windows: a managed machine can deny writes to
+        the Run key by policy, and a checkbox that assumed success would
+        silently do nothing every boot. PRODUCT.md's opt-in default lives
+        on the page -- an unticked box on an install that was never asked
+        -- and this endpoint has no opinion about it.
+        """
+        if not isinstance(value, bool):
+            # The page sends a checkbox state. Anything else is a caller
+            # bug, and coercing it would let a stray string enable a
+            # login entry the user never ticked.
+            return self._field_refused("Start on login is on or off.")
+        try:
+            if value:
+                autostart.enable()
+            else:
+                autostart.disable()
+        except OSError as exc:
+            logger.exception(
+                "Could not %s the login entry", "add" if value else "remove"
+            )
+            action = "add" if value else "remove"
+            return self._field_refused(
+                f"Windows would not let Wingman {action} its login entry. {exc}"
+            )
         return self._field_ok()
 
     def set_privacy(self, value) -> dict:
@@ -2683,7 +2783,7 @@ class Api:
         """Everything the Skills route renders, in one call."""
         if self._skills is None:
             return _empty_skills_state()
-        return self._skills.state_payload()
+        return _with_fetch_labels(self._skills.state_payload())
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
         if self._skills is None:

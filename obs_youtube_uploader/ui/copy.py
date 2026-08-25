@@ -12,6 +12,8 @@ Nothing in here may import tkinter, pywebview, or any widget module. That is
 the whole point: if it needs a window to test, it does not belong here.
 """
 
+import datetime
+
 from .. import discord, library, uploader
 
 # --- main window -----------------------------------------------------------
@@ -242,6 +244,116 @@ def webhook_status(raw: str) -> str:
         return "not configured"
     hook, error = discord.parse_webhook(raw)
     return discord.describe(hook) if hook else error
+
+
+# --- fetch age -------------------------------------------------------------
+
+
+def format_fetched(iso: str, now: "datetime.datetime | None" = None) -> str:
+    """ "Last fetched 5h ago", in the app's one time vocabulary.
+
+    Skills 8: the Uploader renders a file's age as "5h ago" and Skills
+    rendered its fetch time as "8/25/2026, 12:12:28 AM" -- the same class of
+    fact in two formats, one of them carrying seconds precision on a value
+    where seconds cannot matter. The page built the second one itself with
+    toLocaleString, which is why it never had to agree with anything.
+
+    Delegates to library.format_date rather than reimplementing the
+    thresholds. That function's precision degrades with age on purpose
+    (minutes for something from this session, a calendar date for something
+    from March), which is the property that makes it right here too: nobody
+    needs the second a skill fetch landed, and everybody wants to know
+    whether it was recent.
+
+    The value is UTC and format_date works in local wall-clock. That is
+    correct for both halves: the relative branches only need the delta,
+    which is preserved through the POSIX timestamp, and the calendar
+    fallback SHOULD render in the reader's own timezone.
+
+    `now` is injectable for the same reason format_date's is -- every
+    threshold is relative to it, and a test cannot wait for the clock.
+    """
+    parsed = _parse_iso_utc(iso)
+    if parsed is None:
+        # Covers absent ("" from eveskills.state._iso, which never writes
+        # None) and unparseable alike. The page said "Never fetched" for
+        # both and that stays true: a value we cannot read is a value we
+        # cannot claim a time for.
+        return "Never fetched"
+    return f"Last fetched {library.format_date(parsed.timestamp(), now=now)}"
+
+
+def _parse_iso_utc(raw: str):
+    """ISO 8601 to an aware UTC datetime, or None.
+
+    Naive input is read as UTC, matching eveskills.state._parse_utc: this
+    package writes UTC everywhere, so a naive string can only be a hand
+    edit, and reading it as local would shift the age by the machine's
+    offset. Duplicated rather than imported to keep ui/ from depending on
+    eveskills' private helpers -- the behaviour is asserted in tests.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.UTC)
+    return parsed
+
+
+# --- preconditions not met -------------------------------------------------
+#
+# Settings 1: one release rendered "this control cannot act yet" two
+# opposite ways. The Uploader disabled the combat-log checkbox and explained
+# why; Settings > Previews left every keybind below a switched-off feature
+# fully live and explained why. Same situation, same release, opposite
+# answers -- so a user could not learn the rule.
+#
+# app.js's WM.setEnabled settled the TREATMENT half (a control is disabled
+# when the app already knows the action cannot be carried out from the state
+# it holds; not for an action that might merely fail once attempted). This
+# table is the WORDS half, and the two are deliberately separate: the
+# Previews keybinds stay LIVE under that rule, because recording a keybind
+# for later is an action that can be carried out -- but they still need to
+# say that nothing is registered yet. Explaining and disabling are not the
+# same decision, which is most of why the screens diverged.
+#
+# One table rather than prose in each screen's markup, for the reason
+# AUTH_STATES is a table: these sentences are read seconds apart by someone
+# forming a model of one app, and a second copy drifts within a release.
+# index.html carried the Previews one as static markup, where nothing could
+# test it and no other screen could reuse its voice.
+#
+# The shape every entry keeps: name the STATE, then the CONSEQUENCE, then
+# the WAY OUT. PRODUCT.md's "Say what happened and what to do" -- and the
+# way out is not decoration here, because WM.setEnabled forbids disabling
+# the only route to a control's own precondition. A note with no remedy is
+# a dead end the user cannot see the exit from. tests/test_app_copy.py
+# asserts the shape rather than trusting each entry to remember it.
+INERT_NOTES = {
+    "previews_off": (
+        "Previews are off, so every keybind below is unregistered "
+        "until you turn them back on."
+    ),
+    "no_webhook": (
+        "No Discord webhook is configured, so combat logs are not "
+        "posted. Set one in Settings \u203a Discord."
+    ),
+}
+
+
+def inert_note(key: str) -> str:
+    """The sentence for one unmet precondition, or "" if there is none.
+
+    Empty string for an unknown key rather than a raised error or a
+    placeholder: this renders into a hint slot on a live screen, and a
+    KeyError from a note is a worse outcome than a missing note. The page
+    hides the slot when the string is empty, so "" is already the shape it
+    handles.
+    """
+    return INERT_NOTES.get(key, "")
 
 
 # --- EVE settings profiles -------------------------------------------------
