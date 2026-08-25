@@ -15,6 +15,7 @@ import datetime
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import NamedTuple
 
 from . import patterns, tailer
@@ -77,7 +78,7 @@ class AlertService:
         folder = self._folder()
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                if self._tailer is not None and self._tailer._folder == folder:
+                if self._tailer is not None and self._tailer.folder == Path(folder):
                     return
                 # The folder moved. Tear down and rebuild rather than
                 # repoint, so file positions cannot carry across.

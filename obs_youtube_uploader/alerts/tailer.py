@@ -55,6 +55,10 @@ class Tailer:
         self._tracked: dict[str, _Tracked] = {}
         self._seen_first_scan = False
 
+    @property
+    def folder(self) -> Path:
+        return self._folder
+
     def characters(self) -> list[str]:
         return sorted(self._tracked)
 

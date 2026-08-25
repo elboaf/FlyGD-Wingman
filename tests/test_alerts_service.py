@@ -166,3 +166,27 @@ def test_a_raising_poll_is_recorded_rather_than_killing_the_loop():
     s = _service()
     s._record_error(RuntimeError("disk gone"))
     assert "disk gone" in s.health().last_error
+
+
+def test_reconcile_twice_with_an_unchanged_str_folder_does_not_restart(tmp_path):
+    """Tailer stores its folder as a Path (tailer.py: `self._folder =
+    Path(folder)`), but the callable returns whatever the caller was
+    handed -- and the persisted setting everywhere else in this codebase
+    is a plain str. Comparing Path to str is always unequal, so without
+    normalizing the comparison this fast path can never fire: every
+    settings write would tear the thread down and rebuild it, clearing
+    cooldowns and blocking the caller on a join."""
+    cfg = _config()
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: str(tmp_path),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    try:
+        s.reconcile()
+        first_thread = s._thread
+        s.reconcile()
+        assert s._thread is first_thread
+    finally:
+        s.stop()
