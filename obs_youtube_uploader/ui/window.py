@@ -33,7 +33,12 @@ HEIGHT = 680
 # the height is a judgement about how much of the two-pane layout has to
 # stay visible, not an arithmetic result.
 #
-# Read off the real page at 840x625 logical, approached from both
+# Read off the real page at 840x625, approached from both
+# directions. NOTE these are PHYSICAL pixels, not logical: pywebview's
+# WinForms MinimumSize is device pixels under this app's
+# system-DPI-awareness (see ui/chrome.py:220-228), so the CSS viewport
+# floor is 840/scale -- 672px at 125%, 560px at 150%. web/style.css
+# depends on that reading; do not "correct" this to logical.
 # directions. Both provisional estimates were wrong in OPPOSITE directions:
 # 880 was 41px too generous, and 560 was 65px too SMALL -- that one would
 # have let a user drag the window into a state where part of the layout is

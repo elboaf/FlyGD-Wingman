@@ -531,7 +531,7 @@ def main() -> int:
             return
         w = watcher.Watcher(Path(directory), paths.seen_file())
         w.baseline()  # Prunes stale `seen` entries left by out-of-band deletes.
-        # The Api holds the watcher directly: save_settings rebinds it when
+        # The Api holds the watcher directly: set_folder rebinds it when
         # the recording folder changes, and delete_selected forgets what it
         # actually removed. No callback indirection.
         api._watcher = w

@@ -20,18 +20,28 @@
   ['delete_selected', 'start_upload', 'retry',
    'open_path', 'copy_path', 'detect_folder',
    'connect_google', 'dialog_response', 'minimize', 'close',
-   'set_recording_dir',
    'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
    'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
 
-  // NOT one of the generic stubs above. settings.js guards on `!ok`, so the
-  // generic stub's null would make Save a silent no-op here while working
-  // fine in the product -- a dev harness that lies about the one flow it is
-  // most used to exercise.
-  api.save_settings = function (values) {
-    console.log('DEV api.save_settings(', values, ')');
-    return Promise.resolve(true);
+  // NOT generic stubs. The per-field endpoints return
+  // {applied, persisted, error} and the page reads all three, so the
+  // generic stub's null would read as a bridge failure and revert every
+  // control -- a dev harness that lies about the flow it is most used to
+  // exercise. There is no Save button to exercise any more; each of these
+  // is a commit on its own.
+  ['set_privacy', 'set_notify_mode', 'set_category',
+   'set_discord_webhook', 'clear_discord_webhook'
+  ].forEach(function (name) {
+    api[name] = function (value) {
+      console.log('DEV api.' + name + '(', value, ')');
+      return Promise.resolve({applied: true, persisted: true, error: null});
+    };
+  });
+
+  api.set_folder = function (which, path) {
+    console.log('DEV api.set_folder(', which, ',', path, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
   // NOT generic stubs, for the same reason save_settings above is not: the

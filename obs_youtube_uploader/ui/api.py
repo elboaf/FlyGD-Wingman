@@ -164,9 +164,13 @@ class AppState:
     handle that rather than substituting a default: a fallback to the home
     directory would have list_rows() scan it for recordings.
 
-    `settings` is REPLACED wholesale by save_settings rather than mutated,
-    so anything holding the original dict goes stale -- which is why the
-    poll loop and the bridge both read it through this object each time.
+    `settings` is MUTATED IN PLACE, never rebound. It used to be replaced
+    wholesale on every write, which meant anything holding the original
+    dict went stale -- preview/store.py's LayoutStore captures exactly such
+    a reference and writes through it later, and a write it made against
+    the orphaned object was then overwritten by the next save. Every writer
+    now goes through settings.update, which normalises in place under the
+    save lock. Do not reintroduce an assignment to this attribute.
     """
     recording_dir: Path | None
     settings: dict
@@ -1094,66 +1098,10 @@ class Api:
         is listening. So it is a read, matching what app.js already does
         for `list_rows` and settings.js for `auth_labels`.
 
-        Returns the same shape `save_settings` pushes, so the page has one
-        renderer for both.
+        Returns the same shape the per-field endpoints push after a
+        successful write, so the page has one renderer for both.
         """
         return self._settings_payload()
-
-    def save_settings(self, values: dict) -> bool:
-        """Validate, persist, and make the change reach the running app.
-
-        Returns False when the page should keep the form open with the
-        user's edits intact.
-        """
-        category = str(values.get("category", "")).strip()
-        if not category.isdigit():
-            self._alert("warning", "Invalid category",
-                        "Category ID must be a number, e.g. 20.")
-            return False
-        webhook_raw = str(values.get("discord_webhook", "") or "").strip()
-        if webhook_raw:
-            _, webhook_error = discord.parse_webhook(webhook_raw)
-            if webhook_error:
-                self._alert("warning", "Invalid webhook", webhook_error)
-                return False
-        rec_dir = Path(str(values.get("recording_dir", "")))
-        if not rec_dir.is_dir():
-            self._alert("warning", "Invalid folder", f"{rec_dir} is not a folder.")
-            return False
-
-        gamelogs = str(values.get("gamelogs_dir") or "").strip()
-        try:
-            with settings_mod.update(self._state.settings) as cfg:
-                cfg.update({
-                    "privacy": values.get("privacy"),
-                    "category": category,
-                    "notify_mode": values.get("notify_mode"),
-                    "recording_dir": str(rec_dir),
-                    "discord_webhook": webhook_raw,
-                    "gamelogs_dir": gamelogs or None,
-                })
-        except OSError as exc:
-            # update() restored the live dict before re-raising, so state
-            # and disk still agree -- the property the old snapshot-then-
-            # save order was written to protect.
-            self._alert("error", "Could not save settings",
-                        f"Settings were not saved: {exc}")
-            return False
-
-        # update() normalises self._state.settings in place before saving
-        # (privacy/category/etc coercion), so there is no longer a rebind
-        # here -- see its docstring for why replacing the object was the
-        # rebind-race bug this used to have.
-        self._state.recording_dir = rec_dir
-        # The watcher is the reason this method is not just a file write.
-        # It holds its own directory, so persisting the setting alone would
-        # leave it polling the old folder forever. Guarded on a real change
-        # because rebind() re-baselines `seen`.
-        if self._watcher is not None and rec_dir != Path(self._watcher.directory):
-            self._watcher.rebind(rec_dir)
-        self._push("onSettings", self._settings_payload())
-        self.list_rows()
-        return True
 
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""
@@ -1211,42 +1159,198 @@ class Api:
             return ""
         return str(detected)
 
-    def set_recording_dir(self, path: str) -> bool:
-        """Accept the first-run folder choice: persist it and start watching.
+    # ---- per-field settings writes -------------------------------------
+    #
+    # The immediate-save Settings screen commits ONE field at a time, which
+    # save_settings structurally cannot do. It validates and rewrites the
+    # WHOLE document and refuses all of it on the first bad field, so a
+    # blur out of a valid webhook while Category is momentarily empty saves
+    # nothing and warns about a field the user is not looking at. It routes
+    # every failure through _alert, which QUEUES (web/panel.js), so a URL
+    # typed a character at a time would stack a pile of modals. It re-pushes
+    # the complete payload, rewriting every field including the one still
+    # being edited. And it has no no-op guard, so each call re-runs OBS and
+    # gamelogs detection plus a full list_rows() ffprobe sweep.
+    #
+    # Shape: {"applied": bool, "persisted": bool, "error": str | None}.
+    # This extends set_restore_preview_positions' contract with the one
+    # thing a bool cannot carry -- WHY a value was refused -- phrased for
+    # the field's own inline message rather than a queued modal.
+    #
+    #   applied False + error         -> rejected; page reverts and explains
+    #   applied True, persisted False -> in effect, but not written to disk
+    #   applied True, persisted True  -> done
+    #
+    # A truthy dict is also what separates success from a bridge failure,
+    # which resolves to null on the page (web/app.js).
 
-        Returns False when the folder is unusable, so the page keeps the
-        first-run screen up rather than dropping the user into an empty
-        list with no explanation of why.
+    @staticmethod
+    def _field_ok(persisted: bool = True) -> dict:
+        return {"applied": True, "persisted": persisted, "error": None}
 
-        _on_recording_dir_ready is assigned by __main__ and is what actually
-        creates the Watcher and starts the poll loop; the bridge does not
-        own either.
+    @staticmethod
+    def _field_refused(error: str) -> dict:
+        return {"applied": False, "persisted": False, "error": error}
+
+    def _write_setting(self, key: str, value) -> dict:
+        """Persist one already-validated scalar, no-op guarded.
+
+        Through settings.update, never save(): the mutation has to happen
+        inside _SAVE_LOCK or a concurrent writer is reverted, and update()
+        restores the live dict if the write raises, so a failed write
+        leaves the stored value as it was.
         """
-        folder = Path(str(path or "").strip())
-        if not folder.is_dir():
-            self._alert("warning", "Invalid folder",
-                        f"{folder} is not a folder.")
-            return False
-        # Update inside settings.update(), exactly as save_settings does.
-        # Mutating first and returning False on OSError would leave the
-        # app believing it has a recording folder it never persisted --
-        # state and disk diverged, and the divergence survives until the
-        # next launch reads the file back. update()'s rollback on any
-        # exception is what protects that property now.
+        if self._state.settings.get(key) == value:
+            # Not merely an optimisation. settings.save projects the
+            # COMPLETE document, so a no-op write is a full rewrite -- and
+            # an immediate-save page re-emits on every render.
+            return self._field_ok()
         try:
-            with settings_mod.update(self._state.settings) as cfg:
-                cfg["recording_dir"] = str(folder)
-        except OSError as exc:
-            self._alert("error", "Could not save settings",
-                        f"Settings were not saved: {exc}")
-            return False
-        # update() normalises self._state.settings in place; no rebind
-        # needed (see save_settings's comment above for why not).
+            with settings_mod.update(self._state.settings) as doc:
+                doc[key] = value
+        except OSError:
+            # Reported, not raised: a settings file that cannot be written
+            # must not stop the setting taking effect, but the page has to
+            # be able to say the choice is not saved.
+            logger.exception("Could not persist %s", key)
+            return self._field_ok(persisted=False)
+        return self._field_ok()
+
+    def set_privacy(self, value) -> dict:
+        """Default privacy for new uploads."""
+        if value not in settings_mod.VALID_PRIVACY:
+            # settings._normalize would silently coerce this to the default
+            # instead. Silent coercion is wrong for a field the user just
+            # set: they would watch it snap back with no explanation.
+            return self._field_refused("Choose private, unlisted, or public.")
+        return self._write_setting("privacy", value)
+
+    def set_notify_mode(self, value) -> dict:
+        """What happens when a recording finishes."""
+        if value not in settings_mod.VALID_NOTIFY:
+            return self._field_refused("Choose one of the two options.")
+        return self._write_setting("notify_mode", value)
+
+    def set_category(self, value) -> dict:
+        """YouTube category id. Digits only; 20 is Gaming."""
+        text = str(value or "").strip()
+        if not text.isdigit():
+            return self._field_refused(
+                "A category is a number, like 20 for Gaming.")
+        return self._write_setting("category", text)
+
+    def set_discord_webhook(self, value) -> dict:
+        """The combat-log webhook.
+
+        Empty is REFUSED here. The whole-document `save_settings` this
+        replaced treated it as "clear the webhook" and wrote "". Under
+        immediate-save that made
+        select-all, Delete, then look away silently destroy a configured
+        secret -- with no Cancel to take it back and no pre-edit copy
+        anywhere on the page. Removing a webhook is now its own explicit
+        action; this endpoint only ever sets one.
+        """
+        text = str(value or "").strip()
+        if not text:
+            return self._field_refused(
+                "Paste a webhook URL, or use Remove to clear it.")
+        # parse_webhook RETURNS (webhook, error); it does not raise. An
+        # except-ValueError around it never fires, which would have let
+        # every malformed URL through.
+        webhook, error = discord.parse_webhook(text)
+        if webhook is None:
+            return self._field_refused(error)
+        return self._write_setting("discord_webhook", text)
+
+    def clear_discord_webhook(self) -> dict:
+        """Remove the webhook: the explicit counterpart to the above."""
+        return self._write_setting("discord_webhook", "")
+
+    def set_show_eve_tools(self, enabled) -> dict:
+        """Show or hide the EVE destinations and sections.
+
+        VISIBILITY ONLY. It never starts or stops anything: eve_bookmarks
+        .enabled and preview.enabled stay the sole runtime switches.
+
+        The guard is the whole design. Hiding a feature that is RUNNING
+        would conceal its off switch -- previews would keep painting and
+        eighteen global keybinds would keep firing in EVE, with no
+        reachable control to stop them. Making this a kill switch instead
+        was rejected: it would silently stop those from what reads as a
+        display preference, and re-enabling could not know which of the two
+        to restore without a third persisted value.
+
+        So it simply refuses while either is on, and says which. Turning
+        them off first is one extra step, and it is the honest order --
+        that friction is what stops this being a kill switch by accident.
+        """
+        enabled = bool(enabled)
+        if not enabled:
+            running = []
+            if self._state.settings.get("eve_bookmarks", {}).get("enabled"):
+                running.append("Bookmarks")
+            if self._state.settings.get("preview", {}).get("enabled"):
+                running.append("Previews")
+            if running:
+                return self._field_refused(
+                    "Turn off " + " and ".join(running) + " first — hiding "
+                    "them here would leave them running with no way to "
+                    "switch them off.")
+        return self._write_setting("show_eve_tools", enabled)
+
+    def set_folder(self, which: str, path: str) -> dict:
+        """Persist one folder, and make the watcher match it.
+
+        `which` mirrors pick_folder and detect_folder rather than inventing
+        a second spelling for the same discriminator.
+
+        This is also the only folder endpoint, which closes a hole that
+        predates it. There used to be two: `set_recording_dir` could only
+        CREATE a watcher (__main__'s start_watching returns early when a
+        scheduler already exists) and `save_settings` could only REPOINT
+        one (its rebind was guarded on _watcher being set). With _watcher
+        None the folder persisted and _state.recording_dir was set --
+        which un-gates list_rows, so the window looked healthy -- while
+        nothing ever started polling. Both are gone; this handles both
+        cases, and first run calls it too.
+        """
+        if which == "gamelogs":
+            text = str(path or "").strip()
+            # Unlike the recording folder this drives no watcher, and an
+            # empty value legitimately means "no gamelogs folder".
+            if text and not Path(text).is_dir():
+                return self._field_refused("That folder does not exist.")
+            return self._write_setting("gamelogs_dir", text or None)
+
+        text = str(path or "").strip()
+        if not text:
+            # save_settings mapped empty to Path("None") and told the user
+            # that "None is not a folder".
+            return self._field_refused("Choose a recording folder.")
+        folder = Path(text)
+        if not folder.is_dir():
+            return self._field_refused("That folder does not exist.")
+
+        if self._state.recording_dir == folder:
+            # Already watching it. Returning before the rebind below is
+            # what stops a re-commit of the same path re-baselining the
+            # folder and swallowing recordings that arrived this session.
+            return self._write_setting("recording_dir", str(folder))
+
+        result = self._write_setting("recording_dir", str(folder))
+        if not result["applied"]:
+            return result
+
         self._state.recording_dir = folder
-        if self._on_recording_dir_ready is not None:
+        if self._watcher is not None:
+            # rebind() marks every file already in the folder as seen, so
+            # switching folders does not announce a backlog as though it
+            # had just been recorded.
+            self._watcher.rebind(folder)
+        elif self._on_recording_dir_ready is not None:
             self._on_recording_dir_ready(folder)
         self.list_rows()
-        return True
+        return result
 
     def auth_labels(self) -> dict:
         """The whole account-state table, for the page to render from.

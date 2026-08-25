@@ -38,6 +38,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* Declared, not implied: without this WebView2 resolves UA-drawn chrome
+     -- fallback focus rings, form controls, scrollbar corners -- for a
+     LIGHT scheme and paints a near-black ring on a near-black page. */
+  color-scheme: dark;
+
   /* ---- colour ---- */
   --bg: #0c0d10;
   --panel: #14161b;
@@ -46,7 +51,11 @@
   --field-border: #23262e;
   --text: #e8eaed;
   --text-dim: #9aa2b1;
-  --text-faint: #6f7681;
+  /* 4.82:1 on --panel, 5.17:1 on --bg. Was #6f7681, which measured
+     3.88-4.24:1 -- below AA for normal text on every surface it is used
+     on, including all five nav tabs and all three window buttons in
+     their resting state. */
+  --text-faint: #7d8492;
   --brand: #ff5a4d;
   --brand-deep: #c81e12;
   --ok: #4ade80;
@@ -136,6 +145,14 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 }
 .navbtn:hover { color: var(--text); background: #22252c; }
 .navbtn.active { color: var(--text); background: #22252c; }
+/* Author rule, for the same reason .routenav[hidden] carries one: .navbtn
+   sets no display, but the buttons live in a flex row and [hidden] must
+   still remove them from it. */
+.navbtn[hidden] { display: none; }
+/* One destination is not a choice. With the EVE tools hidden the only
+   entry left is Uploader, so the bar goes entirely and hands its width
+   back to the drag region -- the single-screen app the README describes. */
+.routenav.single { display: none; }
 
 /* ---- routes ----------------------------------------------------------
    Settings is a ROUTE in this window, not a second OS window. */
@@ -160,6 +177,14 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
+/* Required, not decorative -- the same trap .routenav[hidden] and
+   .evestat[hidden] already carry a note about. An author rule beats the UA
+   stylesheet's [hidden] { display: none } regardless of specificity, so
+   .row's display:flex above kept #eve-blockers-row rendered even when
+   bookmarks.js set hidden on it: an empty flex row holding 10px of margin
+   under the Enable control, on every install with nothing to warn about.
+   Found by tests/test_page_conventions.py. */
+.row[hidden] { display: none; }
 
 input.field, textarea.field, select.field, span.field {
   flex: 1; min-width: 0; background: var(--field);
@@ -185,13 +210,51 @@ button.btn {
 button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
 button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
+/* Near-black ON the brand, not white on it. White measured 3.08:1 against
+   the old gradient's top stop -- a fail for 12px/600 normal text over
+   roughly the upper half of every primary button in the app. Darkening the
+   fill enough for white text needs ~#cf3b28, which visibly dulls the
+   brand; inverting keeps the vermilion at FULL strength and measures
+   6.31:1. The gradient is narrowed to stay inside the range where the dark
+   label holds: 6.96:1 at the top stop, 5.32:1 at the bottom. */
 button.btn.acc {
-  background: linear-gradient(180deg, var(--brand), #d9291c);
-  border-color: #ff7a6f; color: #fff; font-weight: 600;
+  background: linear-gradient(180deg, #ff6b5e, #f04a3c);
+  border-color: #ff8a80; color: #0c0d10; font-weight: 600;
   box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
 }
+/* brightness(1.08) used to make this button HARDER to read -- it lightened
+   the fill under white text, 3.08 -> 2.96. With a dark label the same
+   gesture improves it, 6.31 -> 6.56. */
 button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
+
+/* THE focus indicator. Nothing below styled :focus at all, so every button
+   in the app fell back to the UA ring -- which, before `color-scheme: dark`
+   above, resolved for a light scheme and drew near-black on a near-black
+   page. #ff8a80 measures 7.2-8.5:1 against every surface here, well over
+   the 3:1 that 1.4.11 asks of a non-text indicator.
+
+   :focus-visible, not :focus: a mouse click on a button must not leave a
+   ring behind, which is the reason the ring was removed rather than
+   restyled the first time. */
+.btn:focus-visible,
+.navbtn:focus-visible,
+.winbtn:focus-visible,
+.bindbtn:focus-visible,
+.linkbtn:focus-visible,
+.rail-plan:focus-visible,
+.rail-item:focus-visible,
+.skills-row-top:focus-visible,
+.ctxmenu button:focus-visible,
+.linkish:focus-visible,
+.list-head > span:focus-visible {
+  outline: 2px solid #ff8a80;
+  outline-offset: 2px;
+}
+/* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
+   concept here -- it is what Space acts on), so an outline on the
+   container as well would read as two competing indicators. */
+.list-scroll:focus-visible { outline: none; }
 
 .hint {
   color: var(--text-faint); font-size: var(--fs-muted);
@@ -535,23 +598,46 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .dialog .buttons {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
+/* Only for a prompt. Author [hidden] rule for the same reason .routenav
+   carries one: input.field sets a display via its own rules and the UA
+   [hidden] would otherwise lose to it. */
+#dlg-input { width: 100%; margin-top: 14px; }
+#dlg-input[hidden] { display: none; }
 
 /* ====================== settings route ==============================
-   A route in this window, not a second OS window. */
-#route-settings { flex-direction: column; overflow-y: auto; padding: 12px; }
+   A route in this window, not a second OS window.
 
-/* ====================== bookmarks route =============================
-   Reuses the settings route's card markup, so it needs the same column
-   direction and scroll safeguard: this route will hold nineteen keybind
-   rows and will exceed the window height. Without overflow-y the lower
-   binds clip with no scrollbar and become unreachable. */
-#route-bookmarks { flex-direction: column; overflow-y: auto; padding: 12px; }
+   A rail beside one visible section, laid out like #route-skills rather
+   than as one long scrolling column. The rail is narrower than skills'
+   214px because its labels are single words; the pane takes the rest and
+   is the only thing that scrolls, so the rail cannot be pushed off the
+   top by a long section. */
+#route-settings {
+  display: none;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 12px; padding: 12px; min-height: 0;
+}
+#route-settings.active { display: grid; }
 
-/* ====================== previews route ===============================
-   Same reason as bookmarks above: the Hotkeys card can hold one row per
-   known character, which exceeds the window height on a roster of any
-   size. Without overflow-y the lower rows clip with no scrollbar. */
-#route-previews { flex-direction: column; overflow-y: auto; padding: 12px; }
+.settings-rail {
+  display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 12px; overflow-y: auto;
+}
+
+.settings-pane { min-width: 0; min-height: 0; overflow-y: auto; }
+
+/* Only the selected section renders. Two classes deep so it beats
+   `.settings`'s own display:flex regardless of source order. */
+.settings-pane .settings { display: none; }
+.settings-pane .settings.active { display: flex; }
+
+/* Bookmarks and Previews are sections of the Settings route now, so the
+   scroll safeguard that used to live on each of them is .settings-pane's
+   overflow-y instead -- one scroller for every section rather than one per
+   route. The reason it is still needed is unchanged: Bookmarks holds
+   eighteen keybind rows and Previews holds one row per known character,
+   and either exceeds the window height. */
 
 /* Character names, like bookmarks' action names, are not short field
    labels -- see the #eve-binds override below for why the shared 118px
@@ -701,16 +787,35 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
 
+/* Radios laid out INLINE in a .row, rather than stacked down a card: the
+   8px stacked margin applies to the first of the pair and not the last
+   (.radio:last-child zeroes it), which sits them at different heights. */
+.settings .row > .radio { margin-bottom: 0; }
+
 /* A masked webhook must not be rendered in a proportional font: the mask
    is what is on screen, and monospace keeps its length honest. */
 #f-webhook { font-family: var(--mono); font-size: var(--fs-mono); letter-spacing: .04em; }
 #f-webhook[type="text"] { letter-spacing: 0; }
 .settings .toggle { flex: none; min-width: 62px; }
 
-.settings-foot {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 4px 0 8px;
+/* Per-card inline message, where a refusal or an unwritable-file warning
+   lands now that there is no Save button. Deliberately NOT _alert's modal:
+   that queues (web/panel.js), so a webhook URL typed a character at a time
+   used to stack a pile of dialogs on top of each other.
+
+   Indented to the field column, not the label column, so it reads as
+   belonging to the control it is about. Author [hidden] rule for the same
+   reason .routenav and .evestat carry one: this sets display, and an
+   author rule beats the UA stylesheet's [hidden] { display: none }. */
+.field-msg {
+  display: block; margin: 8px 0 0 128px;
+  font-size: var(--fs-muted); line-height: 1.45; color: var(--text-dim);
 }
+.field-msg[hidden] { display: none; }
+/* Same two tokens the status strip and #eve-bind-warning already use, so
+   one severity reads the same everywhere in the app. */
+.field-msg.warn { color: var(--warn); }
+.field-msg.err { color: var(--err); }
 
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
@@ -761,15 +866,19 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .rail-count { color: var(--text-dim); font-size: var(--fs-muted); }
 .skills-rail button.btn { width: 100%; text-align: center; }
 
-.rail-plan {
+/* .rail-item is the Settings rail and .rail-plan is the Skills rail: the
+   same affordance -- a list where exactly one entry is current -- so they
+   share one rule rather than keeping two copies that drift. */
+.rail-plan, .rail-item {
   display: flex; align-items: center; gap: 8px; width: 100%;
   background: none; border: 0; border-left: 2px solid transparent;
   border-radius: var(--radius-sm); padding: 6px 8px;
   color: var(--text-dim); font: inherit; font-size: var(--fs-mono);
   cursor: pointer; text-align: left;
 }
-.rail-plan:hover { background: #22252c; color: var(--text); }
-.rail-plan.active {
+.rail-item[hidden] { display: none; }
+.rail-plan:hover, .rail-item:hover { background: #22252c; color: var(--text); }
+.rail-plan.active, .rail-item.active {
   background: #191d24; border-left-color: var(--brand); color: var(--text);
 }
 .rail-plan-name { flex: 1; min-width: 0;
@@ -896,3 +1005,21 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .linkbtn.danger:hover { color: #fff; background: #d9291c; }
 button.btn.danger { border-color: var(--err); color: var(--err); }
 button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
+
+/* ====================== reduced motion ==============================
+   Both animations below are INFINITE and long-running -- `slide` for the
+   entire duration of an ffmpeg stitch, `pulse` for as long as the Google
+   account is unhealthy. Neither offers a pause control, so both exceed
+   WCAG 2.2.2's five-second threshold. Stopped rather than shortened: a
+   faster infinite animation is still an infinite animation.
+
+   The bar must still say "working" without claiming a percentage, so it
+   fills the track at reduced opacity instead of animating across it. */
+@media (prefers-reduced-motion: reduce) {
+  .track.indeterminate .bar {
+    animation: none;
+    width: 100%;
+    opacity: .45;
+  }
+  .pill.warn .led { animation: none; }
+}

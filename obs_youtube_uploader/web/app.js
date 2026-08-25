@@ -91,10 +91,10 @@
   // Settings is a route in this window, not a second OS window. Switching
   // is pure client state; Python is not told which route is showing.
   WM.route = function (name) {
+    // Bookmarks and Previews are NOT here any more: both are sections of
+    // the Settings route, reached through WM.section.
     var routes = { main: 'route-main', settings: 'route-settings',
                    firstrun: 'route-firstrun',
-                   bookmarks: 'route-bookmarks',
-                   previews: 'route-previews',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills' };
     Object.keys(routes).forEach(function (key) {
@@ -111,15 +111,108 @@
     WM.el('routenav').hidden = (name === 'firstrun');
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'bookmarks' || name === 'previews'
-        || name === 'evesettings' || name === 'skills') {
+    if (name === 'main' || name === 'evesettings' || name === 'skills') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;
     }
     WM.current_route = name;
     document.dispatchEvent(new CustomEvent('wm:route', { detail: name }));
+    // Sections live inside the Settings route, so entering or leaving that
+    // route is also entering or leaving whichever section is showing. A
+    // module folded into Settings would otherwise never learn it had been
+    // left -- see WM.section below for why that matters.
+    WM.notify_section(name === 'settings' ? WM.current_section : '');
   };
+
+  // ---- sections -------------------------------------------------------
+  // The Settings route holds several groups and shows one at a time. This
+  // is deliberately the SAME enter/leave contract WM.route provides, not a
+  // simpler "which tab is open" flag.
+  //
+  // The reason is specific. bookmarks.js and previews.js each install a
+  // document-level keydown listener while capturing a keybind, and each
+  // disarms it on being LEFT -- both files carry a comment explaining that
+  // stopPropagation() does not stop a sibling listener on the same node,
+  // so an armed capture consumes the next keystroke typed anywhere and
+  // writes it into the wrong bind, off-screen and silently persisted.
+  // Once those two are sections rather than routes, switching away from
+  // them is no longer a route change, and without this event an armed
+  // capture would survive into Folders or Discord and swallow whatever is
+  // typed there -- its handler preventDefault()s every key, Tab included.
+  WM.current_section = 'account';
+
+  WM.notify_section = function (name) {
+    document.dispatchEvent(new CustomEvent('wm:section', { detail: name }));
+  };
+
+  WM.section = function (name) {
+    WM.current_section = name;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.settings-pane > .settings'),
+      function (node) {
+        node.classList.toggle('active', node.id === 'section-' + name);
+      });
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.rail-item'), function (btn) {
+        btn.classList.toggle('active', btn.dataset.section === name);
+      });
+    WM.notify_section(name);
+  };
+
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.rail-item'), function (btn) {
+      btn.addEventListener('click', function () {
+        WM.section(btn.dataset.section);
+      });
+    });
+
+  // ---- the EVE gate ---------------------------------------------------
+  // Visibility only. Nothing here starts or stops a feature; Python's
+  // set_show_eve_tools refuses to turn the gate off while either is
+  // running, precisely so this can never hide a live feature's off switch.
+  //
+  // With both destinations hidden the nav has one entry left, so it hides
+  // altogether -- which is the single-screen app the README describes.
+  WM.EVE_ROUTES = ['evesettings', 'skills'];
+  WM.EVE_SECTIONS = ['bookmarks', 'previews'];
+
+  WM.apply_eve_gate = function (shown) {
+    WM.eve_shown = shown !== false;
+    WM.EVE_ROUTES.forEach(function (name) {
+      var btn = document.querySelector('.navbtn[data-route="' + name + '"]');
+      if (btn) { btn.hidden = !WM.eve_shown; }
+    });
+    WM.EVE_SECTIONS.forEach(function (name) {
+      var btn = document.querySelector('.rail-item[data-section="' + name + '"]');
+      if (btn) { btn.hidden = !WM.eve_shown; }
+    });
+    // One destination left is not a choice, so the whole bar goes. This
+    // also hands its width back to the drag region.
+    WM.el('routenav').classList.toggle('single', !WM.eve_shown);
+    // Hiding a screen you can still reach would strand you on it, so every
+    // route into one has to be cut -- not just the one you are standing on.
+    //
+    // last_destination is the one that bites. The toggle lives in Settings,
+    // so current_route is 'settings' when it fires and the check below
+    // never matches: you untick from Skills, press the gear to leave, and
+    // the gear returns you to Skills -- with the nav now hidden and no way
+    // out. Found by smoke test, exactly the case the first version missed.
+    if (!WM.eve_shown) {
+      if (WM.EVE_ROUTES.indexOf(WM.current_route) !== -1) { WM.route('main'); }
+      if (WM.EVE_ROUTES.indexOf(WM.last_destination) !== -1) {
+        WM.last_destination = 'main';
+      }
+      if (WM.EVE_SECTIONS.indexOf(WM.current_section) !== -1) {
+        WM.section('general');
+      }
+    }
+  };
+
+  document.addEventListener('wm:settings', function (ev) {
+    var cfg = (ev.detail || {}).settings || {};
+    WM.apply_eve_gate(cfg.show_eve_tools !== false);
+  });
 
   // ---- title bar ----------------------------------------------------
   WM.el('btn-minimize').addEventListener('click', function () {
