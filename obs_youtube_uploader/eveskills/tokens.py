@@ -16,6 +16,7 @@ prompt. This is a defence for data at rest -- a stolen laptop, a disk
 image, a backup, a %LOCALAPPDATA% redirected into OneDrive -- not against
 local code execution.
 """
+
 import base64
 import binascii
 
@@ -68,5 +69,5 @@ def unwrap(blob: str, *, unprotect=dpapi.unprotect):
         return None
     try:
         return unprotect(raw).decode("utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001 - a corrupted token is not a crash
         return None

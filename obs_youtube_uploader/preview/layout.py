@@ -4,6 +4,7 @@ Pure: dict in, dict out. The caller owns the file, because settings.save()
 projects the complete document (settings.py:281-285) and has more than one
 writer already -- see preview/store.py for who may write and how.
 """
+
 from typing import NamedTuple
 
 from .geometry import Rect
@@ -16,8 +17,13 @@ class Entry(NamedTuple):
 
 def serialize(entries: dict) -> dict:
     return {
-        key: {"x": e.rect.x, "y": e.rect.y, "w": e.rect.w, "h": e.rect.h,
-              "locked": bool(e.locked)}
+        key: {
+            "x": e.rect.x,
+            "y": e.rect.y,
+            "w": e.rect.w,
+            "h": e.rect.h,
+            "locked": bool(e.locked),
+        }
         for key, e in entries.items()
     }
 
@@ -36,8 +42,12 @@ def deserialize(raw) -> dict:
         if not isinstance(key, str) or not isinstance(value, dict):
             continue
         try:
-            x, y, w, h = (int(value["x"]), int(value["y"]),
-                          int(value["w"]), int(value["h"]))
+            x, y, w, h = (
+                int(value["x"]),
+                int(value["y"]),
+                int(value["w"]),
+                int(value["h"]),
+            )
         except (KeyError, TypeError, ValueError):
             continue
         if w <= 0 or h <= 0:

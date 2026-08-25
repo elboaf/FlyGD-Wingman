@@ -10,17 +10,18 @@ Same shape as ui/scheduler.py, one level lower: that module's docstring
 records the identical discovery about webview.start() carrying none of
 the old event loop, and answers it with an owned loop.
 """
+
 import ctypes
 import logging
 import threading
 
-from . import cycle, discovery, gestures, geometry, layout, win32
+from . import cycle, discovery, geometry, gestures, layout, win32
 from . import window as window_mod
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
 
-SWEEP_MS = 700          # TriffView uses the same interval
+SWEEP_MS = 700  # TriffView uses the same interval
 SWEEP_TIMER_ID = 1
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
@@ -28,12 +29,15 @@ DEFAULT_SIZE = (320, 210)
 
 def reconcile(current: set, desired: set):
     """(added, removed, kept) stable keys between two sweeps."""
-    return (sorted(desired - current), sorted(current - desired),
-            sorted(current & desired))
+    return (
+        sorted(desired - current),
+        sorted(current - desired),
+        sorted(current & desired),
+    )
 
 
 HOTKEY_ID_BASE = 1
-HOTKEY_ID_MAX = 0xBFFF     # Windows reserves 0xC000+ for DLLs
+HOTKEY_ID_MAX = 0xBFFF  # Windows reserves 0xC000+ for DLLs
 
 
 def plan_registrations(table) -> list:
@@ -80,10 +84,16 @@ class PreviewHost:
     """Owns the preview thread. Public methods are callable from anywhere;
     anything touching an HWND is marshalled onto the thread."""
 
-    def __init__(self, on_layout_changed, saved_layouts=None,
-                 size=DEFAULT_SIZE, flush_layouts=None,
-                 on_clients_changed=None, on_hotkey_status=None,
-                 restore_positions=None):
+    def __init__(
+        self,
+        on_layout_changed,
+        saved_layouts=None,
+        size=DEFAULT_SIZE,
+        flush_layouts=None,
+        on_clients_changed=None,
+        on_hotkey_status=None,
+        restore_positions=None,
+    ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
@@ -102,7 +112,7 @@ class PreviewHost:
         self._restore_positions = restore_positions
         self._size = size
         self._thread = None
-        self._hwnd = None          # message-only window, see _run
+        self._hwnd = None  # message-only window, see _run
         self._windows = {}
         # Every DISCOVERED client, not just those with a window. _windows
         # drops any whose creation failed, and a chord aimed at a running
@@ -118,7 +128,7 @@ class PreviewHost:
         # a dict, so the value travels in a field and only the signal is
         # posted -- the same shape _saved already uses.
         self._desired_hotkeys = {}
-        self._registered = {}     # hotkey_id -> action
+        self._registered = {}  # hotkey_id -> action
         self._hotkey_status = {}  # gesture text -> registered?
         self._last_cycled = None
 
@@ -129,9 +139,10 @@ class PreviewHost:
     def start(self) -> None:
         with self._lock:
             if self._thread is not None:
-                return   # Idempotent: a second enable must not orphan a pump.
-            self._thread = threading.Thread(target=self._run, daemon=True,
-                                            name="wingman-preview")
+                return  # Idempotent: a second enable must not orphan a pump.
+            self._thread = threading.Thread(
+                target=self._run, daemon=True, name="wingman-preview"
+            )
             self._thread.start()
 
     def stop(self, timeout: float = JOIN_TIMEOUT_S) -> None:
@@ -166,8 +177,7 @@ class PreviewHost:
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
         if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd,
-                                             win32.WM_APP_SWEEP_NOW, 0, 0)
+            win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_SWEEP_NOW, 0, 0)
 
     def set_hotkeys(self, table) -> None:
         """Replace the whole binding table. Safe from any thread.
@@ -179,8 +189,7 @@ class PreviewHost:
         with self._lock:
             self._desired_hotkeys = dict(table or {})
         if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd,
-                                             win32.WM_APP_REBIND, 0, 0)
+            win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
 
     def hotkey_status(self) -> dict:
         """Outcome of the most recent registration pass.
@@ -195,6 +204,7 @@ class PreviewHost:
 
     def _run(self) -> None:
         from ctypes import wintypes
+
         libs = win32.bind()
 
         # First, before any window exists. Thread-local, so the process
@@ -202,13 +212,16 @@ class PreviewHost:
         # deliberately chose and ui/chrome.py:177-186 depends on. Verified
         # to isolate correctly on a 192-DPI monitor.
         prev = libs.user32.SetThreadDpiAwarenessContext(
-            ctypes.c_void_p(win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+            ctypes.c_void_p(win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        )
         logger.debug("Preview thread DPI override accepted: %s", bool(prev))
 
         self._hwnd = self._create_host_window(libs)
         if not self._hwnd:
-            logger.error("Preview host window could not be created; "
-                         "previews are disabled for this session")
+            logger.error(
+                "Preview host window could not be created; "
+                "previews are disabled for this session"
+            )
             return
 
         self._sweep(libs)
@@ -216,8 +229,9 @@ class PreviewHost:
         with self._lock:
             initial = dict(self._desired_hotkeys)
         self._apply_hotkeys(libs, initial)
-        libs.user32.SetTimer(self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID),
-                             SWEEP_MS, None)
+        libs.user32.SetTimer(
+            self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
+        )
         self._ready.set()
 
         msg = wintypes.MSG()
@@ -237,16 +251,18 @@ class PreviewHost:
         from ctypes import wintypes
 
         class WNDCLASSW(ctypes.Structure):
-            _fields_ = [("style", wintypes.UINT),
-                        ("lpfnWndProc", win32.wndproc_type()),
-                        ("cbClsExtra", ctypes.c_int),
-                        ("cbWndExtra", ctypes.c_int),
-                        ("hInstance", wintypes.HINSTANCE),
-                        ("hIcon", wintypes.HICON),
-                        ("hCursor", wintypes.HANDLE),
-                        ("hbrBackground", wintypes.HBRUSH),
-                        ("lpszMenuName", wintypes.LPCWSTR),
-                        ("lpszClassName", wintypes.LPCWSTR)]
+            _fields_ = [
+                ("style", wintypes.UINT),
+                ("lpfnWndProc", win32.wndproc_type()),
+                ("cbClsExtra", ctypes.c_int),
+                ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE),
+                ("hIcon", wintypes.HICON),
+                ("hCursor", wintypes.HANDLE),
+                ("hbrBackground", wintypes.HBRUSH),
+                ("lpszMenuName", wintypes.LPCWSTR),
+                ("lpszClassName", wintypes.LPCWSTR),
+            ]
 
         proc = win32.wndproc_type()(self._host_proc)
         win32._KEEPALIVE.append(proc)
@@ -256,8 +272,19 @@ class PreviewHost:
         cls.lpszClassName = "WingmanPreviewHost"
         libs.user32.RegisterClassW(ctypes.byref(cls))
         return libs.user32.CreateWindowExW(
-            0, "WingmanPreviewHost", "wingman-preview-host", 0, 0, 0, 0, 0,
-            wintypes.HWND(win32.HWND_MESSAGE), None, cls.hInstance, None)
+            0,
+            "WingmanPreviewHost",
+            "wingman-preview-host",
+            0,
+            0,
+            0,
+            0,
+            0,
+            wintypes.HWND(win32.HWND_MESSAGE),
+            None,
+            cls.hInstance,
+            None,
+        )
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
@@ -284,17 +311,26 @@ class PreviewHost:
         """Foreground changes trigger a sweep, but never inline: the hook
         callback arrives on an arbitrary thread, and touching HWNDs from
         there is the thread-affinity violation that hangs."""
+
         def on_event(hook, event, hwnd, obj, child, tid, ms):
             self.request_sweep()
 
         cb = win32.winevent_proc_type()(on_event)
         win32._KEEPALIVE.append(cb)
         self._hook = libs.user32.SetWinEventHook(
-            win32.EVENT_SYSTEM_FOREGROUND, win32.EVENT_SYSTEM_FOREGROUND,
-            None, cb, 0, 0, win32.WINEVENT_OUTOFCONTEXT)
+            win32.EVENT_SYSTEM_FOREGROUND,
+            win32.EVENT_SYSTEM_FOREGROUND,
+            None,
+            cb,
+            0,
+            0,
+            win32.WINEVENT_OUTOFCONTEXT,
+        )
         if not self._hook:
-            logger.warning("SetWinEventHook failed; previews will only "
-                           "refresh on the %dms sweep", SWEEP_MS)
+            logger.warning(
+                "SetWinEventHook failed; previews will only refresh on the %dms sweep",
+                SWEEP_MS,
+            )
 
     def _sweep(self, libs) -> None:
         clients = {c.stable_key: c for c in discovery.list_clients()}
@@ -320,22 +356,27 @@ class PreviewHost:
             entry = self._saved.get(key)
             rect = self._resolve_rect(key, len(self._windows), monitors, entry)
             win = PreviewWindow.create(
-                libs, client, rect,
+                libs,
+                client,
+                rect,
                 on_activate=lambda c: None,
                 on_rect_changed=self._layout_changed,
-                neighbours=lambda k=key: [w.rect for k2, w
-                                          in self._windows.items() if k2 != k],
+                neighbours=lambda k=key: [
+                    w.rect for k2, w in self._windows.items() if k2 != k
+                ],
                 screen=self._screen,
                 # Restored, not defaulted: a preview locked before the last
                 # restart must come back locked, or the next drag reports
                 # locked=False and erases the flag from settings.
-                locked=bool(entry.locked) if entry else False)
+                locked=bool(entry.locked) if entry else False,
+            )
             if win is not None:
                 self._windows[key] = win
 
         if added or removed:
-            logger.info("Preview sweep: +%s -%s (%d live)",
-                        added, removed, len(self._windows))
+            logger.info(
+                "Preview sweep: +%s -%s (%d live)", added, removed, len(self._windows)
+            )
 
         now = self.characters()
         if now != before and self._on_clients_changed is not None:
@@ -358,8 +399,7 @@ class PreviewHost:
         stable_key back to "hwnd:0x...", which names nothing a user could
         bind to.
         """
-        return sorted(key for key in self._clients
-                      if not key.startswith("hwnd:"))
+        return sorted(key for key in self._clients if not key.startswith("hwnd:"))
 
     def _apply_hotkeys(self, libs, table) -> None:
         """Unregister everything, then register the new table."""
@@ -370,8 +410,9 @@ class PreviewHost:
         status = {}
         for ident, text, action in plan_registrations(table):
             parsed = gestures.parse(text)
-            ok = bool(libs.user32.RegisterHotKey(self._hwnd, ident,
-                                                 parsed.mods, parsed.vk))
+            ok = bool(
+                libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
+            )
             status[text] = ok
             if ok:
                 self._registered[ident] = action
@@ -379,15 +420,20 @@ class PreviewHost:
                 # A chord another application already owns. User-actionable,
                 # not a bug -- and the parent design requires it be visible
                 # rather than logged only.
-                logger.warning("Could not register preview hotkey %s; "
-                               "another application may already own it", text)
+                logger.warning(
+                    "Could not register preview hotkey %s; "
+                    "another application may already own it",
+                    text,
+                )
         self._hotkey_status = status
         # One line per pass, not per chord: this is the only place that
         # would tell "nothing is bound" from "everything failed" from
         # "some chord lost the fight" if a field report ever needed it.
-        logger.info("Preview hotkeys: %d registered, %d refused",
-                    sum(1 for ok in status.values() if ok),
-                    sum(1 for ok in status.values() if not ok))
+        logger.info(
+            "Preview hotkeys: %d registered, %d refused",
+            sum(1 for ok in status.values() if ok),
+            sum(1 for ok in status.values() if not ok),
+        )
         if self._on_hotkey_status is not None:
             # Guarded for the same reason as _on_clients_changed above: the
             # initial pass runs in _run() before SetTimer/_ready.set(), and
@@ -413,12 +459,17 @@ class PreviewHost:
             target = value
         else:
             foreground = libs.user32.GetForegroundWindow()
-            anchor = next((key for key, client in self._clients.items()
-                           if client.hwnd == foreground), None)
+            anchor = next(
+                (
+                    key
+                    for key, client in self._clients.items()
+                    if client.hwnd == foreground
+                ),
+                None,
+            )
             # Fall back to the last chord's target when focus is not on a
             # client at all -- a browser, or Wingman itself.
-            target = cycle.step(self.characters(),
-                                anchor or self._last_cycled, value)
+            target = cycle.step(self.characters(), anchor or self._last_cycled, value)
             self._last_cycled = target
         logger.debug("Preview hotkey fired: %s -> %s", action, target)
         client = self._clients.get(target)
@@ -475,9 +526,9 @@ class PreviewHost:
                 info.cbSize = ctypes.sizeof(win32.MONITORINFO)
                 if libs.user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
                     r = info.rcMonitor
-                    found.append(geometry.Rect(r.left, r.top,
-                                               r.right - r.left,
-                                               r.bottom - r.top))
+                    found.append(
+                        geometry.Rect(r.left, r.top, r.right - r.left, r.bottom - r.top)
+                    )
                 else:
                     failed.append(hmonitor)
             except Exception:
@@ -491,21 +542,28 @@ class PreviewHost:
         # unlike the WndProc and WinEvent callbacks that _KEEPALIVE exists
         # for. A local reference is enough to keep it alive across the call.
         if not libs.user32.EnumDisplayMonitors(None, None, proc, 0):
-            logger.warning("EnumDisplayMonitors failed; preview placement "
-                           "will not be clamped to a display this sweep")
+            logger.warning(
+                "EnumDisplayMonitors failed; preview placement "
+                "will not be clamped to a display this sweep"
+            )
             return []
         if failed:
-            logger.warning("GetMonitorInfoW failed for %d of %d monitors; "
-                           "preview placement will not be clamped to a "
-                           "display this sweep", len(failed),
-                           len(failed) + len(found))
+            logger.warning(
+                "GetMonitorInfoW failed for %d of %d monitors; "
+                "preview placement will not be clamped to a "
+                "display this sweep",
+                len(failed),
+                len(failed) + len(found),
+            )
             return []
         if not found:
             # A TRUE return with no callbacks at all: an RDP session or
             # every display asleep. Distinguishable from "clamping ran and
             # nothing needed moving" only if it is said out loud.
-            logger.warning("EnumDisplayMonitors reported no displays; "
-                           "preview placement will not be clamped")
+            logger.warning(
+                "EnumDisplayMonitors reported no displays; "
+                "preview placement will not be clamped"
+            )
         return found
 
     def _resolve_rect(self, key, index, monitors, entry=None):
@@ -538,7 +596,8 @@ class PreviewHost:
         # top edge instead of the bounding box's.
         target = geometry.stack_monitor(monitors, self._screen())
         return geometry.clamp_to_monitors(
-            geometry.default_stack(index, target, self._size), monitors)
+            geometry.default_stack(index, target, self._size), monitors
+        )
 
     def _restoring(self) -> bool:
         """Whether a saved rect should be honoured, read live.
@@ -553,8 +612,9 @@ class PreviewHost:
         try:
             return bool(self._restore_positions())
         except Exception:
-            logger.exception("Could not read restore_preview_positions; "
-                             "restoring the saved position")
+            logger.exception(
+                "Could not read restore_preview_positions; restoring the saved position"
+            )
             return True
 
     def _teardown(self, libs) -> None:
@@ -588,13 +648,13 @@ class PreviewHost:
         self._clients = {}
         self._hotkey_status = {}
         if self._hook:
-            libs.user32.UnhookWinEvent(self._hook)   # 1. hook
+            libs.user32.UnhookWinEvent(self._hook)  # 1. hook
             self._hook = None
         for win in list(self._windows.values()):
-            win.close()                              # 2. thumbnails + windows
+            win.close()  # 2. thumbnails + windows
         self._windows.clear()
         if self._hwnd:
             libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID))
-            libs.user32.DestroyWindow(self._hwnd)    # 3. host window
+            libs.user32.DestroyWindow(self._hwnd)  # 3. host window
             self._hwnd = None
-        libs.user32.PostQuitMessage(0)               # 4. end the pump
+        libs.user32.PostQuitMessage(0)  # 4. end the pump

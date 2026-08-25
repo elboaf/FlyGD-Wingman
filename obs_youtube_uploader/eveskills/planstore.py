@@ -9,6 +9,7 @@ check.
 
 Ported from TriffView's PlanStore.cs / PlanNameValidator.cs.
 """
+
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,8 +63,7 @@ def validate_plan_name(name) -> str:
         # differ from the one the user typed.
         return "Plan name has leading or trailing whitespace."
     if len(normalised) > MAX_PLAN_NAME_CHARS:
-        return ("Plan name is longer than "
-                f"{MAX_PLAN_NAME_CHARS} characters.")
+        return f"Plan name is longer than {MAX_PLAN_NAME_CHARS} characters."
     if any(unicodedata.category(ch) == "Cc" for ch in normalised):
         return "Plan name contains a control character."
     if any(ch in _INVALID_CHARS for ch in normalised):
@@ -86,11 +86,11 @@ def validate_plan_name(name) -> str:
 
 @dataclass(frozen=True)
 class PlanFile:
-    name: str           # the (NFC-normalised) filename stem; the plan's
-                         # identity everywhere else in the app
+    name: str  # the (NFC-normalised) filename stem; the plan's
+    # identity everywhere else in the app
     requirements: tuple
     diagnostics: tuple  # always () -- a plan that failed to parse never
-                         # reaches `found`; it becomes a PlanIssue instead
+    # reaches `found`; it becomes a PlanIssue instead
 
     @property
     def ok(self) -> bool:
@@ -107,10 +107,11 @@ class PlanIssue:
     filename by splitting a flat string on some separator would break
     the moment a user names a plan file containing that separator.
     """
+
     file_name: str
     message: str
-    diagnostics: tuple   # the plan's own diagnostics when the issue is a
-                         # parse failure; () for every other kind of issue
+    diagnostics: tuple  # the plan's own diagnostics when the issue is a
+    # parse failure; () for every other kind of issue
 
 
 def _sort_key(path: Path):
@@ -156,8 +157,9 @@ def list_plans(plans_dir: Path):
     except OSError as exc:
         # A deleted or permission-denied folder costs an empty roster,
         # not a crash. `Open plans folder` reports the real failure.
-        return [], [PlanIssue(
-            "plans", f"The plans folder could not be read: {exc}", ())]
+        return [], [
+            PlanIssue("plans", f"The plans folder could not be read: {exc}", ())
+        ]
 
     # Sorted BEFORE the cap so the same 200 plans appear on every
     # reload, rather than whichever 200 the filesystem enumerated first.
@@ -165,10 +167,14 @@ def list_plans(plans_dir: Path):
     # ahead of every lowercase one and scatters related plans.
     entries.sort(key=_sort_key)
     if len(entries) > MAX_PLAN_FILES:
-        issues.append(PlanIssue(
-            "plans",
-            f"Only the first {MAX_PLAN_FILES} of {len(entries)} plan "
-            "files were read.", ()))
+        issues.append(
+            PlanIssue(
+                "plans",
+                f"Only the first {MAX_PLAN_FILES} of {len(entries)} plan "
+                "files were read.",
+                (),
+            )
+        )
         entries = entries[:MAX_PLAN_FILES]
 
     found = []
@@ -199,10 +205,13 @@ def list_plans(plans_dir: Path):
             # case or by NFC/NFD normalisation both look like distinct,
             # valid plans on their own -- it is only in relation to each
             # other that one has to lose, silently, on every reload.
-            issues.append(PlanIssue(
-                path.name,
-                "Plan name collides case-insensitively with another "
-                "file.", ()))
+            issues.append(
+                PlanIssue(
+                    path.name,
+                    "Plan name collides case-insensitively with another file.",
+                    (),
+                )
+            )
             continue
         seen_names.add(collision_key)
 
@@ -219,14 +228,16 @@ def list_plans(plans_dir: Path):
         try:
             size = path.stat().st_size
         except OSError as exc:
-            issues.append(PlanIssue(
-                path.name, f"Could not read plan: {exc}", ()))
+            issues.append(PlanIssue(path.name, f"Could not read plan: {exc}", ()))
             continue
         if size > MAX_PLAN_FILE_BYTES:
-            issues.append(PlanIssue(
-                path.name,
-                f"Plan exceeds the {MAX_PLAN_FILE_BYTES // 1024} KiB "
-                "file limit.", ()))
+            issues.append(
+                PlanIssue(
+                    path.name,
+                    f"Plan exceeds the {MAX_PLAN_FILE_BYTES // 1024} KiB file limit.",
+                    (),
+                )
+            )
             continue
 
         try:
@@ -242,8 +253,7 @@ def list_plans(plans_dir: Path):
             # A .txt Notepad saved as UTF-16, or a binary file renamed.
             # One unreadable file costs its own row, not the folder --
             # the same per-entry tolerance preview/layout.py takes.
-            issues.append(PlanIssue(
-                path.name, f"Could not read plan: {exc}", ()))
+            issues.append(PlanIssue(path.name, f"Could not read plan: {exc}", ()))
             continue
         result = plans.parse(contents)
         if not result.ok:
@@ -252,9 +262,13 @@ def list_plans(plans_dir: Path):
             # cannot produce a single requirement is the silent-
             # poisoning failure plans.parse's own empty-plan diagnostic
             # exists to prevent, just reached from a different angle.
-            issues.append(PlanIssue(
-                path.name, "Plan has invalid lines and was not loaded.",
-                result.diagnostics))
+            issues.append(
+                PlanIssue(
+                    path.name,
+                    "Plan has invalid lines and was not loaded.",
+                    result.diagnostics,
+                )
+            )
             continue
         found.append(PlanFile(normalised_name, result.requirements, ()))
     return found, issues
@@ -312,7 +326,8 @@ def seed_starter_plan(plans_dir: Path) -> bool:
             return False
         plans_dir.mkdir(parents=True)
         (plans_dir / f"{STARTER_PLAN_NAME}.txt").write_text(
-            _STARTER_PLAN, encoding="utf-8")
+            _STARTER_PLAN, encoding="utf-8"
+        )
     except OSError:
         return False
     return True

@@ -3,6 +3,7 @@
 No network anywhere in this file. The token endpoint is exercised through
 the injected transport seam, the same shape discord.py uses.
 """
+
 import inspect
 import io
 import json
@@ -16,10 +17,42 @@ from obs_youtube_uploader.eveskills import application, sso
 # RFC 7636 Appendix B, verbatim. These 32 octets encode to the verifier
 # below, whose ASCII bytes hash to the challenge below. Any drift in the
 # encoding, the hash input, or the padding shows up here immediately.
-RFC7636_OCTETS = bytes([
-    116, 24, 223, 180, 151, 153, 224, 37, 79, 250, 96, 125, 216, 173,
-    187, 186, 22, 212, 37, 77, 105, 214, 191, 240, 91, 88, 5, 88, 83,
-    132, 141, 121])
+RFC7636_OCTETS = bytes(
+    [
+        116,
+        24,
+        223,
+        180,
+        151,
+        153,
+        224,
+        37,
+        79,
+        250,
+        96,
+        125,
+        216,
+        173,
+        187,
+        186,
+        22,
+        212,
+        37,
+        77,
+        105,
+        214,
+        191,
+        240,
+        91,
+        88,
+        5,
+        88,
+        83,
+        132,
+        141,
+        121,
+    ]
+)
 RFC7636_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 RFC7636_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
@@ -55,7 +88,7 @@ def test_pkce_values_are_base64url_without_padding():
     pkce = sso.generate_pkce()
     for value in (pkce.state, pkce.verifier, pkce.challenge):
         assert "=" not in value and "+" not in value and "/" not in value
-        assert len(value) == 43       # 32 bytes, unpadded
+        assert len(value) == 43  # 32 bytes, unpadded
 
 
 def test_generate_pkce_is_random_by_default():
@@ -115,8 +148,12 @@ def test_no_client_secret_appears_anywhere():
 
 VERIFIER = RFC7636_VERIFIER
 
-GOOD = {"access_token": "at-value", "refresh_token": "rt-value",
-        "expires_in": 1199, "token_type": "Bearer"}
+GOOD = {
+    "access_token": "at-value",
+    "refresh_token": "rt-value",
+    "expires_in": 1199,
+    "token_type": "Bearer",
+}
 
 
 class FakeTransport:
@@ -151,15 +188,17 @@ def error_transport(status, payload):
     body = json.dumps(payload).encode("utf-8") if isinstance(payload, dict) else payload
 
     def transport(request, timeout=None):
-        raise urllib.error.HTTPError(request.full_url, status, "Error", {},
-                                     io.BytesIO(body))
+        raise urllib.error.HTTPError(
+            request.full_url, status, "Error", {}, io.BytesIO(body)
+        )
 
     return transport
 
 
 def form_of(request) -> dict:
-    return dict(urllib.parse.parse_qsl(request.data.decode("ascii"),
-                                       strict_parsing=True))
+    return dict(
+        urllib.parse.parse_qsl(request.data.decode("ascii"), strict_parsing=True)
+    )
 
 
 def test_exchange_code_posts_the_authorization_code_grant():
@@ -194,8 +233,9 @@ def test_the_request_is_form_encoded_and_carries_the_user_agent():
     accepts form encoding."""
     transport = FakeTransport(GOOD)
     sso.refresh_token("rt-old", transport=transport)
-    headers = {key.lower(): value for key, value
-               in transport.requests[0].header_items()}
+    headers = {
+        key.lower(): value for key, value in transport.requests[0].header_items()
+    }
     assert headers["content-type"] == "application/x-www-form-urlencoded"
     assert headers["user-agent"] == application.USER_AGENT
 
@@ -348,15 +388,23 @@ def test_definitive_codes_are_exactly_the_three():
     gateway; narrowing it leaves a dead token retrying forever."""
     for code in ("invalid_grant", "identity_mismatch", "owner_changed"):
         assert sso.OAuthError(400, code, "x").definitive is True
-    for code in ("invalid_request", "server_error", "temporarily_unavailable",
-                 "network", "oauth_error", "invalid_response", ""):
+    for code in (
+        "invalid_request",
+        "server_error",
+        "temporarily_unavailable",
+        "network",
+        "oauth_error",
+        "invalid_response",
+        "",
+    ):
         assert sso.OAuthError(500, code, "x").definitive is False
 
 
 def test_an_invalid_grant_response_is_classified_definitive():
     """The revoked-refresh-token case, end to end."""
-    transport = error_transport(400, {"error": "invalid_grant",
-                                      "error_description": "token revoked"})
+    transport = error_transport(
+        400, {"error": "invalid_grant", "error_description": "token revoked"}
+    )
     with pytest.raises(sso.OAuthError) as caught:
         sso.refresh_token("rt-old", transport=transport)
     assert caught.value.code == "invalid_grant"
@@ -399,7 +447,9 @@ def test_a_hostile_error_code_cannot_reach_the_message():
     by whatever answered the request must not carry markup or a newline into
     the UI -- and because the filtered value no longer equals the literal,
     it is NOT definitive either: a hostile body cannot log the user out."""
-    transport = error_transport(400, {"error": "<script>alert(1)</script>\ninvalid_grant"})
+    transport = error_transport(
+        400, {"error": "<script>alert(1)</script>\ninvalid_grant"}
+    )
     with pytest.raises(sso.OAuthError) as caught:
         sso.refresh_token("rt-old", transport=transport)
     assert "<" not in caught.value.code and "\n" not in caught.value.code
@@ -421,7 +471,7 @@ def test_an_oauth_error_message_is_readable():
     """The status and the code both appear, because the pair is what a bug
     report needs and neither alone identifies the failure."""
     transport = error_transport(400, {"error": "invalid_grant"})
-    with pytest.raises(sso.OAuthError, match="400.*invalid_grant"):
+    with pytest.raises(sso.OAuthError, match=r"400.*invalid_grant"):
         sso.refresh_token("rt-old", transport=transport)
 
 
@@ -433,6 +483,9 @@ def test_default_transport_refuses_redirects():
     point directly, with no server, pins the handler itself rather than the
     request that happens to trigger it."""
     handler = sso._NoRedirectHandler()
-    assert handler.redirect_request(
-        None, None, 302, "Found",
-        {}, "https://attacker.example/steal") is None
+    assert (
+        handler.redirect_request(
+            None, None, 302, "Found", {}, "https://attacker.example/steal"
+        )
+        is None
+    )

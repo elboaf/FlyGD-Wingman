@@ -11,6 +11,7 @@ Tk-to-webview port untouched, along with their tests.
 Nothing in here may import tkinter, pywebview, or any widget module. That is
 the whole point: if it needs a window to test, it does not belong here.
 """
+
 from .. import discord, library, uploader
 
 # --- main window -----------------------------------------------------------
@@ -44,8 +45,10 @@ def format_selection_summary(infos: list[library.VideoInfo]) -> str:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     partial = "+" if any(not info.probed for info in infos) else ""
-    return (f"{len(infos)} selected · {library.format_size(total_size)}"
-            f" · {hours}:{minutes:02d}:{seconds:02d}{partial}")
+    return (
+        f"{len(infos)} selected · {library.format_size(total_size)}"
+        f" · {hours}:{minutes:02d}:{seconds:02d}{partial}"
+    )
 
 
 def _hms(total_seconds: int) -> str:
@@ -54,9 +57,14 @@ def _hms(total_seconds: int) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}"
 
 
-def format_upload_confirm(infos: list[library.VideoInfo], title: str,
-                          privacy: str, channel_title: str,
-                          stitch: bool, logs: bool) -> str:
+def format_upload_confirm(
+    infos: list[library.VideoInfo],
+    title: str,
+    privacy: str,
+    channel_title: str,
+    stitch: bool,
+    logs: bool,
+) -> str:
     """The body of the confirm shown before anything is published.
 
     This dialog guards the app's irreversible actions, and it was the only
@@ -85,28 +93,34 @@ def format_upload_confirm(infos: list[library.VideoInfo], title: str,
         what = f"{count} recordings stitched into one video"
         titles = f'"{shown}"'
     else:
-        first = uploader.build_body(title, "", privacy, "", 0, count)["snippet"]["title"]
+        first = uploader.build_body(title, "", privacy, "", 0, count)["snippet"][
+            "title"
+        ]
         what = f"{count} recording{'s' if count != 1 else ''}"
         titles = f'"{first}"'
         if count > 1:
-            last = uploader.build_body(title, "", privacy, "", count - 1,
-                                       count)["snippet"]["title"]
+            last = uploader.build_body(title, "", privacy, "", count - 1, count)[
+                "snippet"
+            ]["title"]
             titles += f' … "{last}"'
 
-    logs_line = ("Logs:     combat logs posted to Discord afterwards\n"
-                 if logs else "")
-    final = ("Publishing to YouTube and posting to Discord cannot be undone "
-             "from this app." if logs else
-             "Publishing to YouTube cannot be undone from this app.")
+    logs_line = "Logs:     combat logs posted to Discord afterwards\n" if logs else ""
+    final = (
+        "Publishing to YouTube and posting to Discord cannot be undone from this app."
+        if logs
+        else "Publishing to YouTube cannot be undone from this app."
+    )
 
-    return (f"Upload {what} to YouTube?\n\n"
-            f"Channel:  {where}\n"
-            f"Privacy:  {privacy}\n"
-            f"Title:    {titles}\n"
-            f"Total:    {library.format_size(total_size)} · "
-            f"{_hms(total_seconds)}\n"
-            f"{logs_line}\n"
-            f"{final}")
+    return (
+        f"Upload {what} to YouTube?\n\n"
+        f"Channel:  {where}\n"
+        f"Privacy:  {privacy}\n"
+        f"Title:    {titles}\n"
+        f"Total:    {library.format_size(total_size)} · "
+        f"{_hms(total_seconds)}\n"
+        f"{logs_line}\n"
+        f"{final}"
+    )
 
 
 def format_progress(index: int, total: int, fraction: float) -> str:
@@ -203,12 +217,12 @@ def webhook_status(raw: str) -> str:
 CELL_HELP: dict[str, dict[str, str]] = {
     "duration": {
         "?": "Length could not be read. ffprobe could not open this file, so\n"
-             "combat-log upload is unavailable for it.",
+        "combat-log upload is unavailable for it.",
         "…": "Measuring length…",
     },
     "link": {
         "↗": "Uploaded to YouTube.\n"
-             "Double-click to open it, or right-click to copy the link.",
+        "Double-click to open it, or right-click to copy the link.",
     },
 }
 

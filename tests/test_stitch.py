@@ -2,6 +2,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from obs_youtube_uploader import library, stitch
 
 
@@ -24,7 +25,11 @@ def test_order_for_stitch_is_earliest_first():
     a = _info(Path("a.mkv"), 300)
     b = _info(Path("b.mkv"), 100)
     c = _info(Path("c.mkv"), 200)
-    assert [i.path.name for i in stitch.order_for_stitch([a, b, c])] == ["b.mkv", "c.mkv", "a.mkv"]
+    assert [i.path.name for i in stitch.order_for_stitch([a, b, c])] == [
+        "b.mkv",
+        "c.mkv",
+        "a.mkv",
+    ]
 
 
 def test_write_concat_list_quotes_every_source(tmp_path):
@@ -63,10 +68,16 @@ def test_build_command_is_a_stream_copy(tmp_path):
     even with the flags scrambled."""
     cmd = stitch.build_command(tmp_path / "list.txt", tmp_path / "out.mkv", "ffmpeg")
     assert cmd == [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(tmp_path / "list.txt"),
-        "-c", "copy",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(tmp_path / "list.txt"),
+        "-c",
+        "copy",
         str(tmp_path / "out.mkv"),
     ]
 
@@ -101,10 +112,12 @@ def test_stitched_cleans_up_when_body_raises(tmp_path):
     for s in srcs:
         s.write_bytes(b"x")
     captured = None
-    with pytest.raises(RuntimeError):
-        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_ok) as out:
-            captured = out
-            raise RuntimeError("upload failed")
+    with (
+        pytest.raises(RuntimeError),
+        stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_ok) as out,
+    ):
+        captured = out
+        raise RuntimeError("upload failed")
     assert captured is not None
     assert not captured.exists()
 
@@ -113,15 +126,19 @@ def test_stitched_raises_when_ffmpeg_fails(tmp_path):
     srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
     for s in srcs:
         s.write_bytes(b"x")
-    with pytest.raises(stitch.StitchError):
-        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail):
-            pass
+    with (
+        pytest.raises(stitch.StitchError),
+        stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail),
+    ):
+        pass
 
 
 def test_stitched_requires_at_least_two_sources(tmp_path):
-    with pytest.raises(ValueError):
-        with stitch.stitched([tmp_path / "a.mkv"], "ffmpeg", tmp_path, runner=_ok):
-            pass
+    with (
+        pytest.raises(ValueError),
+        stitch.stitched([tmp_path / "a.mkv"], "ffmpeg", tmp_path, runner=_ok),
+    ):
+        pass
 
 
 def test_output_names_are_unique_across_runs(tmp_path):
@@ -158,9 +175,11 @@ def test_stitched_cleans_up_the_concat_list_when_ffmpeg_fails(tmp_path):
     srcs = [tmp_path / "a.mkv", tmp_path / "b.mkv"]
     for s in srcs:
         s.write_bytes(b"x")
-    with pytest.raises(stitch.StitchError):
-        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail):
-            pass
+    with (
+        pytest.raises(stitch.StitchError),
+        stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_fail),
+    ):
+        pass
     assert list(tmp_path.glob("stitch-*.txt")) == []
 
 
@@ -195,9 +214,11 @@ def test_stitched_propagates_runner_exception(tmp_path):
     def _raise(cmd, **kw):
         raise RuntimeError("ffmpeg binary not found")
 
-    with pytest.raises(RuntimeError, match="ffmpeg binary not found"):
-        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_raise):
-            pass
+    with (
+        pytest.raises(RuntimeError, match="ffmpeg binary not found"),
+        stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_raise),
+    ):
+        pass
     assert list(tmp_path.glob("stitch-*.mkv")) == []
 
 
@@ -209,9 +230,11 @@ def test_stitched_raises_when_ffmpeg_reports_success_but_no_output(tmp_path):
     def _no_output(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    with pytest.raises(stitch.StitchError, match="no output"):
-        with stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_no_output):
-            pass
+    with (
+        pytest.raises(stitch.StitchError, match="no output"),
+        stitch.stitched(srcs, "ffmpeg", tmp_path, runner=_no_output),
+    ):
+        pass
 
 
 def test_stitched_creates_tmp_dir_when_absent(tmp_path):

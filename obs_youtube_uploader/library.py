@@ -4,6 +4,7 @@ Pure filesystem logic with no GUI dependency: the old VideoEntry held a
 tk.BooleanVar, which made it impossible to test. Selection state now lives
 in the UI layer; this module deals only in data.
 """
+
 import datetime
 import subprocess
 import sys
@@ -16,7 +17,9 @@ VIDEO_EXTS = {".mkv", ".mp4", ".flv", ".mov", ".avi", ".ts", ".m4v", ".webm"}
 # PyInstaller build — this runs once per file on every list refresh.
 # CREATE_NO_WINDOW doesn't exist off Windows, and the test suite injects
 # fake runners on Linux, so this must stay a no-op there.
-_NO_WINDOW_KWARGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+_NO_WINDOW_KWARGS = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
 
 
 def format_size(size_bytes: float) -> str:
@@ -58,9 +61,9 @@ def format_date(mtime: float, now: datetime.datetime | None = None) -> str:
     now than it did for the year branch alone: every threshold here is
     relative to it.
     """
-    when = datetime.datetime.fromtimestamp(mtime)
+    when = datetime.datetime.fromtimestamp(mtime)  # noqa: DTZ006 - local wall-clock, shown to the user
     if now is None:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now()  # noqa: DTZ005 - local wall-clock, shown to the user
 
     seconds = (now - when).total_seconds()
     # Future mtimes are real: a clock correction, a bad archive, a file
@@ -148,8 +151,9 @@ def discover(directory: Path) -> list[Path]:
     return [p for p, _ in entries]
 
 
-def probe(path: Path, ffprobe_bin: str | None,
-          runner=subprocess.run) -> tuple[float | None, bool]:
+def probe(
+    path: Path, ffprobe_bin: str | None, runner=subprocess.run
+) -> tuple[float | None, bool]:
     """Duration in seconds, plus whether the answer is worth remembering.
 
     Returns ``(duration, definitive)``. ``definitive`` is True only when
@@ -172,11 +176,22 @@ def probe(path: Path, ffprobe_bin: str | None,
         return None, False
     try:
         result = runner(
-            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=15, **_NO_WINDOW_KWARGS,
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            **_NO_WINDOW_KWARGS,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - could not launch, or timed out; not a verdict
         # Could not launch, or timed out. Says nothing about the file.
         return None, False
     if result.returncode != 0 or not result.stdout.strip():
@@ -187,7 +202,9 @@ def probe(path: Path, ffprobe_bin: str | None,
         return None, True
 
 
-def probe_duration(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> float | None:
+def probe_duration(
+    path: Path, ffprobe_bin: str | None, runner=subprocess.run
+) -> float | None:
     """Duration in seconds, or None if ffprobe is absent or fails.
 
     Returning None rather than raising is deliberate: a missing ffprobe
@@ -207,8 +224,9 @@ def stat_info(path: Path) -> VideoInfo:
     main thread on one ffprobe per file before showing anything at all.
     """
     stat = path.stat()
-    return VideoInfo(path=path, mtime=stat.st_mtime, size=stat.st_size,
-                     duration=None, probed=False)
+    return VideoInfo(
+        path=path, mtime=stat.st_mtime, size=stat.st_size, duration=None, probed=False
+    )
 
 
 def build_info(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> VideoInfo:

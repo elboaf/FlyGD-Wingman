@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from obs_youtube_uploader import library
 
 
@@ -112,6 +113,7 @@ def test_build_info_results_are_marked_probed(tmp_path):
 # so caching an environmental failure pins that file to "?" permanently and
 # blocks its combat-log upload even after the cause is fixed.
 
+
 def test_probe_reports_a_duration_as_definitive(tmp_path):
     f = _touch(tmp_path / "a.mkv")
 
@@ -191,7 +193,7 @@ def test_size_str_is_human_readable(tmp_path):
     assert library.build_info(f, None).size_str == "2.0 KB"
 
 
-NOW = datetime.datetime(2026, 8, 21, 12, 0)
+NOW = datetime.datetime(2026, 8, 21, 12, 0)  # noqa: DTZ001 - local wall-clock, matching format_date's own convention
 
 
 def _ago(**delta):
@@ -199,18 +201,21 @@ def _ago(**delta):
     return (NOW - datetime.timedelta(**delta)).timestamp()
 
 
-@pytest.mark.parametrize("delta,expected", [
-    ({"seconds": 5}, "just now"),
-    ({"seconds": 89}, "just now"),
-    ({"seconds": 90}, "1m ago"),
-    ({"minutes": 45}, "45m ago"),
-    ({"minutes": 59}, "59m ago"),
-    ({"hours": 1}, "1h ago"),
-    ({"hours": 23}, "23h ago"),
-    ({"hours": 25}, "yesterday"),
-    ({"days": 2}, "2d ago"),
-    ({"days": 6}, "6d ago"),
-])
+@pytest.mark.parametrize(
+    "delta,expected",
+    [
+        ({"seconds": 5}, "just now"),
+        ({"seconds": 89}, "just now"),
+        ({"seconds": 90}, "1m ago"),
+        ({"minutes": 45}, "45m ago"),
+        ({"minutes": 59}, "59m ago"),
+        ({"hours": 1}, "1h ago"),
+        ({"hours": 23}, "23h ago"),
+        ({"hours": 25}, "yesterday"),
+        ({"days": 2}, "2d ago"),
+        ({"days": 6}, "6d ago"),
+    ],
+)
 def test_format_date_is_relative_for_the_last_week(delta, expected):
     """The column answers "is this recent?", and precision degrades with age
     on purpose: minutes matter for this session's recording and are noise
@@ -225,7 +230,7 @@ def test_format_date_falls_back_to_a_calendar_date_after_a_week():
 def test_format_date_prefixes_the_year_only_outside_the_current_one():
     """The year is the least informative part for a recording made this
     year, and this is the tightest non-elastic column in the list."""
-    older = datetime.datetime(2025, 11, 2, 22, 11).timestamp()
+    older = datetime.datetime(2025, 11, 2, 22, 11).timestamp()  # noqa: DTZ001 - local wall-clock, matching format_date's own convention
     assert library.format_date(older, now=NOW) == "2025 Nov 02"
 
 
@@ -233,8 +238,8 @@ def test_format_date_prefers_recency_over_the_calendar_year():
     """Dec 31 23:59 viewed at Jan 1 00:01 is two minutes old, and saying so
     beats naming the year. This reverses the pre-relative rule deliberately:
     the calendar year now only decides the >= 7 day fallback."""
-    mtime = datetime.datetime(2025, 12, 31, 23, 59).timestamp()
-    now = datetime.datetime(2026, 1, 1, 0, 1)
+    mtime = datetime.datetime(2025, 12, 31, 23, 59).timestamp()  # noqa: DTZ001 - local wall-clock, matching format_date's own convention
+    now = datetime.datetime(2026, 1, 1, 0, 1)  # noqa: DTZ001 - local wall-clock, matching format_date's own convention
     assert library.format_date(mtime, now=now) == "2m ago"
 
 
@@ -248,9 +253,11 @@ def test_format_date_does_not_render_a_negative_age():
 def test_format_date_defaults_now_to_the_clock():
     """The default path is exercised for real; only the injected `now`
     branches above pin literal strings, so this cannot become a time bomb."""
-    mtime = datetime.datetime.now().timestamp()
+    mtime = datetime.datetime.now().timestamp()  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
     assert library.format_date(mtime) == library.format_date(
-        mtime, now=datetime.datetime.now())
+        mtime,
+        now=datetime.datetime.now(),  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
+    )
 
 
 def test_date_str_delegates_to_format_date(tmp_path):
@@ -288,9 +295,9 @@ def test_delete_reports_failures_without_aborting_batch(tmp_path):
 
 def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
     """Race condition: file gone by stat() time must be skipped, not crash discover()."""
-    old = _touch(tmp_path / "old.mkv", mtime=1000)
+    _touch(tmp_path / "old.mkv", mtime=1000)
     disappeared = _touch(tmp_path / "disappeared.mkv", mtime=1500)
-    new = _touch(tmp_path / "new.mkv", mtime=2000)
+    _touch(tmp_path / "new.mkv", mtime=2000)
 
     original_stat = Path.stat
 

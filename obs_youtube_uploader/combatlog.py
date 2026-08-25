@@ -8,6 +8,8 @@ the local UTC offset — the wrong hour, or nothing, with no error raised.
 Measured on a real folder: a log whose header reads 20:42:50 has an mtime of
 21:55:16 UTC / 17:55:16 local. Only the UTC reading is coherent.
 """
+
+import contextlib
 import datetime
 import json
 import logging
@@ -18,7 +20,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ def parse_header(path: Path) -> LogHeader | None:
     listener: str | None = None
     started: datetime.datetime | None = None
     try:
-        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             for _ in range(_HEADER_LINES):
                 line = fh.readline()
                 if not line:
@@ -155,7 +157,9 @@ def _filename_start(name: str) -> datetime.datetime | None:
         return None
 
 
-def select_logs(directory, start_utc, end_utc, *, max_files: int = MAX_FILES) -> Selection:
+def select_logs(
+    directory, start_utc, end_utc, *, max_files: int = MAX_FILES
+) -> Selection:
     """Gamelogs overlapping [start_utc, end_utc] padded by WINDOW_PADDING.
 
     Both bounds must be timezone-aware UTC — see the module docstring.
@@ -270,7 +274,7 @@ def summarize_archive(archive: ArchiveResult, start_utc, end_utc) -> str:
     """
     who = ", ".join(archive.characters) or "unknown pilots"
     parts = [
-        f"Combat logs {start_utc:%Y-%m-%d %H:%M}–{end_utc:%H:%M} UTC",
+        f"Combat logs {start_utc:%Y-%m-%d %H:%M}\u2013{end_utc:%H:%M} UTC",
         f"{archive.file_count} file(s)",
         who,
     ]
@@ -317,10 +321,8 @@ def build_archive(selection: Selection, out_path, start_utc, end_utc) -> Archive
             )
         os.replace(staging, out_path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             staging.unlink()
-        except OSError:
-            pass
         raise
 
     return ArchiveResult(

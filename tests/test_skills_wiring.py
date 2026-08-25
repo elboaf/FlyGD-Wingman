@@ -4,9 +4,8 @@ What must hold: the builder runs on every platform, a broken subsystem does
 not stop Wingman launching, the callbacks it passes are resolved eagerly,
 and main() both constructs it and tears it down.
 """
-import inspect
 
-import pytest
+import inspect
 
 from obs_youtube_uploader import __main__ as main_mod
 
@@ -21,6 +20,7 @@ def test_build_skills_controller_is_not_windows_gated(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.paths, "state_dir", lambda: tmp_path)
 
     from tests.test_api import make_api
+
     controller = main_mod.build_skills_controller(make_api(tmp_path))
 
     assert controller is not None
@@ -43,6 +43,7 @@ def test_the_builder_passes_bound_methods_not_lambdas(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.paths, "state_dir", lambda: tmp_path)
 
     from tests.test_api import make_api
+
     api = make_api(tmp_path)
     controller = main_mod.build_skills_controller(api)
 
@@ -84,8 +85,11 @@ def test_main_tears_the_subsystem_down_last_and_unconditionally():
 
     # Base indent of main()'s body, taken from a known sibling statement
     # rather than a hardcoded column count.
-    base_indent = next(len(line) - len(line.lstrip())
-                        for line in raw if line.strip() == "shutdown_engine(engine)")
+    base_indent = next(
+        len(line) - len(line.lstrip())
+        for line in raw
+        if line.strip() == "shutdown_engine(engine)"
+    )
     skills_line = next(line for line in raw if line.strip() == "api.shutdown_skills()")
     skills_indent = len(skills_line) - len(skills_line.lstrip())
     assert skills_indent == base_indent, "must not be nested inside an `if`"

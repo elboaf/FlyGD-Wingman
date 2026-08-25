@@ -27,7 +27,11 @@ def test_finds_advanced_output_path(tmp_path):
 
 
 def test_simple_output_wins_when_both_present(tmp_path):
-    _profile(tmp_path, "Both", "[SimpleOutput]\nFilePath=C:/simple\n[AdvOut]\nRecFilePath=C:/adv\n")
+    _profile(
+        tmp_path,
+        "Both",
+        "[SimpleOutput]\nFilePath=C:/simple\n[AdvOut]\nRecFilePath=C:/adv\n",
+    )
     assert obsconfig.find_recording_dir(tmp_path) == Path("C:/simple")
 
 
@@ -122,6 +126,7 @@ def test_read_path_returns_none_on_os_error(monkeypatch, tmp_path):
     """configparser.read() silently swallows per-file OSErrors internally,
     so this defensive branch can't be triggered through the real filesystem;
     exercise it directly by making read() itself raise."""
+
     def _raise(self, *a, **kw):
         raise OSError("simulated read failure")
 
@@ -147,13 +152,14 @@ def test_returns_none_when_adv_out_present_but_key_missing(tmp_path):
     assert obsconfig.find_recording_dir(tmp_path) is None
 
 
-
 def _global_ini(root: Path, profile_dir: str, extra: str = "") -> Path:
     d = root / "obs-studio"
     d.mkdir(parents=True, exist_ok=True)
     ini = d / "global.ini"
-    ini.write_text(f"[Basic]\nProfileDir={profile_dir}\nProfile=Display Name\n{extra}",
-                    encoding="utf-8")
+    ini.write_text(
+        f"[Basic]\nProfileDir={profile_dir}\nProfile=Display Name\n{extra}",
+        encoding="utf-8",
+    )
     return ini
 
 
@@ -212,7 +218,8 @@ def test_advanced_mode_prefers_adv_out_path(tmp_path):
     against the fixed-priority-order logic, which always returned
     SimpleOutput's C:/Videos here instead of the real D:/Videos."""
     _profile(
-        tmp_path, "OnlyProfile",
+        tmp_path,
+        "OnlyProfile",
         "[Output]\nMode=Advanced\n"
         "[SimpleOutput]\nFilePath=C:/Videos\n"
         "[AdvOut]\nRecFilePath=D:/Videos\n",
@@ -222,7 +229,8 @@ def test_advanced_mode_prefers_adv_out_path(tmp_path):
 
 def test_simple_mode_prefers_simple_output_path(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
+        tmp_path,
+        "OnlyProfile",
         "[Output]\nMode=Simple\n"
         "[SimpleOutput]\nFilePath=C:/Videos\n"
         "[AdvOut]\nRecFilePath=D:/Videos\n",
@@ -232,16 +240,17 @@ def test_simple_mode_prefers_simple_output_path(tmp_path):
 
 def test_missing_output_section_defaults_to_simple(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
-        "[SimpleOutput]\nFilePath=C:/Videos\n"
-        "[AdvOut]\nRecFilePath=D:/Videos\n",
+        tmp_path,
+        "OnlyProfile",
+        "[SimpleOutput]\nFilePath=C:/Videos\n[AdvOut]\nRecFilePath=D:/Videos\n",
     )
     assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
 
 
 def test_unrecognised_mode_value_defaults_to_simple(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
+        tmp_path,
+        "OnlyProfile",
         "[Output]\nMode=Streaming\n"
         "[SimpleOutput]\nFilePath=C:/Videos\n"
         "[AdvOut]\nRecFilePath=D:/Videos\n",
@@ -251,16 +260,17 @@ def test_unrecognised_mode_value_defaults_to_simple(tmp_path):
 
 def test_advanced_mode_falls_back_to_simple_when_adv_out_missing(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
-        "[Output]\nMode=Advanced\n"
-        "[SimpleOutput]\nFilePath=C:/Videos\n",
+        tmp_path,
+        "OnlyProfile",
+        "[Output]\nMode=Advanced\n[SimpleOutput]\nFilePath=C:/Videos\n",
     )
     assert obsconfig.find_recording_dir(tmp_path) == Path("C:/Videos")
 
 
 def test_simple_mode_falls_back_to_advanced_when_simple_output_empty(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
+        tmp_path,
+        "OnlyProfile",
         "[Output]\nMode=Simple\n"
         "[SimpleOutput]\nFilePath=\n"
         "[AdvOut]\nRecFilePath=D:/Videos\n",
@@ -270,7 +280,8 @@ def test_simple_mode_falls_back_to_advanced_when_simple_output_empty(tmp_path):
 
 def test_advanced_mode_is_case_insensitive(tmp_path):
     _profile(
-        tmp_path, "OnlyProfile",
+        tmp_path,
+        "OnlyProfile",
         "[Output]\nMode=ADVANCED\n"
         "[SimpleOutput]\nFilePath=C:/Videos\n"
         "[AdvOut]\nRecFilePath=D:/Videos\n",

@@ -4,6 +4,7 @@ These are pure delegation, so what is worth testing is exactly the two
 things delegation gets wrong: what a mutation returns, and what happens when
 there is no controller at all.
 """
+
 from tests.fakes import FakeWindow
 from tests.test_api import make_api
 
@@ -116,15 +117,24 @@ def test_the_empty_state_has_the_same_shape_as_a_real_one(tmp_path):
 
     payload = api.skills_state()
 
-    for key in ("auth_configured", "auth_in_progress", "refresh_in_flight",
-                "selected_plan_name", "plans", "characters", "plan_issues",
-                "warnings", "plans_updated_utc"):
+    for key in (
+        "auth_configured",
+        "auth_in_progress",
+        "refresh_in_flight",
+        "selected_plan_name",
+        "plans",
+        "characters",
+        "plan_issues",
+        "warnings",
+        "plans_updated_utc",
+    ):
         assert key in payload
     assert payload["auth_configured"] is False
 
 
 def test_shutdown_skills_never_raises(tmp_path):
     """Called last on every exit path, after the window has gone."""
+
     class Exploding(FakeSkills):
         def shutdown(self):
             raise RuntimeError("teardown")

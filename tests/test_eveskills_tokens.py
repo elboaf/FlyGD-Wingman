@@ -4,6 +4,7 @@ Injection is what keeps this testable on Linux while only dpapi.py is
 Windows-only, and it is the same keyword-only-with-a-production-default
 seam discord.py:196-197 uses for its transport.
 """
+
 from obs_youtube_uploader.eveskills import tokens
 
 
@@ -18,8 +19,7 @@ def _reverse_unprotect(blob: bytes) -> bytes:
 
 def test_wrap_then_unwrap_round_trips():
     blob = tokens.wrap("secret-refresh-token", protect=_reverse_protect)
-    assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == \
-        "secret-refresh-token"
+    assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == "secret-refresh-token"
 
 
 def test_the_wrapped_form_is_ascii_text():
@@ -33,12 +33,11 @@ def test_the_wrapped_form_is_ascii_text():
 def test_a_unicode_token_round_trips():
     """The token is opaque to us. Nothing may assume it is ASCII."""
     blob = tokens.wrap("tok-é中", protect=_reverse_protect)
-    assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == \
-        "tok-é中"
+    assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == "tok-é中"
 
 
 def test_unwrap_of_an_empty_blob_is_none():
-    """"" is how the state document spells "this character has no stored
+    """ "" is how the state document spells "this character has no stored
     token", which is a normal state after a definitive auth failure."""
     assert tokens.unwrap("", unprotect=_reverse_unprotect) is None
 
@@ -49,6 +48,7 @@ def test_unwrap_returns_none_when_decryption_fails():
     document unloadable, taking every other character's authorisation with
     it -- which is exactly the failure that putting the tokens in the same
     document was meant to make impossible."""
+
     def boom(_blob):
         raise OSError(13, "The data is invalid")
 
@@ -57,8 +57,7 @@ def test_unwrap_returns_none_when_decryption_fails():
 
 def test_unwrap_returns_none_on_malformed_base64():
     """A truncated or hand-edited blob never reaches the crypt call."""
-    assert tokens.unwrap("!!!not base64!!!",
-                         unprotect=_reverse_unprotect) is None
+    assert tokens.unwrap("!!!not base64!!!", unprotect=_reverse_unprotect) is None
 
 
 def test_unwrap_returns_none_when_the_plaintext_is_not_utf8():
@@ -74,6 +73,7 @@ def test_wrap_of_an_empty_token_is_the_empty_blob():
     decrypts back to "" -- present-looking but empty -- collapsing "never
     authenticated" and "authenticated with an empty token" into the same
     on-disk shape. protect must never even be called."""
+
     def must_not_be_called(_data):
         raise AssertionError("protect() called for an empty token")
 

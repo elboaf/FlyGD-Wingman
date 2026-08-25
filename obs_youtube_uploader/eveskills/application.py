@@ -14,6 +14,7 @@ any of that becomes real, the fix is to move this one constant to
 build-time injection alongside the Google one. This module exists to be
 that single point.
 """
+
 from .. import __version__ as _version
 
 # Registered at developers.eveonline.com against the REDIRECT_URI and
@@ -51,13 +52,11 @@ SCOPES = (
 # CCP asks third-party clients to identify themselves. Matches the shape
 # discord.py:169-170 already sends, for the same reason: an anonymous
 # agent is what gets an application throttled without warning.
-USER_AGENT = (f"FlyGD-Wingman/{_version} "
-              "(+https://github.com/elboaf/FlyGD-Wingman)")
+USER_AGENT = f"FlyGD-Wingman/{_version} (+https://github.com/elboaf/FlyGD-Wingman)"
 
 SSO_AUTHORIZE = "https://login.eveonline.com/v2/oauth/authorize"
 SSO_TOKEN = "https://login.eveonline.com/v2/oauth/token"
-SSO_METADATA = (
-    "https://login.eveonline.com/.well-known/oauth-authorization-server")
+SSO_METADATA = "https://login.eveonline.com/.well-known/oauth-authorization-server"
 SSO_HOST = "login.eveonline.com"
 
 # All three spellings are accepted, matching TriffView's own set
@@ -67,11 +66,13 @@ SSO_HOST = "login.eveonline.com"
 # the `iss` claim against this set by equality and nothing else, so a
 # missing spelling is not a near-miss: it is a rejected token and a
 # character that can never authenticate.
-ACCEPTED_ISSUERS = frozenset({
-    "login.eveonline.com",
-    "https://login.eveonline.com",
-    "https://login.eveonline.com/",
-})
+ACCEPTED_ISSUERS = frozenset(
+    {
+        "login.eveonline.com",
+        "https://login.eveonline.com",
+        "https://login.eveonline.com/",
+    }
+)
 
 ESI_BASE = "https://esi.evetech.net"
 ESI_HOST = "esi.evetech.net"

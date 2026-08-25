@@ -12,6 +12,7 @@ on the first raise would leave the tray icon looking healthy while the
 watcher did nothing, forever, over an unreachable recording folder that
 recovers on its own two minutes later.
 """
+
 import logging
 import threading
 

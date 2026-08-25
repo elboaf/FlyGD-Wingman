@@ -9,6 +9,7 @@ production defaults, that import error would take the entire subsystem's
 test suite with it. The bindings are therefore built lazily inside
 functions, exactly as preview/win32.py:1-9 describes for the same reason.
 """
+
 import sys
 
 import pytest

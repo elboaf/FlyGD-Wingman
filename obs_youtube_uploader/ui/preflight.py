@@ -16,6 +16,7 @@ the same three keys, and must stay that way.
 Testable without a VM: point WEBVIEW2_BROWSER_EXECUTABLE_FOLDER at an empty
 directory to reproduce the runtime-not-found path non-destructively.
 """
+
 import logging
 import sys
 
@@ -87,7 +88,7 @@ def _read_pv(hive: str, subkey: str) -> str | None:
         finally:
             winreg.CloseKey(key)
         return str(value)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable key means no runtime recorded here
         return None
 
 
@@ -106,7 +107,7 @@ def webview2_version(reader=_read_pv) -> str | None:
     for hive, subkey in REGISTRY_KEYS:
         try:
             value = reader(hive, subkey)
-        except Exception:
+        except Exception:  # noqa: BLE001,S112 - one unreadable key must not stop the scan of the other two
             continue
         if value is None:
             continue
@@ -128,7 +129,7 @@ def _message_box(title: str, body: str) -> None:
     caller's decision does not depend on the dialog appearing.
     """
     if sys.platform != "win32":
-        return None
+        return
     import ctypes
 
     MB_OK = 0x0
@@ -136,8 +137,9 @@ def _message_box(title: str, body: str) -> None:
     MB_SETFOREGROUND = 0x10000
     MB_TOPMOST = 0x40000
     ctypes.windll.user32.MessageBoxW(
-        None, body, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST)
-    return None
+        None, body, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+    )
+    return
 
 
 def require_webview2(version=webview2_version, alert=_message_box) -> bool:
@@ -155,7 +157,9 @@ def require_webview2(version=webview2_version, alert=_message_box) -> bool:
     if found is not None:
         logger.debug("WebView2 runtime %s detected", found)
         return True
-    logger.error("WebView2 runtime not found; refusing to start a webview "
-                 "that would silently render nothing")
+    logger.error(
+        "WebView2 runtime not found; refusing to start a webview "
+        "that would silently render nothing"
+    )
     alert(MISSING_RUNTIME_TITLE, missing_runtime_message())
     return False

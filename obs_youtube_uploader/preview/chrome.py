@@ -5,6 +5,7 @@ image. Nothing here knows about HWNDs, which is what lets the whole
 drawing layer be tested on Linux -- the reason this replaces TriffView's
 GDI+ path rather than porting it.
 """
+
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -13,7 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Regular.ttf"
+FONT_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Regular.ttf"
+)
 LABEL_BG = (10, 14, 20, 235)
 LABEL_FG = (235, 240, 245, 255)
 # Opaque, and that is load-bearing rather than cosmetic. A layered window
@@ -39,10 +42,12 @@ def _font(size: int):
         # (uploader.spec's datas is enumerated by hand and PyInstaller exits
         # 0 when an entry misses), and a silent fallback there ships
         # unlabelled previews with nothing in the log to explain them.
-        logger.warning("Bundled font missing at %s; labels will use Pillow's "
-                       "default face. In a frozen build this means "
-                       "uploader.spec did not collect assets/fonts.",
-                       FONT_PATH)
+        logger.warning(
+            "Bundled font missing at %s; labels will use Pillow's "
+            "default face. In a frozen build this means "
+            "uploader.spec did not collect assets/fonts.",
+            FONT_PATH,
+        )
         return ImageFont.load_default()
 
 
@@ -55,8 +60,9 @@ def _ellipsize(draw, text, font, max_w):
     return text + ell
 
 
-def render(size, label, *, border_color, border=5, label_h=30,
-           selected=False, font_size=17):
+def render(
+    size, label, *, border_color, border=5, label_h=30, selected=False, font_size=17
+):
     """Render one preview's chrome, fully opaque.
 
     Opacity is not a look: a layered window is hit-tested against its

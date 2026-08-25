@@ -1,7 +1,8 @@
 """Archive naming, integrity, pruning and restore. All on tmp_path."""
+
 import os
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,11 +10,10 @@ from obs_youtube_uploader.evesettings import backup
 
 
 def at(second=0):
-    return datetime(2026, 8, 24, 12, 34, second, tzinfo=timezone.utc)
+    return datetime(2026, 8, 24, 12, 34, second, tzinfo=UTC)
 
 
-def profile_with(tmp_path, name="settings_Default",
-                 files=("core_char_98123456.dat",)):
+def profile_with(tmp_path, name="settings_Default", files=("core_char_98123456.dat",)):
     target = tmp_path / "root" / "server" / name
     target.mkdir(parents=True)
     for filename in files:
@@ -39,7 +39,8 @@ def test_parse_name_round_trips_a_created_archive(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     made = backup.create_file_backup(
-        store, profile / "core_char_98123456.dat", origin="auto", now=at())
+        store, profile / "core_char_98123456.dat", origin="auto", now=at()
+    )
     info = backup.parse_name(made.name)
     assert info.origin == "auto" and info.kind == "character"
     assert info.stem == "core_char_98123456"
@@ -96,8 +97,9 @@ def test_an_abandoned_claim_is_not_listable(tmp_path):
     mid-copy -- leaves a 0-byte .zip that parse_name accepts, that restore
     can only fail on, and that consumes a prune slot from a real backup."""
     store = tmp_path / "backups"
-    claimed = backup._claim(store, "20260824-120000", "auto", "character",
-                            "aabbccdd", "core_char_1")
+    claimed = backup._claim(
+        store, "20260824-120000", "auto", "character", "aabbccdd", "core_char_1"
+    )
     assert claimed.exists() and claimed.stat().st_size == 0
     assert backup.enumerate_backups(store) == ([], False)
 
@@ -106,22 +108,27 @@ def test_backup_contains_the_file_and_a_manifest(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     made = backup.create_file_backup(
-        store, profile / "core_char_98123456.dat", origin="manual", now=at())
+        store, profile / "core_char_98123456.dat", origin="manual", now=at()
+    )
     with zipfile.ZipFile(made) as archive:
         assert sorted(archive.namelist()) == [
-            "core_char_98123456.dat", backup.MANIFEST_NAME]
+            "core_char_98123456.dat",
+            backup.MANIFEST_NAME,
+        ]
 
 
 def test_profile_backup_holds_every_settings_file(tmp_path):
-    profile = profile_with(tmp_path, files=("core_char_1.dat",
-                                            "core_user_2.dat",
-                                            "notes.txt"))
+    profile = profile_with(
+        tmp_path, files=("core_char_1.dat", "core_user_2.dat", "notes.txt")
+    )
     store = tmp_path / "backups"
-    made = backup.create_profile_backup(store, profile, origin="manual",
-                                        now=at())
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
     with zipfile.ZipFile(made) as archive:
         assert sorted(archive.namelist()) == [
-            "core_char_1.dat", "core_user_2.dat", backup.MANIFEST_NAME]
+            "core_char_1.dat",
+            "core_user_2.dat",
+            backup.MANIFEST_NAME,
+        ]
 
 
 def test_prune_keeps_the_newest_auto_backups(tmp_path):
@@ -140,8 +147,7 @@ def test_prune_never_touches_manual_backups(tmp_path):
     store = tmp_path / "backups"
     source = profile / "core_char_98123456.dat"
     for second in range(4):
-        backup.create_file_backup(store, source, origin="manual",
-                                  now=at(second))
+        backup.create_file_backup(store, source, origin="manual", now=at(second))
     assert backup.prune(store, keep=1) == []
     assert len(backup.enumerate_backups(store)[0]) == 4
 
@@ -153,15 +159,19 @@ def test_prune_does_not_cross_profiles_for_the_same_character(tmp_path):
     alt = profile_with(tmp_path, name="settings_Alt")
     store = tmp_path / "backups"
     for second in range(3):
-        backup.create_file_backup(store, default / "core_char_98123456.dat",
-                                  origin="auto", now=at(second))
-    backup.create_file_backup(store, alt / "core_char_98123456.dat",
-                              origin="auto", now=at(9))
+        backup.create_file_backup(
+            store, default / "core_char_98123456.dat", origin="auto", now=at(second)
+        )
+    backup.create_file_backup(
+        store, alt / "core_char_98123456.dat", origin="auto", now=at(9)
+    )
     backup.prune(store, keep=1)
     remaining, _ = backup.enumerate_backups(store)
     assert len(remaining) == 2
     assert {info.src for info in remaining} == {
-        backup.source_key(default), backup.source_key(alt)}
+        backup.source_key(default),
+        backup.source_key(alt),
+    }
 
 
 def test_restore_puts_the_file_back(tmp_path):
@@ -174,17 +184,14 @@ def test_restore_puts_the_file_back(tmp_path):
     assert source.read_bytes() == b"payload-core_char_98123456.dat"
 
 
-def test_restore_failure_during_extraction_leaves_the_profile_untouched(
-        tmp_path):
+def test_restore_failure_during_extraction_leaves_the_profile_untouched(tmp_path):
     """Extraction now stages every member before anything live is touched.
     A failure partway through must leave the profile bit-for-bit as it was
     -- no files deleted, no partial or leftover staging files -- rather
     than half-repopulated."""
-    profile = profile_with(tmp_path, files=("core_char_1.dat",
-                                            "core_user_2.dat"))
+    profile = profile_with(tmp_path, files=("core_char_1.dat", "core_user_2.dat"))
     store = tmp_path / "backups"
-    made = backup.create_profile_backup(store, profile, origin="manual",
-                                        now=at())
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
     before = {p.name: p.read_bytes() for p in profile.iterdir()}
     backups_before = set(backup.enumerate_backups(store)[0])
 
@@ -207,16 +214,14 @@ def test_restore_failure_during_extraction_leaves_the_profile_untouched(
     assert set(backup.enumerate_backups(store)[0]) == backups_before
 
 
-def test_restore_failure_in_the_auto_backup_leaves_the_profile_untouched(
-        tmp_path):
+def test_restore_failure_in_the_auto_backup_leaves_the_profile_untouched(tmp_path):
     """A failure in the pre-restore auto-backup must abort the same as a
     failure during extraction: every member is already staged by then, but
     nothing live has been touched, so the fix is to unstage and leave the
     profile alone."""
     profile = profile_with(tmp_path, files=("core_char_1.dat",))
     store = tmp_path / "backups"
-    made = backup.create_profile_backup(store, profile, origin="manual",
-                                        now=at())
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
     before = {p.name: p.read_bytes() for p in profile.iterdir()}
 
     def explode(*args, **kwargs):
@@ -237,8 +242,7 @@ def test_restore_failure_in_the_auto_backup_leaves_the_profile_untouched(
 def test_profile_restore_removes_files_absent_from_the_archive(tmp_path):
     profile = profile_with(tmp_path, files=("core_char_1.dat",))
     store = tmp_path / "backups"
-    made = backup.create_profile_backup(store, profile, origin="manual",
-                                        now=at())
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
     (profile / "core_char_2.dat").write_bytes(b"added later")
     backup.restore(store, made, tmp_path / "root")
     assert (profile / "core_char_1.dat").exists()
@@ -248,8 +252,7 @@ def test_profile_restore_removes_files_absent_from_the_archive(tmp_path):
 def test_profile_restore_backs_up_before_deleting(tmp_path):
     profile = profile_with(tmp_path, files=("core_char_1.dat",))
     store = tmp_path / "backups"
-    made = backup.create_profile_backup(store, profile, origin="manual",
-                                        now=at())
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
     backup.restore(store, made, tmp_path / "root", now=at(5))
     autos = [i for i in backup.enumerate_backups(store)[0] if i.origin == "auto"]
     assert len(autos) == 1
@@ -261,11 +264,15 @@ def test_restore_rejects_an_archive_with_a_path_bearing_entry(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     store.mkdir(parents=True)
-    hostile = store / "20260824-123456-000-manual-profile-{}-Default.zip".format(
-        backup.source_key(profile))
+    hostile = (
+        store
+        / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
+    )
     with zipfile.ZipFile(hostile, "w") as archive:
-        archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
-                         '"source": "%s"}' % profile.as_posix())
+        archive.writestr(
+            backup.MANIFEST_NAME,
+            f'{{"kind": "profile", "source": "{profile.as_posix()}"}}',
+        )
         archive.writestr("../escape.dat", "nope")
     with pytest.raises(ValueError):
         backup.restore(store, hostile, tmp_path / "root")
@@ -276,11 +283,15 @@ def test_restore_rejects_an_unexpected_member(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     store.mkdir(parents=True)
-    hostile = store / "20260824-123456-000-manual-profile-{}-Default.zip".format(
-        backup.source_key(profile))
+    hostile = (
+        store
+        / f"20260824-123456-000-manual-profile-{backup.source_key(profile)}-Default.zip"
+    )
     with zipfile.ZipFile(hostile, "w") as archive:
-        archive.writestr(backup.MANIFEST_NAME, '{"kind": "profile", '
-                         '"source": "%s"}' % profile.as_posix())
+        archive.writestr(
+            backup.MANIFEST_NAME,
+            f'{{"kind": "profile", "source": "{profile.as_posix()}"}}',
+        )
         archive.writestr("payload.exe", "nope")
     with pytest.raises(ValueError):
         backup.restore(store, hostile, tmp_path / "root")
@@ -296,11 +307,15 @@ def test_restore_rejects_a_file_archive_carrying_a_passenger_member(tmp_path):
     store = tmp_path / "backups"
     store.mkdir(parents=True)
     source = profile / "core_char_98123456.dat"
-    hostile = store / "20260824-123456-000-manual-character-{}-core_char_98123456.zip".format(
-        backup.source_key(profile))
+    hostile = (
+        store
+        / f"20260824-123456-000-manual-character-{backup.source_key(profile)}-core_char_98123456.zip"
+    )
     with zipfile.ZipFile(hostile, "w") as archive:
-        archive.writestr(backup.MANIFEST_NAME, '{"kind": "character", '
-                         '"source": "%s"}' % source.as_posix())
+        archive.writestr(
+            backup.MANIFEST_NAME,
+            f'{{"kind": "character", "source": "{source.as_posix()}"}}',
+        )
         archive.writestr("core_char_98123456.dat", "restored")
         archive.writestr("core_char_222.dat", "passenger")
     with pytest.raises(ValueError):
@@ -312,7 +327,8 @@ def test_restore_rejects_a_target_outside_the_current_root(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     made = backup.create_file_backup(
-        store, profile / "core_char_98123456.dat", origin="manual", now=at())
+        store, profile / "core_char_98123456.dat", origin="manual", now=at()
+    )
     with pytest.raises(ValueError):
         backup.restore(store, made, tmp_path / "elsewhere")
 
@@ -321,7 +337,8 @@ def test_delete_removes_one_archive(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
     made = backup.create_file_backup(
-        store, profile / "core_char_98123456.dat", origin="manual", now=at())
+        store, profile / "core_char_98123456.dat", origin="manual", now=at()
+    )
     backup.delete(store, made)
     assert backup.enumerate_backups(store) == ([], False)
 
@@ -347,7 +364,8 @@ def test_an_unreadable_store_is_reported_not_read_as_empty(tmp_path):
     store = tmp_path / "backups"
     store.mkdir()
     (store / "20260824-120000-000-auto-character-aabbccdd-x.zip").write_bytes(
-        b"not empty")
+        b"not empty"
+    )
     store.chmod(0o000)
     try:
         try:

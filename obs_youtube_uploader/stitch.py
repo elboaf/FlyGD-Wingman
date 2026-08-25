@@ -4,6 +4,7 @@ The temp file's lifetime is owned by a context manager so cleanup happens on
 every exit path. The pre-2.0 code deleted it only after a successful upload,
 so any failure leaked a multi-gigabyte file permanently.
 """
+
 import logging
 import subprocess
 import sys
@@ -24,7 +25,9 @@ _LIST_SUFFIX = ".txt"
 # entire multi-minute encode. CREATE_NO_WINDOW doesn't exist off Windows,
 # and the Linux test suite injects fake runners, so this must not affect
 # non-Windows platforms.
-_NO_WINDOW_KWARGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+_NO_WINDOW_KWARGS = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
 
 
 class StitchError(RuntimeError):
@@ -75,16 +78,24 @@ def build_command(list_path: Path, out_path: Path, ffmpeg_bin: str) -> list[str]
     option, and the output is Matroska.
     """
     return [
-        ffmpeg_bin, "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_path),
-        "-c", "copy",
+        ffmpeg_bin,
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_path),
+        "-c",
+        "copy",
         str(out_path),
     ]
 
 
 @contextmanager
-def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subprocess.run):
+def stitched(
+    sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subprocess.run
+):
     """Yield a concatenated file, deleting it on every exit path."""
     if len(sources) < 2:
         raise ValueError("stitching requires at least two sources")
@@ -97,8 +108,12 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
     list_path = tmp_dir / f"{stem}{_LIST_SUFFIX}"
     try:
         write_concat_list(sources, list_path)
-        result = runner(build_command(list_path, out_path, ffmpeg_bin),
-                        capture_output=True, text=True, **_NO_WINDOW_KWARGS)
+        result = runner(
+            build_command(list_path, out_path, ffmpeg_bin),
+            capture_output=True,
+            text=True,
+            **_NO_WINDOW_KWARGS,
+        )
         if result.returncode != 0:
             raise StitchError(result.stderr.strip() or "ffmpeg failed")
         if not out_path.exists():
@@ -111,7 +126,9 @@ def stitched(sources: list[Path], ffmpeg_bin: str, tmp_dir: Path, runner=subproc
             except FileNotFoundError:
                 pass
             except OSError:
-                logger.warning("Could not remove stitched temp file %s", path, exc_info=True)
+                logger.warning(
+                    "Could not remove stitched temp file %s", path, exc_info=True
+                )
 
 
 def sweep_orphans(tmp_dir: Path) -> int:

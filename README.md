@@ -322,8 +322,25 @@ upload again.
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest tests/
+uv run --extra dev ruff check .
+uv run --extra dev ruff format --check .
 python -m obs_youtube_uploader
 ```
+
+CI gates on all three: the suite, `ruff check`, and `ruff format --check`.
+Running the format check locally is worth the second it takes — otherwise
+the first you hear of it is a red pull request.
+
+### After cloning
+
+```
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+The repository was reformatted with `ruff format` in one commit touching
+136 files. Without this setting, `git blame` attributes all of them to
+that reformat rather than to whoever wrote the code. The setting is
+per-clone and cannot be committed, so every clone needs it once.
 
 Official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which injects

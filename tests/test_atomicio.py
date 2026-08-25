@@ -1,9 +1,12 @@
 """One writer per file prevents conflicting WRITES. It does nothing about a
 reader observing a half-written file, and every one of these files is polled
 by another process on a 2s or 10s timer."""
+
 import os
 from pathlib import Path
+
 import pytest
+
 from obs_youtube_uploader import atomicio
 
 
@@ -108,8 +111,7 @@ def test_a_permanently_locked_destination_raises_and_leaves_no_debris(tmp_path):
     atomicio.os.replace = always
     try:
         with pytest.raises(PermissionError):
-            atomicio.write_atomic(target, "new", attempts=3,
-                                  sleep=lambda _s: None)
+            atomicio.write_atomic(target, "new", attempts=3, sleep=lambda _s: None)
     finally:
         atomicio.os.replace = real
     assert target.read_text() == "old"
@@ -127,8 +129,7 @@ def test_replace_with_retry_rejects_non_positive_attempts(tmp_path):
         atomicio.replace_with_retry("src.tmp", tmp_path / "dst", attempts=0)
 
 
-def test_write_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
-        tmp_path):
+def test_write_atomic_rejects_zero_attempts_instead_of_silently_no_opping(tmp_path):
     """`for attempt in range(0)` never runs the loop body: without the
     guard, attempts=0 would return normally having replaced nothing, and
     the caller would believe the write succeeded."""
@@ -140,8 +141,7 @@ def test_write_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
     assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
 
 
-def test_copy_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
-        tmp_path):
+def test_copy_atomic_rejects_zero_attempts_instead_of_silently_no_opping(tmp_path):
     source = tmp_path / "src.dat"
     source.write_bytes(b"new")
     target = tmp_path / "dst.dat"

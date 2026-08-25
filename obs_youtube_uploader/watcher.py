@@ -7,6 +7,7 @@ dependency, and polling one directory every few seconds costs nothing.
 A file appearing is not a file finished. Size must hold steady across
 several consecutive polls before the file is announced.
 """
+
 import json
 import logging
 from dataclasses import dataclass
@@ -69,7 +70,9 @@ class Watcher:
         try:
             save_seen(self.seen_path, self.seen)
         except OSError:
-            logger.warning("Could not persist seen-set to %s", self.seen_path, exc_info=True)
+            logger.warning(
+                "Could not persist seen-set to %s", self.seen_path, exc_info=True
+            )
 
     def baseline(self) -> None:
         """Establish the starting point without announcing anything.
@@ -104,7 +107,11 @@ class Watcher:
             except OSError:
                 continue
             entry = self.seen.get(key)
-            if entry is not None and entry.size == stat.st_size and entry.mtime == stat.st_mtime:
+            if (
+                entry is not None
+                and entry.size == stat.st_size
+                and entry.mtime == stat.st_mtime
+            ):
                 continue  # Unchanged since we last recorded it.
             previous = self._pending.get(key)
             if previous is not None and previous[0] == stat.st_size:

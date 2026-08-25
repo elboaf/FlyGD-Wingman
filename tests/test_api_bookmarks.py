@@ -1,7 +1,10 @@
 """The bridge is tested headless through FakeWindow, as every other Api
 method is (tests/fakes.py)."""
+
 import json
+
 import pytest
+
 from obs_youtube_uploader import bookmarks, hotkeys, settings
 from tests.fakes import FakeWindow
 
@@ -41,18 +44,18 @@ class FakeEngine:
         if not enabled:
             return hotkeys.EngineStatus(state="off")
         if not self.running:
-            return hotkeys.EngineStatus(state="stopped",
-                                        last_error=self.last_error)
+            return hotkeys.EngineStatus(state="stopped", last_error=self.last_error)
         return hotkeys.EngineStatus(state="running", root="J1234")
 
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
-    monkeypatch.setattr(api_mod.paths, "settings_file",
-                        lambda: tmp_path / "s.json")
-    state = api_mod.AppState(recording_dir=tmp_path,
-                             settings=settings.load(tmp_path / "s.json"))
+
+    monkeypatch.setattr(api_mod.paths, "settings_file", lambda: tmp_path / "s.json")
+    state = api_mod.AppState(
+        recording_dir=tmp_path, settings=settings.load(tmp_path / "s.json")
+    )
     state.engine = FakeEngine()
     built = api_mod.Api(state)
     built._window = FakeWindow()
@@ -77,8 +80,8 @@ def test_get_returns_human_labels_for_bound_keys(api):
 
 def test_get_lists_live_eve_windows(api, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
-    monkeypatch.setattr(api_mod.evewindows, "list_eve_windows",
-                        lambda: ["EVE - Pilot"])
+
+    monkeypatch.setattr(api_mod.evewindows, "list_eve_windows", lambda: ["EVE - Pilot"])
     assert api.get_bookmarks()["windows"] == ["EVE - Pilot"]
 
 
@@ -115,11 +118,14 @@ def test_save_rejects_a_non_dict_payload(api):
     assert api.get_bookmarks()["settings"] == before
 
 
-def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(api, monkeypatch):
+def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(
+    api, monkeypatch
+):
     """Same contract as save_settings: bail before touching in-memory state
     so state and disk never diverge, and tell the user why."""
     from obs_youtube_uploader.ui import api as api_mod
     from tests import fakes
+
     api._alert = fakes.Alerts()
     before = api.get_bookmarks()["settings"]
 
@@ -136,13 +142,18 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(api, monk
 
 
 def test_capture_and_parse_delegate_to_bookmarks(api):
-    assert api.capture_bind({"ctrl": True, "alt": False, "shift": True,
-                             "meta": False, "code": "KeyS"})["ahk"] == "^+s"
+    assert (
+        api.capture_bind(
+            {"ctrl": True, "alt": False, "shift": True, "meta": False, "code": "KeyS"}
+        )["ahk"]
+        == "^+s"
+    )
     assert api.parse_bind("+^s")["ahk"] == "^+s"
 
 
 def test_import_applies_and_reports(api, tmp_path, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
+
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
     legacy.write_text("[Keybinds]\r\nFinH=y\r\nCopy=^c\r\n")
@@ -158,17 +169,20 @@ def test_import_applies_and_reports(api, tmp_path, monkeypatch):
 
 
 def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
-        api, tmp_path, monkeypatch):
+    api, tmp_path, monkeypatch
+):
     """AutoHotkey's IniWrite emits UTF-16 LE on a Unicode build, which is
     what the file in the wild actually is. Read as UTF-8 it parsed as
     nothing, and that nothing was then saved over the user's settings while
     the dialog said "Import complete"."""
     from obs_youtube_uploader.ui import api as api_mod
+
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
     legacy.write_bytes(
         "\ufeff[Keybinds]\r\nFinH=y\r\nGrabSig=^j\r\n"
-        "[Enabled]\r\nEVE - Pilot=1\r\n".encode("utf-16-le"))
+        "[Enabled]\r\nEVE - Pilot=1\r\n".encode("utf-16-le")
+    )
     api._window.dialog_result = (str(legacy),)
     assert api.import_bookmarks()["ok"] is True
     section = api.get_bookmarks()["settings"]
@@ -178,13 +192,14 @@ def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
 
 
 def test_an_unparseable_file_does_not_wipe_the_existing_settings(
-        api, tmp_path, monkeypatch):
+    api, tmp_path, monkeypatch
+):
     """The failure mode the encoding bug actually caused: nothing parsed,
     and the empty result was saved over real settings."""
     from obs_youtube_uploader.ui import api as api_mod
+
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
-    api.save_bookmarks({**api.get_bookmarks()["settings"],
-                        "keybinds": {"FinH": "^h"}})
+    api.save_bookmarks({**api.get_bookmarks()["settings"], "keybinds": {"FinH": "^h"}})
     junk = tmp_path / "junk.ini"
     junk.write_bytes(b"\x00\x01 not an ini at all")
     api._window.dialog_result = (str(junk),)
@@ -197,14 +212,16 @@ def test_an_unparseable_file_does_not_wipe_the_existing_settings(
 def test_reset_binds_overwrites_every_bind(api):
     """The standalone GUI's Reset Defaults button. Overwrite, not
     fill-blanks: a reset whose effect depends on hidden state is not one."""
-    api.save_bookmarks({**api.get_bookmarks()["settings"],
-                        "keybinds": {"FinH": "^h", "GrabSig": "^g"}})
+    api.save_bookmarks(
+        {**api.get_bookmarks()["settings"], "keybinds": {"FinH": "^h", "GrabSig": "^g"}}
+    )
     binds = api.reset_binds()["settings"]["keybinds"]
     assert binds == bookmarks.RECOMMENDED_BINDS
 
 
 def test_import_cancelled_changes_nothing(api, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
+
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     api._window.dialog_result = None
     assert api.import_bookmarks()["ok"] is False
@@ -228,12 +245,12 @@ def test_a_failed_start_does_not_crash_the_save(api):
     assert api.save_bookmarks(section)["settings"]["enabled"] is True
 
 
-def test_import_does_not_claim_success_when_the_save_fails(
-        api, tmp_path, monkeypatch):
+def test_import_does_not_claim_success_when_the_save_fails(api, tmp_path, monkeypatch):
     """save_bookmarks returns the same shape whether it wrote or refused, so
     import used to report "Import complete" beside the error dialog naming
     the failure. The `saved` flag is what lets it tell the two apart."""
     from obs_youtube_uploader.ui import api as api_mod
+
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
     legacy.write_text("[Keybinds]\r\nFinH=y\r\n")
@@ -241,6 +258,7 @@ def test_import_does_not_claim_success_when_the_save_fails(
 
     def boom(*a, **kw):
         raise OSError("read-only file system")
+
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
 
     got = api.import_bookmarks()
@@ -252,12 +270,14 @@ def test_import_does_not_claim_success_when_the_save_fails(
 
 def test_save_bookmarks_reports_whether_it_actually_wrote(api, monkeypatch):
     from obs_youtube_uploader.ui import api as api_mod
+
     section = api.get_bookmarks()["settings"]
     assert api.save_bookmarks(section)["saved"] is True
     assert api.save_bookmarks("not a dict")["saved"] is False
 
     def boom(*a, **kw):
         raise OSError("nope")
+
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
     assert api.save_bookmarks(section)["saved"] is False
 
@@ -271,7 +291,10 @@ def test_get_bookmarks_reports_registration_blockers(api):
     every keypress did nothing.
     """
     api._state.settings["eve_bookmarks"] = {
-        "enabled": True, "windows": {}, "keybinds": {"FinH": ""}}
+        "enabled": True,
+        "windows": {},
+        "keybinds": {"FinH": ""},
+    }
     got = api.get_bookmarks()
     assert got["engine"]["blockers"] == ["no_windows", "no_binds"]
 
@@ -280,7 +303,8 @@ def test_a_working_setup_reports_no_blockers(api):
     api._state.settings["eve_bookmarks"] = {
         "enabled": True,
         "windows": {"EVE - Pilot": True},
-        "keybinds": {"FinH": "^y"}}
+        "keybinds": {"FinH": "^y"},
+    }
     assert api.get_bookmarks()["engine"]["blockers"] == []
 
 
@@ -289,5 +313,8 @@ def test_blockers_are_empty_while_the_feature_is_off(api):
     them here would put a warning on a route the user has deliberately
     switched off."""
     api._state.settings["eve_bookmarks"] = {
-        "enabled": False, "windows": {}, "keybinds": {"FinH": ""}}
+        "enabled": False,
+        "windows": {},
+        "keybinds": {"FinH": ""},
+    }
     assert api.get_bookmarks()["engine"]["blockers"] == []

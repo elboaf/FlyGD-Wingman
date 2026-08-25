@@ -22,6 +22,7 @@ rest -- a stolen laptop, a disk image, a backup, or a %LOCALAPPDATA%
 redirected into OneDrive all expose it. CryptProtectData is user-scoped and
 closes that gap for about forty lines.
 """
+
 import ctypes
 import sys
 from functools import lru_cache
@@ -34,8 +35,8 @@ class DATA_BLOB(ctypes.Structure):
     the Linux import path; the two are the same width on every Windows ABI
     this ships to.
     """
-    _fields_ = [("cbData", ctypes.c_uint32),
-                ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
 def available() -> bool:
@@ -69,18 +70,28 @@ def _crypt32():
     #                       PVOID reserved, PROMPTSTRUCT *prompt,
     #                       DWORD flags, DATA_BLOB *out)
     crypt32.CryptProtectData.argtypes = [
-        ctypes.POINTER(DATA_BLOB), ctypes.c_wchar_p,
-        ctypes.POINTER(DATA_BLOB), ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.c_uint32, ctypes.POINTER(DATA_BLOB)]
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_wchar_p,
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(DATA_BLOB),
+    ]
     crypt32.CryptProtectData.restype = ctypes.c_int
     # CryptUnprotectData's second argument is LPWSTR* -- an OUT pointer to a
     # description string, not a string. Declared as c_void_p and passed
     # NULL, so crypt32 allocates nothing for it and there is nothing extra
     # to LocalFree.
     crypt32.CryptUnprotectData.argtypes = [
-        ctypes.POINTER(DATA_BLOB), ctypes.c_void_p,
-        ctypes.POINTER(DATA_BLOB), ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.c_uint32, ctypes.POINTER(DATA_BLOB)]
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p,
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(DATA_BLOB),
+    ]
     crypt32.CryptUnprotectData.restype = ctypes.c_int
     return crypt32
 
@@ -102,11 +113,11 @@ def _call(func, name: str, data: bytes) -> bytes:
     # alive for the duration of the call -- built inline it could be
     # collected while crypt32 still held the pointer.
     buffer = ctypes.create_string_buffer(data, len(data))
-    blob_in = DATA_BLOB(len(data),
-                        ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    blob_in = DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
     blob_out = DATA_BLOB()
-    if not func(ctypes.byref(blob_in), None, None, None, None, 0,
-                ctypes.byref(blob_out)):
+    if not func(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+    ):
         # ctypes.WinError looks up get_last_error()'s code through
         # FormatMessage, giving the real Windows error text ("Access is
         # denied.", "The data is invalid.") rather than just its bare

@@ -1,9 +1,9 @@
 """Client discovery. Every collaborator is injected so identity and
 filtering logic is testable off Windows."""
+
 from obs_youtube_uploader.preview import discovery
 
-WINDOWS = [(0x10, "EVE - Pilot One"), (0x20, "Firefox"),
-           (0x30, "EVE - Pilot Two")]
+WINDOWS = [(0x10, "EVE - Pilot One"), (0x20, "Firefox"), (0x30, "EVE - Pilot Two")]
 PIDS = {0x10: 100, 0x20: 200, 0x30: 300}
 IMAGES = {100: "exefile.exe", 200: "firefox.exe", 300: "exefile.exe"}
 
@@ -23,9 +23,11 @@ def test_rejects_a_non_eve_process_with_an_eve_title():
     """A browser tab titled 'EVE - something' must not become a preview.
     Title alone is user-controlled; the process name is not."""
     windows = [(0x40, "EVE - Not A Client")]
-    out = discovery.list_clients(enumerator=lambda: windows,
-                                 pids={0x40: 400}.get,
-                                 image_name={400: "chrome.exe"}.get)
+    out = discovery.list_clients(
+        enumerator=lambda: windows,
+        pids={0x40: 400}.get,
+        image_name={400: "chrome.exe"}.get,
+    )
     assert out == []
 
 
@@ -35,9 +37,11 @@ def test_does_not_apply_the_engine_ini_rule():
     constraint of a different feature, not a property of EVE clients, and
     reusing it here would silently drop a previewable window."""
     windows = [(0x50, "EVE - Odd=Name")]
-    out = discovery.list_clients(enumerator=lambda: windows,
-                                 pids={0x50: 500}.get,
-                                 image_name={500: "exefile.exe"}.get)
+    out = discovery.list_clients(
+        enumerator=lambda: windows,
+        pids={0x50: 500}.get,
+        image_name={500: "exefile.exe"}.get,
+    )
     assert len(out) == 1
 
 
@@ -50,9 +54,11 @@ def test_character_select_has_no_character_and_falls_back_to_the_handle():
     but must never have a layout persisted against it -- the next client
     to sit at that screen would inherit the position."""
     windows = [(0x60, "EVE")]
-    out = discovery.list_clients(enumerator=lambda: windows,
-                                 pids={0x60: 600}.get,
-                                 image_name={600: "exefile.exe"}.get)
+    out = discovery.list_clients(
+        enumerator=lambda: windows,
+        pids={0x60: 600}.get,
+        image_name={600: "exefile.exe"}.get,
+    )
     assert out[0].character is None
     assert out[0].stable_key == "hwnd:0x60"
 
@@ -67,4 +73,5 @@ def test_access_denied_on_image_name_drops_the_window():
 def test_enumerator_failure_is_survivable():
     def boom():
         raise OSError("no window station")
+
     assert _list(enumerator=boom) == []

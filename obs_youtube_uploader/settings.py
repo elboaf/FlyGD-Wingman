@@ -3,6 +3,7 @@
 Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 ``category_id``).
 """
+
 import contextlib
 import copy
 import json
@@ -22,20 +23,25 @@ def _preview_defaults() -> dict:
     700ms sweep, and a foreground hook. A user who never previews EVE
     clients should pay none of that.
     """
-    return {"enabled": False, "width": 320, "height": 210,
-            "opacity": 235, "layouts": {},
-            # Flat cycle chords, not a group table. When named cycle groups
-            # land these become the default group's, so the schema grows
-            # without migrating anyone -- the same shape the parent design
-            # used to defer profiles.
-            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
-            "seen": [],
-            # Where a preview OPENS: on, at the rect the user last dragged
-            # it to; off, at default_stack placement. Positions are
-            # recorded either way, so switching back on restores what they
-            # last had. On by default -- it is what shipped, and the
-            # alternative silently discards existing layouts.
-            "restore_preview_positions": True}
+    return {
+        "enabled": False,
+        "width": 320,
+        "height": 210,
+        "opacity": 235,
+        "layouts": {},
+        # Flat cycle chords, not a group table. When named cycle groups
+        # land these become the default group's, so the schema grows
+        # without migrating anyone -- the same shape the parent design
+        # used to defer profiles.
+        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+        "seen": [],
+        # Where a preview OPENS: on, at the rect the user last dragged
+        # it to; off, at default_stack placement. Positions are
+        # recorded either way, so switching back on restores what they
+        # last had. On by default -- it is what shipped, and the
+        # alternative silently discards existing layouts.
+        "restore_preview_positions": True,
+    }
 
 
 def _eve_defaults() -> dict:
@@ -44,9 +50,7 @@ def _eve_defaults() -> dict:
     # but enabling this still starts a process that installs a system-wide
     # keyboard hook, which an upgrading user has to ask for rather than be
     # given.
-    return {"enabled": False,
-            "keybinds": dict(bookmarks.DEFAULT_BINDS),
-            "windows": {}}
+    return {"enabled": False, "keybinds": dict(bookmarks.DEFAULT_BINDS), "windows": {}}
 
 
 def _eve_settings_defaults() -> dict:
@@ -142,7 +146,8 @@ def validated_preview(raw) -> dict:
     # Round-tripped through the layout model so a corrupt entry is dropped
     # at load rather than at draw time.
     section["layouts"] = preview_layout.serialize(
-        preview_layout.deserialize(raw.get("layouts")))
+        preview_layout.deserialize(raw.get("layouts"))
+    )
 
     raw_hotkeys = raw.get("hotkeys")
     if isinstance(raw_hotkeys, dict):
@@ -156,8 +161,9 @@ def validated_preview(raw) -> dict:
                     # Canonical form, so "Alt+Ctrl+F2" and "Ctrl+Alt+F2"
                     # cannot read as two different bindings to the clash
                     # check.
-                    section["hotkeys"]["characters"][name] = \
-                        preview_gestures.display(parsed)
+                    section["hotkeys"]["characters"][name] = preview_gestures.display(
+                        parsed
+                    )
         for key in ("cycle_next", "cycle_prev"):
             parsed = preview_gestures.parse(raw_hotkeys.get(key))
             if parsed is not None:
@@ -214,8 +220,9 @@ def validated_eve(raw) -> dict:
 
     windows = raw.get("windows")
     if isinstance(windows, dict):
-        section["windows"] = {k: bool(v) for k, v in windows.items()
-                              if isinstance(k, str)}
+        section["windows"] = {
+            k: bool(v) for k, v in windows.items() if isinstance(k, str)
+        }
     return section
 
 
@@ -236,9 +243,17 @@ def _normalize(data: dict) -> dict:
     that IS present is left exactly as validated below -- only an absent
     key is touched here.
     """
-    for key in ("privacy", "notify_mode", "category", "recording_dir",
-                "discord_webhook", "gamelogs_dir", "channel_id",
-                "channel_title", "show_eve_tools"):
+    for key in (
+        "privacy",
+        "notify_mode",
+        "category",
+        "recording_dir",
+        "discord_webhook",
+        "gamelogs_dir",
+        "channel_id",
+        "channel_title",
+        "show_eve_tools",
+    ):
         data.setdefault(key, DEFAULTS[key])
     # Coerced rather than defaulted: a hand-edited file with a string here
     # would otherwise make every truthy string mean "shown" and the empty
@@ -356,8 +371,9 @@ def update(data: dict, path: Path | None = None):
             raise
 
 
-def update_section(data: dict, name: str, values: dict,
-                   path: Path | None = None) -> dict:
+def update_section(
+    data: dict, name: str, values: dict, path: Path | None = None
+) -> dict:
     """Merge *values* into one section of the live settings document.
 
     A section-shaped wrapper over update(), not a second implementation of

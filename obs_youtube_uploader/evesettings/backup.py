@@ -9,6 +9,8 @@ the same second safe; staging keeps a half-written archive from ever
 appearing under its final name, where filename-only listing would present it
 as restorable. combatlog.build_archive stages for exactly this reason.
 """
+
+import contextlib
 import hashlib
 import json
 import os
@@ -17,7 +19,7 @@ import shutil
 import uuid
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import atomicio
@@ -37,7 +39,8 @@ _NAME_RE = re.compile(
     rf"-(?P<origin>{'|'.join(_ORIGINS)})"
     rf"-(?P<kind>{'|'.join(_KINDS)})"
     r"-(?P<src>[0-9a-f]{8})"
-    r"-(?P<stem>.+)$")
+    r"-(?P<stem>.+)$"
+)
 _MAX_SEQ = 1000
 
 
@@ -76,7 +79,7 @@ def _sanitize(text: str) -> str:
 def parse_name(name: str) -> BackupInfo | None:
     if not name.endswith(".zip"):
         return None
-    match = _NAME_RE.match(name[:-len(".zip")])
+    match = _NAME_RE.match(name[: -len(".zip")])
     if match is None:
         return None
     return BackupInfo(
@@ -86,18 +89,20 @@ def parse_name(name: str) -> BackupInfo | None:
         origin=match["origin"],
         kind=match["kind"],
         src=match["src"],
-        stem=match["stem"])
+        stem=match["stem"],
+    )
 
 
-def _claim(backup_dir: Path, stamp: str, origin: str, kind: str,
-           src: str, stem: str) -> Path:
+def _claim(
+    backup_dir: Path, stamp: str, origin: str, kind: str, src: str, stem: str
+) -> Path:
     backup_dir.mkdir(parents=True, exist_ok=True)
     for seq in range(_MAX_SEQ):
-        candidate = backup_dir / (
-            f"{stamp}-{seq:03d}-{origin}-{kind}-{src}-{stem}.zip")
+        candidate = backup_dir / (f"{stamp}-{seq:03d}-{origin}-{kind}-{src}-{stem}.zip")
         try:
-            handle = os.open(str(candidate),
-                             os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            handle = os.open(
+                str(candidate), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            )
         except FileExistsError:
             continue
         os.close(handle)
@@ -110,23 +115,22 @@ def _write_archive(claimed: Path, members, manifest: dict) -> None:
     try:
         with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as archive:
             for member in members:
-                with open(member, "rb") as source, \
-                        archive.open(Path(member).name, "w") as entry:
+                with (
+                    open(member, "rb") as source,
+                    archive.open(Path(member).name, "w") as entry,
+                ):
                     shutil.copyfileobj(source, entry)
-            archive.writestr(MANIFEST_NAME,
-                             json.dumps(manifest, indent=2))
+            archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
         os.replace(staging, claimed)
     except BaseException:
         for debris in (staging, claimed):
-            try:
+            with contextlib.suppress(OSError):
                 debris.unlink()
-            except OSError:
-                pass
         raise
 
 
 def _stamp(now) -> str:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return now.strftime("%Y%m%d-%H%M%S")
 
 
@@ -138,35 +142,52 @@ def create_file_backup(backup_dir, source, *, origin: str, now=None) -> Path:
     if origin not in _ORIGINS:
         raise ValueError(f"Unknown backup origin: {origin}")
     profile = source.parent
-    claimed = _claim(Path(backup_dir), _stamp(now), origin, kind,
-                     source_key(profile), _sanitize(source.stem))
-    _write_archive(claimed, [source], {
-        "kind": kind,
-        "source": str(source),
-        "profile": str(profile),
-        "created": _stamp(now),
-    })
+    claimed = _claim(
+        Path(backup_dir),
+        _stamp(now),
+        origin,
+        kind,
+        source_key(profile),
+        _sanitize(source.stem),
+    )
+    _write_archive(
+        claimed,
+        [source],
+        {
+            "kind": kind,
+            "source": str(source),
+            "profile": str(profile),
+            "created": _stamp(now),
+        },
+    )
     return claimed
 
 
-def create_profile_backup(backup_dir, profile, *, origin: str,
-                          now=None) -> Path:
+def create_profile_backup(backup_dir, profile, *, origin: str, now=None) -> Path:
     profile = Path(profile)
     if origin not in _ORIGINS:
         raise ValueError(f"Unknown backup origin: {origin}")
-    members = sorted(child for child in profile.iterdir()
-                     if tree.file_kind(child))
+    members = sorted(child for child in profile.iterdir() if tree.file_kind(child))
     label = profile.name
-    if label.startswith("settings_"):
-        label = label[len("settings_"):]
-    claimed = _claim(Path(backup_dir), _stamp(now), origin, "profile",
-                     source_key(profile), _sanitize(label))
-    _write_archive(claimed, members, {
-        "kind": "profile",
-        "source": str(profile),
-        "profile": str(profile),
-        "created": _stamp(now),
-    })
+    label = label.removeprefix("settings_")
+    claimed = _claim(
+        Path(backup_dir),
+        _stamp(now),
+        origin,
+        "profile",
+        source_key(profile),
+        _sanitize(label),
+    )
+    _write_archive(
+        claimed,
+        members,
+        {
+            "kind": "profile",
+            "source": str(profile),
+            "profile": str(profile),
+            "created": _stamp(now),
+        },
+    )
     return claimed
 
 
@@ -209,8 +230,17 @@ def enumerate_backups(backup_dir) -> tuple[list, bool]:
         info = parse_name(Path(entry.path).name)
         if info is None:
             continue
-        found.append(BackupInfo(Path(entry.path), info.created, info.seq,
-                                info.origin, info.kind, info.src, info.stem))
+        found.append(
+            BackupInfo(
+                Path(entry.path),
+                info.created,
+                info.seq,
+                info.origin,
+                info.kind,
+                info.src,
+                info.stem,
+            )
+        )
     found.sort(key=lambda i: (i.created, i.seq), reverse=True)
     return found, False
 
@@ -229,7 +259,7 @@ def prune(backup_dir, keep: int) -> list:
     removed = []
     for infos in groups.values():
         infos.sort(key=lambda i: (i.created, i.seq), reverse=True)
-        for info in infos[max(0, keep):]:
+        for info in infos[max(0, keep) :]:
             try:
                 info.path.unlink()
                 removed.append(info.path)
@@ -266,8 +296,7 @@ def _validated_members(archive: zipfile.ZipFile) -> list:
         if name == MANIFEST_NAME:
             continue
         if name != Path(name).name or name in ("", ".", ".."):
-            raise ValueError(
-                f"That archive contains a path-bearing entry: {name!r}")
+            raise ValueError(f"That archive contains a path-bearing entry: {name!r}")
         if tree.file_kind(name) is None:
             raise ValueError(f"That archive contains an unexpected file: {name!r}")
         members.append(name)
@@ -304,38 +333,34 @@ def restore(backup_dir, archive_path, root, *, now=None) -> Path:
                 # `source`, silently clobbering an unrelated character with
                 # no way back.
                 raise ValueError(
-                    "That archive does not hold exactly the file it claims "
-                    "to back up.")
+                    "That archive does not hold exactly the file it claims to back up."
+                )
             for name in members:
                 # Belt and braces behind _validated_members: basename again
                 # on the way out, so nothing can escape even if validation
                 # grows a hole later.
                 destination = target_dir / Path(name).name
                 staging = destination.with_name(
-                    f"{destination.name}.{uuid.uuid4().hex}.tmp")
+                    f"{destination.name}.{uuid.uuid4().hex}.tmp"
+                )
                 # Recorded before the write: open(..., "wb") creates the
                 # file even if the copy that follows raises immediately, so
                 # cleanup must already know about it by then.
                 staged.append((staging, destination))
-                with archive.open(name) as entry, \
-                        open(staging, "wb") as handle:
+                with archive.open(name) as entry, open(staging, "wb") as handle:
                     shutil.copyfileobj(entry, handle)
 
             # The pre-restore auto-backup, taken only once every member is
             # safely staged. A failure here must still abort -- nothing
             # live has been touched yet, so aborting just means unstaging.
             if kind == "profile":
-                create_profile_backup(backup_dir, target_dir, origin="auto",
-                                      now=now)
+                create_profile_backup(backup_dir, target_dir, origin="auto", now=now)
             elif source.exists():
-                create_file_backup(backup_dir, source, origin="auto",
-                                   now=now)
+                create_file_backup(backup_dir, source, origin="auto", now=now)
     except BaseException:
         for staging, _destination in staged:
-            try:
+            with contextlib.suppress(OSError):
                 staging.unlink()
-            except OSError:
-                pass
         raise
 
     if kind == "profile":

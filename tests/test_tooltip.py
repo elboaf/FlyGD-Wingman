@@ -1,9 +1,11 @@
 """The tooltip text decision. The widget machinery is untested by design."""
+
+from pathlib import Path
+
 import pytest
 
 from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import copy as copy_mod
-from pathlib import Path
 
 
 def test_unreadable_duration_explains_itself():
@@ -15,7 +17,7 @@ def test_unreadable_duration_explains_itself():
 
 
 def test_pending_probe_is_distinguished_from_a_failed_one():
-    """"…" and "?" mean opposite things -- not measured yet versus measured
+    """ "…" and "?" mean opposite things -- not measured yet versus measured
     and unreadable -- and looked equally mysterious."""
     pending = copy_mod.tooltip_for_cell("duration", "…")
     failed = copy_mod.tooltip_for_cell("duration", "?")
@@ -42,17 +44,22 @@ def test_unknown_columns_get_no_tooltip():
     assert copy_mod.tooltip_for_cell("nonsense", "?") is None
 
 
-@pytest.mark.parametrize("probed,duration,expected_help", [
-    (False, None, True),   # "…"
-    (True, None, True),    # "?"
-    (True, 90.0, False),   # "1:30"
-])
-def test_the_keys_match_what_video_info_actually_renders(probed, duration,
-                                                         expected_help):
+@pytest.mark.parametrize(
+    "probed,duration,expected_help",
+    [
+        (False, None, True),  # "…"
+        (True, None, True),  # "?"
+        (True, 90.0, False),  # "1:30"
+    ],
+)
+def test_the_keys_match_what_video_info_actually_renders(
+    probed, duration, expected_help
+):
     """Guards the coupling: the table is keyed on rendered text, so a change
     to duration_str's glyphs would silently orphan these entries."""
-    info = library.VideoInfo(path=Path("a.mkv"), mtime=0.0, size=1,
-                             duration=duration, probed=probed)
+    info = library.VideoInfo(
+        path=Path("a.mkv"), mtime=0.0, size=1, duration=duration, probed=probed
+    )
     got = copy_mod.tooltip_for_cell("duration", info.duration_str)
     assert (got is not None) is expected_help
 
@@ -73,16 +80,22 @@ def test_the_page_carries_the_same_table_this_one_describes():
     Compared fragment by fragment because the page writes the multi-line
     entries as `+`-concatenated literals.
     """
-    source = (Path(__file__).resolve().parent.parent / "obs_youtube_uploader"
-              / "web" / "list.js").read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "obs_youtube_uploader"
+        / "web"
+        / "list.js"
+    ).read_text(encoding="utf-8")
     start = source.index("var CELL_HELP = {")
-    block = source[start:source.index("};", start)]
+    block = source[start : source.index("};", start)]
 
     for column, entries in copy_mod.CELL_HELP.items():
         assert f"{column}:" in block, f"list.js has no {column} tooltips"
         for rendered, help_text in entries.items():
             assert f"'{rendered}'" in block, (
-                f"list.js has no tooltip keyed on {rendered!r}")
+                f"list.js has no tooltip keyed on {rendered!r}"
+            )
             for fragment in help_text.split("\n"):
                 assert fragment in block, (
-                    f"list.js is missing tooltip copy: {fragment!r}")
+                    f"list.js is missing tooltip copy: {fragment!r}"
+                )

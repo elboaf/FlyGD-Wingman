@@ -19,6 +19,7 @@ is no UI thread to marshal onto.
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
 """
+
 import contextlib
 import datetime
 import json
@@ -30,9 +31,19 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .. import (bookmarks, combatlog, discord, durations, evewindows,
-                library, obsconfig, paths, settings as settings_mod, stitch,
-                uploader)
+from .. import (
+    bookmarks,
+    combatlog,
+    discord,
+    durations,
+    evewindows,
+    library,
+    obsconfig,
+    paths,
+    stitch,
+    uploader,
+)
+from .. import settings as settings_mod
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
@@ -74,6 +85,7 @@ def _folder_dialog_kind():
     to change if it moves again.
     """
     import webview
+
     return webview.FileDialog.FOLDER
 
 
@@ -86,6 +98,7 @@ def _open_file_dialog_kind():
     is what broke the import tests -- there was no seam left to patch.
     """
     import webview
+
     return webview.FileDialog.OPEN
 
 
@@ -97,11 +110,17 @@ def _empty_skills_state() -> dict:
     access in the page needs a guard, and the one that gets forgotten
     throws inside a click handler with no console attached.
     """
-    return {"auth_configured": False, "auth_in_progress": False,
-            "refresh_in_flight": False, "selected_plan_name": "",
-            "plans": [], "characters": [], "plan_issues": [],
-            "warnings": ["The EVE skills subsystem is unavailable."],
-            "plans_updated_utc": ""}
+    return {
+        "auth_configured": False,
+        "auth_in_progress": False,
+        "refresh_in_flight": False,
+        "selected_plan_name": "",
+        "plans": [],
+        "characters": [],
+        "plan_issues": [],
+        "warnings": ["The EVE skills subsystem is unavailable."],
+        "plans_updated_utc": "",
+    }
 
 
 def _close_media(media) -> None:
@@ -134,6 +153,7 @@ class UploadJob:
     the "(2/3)" title suffixes: the worker skips earlier indices but still
     computes totals from the full list.
     """
+
     items: list
     ids: list[str]
     title: str
@@ -151,6 +171,7 @@ class UploadJob:
 @dataclass
 class RetryState:
     """What a manual Retry needs to resume rather than restart."""
+
     job: UploadJob
     resume_index: int
     request: object | None
@@ -172,6 +193,7 @@ class AppState:
     now goes through settings.update, which normalises in place under the
     save lock. Do not reintroduce an assignment to this attribute.
     """
+
     recording_dir: Path | None
     settings: dict
     ffmpeg_bin: str | None = None
@@ -185,14 +207,22 @@ class AppState:
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
-    def __init__(self, state: AppState, *,
-                 id_factory=lambda: uuid.uuid4().hex,
-                 rows=None, durations_file=None,
-                 drain_interval_s=PROBE_DRAIN_S,
-                 spawn=threading.Thread, probe=library.probe,
-                 timer=threading.Timer, preview_host=None, skills=None):
+    def __init__(
+        self,
+        state: AppState,
+        *,
+        id_factory=lambda: uuid.uuid4().hex,
+        rows=None,
+        durations_file=None,
+        drain_interval_s=PROBE_DRAIN_S,
+        spawn=threading.Thread,
+        probe=library.probe,
+        timer=threading.Timer,
+        preview_host=None,
+        skills=None,
+    ):
         self._state = state
-        self._window = None          # assigned by ui.window.create()
+        self._window = None  # assigned by ui.window.create()
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -308,8 +338,7 @@ class Api:
         this runs on upload and probe workers, and a window destroyed
         mid-upload must cost a status line, not the upload.
         """
-        script = (f"window.{handler} && "
-                  f"window.{handler}({json.dumps(payload)})")
+        script = f"window.{handler} && window.{handler}({json.dumps(payload)})"
         try:
             self._window.evaluate_js(script)
         except Exception:
@@ -317,8 +346,9 @@ class Api:
 
     def _alert(self, kind: str, title: str, body: str) -> None:
         """Non-blocking message box: info, error, or warning."""
-        self._push("onDialog", {"kind": kind, "title": title, "body": body,
-                                "request_id": None})
+        self._push(
+            "onDialog", {"kind": kind, "title": title, "body": body, "request_id": None}
+        )
 
     def _confirm(self, title: str, body: str) -> bool:
         """Ask the page a yes/no question and block until it answers.
@@ -347,11 +377,21 @@ class Api:
         with self._dialog_lock:
             self._dialogs[request_id] = entry
         try:
-            self._push("onDialog", {"kind": "confirm", "title": title,
-                                    "body": body, "request_id": request_id})
+            self._push(
+                "onDialog",
+                {
+                    "kind": "confirm",
+                    "title": title,
+                    "body": body,
+                    "request_id": request_id,
+                },
+            )
             if not event.wait(timeout):
-                logger.warning("No answer to %r within %ss; treating it as "
-                               "a refusal", title, timeout)
+                logger.warning(
+                    "No answer to %r within %ss; treating it as a refusal",
+                    title,
+                    timeout,
+                )
                 return False
             return bool(entry[1])
         finally:
@@ -415,8 +455,11 @@ class Api:
                 self._rows.set_duration(row_id, info.duration, True)
 
         self._push("onRows", {"rows": self._rows.rows()})
-        work = [(row_id, info) for row_id, info in zip(ids, infos)
-                if id(info) in outstanding]
+        work = [
+            (row_id, info)
+            for row_id, info in zip(ids, infos)
+            if id(info) in outstanding
+        ]
         if work:
             self._start_probe(work, generation)
 
@@ -448,26 +491,30 @@ class Api:
     # ----- delete, open, copy ------------------------------------------------
 
     def delete_selected(self, ids) -> None:
-        pairs = [(rid, info) for rid in ids
-                 if (info := self._rows.resolve(rid)) is not None]
+        pairs = [
+            (rid, info) for rid in ids if (info := self._rows.resolve(rid)) is not None
+        ]
         if not pairs:
-            self._alert("warning", "No Selection",
-                        "Select at least one video to delete.")
+            self._alert(
+                "warning", "No Selection", "Select at least one video to delete."
+            )
             return
         # Same reason as _confirm_then_upload: _confirm blocks until the
         # page answers, and the page's answer arrives on the bridge thread
         # this method is running on.
         self._delete_thread = threading.Thread(
-            target=self._delete_worker, args=(pairs,), daemon=True)
+            target=self._delete_worker, args=(pairs,), daemon=True
+        )
         self._delete_thread.start()
 
     def _delete_worker(self, pairs) -> None:
         infos = [info for _, info in pairs]
         names = "\n".join(f"  • {i.path.name}" for i in infos)
         if not self._confirm(
-                "Confirm Delete",
-                f"Permanently delete these files from disk?\n\n{names}"
-                "\n\nThis cannot be undone."):
+            "Confirm Delete",
+            f"Permanently delete these files from disk?\n\n{names}"
+            "\n\nThis cannot be undone.",
+        ):
             return
         deleted, failures = library.delete([i.path for i in infos])
         # Forget only what actually went. A file that failed to delete still
@@ -497,8 +544,7 @@ class Api:
         url = self._links.get(row_id, "")
         if not url:
             return ""
-        self._push("onStatus", {"text": "Link copied to clipboard",
-                                "kind": "SUCCESS"})
+        self._push("onStatus", {"text": "Link copied to clipboard", "kind": "SUCCESS"})
         return url
 
     def open_path(self, row_id: str) -> None:
@@ -517,6 +563,7 @@ class Api:
         a structure written from two threads, and it would give up the
         batching that makes the per-tick save affordable.
         """
+
         def worker() -> None:
             try:
                 for row_id, info in work:
@@ -524,10 +571,12 @@ class Api:
                         break  # A newer list_rows owns the list now.
                     if info.probed:
                         continue  # Already resolved on demand.
-                    duration, definitive = self._probe(info.path,
-                                                       self._state.ffprobe_bin)
+                    duration, definitive = self._probe(
+                        info.path, self._state.ffprobe_bin
+                    )
                     self._probe_queue.put(
-                        (generation, row_id, info, duration, definitive))
+                        (generation, row_id, info, duration, definitive)
+                    )
             except Exception:
                 # probe() swallows its own failures, so reaching here means
                 # something unforeseen. Rows left unprobed sit on "…", and in
@@ -564,11 +613,14 @@ class Api:
                 done = True
                 continue
             if definitive:
-                durations.remember(self._cache, info.path, info.size,
-                                   info.mtime, duration)
+                durations.remember(
+                    self._cache, info.path, info.size, info.mtime, duration
+                )
             self._rows.set_duration(row_id, duration, definitive)
-            self._push("onDuration", {"id": row_id, "duration": duration,
-                                      "definitive": definitive})
+            self._push(
+                "onDuration",
+                {"id": row_id, "duration": duration, "definitive": definitive},
+            )
             applied += 1
         # Per tick rather than once at the end: a cold scan of a large folder
         # takes a while, and a user who opens the window from the tray and
@@ -603,24 +655,33 @@ class Api:
         # Resolved one id at a time rather than through resolve_many so ids
         # and infos stay index-aligned when the page sends an id the
         # snapshot no longer knows (a stale page after a refresh).
-        pairs = [(rid, info) for rid in ids
-                 if (info := self._rows.resolve(rid)) is not None]
+        pairs = [
+            (rid, info) for rid in ids if (info := self._rows.resolve(rid)) is not None
+        ]
         if not pairs:
-            self._alert("warning", "No Selection",
-                        "Select at least one video to upload.")
+            self._alert(
+                "warning", "No Selection", "Select at least one video to upload."
+            )
             return
         if stitch and len(pairs) < 2:
-            self._alert("warning", "Stitch",
-                        "Select at least two videos to stitch.")
+            self._alert("warning", "Stitch", "Select at least two videos to stitch.")
             return
         if self._busy():
             self._alert("warning", "Busy", "An upload is already in progress.")
             return
-        job = UploadJob(items=[i for _, i in pairs], ids=[r for r, _ in pairs],
-                        title=title, description=description, stitch=bool(stitch),
-                        privacy=privacy, category=category, logs=bool(logs))
+        job = UploadJob(
+            items=[i for _, i in pairs],
+            ids=[r for r, _ in pairs],
+            title=title,
+            description=description,
+            stitch=bool(stitch),
+            privacy=privacy,
+            category=category,
+            logs=bool(logs),
+        )
         self._upload_thread = threading.Thread(
-            target=self._confirm_then_upload, args=(job,), daemon=True)
+            target=self._confirm_then_upload, args=(job,), daemon=True
+        )
         self._upload_thread.start()
 
     def _confirm_then_upload(self, job: UploadJob) -> None:
@@ -631,8 +692,13 @@ class Api:
         # bridge on itself. The busy guard is already set by the time this
         # dialog is up, which is also what we want.
         body = copy_mod.format_upload_confirm(
-            job.items, job.title, job.privacy,
-            self._state.settings.get("channel_title", ""), job.stitch, job.logs)
+            job.items,
+            job.title,
+            job.privacy,
+            self._state.settings.get("channel_title", ""),
+            job.stitch,
+            job.logs,
+        )
         if not self._confirm("Confirm Upload", body):
             return
         self._upload_worker(job)
@@ -651,8 +717,10 @@ class Api:
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
         self._push("onStatus", {"text": "Upload complete!", "kind": "SUCCESS"})
-        self._push("onProgress", {"mode": "determinate", "pct": 100.0,
-                                  "text": "", "kind": "SUCCESS"})
+        self._push(
+            "onProgress",
+            {"mode": "determinate", "pct": 100.0, "text": "", "kind": "SUCCESS"},
+        )
         self._push("onRetryAvailable", {"available": False})
         # The single point at which the video half is known to have
         # succeeded -- both the plain worker and the resume tail arrive
@@ -675,6 +743,7 @@ class Api:
     def _upload_worker(self, job: UploadJob) -> None:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
+
         index = job.start_index
         try:
             creds = uploader.load_credentials(paths.token_file())
@@ -696,22 +765,38 @@ class Api:
                 # on_progress does it: start_upload writes no status before
                 # dispatching, so a red error from the previous attempt
                 # would otherwise survive into this message.
-                self._push("onProgress", {"mode": "indeterminate", "pct": 0.0,
-                                          "text": "Stitching with FFmpeg…",
-                                          "kind": "FG"})
-                with stitch.stitched(sources, self._state.ffmpeg_bin,
-                                     paths.tmp_dir()) as merged:
-                    self._push("onProgress", {"mode": "determinate", "pct": 0.0,
-                                              "text": "", "kind": "FG"})
-                    vid = self._upload_one(youtube, MediaFileUpload, merged,
-                                           job, 0, 1, close_media=True)
+                self._push(
+                    "onProgress",
+                    {
+                        "mode": "indeterminate",
+                        "pct": 0.0,
+                        "text": "Stitching with FFmpeg…",
+                        "kind": "FG",
+                    },
+                )
+                with stitch.stitched(
+                    sources, self._state.ffmpeg_bin, paths.tmp_dir()
+                ) as merged:
+                    self._push(
+                        "onProgress",
+                        {"mode": "determinate", "pct": 0.0, "text": "", "kind": "FG"},
+                    )
+                    vid = self._upload_one(
+                        youtube, MediaFileUpload, merged, job, 0, 1, close_media=True
+                    )
                 for row_id in job.ids:
                     self._link(row_id, vid)
             else:
                 total = len(job.items)
                 for index in range(job.start_index, total):
-                    vid = self._upload_one(youtube, MediaFileUpload,
-                                           job.items[index].path, job, index, total)
+                    vid = self._upload_one(
+                        youtube,
+                        MediaFileUpload,
+                        job.items[index].path,
+                        job,
+                        index,
+                        total,
+                    )
                     self._link(job.ids[index], vid)
             self._upload_done(job)
         except uploader.UploadFailed as exc:
@@ -725,8 +810,11 @@ class Api:
             # MediaFileUpload, and with it an open handle on the user's own
             # recording, alive until the next failure replaces this state.
             # On Windows that blocks renaming or deleting that file.
-            resumable = (exc.request is not None and not job.stitch
-                         and exc.outcome is uploader.Outcome.RETRY)
+            resumable = (
+                exc.request is not None
+                and not job.stitch
+                and exc.outcome is uploader.Outcome.RETRY
+            )
             self._retry_state = RetryState(
                 job=job,
                 # On the stitch path `index` never advances past
@@ -740,46 +828,72 @@ class Api:
             self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
             if exc.outcome is uploader.Outcome.RETRY:
                 self._push("onRetryAvailable", {"available": True})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never raised
             self._retry_state = None
             # Covers a stitch failure too (StitchError isn't an
             # UploadFailed): if the bar was left indeterminate above, put it
             # back rather than leaving it animating behind the error.
-            self._push("onProgress", {"mode": "determinate", "pct": 0.0,
-                                      "text": "", "kind": "FG"})
+            self._push(
+                "onProgress",
+                {"mode": "determinate", "pct": 0.0, "text": "", "kind": "FG"},
+            )
             self._alert("error", "Upload Failed", str(exc))
             self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
 
-    def _upload_one(self, youtube, MediaFileUpload, path, job, index, total,
-                    close_media: bool = False) -> str:
-        body = uploader.build_body(job.title, job.description, job.privacy,
-                                   job.category, index, total)
-        media = MediaFileUpload(str(path), chunksize=uploader.CHUNK_SIZE,
-                                resumable=True)
-        request = youtube.videos().insert(part="snippet,status", body=body,
-                                          media_body=media)
+    def _upload_one(
+        self,
+        youtube,
+        MediaFileUpload,
+        path,
+        job,
+        index,
+        total,
+        close_media: bool = False,
+    ) -> str:
+        body = uploader.build_body(
+            job.title, job.description, job.privacy, job.category, index, total
+        )
+        media = MediaFileUpload(
+            str(path), chunksize=uploader.CHUNK_SIZE, resumable=True
+        )
+        request = youtube.videos().insert(
+            part="snippet,status", body=body, media_body=media
+        )
 
         def on_progress(fraction: float) -> None:
             self._last_pct = ((index + fraction) / total) * 100
-            self._push("onProgress", {
-                "mode": "determinate", "pct": self._last_pct,
-                "text": copy_mod.format_progress(index, total, fraction),
-                "kind": "FG"})
+            self._push(
+                "onProgress",
+                {
+                    "mode": "determinate",
+                    "pct": self._last_pct,
+                    "text": copy_mod.format_progress(index, total, fraction),
+                    "kind": "FG",
+                },
+            )
 
         def on_retry(attempt: int, delay: float) -> None:
             # Carries the last percentage rather than zero: the upload has
             # not lost the ground it covered, and a bar snapping backwards
             # while the text says "retrying" reads as a restart.
-            self._push("onProgress", {
-                "mode": "determinate", "pct": self._last_pct,
-                "text": f"Network problem — retrying in {delay:.0f}s "
-                        f"(attempt {attempt})",
-                "kind": "WARNING"})
+            self._push(
+                "onProgress",
+                {
+                    "mode": "determinate",
+                    "pct": self._last_pct,
+                    "text": f"Network problem — retrying in {delay:.0f}s "
+                    f"(attempt {attempt})",
+                    "kind": "WARNING",
+                },
+            )
 
         try:
-            return uploader.upload(request, on_progress=on_progress,
-                                   on_retry=on_retry,
-                                   on_response=self._remember_channel)
+            return uploader.upload(
+                request,
+                on_progress=on_progress,
+                on_retry=on_retry,
+                on_response=self._remember_channel,
+            )
         finally:
             if close_media:
                 # The caller is about to delete `path`, and Windows refuses
@@ -807,8 +921,10 @@ class Api:
         channel_id, channel_title = uploader.channel_of(response)
         if not channel_title:
             return
-        if (self._state.settings.get("channel_id") == channel_id
-                and self._state.settings.get("channel_title") == channel_title):
+        if (
+            self._state.settings.get("channel_id") == channel_id
+            and self._state.settings.get("channel_title") == channel_title
+        ):
             return
         try:
             with settings_mod.update(self._state.settings) as cfg:
@@ -818,15 +934,19 @@ class Api:
             # A settings file that cannot be written must not fail an
             # upload that succeeded.
             logger.exception("could not persist the destination channel")
-        self._push("onChannel", {
-            "channel_id": channel_id,
-            "channel_title": channel_title,
-            # Rendered here, not in the page: format_destination states the
-            # "learned from the first upload" case in words, and that
-            # explanation is copy with its own test, not a template.
-            "destination": copy_mod.format_destination(
-                channel_title, self._state.settings.get("privacy", "")),
-        })
+        self._push(
+            "onChannel",
+            {
+                "channel_id": channel_id,
+                "channel_title": channel_title,
+                # Rendered here, not in the page: format_destination states the
+                # "learned from the first upload" case in words, and that
+                # explanation is copy with its own test, not a template.
+                "destination": copy_mod.format_destination(
+                    channel_title, self._state.settings.get("privacy", "")
+                ),
+            },
+        )
         # The Settings account line names the channel, and this is the
         # moment the channel becomes known. Without this it would read a
         # bare "Connected" for the rest of the session that learned it, and
@@ -843,7 +963,8 @@ class Api:
         # must not be repeatable while the resume is being set up.
         self._push("onRetryAvailable", {"available": False})
         self._upload_thread = threading.Thread(
-            target=self._retry_worker, args=(state,), daemon=True)
+            target=self._retry_worker, args=(state,), daemon=True
+        )
         self._upload_thread.start()
 
     def _retry_worker(self, state: RetryState) -> None:
@@ -859,11 +980,17 @@ class Api:
 
             def on_progress(fraction: float) -> None:
                 self._last_pct = ((state.resume_index + fraction) / total) * 100
-                self._push("onProgress", {
-                    "mode": "determinate", "pct": self._last_pct,
-                    "text": copy_mod.format_progress(state.resume_index, total,
-                                                     fraction),
-                    "kind": "FG"})
+                self._push(
+                    "onProgress",
+                    {
+                        "mode": "determinate",
+                        "pct": self._last_pct,
+                        "text": copy_mod.format_progress(
+                            state.resume_index, total, fraction
+                        ),
+                        "kind": "FG",
+                    },
+                )
 
             vid = uploader.upload(state.request, on_progress=on_progress)
             self._link(state.job.ids[state.resume_index], vid)
@@ -880,15 +1007,15 @@ class Api:
             if not retryable:
                 _close_media(getattr(exc.request, "resumable", None))
             self._retry_state = replace(
-                state, request=exc.request if retryable else None)
+                state, request=exc.request if retryable else None
+            )
             self._push("onStatus", {"text": str(exc), "kind": "ERROR"})
             if retryable:
                 self._push("onRetryAvailable", {"available": True})
             return
         # The resumed file is done; continue with whatever followed it.
         if state.resume_index + 1 < len(state.job.items):
-            self._upload_worker(replace(state.job,
-                                        start_index=state.resume_index + 1))
+            self._upload_worker(replace(state.job, start_index=state.resume_index + 1))
         else:
             self._upload_done(state.job)
 
@@ -903,9 +1030,13 @@ class Api:
         failed. It replaces "Upload complete!" on the strip rather than
         following it, so the last thing said never overstates what was done.
         """
-        self._push("onStatus", {
-            "text": f"Upload complete — combat logs skipped: {reason}",
-            "kind": "WARNING"})
+        self._push(
+            "onStatus",
+            {
+                "text": f"Upload complete — combat logs skipped: {reason}",
+                "kind": "WARNING",
+            },
+        )
 
     def _post_combat_logs(self, job: UploadJob) -> None:
         """The log half of a combined upload. Best-effort, by design.
@@ -929,8 +1060,9 @@ class Api:
         gamelogs = cfg.get("gamelogs_dir")
         gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
         if gamelogs_dir is None or not gamelogs_dir.is_dir():
-            self._skip_logs("your EVE Gamelogs folder was not found. "
-                            "Set it in Settings.")
+            self._skip_logs(
+                "your EVE Gamelogs folder was not found. Set it in Settings."
+            )
             return
 
         # Resolve any still-pending probe for THIS selection first: an
@@ -942,21 +1074,23 @@ class Api:
         missing = [i.path.name for _, i in pairs if i.duration is None]
         if missing:
             self._skip_logs(
-                "no readable duration for " + ", ".join(missing)
+                "no readable duration for "
+                + ", ".join(missing)
                 + ", so the time window cannot be worked out (this usually "
-                  "means ffprobe is unavailable).")
+                "means ffprobe is unavailable)."
+            )
             return
 
         # Union across the selection: earliest start to latest end, one
         # archive, matching how stitching treats a multi-selection.
         infos = [i for _, i in pairs]
         start_utc = min(
-            datetime.datetime.fromtimestamp(i.mtime - i.duration,
-                                            datetime.timezone.utc)
-            for i in infos)
+            datetime.datetime.fromtimestamp(i.mtime - i.duration, datetime.UTC)
+            for i in infos
+        )
         end_utc = max(
-            datetime.datetime.fromtimestamp(i.mtime, datetime.timezone.utc)
-            for i in infos)
+            datetime.datetime.fromtimestamp(i.mtime, datetime.UTC) for i in infos
+        )
 
         self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc)
 
@@ -983,17 +1117,21 @@ class Api:
         total = len(unprobed)
         measured = 0
         for index, (row_id, info) in enumerate(unprobed, start=1):
-            self._push("onStatus", {
-                "text": f"Reading recording lengths… ({index}/{total})",
-                "kind": "FG"})
+            self._push(
+                "onStatus",
+                {"text": f"Reading recording lengths… ({index}/{total})", "kind": "FG"},
+            )
             duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
             if definitive:
-                durations.remember(self._cache, info.path, info.size,
-                                   info.mtime, duration)
+                durations.remember(
+                    self._cache, info.path, info.size, info.mtime, duration
+                )
                 measured += 1
             self._rows.set_duration(row_id, duration, definitive)
-            self._push("onDuration", {"id": row_id, "duration": duration,
-                                      "definitive": definitive})
+            self._push(
+                "onDuration",
+                {"id": row_id, "duration": duration, "definitive": definitive},
+            )
         if measured:
             durations.save(self._durations_file, self._cache)
 
@@ -1009,14 +1147,18 @@ class Api:
             self._push("onStatus", {"text": "Collecting combat logs…", "kind": "FG"})
             selection = combatlog.select_logs(gamelogs_dir, start_utc, end_utc)
             if not selection.logs:
-                self._alert("info", "No logs found", (
-                    "No EVE logs overlap that window.\n\n"
-                    f"Window (UTC): {start_utc:%Y-%m-%d %H:%M} to {end_utc:%H:%M}\n"
-                    f"Folder: {gamelogs_dir}\n\n"
-                    "EVE writes log timestamps in UTC, so this window is in "
-                    "UTC too."))
-                self._push("onStatus", {"text": "No combat logs found.",
-                                        "kind": "FG"})
+                self._alert(
+                    "info",
+                    "No logs found",
+                    (
+                        "No EVE logs overlap that window.\n\n"
+                        f"Window (UTC): {start_utc:%Y-%m-%d %H:%M} to {end_utc:%H:%M}\n"
+                        f"Folder: {gamelogs_dir}\n\n"
+                        "EVE writes log timestamps in UTC, so this window is in "
+                        "UTC too."
+                    ),
+                )
+                self._push("onStatus", {"text": "No combat logs found.", "kind": "FG"})
                 return
 
             stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
@@ -1030,10 +1172,8 @@ class Api:
 
             if result.ok:
                 # Only remove the archive once Discord has it.
-                try:
+                with contextlib.suppress(OSError):
                     archive.path.unlink()
-                except OSError:
-                    pass
                 # Discord's own message does not mention the cap; append the
                 # same drop note so the status line does not quietly
                 # disagree with the content the user just sent.
@@ -1046,11 +1186,16 @@ class Api:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told
                 # "too large" has no move available unless the file survives.
-                self._alert("error", "Combat log upload failed", (
-                    f"{result.message}\n\nThe archive was kept so you can "
-                    f"upload it by hand:\n{archive.path}"))
+                self._alert(
+                    "error",
+                    "Combat log upload failed",
+                    (
+                        f"{result.message}\n\nThe archive was kept so you can "
+                        f"upload it by hand:\n{archive.path}"
+                    ),
+                )
                 self._push("onStatus", {"text": result.message, "kind": "ERROR"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported, and the archive is kept on disk
             # post_archive never raises, but build_archive and
             # summarize_archive can -- and by then the archive may already be
             # on disk. Without this the user gets a bare str(exc) and the
@@ -1058,8 +1203,10 @@ class Api:
             # -post branch above makes, quietly does not hold on this path.
             detail = str(exc)
             if archive is not None and archive.path.exists():
-                detail += ("\n\nThe archive was kept so you can upload it "
-                           f"by hand:\n{archive.path}")
+                detail += (
+                    "\n\nThe archive was kept so you can upload it "
+                    f"by hand:\n{archive.path}"
+                )
             self._alert("error", "Combat log upload failed", detail)
             self._push("onStatus", {"text": f"Error: {exc}", "kind": "ERROR"})
 
@@ -1074,7 +1221,8 @@ class Api:
             # Top level, not inside `settings`: it is derived, not stored,
             # and nesting it invites the page to write it back on Save.
             "webhook_status": copy_mod.webhook_status(
-                cfg.get("discord_webhook", "") or ""),
+                cfg.get("discord_webhook", "") or ""
+            ),
             "detected": {
                 "recording": str(detected_rec) if detected_rec else "",
                 "gamelogs": str(detected_logs) if detected_logs else "",
@@ -1083,7 +1231,8 @@ class Api:
             # privacy), so it is rendered here rather than templated in the
             # page -- format_destination is tested copy.
             "destination": copy_mod.format_destination(
-                cfg.get("channel_title", ""), cfg.get("privacy", "")),
+                cfg.get("channel_title", ""), cfg.get("privacy", "")
+            ),
         }
 
     def get_settings(self) -> dict:
@@ -1113,8 +1262,7 @@ class Api:
             # pywebview happens to discard a path that does not exist, but
             # that is its implementation detail, not our intent.
             start = str(self._state.recording_dir or "")
-        chosen = self._window.create_file_dialog(_folder_dialog_kind(),
-                                                 directory=start)
+        chosen = self._window.create_file_dialog(_folder_dialog_kind(), directory=start)
         # create_file_dialog returns a sequence of paths, or None on cancel.
         if not chosen:
             return ""
@@ -1135,27 +1283,37 @@ class Api:
         if which == "gamelogs":
             found = combatlog.find_gamelogs_dir()
             if found is None:
-                self._alert("info", "Gamelogs not found",
-                            "Could not find an EVE Gamelogs folder under "
-                            "Documents or OneDrive\\Documents. Use Browse… "
-                            "to point at it.")
+                self._alert(
+                    "info",
+                    "Gamelogs not found",
+                    "Could not find an EVE Gamelogs folder under "
+                    "Documents or OneDrive\\Documents. Use Browse… "
+                    "to point at it.",
+                )
                 return ""
             if str(found) == current:
-                self._alert("info", "Gamelogs",
-                            f"Already set to the detected folder:\n{found}")
+                self._alert(
+                    "info", "Gamelogs", f"Already set to the detected folder:\n{found}"
+                )
                 return ""
             return str(found)
 
         detected = obsconfig.find_recording_dir()
         if detected is None or not detected.is_dir():
-            self._alert("info", "Detect recording folder",
-                        "Could not read OBS's configuration to detect a "
-                        "recording folder. Make sure OBS is installed and has "
-                        "recorded at least once, then try again.")
+            self._alert(
+                "info",
+                "Detect recording folder",
+                "Could not read OBS's configuration to detect a "
+                "recording folder. Make sure OBS is installed and has "
+                "recorded at least once, then try again.",
+            )
             return ""
         if str(detected) == current:
-            self._alert("info", "Detect recording folder",
-                        f"Already set to the detected folder:\n{detected}")
+            self._alert(
+                "info",
+                "Detect recording folder",
+                f"Already set to the detected folder:\n{detected}",
+            )
             return ""
         return str(detected)
 
@@ -1235,8 +1393,7 @@ class Api:
         """YouTube category id. Digits only; 20 is Gaming."""
         text = str(value or "").strip()
         if not text.isdigit():
-            return self._field_refused(
-                "A category is a number, like 20 for Gaming.")
+            return self._field_refused("A category is a number, like 20 for Gaming.")
         return self._write_setting("category", text)
 
     def set_discord_webhook(self, value) -> dict:
@@ -1253,7 +1410,8 @@ class Api:
         text = str(value or "").strip()
         if not text:
             return self._field_refused(
-                "Paste a webhook URL, or use Remove to clear it.")
+                "Paste a webhook URL, or use Remove to clear it."
+            )
         # parse_webhook RETURNS (webhook, error); it does not raise. An
         # except-ValueError around it never fires, which would have let
         # every malformed URL through.
@@ -1295,7 +1453,8 @@ class Api:
                 return self._field_refused(
                     "Turn off " + " and ".join(running) + " first — hiding "
                     "them here would leave them running with no way to "
-                    "switch them off.")
+                    "switch them off."
+                )
         return self._write_setting("show_eve_tools", enabled)
 
     def set_folder(self, which: str, path: str) -> dict:
@@ -1360,9 +1519,10 @@ class Api:
         carries. Keeping the strings here keeps them under test, and stops
         the page growing a second copy that drifts.
         """
-        return {state: {"message": message, "label": label, "enabled": enabled}
-                for state, (message, label, enabled)
-                in copy_mod.AUTH_STATES.items()}
+        return {
+            state: {"message": message, "label": label, "enabled": enabled}
+            for state, (message, label, enabled) in copy_mod.AUTH_STATES.items()
+        }
 
     def _push_eve_status(self) -> None:
         """Publish engine status to the page.
@@ -1376,15 +1536,21 @@ class Api:
             return
         enabled = self._state.settings["eve_bookmarks"]["enabled"]
         status = engine.status(enabled=enabled)
-        self._push("onEveStatus", {
-            "state": status.state, "sig": status.sig, "root": status.root,
-            "next_num": status.next_num, "next_alpha": status.next_alpha,
-            "failed_binds": status.failed_binds,
-            # A failed start is otherwise invisible: this is the one
-            # actionable thing the user can be told ("the engine is
-            # missing, reinstall").
-            "last_error": status.last_error,
-        })
+        self._push(
+            "onEveStatus",
+            {
+                "state": status.state,
+                "sig": status.sig,
+                "root": status.root,
+                "next_num": status.next_num,
+                "next_alpha": status.next_alpha,
+                "failed_binds": status.failed_binds,
+                # A failed start is otherwise invisible: this is the one
+                # actionable thing the user can be told ("the engine is
+                # missing, reinstall").
+                "last_error": status.last_error,
+            },
+        )
 
     # ---- EVE client previews ------------------------------------------
 
@@ -1460,8 +1626,7 @@ class Api:
             logger.exception("Preview host did not stop cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
-        return preview_gestures.from_capture(
-            parts if isinstance(parts, dict) else {})
+        return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
 
     def parse_preview_bind(self, text) -> dict:
         parsed = preview_gestures.parse(text if isinstance(text, str) else "")
@@ -1486,7 +1651,7 @@ class Api:
                 if not isinstance(name, str) or name.startswith("hwnd:"):
                     return False
                 if not text:
-                    continue      # cleared, not invalid
+                    continue  # cleared, not invalid
                 parsed = preview_gestures.parse(text)
                 if parsed is None:
                     return False
@@ -1567,8 +1732,10 @@ class Api:
             if rendered:
                 chords.add(rendered)
         live = bool(eve.get("enabled")) and any(eve.get("windows", {}).values())
-        return {"active": sorted(chords) if live else [],
-                "latent": [] if live else sorted(chords)}
+        return {
+            "active": sorted(chords) if live else [],
+            "latent": [] if live else sorted(chords),
+        }
 
     def push_preview_hotkeys(self, status=None) -> None:
         """Announce a change to a page that is already up. Never the only
@@ -1607,15 +1774,13 @@ class Api:
                 # as it was and the next toggle retries on its own --
                 # which is why this needs no dirty-flag of its own.
                 with settings_mod.update(self._state.settings) as doc:
-                    doc.setdefault("preview", {})[
-                        "restore_preview_positions"] = enabled
+                    doc.setdefault("preview", {})["restore_preview_positions"] = enabled
             except OSError:
                 # Logged and reported, not raised. A settings file that
                 # cannot be written must not break the toggle -- but the
                 # page has to be able to say the choice is not saved.
                 persisted = False
-                logger.exception(
-                    "Could not persist restore_preview_positions")
+                logger.exception("Could not persist restore_preview_positions")
         return {"applied": True, "persisted": persisted}
 
     def _push_first_run_when_ready(self) -> None:
@@ -1639,7 +1804,8 @@ class Api:
         # actually learned it.
         if message is None:
             message = copy_mod.account_line(
-                state, self._state.settings.get("channel_title", "") or "")
+                state, self._state.settings.get("channel_title", "") or ""
+            )
         self._push("onAuthState", {"state": state, "message": message})
 
     def _auth_busy(self) -> bool:
@@ -1657,15 +1823,16 @@ class Api:
         if self._auth_busy():
             return
         self._push_auth("connecting", "Checking…")
-        self._auth_thread = threading.Thread(target=self._auth_check_worker,
-                                             daemon=True)
+        self._auth_thread = threading.Thread(
+            target=self._auth_check_worker, daemon=True
+        )
         self._auth_thread.start()
 
     def _auth_check_worker(self) -> None:
         try:
             creds = uploader.load_credentials(paths.token_file())
             connected = creds is not None and not uploader.needs_reauth(creds)
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable is indistinguishable from disconnected
             # An unreadable token is indistinguishable from not being
             # connected, and leaving the control mid-check forever is the
             # one outcome that helps nobody.
@@ -1688,7 +1855,7 @@ class Api:
         try:
             creds = uploader.run_oauth_flow()
             uploader.save_credentials(creds, paths.token_file())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never raised
             self._alert("error", "Connection failed", str(exc))
             self._push_auth("disconnected")
             return
@@ -1700,8 +1867,9 @@ class Api:
         """Everything the Bookmarks route renders, in one call."""
         section = self._state.settings["eve_bookmarks"]
         engine = self._state.engine
-        status = (engine.status(enabled=section["enabled"])
-                  if engine is not None else None)
+        status = (
+            engine.status(enabled=section["enabled"]) if engine is not None else None
+        )
         return {
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
@@ -1712,9 +1880,11 @@ class Api:
             # the page, which is the entire reason to_ahk returns a display
             # string: the page holds no mapping table and cannot drift from
             # this one. Without this the UI would show raw "^+s".
-            "displays": {bid: bookmarks.parse_ahk(value)["display"]
-                         for bid, value in section["keybinds"].items()
-                         if value},
+            "displays": {
+                bid: bookmarks.parse_ahk(value)["display"]
+                for bid, value in section["keybinds"].items()
+                if value
+            },
             "engine": {
                 "state": status.state if status else "off",
                 # Surfaces a failed start straight away. Without this the
@@ -1725,8 +1895,11 @@ class Api:
                 # nothing. Empty while the feature is off: nothing is
                 # running, so there is nothing to warn about, and a warning
                 # on a deliberately-disabled route is just noise.
-                "blockers": (bookmarks.registration_blockers(section)
-                             if section["enabled"] else []),
+                "blockers": (
+                    bookmarks.registration_blockers(section)
+                    if section["enabled"]
+                    else []
+                ),
             },
         }
 
@@ -1755,8 +1928,11 @@ class Api:
             # Same contract as save_settings: update() restored the live
             # dict before re-raising, so state and disk never diverge, and
             # say why rather than letting the exception escape.
-            self._alert("error", "Could not save settings",
-                        f"Bookmark settings were not saved: {exc}")
+            self._alert(
+                "error",
+                "Could not save settings",
+                f"Bookmark settings were not saved: {exc}",
+            )
             return {**self.get_bookmarks(), "saved": False}
 
         # update() normalises self._state.settings in place; no rebind
@@ -1797,8 +1973,7 @@ class Api:
         directory, so there is no path worth probing -- the user points at
         it.
         """
-        chosen = self._window.create_file_dialog(
-            _open_file_dialog_kind(), directory="")
+        chosen = self._window.create_file_dialog(_open_file_dialog_kind(), directory="")
         if not chosen:
             return {"ok": False, "discarded": [], "notes": []}
         try:
@@ -1811,8 +1986,11 @@ class Api:
             # dialog reported success.
             raw = Path(chosen[0]).read_bytes()
         except OSError as exc:
-            return {"ok": False, "discarded": [],
-                    "notes": [f"Could not read that file: {exc}"]}
+            return {
+                "ok": False,
+                "discarded": [],
+                "notes": [f"Could not read that file: {exc}"],
+            }
 
         result = bookmarks.import_legacy_ini(bookmarks.decode_ini_bytes(raw))
         if not result["parsed"]:
@@ -1820,13 +1998,17 @@ class Api:
             # content, so it is treated as the failure it almost certainly
             # is: saving here would wipe the settings the import exists to
             # preserve.
-            return {"ok": False, "discarded": [], "notes": [
-                "That file does not look like a bookmark helper INI - no "
-                "settings were found in it, so nothing was changed."]}
+            return {
+                "ok": False,
+                "discarded": [],
+                "notes": [
+                    "That file does not look like a bookmark helper INI - no "
+                    "settings were found in it, so nothing was changed."
+                ],
+            }
         # Import never enables the engine: reading someone's old settings is
         # not consent to start a keyboard hook.
-        result["section"]["enabled"] = \
-            self._state.settings["eve_bookmarks"]["enabled"]
+        result["section"]["enabled"] = self._state.settings["eve_bookmarks"]["enabled"]
         if not self.save_bookmarks(result["section"])["saved"]:
             # Deliberately no note: save_bookmarks has already raised its own
             # "Could not save settings" dialog naming the reason, and the
@@ -1836,8 +2018,7 @@ class Api:
             # "Import complete" beside the error, which is the bug this
             # flag exists to close.
             return {"ok": False, "discarded": [], "notes": []}
-        return {"ok": True, "discarded": result["discarded"],
-                "notes": result["notes"]}
+        return {"ok": True, "discarded": result["discarded"], "notes": result["notes"]}
 
     def alert_import(self, body: str) -> None:
         """Report what an import changed. Uses the existing dialog layer."""
@@ -1861,7 +2042,8 @@ class Api:
         # across a module boundary for a private name is how a caller ends
         # up depending on something the owning module is free to rename.
         return self._state.settings.setdefault(
-            "eve_settings", settings_mod.validated_eve_settings({}))
+            "eve_settings", settings_mod.validated_eve_settings({})
+        )
 
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
@@ -1873,19 +2055,20 @@ class Api:
         self._eve_refresh_running()
         section = self._eve_section()
         root = section.get("root")
-        found = evesettings_tree.discover(root, section.get("server"),
-                                          section.get("profile"))
+        found = evesettings_tree.discover(
+            root, section.get("server"), section.get("profile")
+        )
         store = paths.eve_settings_backup_dir()
 
         def describe(record):
-            name = (self._eve_names.label(int(record.file_id))
-                    if record.kind == "character" and record.file_id.isdigit()
-                    else f"Account {record.file_id}")
-            return {"path": str(record.path), "id": record.file_id,
-                    "name": name}
+            name = (
+                self._eve_names.label(int(record.file_id))
+                if record.kind == "character" and record.file_id.isdigit()
+                else f"Account {record.file_id}"
+            )
+            return {"path": str(record.path), "id": record.file_id, "name": name}
 
-        listed, backups_unreadable = \
-            evesettings_backup.enumerate_backups(store)
+        listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
@@ -1900,11 +2083,11 @@ class Api:
             # _eve_refresh_running: this method is costed as scandir over
             # a few dozen files and must stay that.
             "eve_running": self._eve_running,
-            "servers": [{"path": str(s.path), "name": s.name}
-                        for s in found.servers],
-            "profiles": [{"path": str(p.path), "name": p.name,
-                          "file_count": p.file_count}
-                         for p in found.profiles],
+            "servers": [{"path": str(s.path), "name": s.name} for s in found.servers],
+            "profiles": [
+                {"path": str(p.path), "name": p.name, "file_count": p.file_count}
+                for p in found.profiles
+            ],
             "characters": [describe(c) for c in found.characters],
             "accounts": [describe(a) for a in found.accounts],
             # Reported separately from an empty list for the same reason
@@ -1913,9 +2096,16 @@ class Api:
             # user the second when the first is true invites them to
             # overwrite settings they believe are unprotected.
             "backups_unreadable": backups_unreadable,
-            "backups": [{"path": str(b.path), "created": b.created,
-                         "origin": b.origin, "kind": b.kind, "stem": b.stem}
-                        for b in listed],
+            "backups": [
+                {
+                    "path": str(b.path),
+                    "created": b.created,
+                    "origin": b.origin,
+                    "kind": b.kind,
+                    "stem": b.stem,
+                }
+                for b in listed
+            ],
         }
 
     def _eve_client_running(self) -> bool:
@@ -1924,10 +2114,10 @@ class Api:
         as "not a client", and caches per PID."""
         try:
             from ..preview import discovery
+
             return bool(discovery.list_clients())
-        except Exception:  # noqa: BLE001 - a pill, never a failure
-            logger.debug("Could not check for a running EVE client",
-                         exc_info=True)
+        except Exception:
+            logger.debug("Could not check for a running EVE client", exc_info=True)
             return False
 
     def _eve_refresh_running(self) -> None:
@@ -1947,13 +2137,14 @@ class Api:
         resolver uses, and for the same reason -- request/response cannot
         express an answer that arrives after the response did.
         """
+
         def worker() -> None:
             try:
                 value = self._eve_client_running()
                 if value != self._eve_running:
                     self._eve_running = value
                     self._push("onEveSettingsRunning", {"running": value})
-            except Exception:  # noqa: BLE001 - a pill, never a failure
+            except Exception:
                 logger.debug("EVE client probe failed", exc_info=True)
             finally:
                 self._eve_probe.release()
@@ -1965,13 +2156,12 @@ class Api:
             return
         try:
             self._spawn(target=worker, daemon=True).start()
-        except Exception:  # noqa: BLE001 - the pill simply stays stale
+        except Exception:
             # Only the worker releases, and a worker that never started
             # never will -- that would wedge the probe for the process's
             # lifetime and freeze the pill on whatever it last said.
             self._eve_probe.release()
-            logger.debug("Could not start the EVE client probe",
-                         exc_info=True)
+            logger.debug("Could not start the EVE client probe", exc_info=True)
         except BaseException:
             self._eve_probe.release()
             raise
@@ -1998,9 +2188,12 @@ class Api:
         is not meaningfully better than one.
         """
         if not self._eve_mutation.acquire(blocking=False):
-            self._alert("warning", "EVE Settings busy",
-                        "Another EVE Settings operation is still running. "
-                        "Wait for it to finish, then try again.")
+            self._alert(
+                "warning",
+                "EVE Settings busy",
+                "Another EVE Settings operation is still running. "
+                "Wait for it to finish, then try again.",
+            )
             yield False
             return
         try:
@@ -2017,27 +2210,31 @@ class Api:
             if not held:
                 return ""
             section = self._eve_section()
-            start = str(section.get("root")
-                        or evesettings_tree.default_root())
-            chosen = self._window.create_file_dialog(_folder_dialog_kind(),
-                                                     directory=start)
+            start = str(section.get("root") or evesettings_tree.default_root())
+            chosen = self._window.create_file_dialog(
+                _folder_dialog_kind(), directory=start
+            )
             if not chosen:
                 return ""
             picked = str(chosen[0])
             # Selection is cleared, not carried: the old server and profile
             # belong to a tree that is no longer the one on screen.
-            settings_mod.update_section(self._state.settings, "eve_settings",
-                                        {"root": picked, "server": None,
-                                         "profile": None})
+            settings_mod.update_section(
+                self._state.settings,
+                "eve_settings",
+                {"root": picked, "server": None, "profile": None},
+            )
             return picked
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
         with self._eve_hold() as held:
             if not held:
                 return False
-            settings_mod.update_section(self._state.settings, "eve_settings",
-                                        {"server": server or None,
-                                         "profile": profile or None})
+            settings_mod.update_section(
+                self._state.settings,
+                "eve_settings",
+                {"server": server or None, "profile": profile or None},
+            )
             return True
 
     def eve_settings_resolve_names(self) -> None:
@@ -2047,19 +2244,19 @@ class Api:
         the state that triggered this was already returned, carrying
         fallback ids. One push per pass, not per name.
         """
+
         def worker() -> None:
             try:
                 found = evesettings_tree.discover(
                     self._eve_section().get("root"),
                     self._eve_section().get("server"),
-                    self._eve_section().get("profile"))
-                ids = [int(c.file_id) for c in found.characters
-                       if c.file_id.isdigit()]
+                    self._eve_section().get("profile"),
+                )
+                ids = [int(c.file_id) for c in found.characters if c.file_id.isdigit()]
                 if self._eve_names.resolve_missing(ids):
                     self._push("onEveSettingsNames", {})
-            except Exception:  # noqa: BLE001 - names are cosmetic
-                logger.warning("EVE character name lookup failed",
-                               exc_info=True)
+            except Exception:
+                logger.warning("EVE character name lookup failed", exc_info=True)
 
         self._spawn(target=worker, daemon=True).start()
 
@@ -2070,19 +2267,21 @@ class Api:
         would describe state that has since changed.
         """
         if not self._eve_mutation.acquire(blocking=False):
-            self._alert("warning", "EVE Settings busy",
-                        "Another EVE Settings operation is still running.")
+            self._alert(
+                "warning",
+                "EVE Settings busy",
+                "Another EVE Settings operation is still running.",
+            )
             return False
         try:
             self._spawn(target=worker, args=args, daemon=True).start()
-        except Exception:  # noqa: BLE001 - reported, never raised
+        except Exception:
             # Only the worker releases the lock, and a worker that never
             # started never will: without this the feature is dead until
             # the app restarts.
             self._eve_mutation.release()
             logger.exception("Could not start the EVE Settings worker")
-            self._alert("error", "EVE Settings",
-                        "That operation could not be started.")
+            self._alert("error", "EVE Settings", "That operation could not be started.")
             return False
         except BaseException:
             self._eve_mutation.release()
@@ -2110,35 +2309,48 @@ class Api:
         evesettings_backup.create_file_backup(store, target, origin="auto")
 
     def eve_settings_copy(self, source: str, targets: list) -> bool:
-        return self._eve_begin(self._eve_copy_worker,
-                               (source, [str(t) for t in targets or []]))
+        return self._eve_begin(
+            self._eve_copy_worker, (source, [str(t) for t in targets or []])
+        )
 
     def _eve_copy_worker(self, source: str, targets: list) -> None:
         ok = False
         try:
             if not self._eve_confirm(
-                    "Confirm Copy",
-                    f"Copy these settings onto {len(targets)} other "
-                    f"file(s)?\n\nEach one is backed up first.\n\n"
-                    "This cannot be undone except by restoring a backup."):
+                "Confirm Copy",
+                f"Copy these settings onto {len(targets)} other "
+                f"file(s)?\n\nEach one is backed up first.\n\n"
+                "This cannot be undone except by restoring a backup.",
+            ):
                 return
             report = evesettings_ops.copy_to_targets(
-                source, targets, root=self._eve_section().get("root"),
-                backup=self._eve_auto_backup)
+                source,
+                targets,
+                root=self._eve_section().get("root"),
+                backup=self._eve_auto_backup,
+            )
             keep = int(self._eve_section().get("auto_keep", 10))
             evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
             if report.failed:
-                names = "\n".join(f"  • {Path(o.path).stem}: {o.reason}"
-                                  for o in report.failed)
-                self._alert("error", "Some copies did not happen",
-                            f"Copied to {len(report.succeeded)} of "
-                            f"{len(report.outcomes)}.\n\n{names}")
+                names = "\n".join(
+                    f"  • {Path(o.path).stem}: {o.reason}" for o in report.failed
+                )
+                self._alert(
+                    "error",
+                    "Some copies did not happen",
+                    f"Copied to {len(report.succeeded)} of "
+                    f"{len(report.outcomes)}.\n\n{names}",
+                )
             else:
-                self._push("onStatus", {
-                    "text": f"Copied to {len(report.succeeded)} file(s).",
-                    "kind": "FG"})
+                self._push(
+                    "onStatus",
+                    {
+                        "text": f"Copied to {len(report.succeeded)} file(s).",
+                        "kind": "FG",
+                    },
+                )
                 ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings copy failed")
             self._alert("error", "Copy failed", str(error))
         finally:
@@ -2158,20 +2370,22 @@ class Api:
             if not path:
                 raise ValueError("Choose a settings set to back up first.")
             resolved = evesettings_tree.require_under(
-                self._eve_section().get("root"), path)
+                self._eve_section().get("root"), path
+            )
             if not resolved.exists():
                 raise ValueError("That no longer exists.")
             store = paths.eve_settings_backup_dir()
             if kind == "profile":
                 made = evesettings_backup.create_profile_backup(
-                    store, path, origin="manual")
+                    store, path, origin="manual"
+                )
             else:
                 made = evesettings_backup.create_file_backup(
-                    store, path, origin="manual")
-            self._push("onStatus", {"text": f"Backed up to {made.name}.",
-                                    "kind": "FG"})
+                    store, path, origin="manual"
+                )
+            self._push("onStatus", {"text": f"Backed up to {made.name}.", "kind": "FG"})
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings backup failed")
             self._alert("error", "Backup failed", str(error))
         finally:
@@ -2185,20 +2399,22 @@ class Api:
         ok = False
         try:
             if not self._eve_confirm(
-                    "Confirm Restore",
-                    "Restore this backup?\n\nThe current settings are backed "
-                    "up first. For a whole settings set, any file not in the "
-                    "backup is removed."):
+                "Confirm Restore",
+                "Restore this backup?\n\nThe current settings are backed "
+                "up first. For a whole settings set, any file not in the "
+                "backup is removed.",
+            ):
                 return
             store = paths.eve_settings_backup_dir()
             root = self._eve_section().get("root")
             written = evesettings_backup.restore(store, archive, root)
             keep = int(self._eve_section().get("auto_keep", 10))
             evesettings_backup.prune(store, keep)
-            self._push("onStatus", {"text": f"Restored into {written.name}.",
-                                    "kind": "FG"})
+            self._push(
+                "onStatus", {"text": f"Restored into {written.name}.", "kind": "FG"}
+            )
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings restore failed")
             self._alert("error", "Restore failed", str(error))
         finally:
@@ -2212,14 +2428,14 @@ class Api:
         ok = False
         try:
             if not self._eve_confirm(
-                    "Confirm Delete",
-                    f"Permanently delete {Path(archive).name}?\n\n"
-                    "This cannot be undone."):
+                "Confirm Delete",
+                f"Permanently delete {Path(archive).name}?\n\nThis cannot be undone.",
+            ):
                 return
             evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)
             self._push("onStatus", {"text": "Backup deleted.", "kind": "FG"})
             ok = True
-        except Exception as error:  # noqa: BLE001 - reported, never raised
+        except Exception as error:
             logger.exception("EVE settings backup delete failed")
             self._alert("error", "Delete failed", str(error))
         finally:
@@ -2236,10 +2452,16 @@ class Api:
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
         if self._skills is None:
-            return {"ok": False, "message": "The EVE skills subsystem is "
-                    "unavailable.", "character_id": 0, "plan_name": "",
-                    "readiness": "Unknown", "estimated_finish_utc": "",
-                    "queue_timing_unknown": False, "requirements": []}
+            return {
+                "ok": False,
+                "message": "The EVE skills subsystem is unavailable.",
+                "character_id": 0,
+                "plan_name": "",
+                "readiness": "Unknown",
+                "estimated_finish_utc": "",
+                "queue_timing_unknown": False,
+                "requirements": [],
+            }
         return self._skills.character_detail(character_id, plan_name)
 
     def skills_add_character(self) -> bool:

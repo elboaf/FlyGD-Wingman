@@ -8,6 +8,7 @@ stale, and a stale page acting on a path whose meaning has changed is a
 deletion of the wrong file. Ids resolved against the current snapshot make
 that fail cleanly instead.
 """
+
 import dataclasses
 import os
 from pathlib import Path
@@ -18,8 +19,9 @@ from obs_youtube_uploader import library
 from obs_youtube_uploader.ui import rows as rows_mod
 
 
-def _touch(directory: Path, name: str, size: int = 1024,
-           mtime: float | None = None) -> Path:
+def _touch(
+    directory: Path, name: str, size: int = 1024, mtime: float | None = None
+) -> Path:
     path = directory / name
     path.write_bytes(b"x" * size)
     if mtime is not None:
@@ -34,6 +36,7 @@ def _snapshot_over(directory: Path, preselect=None):
 
 
 # --- identity --------------------------------------------------------------
+
 
 def test_ids_are_not_paths(tmp_path):
     """The whole reason ids exist. A path crossing the bridge would let a
@@ -80,6 +83,7 @@ def test_a_rebuild_mints_new_ids_so_a_stale_page_fails_cleanly(tmp_path):
 
 # --- building --------------------------------------------------------------
 
+
 def test_rows_are_newest_first_like_discover(tmp_path):
     _touch(tmp_path, "old.mkv", mtime=1000)
     _touch(tmp_path, "new.mkv", mtime=2000)
@@ -123,6 +127,7 @@ def test_a_file_that_vanishes_mid_scan_is_skipped(tmp_path, monkeypatch):
 
 # --- preselection ----------------------------------------------------------
 
+
 def test_preselect_marks_only_the_named_paths(tmp_path):
     """The watcher's whole point: finish a fight, open the window, hit
     Upload with no clicking."""
@@ -147,6 +152,7 @@ def test_a_preselected_path_that_is_gone_is_simply_absent(tmp_path):
 
 
 # --- resolution ------------------------------------------------------------
+
 
 def test_resolve_returns_the_backing_video_info(tmp_path):
     path = _touch(tmp_path, "a.mkv")
@@ -188,6 +194,7 @@ def test_resolve_many_of_nothing_is_empty(tmp_path):
 
 
 # --- links -----------------------------------------------------------------
+
 
 def test_set_link_puts_a_watch_url_on_the_row(tmp_path):
     _touch(tmp_path, "a.mkv")
@@ -235,6 +242,7 @@ def test_a_link_is_dropped_once_its_recording_is_gone(tmp_path):
 
 # --- durations -------------------------------------------------------------
 
+
 def test_set_duration_renders_the_measured_length(tmp_path):
     _touch(tmp_path, "a.mkv")
     snapshot, listed = _snapshot_over(tmp_path)
@@ -253,7 +261,7 @@ def test_set_duration_updates_the_backing_info_too(tmp_path):
 
 
 def test_an_unreadable_recording_stops_showing_as_pending(tmp_path):
-    """"…" and "?" mean opposite things. A finished probe that read nothing
+    """ "…" and "?" mean opposite things. A finished probe that read nothing
     must move off "measuring", or the summary keeps its partial "+"."""
     _touch(tmp_path, "a.mkv")
     snapshot, listed = _snapshot_over(tmp_path)
@@ -305,14 +313,22 @@ def test_a_rebuild_forgets_durations_because_the_cache_owns_them(tmp_path):
 
 # --- shape -----------------------------------------------------------------
 
+
 def test_rows_returns_plain_dicts_for_the_bridge(tmp_path):
     """pywebview serialises what it is handed; a dataclass does not survive
     the trip."""
     _touch(tmp_path, "a.mkv")
     _, listed = _snapshot_over(tmp_path)
     assert isinstance(listed[0], dict)
-    assert set(listed[0]) == {"id", "name", "date", "size", "duration",
-                              "link", "preselected"}
+    assert set(listed[0]) == {
+        "id",
+        "name",
+        "date",
+        "size",
+        "duration",
+        "link",
+        "preselected",
+    }
 
 
 def test_rebuild_returns_the_same_rows_it_stores(tmp_path):
@@ -324,7 +340,14 @@ def test_rebuild_returns_the_same_rows_it_stores(tmp_path):
 def test_a_row_cannot_be_mutated_in_place(tmp_path):
     """Rows are replaced, never edited: an in-place edit that misses the
     stored copy shows one thing and resolves to another."""
-    row = rows_mod.Row(id="r1", name="a.mkv", date="", size="", duration="",
-                       link=None, preselected=False)
+    row = rows_mod.Row(
+        id="r1",
+        name="a.mkv",
+        date="",
+        size="",
+        duration="",
+        link=None,
+        preselected=False,
+    )
     with pytest.raises(dataclasses.FrozenInstanceError):
         row.name = "b.mkv"

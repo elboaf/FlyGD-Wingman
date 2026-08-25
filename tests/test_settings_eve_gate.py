@@ -5,6 +5,7 @@ are about what it is NOT allowed to do: it governs visibility only, and it
 must never be able to hide a feature that is still running, because that
 would conceal the only control that stops it.
 """
+
 from obs_youtube_uploader import settings as settings_mod
 from tests.test_api_settings import settings_api
 
@@ -36,7 +37,8 @@ def test_hiding_is_refused_while_bookmarks_are_running(tmp_path, monkeypatch):
     eighteen global keybinds would keep firing in EVE with no reachable
     control to stop them."""
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch, settings={"eve_bookmarks": {"enabled": True}})
+        tmp_path, monkeypatch, settings={"eve_bookmarks": {"enabled": True}}
+    )
 
     result = api.set_show_eve_tools(False)
 
@@ -48,7 +50,8 @@ def test_hiding_is_refused_while_bookmarks_are_running(tmp_path, monkeypatch):
 
 def test_hiding_is_refused_while_previews_are_running(tmp_path, monkeypatch):
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch, settings={"preview": {"enabled": True}})
+        tmp_path, monkeypatch, settings={"preview": {"enabled": True}}
+    )
 
     result = api.set_show_eve_tools(False)
 
@@ -58,11 +61,12 @@ def test_hiding_is_refused_while_previews_are_running(tmp_path, monkeypatch):
 
 
 def test_the_refusal_names_both_when_both_are_running(tmp_path, monkeypatch):
-    """"Turn something off first" is useless if it does not say what."""
+    """ "Turn something off first" is useless if it does not say what."""
     api, _window, _saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"eve_bookmarks": {"enabled": True},
-                  "preview": {"enabled": True}})
+        tmp_path,
+        monkeypatch,
+        settings={"eve_bookmarks": {"enabled": True}, "preview": {"enabled": True}},
+    )
 
     error = api.set_show_eve_tools(False)["error"]
 
@@ -71,9 +75,10 @@ def test_the_refusal_names_both_when_both_are_running(tmp_path, monkeypatch):
 
 def test_hiding_succeeds_once_both_are_off(tmp_path, monkeypatch):
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"eve_bookmarks": {"enabled": False},
-                  "preview": {"enabled": False}})
+        tmp_path,
+        monkeypatch,
+        settings={"eve_bookmarks": {"enabled": False}, "preview": {"enabled": False}},
+    )
 
     assert api.set_show_eve_tools(False)["applied"] is True
     assert saved["show_eve_tools"] is False
@@ -84,9 +89,10 @@ def test_showing_is_never_refused(tmp_path, monkeypatch):
     never strand anything, so a running feature must not block it -- and a
     user whose file somehow has both would otherwise be stuck hidden."""
     api, _window, _saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"show_eve_tools": False,
-                  "eve_bookmarks": {"enabled": True}})
+        tmp_path,
+        monkeypatch,
+        settings={"show_eve_tools": False, "eve_bookmarks": {"enabled": True}},
+    )
 
     assert api.set_show_eve_tools(True)["applied"] is True
 
@@ -97,9 +103,10 @@ def test_the_gate_never_touches_the_runtime_switches(tmp_path, monkeypatch):
     preference -- and could not know which of the two to restore on
     re-enable without a third persisted value."""
     api, _window, _saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"eve_bookmarks": {"enabled": False},
-                  "preview": {"enabled": False}})
+        tmp_path,
+        monkeypatch,
+        settings={"eve_bookmarks": {"enabled": False}, "preview": {"enabled": False}},
+    )
 
     api.set_show_eve_tools(False)
 
@@ -134,8 +141,7 @@ def test_the_page_gates_both_destinations_and_both_sections():
     for a feature the user asked not to see."""
     import pathlib
 
-    web = (pathlib.Path(__file__).resolve().parents[1]
-           / "obs_youtube_uploader" / "web")
+    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
     app = (web / "app.js").read_text(encoding="utf-8")
 
     assert "WM.EVE_ROUTES = ['evesettings', 'skills']" in app
@@ -162,13 +168,13 @@ def test_the_toggle_repaints_the_chrome_itself():
     """
     import pathlib
 
-    web = (pathlib.Path(__file__).resolve().parents[1]
-           / "obs_youtube_uploader" / "web")
+    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
     js = (web / "settings.js").read_text(encoding="utf-8")
 
     handler = js.split("set_show_eve_tools")[1].split("});")[0]
     assert "apply_eve_gate" in handler, (
-        "the toggle writes the setting but never repaints the nav or rail")
+        "the toggle writes the setting but never repaints the nav or rail"
+    )
 
 
 def test_hiding_cuts_every_route_into_a_hidden_screen():
@@ -185,10 +191,10 @@ def test_hiding_cuts_every_route_into_a_hidden_screen():
     """
     import pathlib
 
-    web = (pathlib.Path(__file__).resolve().parents[1]
-           / "obs_youtube_uploader" / "web")
+    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
     app = (web / "app.js").read_text(encoding="utf-8")
 
     block = app.split("WM.apply_eve_gate")[1].split("document.addEventListener")[0]
     assert "WM.last_destination" in block, (
-        "the gear can still return to a hidden destination")
+        "the gear can still return to a hidden destination"
+    )

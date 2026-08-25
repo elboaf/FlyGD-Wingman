@@ -12,13 +12,18 @@ scope. Two reasons:
 The flags below are not cosmetic. Every one of them was paid for by the
 spike; see the comments at each.
 """
+
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # Safe to import at module scope, unlike webview: chrome.py builds its
 # Win32 types lazily so it imports cleanly off Windows (see its docstring).
 from obs_youtube_uploader.ui import chrome
+
+if TYPE_CHECKING:  # pragma: no cover - the import is real only to type checkers
+    import webview
 
 TITLE = "FlyGD Wingman"
 
@@ -81,6 +86,7 @@ def _screen_size() -> tuple[int, int]:
     if sys.platform != "win32":
         return (1920, 1080)
     import ctypes
+
     try:
         user32 = ctypes.windll.user32
         return (user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
@@ -100,6 +106,7 @@ def _system_scale() -> float:
     if sys.platform != "win32":
         return 1.0
     import ctypes
+
     try:
         user32 = ctypes.windll.user32
         get_dpi = getattr(user32, "GetDpiForSystem", None)
@@ -111,8 +118,9 @@ def _system_scale() -> float:
         return 1.0
 
 
-def _placement(width: int, height: int, metrics=_screen_size,
-               scale=_system_scale) -> tuple[int, int]:
+def _placement(
+    width: int, height: int, metrics=_screen_size, scale=_system_scale
+) -> tuple[int, int]:
     """Centre the window, clamped at the top-left corner.
 
     Frameless windows get NO sensible default placement from pywebview --
@@ -135,11 +143,10 @@ def _placement(width: int, height: int, metrics=_screen_size,
     frameless window with no reachable drag region cannot be moved back.
     """
     screen_w, screen_h = metrics()
-    factor = scale() or 1.0          # A reported DPI of 0 must not divide.
+    factor = scale() or 1.0  # A reported DPI of 0 must not divide.
     screen_w = int(screen_w / factor)
     screen_h = int(screen_h / factor)
     return (max(0, (screen_w - width) // 2), max(0, (screen_h - height) // 2))
-
 
 
 def _silence_pywebview_logging() -> None:

@@ -3,6 +3,7 @@
 State never lives next to the executable: the installer targets Program
 Files, which is read-only for non-admin users.
 """
+
 import os
 import shutil
 import sys

@@ -12,6 +12,7 @@ These tests assert the sequence, not the timing: nothing may reach the
 page before run() is entered, and the work that used to run early must
 still run automatically.
 """
+
 import threading
 from types import SimpleNamespace
 
@@ -65,16 +66,19 @@ def startup(monkeypatch, tmp_path):
     # every path, and main() now relies on that when priming the hotkey
     # engine. A bare {} here would only ever have worked while nothing
     # depended on the invariant.
-    monkeypatch.setattr(main_mod.settings_mod, "load",
-                        lambda path=None: {"eve_bookmarks": {
-                            "enabled": False, "keybinds": {}, "windows": {}}})
+    monkeypatch.setattr(
+        main_mod.settings_mod,
+        "load",
+        lambda path=None: {
+            "eve_bookmarks": {"enabled": False, "keybinds": {}, "windows": {}}
+        },
+    )
     monkeypatch.setattr(main_mod.preflight, "require_webview2", lambda: True)
     # None keeps main() off the watcher path: no Scheduler, no polling
     # thread, nothing to tear down. The first-run push is deferred onto a
     # daemon timer that outlives the test harmlessly.
     monkeypatch.setattr(main_mod, "resolve_recording_dir", lambda cfg: None)
-    monkeypatch.setattr(main_mod, "build_tray",
-                        lambda on_open, on_quit: FakeIcon())
+    monkeypatch.setattr(main_mod, "build_tray", lambda on_open, on_quit: FakeIcon())
 
     def fake_create(api):
         # The real create() hands the api its window; the ordering test
@@ -120,7 +124,8 @@ def test_nothing_touches_the_page_before_the_gui_loop_starts(startup):
     order = startup.order
     assert "refresh_auth" in order, "the auth check must still run at startup"
     assert order.index("run") < order.index("refresh_auth"), (
-        f"refresh_auth ran before the GUI loop: {order}")
+        f"refresh_auth ran before the GUI loop: {order}"
+    )
 
 
 def test_the_auth_check_is_handed_to_the_gui_loop_to_run(startup):

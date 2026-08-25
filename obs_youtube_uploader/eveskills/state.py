@@ -16,12 +16,14 @@ is the same posture settings.py's validated_*() functions take and the
 reason preview/layout.py:26-32 gives: a partially-written or hand-edited
 file should cost one row, not the launch.
 """
+
+import contextlib
 import json
 import os
 import stat as stat_module
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import atomicio
@@ -110,8 +112,7 @@ class SkillsState:
         # an update to an existing id, so capacity is checked against
         # rows that would actually grow the roster.
         if len(self.characters) >= MAX_CHARACTERS:
-            raise ValueError(
-                f"TriffSkills supports up to {MAX_CHARACTERS} characters.")
+            raise ValueError(f"TriffSkills supports up to {MAX_CHARACTERS} characters.")
         self.characters.append(character)
 
     def remove(self, character_id: int) -> bool:
@@ -127,7 +128,7 @@ def _iso(value) -> str:
     shape for a field whether or not it is set."""
     if value is None:
         return ""
-    return value.astimezone(timezone.utc).isoformat()
+    return value.astimezone(UTC).isoformat()
 
 
 def _parse_utc(raw):
@@ -146,8 +147,8 @@ def _parse_utc(raw):
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _coerce_int(raw):
@@ -217,12 +218,15 @@ def _coerce_queue(raw) -> tuple:
         if skill_id <= 0 or not 1 <= finished_level <= 5:
             continue
         position = _coerce_int(item.get("queue_position"))
-        entries.append(QueueEntry(
-            skill_id=skill_id,
-            finished_level=finished_level,
-            start_date=_parse_utc(item.get("start_date")),
-            finish_date=_parse_utc(item.get("finish_date")),
-            queue_position=len(entries) if position is None else position))
+        entries.append(
+            QueueEntry(
+                skill_id=skill_id,
+                finished_level=finished_level,
+                start_date=_parse_utc(item.get("start_date")),
+                finish_date=_parse_utc(item.get("finish_date")),
+                queue_position=len(entries) if position is None else position,
+            )
+        )
     entries.sort(key=lambda entry: entry.queue_position)
     return tuple(entries)
 
@@ -285,31 +289,39 @@ def to_dict(state: SkillsState) -> dict:
     return {
         "version": STATE_VERSION,
         "selected_plan_name": state.selected_plan_name,
-        "characters": [{
-            "character_id": character.character_id,
-            "character_name": character.character_name,
-            "owner_hash": character.owner_hash,
-            "scopes": list(character.scopes),
-            "authenticated_utc": _iso(character.authenticated_utc),
-            "fetched_utc": _iso(character.fetched_utc),
-            # JSON object keys are strings; from_dict coerces them back.
-            "active_levels": {str(k): v
-                              for k, v in character.active_levels.items()},
-            "trained_levels": {str(k): v
-                               for k, v in character.trained_levels.items()},
-            "queue": [{
-                "skill_id": entry.skill_id,
-                "finished_level": entry.finished_level,
-                "start_date": _iso(entry.start_date),
-                "finish_date": _iso(entry.finish_date),
-                "queue_position": entry.queue_position,
-            } for entry in character.queue],
-            "error": character.error,
-            "needs_reauth": character.needs_reauth,
-            "refresh_token_blob": character.refresh_token_blob,
-            "skills_etag": character.skills_etag,
-            "queue_etag": character.queue_etag,
-        } for character in state.characters],
+        "characters": [
+            {
+                "character_id": character.character_id,
+                "character_name": character.character_name,
+                "owner_hash": character.owner_hash,
+                "scopes": list(character.scopes),
+                "authenticated_utc": _iso(character.authenticated_utc),
+                "fetched_utc": _iso(character.fetched_utc),
+                # JSON object keys are strings; from_dict coerces them back.
+                "active_levels": {
+                    str(k): v for k, v in character.active_levels.items()
+                },
+                "trained_levels": {
+                    str(k): v for k, v in character.trained_levels.items()
+                },
+                "queue": [
+                    {
+                        "skill_id": entry.skill_id,
+                        "finished_level": entry.finished_level,
+                        "start_date": _iso(entry.start_date),
+                        "finish_date": _iso(entry.finish_date),
+                        "queue_position": entry.queue_position,
+                    }
+                    for entry in character.queue
+                ],
+                "error": character.error,
+                "needs_reauth": character.needs_reauth,
+                "refresh_token_blob": character.refresh_token_blob,
+                "skills_etag": character.skills_etag,
+                "queue_etag": character.queue_etag,
+            }
+            for character in state.characters
+        ],
     }
 
 
@@ -326,7 +338,8 @@ def from_dict(raw: object) -> SkillsState:
     if not isinstance(raw, dict):
         return result
     result.selected_plan_name = _coerce_selected_plan_name(
-        raw.get("selected_plan_name"))
+        raw.get("selected_plan_name")
+    )
 
     characters = raw.get("characters")
     if not isinstance(characters, list):
@@ -365,7 +378,8 @@ def from_dict(raw: object) -> SkillsState:
             needs_reauth=item.get("needs_reauth") is True,
             refresh_token_blob=_coerce_text(item.get("refresh_token_blob")),
             skills_etag=_coerce_text(item.get("skills_etag")),
-            queue_etag=_coerce_text(item.get("queue_etag")))
+            queue_etag=_coerce_text(item.get("queue_etag")),
+        )
     result.characters = list(by_id.values())[:MAX_CHARACTERS]
     return result
 
@@ -384,7 +398,8 @@ def _read_bounded(path: Path) -> str:
     if path.stat().st_size > MAX_STATE_FILE_BYTES:
         raise ValueError(
             f"{path.name} exceeds the "
-            f"{MAX_STATE_FILE_BYTES // (1024 * 1024)} MiB limit.")
+            f"{MAX_STATE_FILE_BYTES // (1024 * 1024)} MiB limit."
+        )
     return path.read_text(encoding="utf-8")
 
 
@@ -409,8 +424,7 @@ def _preserve_corrupt(path: Path) -> str:
     the actual uniqueness guarantee, with the millisecond stamp doing the
     practical work of keeping that loop to at most one or two iterations.
     """
-    stamp = (time.strftime("%Y%m%d-%H%M%S")
-             + f"{int(time.time() * 1000) % 1000:03d}")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"{int(time.time() * 1000) % 1000:03d}"
     target = path.with_name(f"{path.name}.corrupt-{stamp}")
     suffix = 0
     while target.exists():
@@ -462,8 +476,10 @@ def load(path: Path) -> tuple:
         # if the file cannot even be opened, neither can its .bak sibling
         # for the same reason, and attempting os.replace() on a file we
         # just failed to read would likely fail identically.
-        warnings.append(f"{path.name} could not be read ({exc.strerror}); "
-                        "starting with an empty roster.")
+        warnings.append(
+            f"{path.name} could not be read ({exc.strerror}); "
+            "starting with an empty roster."
+        )
         return SkillsState(), warnings
     except ValueError:
         # _read_bounded's own size-cap check. TriffSkillsState.cs:104 groups
@@ -521,7 +537,8 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
         warnings.append(
             f"{path.name} was missing and its backup ({backup.name}) could "
             "not be read either; starting with an empty roster. Any "
-            "characters you had added will need re-authorising.")
+            "characters you had added will need re-authorising."
+        )
         return SkillsState(), warnings
 
     # Write the recovered document back to *path* immediately. save() sees
@@ -535,12 +552,14 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
             f"{path.name} was missing; recovered it from {backup.name}, but "
             f"the recovery could not be saved back to disk ({exc}). If the "
             "app closes before the next successful save, this recovery "
-            "will be lost.")
+            "will be lost."
+        )
         return recovered, warnings
 
     warnings.append(
         f"{path.name} was missing (likely an interrupted save) and was "
-        f"recovered from its backup, {backup.name}.")
+        f"recovered from its backup, {backup.name}."
+    )
     return recovered, warnings
 
 
@@ -579,7 +598,8 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
         warnings.append(
             f"{path.name} could not be read and was preserved as "
             f"{preserved or 'a copy'}; starting with an empty roster. "
-            "Any characters you had added will need re-authorising.")
+            "Any characters you had added will need re-authorising."
+        )
         return SkillsState(), warnings
 
     if not preserved:
@@ -601,7 +621,8 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             "not be read, but the corrupt file could not be moved aside "
             "and was left in place; the recovery could not be saved back "
             "to disk. If the app closes before the next successful save, "
-            "this recovery will be lost.")
+            "this recovery will be lost."
+        )
         return recovered, warnings
 
     # TriffSkillsState.cs:118-119: write the recovered document back to
@@ -627,13 +648,15 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             f"not be read, but the recovery could not be saved back to "
             f"disk ({exc}); it was preserved as {preserved or 'a copy'}. "
             "If the app closes before the next successful save, this "
-            "recovery will be lost.")
+            "recovery will be lost."
+        )
         return recovered, warnings
 
     warnings.append(
         f"Recovered {path.name} from backup after the main file could not "
         f"be read; it was preserved as {preserved or 'a copy'}. Anything "
-        "saved since the previous write is gone.")
+        "saved since the previous write is gone."
+    )
     return recovered, warnings
 
 
@@ -667,20 +690,19 @@ def save(state: SkillsState, path: Path) -> None:
     # existing primary touched at all.
     atomicio.write_atomic(staging, json.dumps(to_dict(state), indent=2))
     if path.exists():
-        try:
-            # Rename, not copy: os.replace carries the source file's own
-            # mode across unchanged (it is the same inode under a new
-            # name), matching what shutil.copy2 gave the old copy-then-write
-            # shape -- and it only runs now, after the new content is
-            # already safely on disk at *staging*, so a primary that was
-            # itself corrupt never gets a chance to overwrite a good .bak
-            # with more corruption.
+        # Rename, not copy: os.replace carries the source file's own
+        # mode across unchanged (it is the same inode under a new
+        # name), matching what shutil.copy2 gave the old copy-then-write
+        # shape -- and it only runs now, after the new content is
+        # already safely on disk at *staging*, so a primary that was
+        # itself corrupt never gets a chance to overwrite a good .bak
+        # with more corruption.
+        #
+        # A backup that cannot be made must not stop the save. Losing
+        # the tier is strictly better than losing the write that the
+        # tier exists to protect.
+        with contextlib.suppress(OSError):
             os.replace(path, bak)
-        except OSError:
-            # A backup that cannot be made must not stop the save. Losing
-            # the tier is strictly better than losing the write that the
-            # tier exists to protect.
-            pass
     # Bounded retry, mirroring atomicio.write_atomic's own retry on this
     # exact rename: a Windows MoveFileExW sharing violation from a reader
     # that does not grant FILE_SHARE_DELETE is transient, so a short wait
@@ -698,23 +720,21 @@ def save(state: SkillsState, path: Path) -> None:
                 raise
             time.sleep(0.05 * (attempt + 1))
     if bak.exists():
-        try:
-            # write_atomic's own temp file is always created at 0600 by
-            # tempfile.mkstemp and carries that mode across on replace, so
-            # *path* is 0600 regardless of what mode the document it just
-            # replaced had. Align .bak to match: without this, a document
-            # that predates this package ever touching it (hand-created,
-            # or migrated from an older release) leaves a laxer-permission
-            # backup sitting beside the hardened primary it just replaced.
-            #
-            # This chmod is a no-op on Windows -- os.chmod there only ever
-            # toggles the read-only attribute, never real permission bits
-            # (uploader.py:286-293 makes the same point about the Google
-            # token file). It costs nothing to still call it (POSIX gets
-            # the real protection it describes), but the actual protection
-            # for this document on Windows is the %LOCALAPPDATA% directory
-            # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
-            # dpapi.py), not these mode bits.
+        # write_atomic's own temp file is always created at 0600 by
+        # tempfile.mkstemp and carries that mode across on replace, so
+        # *path* is 0600 regardless of what mode the document it just
+        # replaced had. Align .bak to match: without this, a document
+        # that predates this package ever touching it (hand-created,
+        # or migrated from an older release) leaves a laxer-permission
+        # backup sitting beside the hardened primary it just replaced.
+        #
+        # This chmod is a no-op on Windows -- os.chmod there only ever
+        # toggles the read-only attribute, never real permission bits
+        # (uploader.py:286-293 makes the same point about the Google
+        # token file). It costs nothing to still call it (POSIX gets
+        # the real protection it describes), but the actual protection
+        # for this document on Windows is the %LOCALAPPDATA% directory
+        # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
+        # dpapi.py), not these mode bits.
+        with contextlib.suppress(OSError):
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))
-        except OSError:
-            pass

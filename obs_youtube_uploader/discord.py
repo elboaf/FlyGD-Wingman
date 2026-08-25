@@ -5,6 +5,8 @@ channel indefinitely. Unlike the OAuth token it does not expire, cannot be
 scoped, and has no revocation UI short of deleting the webhook server-side.
 Nothing here may ever surface one in full.
 """
+
+import contextlib
 import logging
 import mimetypes
 import traceback
@@ -19,8 +21,9 @@ from . import __version__ as _version
 
 # The only hosts Discord serves webhooks from. Deliberately not a suffix
 # match: "discord.com.evil.example" must not pass.
-_ALLOWED_HOSTS = frozenset({"discord.com", "discordapp.com", "ptb.discord.com",
-                            "canary.discord.com"})
+_ALLOWED_HOSTS = frozenset(
+    {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"}
+)
 
 # Real Discord webhook tokens are long, high-entropy strings (well over 60
 # characters). A malformed-but-parseable URL could in principle carry a
@@ -61,8 +64,10 @@ def parse_webhook(raw: str | None) -> tuple[Webhook | None, str]:
         return None, f"'{parsed.hostname}' is not a Discord webhook host."
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 4 or parts[0] != "api" or parts[1] != "webhooks":
-        return None, ("That does not look like a Discord webhook URL "
-                      "(expected .../api/webhooks/{id}/{token}).")
+        return None, (
+            "That does not look like a Discord webhook URL "
+            "(expected .../api/webhooks/{id}/{token})."
+        )
     host = parsed.hostname.lower()
     return Webhook(url=candidate, webhook_id=parts[2], token=parts[3], host=host), ""
 
@@ -88,8 +93,7 @@ def redact(text: str, webhook: Webhook | None) -> str:
     out = text.replace(webhook.url, _SENTINEL)
     if webhook.token and len(webhook.token) >= _MIN_REDACTABLE_TOKEN_LEN:
         out = out.replace(webhook.token, "…")
-    out = out.replace(_SENTINEL, describe(webhook))
-    return out
+    return out.replace(_SENTINEL, describe(webhook))
 
 
 class RedactingFilter(logging.Filter):
@@ -117,7 +121,7 @@ class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             webhook = self._get_webhook()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a filter must never raise, or every log call breaks
             return True
         if webhook is None:
             return True
@@ -125,7 +129,7 @@ class RedactingFilter(logging.Filter):
         # in the format string.
         try:
             rendered = record.getMessage()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a filter must never raise, or every log call breaks
             return True
         cleaned = redact(rendered, webhook)
         if cleaned != rendered:
@@ -142,18 +146,17 @@ class RedactingFilter(logging.Filter):
             try:
                 if not record.exc_text:
                     record.exc_text = "".join(
-                        traceback.format_exception(*record.exc_info))
+                        traceback.format_exception(*record.exc_info)
+                    )
                 record.exc_text = redact(record.exc_text, webhook)
-            except Exception:
+            except Exception:  # noqa: BLE001,S110 - a filter must never raise, or every log call breaks
                 pass
         # stack_info=True appends record.stack_info the same way; it's
         # already a formatted string by the time a record carries it (built
         # eagerly by Logger._log), so it just needs redacting in place.
         if record.stack_info:
-            try:
+            with contextlib.suppress(Exception):
                 record.stack_info = redact(record.stack_info, webhook)
-            except Exception:
-                pass
         return True
 
 
@@ -166,8 +169,7 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 # webhook, so without this header _describe_status reports a perfectly valid
 # webhook as "invalid or has been deleted". Discord's API docs ask for a
 # descriptive user agent; sending one gets the real webhook response back.
-_USER_AGENT = (f"FlyGD-Wingman/{_version} "
-               "(+https://github.com/elboaf/FlyGD-Wingman)")
+_USER_AGENT = f"FlyGD-Wingman/{_version} (+https://github.com/elboaf/FlyGD-Wingman)"
 
 _TIMEOUT_SECONDS = 60
 
@@ -210,18 +212,21 @@ def _build_multipart(archive_path: Path, content: str) -> tuple[bytes, str]:
     parts = [
         f"--{boundary}\r\n".encode(),
         b'Content-Disposition: form-data; name="content"\r\n\r\n',
-        content.encode("utf-8"), b"\r\n",
+        content.encode("utf-8"),
+        b"\r\n",
         f"--{boundary}\r\n".encode(),
         f'Content-Disposition: form-data; name="files[0]"; filename="{archive_path.name}"\r\n'.encode(),
         f"Content-Type: {ctype}\r\n\r\n".encode(),
-        payload, b"\r\n",
+        payload,
+        b"\r\n",
         f"--{boundary}--\r\n".encode(),
     ]
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def post_archive(webhook: Webhook, archive_path, content: str, *,
-                  transport=_default_transport) -> PostResult:
+def post_archive(
+    webhook: Webhook, archive_path, content: str, *, transport=_default_transport
+) -> PostResult:
     """POST an archive to a Discord webhook.
 
     Refuses locally when the archive exceeds Discord's limit rather than
@@ -239,9 +244,13 @@ def post_archive(webhook: Webhook, archive_path, content: str, *,
         return PostResult(False, f"Could not read the archive: {exc}")
 
     if size > MAX_ATTACHMENT_BYTES:
-        return PostResult(False, (
-            f"The archive is {size / 1024 / 1024:.1f} MB, which is too large for "
-            f"Discord ({MAX_ATTACHMENT_BYTES // 1024 // 1024} MB limit)."))
+        return PostResult(
+            False,
+            (
+                f"The archive is {size / 1024 / 1024:.1f} MB, which is too large for "
+                f"Discord ({MAX_ATTACHMENT_BYTES // 1024 // 1024} MB limit)."
+            ),
+        )
 
     try:
         # archive_path.read_bytes() inside _build_multipart can raise OSError
@@ -251,9 +260,11 @@ def post_archive(webhook: Webhook, archive_path, content: str, *,
         # breaks and the recovery message below never gets shown.
         body, content_type = _build_multipart(archive_path, content)
         request = urllib.request.Request(
-            webhook.url, data=body,
+            webhook.url,
+            data=body,
             headers={"Content-type": content_type, "User-agent": _USER_AGENT},
-            method="POST")
+            method="POST",
+        )
         with transport(request, timeout=_TIMEOUT_SECONDS) as response:
             status = getattr(response, "status", 200)
     except urllib.error.HTTPError as exc:

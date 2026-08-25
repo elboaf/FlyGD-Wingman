@@ -4,6 +4,7 @@ desktop and lives in the smoke checklist.
 Click-versus-drag is where this goes subtly wrong: a click that moves one
 pixel must still focus the client, and a locked preview must never move
 but must still activate on release."""
+
 from obs_youtube_uploader.preview import window
 from obs_youtube_uploader.preview.geometry import Rect
 
@@ -11,20 +12,17 @@ R = Rect(100, 100, 320, 210)
 
 
 def test_a_still_press_is_a_click():
-    action, rect = window.drag_result((10, 10), (10, 10), R, locked=False,
-                                      drag_min=4)
+    action, rect = window.drag_result((10, 10), (10, 10), R, locked=False, drag_min=4)
     assert action == "activate" and rect == R
 
 
 def test_movement_within_the_drag_threshold_is_still_a_click():
-    action, _ = window.drag_result((10, 10), (12, 11), R, locked=False,
-                                   drag_min=4)
+    action, _ = window.drag_result((10, 10), (12, 11), R, locked=False, drag_min=4)
     assert action == "activate"
 
 
 def test_movement_past_the_threshold_is_a_drag():
-    action, rect = window.drag_result((10, 10), (60, 40), R, locked=False,
-                                      drag_min=4)
+    action, rect = window.drag_result((10, 10), (60, 40), R, locked=False, drag_min=4)
     assert action == "move"
     assert rect == Rect(150, 130, 320, 210)
 
@@ -32,8 +30,7 @@ def test_movement_past_the_threshold_is_a_drag():
 def test_a_locked_preview_never_moves_but_still_activates():
     """Locking exists so a carefully placed layout survives a stray drag.
     It must not also break click-to-focus."""
-    action, rect = window.drag_result((10, 10), (200, 200), R, locked=True,
-                                      drag_min=4)
+    action, rect = window.drag_result((10, 10), (200, 200), R, locked=True, drag_min=4)
     assert action == "activate" and rect == R
 
 
@@ -55,12 +52,13 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     """__main__.py:64 sets the root logger to INFO. A DEBUG line about a
     failed activation is therefore invisible in the only log a user will
     ever send -- which defeats the point of logging it at all."""
+
     class FakeUser32:
         def IsIconic(self, h):
             return False
 
         def GetForegroundWindow(self):
-            return 999           # never becomes the target
+            return 999  # never becomes the target
 
         def GetWindowThreadProcessId(self, h, p):
             return 0
@@ -91,10 +89,18 @@ class _RecordingWindow(window.PreviewWindow):
         class FakeLibs:
             user32 = FakeUser32()
 
-        client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot",
-                                "hwnd": 1})()
-        super().__init__(FakeLibs(), client, rect, lambda c: None,
-                         lambda *a: None, lambda: [], lambda: rect)
+        client = type(
+            "C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1}
+        )()
+        super().__init__(
+            FakeLibs(),
+            client,
+            rect,
+            lambda c: None,
+            lambda *a: None,
+            list,
+            lambda: rect,
+        )
         self.hwnd = 1
         self.renders = 0
 
@@ -125,7 +131,6 @@ def test_coalesce_moves_keeps_only_the_newest_position():
     320/s against a 1.8ms handler). Processing every one builds a backlog
     and the window lags the cursor -- which is what the stutter is. Only
     the newest position can be correct."""
-    from ctypes import wintypes
 
     queued = [111, 222, 333]
 
@@ -199,18 +204,24 @@ class _FakeLibs:
                 return True
 
             def PeekMessageW(self, *a):
-                return False        # nothing queued behind this event
+                return False  # nothing queued behind this event
 
         self.user32 = User32()
 
 
 def _window_for_gestures(locked):
-    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot",
-                            "hwnd": 1})()
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
     libs = _FakeLibs()
-    w = window.PreviewWindow(libs, client, Rect(100, 100, 320, 210),
-                             lambda c: None, lambda *a: None, lambda: [],
-                             lambda: Rect(0, 0, 1920, 1080), locked=locked)
+    w = window.PreviewWindow(
+        libs,
+        client,
+        Rect(100, 100, 320, 210),
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: Rect(0, 0, 1920, 1080),
+        locked=locked,
+    )
     w.hwnd = 1
     w.redraw = lambda force=False: None
     return w, libs

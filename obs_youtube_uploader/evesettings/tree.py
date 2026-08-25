@@ -3,6 +3,7 @@
 Pure: scandir and stat, no mutation, no network. Every path that reaches a
 destructive operation passes through require_under() first.
 """
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -97,7 +98,7 @@ def default_root() -> Path:
 
 
 def file_kind(path) -> str | None:
-    """"character", "account", or None for anything else.
+    """ "character", "account", or None for anything else.
 
     The id must be ASCII digits: str.isdigit() is True for Arabic-Indic and
     other Unicode numerals, none of which can be an EVE id.
@@ -105,10 +106,10 @@ def file_kind(path) -> str | None:
     name = Path(path).name
     if not name.endswith(".dat"):
         return None
-    stem = name[:-len(".dat")]
+    stem = name[: -len(".dat")]
     for prefix, kind in _KIND_PREFIXES.items():
         if stem.startswith(prefix):
-            ident = stem[len(prefix):]
+            ident = stem[len(prefix) :]
             if ident and ident.isascii() and ident.isdigit():
                 return kind
             return None
@@ -116,10 +117,10 @@ def file_kind(path) -> str | None:
 
 
 def file_id(path) -> str:
-    stem = Path(path).name[:-len(".dat")]
+    stem = Path(path).name[: -len(".dat")]
     for prefix in _KIND_PREFIXES:
         if stem.startswith(prefix):
-            return stem[len(prefix):]
+            return stem[len(prefix) :]
     return ""
 
 
@@ -185,6 +186,7 @@ class Probe(NamedTuple):
     "I was denied" the same answer, which is the conflation this whole
     module is written against.
     """
+
     found: bool
     truncated: bool = False
     denied: bool = False
@@ -294,8 +296,7 @@ def _profiles_in(server) -> tuple[list, bool]:
             modified = path.stat().st_mtime
         except OSError:
             modified = 0.0
-        found.append(Profile(path, path.name[len(_PROFILE_PREFIX):],
-                             count, modified))
+        found.append(Profile(path, path.name[len(_PROFILE_PREFIX) :], count, modified))
     found.sort(key=lambda p: (p.name.lower() != "default", p.name.lower()))
     return found, unreadable
 
@@ -329,9 +330,7 @@ def normalize_selection(root, server, profile):
     if _has_profiles(root).found and root.parent != root:
         # A server directory: keep it as the server, lift the root above it.
         return root.parent, root, Path(profile) if profile else None
-    return (root,
-            Path(server) if server else None,
-            Path(profile) if profile else None)
+    return (root, Path(server) if server else None, Path(profile) if profile else None)
 
 
 def discover(root, server=None, profile=None) -> Tree:
@@ -342,8 +341,9 @@ def discover(root, server=None, profile=None) -> Tree:
     servers, unreadable, too_broad = _servers_in(root, keep=server)
     chosen_server = None
     if server is not None:
-        chosen_server = next((s.path for s in servers
-                              if _real(s.path) == _real(server)), None)
+        chosen_server = next(
+            (s.path for s in servers if _real(s.path) == _real(server)), None
+        )
     if chosen_server is None and servers:
         chosen_server = servers[0].path
 
@@ -352,8 +352,9 @@ def discover(root, server=None, profile=None) -> Tree:
         profiles, profiles_unreadable = _profiles_in(chosen_server)
     chosen_profile = None
     if profile is not None:
-        chosen_profile = next((p.path for p in profiles
-                               if _real(p.path) == _real(profile)), None)
+        chosen_profile = next(
+            (p.path for p in profiles if _real(p.path) == _real(profile)), None
+        )
     if chosen_profile is None and profiles:
         chosen_profile = profiles[0].path
 
@@ -361,9 +362,14 @@ def discover(root, server=None, profile=None) -> Tree:
     if chosen_profile is not None:
         characters, accounts, files_unreadable = _files_in(chosen_profile)
 
-    return Tree(root=root, server=chosen_server, profile=chosen_profile,
-                servers=servers, profiles=profiles,
-                characters=characters, accounts=accounts,
-                unreadable=unreadable or profiles_unreadable
-                or files_unreadable,
-                too_broad=too_broad)
+    return Tree(
+        root=root,
+        server=chosen_server,
+        profile=chosen_profile,
+        servers=servers,
+        profiles=profiles,
+        characters=characters,
+        accounts=accounts,
+        unreadable=unreadable or profiles_unreadable or files_unreadable,
+        too_broad=too_broad,
+    )

@@ -6,6 +6,7 @@ JavaScript it was asked to evaluate. That is the whole reason `_window` is
 assigned rather than constructed -- ui.window.create() does it in
 production, and a test does it directly.
 """
+
 import json
 import threading
 from pathlib import Path
@@ -15,7 +16,6 @@ import pytest
 from obs_youtube_uploader import durations
 from obs_youtube_uploader.ui.api import Api, AppState
 from obs_youtube_uploader.ui.rows import RowSnapshot
-from obs_youtube_uploader.ui.scheduler import Scheduler
 from tests.test_scheduler import FakeClock
 
 
@@ -45,12 +45,23 @@ class FakeWindow:
 
 
 def make_state(tmp_path, **overrides):
-    settings = {"privacy": "unlisted", "category": "20", "notify_mode": "toast",
-                "recording_dir": str(tmp_path), "discord_webhook": "",
-                "gamelogs_dir": None, "channel_id": "", "channel_title": ""}
+    settings = {
+        "privacy": "unlisted",
+        "category": "20",
+        "notify_mode": "toast",
+        "recording_dir": str(tmp_path),
+        "discord_webhook": "",
+        "gamelogs_dir": None,
+        "channel_id": "",
+        "channel_title": "",
+    }
     settings.update(overrides)
-    return AppState(recording_dir=Path(tmp_path), settings=settings,
-                    ffmpeg_bin="/usr/bin/ffmpeg", ffprobe_bin=None)
+    return AppState(
+        recording_dir=Path(tmp_path),
+        settings=settings,
+        ffmpeg_bin="/usr/bin/ffmpeg",
+        ffprobe_bin=None,
+    )
 
 
 def make_api(tmp_path, window=None, **kwargs):
@@ -64,8 +75,9 @@ def pushes(window: FakeWindow) -> list[tuple[str, object]]:
     out = []
     for script in window.evaluated:
         handler = script.split("window.", 1)[1].split(" ", 1)[0]
-        payload = json.loads(script[script.index("(", script.rindex(handler)) + 1:
-                                    script.rindex(")")])
+        payload = json.loads(
+            script[script.index("(", script.rindex(handler)) + 1 : script.rindex(")")]
+        )
         out.append((handler, payload))
     return out
 
@@ -92,8 +104,9 @@ def test_push_guards_on_the_handler_existing(tmp_path):
 def test_push_survives_a_dead_window(tmp_path):
     # Workers keep pushing while the user is closing the window. A teardown
     # race must not take down the upload thread.
-    make_api(tmp_path, FakeWindow(fail=True))._push("onStatus",
-                                                    {"text": "x", "kind": "FG"})
+    make_api(tmp_path, FakeWindow(fail=True))._push(
+        "onStatus", {"text": "x", "kind": "FG"}
+    )
 
 
 def test_close_hides_rather_than_destroying(tmp_path):
@@ -138,12 +151,17 @@ def test_alert_pushes_a_dialog_with_no_request_id(tmp_path):
 
     api._alert("warning", "Nothing selected", "Select at least one recording.")
 
-    assert pushes(window) == [("onDialog", {
-        "kind": "warning",
-        "title": "Nothing selected",
-        "body": "Select at least one recording.",
-        "request_id": None,
-    })]
+    assert pushes(window) == [
+        (
+            "onDialog",
+            {
+                "kind": "warning",
+                "title": "Nothing selected",
+                "body": "Select at least one recording.",
+                "request_id": None,
+            },
+        )
+    ]
 
 
 def test_confirm_blocks_the_worker_until_the_page_answers(tmp_path):
@@ -166,8 +184,10 @@ def test_confirm_blocks_the_worker_until_the_page_answers(tmp_path):
     result = {}
 
     worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm("Delete 2 files?",
-                                                     "This cannot be undone.")))
+        target=lambda: result.update(
+            ok=api._confirm("Delete 2 files?", "This cannot be undone.")
+        )
+    )
     worker.start()
 
     assert answered.wait(5), "confirm never reached the page"
@@ -188,7 +208,8 @@ def test_confirm_returns_false_when_the_page_declines(tmp_path):
     result = {}
 
     worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm("Upload 3 videos?", "body")))
+        target=lambda: result.update(ok=api._confirm("Upload 3 videos?", "body"))
+    )
     worker.start()
     # id_factory is fixed, so the id is known without racing the push.
     for _ in range(500):
@@ -244,9 +265,14 @@ def recordings(tmp_path):
 
 
 def rows_api(recordings, tmp_path, clock, probe, window=None):
-    api = Api(make_state(recordings), rows=RowSnapshot(),
-              durations_file=tmp_path / "durations.json",
-              spawn=InlineThread, probe=probe, timer=clock.timer)
+    api = Api(
+        make_state(recordings),
+        rows=RowSnapshot(),
+        durations_file=tmp_path / "durations.json",
+        spawn=InlineThread,
+        probe=probe,
+        timer=clock.timer,
+    )
     api._window = window if window is not None else FakeWindow()
     return api
 
@@ -254,8 +280,13 @@ def rows_api(recordings, tmp_path, clock, probe, window=None):
 def test_list_rows_pushes_every_row_then_streams_durations(recordings, tmp_path):
     window = FakeWindow()
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True), window=window)
+    api = rows_api(
+        recordings,
+        tmp_path,
+        clock,
+        probe=lambda path, binary: (12.5, True),
+        window=window,
+    )
 
     api.list_rows()
 
@@ -279,8 +310,13 @@ def test_preselect_marks_the_named_paths(recordings, tmp_path):
     """The watcher's channel: finish a fight, open the window, hit Upload."""
     window = FakeWindow()
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True), window=window)
+    api = rows_api(
+        recordings,
+        tmp_path,
+        clock,
+        probe=lambda path, binary: (12.5, True),
+        window=window,
+    )
 
     api.list_rows(preselect={recordings / "a.mkv"})
 
@@ -299,8 +335,7 @@ def test_the_panel_text_is_computed_in_python(recordings, tmp_path):
     disclosure that a batch is numbered.
     """
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
     ids = [row["id"] for row in api._rows.rows()]
 
@@ -308,8 +343,7 @@ def test_the_panel_text_is_computed_in_python(recordings, tmp_path):
     assert api.panel_text(ids[:1], False)["summary"].startswith("1 selected")
 
 
-def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(
-        recordings, tmp_path):
+def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(recordings, tmp_path):
     """Three distinct labels, because three distinct things happen.
 
     A batch is numbered per file, a stitch collapses to one video, and a
@@ -318,13 +352,13 @@ def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(
     regresses.
     """
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
     ids = [row["id"] for row in api._rows.rows()]  # the fixture holds two
 
     assert api.panel_text(ids, False)["title_hint"] == (
-        "Title (applies to all 2, numbered 1-2)")
+        "Title (applies to all 2, numbered 1-2)"
+    )
     assert api.panel_text(ids, True)["title_hint"] == "Title (one stitched video)"
     assert api.panel_text(ids[:1], False)["title_hint"] == "Title"
 
@@ -332,8 +366,7 @@ def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(
 def test_the_summary_ignores_ids_the_snapshot_does_not_know(recordings, tmp_path):
     """A stale page after a refresh must not make the summary lie."""
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
     assert api.panel_text(["nonsense"], False)["summary"] == "Nothing selected"
 
@@ -341,13 +374,14 @@ def test_the_summary_ignores_ids_the_snapshot_does_not_know(recordings, tmp_path
 def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
     cache_file = tmp_path / "durations.json"
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
     clock.fire()
 
     assert set(durations.load(cache_file)) == {
-        str(recordings / "a.mkv"), str(recordings / "b.mkv")}
+        str(recordings / "a.mkv"),
+        str(recordings / "b.mkv"),
+    }
 
     # Second Api, same cache file: nothing left to probe, so no worker and
     # no drain loop at all.
@@ -357,8 +391,7 @@ def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
     def explode(path, binary):
         raise AssertionError("probed a file already in the cache")
 
-    rows_api(recordings, tmp_path, clock2, probe=explode,
-             window=window2).list_rows()
+    rows_api(recordings, tmp_path, clock2, probe=explode, window=window2).list_rows()
 
     assert [name for name, _ in pushes(window2)] == ["onRows"]
     assert clock2.timers == []
@@ -376,7 +409,8 @@ def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
 
 
 def test_a_cached_duration_reaches_the_page_on_the_very_first_push(
-        recordings, tmp_path):
+    recordings, tmp_path
+):
     """The regression above, isolated to one row and one assertion.
 
     The selection summary is computed in Python straight off the infos, so
@@ -396,8 +430,9 @@ def test_a_cached_duration_reaches_the_page_on_the_very_first_push(
     def explode(path, binary):
         raise AssertionError("probed a file the cache already knew")
 
-    rows_api(recordings, tmp_path, FakeClock(), probe=explode,
-             window=window).list_rows()
+    rows_api(
+        recordings, tmp_path, FakeClock(), probe=explode, window=window
+    ).list_rows()
 
     _, payload = pushes(window)[0]
     assert [row["duration"] for row in payload["rows"]] == ["1:30", "1:30"]
@@ -413,8 +448,13 @@ def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
     """
     clock = FakeClock()
     window = FakeWindow()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (None, False), window=window)
+    api = rows_api(
+        recordings,
+        tmp_path,
+        clock,
+        probe=lambda path, binary: (None, False),
+        window=window,
+    )
     api.list_rows()
     clock.fire()
 
@@ -425,8 +465,7 @@ def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
 
 def test_the_drain_loop_stops_once_the_worker_is_done(recordings, tmp_path):
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
 
     clock.fire()
@@ -446,8 +485,13 @@ def test_a_straggler_from_a_superseded_refresh_is_dropped(recordings, tmp_path):
     """
     window = FakeWindow()
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True), window=window)
+    api = rows_api(
+        recordings,
+        tmp_path,
+        clock,
+        probe=lambda path, binary: (12.5, True),
+        window=window,
+    )
     api.list_rows()
     clock.fire()
     window.evaluated.clear()
@@ -459,14 +503,14 @@ def test_a_straggler_from_a_superseded_refresh_is_dropped(recordings, tmp_path):
     api._drain_probes(api._generation)
 
     assert [p for name, p in pushes(window) if name == "onDuration"] == []
-    assert 999.0 not in {e.duration for e in
-                         durations.load(tmp_path / "durations.json").values()}
+    assert 999.0 not in {
+        e.duration for e in durations.load(tmp_path / "durations.json").values()
+    }
 
 
 def test_a_drain_for_a_superseded_generation_stops_itself(recordings, tmp_path):
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
     stale_generation = api._generation
     api._generation += 1  # as a concurrent list_rows would
@@ -477,7 +521,8 @@ def test_a_drain_for_a_superseded_generation_stops_itself(recordings, tmp_path):
 
 
 def test_the_cache_is_written_on_every_tick_that_applied_something(
-        recordings, tmp_path, monkeypatch):
+    recordings, tmp_path, monkeypatch
+):
     """Persist per drain, not once at the end.
 
     A cold scan of a large folder runs for a while. Saving only when the
@@ -489,13 +534,14 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
 
     saves = []
     real_save = api_mod.durations.save
-    monkeypatch.setattr(api_mod.durations, "save",
-                        lambda path, cache: (saves.append(len(cache)),
-                                             real_save(path, cache)))
+    monkeypatch.setattr(
+        api_mod.durations,
+        "save",
+        lambda path, cache: (saves.append(len(cache)), real_save(path, cache)),
+    )
 
     clock = FakeClock()
-    api = rows_api(recordings, tmp_path, clock,
-                   probe=lambda path, binary: (12.5, True))
+    api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     # Hand-drive the queue so results land across two ticks rather than one.
     api._generation += 1
     generation = api._generation
@@ -503,12 +549,15 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     rows = api._rows.rows()
 
     for row in rows:
-        api._probe_queue.put((generation, row["id"], api._rows.resolve(row["id"]),
-                              12.5, True))
+        api._probe_queue.put(
+            (generation, row["id"], api._rows.resolve(row["id"]), 12.5, True)
+        )
         api._drain_probes(generation)
     api._drain_probes(generation)  # a tick with nothing waiting
 
-    assert saves == [1, 2], "one save per tick that applied results, none for an empty tick"
+    assert saves == [1, 2], (
+        "one save per tick that applied results, none for an empty tick"
+    )
 
 
 class _FakeHost:
@@ -562,12 +611,13 @@ def test_set_preview_binds_persists_and_pushes_to_the_host(tmp_path):
     fake_host = _FakeHost()
     api = make_api(tmp_path, preview_host=fake_host)
 
-    ok = api.set_preview_binds({"characters": {"Alice": "ctrl+f1"},
-                                "cycle_next": "", "cycle_prev": ""})
+    ok = api.set_preview_binds(
+        {"characters": {"Alice": "ctrl+f1"}, "cycle_next": "", "cycle_prev": ""}
+    )
 
     assert ok is True
     stored = api._state.settings["preview"]["hotkeys"]["characters"]
-    assert stored == {"Alice": "Ctrl+F1"}          # canonicalised
+    assert stored == {"Alice": "Ctrl+F1"}  # canonicalised
     assert fake_host.hotkeys["characters"] == {"Alice": "Ctrl+F1"}
 
 
@@ -577,9 +627,9 @@ def test_set_preview_binds_rejects_an_unparseable_chord(tmp_path):
     # A real settings document always has this section (settings.DEFAULTS);
     # make_state's minimal fixture does not, so seed it to prove a rejected
     # chord leaves the existing table untouched rather than KeyError-ing.
-    api._state.settings["preview"] = {"hotkeys": {"characters": {},
-                                                  "cycle_next": "",
-                                                  "cycle_prev": ""}}
+    api._state.settings["preview"] = {
+        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+    }
 
     assert api.set_preview_binds({"characters": {"Alice": "nonsense"}}) is False
     assert api._state.settings["preview"]["hotkeys"]["characters"] == {}
@@ -639,8 +689,10 @@ def test_bookmark_chords_are_active_only_when_they_are_registered(tmp_path):
     fake_host = _FakeHost()
     api = make_api(tmp_path, preview_host=fake_host)
     api._state.settings["eve_bookmarks"] = {
-        "enabled": True, "keybinds": {"GrabSig": "^q"},
-        "windows": {"EVE - A": True}}
+        "enabled": True,
+        "keybinds": {"GrabSig": "^q"},
+        "windows": {"EVE - A": True},
+    }
 
     chords = api.get_preview_hotkey_state()["bookmark_chords"]
     assert chords == {"active": ["Ctrl+Q"], "latent": []}
@@ -661,8 +713,12 @@ def test_bookmark_chords_are_rendered_in_gesture_display_form(tmp_path):
     fake_host = _FakeHost()
     api = make_api(tmp_path, preview_host=fake_host)
     api._state.settings["eve_bookmarks"] = {
-        "enabled": True, "windows": {"EVE - A": True},
-        "keybinds": {"GrabSig": "^+s", "FinH": "^y"}}
+        "enabled": True,
+        "windows": {"EVE - A": True},
+        "keybinds": {"GrabSig": "^+s", "FinH": "^y"},
+    }
 
     assert api.get_preview_hotkey_state()["bookmark_chords"]["active"] == [
-        "Ctrl+Shift+S", "Ctrl+Y"]
+        "Ctrl+Shift+S",
+        "Ctrl+Y",
+    ]

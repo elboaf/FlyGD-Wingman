@@ -1,5 +1,6 @@
 """Cycle resolution. The client set changes every 700ms, so everything here
 is about behaving sanely when it does."""
+
 from obs_youtube_uploader.preview import cycle
 
 

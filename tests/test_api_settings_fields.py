@@ -9,6 +9,7 @@ The harness is `test_api_settings.settings_api`, reused rather than
 rebuilt: it fakes only `_save_locked`, so the real lock-and-rollback
 machinery in `settings.update` stays in the loop.
 """
+
 import json
 
 import pytest
@@ -18,8 +19,8 @@ from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.test_api_settings import settings_api
 
-
 # ---- shape ------------------------------------------------------------
+
 
 def test_a_refusal_is_distinguishable_from_a_failed_write(monkeypatch, tmp_path):
     """Three outcomes, not two. A bare bool would collapse "we rejected
@@ -54,6 +55,7 @@ def test_an_unwritable_settings_file_still_applies_the_change(monkeypatch, tmp_p
 
 # ---- the no-op guard --------------------------------------------------
 
+
 def test_rewriting_the_same_value_does_not_touch_the_file(monkeypatch, tmp_path):
     """settings.save projects the COMPLETE document, so a no-op write is a
     full rewrite -- and an immediate-save page re-emits on every render.
@@ -71,6 +73,7 @@ def test_rewriting_the_same_value_does_not_touch_the_file(monkeypatch, tmp_path)
 
 
 # ---- scalars ----------------------------------------------------------
+
 
 @pytest.mark.parametrize("value", ["private", "unlisted", "public"])
 def test_every_privacy_the_select_offers_is_accepted(monkeypatch, tmp_path, value):
@@ -112,21 +115,27 @@ def test_a_bogus_notify_mode_is_refused(monkeypatch, tmp_path):
 
 # ---- the webhook ------------------------------------------------------
 
-def test_an_empty_webhook_is_refused_rather_than_treated_as_a_clear(monkeypatch, tmp_path):
+
+def test_an_empty_webhook_is_refused_rather_than_treated_as_a_clear(
+    monkeypatch, tmp_path
+):
     """THE wipe guard. save_settings skips validation entirely when the
     value is empty and writes "", so under immediate-save a select-all,
     Delete, then look away would destroy a configured secret -- with no
     Cancel to take it back and no pre-edit copy anywhere on the page."""
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"discord_webhook": "https://discord.com/api/webhooks/1/abc"})
+        tmp_path,
+        monkeypatch,
+        settings={"discord_webhook": "https://discord.com/api/webhooks/1/abc"},
+    )
 
     result = api.set_discord_webhook("")
 
     assert result["applied"] is False
     assert saved == {}
     assert api._state.settings["discord_webhook"] == (
-        "https://discord.com/api/webhooks/1/abc")
+        "https://discord.com/api/webhooks/1/abc"
+    )
 
 
 def test_whitespace_alone_is_also_refused(monkeypatch, tmp_path):
@@ -150,14 +159,17 @@ def test_an_unparseable_webhook_is_refused_and_says_why(monkeypatch, tmp_path):
 
 def test_clearing_a_webhook_is_its_own_explicit_action(monkeypatch, tmp_path):
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch,
-        settings={"discord_webhook": "https://discord.com/api/webhooks/1/abc"})
+        tmp_path,
+        monkeypatch,
+        settings={"discord_webhook": "https://discord.com/api/webhooks/1/abc"},
+    )
 
     assert api.clear_discord_webhook()["applied"] is True
     assert saved["discord_webhook"] == ""
 
 
 # ---- folders ----------------------------------------------------------
+
 
 def test_a_new_recording_folder_rebinds_the_live_watcher(monkeypatch, tmp_path):
     new_dir = tmp_path / "elsewhere"
@@ -196,7 +208,9 @@ def test_a_folder_that_does_not_exist_leaves_the_watcher_alone(monkeypatch, tmp_
     assert api._state.recording_dir == tmp_path
 
 
-def test_an_empty_recording_folder_does_not_blame_a_folder_called_None(monkeypatch, tmp_path):
+def test_an_empty_recording_folder_does_not_blame_a_folder_called_None(
+    monkeypatch, tmp_path
+):
     """save_settings mapped an empty field to Path("None") and told the
     user that "None is not a folder"."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
@@ -227,7 +241,8 @@ def test_an_empty_gamelogs_folder_is_stored_as_no_folder(monkeypatch, tmp_path):
     """Unlike the recording folder this drives no watcher, and empty
     legitimately means "I have no gamelogs folder"."""
     api, _window, saved = settings_api(
-        tmp_path, monkeypatch, settings={"gamelogs_dir": str(tmp_path)})
+        tmp_path, monkeypatch, settings={"gamelogs_dir": str(tmp_path)}
+    )
 
     assert api.set_folder("gamelogs", "")["applied"] is True
     assert saved["gamelogs_dir"] is None
@@ -247,6 +262,7 @@ def test_a_gamelogs_folder_that_does_not_exist_is_refused(monkeypatch, tmp_path)
 # These were written against save_settings and are ported here rather than
 # retired with it: they encode properties of ANY settings write, and the
 # per-field endpoints are the writer now.
+
 
 def test_the_settings_object_survives_a_per_field_write(monkeypatch, tmp_path):
     """Regression test for the settings rebind race, re-aimed.
@@ -286,8 +302,7 @@ def test_the_settings_object_survives_a_per_field_write(monkeypatch, tmp_path):
     assert "Pilot" in api._state.settings["preview"]["layouts"]
 
 
-def test_a_per_field_write_does_not_revert_the_uploaders_channel(monkeypatch,
-                                                                 tmp_path):
+def test_a_per_field_write_does_not_revert_the_uploaders_channel(monkeypatch, tmp_path):
     """save_settings once built its payload from a snapshot taken outside
     _SAVE_LOCK, so a channel learned from an upload mid-save was projected
     away. The per-field endpoints mutate the live document inside the lock

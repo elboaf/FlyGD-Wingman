@@ -4,6 +4,7 @@ Separate from `evewindows.list_eve_windows` on purpose: that function's
 string-list return type is consumed by ui/api.py and is frozen. Both share
 `_enumerate_windows` so the argtypes discipline lives in one place.
 """
+
 import logging
 import sys
 from typing import NamedTuple
@@ -31,7 +32,7 @@ class Client(NamedTuple):
 
 def _character(title: str):
     if title.startswith(TITLE_PREFIX):
-        name = title[len(TITLE_PREFIX):].strip()
+        name = title[len(TITLE_PREFIX) :].strip()
         return name or None
     return None
 
@@ -67,22 +68,24 @@ def list_clients(*, enumerator=None, pids=None, image_name=None) -> list:
             logger.exception("Skipped window 0x%x during discovery", hwnd)
             continue
         character = _character(title)
-        out.append(Client(hwnd, title, pid, character,
-                          character or f"hwnd:0x{hwnd:x}"))
+        out.append(Client(hwnd, title, pid, character, character or f"hwnd:0x{hwnd:x}"))
     return out
 
 
 _IMAGE_CACHE = {}
 _CACHE_SWEEPS = 0
-_CACHE_FLUSH_EVERY = 512   # TriffViewSubsystem.cs:4732 uses the same bound
+_CACHE_FLUSH_EVERY = 512  # TriffViewSubsystem.cs:4732 uses the same bound
 
 
 def _pid_for_window(hwnd: int) -> int:
     import ctypes
     from ctypes import wintypes
+
     user32 = ctypes.windll.user32
-    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
-                                                ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
@@ -104,12 +107,16 @@ def _image_name_for_pid(pid: int):
         return _IMAGE_CACHE[pid]
     import ctypes
     from ctypes import wintypes
+
     k32 = ctypes.windll.kernel32
     k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     k32.OpenProcess.restype = wintypes.HANDLE
     k32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD)]
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     k32.CloseHandle.argtypes = [wintypes.HANDLE]
 

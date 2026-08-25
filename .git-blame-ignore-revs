@@ -1,0 +1,39 @@
+# Commits to skip when running `git blame`, so a mechanical reformat does
+# not take credit for 136 files it only re-indented.
+#
+# Configure once per clone (this cannot be committed):
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# The hash below is only valid if this pull request lands with the
+# reformat commit's hash intact. THREE operations destroy it, all
+# silently:
+#
+#   * squash merge   -- collapses the branch into one new commit
+#   * rebase merge   -- replays every commit with a new hash
+#   * updating this branch with `git pull --rebase`, or GitHub's
+#     "Update branch" when it offers rebase rather than merge
+#
+# This repository squash-merges by default, and the branch needed a
+# conflict resolution, so the rebase paths are live risks and not
+# theoretical. Update and merge with a MERGE COMMIT only.
+#
+# Git ignores an unknown hash here SILENTLY -- no error, no warning --
+# and every reformatted file stays attributed to the reformat anyway.
+# Nothing in the working tree reveals that it happened, which is why the
+# check below is worth running rather than assuming.
+#
+# To verify after merging (uploader.py:134 is a line the reformat
+# created by splitting a signature):
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#   git blame -L 134,134 obs_youtube_uploader/uploader.py
+#
+# It should name the author who wrote the line, NOT the reformat. If it
+# names the reformat, the hash below is stale: delete the line rather
+# than substituting whatever commit replaced it. A squash or rebase
+# commit also covers the lint fixes, the CI changes, and the noqa fix,
+# none of which should be hidden from blame.
+
+# Adopt ruff format across the tree (136 Python files, no behaviour change)
+f20055e08ea4a74958702abe1a8329e3adc355fc

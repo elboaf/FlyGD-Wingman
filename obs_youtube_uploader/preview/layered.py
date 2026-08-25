@@ -3,9 +3,8 @@
 Split deliberately: the byte conversion is pure and tested in CI, the
 UpdateLayeredWindow call is thin enough to leave to the smoke checklist.
 """
-import ctypes
 
-from PIL import Image
+import ctypes
 
 from . import win32
 
@@ -32,26 +31,34 @@ def push(libs, hwnd, img, x, y) -> bool:
     bmi = win32.BITMAPINFO()
     bmi.bmiHeader.biSize = ctypes.sizeof(win32.BITMAPINFOHEADER)
     bmi.bmiHeader.biWidth = w
-    bmi.bmiHeader.biHeight = -h        # negative == top-down
+    bmi.bmiHeader.biHeight = -h  # negative == top-down
     bmi.bmiHeader.biPlanes = 1
     bmi.bmiHeader.biBitCount = 32
-    bmi.bmiHeader.biCompression = 0    # BI_RGB
+    bmi.bmiHeader.biCompression = 0  # BI_RGB
 
     screen_dc = libs.user32.GetDC(None)
     mem_dc = libs.gdi32.CreateCompatibleDC(screen_dc)
     bits = ctypes.c_void_p()
-    dib = libs.gdi32.CreateDIBSection(mem_dc, ctypes.byref(bmi), 0,
-                                      ctypes.byref(bits), None, 0)
+    dib = libs.gdi32.CreateDIBSection(
+        mem_dc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0
+    )
     old = libs.gdi32.SelectObject(mem_dc, dib)
     try:
         ctypes.memmove(bits, data, len(data))
-        blend = win32.BLENDFUNCTION(win32.AC_SRC_OVER, 0, 255,
-                                    win32.AC_SRC_ALPHA)
-        return bool(libs.user32.UpdateLayeredWindow(
-            hwnd, screen_dc, ctypes.byref(win32.POINT(x, y)),
-            ctypes.byref(win32.SIZE(w, h)), mem_dc,
-            ctypes.byref(win32.POINT(0, 0)), 0,
-            ctypes.byref(blend), win32.ULW_ALPHA))
+        blend = win32.BLENDFUNCTION(win32.AC_SRC_OVER, 0, 255, win32.AC_SRC_ALPHA)
+        return bool(
+            libs.user32.UpdateLayeredWindow(
+                hwnd,
+                screen_dc,
+                ctypes.byref(win32.POINT(x, y)),
+                ctypes.byref(win32.SIZE(w, h)),
+                mem_dc,
+                ctypes.byref(win32.POINT(0, 0)),
+                0,
+                ctypes.byref(blend),
+                win32.ULW_ALPHA,
+            )
+        )
     finally:
         # Ordered: restore the DC's original object before deleting ours,
         # or the DIB leaks for the life of the process.

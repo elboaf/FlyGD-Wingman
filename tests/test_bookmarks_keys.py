@@ -1,7 +1,9 @@
 """The mapping lives in Python because the repo has no way to test JS
 (webview-replatform-design.md:545). These tests are what stands in for the
 browser tests we deliberately do not have."""
+
 import pytest
+
 from obs_youtube_uploader import bookmarks
 
 NONE = {"ctrl": False, "alt": False, "shift": False, "meta": False}
@@ -13,7 +15,10 @@ def parts(code, **mods):
 
 def test_plain_letter():
     assert bookmarks.to_ahk(parts("KeyS")) == {
-        "ahk": "s", "display": "S", "error": None}
+        "ahk": "s",
+        "display": "S",
+        "error": None,
+    }
 
 
 def test_modifiers_use_canonical_order():
@@ -25,17 +30,27 @@ def test_modifiers_use_canonical_order():
 
 
 def test_all_four_modifiers():
-    got = bookmarks.to_ahk(parts("KeyA", ctrl=True, alt=True, shift=True,
-                                 meta=True))
+    got = bookmarks.to_ahk(parts("KeyA", ctrl=True, alt=True, shift=True, meta=True))
     assert got["ahk"] == "^!+#a"
     assert got["display"] == "Ctrl+Alt+Shift+Win+A"
 
 
-@pytest.mark.parametrize("code,ahk", [
-    ("Comma", ","), ("Period", "."), ("Slash", "/"), ("Quote", "'"),
-    ("Semicolon", ";"), ("Backquote", "`"), ("Minus", "-"), ("Equal", "="),
-    ("BracketLeft", "["), ("BracketRight", "]"), ("Backslash", "\\"),
-])
+@pytest.mark.parametrize(
+    "code,ahk",
+    [
+        ("Comma", ","),
+        ("Period", "."),
+        ("Slash", "/"),
+        ("Quote", "'"),
+        ("Semicolon", ";"),
+        ("Backquote", "`"),
+        ("Minus", "-"),
+        ("Equal", "="),
+        ("BracketLeft", "["),
+        ("BracketRight", "]"),
+        ("Backslash", "\\"),
+    ],
+)
 def test_punctuation(code, ahk):
     """The finishers are historically punctuation-bound -- the handler names
     still read DoComma, DoDot, DoQuote, DoSemi -- so these are the common
@@ -45,14 +60,28 @@ def test_punctuation(code, ahk):
     assert got["display"] == ahk
 
 
-@pytest.mark.parametrize("code,ahk", [
-    ("Space", "Space"), ("Enter", "Enter"), ("Tab", "Tab"),
-    ("Escape", "Esc"), ("Backspace", "Backspace"), ("Delete", "Delete"),
-    ("Home", "Home"), ("End", "End"), ("PageUp", "PgUp"),
-    ("PageDown", "PgDn"), ("ArrowUp", "Up"), ("ArrowDown", "Down"),
-    ("ArrowLeft", "Left"), ("ArrowRight", "Right"), ("F5", "F5"),
-    ("Numpad7", "Numpad7"), ("Digit4", "4"),
-])
+@pytest.mark.parametrize(
+    "code,ahk",
+    [
+        ("Space", "Space"),
+        ("Enter", "Enter"),
+        ("Tab", "Tab"),
+        ("Escape", "Esc"),
+        ("Backspace", "Backspace"),
+        ("Delete", "Delete"),
+        ("Home", "Home"),
+        ("End", "End"),
+        ("PageUp", "PgUp"),
+        ("PageDown", "PgDn"),
+        ("ArrowUp", "Up"),
+        ("ArrowDown", "Down"),
+        ("ArrowLeft", "Left"),
+        ("ArrowRight", "Right"),
+        ("F5", "F5"),
+        ("Numpad7", "Numpad7"),
+        ("Digit4", "4"),
+    ],
+)
 def test_named_keys(code, ahk):
     got = bookmarks.to_ahk(parts(code))
     assert got["ahk"] == ahk
@@ -68,11 +97,17 @@ def test_modifier_with_nonletter_key():
     assert got["display"] == "Ctrl+,"
 
 
-@pytest.mark.parametrize("code,ahk", [
-    ("NumpadAdd", "NumpadAdd"), ("NumpadSubtract", "NumpadSub"),
-    ("NumpadMultiply", "NumpadMult"), ("NumpadDivide", "NumpadDiv"),
-    ("NumpadDecimal", "NumpadDot"), ("NumpadEnter", "NumpadEnter"),
-])
+@pytest.mark.parametrize(
+    "code,ahk",
+    [
+        ("NumpadAdd", "NumpadAdd"),
+        ("NumpadSubtract", "NumpadSub"),
+        ("NumpadMultiply", "NumpadMult"),
+        ("NumpadDivide", "NumpadDiv"),
+        ("NumpadDecimal", "NumpadDot"),
+        ("NumpadEnter", "NumpadEnter"),
+    ],
+)
 def test_numpad_operator_keys(code, ahk):
     """A real numpad also sends these six codes, and three of them need a
     name translation because the DOM code and the AHK key name differ."""
@@ -81,10 +116,19 @@ def test_numpad_operator_keys(code, ahk):
     assert got["display"] == ahk
 
 
-@pytest.mark.parametrize("code", [
-    "ControlLeft", "ControlRight", "AltLeft", "AltRight",
-    "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight",
-])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "ControlLeft",
+        "ControlRight",
+        "AltLeft",
+        "AltRight",
+        "ShiftLeft",
+        "ShiftRight",
+        "MetaLeft",
+        "MetaRight",
+    ],
+)
 def test_modifier_only_is_rejected(code):
     """Holding Ctrl to reach a combo must not bind Ctrl."""
     got = bookmarks.to_ahk(parts(code, ctrl=True))
@@ -100,11 +144,19 @@ def test_unknown_code_is_rejected():
     assert got["ahk"] == ""
 
 
-@pytest.mark.parametrize("text,ahk", [
-    ("numpad7", "Numpad7"), ("NUMPAD7", "Numpad7"), ("Numpad007", "Numpad7"),
-    ("f5", "F5"), ("F007", "F7"), ("f24", "F24"),
-    ("numpadadd", "NumpadAdd"), ("^numpad7", "^Numpad7"),
-])
+@pytest.mark.parametrize(
+    "text,ahk",
+    [
+        ("numpad7", "Numpad7"),
+        ("NUMPAD7", "Numpad7"),
+        ("Numpad007", "Numpad7"),
+        ("f5", "F5"),
+        ("F007", "F7"),
+        ("f24", "F24"),
+        ("numpadadd", "NumpadAdd"),
+        ("^numpad7", "^Numpad7"),
+    ],
+)
 def test_parse_ahk_is_case_insensitive_and_canonicalising(text, ahk):
     """parse_ahk is the only binding path for non-US layouts, and it feeds a
     file the engine re-reads every 10s. Accepting what a human types and

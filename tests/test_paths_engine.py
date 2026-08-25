@@ -1,7 +1,7 @@
 """resolve_binary() falls back to PATH, which is right for ffmpeg and wrong
 here: a user with AutoHotkey v2 installed would have their v2 interpreter
 handed a v1 script and fail with parse errors that look like our bug."""
-from pathlib import Path
+
 from obs_youtube_uploader import paths
 
 
@@ -14,8 +14,11 @@ def test_state_files_live_together(monkeypatch, tmp_path):
 
 def test_engine_exe_never_falls_back_to_path(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
-    monkeypatch.setattr(paths.shutil, "which",
-                        lambda _n: "C:/Program Files/AutoHotkey/v2/AutoHotkey.exe")
+    monkeypatch.setattr(
+        paths.shutil,
+        "which",
+        lambda _n: "C:/Program Files/AutoHotkey/v2/AutoHotkey.exe",
+    )
     assert paths.engine_exe() is None
 
 

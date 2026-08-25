@@ -1,4 +1,5 @@
 """Preview section validation. Mirrors test_settings_eve.py's cases."""
+
 import json
 
 import pytest
@@ -35,9 +36,14 @@ def test_booleans_are_not_accepted_as_sizes():
 
 
 def test_a_corrupt_layout_entry_drops_alone():
-    out = settings.validated_preview({"layouts": {
-        "Good": {"x": 1, "y": 2, "w": 3, "h": 4},
-        "Bad": {"x": "no", "y": 2, "w": 3, "h": 4}}})
+    out = settings.validated_preview(
+        {
+            "layouts": {
+                "Good": {"x": 1, "y": 2, "w": 3, "h": 4},
+                "Bad": {"x": "no", "y": 2, "w": 3, "h": 4},
+            }
+        }
+    )
     assert set(out["layouts"]) == {"Good"}
 
 
@@ -58,12 +64,18 @@ def test_restore_preview_positions_defaults_on():
 
 
 def test_restore_preview_positions_accepts_only_a_bool():
-    assert settings.validated_preview(
-        {"restore_preview_positions": False}
-    )["restore_preview_positions"] is False
-    assert settings.validated_preview(
-        {"restore_preview_positions": "no"}
-    )["restore_preview_positions"] is True
+    assert (
+        settings.validated_preview({"restore_preview_positions": False})[
+            "restore_preview_positions"
+        ]
+        is False
+    )
+    assert (
+        settings.validated_preview({"restore_preview_positions": "no"})[
+            "restore_preview_positions"
+        ]
+        is True
+    )
 
 
 def test_the_client_window_keys_are_gone():
@@ -93,7 +105,8 @@ def test_a_settings_file_still_holding_the_client_window_keys_loads(tmp_path):
     raw = settings._fresh_defaults()
     raw["preview"]["restore_clients_on_launch"] = True
     raw["preview"]["client_layouts"] = {
-        "Pilot": {"x": 1, "y": 2, "w": 3, "h": 4, "maximized": True}}
+        "Pilot": {"x": 1, "y": 2, "w": 3, "h": 4, "maximized": True}
+    }
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     section = settings.load(path)["preview"]
@@ -116,5 +129,4 @@ def test_restore_preview_positions_survives_a_load_round_trip(tmp_path):
     data = settings._fresh_defaults()
     data["preview"]["restore_preview_positions"] = False
     settings.save(data, path)
-    assert settings.load(path)["preview"][
-        "restore_preview_positions"] is False
+    assert settings.load(path)["preview"]["restore_preview_positions"] is False

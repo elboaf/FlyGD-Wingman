@@ -3,6 +3,7 @@
 Testing pixels directly is the point of moving off GDI+ -- these run in
 CI on Linux, where no Windows drawing API exists.
 """
+
 from obs_youtube_uploader.preview import chrome
 
 CYAN = (0, 200, 220, 255)
@@ -37,9 +38,8 @@ def test_a_degenerate_size_is_still_fully_opaque():
 
 
 def test_label_band_is_opaque_and_the_right_height():
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN,
-                        border=5, label_h=30)
-    assert img.getpixel((160, 6))[3] > 200        # inside the band
+    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=5, label_h=30)
+    assert img.getpixel((160, 6))[3] > 200  # inside the band
     # Below the band is the thumbnail area: opaque (see the hit-testing
     # test above) but a different colour from the band.
     assert img.getpixel((160, 40))[3] == 255
@@ -54,10 +54,8 @@ def test_label_text_is_actually_drawn():
 
 def test_long_labels_do_not_overflow_the_band():
     """A 40-character character name must not paint over the thumbnail."""
-    img = chrome.render((320, 210), "X" * 60, border_color=CYAN,
-                        border=5, label_h=30)
-    band = chrome.render((320, 210), "", border_color=CYAN,
-                         border=5, label_h=30)
+    img = chrome.render((320, 210), "X" * 60, border_color=CYAN, border=5, label_h=30)
+    band = chrome.render((320, 210), "", border_color=CYAN, border=5, label_h=30)
     # Below the band must be untouched interior, identical to the
     # unlabelled render.
     assert img.getpixel((160, 40)) == band.getpixel((160, 40))
@@ -65,8 +63,7 @@ def test_long_labels_do_not_overflow_the_band():
 
 def test_selected_draws_a_thicker_border():
     plain = chrome.render((320, 210), "P", border_color=CYAN, border=5)
-    picked = chrome.render((320, 210), "P", border_color=CYAN, border=5,
-                           selected=True)
+    picked = chrome.render((320, 210), "P", border_color=CYAN, border=5, selected=True)
     assert plain.tobytes() != picked.tobytes()
 
 
@@ -81,6 +78,7 @@ def test_missing_font_is_logged_not_swallowed(monkeypatch, caplog):
     when an entry misses). A silent fallback ships unlabelled previews
     with nothing in the log to explain them."""
     import pathlib
+
     chrome._font.cache_clear()
     monkeypatch.setattr(chrome, "FONT_PATH", pathlib.Path("/nonexistent.ttf"))
     with caplog.at_level("WARNING"):

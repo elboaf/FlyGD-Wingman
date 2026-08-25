@@ -11,9 +11,8 @@ Timers are injected so these tests are instant and deterministic -- nothing
 here sleeps, and a real threading.Timer would make the always-reschedule
 assertions timing-dependent, which is the one property they must not have.
 """
-import threading
 
-import pytest
+import threading
 
 from obs_youtube_uploader.ui.scheduler import Scheduler
 

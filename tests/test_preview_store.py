@@ -2,13 +2,14 @@
 the whole projected document (settings.py:281-285), and there are already
 two writers without previews -- ui/api.py persists the channel from an
 upload worker thread, deliberately. This store is the merge boundary."""
+
 import contextlib
 import copy
 
-from obs_youtube_uploader.preview.store import LayoutStore
-from obs_youtube_uploader.preview.layout import Entry
-from obs_youtube_uploader.preview.geometry import Rect
 from obs_youtube_uploader.preview import layout
+from obs_youtube_uploader.preview.geometry import Rect
+from obs_youtube_uploader.preview.layout import Entry
+from obs_youtube_uploader.preview.store import LayoutStore
 
 
 class FakeTimer:
@@ -101,9 +102,13 @@ def test_layouts_for_clients_not_running_are_preserved():
     seen this session, the other twenty-eight lose their saved positions
     -- and the user finds out weeks later, once, with no way back."""
     saves = []
-    stored = {"preview": {"layouts": {
-        "Absent Pilot": {"x": 7, "y": 7, "w": 320, "h": 210,
-                         "locked": False}}}}
+    stored = {
+        "preview": {
+            "layouts": {
+                "Absent Pilot": {"x": 7, "y": 7, "w": 320, "h": 210, "locked": False}
+            }
+        }
+    }
     s, timers, _ = _store(saves, stored)
     s.record("Present Pilot", Entry(Rect(1, 2, 320, 210)))
     timers[-1].fire()
@@ -153,7 +158,12 @@ def test_write_goes_through_one_atomic_transaction():
 
     assert opened == ["enter", "exit"]
     assert live["preview"]["layouts"]["Scout Alt"] == {
-        "x": 1, "y": 2, "w": 3, "h": 4, "locked": False}
+        "x": 1,
+        "y": 2,
+        "w": 3,
+        "h": 4,
+        "locked": False,
+    }
 
 
 def _updater(live, log=None):
@@ -187,8 +197,12 @@ def test_record_character_never_persists_a_character_select_client():
 
 
 def test_a_bound_character_is_protected_from_eviction():
-    live = {"preview": {"seen": [f"C{i}" for i in range(64)],
-                        "hotkeys": {"characters": {"C63": "Ctrl+F1"}}}}
+    live = {
+        "preview": {
+            "seen": [f"C{i}" for i in range(64)],
+            "hotkeys": {"characters": {"C63": "Ctrl+F1"}},
+        }
+    }
     store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
     store.record_character("New")
     store.flush()
@@ -206,8 +220,7 @@ def test_layout_and_roster_writes_share_one_transaction():
     flush() calls _write() directly, so both pending kinds land together."""
     live = {"preview": {"layouts": {}, "seen": []}}
     opened = []
-    store = LayoutStore(update_settings=_updater(live, opened),
-                        timer=FakeTimer)
+    store = LayoutStore(update_settings=_updater(live, opened), timer=FakeTimer)
     store.record("Alice", layout.Entry(Rect(1, 2, 3, 4), False))
     store.record_character("Alice")
     store.flush()

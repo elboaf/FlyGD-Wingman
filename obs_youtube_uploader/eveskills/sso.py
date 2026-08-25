@@ -6,7 +6,9 @@ a secret compiled into it would be readable by everyone holding the binary
 and would protect exactly nothing. PKCE is what stands in for it, which is
 why the verifier checks below are not cosmetic.
 """
+
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -104,7 +106,8 @@ def authorize_url(pkce: Pkce) -> str:
     # is a rejected authorization rather than a visible error.
     encoded = "&".join(
         f"{urllib.parse.quote(key, safe='')}={urllib.parse.quote(value, safe='')}"
-        for key, value in query.items())
+        for key, value in query.items()
+    )
     return f"{application.SSO_AUTHORIZE}?{encoded}"
 
 
@@ -128,8 +131,9 @@ def _default_transport(request, timeout=None):
     return _opener.open(request, timeout=timeout)
 
 
-def exchange_code(code: str, verifier: str, *,
-                  transport=_default_transport) -> TokenSet:
+def exchange_code(
+    code: str, verifier: str, *, transport=_default_transport
+) -> TokenSet:
     """Trade an authorization code for a token set."""
     # Checked locally: sending a blank code or a malformed verifier spends a
     # round trip to be told about a bug that is entirely on this side.
@@ -140,15 +144,20 @@ def exchange_code(code: str, verifier: str, *,
     # guard exists to avoid.
     if not code.strip() or len(code) > MAX_CODE_CHARS or "\0" in code:
         raise OAuthError(0, "invalid_request", "The authorization code was invalid.")
-    if not 43 <= len(verifier) <= 128 or any(ch not in _VERIFIER_CHARS for ch in verifier):
+    if not 43 <= len(verifier) <= 128 or any(
+        ch not in _VERIFIER_CHARS for ch in verifier
+    ):
         raise OAuthError(0, "invalid_request", "The PKCE verifier was invalid.")
-    payload = _post_token({
-        "grant_type": "authorization_code",
-        "code": code,
-        "client_id": application.CLIENT_ID,
-        "code_verifier": verifier,
-        "redirect_uri": application.REDIRECT_URI,
-    }, transport)
+    payload = _post_token(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": application.CLIENT_ID,
+            "code_verifier": verifier,
+            "redirect_uri": application.REDIRECT_URI,
+        },
+        transport,
+    )
     return _read_token_set(payload, require_refresh_token=True)
 
 
@@ -160,22 +169,29 @@ def refresh_token(token: str, *, transport=_default_transport) -> TokenSet:
     # the wire.
     if not token.strip() or len(token) > MAX_REFRESH_TOKEN_CHARS or "\0" in token:
         raise OAuthError(0, "invalid_request", "The stored refresh token was invalid.")
-    payload = _post_token({
-        "grant_type": "refresh_token",
-        "refresh_token": token,
-        "client_id": application.CLIENT_ID,
-    }, transport)
+    payload = _post_token(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": token,
+            "client_id": application.CLIENT_ID,
+        },
+        transport,
+    )
     return _read_token_set(payload, require_refresh_token=False)
 
 
 def _post_token(form: dict, transport) -> dict:
     body = urllib.parse.urlencode(form).encode("ascii")
     request = urllib.request.Request(
-        application.SSO_TOKEN, data=body,
-        headers={"Content-type": "application/x-www-form-urlencoded",
-                 "Accept": "application/json",
-                 "User-agent": application.USER_AGENT},
-        method="POST")
+        application.SSO_TOKEN,
+        data=body,
+        headers={
+            "Content-type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-agent": application.USER_AGENT,
+        },
+        method="POST",
+    )
     try:
         with transport(request, timeout=TIMEOUT_S) as response:
             # limit + 1 so an oversized body is detected rather than
@@ -189,32 +205,34 @@ def _post_token(form: dict, transport) -> dict:
         # else to come from. Everything read here goes through
         # safe_oauth_code before it can reach a message.
         detail = b""
-        try:
+        with contextlib.suppress(OSError):
             detail = exc.read(MAX_TOKEN_RESPONSE_BYTES + 1)
-        except OSError:
-            pass
         code = _read_error_code(detail)
-        raise OAuthError(exc.code, code,
-                         f"EVE SSO token request returned {exc.code} ({code}).") from exc
+        raise OAuthError(
+            exc.code, code, f"EVE SSO token request returned {exc.code} ({code})."
+        ) from exc
     except (urllib.error.URLError, OSError) as exc:
         # Transient by construction: the code is not in _DEFINITIVE, so a
         # flaky connection can never cost the user their stored token.
         raise OAuthError(0, "network", "EVE SSO could not be reached.") from exc
 
     if len(raw) > MAX_TOKEN_RESPONSE_BYTES:
-        raise OAuthError(status, "invalid_response",
-                         "EVE SSO returned an invalid token response.")
+        raise OAuthError(
+            status, "invalid_response", "EVE SSO returned an invalid token response."
+        )
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise OAuthError(status, "invalid_response",
-                         "EVE SSO returned an invalid token response.") from exc
+        raise OAuthError(
+            status, "invalid_response", "EVE SSO returned an invalid token response."
+        ) from exc
     if not isinstance(parsed, dict):
         # Every hop below would raise AttributeError on a list, and this is
         # the failure path, where that would replace the real diagnosis with
         # a type error.
-        raise OAuthError(status, "invalid_response",
-                         "EVE SSO returned an invalid token response.")
+        raise OAuthError(
+            status, "invalid_response", "EVE SSO returned an invalid token response."
+        )
     return parsed
 
 
@@ -238,19 +256,27 @@ def _read_error_code(detail: bytes) -> str:
 
 def _read_token_set(payload: dict, *, require_refresh_token: bool) -> TokenSet:
     access = payload.get("access_token")
-    if (not isinstance(access, str) or not access.strip()
-            or len(access) > MAX_ACCESS_TOKEN_CHARS):
-        raise OAuthError(200, "invalid_response",
-                         "EVE SSO returned an invalid access token.")
+    if (
+        not isinstance(access, str)
+        or not access.strip()
+        or len(access) > MAX_ACCESS_TOKEN_CHARS
+    ):
+        raise OAuthError(
+            200, "invalid_response", "EVE SSO returned an invalid access token."
+        )
 
     refresh = payload.get("refresh_token", "")
     if refresh is None:
         refresh = ""
-    if (not isinstance(refresh, str) or len(refresh) > MAX_REFRESH_TOKEN_CHARS
-            or "\0" in refresh):
+    if (
+        not isinstance(refresh, str)
+        or len(refresh) > MAX_REFRESH_TOKEN_CHARS
+        or "\0" in refresh
+    ):
         # Bounded because this is about to be encrypted and written to disk.
-        raise OAuthError(200, "invalid_response",
-                         "EVE SSO returned an invalid refresh token.")
+        raise OAuthError(
+            200, "invalid_response", "EVE SSO returned an invalid refresh token."
+        )
     # Required on a code exchange, OPTIONAL on a refresh. EVE sometimes
     # answers a refresh without reissuing one and expects the caller to keep
     # the token it already holds; demanding one here would turn a perfectly
@@ -260,16 +286,21 @@ def _read_token_set(payload: dict, *, require_refresh_token: bool) -> TokenSet:
 
     expires = payload.get("expires_in")
     # bool is an int subclass, and `expires_in: true` must not read as 1.
-    if (isinstance(expires, bool) or not isinstance(expires, int)
-            or not 0 < expires <= MAX_EXPIRES_IN_S):
-        raise OAuthError(200, "invalid_response",
-                         "EVE SSO returned an invalid token lifetime.")
+    if (
+        isinstance(expires, bool)
+        or not isinstance(expires, int)
+        or not 0 < expires <= MAX_EXPIRES_IN_S
+    ):
+        raise OAuthError(
+            200, "invalid_response", "EVE SSO returned an invalid token lifetime."
+        )
 
     token_type = payload.get("token_type")
     # Case-insensitive: CCP has spelled it both ways, and the bearer-auth
     # header the caller builds from it is identical either way.
     if not isinstance(token_type, str) or token_type.lower() != "bearer":
-        raise OAuthError(200, "invalid_response",
-                         "EVE SSO returned an unexpected token type.")
+        raise OAuthError(
+            200, "invalid_response", "EVE SSO returned an unexpected token type."
+        )
 
     return TokenSet(access_token=access, refresh_token=refresh, expires_in=expires)

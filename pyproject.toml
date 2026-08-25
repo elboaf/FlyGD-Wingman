@@ -55,7 +55,7 @@ Releases = "https://github.com/elboaf/FlyGD-Wingman/releases"
 "Terms of Service" = "https://wingman.zoolanders.vip/terms"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "ruff==0.16.4"]
 
 [tool.setuptools]
 # Declared explicitly rather than left to auto-discovery. `packaging/` holds
@@ -78,3 +78,80 @@ packages = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+# 88 is ruff's default and already this codebase's shape: the longest
+# line in the tree is 104 characters. Raising the limit to 100 does not
+# reduce the reformat at all -- 149 files change either way -- and it
+# would rejoin deliberately wrapped user-facing message strings into
+# 97-character lines.
+line-length = 88
+# packaging/ holds one-off build-time fetch scripts (AutoHotkey, ffmpeg,
+# WebView2 runtime) that a separate task owns end to end, including their
+# installer-version coupling. Linting them here would mix an unrelated
+# diff into this task's hand-reviewed cleanup.
+#
+# *.md is excluded because ruff formats Python code fences inside markdown
+# by default, and this repository keeps its design and plan documents at
+# the root. Those are historical records of completed work: reformatting
+# their code blocks rewrites what was written at the time without changing
+# anything that runs. Left enabled it also doubled the reformat commit
+# (9,655 markdown lines against 9,711 Python), and the "the suite still
+# passes" argument that justifies a mechanical reformat has no purchase on
+# prose. A plan's code blocks should be formatted when the plan is written,
+# not retroactively.
+extend-exclude = ["packaging", "*.md"]
+# Exclusions above are applied during directory traversal but NOT to paths
+# named explicitly on the command line, unless this is set. Without it,
+# `ruff format somefile.md`, an editor's "Format Document", or any
+# pre-commit hook (which passes filenames explicitly -- the case this
+# option exists for) reformats the plan docs anyway, and `ruff format .`
+# being safe hides that. Verified: with *.md excluded but force-exclude
+# off, `ruff format --check *.md` still reformats 10 files.
+force-exclude = true
+
+[tool.ruff.lint]
+select = [
+    "I",      # import sorting
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "RET",    # flake8-return
+    "PIE",
+    "FURB",
+    "RUF",
+    "BLE",    # blind except -- see below
+    "DTZ",    # naive datetimes
+    "S110",   # try-except-pass
+    "S112",   # try-except-continue
+]
+ignore = [
+    # The formatter owns line length. Selecting "E" pulls in E501, which
+    # flags 84 lines here -- and `ruff format` CANNOT fix them, because it
+    # will not split a long string or a comment. Leaving E501 enabled makes
+    # the lint gate unsatisfiable without hand-rewrapping 84 sites for no
+    # benefit the formatter does not already provide.
+    "E501",
+]
+# Not selected, deliberately:
+#   D    -- the docstrings here are unusually good and carry real
+#           reasoning. A formal style gate would produce noise, not signal.
+#   ANN  -- annotating 16k lines is its own project.
+#   PL, C901 -- complexity thresholds would flag ui/api.py without
+#           telling anyone something they do not already know.
+#
+# BLE001 is selected even though seventeen sites currently trip it.
+# Fourteen `# noqa: BLE001` directives with reasons attached existed
+# before ruff was adopted; eight of those survive, and six turned out to
+# be unused and were removed by RUF100 (one in evesettings/names.py,
+# five in ui/api.py -- their handlers log with exc_info=True, so BLE001
+# never fired there). Nine were added when ruff was adopted. The
+# convention pre-dates the linter; this makes it enforced. Every new
+# suppression must state why the exception is swallowed.
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately bind values purely to assert on them later, and
+# fixtures shadow imports by design.
+"tests/*" = ["S110", "S112"]

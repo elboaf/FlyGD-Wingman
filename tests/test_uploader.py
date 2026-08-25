@@ -1,19 +1,23 @@
 import os
-import socket
 import stat
 import sys
 
 import pytest
-from obs_youtube_uploader import uploader
+
+from obs_youtube_uploader import credentials, uploader
 
 
 class FakeResp:
-    def __init__(self, status): self.status = status
-    def __getitem__(self, k): return self.status if k == "status" else None
+    def __init__(self, status):
+        self.status = status
+
+    def __getitem__(self, k):
+        return self.status if k == "status" else None
 
 
 class FakeHttpError(Exception):
     """Stands in for googleapiclient.errors.HttpError."""
+
     def __init__(self, status, content=b""):
         self.resp = FakeResp(status)
         self.status_code = status
@@ -26,11 +30,14 @@ def test_transient_http_errors_retry(status):
     assert uploader.classify(FakeHttpError(status)) is uploader.Outcome.RETRY
 
 
-@pytest.mark.parametrize("exc", [
-    socket.timeout("slow"),
-    ConnectionResetError("reset"),
-    OSError("network down"),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("slow"),
+        ConnectionResetError("reset"),
+        OSError("network down"),
+    ],
+)
 def test_network_errors_retry(exc):
     assert uploader.classify(exc) is uploader.Outcome.RETRY
 
@@ -79,6 +86,7 @@ class FakeRequest:
     `script` is a list of either ('progress', fraction), ('fail', exc), or
     ('done', response_dict) applied on successive next_chunk() calls.
     """
+
     def __init__(self, script):
         self.script = list(script)
         self.calls = 0
@@ -94,8 +102,11 @@ class FakeRequest:
 
 
 class FakeStatus:
-    def __init__(self, fraction): self._f = fraction
-    def progress(self): return self._f
+    def __init__(self, fraction):
+        self._f = fraction
+
+    def progress(self):
+        return self._f
 
 
 def test_upload_returns_video_id_on_clean_run():
@@ -104,31 +115,37 @@ def test_upload_returns_video_id_on_clean_run():
 
 
 def test_upload_resumes_after_transient_failure():
-    req = FakeRequest([
-        ("progress", 0.3),
-        ("fail", FakeHttpError(503)),
-        ("progress", 0.7),
-        ("done", {"id": "xyz789"}),
-    ])
+    req = FakeRequest(
+        [
+            ("progress", 0.3),
+            ("fail", FakeHttpError(503)),
+            ("progress", 0.7),
+            ("done", {"id": "xyz789"}),
+        ]
+    )
     assert uploader.upload(req, sleep=lambda s: None) == "xyz789"
 
 
 def test_video_id_survives_mid_upload_failure():
     """Regression guard: the link column breaks if retry loses the ID."""
-    req = FakeRequest([
-        ("fail", ConnectionResetError("reset")),
-        ("done", {"id": "survived"}),
-    ])
+    req = FakeRequest(
+        [
+            ("fail", ConnectionResetError("reset")),
+            ("done", {"id": "survived"}),
+        ]
+    )
     assert uploader.upload(req, sleep=lambda s: None) == "survived"
 
 
 def test_upload_does_not_restart_from_zero():
     """next_chunk is called once more than the number of failures, never reset."""
-    req = FakeRequest([
-        ("progress", 0.5),
-        ("fail", FakeHttpError(500)),
-        ("done", {"id": "a"}),
-    ])
+    req = FakeRequest(
+        [
+            ("progress", 0.5),
+            ("fail", FakeHttpError(500)),
+            ("done", {"id": "a"}),
+        ]
+    )
     uploader.upload(req, sleep=lambda s: None)
     assert req.calls == 3
 
@@ -160,11 +177,13 @@ def test_upload_does_not_retry_quota_errors():
 
 def test_backoff_grows_between_attempts():
     slept = []
-    req = FakeRequest([
-        ("fail", FakeHttpError(503)),
-        ("fail", FakeHttpError(503)),
-        ("done", {"id": "a"}),
-    ])
+    req = FakeRequest(
+        [
+            ("fail", FakeHttpError(503)),
+            ("fail", FakeHttpError(503)),
+            ("done", {"id": "a"}),
+        ]
+    )
     uploader.upload(req, sleep=slept.append, jitter=lambda: 0.0)
     assert len(slept) == 2
     assert slept[1] > slept[0]
@@ -180,11 +199,13 @@ def test_progress_callback_receives_fractions():
 def test_retry_callback_reports_each_attempt():
     """A stalled upload must look like it is retrying, not frozen."""
     attempts = []
-    req = FakeRequest([
-        ("fail", FakeHttpError(503)),
-        ("fail", FakeHttpError(503)),
-        ("done", {"id": "a"}),
-    ])
+    req = FakeRequest(
+        [
+            ("fail", FakeHttpError(503)),
+            ("fail", FakeHttpError(503)),
+            ("done", {"id": "a"}),
+        ]
+    )
     uploader.upload(req, on_retry=lambda n, d: attempts.append(n), sleep=lambda s: None)
     assert attempts == [1, 2]
 
@@ -255,9 +276,6 @@ def test_build_body_falls_back_to_untitled():
     assert body["snippet"]["title"] == "Untitled"
 
 
-from obs_youtube_uploader import credentials
-
-
 def test_is_placeholder_true_for_the_source_tree_value():
     assert credentials.is_placeholder() is True
 
@@ -268,7 +286,8 @@ def test_is_placeholder_false_once_the_release_workflow_has_substituted_it(monke
     own sentinel construction untouched (it must be, since the replace
     can't match a value assembled from fragments — see credentials.py)."""
     monkeypatch.setitem(
-        credentials.CLIENT_CONFIG["installed"], "client_id",
+        credentials.CLIENT_CONFIG["installed"],
+        "client_id",
         "123456789-abcdefg.apps.googleusercontent.com",
     )
     assert credentials.is_placeholder() is False
@@ -304,6 +323,7 @@ def test_needs_reauth_false_for_valid_creds():
         valid = True
         expired = False
         refresh_token = "r"
+
     assert uploader.needs_reauth(Creds()) is False
 
 
@@ -312,6 +332,7 @@ def test_needs_reauth_true_when_expired_without_refresh_token():
         valid = False
         expired = True
         refresh_token = None
+
     assert uploader.needs_reauth(Creds()) is True
 
 
@@ -320,6 +341,7 @@ def test_needs_reauth_false_when_expired_but_refresh_token_present():
         valid = False
         expired = True
         refresh_token = "r"
+
     assert uploader.needs_reauth(Creds()) is False
 
 
@@ -328,12 +350,15 @@ def test_needs_reauth_true_when_invalid_and_not_expired():
         valid = False
         expired = False
         refresh_token = "r"
+
     assert uploader.needs_reauth(Creds()) is True
 
 
 def test_save_credentials_writes_and_restricts(tmp_path):
     class Creds:
-        def to_json(self): return '{"token": "x"}'
+        def to_json(self):
+            return '{"token": "x"}'
+
     p = tmp_path / "token.json"
     uploader.save_credentials(Creds(), p)
     assert p.exists()
@@ -342,7 +367,9 @@ def test_save_credentials_writes_and_restricts(tmp_path):
 
 def test_save_credentials_restricts_permissions(tmp_path):
     class Creds:
-        def to_json(self): return '{"token": "x"}'
+        def to_json(self):
+            return '{"token": "x"}'
+
     p = tmp_path / "token.json"
     uploader.save_credentials(Creds(), p)
     if sys.platform != "win32":
@@ -354,11 +381,12 @@ def test_on_response_receives_the_full_insert_response():
     """The channel a video actually landed on is in this response, and it is
     the only place the app can learn it: SCOPES holds youtube.upload alone,
     which does not permit channels.list."""
-    body = {"id": "vid1",
-            "snippet": {"channelId": "UC9", "channelTitle": "Zoolanders"}}
+    body = {"id": "vid1", "snippet": {"channelId": "UC9", "channelTitle": "Zoolanders"}}
     seen = []
-    assert uploader.upload(FakeRequest([("done", body)]),
-                           on_response=seen.append) == "vid1"
+    assert (
+        uploader.upload(FakeRequest([("done", body)]), on_response=seen.append)
+        == "vid1"
+    )
     assert seen == [body]
 
 
@@ -369,9 +397,13 @@ def test_on_response_is_optional():
 def test_on_response_is_not_called_when_the_upload_fails():
     seen = []
     with pytest.raises(uploader.UploadFailed):
-        uploader.upload(FakeRequest([("fail", RuntimeError("boom"))]),
-                        on_response=seen.append, max_attempts=1,
-                        sleep=lambda _s: None, jitter=lambda: 0)
+        uploader.upload(
+            FakeRequest([("fail", RuntimeError("boom"))]),
+            on_response=seen.append,
+            max_attempts=1,
+            sleep=lambda _s: None,
+            jitter=lambda: 0,
+        )
     assert seen == []
 
 
@@ -381,18 +413,23 @@ def test_channel_of_reads_the_snippet():
     ) == ("UC9", "Zoolanders")
 
 
-@pytest.mark.parametrize("response", [
-    {},
-    {"snippet": {}},
-    {"snippet": None},
-    {"snippet": {"channelId": 7, "channelTitle": ["x"]}},
-    None,
-    "not a dict",
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"snippet": {}},
+        {"snippet": None},
+        {"snippet": {"channelId": 7, "channelTitle": ["x"]}},
+        None,
+        "not a dict",
+    ],
+)
 def test_channel_of_returns_empty_for_anything_unusable(response):
     """A response-shape change at Google's end must degrade to "channel
     unknown", never crash a finished upload or put a repr in a label."""
     assert uploader.channel_of(response) == ("", "")
+
+
 # The exact payload observed in the field: YouTube rejects a video that
 # exceeds the channel's daily upload allowance with status 400 (not 403)
 # and reason uploadLimitExceeded. Classifying it as PERMANENT told users
@@ -434,11 +471,14 @@ def test_upload_failure_is_logged_with_the_underlying_error(caplog):
     err = FakeHttpError(400, _UPLOAD_LIMIT_BODY)
 
     class Request:
-        def next_chunk(self): raise err
+        def next_chunk(self):
+            raise err
 
-    with caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"):
-        with pytest.raises(uploader.UploadFailed):
-            uploader.upload(Request(), sleep=lambda s: None)
+    with (
+        caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"),
+        pytest.raises(uploader.UploadFailed),
+    ):
+        uploader.upload(Request(), sleep=lambda s: None)
 
     text = caplog.text
     assert "upload_limit" in text
@@ -450,12 +490,15 @@ def test_upload_failure_is_logged_with_the_underlying_error(caplog):
 _ODD_BODY = b'{"error":"invalid_grant","error_description":"bad"}'
 
 
-@pytest.mark.parametrize("body", [
-    _ODD_BODY,
-    b'[{"reason":"whatever"}]',      # top-level array
-    b'{"error":{"errors":"oops"}}',  # errors is not a list
-    b'{"error":{}}',
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        _ODD_BODY,
+        b'[{"reason":"whatever"}]',  # top-level array
+        b'{"error":{"errors":"oops"}}',  # errors is not a list
+        b'{"error":{}}',
+    ],
+)
 def test_odd_error_bodies_do_not_break_classification(body):
     """_reasons() must never raise: it is called on the failure path, one
     line before the raise, so an exception there replaces the real error
@@ -468,9 +511,11 @@ def test_exhausted_retries_on_odd_body_still_raise_upload_failed():
     err = FakeHttpError(503, _ODD_BODY)
 
     class Request:
-        def next_chunk(self): raise err
+        def next_chunk(self):
+            raise err
 
     with pytest.raises(uploader.UploadFailed) as caught:
-        uploader.upload(Request(), max_attempts=2, sleep=lambda s: None,
-                        jitter=lambda: 0.0)
+        uploader.upload(
+            Request(), max_attempts=2, sleep=lambda s: None, jitter=lambda: 0.0
+        )
     assert caught.value.outcome is uploader.Outcome.RETRY

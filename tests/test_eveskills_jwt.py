@@ -7,13 +7,15 @@ exercising the same `cryptography` verify() call production uses. A test
 that stubbed out signature verification would pass just as happily against
 a module that never verified anything.
 """
+
 import base64
 import json
+import re
 import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives import hashes
@@ -171,8 +173,9 @@ def test_rejects_a_token_whose_payload_was_edited(keypair):
     head_b64, _, sig_b64 = token.split(".")
     forged = b64(json.dumps(claims(sub="CHARACTER:EVE:1")).encode("utf-8"))
     with pytest.raises(evejwt.JwtError, match="signature"):
-        validate(f"{head_b64}.{forged}.{sig_b64}",
-                 FakeKeys({"k1": keypair.public_key()}))
+        validate(
+            f"{head_b64}.{forged}.{sig_b64}", FakeKeys({"k1": keypair.public_key()})
+        )
 
 
 def test_rejects_a_signature_outside_the_base64url_alphabet(keypair):
@@ -181,8 +184,10 @@ def test_rejects_a_signature_outside_the_base64url_alphabet(keypair):
     decode to different bytes than it reads as."""
     head_b64, body_b64, _ = sign(keypair, claims()).split(".")
     with pytest.raises(evejwt.JwtError, match="unreadable"):
-        validate(f"{head_b64}.{body_b64}.not*a*signature",
-                 FakeKeys({"k1": keypair.public_key()}))
+        validate(
+            f"{head_b64}.{body_b64}.not*a*signature",
+            FakeKeys({"k1": keypair.public_key()}),
+        )
 
 
 def test_a_trailing_newline_is_not_a_valid_base64url_segment(keypair):
@@ -256,9 +261,11 @@ def keys(keypair):
 
 def test_accepts_every_form_of_the_issuer(keypair, keys):
     """CCP has emitted all three spellings; all three are the same issuer."""
-    for issuer in ("https://login.eveonline.com",
-                   "https://login.eveonline.com/",
-                   "login.eveonline.com"):
+    for issuer in (
+        "https://login.eveonline.com",
+        "https://login.eveonline.com/",
+        "login.eveonline.com",
+    ):
         identity = validate(sign(keypair, claims(iss=issuer)), keys)
         assert identity.character_id == 95465499
 
@@ -266,7 +273,9 @@ def test_accepts_every_form_of_the_issuer(keypair, keys):
 def test_rejects_an_unexpected_issuer(keypair, keys):
     """Not a suffix match: "login.eveonline.com.evil.test" must not pass."""
     with pytest.raises(evejwt.JwtError, match="issuer"):
-        validate(sign(keypair, claims(iss="https://login.eveonline.com.evil.test")), keys)
+        validate(
+            sign(keypair, claims(iss="https://login.eveonline.com.evil.test")), keys
+        )
 
 
 def test_audience_is_a_conjunction_not_a_choice(keypair, keys):
@@ -308,10 +317,10 @@ def test_expiry_allows_two_minutes_of_skew(keypair, keys):
     `now` is injected rather than slept for, so this asserts the boundary
     exactly instead of approximately.
     """
-    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
-    expiry = int(moment.timestamp()) - 60          # expired a minute ago
+    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+    expiry = int(moment.timestamp()) - 60  # expired a minute ago
     assert validate(sign(keypair, claims(exp=expiry)), keys, now=moment)
-    stale = int(moment.timestamp()) - 121          # past the 120s allowance
+    stale = int(moment.timestamp()) - 121  # past the 120s allowance
     with pytest.raises(evejwt.JwtError, match="expired"):
         validate(sign(keypair, claims(exp=stale)), keys, now=moment)
 
@@ -352,10 +361,10 @@ def test_nbf_allows_two_minutes_of_skew(keypair, keys):
     this file, none of which set it) must keep validating; only a PRESENT
     nbf beyond the skew is a rejection.
     """
-    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
-    almost_valid = int(moment.timestamp()) + 60          # a minute from now
+    moment = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+    almost_valid = int(moment.timestamp()) + 60  # a minute from now
     assert validate(sign(keypair, claims(nbf=almost_valid)), keys, now=moment)
-    not_yet = int(moment.timestamp()) + 121              # past the 120s allowance
+    not_yet = int(moment.timestamp()) + 121  # past the 120s allowance
     with pytest.raises(evejwt.JwtError, match="not yet valid"):
         validate(sign(keypair, claims(nbf=not_yet)), keys, now=moment)
 
@@ -374,9 +383,15 @@ def test_subject_must_be_a_character_subject(keypair, keys):
     number that never matches an ESI skills response. The leading-zero and
     trailing-space cases are the ones a looser regex lets through.
     """
-    for bad in ("CORPORATION:EVE:98000001", "CHARACTER:EVE:0",
-                "CHARACTER:EVE:0123", "CHARACTER:EVE:", "95465499",
-                "CHARACTER:EVE:95465499 ", "character:eve:95465499"):
+    for bad in (
+        "CORPORATION:EVE:98000001",
+        "CHARACTER:EVE:0",
+        "CHARACTER:EVE:0123",
+        "CHARACTER:EVE:",
+        "95465499",
+        "CHARACTER:EVE:95465499 ",
+        "character:eve:95465499",
+    ):
         with pytest.raises(evejwt.JwtError, match="character subject"):
             validate(sign(keypair, claims(sub=bad)), keys)
 
@@ -389,8 +404,7 @@ def test_character_id_is_bounded_to_int64(keypair, keys):
     assume a 64-bit column the moment this guard is missing.
     """
     with pytest.raises(evejwt.JwtError, match="character subject"):
-        validate(sign(keypair, claims(sub="CHARACTER:EVE:9999999999999999999")),
-                  keys)
+        validate(sign(keypair, claims(sub="CHARACTER:EVE:9999999999999999999")), keys)
 
 
 def test_name_is_trimmed_and_bounded(keypair, keys):
@@ -427,8 +441,13 @@ def test_owner_is_optional_but_bounded_when_present(keypair, keys):
 
 def test_scp_as_a_space_separated_string(keypair, keys):
     """The shape EVE emits for a multi-scope token today."""
-    identity = validate(sign(keypair, claims(
-        scp="esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1")), keys)
+    identity = validate(
+        sign(
+            keypair,
+            claims(scp="esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1"),
+        ),
+        keys,
+    )
     assert identity.scopes == frozenset(REQUIRED)
 
 
@@ -450,7 +469,8 @@ def test_scp_as_a_bare_string_for_a_single_scope(keypair, keys):
         sign(keypair, claims(scp="esi-skills.read_skills.v1")),
         client_id=CLIENT_ID,
         required_scopes=("esi-skills.read_skills.v1",),
-        key_source=keys)
+        key_source=keys,
+    )
     assert identity.scopes == frozenset({"esi-skills.read_skills.v1"})
 
 
@@ -473,15 +493,16 @@ def test_required_scopes_are_a_subset_so_extras_are_fine(keypair, keys):
     Requiring equality would break the moment a user re-consents to a
     superset, or CCP widens what a scope implies.
     """
-    granted = list(REQUIRED) + ["esi-characters.read_notifications.v1"]
+    granted = [*list(REQUIRED), "esi-characters.read_notifications.v1"]
     identity = validate(sign(keypair, claims(scp=granted)), keys)
     assert frozenset(REQUIRED) <= identity.scopes
 
 
 def test_missing_scopes_are_named_in_the_message(keypair, keys):
     """The message is what the user acts on, so it names what is missing."""
-    with pytest.raises(evejwt.JwtError,
-                       match="esi-skills.read_skillqueue.v1"):
+    with pytest.raises(
+        evejwt.JwtError, match=re.escape("esi-skills.read_skillqueue.v1")
+    ):
         validate(sign(keypair, claims(scp="esi-skills.read_skills.v1")), keys)
 
 
@@ -499,8 +520,13 @@ def jwks_entry(public_key, kid="k1", **overrides):
     def encode(value: int) -> str:
         return b64(value.to_bytes((value.bit_length() + 7) // 8, "big"))
 
-    entry = {"kty": "RSA", "use": "sig", "kid": kid,
-             "n": encode(numbers.n), "e": encode(numbers.e)}
+    entry = {
+        "kty": "RSA",
+        "use": "sig",
+        "kid": kid,
+        "n": encode(numbers.n),
+        "e": encode(numbers.e),
+    }
     entry.update(overrides)
     return entry
 
@@ -554,7 +580,7 @@ def metadata(**overrides):
 
 class FakeClock:
     def __init__(self, start=None):
-        self.moment = start or datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+        self.moment = start or datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
     def __call__(self):
         return self.moment
@@ -565,8 +591,12 @@ class FakeClock:
 
 def test_key_source_fetches_metadata_then_jwks(keypair):
     """Two hops, in order: the metadata document names the JWKS address."""
-    http = FakeHttp({METADATA_URL: metadata(),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     assert list(source.keys()) == ["k1"]
     assert http.fetched == [METADATA_URL, JWKS_URL]
@@ -575,8 +605,12 @@ def test_key_source_fetches_metadata_then_jwks(keypair):
 def test_keys_are_cached_for_five_minutes(keypair):
     """One fetch pair per TTL window, not one per token validated."""
     clock = FakeClock()
-    http = FakeHttp({METADATA_URL: metadata(),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=clock)
     source.keys()
     clock.advance(299)
@@ -590,8 +624,12 @@ def test_keys_are_cached_for_five_minutes(keypair):
 def test_force_refetches_inside_the_ttl(keypair):
     """The unknown-kid path needs a way past a cache that is still fresh."""
     clock = FakeClock()
-    http = FakeHttp({METADATA_URL: metadata(),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=clock)
     source.keys()
     source.keys(force=True)
@@ -606,8 +644,12 @@ def test_a_failed_refresh_leaves_the_previous_keys_usable(keypair):
     the next non-forced call must still hand back the keys already held.
     """
     clock = FakeClock()
-    http = FakeHttp({METADATA_URL: metadata(),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=clock)
     assert list(source.keys()) == ["k1"]
     http.documents[METADATA_URL] = urllib.error.URLError("offline")
@@ -618,8 +660,12 @@ def test_a_failed_refresh_leaves_the_previous_keys_usable(keypair):
 
 def test_rejects_metadata_with_an_unexpected_issuer(keypair):
     """And never fetches the JWKS the bad document named."""
-    http = FakeHttp({METADATA_URL: metadata(issuer="https://evil.test"),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(issuer="https://evil.test"),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     with pytest.raises(evejwt.JwtError, match="issuer"):
         source.keys()
@@ -631,9 +677,14 @@ def test_rejects_a_jwks_uri_that_is_not_absolute_https_on_the_sso_host():
     contents this process then trusts. A relative, plaintext, or off-host
     jwks_uri is precisely how that becomes key substitution -- and the
     third case below is why the host check is not a suffix match."""
-    for bad in ("/oauth/jwks", "http://login.eveonline.com/oauth/jwks",
-                "https://login.eveonline.com.evil.test/oauth/jwks",
-                "https://evil.test/oauth/jwks", "not a url", ""):
+    for bad in (
+        "/oauth/jwks",
+        "http://login.eveonline.com/oauth/jwks",
+        "https://login.eveonline.com.evil.test/oauth/jwks",
+        "https://evil.test/oauth/jwks",
+        "not a url",
+        "",
+    ):
         http = FakeHttp({METADATA_URL: metadata(jwks_uri=bad)})
         source = evejwt.SigningKeySource(transport=http, now=FakeClock())
         with pytest.raises(evejwt.JwtError, match="JWKS address"):
@@ -648,14 +699,27 @@ def test_filters_jwks_to_rsa_signing_keys_with_a_kid(keypair):
     from the map, and validate() reports an unknown key.
     """
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    http = FakeHttp({METADATA_URL: metadata(), JWKS_URL: {"keys": [
-        {"kty": "EC", "use": "sig", "kid": "ec-key", "crv": "P-256",
-         "x": "AAAA", "y": "AAAA"},
-        jwks_entry(other.public_key(), kid="enc-key", use="enc"),
-        jwks_entry(other.public_key(), kid="  "),
-        "not-even-an-object",
-        jwks_entry(keypair.public_key(), kid="k1"),
-    ]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {
+                "keys": [
+                    {
+                        "kty": "EC",
+                        "use": "sig",
+                        "kid": "ec-key",
+                        "crv": "P-256",
+                        "x": "AAAA",
+                        "y": "AAAA",
+                    },
+                    jwks_entry(other.public_key(), kid="enc-key", use="enc"),
+                    jwks_entry(other.public_key(), kid="  "),
+                    "not-even-an-object",
+                    jwks_entry(keypair.public_key(), kid="k1"),
+                ]
+            },
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     assert list(source.keys()) == ["k1"]
 
@@ -663,11 +727,24 @@ def test_filters_jwks_to_rsa_signing_keys_with_a_kid(keypair):
 def test_a_kid_naming_a_non_rsa_key_is_rejected_never_a_fallback(keypair):
     """End to end: the token names the EC entry, and validation fails with
     "unknown key" rather than quietly verifying against the RSA one."""
-    http = FakeHttp({METADATA_URL: metadata(), JWKS_URL: {"keys": [
-        {"kty": "EC", "use": "sig", "kid": "ec-key", "crv": "P-256",
-         "x": "AAAA", "y": "AAAA"},
-        jwks_entry(keypair.public_key(), kid="k1"),
-    ]}})
+    http = FakeHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {
+                "keys": [
+                    {
+                        "kty": "EC",
+                        "use": "sig",
+                        "kid": "ec-key",
+                        "crv": "P-256",
+                        "x": "AAAA",
+                        "y": "AAAA",
+                    },
+                    jwks_entry(keypair.public_key(), kid="k1"),
+                ]
+            },
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     token = sign(keypair, claims(), header={"alg": "RS256", "kid": "ec-key"})
     with pytest.raises(evejwt.JwtError, match="unknown key"):
@@ -701,7 +778,7 @@ def test_a_non_object_key_document_is_rejected():
 
 
 def test_an_http_failure_on_the_metadata_fetch_is_reported(keypair):
-    http = FakeHttp({})           # every URL 404s
+    http = FakeHttp({})  # every URL 404s
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     with pytest.raises(evejwt.JwtError, match="404"):
         source.keys()
@@ -717,6 +794,7 @@ def test_an_http_failure_on_the_metadata_fetch_is_reported(keypair):
 # tests (test_the_default_opener_refuses_redirects and
 # test_a_cross_host_redirect_does_not_leak_the_authorization_header),
 # which this pair is modelled on line for line.
+
 
 def test_the_default_opener_refuses_redirects():
     """Guards _default_transport's actual wiring, not just _NoRedirectHandler
@@ -744,8 +822,8 @@ def test_a_redirect_does_not_relocate_key_trust():
     request = urllib.request.Request(METADATA_URL)
     redirect_headers = {}
     result = handler.redirect_request(
-        request, None, 302, "Found", redirect_headers,
-        "https://evil.test/oauth/jwks")
+        request, None, 302, "Found", redirect_headers, "https://evil.test/oauth/jwks"
+    )
     assert result is None
 
 
@@ -757,6 +835,7 @@ def test_a_redirect_does_not_relocate_key_trust():
 # ONE shared fetch rather than one per waiting thread. A single-caller test
 # cannot tell a coalesced implementation apart from one that simply fetches
 # every time it is asked; only concurrent callers can.
+
 
 def test_concurrent_forced_refreshes_share_a_single_fetch(keypair):
     """N threads all observe an unknown kid at once and all call
@@ -793,8 +872,12 @@ def test_concurrent_forced_refreshes_share_a_single_fetch(keypair):
                 release.wait(timeout=5)
             return super().__call__(request, timeout=timeout)
 
-    http = SlowHttp({METADATA_URL: metadata(),
-                     JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]}})
+    http = SlowHttp(
+        {
+            METADATA_URL: metadata(),
+            JWKS_URL: {"keys": [jwks_entry(keypair.public_key())]},
+        }
+    )
     source = evejwt.SigningKeySource(transport=http, now=FakeClock())
     source.keys()  # warm the cache so every thread below is a forced refresh
     http.fetched.clear()

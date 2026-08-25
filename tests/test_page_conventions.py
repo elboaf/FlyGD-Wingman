@@ -25,33 +25,35 @@ These are deliberately mechanical. They cannot judge whether a screen is
 well designed; they only stop a convention being dropped silently. What
 they cannot see is recorded in DESIGN.md.
 """
+
 import pathlib
 import re
 
-WEB = (pathlib.Path(__file__).resolve().parents[1]
-       / "obs_youtube_uploader" / "web")
+WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 # Comments are stripped before any rule parsing below: style.css leads
 # almost every rule with a block comment, and a naive selector capture
 # swallows it -- which made the [hidden] check miss .evestat[hidden], a
 # rule that has been there all along.
-CSS = re.sub(r"/\*.*?\*/", "",
-             (WEB / "style.css").read_text(encoding="utf-8"), flags=re.S)
+CSS = re.sub(
+    r"/\*.*?\*/", "", (WEB / "style.css").read_text(encoding="utf-8"), flags=re.DOTALL
+)
 
 
 def _strip_html_comments(text: str) -> str:
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
 def _strip_js_comments(text: str) -> str:
     """Line comments only. Every rationale comment in web/*.js is a line
     comment or a /* */ block at the top of a file; a rule quoted inside one
     must not be what fails a test whose whole point is to explain itself."""
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     return re.sub(r"(?m)^\s*//.*$", "", text)
 
 
 # ---- native form controls ---------------------------------------------
+
 
 def test_no_checkbox_or_radio_renders_as_a_native_control():
     """Nothing in style.css targets input[type=checkbox] or [type=radio].
@@ -68,10 +70,11 @@ def test_no_checkbox_or_radio_renders_as_a_native_control():
     body = _strip_html_comments(HTML)
     for match in re.finditer(r'<input[^>]*type="(checkbox|radio)"[^>]*>', body):
         tag = match.group(0)
-        after = body[match.end():match.end() + 120]
+        after = body[match.end() : match.end() + 120]
         wrapper = "box" if match.group(1) == "checkbox" else "ring"
         assert f'class="{wrapper}"' in after, (
-            f"bare {match.group(1)} renders as a native Windows control: {tag}")
+            f"bare {match.group(1)} renders as a native Windows control: {tag}"
+        )
 
 
 def test_generated_controls_use_the_wrapper_too():
@@ -80,16 +83,17 @@ def test_generated_controls_use_the_wrapper_too():
     missed it entirely."""
     for path in sorted(WEB.glob("*.js")):
         src = _strip_js_comments(path.read_text(encoding="utf-8"))
-        for match in re.finditer(r"""\.type\s*=\s*['"](checkbox|radio)['"]""",
-                                 src):
-            window = src[match.start():match.start() + 600]
+        for match in re.finditer(r"""\.type\s*=\s*['"](checkbox|radio)['"]""", src):
+            window = src[match.start() : match.start() + 600]
             wrapper = "box" if match.group(1) == "checkbox" else "ring"
             assert f"'{wrapper}'" in window or f'"{wrapper}"' in window, (
                 f"{path.name}: a generated {match.group(1)} with no "
-                f".{wrapper} wrapper renders as a native Windows control")
+                f".{wrapper} wrapper renders as a native Windows control"
+            )
 
 
 # ---- native dialogs ----------------------------------------------------
+
 
 def test_no_native_dialogs():
     """WebView2 renders these as browser chrome captioned with the page
@@ -109,6 +113,7 @@ def test_no_native_dialogs():
 
 # ---- the label column --------------------------------------------------
 
+
 def test_settings_rows_label_through_the_shared_column():
     """`.settings .row > .lab` is a 118px right-aligned column for the
     WHOLE screen. A bare <label> or <span> in a row gets none of it, so it
@@ -121,15 +126,16 @@ def test_settings_rows_label_through_the_shared_column():
     """
     body = _strip_html_comments(HTML)
     # Rows inside a .settings container, which is every Settings section.
-    for row in re.finditer(r'<div class="row"[^>]*>(.*?)</div>', body, re.S):
+    for row in re.finditer(r'<div class="row"[^>]*>(.*?)</div>', body, re.DOTALL):
         inner = row.group(1)
         for label in re.finditer(r"<label(?![^>]*\bclass=)[^>]*>", inner):
             assert False, (
-                "a settings row labels outside the shared column: "
-                + label.group(0))
+                "a settings row labels outside the shared column: " + label.group(0)
+            )
 
 
 # ---- the [hidden] trap -------------------------------------------------
+
 
 def test_every_hidden_element_can_actually_hide():
     """An author rule beats the UA stylesheet's [hidden] { display: none }
@@ -170,10 +176,16 @@ def test_every_hidden_element_can_actually_hide():
     problems = []
     for tag in re.finditer(r"<(\w+)([^>]*\bhidden\b[^>]*)>", body):
         attrs = tag.group(2)
-        names = ["." + c for c in
-                 (re.search(r'class="([^"]*)"', attrs) or
-                  re.match("", "")).group(1).split()] \
-            if re.search(r'class="([^"]*)"', attrs) else []
+        names = (
+            [
+                "." + c
+                for c in (re.search(r'class="([^"]*)"', attrs) or re.match("", ""))
+                .group(1)
+                .split()
+            ]
+            if re.search(r'class="([^"]*)"', attrs)
+            else []
+        )
         ident = re.search(r'id="([^"]*)"', attrs)
         if ident:
             names.append("#" + ident.group(1))
@@ -183,10 +195,12 @@ def test_every_hidden_element_can_actually_hide():
 
     assert not problems, (
         "these carry `hidden` but their own rule sets a display, so they "
-        "stay visible: " + repr(problems))
+        "stay visible: " + repr(problems)
+    )
 
 
 # ---- one accent per screen ---------------------------------------------
+
 
 def test_no_container_offers_two_primary_actions():
     """`.btn.acc` is documented as "the ONE brand-accent control on any
@@ -201,17 +215,20 @@ def test_no_container_offers_two_primary_actions():
     # button only for a confirm. Two accents on screen at once is real
     # there, and deliberate -- the overlay dims the page behind it, so it
     # reads as layering rather than as two competing primaries.
-    body = re.sub(r'<div id="dialog-slot">.*?</div>\s*</div>\s*</div>', "",
-                  body, flags=re.S)
+    body = re.sub(
+        r'<div id="dialog-slot">.*?</div>\s*</div>\s*</div>', "", body, flags=re.DOTALL
+    )
     containers = re.split(r'(?=<div class="route"|<div class="settings")', body)
     for chunk in containers:
         ident = re.search(r'id="([\w-]+)"', chunk)
         count = len(re.findall(r'class="btn acc"', chunk))
         assert count <= 1, (
-            f"{ident.group(1) if ident else '?'} has {count} accent buttons")
+            f"{ident.group(1) if ident else '?'} has {count} accent buttons"
+        )
 
 
 # ---- reachability ------------------------------------------------------
+
 
 def test_every_destination_and_section_is_reachable_and_exists():
     """A container with no control never shows; a control with no container
@@ -227,13 +244,15 @@ def test_every_destination_and_section_is_reachable_and_exists():
     assert nav <= routes, f"nav points at missing routes: {nav - routes}"
     for name in nav:
         assert f"{name}: 'route-{name}'" in app, (
-            f"{name} has a nav button but no entry in WM.route's map")
+            f"{name} has a nav button but no entry in WM.route's map"
+        )
 
     sections = set(re.findall(r'id="section-([\w-]+)"', body))
     rail = set(re.findall(r'data-section="([\w-]+)"', body))
     assert rail == sections, (
         f"rail and sections disagree: only in rail {rail - sections}, "
-        f"only in markup {sections - rail}")
+        f"only in markup {sections - rail}"
+    )
 
 
 def test_opening_a_dialog_disarms_an_armed_keybind_capture():
@@ -255,7 +274,7 @@ def test_opening_a_dialog_disarms_an_armed_keybind_capture():
         assert "endCapture" in src, f"{name} has no capture to disarm?"
         for match in re.finditer(r"WM\.prompt\(", src):
             # The handler that raises it must disarm somewhere above.
-            before = src[max(0, match.start() - 400):match.start()]
+            before = src[max(0, match.start() - 400) : match.start()]
             assert "endCapture()" in before, (
-                f"{name} raises WM.prompt without disarming an armed "
-                f"capture first")
+                f"{name} raises WM.prompt without disarming an armed capture first"
+            )

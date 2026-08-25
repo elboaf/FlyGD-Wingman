@@ -1,7 +1,9 @@
 """The INI is a generated artifact: Wingman writes it, the engine only ever
 reads it. These tests pin the exact bytes because the consumer is an AHK
 script we cannot test."""
+
 import pytest
+
 from obs_youtube_uploader import bookmarks, settings
 
 
@@ -35,8 +37,9 @@ def test_every_bind_is_written_even_when_blank():
 
 
 def test_enabled_windows_are_written_as_one_and_zero():
-    text = bookmarks.generate_ini(section(
-        windows={"EVE - Pilot": True, "EVE - Alt": False}))
+    text = bookmarks.generate_ini(
+        section(windows={"EVE - Pilot": True, "EVE - Alt": False})
+    )
     assert "[Enabled]\r\n" in text
     assert "EVE - Pilot=1\r\n" in text
     assert "EVE - Alt=0\r\n" in text
@@ -46,8 +49,9 @@ def test_semicolon_bind_survives():
     """Windows INI treats ; as a comment only at line start, and the value
     reaches AHK through IniRead into a variable so it is never parsed as
     script text. Pinned by a test rather than by confidence."""
-    text = bookmarks.generate_ini(section(
-        keybinds=dict(bookmarks.DEFAULT_BINDS, FinH="^;")))
+    text = bookmarks.generate_ini(
+        section(keybinds=dict(bookmarks.DEFAULT_BINDS, FinH="^;"))
+    )
     assert "FinH=^;\r\n" in text
 
 
@@ -56,8 +60,7 @@ def test_newline_in_a_window_title_cannot_forge_a_line():
     not be able to inject an extra INI entry. Asserted line-anchored: the
     sanitised title becomes "EVE - BadFinH=1", which *contains* "FinH=1"
     as a substring without being a forged line."""
-    text = bookmarks.generate_ini(section(
-        windows={"EVE - Bad\r\nFinH": True}))
+    text = bookmarks.generate_ini(section(windows={"EVE - Bad\r\nFinH": True}))
     lines = text.split("\r\n")
     assert "FinH=1" not in lines
     assert "EVE - BadFinH=1" in lines
@@ -85,9 +88,9 @@ def test_naming_is_fixed_and_ignores_whatever_the_section_says():
     """The controls are gone, so a stale settings.json -- or a hand-edited
     one -- must not be able to steer naming, or to smuggle a line into the
     INI through a value that never reaches it."""
-    text = bookmarks.generate_ini(section(home_zero=True,
-                                          preface_return=True,
-                                          return_preface="@\r\nMode=1"))
+    text = bookmarks.generate_ini(
+        section(home_zero=True, preface_return=True, return_preface="@\r\nMode=1")
+    )
     assert "[Settings]" not in text
     assert "@" not in text
     assert "\r\nMode=1\r\n" not in text
@@ -101,9 +104,16 @@ def test_no_naming_constants_survive():
         assert not hasattr(bookmarks, name), name
 
 
-@pytest.mark.parametrize("title", [
-    "[Keybinds]", ";EVE - Pilot", "Notepad", "EVE - A=B", "",
-])
+@pytest.mark.parametrize(
+    "title",
+    [
+        "[Keybinds]",
+        ";EVE - Pilot",
+        "Notepad",
+        "EVE - A=B",
+        "",
+    ],
+)
 def test_titles_the_engine_could_never_match_are_dropped(title):
     """Titles are written as INI keys. A leading "[" is parsed as a section
     header and would relocate every following entry; a leading ";" as a
@@ -115,8 +125,9 @@ def test_titles_the_engine_could_never_match_are_dropped(title):
 
 
 def test_real_eve_titles_still_pass():
-    text = bookmarks.generate_ini(section(
-        windows={"EVE - Pilot One": True, "EVE - Alt Two": False}))
+    text = bookmarks.generate_ini(
+        section(windows={"EVE - Pilot One": True, "EVE - Alt Two": False})
+    )
     lines = text.split("\r\n")
     assert "EVE - Pilot One=1" in lines
     assert "EVE - Alt Two=0" in lines

@@ -4,6 +4,7 @@ enable/disable is idempotent, and shutdown always tears it down.
 make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 """
+
 import contextlib
 import copy
 
@@ -99,6 +100,7 @@ def test_shutdown_without_a_host_is_a_no_op(tmp_path):
 
 def test_build_preview_host_returns_none_off_windows(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
+
     monkeypatch.setattr(main_mod.sys, "platform", "linux")
     assert main_mod.build_preview_host(object(), {}) is None
 
@@ -121,11 +123,14 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     from obs_youtube_uploader import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    state = SimpleNamespace(settings={"preview": {
-        "enabled": False, "width": 320, "height": 210, "layouts": {}}})
+    state = SimpleNamespace(
+        settings={
+            "preview": {"enabled": False, "width": 320, "height": 210, "layouts": {}}
+        }
+    )
     host = main_mod.build_preview_host(state, {})
     assert host is not None
-    assert not host.is_running     # constructed, never started
+    assert not host.is_running  # constructed, never started
 
 
 def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
@@ -185,16 +190,18 @@ def test_the_preview_card_lives_in_its_own_section():
     import re
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    lines = (root / "obs_youtube_uploader" / "web"
-             / "index.html").read_text(encoding="utf-8").splitlines()
+    lines = (
+        (root / "obs_youtube_uploader" / "web" / "index.html")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
 
     starts = {}
     for i, line in enumerate(lines):
         m = re.search(r'id="(?:route|section)-(\w+)"', line)
         if m:
             starts[m.group(1)] = i
-    card = next(i for i, line in enumerate(lines)
-                if "EVE client previews" in line)
+    card = next(i for i, line in enumerate(lines) if "EVE client previews" in line)
     ordered = sorted(starts.items(), key=lambda kv: kv[1])
     owner = [name for name, at in ordered if at < card][-1]
     assert owner == "previews", f"the preview card is in {owner}"
@@ -251,7 +258,7 @@ def test_an_unchanged_toggle_still_reports_success(tmp_path):
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": True}
     assert api.set_preview_enabled(True) is True
-    assert host.started == 0        # still short-circuited, not restarted
+    assert host.started == 0  # still short-circuited, not restarted
 
 
 def _no_disk(monkeypatch):
@@ -259,6 +266,7 @@ def _no_disk(monkeypatch):
     the real save()/update() write to paths.settings_file() -- the user's
     actual file. Stub both so no test can reach it."""
     from obs_youtube_uploader.ui import api as api_mod
+
     writes = []
     monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
 
@@ -287,7 +295,9 @@ def test_the_position_toggle_is_a_no_op_without_a_host(tmp_path, monkeypatch):
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
     assert api.set_restore_preview_positions(False) == {
-        "applied": True, "persisted": True}
+        "applied": True,
+        "persisted": True,
+    }
 
 
 def test_the_position_toggle_persists_the_choice(tmp_path, monkeypatch):
@@ -295,14 +305,16 @@ def test_the_position_toggle_persists_the_choice(tmp_path, monkeypatch):
     api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
     assert api.set_restore_preview_positions(False) == {
-        "applied": True, "persisted": True}
-    assert api._state.settings["preview"][
-        "restore_preview_positions"] is False
+        "applied": True,
+        "persisted": True,
+    }
+    assert api._state.settings["preview"]["restore_preview_positions"] is False
     assert len(writes) == 1
 
 
 def test_the_position_toggle_does_not_move_the_previews_already_open(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     """The setting says where a preview OPENS. Repositioning windows the
     user has already arranged is what #29 learned not to do from the
     toggle it replaces."""
@@ -316,8 +328,7 @@ def test_the_position_toggle_does_not_move_the_previews_already_open(
     assert host.sweeps == 0
 
 
-def test_a_failed_position_write_is_reported_rather_than_claimed(
-        tmp_path, monkeypatch):
+def test_a_failed_position_write_is_reported_rather_than_claimed(tmp_path, monkeypatch):
     """#29's contract, carried across the rename: a dict, not a bool, so
     a write that did not land can be said out loud instead of leaving the
     checkbox lying about what survives a restart."""
@@ -330,16 +341,18 @@ def test_a_failed_position_write_is_reported_rather_than_claimed(
     api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
     assert api.set_restore_preview_positions(False) == {
-        "applied": True, "persisted": False}
+        "applied": True,
+        "persisted": False,
+    }
 
 
-def test_a_failed_position_write_lets_the_next_toggle_retry(
-        tmp_path, monkeypatch):
+def test_a_failed_position_write_lets_the_next_toggle_retry(tmp_path, monkeypatch):
     """settings.update() restores the live dict when the block raises, so
     the stored value still reads as the OLD one and the next call sees a
     real change. Stubs _save_locked, not update(): the point is to
     exercise the REAL update() and fake only the disk write."""
     from obs_youtube_uploader.ui import api as api_mod
+
     calls = []
     real_save_locked = api_mod.settings_mod._save_locked
 
@@ -359,7 +372,8 @@ def test_a_failed_position_write_lets_the_next_toggle_retry(
 
 
 def test_an_unchanged_position_toggle_does_not_rewrite_the_document(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     """settings.save projects every key, so a no-op toggle rewriting the
     whole file is a real cost."""
     writes = _no_disk(monkeypatch)
@@ -380,9 +394,17 @@ def test_the_host_reads_the_position_setting_live(monkeypatch):
     from obs_youtube_uploader import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    state = SimpleNamespace(settings={"preview": {
-        "enabled": False, "width": 320, "height": 210, "layouts": {},
-        "restore_preview_positions": True}})
+    state = SimpleNamespace(
+        settings={
+            "preview": {
+                "enabled": False,
+                "width": 320,
+                "height": 210,
+                "layouts": {},
+                "restore_preview_positions": True,
+            }
+        }
+    )
     host = main_mod.build_preview_host(state, {})
     assert host._restoring() is True
 
@@ -414,16 +436,17 @@ def test_the_client_window_machinery_is_gone():
 
     for name in ("placement", "clientwin32", "clientlayout"):
         try:
-            importlib.import_module(
-                "obs_youtube_uploader.preview." + name)
+            importlib.import_module("obs_youtube_uploader.preview." + name)
         except ImportError:
             continue
-        raise AssertionError("obs_youtube_uploader.preview.%s still exists"
-                             % name)
-    for name in ("save_client_layout", "restore_client_layout",
-                 "set_restore_clients_on_launch",
-                 "start_client_layouts_if_enabled",
-                 "shutdown_client_layouts"):
+        raise AssertionError(f"obs_youtube_uploader.preview.{name} still exists")
+    for name in (
+        "save_client_layout",
+        "restore_client_layout",
+        "set_restore_clients_on_launch",
+        "start_client_layouts_if_enabled",
+        "shutdown_client_layouts",
+    ):
         assert not hasattr(api_mod.Api, name), name
 
 
@@ -456,11 +479,16 @@ def test_the_client_placement_win32_surface_is_not_declared():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    src = (root / "obs_youtube_uploader" / "preview"
-           / "win32.py").read_text(encoding="utf-8")
-    for gone in ("SetWindowPlacement", "GetWindowPlacement",
-                 "WINDOWPLACEMENT", "SPI_GETWORKAREA",
-                 "SystemParametersInfoW"):
+    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
+        encoding="utf-8"
+    )
+    for gone in (
+        "SetWindowPlacement",
+        "GetWindowPlacement",
+        "WINDOWPLACEMENT",
+        "SPI_GETWORKAREA",
+        "SystemParametersInfoW",
+    ):
         assert gone not in src, gone
 
 
@@ -468,21 +496,27 @@ def _web(name):
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    return (root / "obs_youtube_uploader" / "web"
-            / name).read_text(encoding="utf-8")
+    return (root / "obs_youtube_uploader" / "web" / name).read_text(encoding="utf-8")
 
 
 def test_the_client_window_card_is_gone():
     """Its buttons drove SetWindowPlacement against a live EVE client."""
     html = _web("index.html")
     js = _web("settings.js")
-    for gone in ("EVE client windows", "btn-save-client-layout",
-                 "btn-restore-client-layout", "client-restore-on-launch",
-                 "client-layout-status"):
+    for gone in (
+        "EVE client windows",
+        "btn-save-client-layout",
+        "btn-restore-client-layout",
+        "client-restore-on-launch",
+        "client-layout-status",
+    ):
         assert gone not in html, gone
         assert gone not in js, gone
-    for gone in ("save_client_layout", "restore_client_layout",
-                 "set_restore_clients_on_launch"):
+    for gone in (
+        "save_client_layout",
+        "restore_client_layout",
+        "set_restore_clients_on_launch",
+    ):
         assert gone not in js, gone
 
 
@@ -493,8 +527,7 @@ def test_the_position_checkbox_sits_with_the_preview_settings():
     route = html.split('id="section-previews"')[1].split('id="section-')[0]
     card = route.split("EVE client previews")[1].split("<section")[0]
     assert 'id="restore-preview-positions"' in card
-    label = card.split('id="restore-preview-positions"')[1].split(
-        "</label>")[0]
+    label = card.split('id="restore-preview-positions"')[1].split("</label>")[0]
     assert "client" not in label.lower(), label
 
 
@@ -518,6 +551,7 @@ def test_the_position_toggle_says_when_the_choice_will_not_survive():
 # They are written against named states rather than CSS values so that a
 # rename breaks them loudly instead of silently passing.
 
+
 def test_an_absent_registration_entry_is_its_own_state():
     """Three states, not two. `false` is "Windows refused this chord";
     ABSENT is "we cannot know" -- which is what Python sends for every
@@ -529,7 +563,8 @@ def test_an_absent_registration_entry_is_its_own_state():
     block = js.split("function clashes")[1].split("function makeRow")[0]
     assert "hasOwnProperty" in block, (
         "an absent key must be distinguished from a present one; a plain "
-        "lookup cannot tell `undefined` from a missing entry")
+        "lookup cannot tell `undefined` from a missing entry"
+    )
     assert "'unknown'" in block
     assert "'refused'" in block
 
@@ -540,8 +575,7 @@ def test_an_unknown_chord_is_not_rendered_as_a_refusal():
     js = _web("previews.js")
     block = js.split("function makeRow")[1].split("function beginCapture")[0]
     marked = block.split("classList.add('clash')")[0]
-    assert "'unknown'" not in marked, (
-        "the unknown state reaches the .clash branch")
+    assert "'unknown'" not in marked, "the unknown state reaches the .clash branch"
     assert "classList.add('unknown')" in block
 
 
@@ -563,8 +597,8 @@ def test_rows_are_not_dimmed_when_previews_are_off():
     js = _web("previews.js")
     block = js.split("function render")[1].split("function send")[0]
     assert "state.enabled && entry.online" not in block, (
-        "previews being off must not be reported as every character "
-        "being offline")
+        "previews being off must not be reported as every character being offline"
+    )
     assert "preview-binds-off" in js, "the explicit off banner is the signal"
 
 
@@ -585,7 +619,8 @@ def test_a_resolved_save_cannot_overwrite_a_newer_push():
     js = _web("previews.js")
     block = js.split("function send")[1].split("function setBind")[0]
     assert "generation" in block, (
-        "nothing distinguishes a state that was replaced mid-flight")
+        "nothing distinguishes a state that was replaced mid-flight"
+    )
 
 
 def test_the_row_dedup_set_cannot_collide_with_object_prototype():

@@ -15,6 +15,7 @@ Two rules the tests pin, both of which a naive implementation breaks:
     between another writer's read and its save reverts keys it never
     touched.
 """
+
 import logging
 import threading
 
@@ -26,8 +27,7 @@ DEBOUNCE_S = 1.0
 
 
 class LayoutStore:
-    def __init__(self, update_settings, debounce_s=DEBOUNCE_S,
-                 timer=threading.Timer):
+    def __init__(self, update_settings, debounce_s=DEBOUNCE_S, timer=threading.Timer):
         # One context manager, not a read/save pair. The pair could not be
         # made atomic by the caller: another writer lands between them and
         # reverts whatever this one did not re-read.
@@ -90,10 +90,10 @@ class LayoutStore:
                 for name in names:
                     # Bound characters are protected: evicting one would
                     # leave a chord the bind list has no row to show.
-                    bound = set(section.get("hotkeys", {})
-                                .get("characters", {}))
-                    section["seen"] = roster.touch(section.get("seen", []),
-                                                   name, protected=bound)
+                    bound = set(section.get("hotkeys", {}).get("characters", {}))
+                    section["seen"] = roster.touch(
+                        section.get("seen", []), name, protected=bound
+                    )
         except OSError:
             # A settings file that cannot be written must not take the
             # preview thread down -- same posture as ui/api.py's channel

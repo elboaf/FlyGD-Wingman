@@ -7,6 +7,7 @@ artifact, not in the checkout where the source tree makes it work anyway."
 A source checkout passes every test while the frozen release dies on
 launch, so only a test that reads the manifest can catch it here.
 """
+
 import pathlib
 import tomllib
 

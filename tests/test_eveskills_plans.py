@@ -5,6 +5,7 @@ Any diagnostic rejects the whole file. There is no partial-success mode,
 because a plan that silently dropped a line would score a character
 "Ready" for a ship it cannot fly, and the user has no way to notice.
 """
+
 import pytest
 
 from obs_youtube_uploader.eveskills import plans
@@ -18,8 +19,9 @@ def parse_one(text):
 
 
 def test_roman_numerals_one_through_five():
-    got = parse_one("Navigation I\nNavigation2 II\nNavigation3 III\n"
-                    "Navigation4 IV\nNavigation5 V\n")
+    got = parse_one(
+        "Navigation I\nNavigation2 II\nNavigation3 III\nNavigation4 IV\nNavigation5 V\n"
+    )
     assert [r.level for r in got] == [1, 2, 3, 4, 5]
 
 
@@ -54,7 +56,7 @@ def test_blank_lines_and_comments_are_skipped():
 
 
 def test_a_comment_marker_must_start_the_line():
-    """"#" mid-line is not a comment introducer; a skill named with one
+    """ "#" mid-line is not a comment introducer; a skill named with one
     would otherwise be truncated into a name that resolves to nothing."""
     got = parse_one("Sharpshooter #1 III\n")
     assert got[0].skill_name == "Sharpshooter #1"
@@ -89,7 +91,8 @@ def test_an_empty_plan_is_a_whole_file_diagnostic():
     result = plans.parse("")
     assert not result.ok
     assert result.diagnostics == (
-        plans.Diagnostic(0, "Plan contains no skill requirements."),)
+        plans.Diagnostic(0, "Plan contains no skill requirements."),
+    )
 
 
 def test_a_whitespace_only_plan_is_a_whole_file_diagnostic():
@@ -128,12 +131,12 @@ def test_an_underscore_separated_level_is_rejected():
 
 
 def test_a_unicode_digit_level_is_rejected():
-    """Python trap 3. "٥" is ARABIC-INDIC DIGIT FIVE. Its .isdigit()
-    is True and int("٥") returns 5, so a naive port silently accepts
-    `Navigation ٥` as level V. The guard is
+    """Python trap 3. "\u0665" is ARABIC-INDIC DIGIT FIVE. Its .isdigit()
+    is True and int("\u0665") returns 5, so a naive port silently accepts
+    `Navigation \u0665` as level V. The guard is
     `token.isascii() and token.isdigit()` -- isascii() is what makes
     isdigit() mean "ASCII 0-9" and nothing wider."""
-    assert not plans.parse("Navigation ٥\n").ok
+    assert not plans.parse("Navigation \u0665\n").ok
 
 
 def test_a_whitespace_padded_level_is_rejected():
@@ -143,14 +146,21 @@ def test_a_whitespace_padded_level_is_rejected():
     assert plans._parse_level(" 1 ") is None
 
 
-@pytest.mark.parametrize("token", ["+1", "-1", "1_0", "٥", " 1 ", "١"])
+@pytest.mark.parametrize("token", ["+1", "-1", "1_0", "\u0665", " 1 ", "\u0661"])
 def test_the_level_guard_rejects_every_trap_token(token):
     assert plans._parse_level(token) is None
 
 
-@pytest.mark.parametrize("token,expected", [
-    ("1", 1), ("5", 5), ("I", 1), ("v", 5), ("IV", 4),
-])
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        ("1", 1),
+        ("5", 5),
+        ("I", 1),
+        ("v", 5),
+        ("IV", 4),
+    ],
+)
 def test_the_level_guard_still_accepts_real_levels(token, expected):
     assert plans._parse_level(token) == expected
 
@@ -173,8 +183,8 @@ def test_normalisation_happens_before_the_length_cap():
     already precomposed by the editor/toolchain, which would silently
     defeat the point of the test."""
     decomposed = "é" * 150
-    assert len(decomposed) == 300          # 2 code points each, un-composed
-    got = parse_one(f"{decomposed} V\n")   # 150 once composed
+    assert len(decomposed) == 300  # 2 code points each, un-composed
+    got = parse_one(f"{decomposed} V\n")  # 150 once composed
     assert len(got[0].skill_name) == 150
 
 
@@ -245,7 +255,7 @@ def test_content_exactly_at_the_content_cap_is_accepted():
     all-comment filler would test that rule instead of the content cap.
     A single ~512 KiB line is avoided too -- it would independently trip
     the per-line cap tested separately below."""
-    comment_line = "#" + "A" * 510 + "\n"    # 512 raw chars incl. newline
+    comment_line = "#" + "A" * 510 + "\n"  # 512 raw chars incl. newline
     requirement = "Navigation V"
     last_line = " " * (512 - len(requirement)) + requirement  # 512 chars
     filler = comment_line * 1023 + last_line
@@ -275,7 +285,7 @@ def test_a_line_exactly_at_the_line_cap_is_accepted():
     its own would independently trip the 200-character name cap tested
     separately above, and this test would stop exercising the line cap
     at all."""
-    name = "N" * (plans.MAX_SKILL_NAME_CHARS - 1)   # 199, under the name cap
+    name = "N" * (plans.MAX_SKILL_NAME_CHARS - 1)  # 199, under the name cap
     suffix = " V"
     pad = plans.MAX_LINE_CHARS - len(name) - len(suffix)
     line = " " * pad + name + suffix
@@ -320,7 +330,7 @@ def test_one_bad_line_rejects_every_good_line_with_it():
 def test_every_bad_line_is_reported_not_just_the_first():
     """Fixing a plan one diagnostic per save-and-reload cycle is why
     parsing continues past the first complaint."""
-    result = plans.parse("A nope\nB 9\nC ٥\n")
+    result = plans.parse("A nope\nB 9\nC \u0665\n")
     assert [d.line for d in result.diagnostics] == [1, 2, 3]
 
 

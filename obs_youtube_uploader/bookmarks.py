@@ -8,33 +8,66 @@ be tested at all, so this is where the coverage has to come from.
 
 # Ctrl, Alt, Shift, Win. AHK accepts any order; a fixed one is what makes
 # two spellings of the same combo compare equal in collision detection.
-_MODIFIERS = (("ctrl", "^", "Ctrl"), ("alt", "!", "Alt"),
-              ("shift", "+", "Shift"), ("meta", "#", "Win"))
+_MODIFIERS = (
+    ("ctrl", "^", "Ctrl"),
+    ("alt", "!", "Alt"),
+    ("shift", "+", "Shift"),
+    ("meta", "#", "Win"),
+)
 
-_MODIFIER_CODES = frozenset({
-    "ControlLeft", "ControlRight", "AltLeft", "AltRight",
-    "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight",
-})
+_MODIFIER_CODES = frozenset(
+    {
+        "ControlLeft",
+        "ControlRight",
+        "AltLeft",
+        "AltRight",
+        "ShiftLeft",
+        "ShiftRight",
+        "MetaLeft",
+        "MetaRight",
+    }
+)
 
 # event.code -> AHK key name. event.code is used rather than event.key
 # because event.key reports the *produced* character: Shift+Comma arrives as
 # "<" and the shifting would have to be reversed to recover the "," AHK
 # wants. The cost is a US-layout assumption, mitigated by manual entry.
 _NAMED = {
-    "Space": "Space", "Enter": "Enter", "Tab": "Tab", "Escape": "Esc",
-    "Backspace": "Backspace", "Delete": "Delete", "Insert": "Insert",
-    "Home": "Home", "End": "End", "PageUp": "PgUp", "PageDown": "PgDn",
-    "ArrowUp": "Up", "ArrowDown": "Down", "ArrowLeft": "Left",
+    "Space": "Space",
+    "Enter": "Enter",
+    "Tab": "Tab",
+    "Escape": "Esc",
+    "Backspace": "Backspace",
+    "Delete": "Delete",
+    "Insert": "Insert",
+    "Home": "Home",
+    "End": "End",
+    "PageUp": "PgUp",
+    "PageDown": "PgDn",
+    "ArrowUp": "Up",
+    "ArrowDown": "Down",
+    "ArrowLeft": "Left",
     "ArrowRight": "Right",
-    "Comma": ",", "Period": ".", "Slash": "/", "Semicolon": ";",
-    "Quote": "'", "Backquote": "`", "Minus": "-", "Equal": "=",
-    "BracketLeft": "[", "BracketRight": "]", "Backslash": "\\",
+    "Comma": ",",
+    "Period": ".",
+    "Slash": "/",
+    "Semicolon": ";",
+    "Quote": "'",
+    "Backquote": "`",
+    "Minus": "-",
+    "Equal": "=",
+    "BracketLeft": "[",
+    "BracketRight": "]",
+    "Backslash": "\\",
     # The digit/letter numpad codes fall through to the generic Numpad<n>
     # branch below unchanged, but these six have DOM codes that don't match
     # the AHK key name AHK expects, so they need an explicit translation.
-    "NumpadAdd": "NumpadAdd", "NumpadSubtract": "NumpadSub",
-    "NumpadMultiply": "NumpadMult", "NumpadDivide": "NumpadDiv",
-    "NumpadDecimal": "NumpadDot", "NumpadEnter": "NumpadEnter",
+    "NumpadAdd": "NumpadAdd",
+    "NumpadSubtract": "NumpadSub",
+    "NumpadMultiply": "NumpadMult",
+    "NumpadDivide": "NumpadDiv",
+    "NumpadDecimal": "NumpadDot",
+    "NumpadEnter": "NumpadEnter",
 }
 
 
@@ -73,7 +106,7 @@ def to_ahk(parts: dict) -> dict:
     display_key = base.upper() if len(base) == 1 and base.isalpha() else base
     return {
         "ahk": prefix + base,
-        "display": "+".join(labels + [display_key]),
+        "display": "+".join([*labels, display_key]),
         "error": None,
     }
 
@@ -86,10 +119,24 @@ def to_ahk(parts: dict) -> dict:
 # Copy and Paste only ever sent ^c and ^v (111unified.ahk:988-995), so they
 # spent a global keyboard hook reproducing what Windows already does.
 BIND_IDS = (
-    "GrabSig", "SetRoot", "FormatEnf", "ConvertScout",
-    "FinH", "FinL", "FinN", "Fin13",
-    "Fin1", "Fin2", "Fin3", "Fin4", "Fin5", "Fin6",
-    "FinETag", "FinSlash", "FinS", "FinC",
+    "GrabSig",
+    "SetRoot",
+    "FormatEnf",
+    "ConvertScout",
+    "FinH",
+    "FinL",
+    "FinN",
+    "Fin13",
+    "Fin1",
+    "Fin2",
+    "Fin3",
+    "Fin4",
+    "Fin5",
+    "Fin6",
+    "FinETag",
+    "FinSlash",
+    "FinS",
+    "FinC",
 )
 
 # Human labels for the route. Kept beside the ids so the two cannot drift.
@@ -102,9 +149,12 @@ BIND_LABELS = {
     "FinL": "Finisher: LS (lowsec)",
     "FinN": "Finisher: NS (nullsec)",
     "Fin13": "Finisher: C13 (shattered)",
-    "Fin1": "Finisher: C1", "Fin2": "Finisher: C2",
-    "Fin3": "Finisher: C3", "Fin4": "Finisher: C4",
-    "Fin5": "Finisher: C5", "Fin6": "Finisher: C6",
+    "Fin1": "Finisher: C1",
+    "Fin2": "Finisher: C2",
+    "Fin3": "Finisher: C3",
+    "Fin4": "Finisher: C4",
+    "Fin5": "Finisher: C5",
+    "Fin6": "Finisher: C6",
     "FinETag": "e Tag (end of life)",
     "FinSlash": "/ Tag (half mass)",
     "FinS": "f Tag (frig hole)",
@@ -116,8 +166,7 @@ BIND_LABELS = {
 # its own Reset Defaults handler (:655-676) leave every other bind blank.
 # Fidelity is the reason, not caution -- RECOMMENDED_BINDS below is how a
 # new user gets a working set without one being imposed on them.
-DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "")
-                 for bid in BIND_IDS}
+DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "") for bid in BIND_IDS}
 
 # The set the corp actually runs, offered behind the route's "Reset
 # defaults" button (the standalone GUI's :319 button, which the port
@@ -127,13 +176,24 @@ DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "")
 # ConvertScout stays at the script's compiled default rather than the ^s
 # the shipped INI carries -- maintainer's call.
 RECOMMENDED_BINDS = {
-    "GrabSig": "^q", "SetRoot": "^;", "FormatEnf": "^e",
+    "GrabSig": "^q",
+    "SetRoot": "^;",
+    "FormatEnf": "^e",
     "ConvertScout": "^+s",
-    "FinH": "^y", "FinL": "^p", "FinN": "^.", "Fin13": "^o",
-    "Fin1": "^1", "Fin2": "^2", "Fin3": "^3",
-    "Fin4": "^4", "Fin5": "^5", "Fin6": "^6",
-    "FinETag": "^'", "FinSlash": "^,",
-    "FinS": "^i", "FinC": "^x",
+    "FinH": "^y",
+    "FinL": "^p",
+    "FinN": "^.",
+    "Fin13": "^o",
+    "Fin1": "^1",
+    "Fin2": "^2",
+    "Fin3": "^3",
+    "Fin4": "^4",
+    "Fin5": "^5",
+    "Fin6": "^6",
+    "FinETag": "^'",
+    "FinSlash": "^,",
+    "FinS": "^i",
+    "FinC": "^x",
 }
 
 _SYMBOL_TO_KEY = {sym: key for key, sym, _ in _MODIFIERS}
@@ -169,11 +229,11 @@ def registration_blockers(section: dict) -> list[str]:
     # hand-editable, and a wrong type must not be read as a working setup.
     # This is the failure the whole check exists to prevent, so it errs
     # towards warning.
-    if not isinstance(windows, dict) or not any(
-            bool(on) for on in windows.values()):
+    if not isinstance(windows, dict) or not any(bool(on) for on in windows.values()):
         reasons.append(NO_WINDOWS)
     if not isinstance(binds, dict) or not any(
-            str(value).strip() for value in binds.values()):
+        str(value).strip() for value in binds.values()
+    ):
         reasons.append(NO_BINDS)
     return reasons
 
@@ -389,9 +449,7 @@ def import_legacy_ini(text: str) -> dict:
     legacy_settings = parsed.get("Settings", {})
     legacy_windows = parsed.get("Enabled", {})
 
-    section = {"enabled": False,
-               "keybinds": dict(DEFAULT_BINDS),
-               "windows": {}}
+    section = {"enabled": False, "keybinds": dict(DEFAULT_BINDS), "windows": {}}
     for bid in BIND_IDS:
         if bid in legacy_binds:
             section["keybinds"][bid] = sanitise(legacy_binds[bid])
@@ -414,14 +472,17 @@ def import_legacy_ini(text: str) -> dict:
     # Flygd/ABH, so Mode=2 is preserved behaviour and saying otherwise
     # would alarm a user who lost nothing. Mode=1 is a real loss and gets a
     # note below that says what actually changes for them.
-    discarded = [f"{title} (window, not an EVE client window)"
-                 for title in discarded_windows]
+    discarded = [
+        f"{title} (window, not an EVE client window)" for title in discarded_windows
+    ]
     # The loop above is over BIND_IDS, so a legacy Copy or Paste bind is
     # dropped by construction. Silently, unless it is named here -- and a
     # user who had bound them will otherwise just find two dead keys.
-    discarded += [f"{bid} (hotkey, no longer part of Wingman)"
-                  for bid in ("Copy", "Paste", "FinM")
-                  if sanitise(legacy_binds.get(bid, ""))]
+    discarded += [
+        f"{bid} (hotkey, no longer part of Wingman)"
+        for bid in ("Copy", "Paste", "FinM")
+        if sanitise(legacy_binds.get(bid, ""))
+    ]
 
     notes = []
 
@@ -437,7 +498,8 @@ def import_legacy_ini(text: str) -> dict:
         notes.append(
             "Your first home hole was numbered .0. Wingman always numbers "
             "home holes from .1, so they will come out one higher than you "
-            "are used to.")
+            "are used to."
+        )
     preface_on = legacy_settings.get("PrefaceReturn", "1").strip() != "0"
     # "!" is the standalone script's own compiled default, used when the
     # legacy file omits the key -- not a Wingman value. Wingman has none.
@@ -448,7 +510,8 @@ def import_legacy_ini(text: str) -> dict:
         # to someone who had set it to something else.
         notes.append(
             f"Your return bookmarks were prefaced with {preface}. Wingman "
-            "does not preface them.")
+            "does not preface them."
+        )
 
     # Protean/v21 is the one behaviour the engine cannot reproduce, so a
     # user who was running it needs telling in their own terms rather than
@@ -457,9 +520,14 @@ def import_legacy_ini(text: str) -> dict:
         notes.append(
             "You were using Protean/v21 naming. Wingman only supports the "
             "Flygd/ABH scheme, so your bookmarks will be formatted "
-            "differently.")
+            "differently."
+        )
     # A file that yielded no sections at all did not parse -- an empty
     # config is indistinguishable from a wrong encoding here, and the
     # caller must not save this section over the user's real settings.
-    return {"section": section, "discarded": discarded, "notes": notes,
-            "parsed": bool(parsed)}
+    return {
+        "section": section,
+        "discarded": discarded,
+        "notes": notes,
+        "parsed": bool(parsed),
+    }

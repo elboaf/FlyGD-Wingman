@@ -1,6 +1,7 @@
 """Layout persistence, pure. Mirrors settings.py's posture: a malformed
 stored value must fall back, never raise -- a corrupt layout key should
 cost you one preview's position, not the app's launch."""
+
 from obs_youtube_uploader.preview import layout
 from obs_youtube_uploader.preview.geometry import Rect
 

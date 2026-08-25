@@ -1,5 +1,6 @@
 """Discovery and containment. Every case builds a fake EVE tree in tmp_path,
 so the whole module tests on Linux."""
+
 import os
 from pathlib import Path
 
@@ -8,8 +9,12 @@ import pytest
 from obs_youtube_uploader.evesettings import tree
 
 
-def build(root: Path, server="c_eve_sharedcache_tq_tranquility",
-          profile="settings_Default", files=("core_char_98123456.dat",)):
+def build(
+    root: Path,
+    server="c_eve_sharedcache_tq_tranquility",
+    profile="settings_Default",
+    files=("core_char_98123456.dat",),
+):
     target = root / server / profile
     target.mkdir(parents=True)
     for name in files:
@@ -17,15 +22,18 @@ def build(root: Path, server="c_eve_sharedcache_tq_tranquility",
     return target
 
 
-@pytest.mark.parametrize("name,expected", [
-    ("core_char_98123456.dat", "character"),
-    ("core_user_12345.dat", "account"),
-    ("core_char_abc.dat", None),
-    ("core_char_.dat", None),
-    ("core_char_98123456.txt", None),
-    ("settings.dat", None),
-    ("core_char_٣.dat", None),
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("core_char_98123456.dat", "character"),
+        ("core_user_12345.dat", "account"),
+        ("core_char_abc.dat", None),
+        ("core_char_.dat", None),
+        ("core_char_98123456.txt", None),
+        ("settings.dat", None),
+        ("core_char_٣.dat", None),
+    ],
+)
 def test_file_kind(name, expected):
     """The id must be ASCII digits. isdigit() alone accepts Arabic-Indic
     numerals, which cannot be a character id."""
@@ -78,7 +86,7 @@ def test_normalize_selection_heals_a_root_pointed_at_a_profile(tmp_path):
 
 def test_normalize_selection_heals_a_root_pointed_at_a_server(tmp_path):
     profile = build(tmp_path)
-    root, server, selected = tree.normalize_selection(profile.parent, None, None)
+    root, server, _selected = tree.normalize_selection(profile.parent, None, None)
     assert root == tmp_path
     assert server == profile.parent
 
@@ -143,7 +151,8 @@ def test_require_under_enforces_the_suffix(tmp_path):
 
 
 def test_a_root_with_implausibly_many_children_is_refused_not_probed(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     """Every child directory of the root costs a scandir apiece to probe.
 
     A mis-picked root like C:\\Users\\me blocks the bridge thread for as
@@ -160,8 +169,9 @@ def test_a_root_with_implausibly_many_children_is_refused_not_probed(
 
     probed = []
     real = tree._has_profiles
-    monkeypatch.setattr(tree, "_has_profiles",
-                        lambda p: probed.append(str(p)) or real(p))
+    monkeypatch.setattr(
+        tree, "_has_profiles", lambda p: probed.append(str(p)) or real(p)
+    )
 
     found = tree.discover(root)
     assert found.too_broad is True
@@ -223,8 +233,7 @@ def test_has_profiles_stops_at_the_first_match(tmp_path, monkeypatch):
     assert consumed == ["settings_Default"], "it read past the first match"
 
 
-def test_a_truncated_probe_says_so_rather_than_answering_no(tmp_path,
-                                                            monkeypatch):
+def test_a_truncated_probe_says_so_rather_than_answering_no(tmp_path, monkeypatch):
     """Returning a bare False here would make a settings set vanish from
     the dropdown with nothing said -- telling the user they have no
     settings sets for a folder that plainly has them, which is the defect

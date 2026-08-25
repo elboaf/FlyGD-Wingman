@@ -10,12 +10,12 @@ the module raised off Windows, this file could not exist and the feature
 would ship with no automated coverage at all. That this module imports is
 itself part of what these tests assert.
 """
+
 import sys
 
 import pytest
 
 from obs_youtube_uploader.ui import chrome
-
 
 # 1000x600 at (100, 100). Deliberately not square and not at the origin, so
 # a transposed or origin-relative bug cannot pass by coincidence.
@@ -30,28 +30,34 @@ def test_the_middle_of_the_window_is_not_a_resize_zone():
     assert chrome.hit_code(RECT, 600, 400) is None
 
 
-@pytest.mark.parametrize("x, y, expected", [
-    (600, 102, chrome.HTTOP),
-    (600, 698, chrome.HTBOTTOM),
-    (102, 400, chrome.HTLEFT),
-    (1098, 400, chrome.HTRIGHT),
-    (102, 102, chrome.HTTOPLEFT),
-    (1098, 102, chrome.HTTOPRIGHT),
-    (102, 698, chrome.HTBOTTOMLEFT),
-    (1098, 698, chrome.HTBOTTOMRIGHT),
-])
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        (600, 102, chrome.HTTOP),
+        (600, 698, chrome.HTBOTTOM),
+        (102, 400, chrome.HTLEFT),
+        (1098, 400, chrome.HTRIGHT),
+        (102, 102, chrome.HTTOPLEFT),
+        (1098, 102, chrome.HTTOPRIGHT),
+        (102, 698, chrome.HTBOTTOMLEFT),
+        (1098, 698, chrome.HTBOTTOMRIGHT),
+    ],
+)
 def test_every_edge_and_corner_has_its_own_zone(x, y, expected):
     assert chrome.hit_code(RECT, x, y) == expected
 
 
-@pytest.mark.parametrize("x, y, expected", [
-    # Along the top edge, inside the corner reach but outside the border.
-    (108, 102, chrome.HTTOPLEFT),
-    (1092, 102, chrome.HTTOPRIGHT),
-    # Down the left edge, likewise -- the reach works in both axes.
-    (102, 108, chrome.HTTOPLEFT),
-    (102, 692, chrome.HTBOTTOMLEFT),
-])
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        # Along the top edge, inside the corner reach but outside the border.
+        (108, 102, chrome.HTTOPLEFT),
+        (1092, 102, chrome.HTTOPRIGHT),
+        # Down the left edge, likewise -- the reach works in both axes.
+        (102, 108, chrome.HTTOPLEFT),
+        (102, 692, chrome.HTBOTTOMLEFT),
+    ],
+)
 def test_corners_reach_further_than_the_edges(x, y, expected):
     """A BORDER-sized corner square is too small to hit reliably.
 
@@ -75,13 +81,19 @@ def test_just_past_the_border_is_the_page():
     assert chrome.hit_code(RECT, 600, 106) is None
 
 
-@pytest.mark.parametrize("scale, y, expected", [
-    # Each pair straddles the band's inner limit at that scale:
-    # int(BORDER * scale) is 6, 9 and 12 respectively.
-    (1.0, 105, chrome.HTTOP), (1.0, 106, None),
-    (1.5, 108, chrome.HTTOP), (1.5, 109, None),
-    (2.0, 111, chrome.HTTOP), (2.0, 112, None),
-])
+@pytest.mark.parametrize(
+    "scale, y, expected",
+    [
+        # Each pair straddles the band's inner limit at that scale:
+        # int(BORDER * scale) is 6, 9 and 12 respectively.
+        (1.0, 105, chrome.HTTOP),
+        (1.0, 106, None),
+        (1.5, 108, chrome.HTTOP),
+        (1.5, 109, None),
+        (2.0, 111, chrome.HTTOP),
+        (2.0, 112, None),
+    ],
+)
 def test_the_band_scales_with_dpi(scale, y, expected):
     """At 150% the band must stay the same APPARENT thickness.
 
@@ -140,6 +152,7 @@ def test_enable_resize_survives_a_window_with_no_native_handle():
     Being called too early must degrade to a fixed-size window, not raise
     into whatever was mid-launch.
     """
+
     class NotShownYet:
         native = None
 

@@ -5,6 +5,7 @@ ULW_ALPHA requires PREMULTIPLIED BGRA. Getting this wrong makes
 translucent pixels glow -- which looks correct on a dark background and
 wrong everywhere else, so it is exactly the bug that ships.
 """
+
 from PIL import Image
 
 from obs_youtube_uploader.preview import layered

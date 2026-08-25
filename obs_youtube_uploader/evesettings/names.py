@@ -9,6 +9,7 @@ The trap is that ESI also 404s a moved or renamed route, and treating that as
 invalid-ids would blacklist every character the user has. The two are
 separated by response shape, not wording, so CCP can reword the message.
 """
+
 import json
 import logging
 import urllib.error
@@ -18,8 +19,7 @@ from .. import __version__ as _version
 
 logger = logging.getLogger(__name__)
 
-ESI_URL = ("https://esi.evetech.net/latest/universe/names/"
-           "?datasource=tranquility")
+ESI_URL = "https://esi.evetech.net/latest/universe/names/?datasource=tranquility"
 _USER_AGENT = f"FlyGD-Wingman/{_version} (+https://wingman.zoolanders.vip/)"
 _TIMEOUT_SECONDS = 8.0
 # ESI's documented cap for this endpoint.
@@ -61,14 +61,20 @@ def classify(status: int, body: str) -> tuple[str, dict]:
         if not isinstance(item, dict):
             continue
         ident, name = item.get("id"), item.get("name")
-        if (isinstance(ident, int) and not isinstance(ident, bool)
-                and ident > 0 and isinstance(name, str) and name.strip()):
+        if (
+            isinstance(ident, int)
+            and not isinstance(ident, bool)
+            and ident > 0
+            and isinstance(name, str)
+            and name.strip()
+        ):
             resolved[ident] = name.strip()
     return RESOLVED, resolved
 
 
-def fetch_batch(ids, *, transport=urllib.request.urlopen,
-                timeout: float = _TIMEOUT_SECONDS) -> tuple[str, dict]:
+def fetch_batch(
+    ids, *, transport=urllib.request.urlopen, timeout: float = _TIMEOUT_SECONDS
+) -> tuple[str, dict]:
     # Building the request sits INSIDE the try with the send. Everything
     # else here degrades -- names are cosmetic and every failure returns
     # TRANSIENT -- and json.dumps on a non-serialisable id, or Request()
@@ -79,10 +85,11 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
     try:
         payload = json.dumps(list(ids)).encode("utf-8")
         request = urllib.request.Request(
-            ESI_URL, data=payload,
-            headers={"Content-type": "application/json",
-                     "User-agent": _USER_AGENT},
-            method="POST")
+            ESI_URL,
+            data=payload,
+            headers={"Content-type": "application/json", "User-agent": _USER_AGENT},
+            method="POST",
+        )
         with transport(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             body = response.read().decode("utf-8", "replace")
@@ -92,7 +99,7 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
         except Exception:  # noqa: BLE001 - a body we cannot read is not a verdict
             body = ""
         return classify(exc.code, body)
-    except Exception:  # noqa: BLE001 - reported as transient, never raised
+    except Exception:
         # Logged because TRANSIENT means "retry next pass", and a caller
         # bug -- a non-serialisable id, a malformed URL -- retries forever
         # while every row shows its fallback label. Before these two
@@ -107,12 +114,16 @@ def fetch_batch(ids, *, transport=urllib.request.urlopen,
 
 def resolve(ids, known_invalid: set, fetch) -> dict:
     """Names for *ids*, bisecting around any the endpoint rejects."""
-    candidates = [i for i in dict.fromkeys(ids)
-                  if isinstance(i, int) and i > 0 and i not in known_invalid]
+    candidates = [
+        i
+        for i in dict.fromkeys(ids)
+        if isinstance(i, int) and i > 0 and i not in known_invalid
+    ]
     resolved: dict = {}
     for start in range(0, len(candidates), MAX_BATCH):
-        _resolve_batch(candidates[start:start + MAX_BATCH],
-                       known_invalid, fetch, resolved)
+        _resolve_batch(
+            candidates[start : start + MAX_BATCH], known_invalid, fetch, resolved
+        )
     return resolved
 
 
@@ -144,8 +155,7 @@ class NameCache:
 
     def resolve_missing(self, ids, fetch=fetch_batch) -> bool:
         """Resolve what is not cached. True when at least one name was new."""
-        missing = [i for i in ids
-                   if i not in self.names and i not in self.invalid]
+        missing = [i for i in ids if i not in self.names and i not in self.invalid]
         if not missing:
             return False
         found = resolve(missing, self.invalid, fetch)
