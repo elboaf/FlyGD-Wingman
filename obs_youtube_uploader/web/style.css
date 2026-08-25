@@ -454,9 +454,20 @@ input.field.mono, span.field.mono, textarea.field.mono {
   font-family: var(--mono); font-size: var(--fs-mono);
 }
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The border change is a supporting cue, not the indicator: --field-focus-
+   border against --field is about 1.45:1 as a change of state, and the
+   glow this rule used to carry -- rgba(132,48,217,.14) over the card --
+   composited to roughly 1.11:1. Neither is near the 3:1 that 1.4.11 asks,
+   so a focused field was, in practice, unmarked. It takes the same
+   --focus-ring outline every button below uses; see "THE focus indicator".
+
+   :focus rather than :focus-visible, unlike the buttons: a text field
+   clicked with the mouse is about to be typed into, so the ring is wanted
+   there. That is the case the buttons' comment argues the other way for. */
 input.field:focus, textarea.field:focus, select.field:focus {
   border-color: var(--field-focus-border);
-  box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 textarea.field { resize: none; line-height: 1.5; }
 
@@ -633,6 +644,7 @@ button.btn:disabled,
 .navbtn:focus-visible,
 .winbtn:focus-visible,
 .bindbtn:focus-visible,
+.alert-color:focus-visible,
 .linkbtn:focus-visible,
 .rail-plan:focus-visible,
 .rail-item:focus-visible,
@@ -1063,7 +1075,12 @@ button.btn:disabled,
   border-color: var(--brand-edge);
 }
 .check input:checked + .box::after { opacity: 1; }
-.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
+/* Same --focus-ring outline as every other control. The glow this used to
+   carry, rgba(132,48,217,.3) over the card, composites to about 1.28:1 --
+   and .box is 15px square, so that glow WAS the whole indicator. */
+.check input:focus-visible + .box {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 /* Scoped to this one label by id: .check is the shared wrapper Settings,
    Bookmarks and Previews all build on, and an opacity on it would dim
    every checkbox in the app. Same .45 button.btn:disabled uses, so an
@@ -2194,7 +2211,10 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   border: 4.5px solid var(--brand); background: var(--field);
   box-shadow: 0 0 10px rgba(132, 48, 217, .5);
 }
-.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
+/* Paired with .check's, and for the same reason. */
+.radio input:focus-visible + .ring {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 
 /* Radios laid out INLINE in a .row, rather than stacked down a card: the
    8px stacked margin applies to the first of the pair and not the last

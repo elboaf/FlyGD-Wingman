@@ -647,9 +647,9 @@
           <!-- Never the character count alone: get_alert_state's `running`
                flag renders in the same sentence, so a dead tailer thread
                cannot keep reading as a healthy "watching N characters". -->
-          <span class="hint" id="alerts-health"></span></div>
+          <span class="hint" id="alerts-health" role="status"></span></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-status"></span></div>
+          <span class="hint" id="alerts-status" role="status"></span></div>
         <!-- The consequence of the switch above for the twelve controls
              below, in the same voice as settings.js's DEPENDS one card up
              and only while it is true. #alerts-health states the STATE
@@ -696,7 +696,7 @@
           </select>
           <button class="btn" id="alert-event-combat-test"
             aria-label="Test the Combat alert">Test</button>
-          <span class="field-msg" id="alert-event-combat-msg" hidden></span>
+          <span class="field-msg" id="alert-event-combat-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
           <label class="check">
@@ -713,7 +713,7 @@
           </select>
           <button class="btn" id="alert-event-warp_scramble-test"
             aria-label="Test the Warp scramble alert">Test</button>
-          <span class="field-msg" id="alert-event-warp_scramble-msg" hidden></span>
+          <span class="field-msg" id="alert-event-warp_scramble-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
           <label class="check">
@@ -730,7 +730,7 @@
           </select>
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
-          <span class="field-msg" id="alert-event-decloak-msg" hidden></span>
+          <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
       </section>

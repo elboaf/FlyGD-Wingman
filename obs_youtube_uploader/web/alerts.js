@@ -56,11 +56,27 @@
   // what it was before.
   var lastGood = {};
 
-  function say(text) { if (status) { status.textContent = text || ''; } }
+  // Every write below goes through this. The five text slots in this card
+  // are role="status" live regions now, and replacing a text node
+  // re-announces it even when the string is identical -- render() sets the
+  // health line unconditionally on section entry and on every
+  // wm:preview-enabled-changed, so an unguarded write would read "Not
+  // watching gamelogs." aloud again on each one.
+  //
+  // The four .field-msg slots in the other Settings cards have the same
+  // gap and are deliberately NOT changed here: they are live regions
+  // nowhere yet, and arming them without reading how their own modules
+  // write to them is how this kind of noise ships.
+  function setText(el, text) {
+    var next = text || '';
+    if (el && el.textContent !== next) { el.textContent = next; }
+  }
+
+  function say(text) { setText(status, text); }
 
   function showDepends(enabled) {
     if (!depends) { return; }
-    depends.textContent = enabled ? '' : DEPENDS;
+    setText(depends, enabled ? '' : DEPENDS);
     depends.style.display = enabled ? 'none' : '';
   }
 
@@ -82,7 +98,7 @@
   // (style.css:1845), so this is not the trap DESIGN.md names.
   function sayRow(row, text, severity) {
     if (!row.msg) { return; }
-    row.msg.textContent = text || '';
+    setText(row.msg, text);
     row.msg.className = 'field-msg' + (text && severity ? ' ' + severity : '');
     row.msg.hidden = !text;
   }
@@ -244,7 +260,7 @@
     if (folderBanner) {
       folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
     }
-    if (healthLine) { healthLine.textContent = healthText(state); }
+    setText(healthLine, healthText(state));
     // Read from get_alert_state's own `enabled`, not the checkbox: the box
     // is what the user just clicked, and a refused or bridge-failed write
     // reverts it. This must describe what the app is actually doing.

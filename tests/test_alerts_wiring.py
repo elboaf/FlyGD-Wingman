@@ -7,6 +7,8 @@ make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 """
 
+import re
+
 from obs_youtube_uploader.alerts import service as alert_service
 from tests.test_api import make_api
 
@@ -577,6 +579,13 @@ def test_the_card_refreshes_when_previews_are_toggled_without_navigating():
     )[0]
     assert "wm:preview-enabled-changed" in preview_block
 
-    js = _web("alerts.js")
+    # Comments stripped first, the same way test_page_conventions.py does
+    # it. This asserts a fact about the LISTENER, but it locates it by
+    # splitting on the event's name in raw source -- so the first prose
+    # mention of that name anywhere above the registration silently became
+    # the split point, and the assertion started reading a comment. That
+    # is exactly what happened when alerts.js grew a comment explaining
+    # which events re-render the health line.
+    js = re.sub(r"(?m)^\s*//.*$", "", _web("alerts.js"))
     assert "wm:preview-enabled-changed" in js
     assert "refresh" in js.split("wm:preview-enabled-changed")[1][:80]
