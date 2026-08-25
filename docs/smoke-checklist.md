@@ -1406,6 +1406,66 @@ appears, so an item that only restarts the app tests half of it.
 - [ ] Nothing at any point moves or resizes an EVE client. The log has no
       line about placing or restoring a client window.
 
+### Preview configuration options
+
+Four settings on the Previews card: Labels, per-character Lock, Opacity, and
+Minimize inactive clients. None of this is covered by pytest — it needs a
+real desktop and, for the minimize checks, two clients you can watch switch
+foreground.
+
+- [ ] Labels off reclaims the character-name band and the mirrored video
+      grows into it; labels on restores the band. Both take effect on
+      already-open previews without a restart.
+- [ ] **LOAD-BEARING: a preview created while labels are OFF opens with the
+      band already reclaimed.** With the Labels checkbox already off, start
+      a new EVE client (or one that has never had a preview) so a preview is
+      created fresh. `create()`'s thumbnail call site is the one
+      `show_labels` site with no automated coverage — it needs a real
+      `CreateWindowExW` and `Thumbnail.register` and cannot be reached from a
+      Linux test. A band on a freshly created preview, with labels off, is
+      the specific regression this item exists to catch.
+- [ ] Opacity dims the mirrored video and leaves the border and label at
+      full strength — drag the slider to its low end and confirm the chrome
+      stays crisp while only the video fades.
+- [ ] A locked preview refuses a left drag and accepts a right drag. Check
+      this **on a character who has never dragged their preview**, not just
+      one that already has a saved position — that is the case the lock's
+      own storage list exists for, since `locked` cannot ride in
+      `preview.layouts` without a saved rect.
+- [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
+      Activation ownership moved from the preview window into the host as
+      part of this slice; this is a pure regression check on the
+      subsystem's primary interaction, and nothing in the suite executes
+      Win32 to catch it failing.
+- [ ] Minimize-inactive: with the checkbox on, clicking a different preview
+      minimizes the client you were on, the new client ends up foreground
+      and stays there, and a character on the never-minimize list is skipped
+      entirely.
+- [ ] A failed activation leaves both clients exactly where they were — no
+      minimize happens. Hard to force deliberately; watch for it rather than
+      staging it.
+- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
+      a client with visible motion — undocked, drones out, or the camera
+      spinning. Do NOT use a docked ship on a static scene: it looks
+      identical whether the thumbnail is live or frozen on its last frame,
+      so that scene cannot tell you which one you saw. This is the check
+      that decides whether minimize-inactive is compatible with the
+      previews it sits beside.
+- [ ] Watch whether the 10 ms settle before the minimize, and the 100 ms
+      `SendMessageTimeoutW` ceiling, are enough on a real, possibly loaded
+      client — both are ported constants that have never run outside this
+      pass.
+- [ ] Watch for a failed SECOND activation: the minimize succeeds but the
+      re-activation after it is refused, leaving you on whatever Windows
+      picked instead of the client you switched to. This is silent by
+      design — there is no clean recovery — but should be observed rather
+      than assumed absent.
+- [ ] Reader's note, not a defect to file on its own: the Minimize-inactive
+      checkbox and the never-minimize column sit in the card headed "Global
+      keybinds" — right for their adjacency to that column, but that card's
+      intro tells the user everything in it is a global keybind, and
+      minimize-inactive is not one. Worth noticing during the walk.
+
 ## EVE preview hotkeys
 
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
