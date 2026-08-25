@@ -14,14 +14,24 @@ the old event loop, and answers it with an owned loop.
 import ctypes
 import logging
 import threading
+import time
 
-from . import cycle, discovery, geometry, gestures, layout, win32
+from . import cycle, discovery, geometry, gestures, layout, switching, win32
 from . import window as window_mod
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
 
 SWEEP_MS = 700  # TriffView uses the same interval
+# Between activating the next client and minimizing the previous one.
+# TriffView's own constant, kept at its value: the minimize is a message
+# to another process's queue, and sending it the instant the foreground
+# moved raced the switch often enough that TriffView tuned this in.
+SWITCH_SETTLE_MS = 10
+# Upper bound on the minimize send. With SMTO_ABORTIFHUNG this is what
+# keeps a still-loading EVE client from stalling the preview thread --
+# see the SendMessageTimeoutW bind comment in win32.py.
+MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
@@ -632,8 +642,85 @@ class PreviewHost:
         The bool is window_mod.activate's verdict, read from
         GetForegroundWindow -- callers that do more work after the switch
         need to know it actually happened.
+
+        The whole sequence runs synchronously on the preview thread --
+        the same thread that pumps hotkeys, alerts and the sweep -- and
+        it is the one place that blocks it: SWITCH_SETTLE_MS of sleep
+        plus up to MINIMIZE_TIMEOUT_MS waiting on another process's
+        message queue, so ~110ms worst case with nothing else dispatched.
+        That is per switch, never per sweep, and SMTO_ABORTIFHUNG is what
+        bounds the second half; a bare SendMessageW there would not be
+        bounded at all (win32.py records why it is not bound).
         """
-        return window_mod.activate(libs, client.hwnd)
+        # Read BEFORE activating: once the foreground has moved there is
+        # nothing left to identify the outgoing client by. This ordering
+        # is the reason the switch has a single owner -- the click path
+        # used to activate inside window.py and tell the host afterwards,
+        # by which point this read was already too late.
+        previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
+        previous_key, previous = next(
+            ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
+            (None, None),
+        )
+
+        ok = window_mod.activate(libs, client.hwnd)
+
+        # Every decision about *whether* to minimize lives in switching.py
+        # so it can be tested off Windows; this function owns only the
+        # Win32 calls and their order.
+        #
+        # `activated=ok` is the safety property, ported from TriffView,
+        # which returns early on the same condition: minimizing after a
+        # refused switch takes away the client the user was looking at
+        # and gives them nothing in return -- an empty desktop with no
+        # window focused, strictly worse than the switch simply not
+        # working.
+        if not switching.should_minimize(
+            enabled=self._minimizing_inactive(),
+            activated=ok,
+            previous_key=previous_key,
+            next_key=client.stable_key,
+            # should_minimize only asks whether previous_key is in the
+            # roster, so the guarded per-key reader answers it exactly;
+            # there is no guarded reader for the whole list.
+            never=[previous_key] if self._is_never_minimize(previous_key) else [],
+        ):
+            return ok
+
+        time.sleep(SWITCH_SETTLE_MS / 1000.0)
+        sent = libs.user32.SendMessageTimeoutW(
+            previous.hwnd,
+            win32.WM_SYSCOMMAND,
+            win32.SC_MINIMIZE,
+            0,
+            win32.SMTO_ABORTIFHUNG,
+            MINIMIZE_TIMEOUT_MS,
+            None,
+        )
+        if not sent:
+            # Zero means the send timed out or was abandoned (ABORTIFHUNG),
+            # so the client never processed the message and is still where
+            # it was. Nothing to re-activate around, and re-activating
+            # anyway would just be a second unexplained foreground change.
+            # INFO for the same reason window.py logs a refused activation
+            # at INFO: the root logger runs at INFO, and this is what
+            # "minimize sometimes does nothing" looks like in a user's log.
+            logger.info(
+                "Minimize of 0x%x timed out after %dms; leaving it as it is",
+                previous.hwnd,
+                MINIMIZE_TIMEOUT_MS,
+            )
+            return ok
+
+        # Re-activate. Minimizing the outgoing window makes Windows hand
+        # the foreground to whatever it picks next, which is not the
+        # client just switched to -- without this line the minimize
+        # steals focus straight back off the target and the switch looks
+        # like it half-worked. TriffView's README calls the tuned result
+        # "no more dropping to desktop or lagging when cycling"; both
+        # halves of that sentence are load-bearing lines here.
+        window_mod.activate(libs, client.hwnd)
+        return ok
 
     def _apply_alerts(self, libs, pending) -> None:
         """No-op for now -- rendering the alert on its preview window is

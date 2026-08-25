@@ -1471,3 +1471,160 @@ def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
     h._on_hotkey(libs, next(iter(user32.registered)))
 
     assert seen == [0x1234]
+
+
+class _SwitchUser32(_FakeUser32):
+    """Records the foreground reads and the minimize sends into a shared
+    order log, so a test can assert the SEQUENCE and not just the calls --
+    the ordering is the whole feature here."""
+
+    def __init__(self, order, foreground=0, send_result=1):
+        super().__init__(foreground=foreground)
+        self._order = order
+        self._send_result = send_result
+
+    def GetForegroundWindow(self):
+        self._order.append(("foreground", self._foreground))
+        return self._foreground
+
+    def SendMessageTimeoutW(self, hwnd, msg, wparam, lparam, flags, timeout, result):
+        self._order.append(("send", hwnd, msg, wparam, lparam, flags, timeout))
+        return self._send_result
+
+
+def _switching_host(
+    monkeypatch,
+    *,
+    foreground,
+    activated=True,
+    send_result=1,
+    minimize=True,
+    never=(),
+):
+    """A host with two clients, Alice on 0x1111 and Bravo on 0x2222, whose
+    activation, sleep and minimize send are all recorded in one log."""
+    order = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: order.append(("activate", hwnd)) or activated,
+    )
+    monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
+    user32 = _SwitchUser32(order, foreground=foreground, send_result=send_result)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        minimize_inactive_clients=lambda: minimize,
+        never_minimize=lambda: list(never),
+    )
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    return h, _FakeLibs(user32), order
+
+
+def test_the_switch_reads_the_foreground_activates_settles_minimizes_reactivates(
+    monkeypatch,
+):
+    """The order is the feature. Reading the foreground after activating
+    identifies the wrong client; minimizing before the settle races the
+    switch; and skipping the second activation hands the foreground to
+    whatever Windows picks after the minimize."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [
+        ("foreground", 0x1111),
+        ("activate", 0x2222),
+        ("sleep", host.SWITCH_SETTLE_MS / 1000.0),
+        (
+            "send",
+            0x1111,
+            host.win32.WM_SYSCOMMAND,
+            host.win32.SC_MINIMIZE,
+            0,
+            host.win32.SMTO_ABORTIFHUNG,
+            host.MINIMIZE_TIMEOUT_MS,
+        ),
+        ("activate", 0x2222),
+    ]
+
+
+def test_a_refused_switch_minimizes_nothing(monkeypatch):
+    """The safety property, ported from TriffView. Minimizing after an
+    activation that did not take leaves the user on an empty desktop with
+    nothing focused -- their old client gone and the new one never
+    arrived, which is strictly worse than the switch failing quietly."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is False
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_a_timed_out_minimize_does_not_reactivate(monkeypatch):
+    """A zero return means the client never processed the message, so it
+    is still exactly where it was. There is no foreground theft to undo,
+    and a second activation would be an unexplained focus change."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    kinds = [entry[0] for entry in order]
+    assert kinds == ["foreground", "activate", "sleep", "send"]
+
+
+def test_a_never_minimize_character_is_left_alone(monkeypatch):
+    """The roster names the client being switched AWAY from -- the one
+    that would be minimized."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, never=("Alice",))
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, minimize=False)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+
+
+def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
+    monkeypatch,
+):
+    """window_mod.activate returns True EARLY when the target is already
+    foreground, without touching anything -- so this arrives here as a
+    successful activation whose previous and next client are the same.
+    Minimizing on it would minimize the very client just clicked."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x2222)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0x2222), ("activate", 0x2222)]
+
+
+def test_the_switch_reports_the_activation_verdict_even_when_it_minimizes(monkeypatch):
+    """The bool is window_mod.activate's, not the minimize send's: the
+    minimize is a side effect, and a caller asking whether the switch took
+    must not be told 'no' because a client was slow to minimize."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+
+def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
+    """A browser, Discord, or Wingman itself. Nothing in the roster owns
+    that hwnd, so there is no previous client to minimize -- and sending
+    SC_MINIMIZE to whatever happened to be foreground would minimize the
+    user's other application on every switch."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0xDEAD)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert order == [("foreground", 0xDEAD), ("activate", 0x2222)]
