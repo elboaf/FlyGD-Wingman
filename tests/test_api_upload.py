@@ -399,8 +399,7 @@ def test_the_confirm_names_the_discord_half_when_logs_are_requested(tmp_path):
 
 
 def test_the_confirm_withdraws_the_discord_promise_on_a_fresh_install(tmp_path):
-    """The checkbox is ticked and no webhook is configured -- the state
-    every fresh install starts in.
+    """No webhook is configured -- the state every fresh install starts in.
 
     Api reads the webhook out of live settings and hands it to the confirm,
     which parses it with the same discord.parse_webhook _post_combat_logs
@@ -416,7 +415,7 @@ def test_the_confirm_withdraws_the_discord_promise_on_a_fresh_install(tmp_path):
 
     ((_title, body),) = api._confirm.asked
     assert "posted to Discord" not in body
-    assert "skipped" in body
+    assert "not posted" in body
 
 
 def test_declining_the_confirm_posts_no_logs_either(monkeypatch, tmp_path):
@@ -528,17 +527,32 @@ def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_
     assert texts.index("Upload complete!") < len(texts) - 1
 
 
-def test_leaving_the_box_unchecked_uploads_the_video_alone(monkeypatch, tmp_path):
+def test_the_logs_argument_no_longer_suppresses_the_post(monkeypatch, tmp_path):
+    """Uploader 8: the checkbox had no true second state, so logs are
+    unconditional and a configured webhook is what decides the post.
+
+    The parameter is still ACCEPTED because the page still sends it -- R1
+    removes the control, and until that lands a shorter signature would
+    break every upload. So the guard is that a False arriving from a page
+    that predates R1 changes nothing: this is the one window in which the
+    old value and the new behaviour coexist, and it must resolve toward
+    the new one.
+    """
     api, _window, _rows = combined_api(tmp_path, monkeypatch)
     posted = []
     monkeypatch.setattr(
-        api_mod.discord, "post_archive", lambda hook, path, content: posted.append(path)
+        api_mod.discord,
+        "post_archive",
+        lambda hook, path, content: (
+            posted.append(path),
+            discord.PostResult(ok=True, message="Posted combatlogs.zip."),
+        )[1],
     )
 
     api.start_upload("Fight", "d", False, False, ["r1"])
     join(api)
 
-    assert posted == []
+    assert len(posted) == 1
     assert api._alert.raised == []
 
 
@@ -551,11 +565,46 @@ def test_leaving_the_box_unchecked_uploads_the_video_alone(monkeypatch, tmp_path
 # than pretend it did nothing.
 
 
-def test_an_unconfigured_webhook_skips_the_logs_and_keeps_the_video(
-    monkeypatch, tmp_path
-):
+def test_an_unconfigured_webhook_says_nothing_at_all(monkeypatch, tmp_path):
+    """No webhook is a fact about the install, not a skipped request.
+
+    This used to end on a WARNING strip, and that was right while a ticked
+    checkbox meant the user had asked for logs on this run. Uploader 8
+    removed the checkbox, so nobody asked -- and reporting a skip anyway
+    would put a warning on every upload a webhook-less install ever
+    performs. That is the exact failure format_upload_confirm's docstring
+    records: a strip "reading like a recurring failure rather than an
+    unconfigured option".
+
+    The fact belongs on the panel, where it is true all the time. R1
+    renders it there.
+    """
     api, _window, _rows = combined_api(
         tmp_path, monkeypatch, settings={"discord_webhook": ""}
+    )
+    sent = fakes.record_pushes(api)
+
+    api.start_upload("Fight", "d", False, True, ["r1"])
+    join(api)
+
+    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    final = fakes.payloads(sent, "onStatus")[-1]
+    assert "skipped" not in final["text"].lower()
+    assert final["kind"] != "WARNING"
+    assert api._alert.raised == []
+
+
+def test_a_webhook_that_does_not_parse_still_warns(monkeypatch, tmp_path):
+    """The counterpart to the above, and the reason it checks emptiness
+    rather than just `hook is None`.
+
+    A user who PUT something in the field and got it wrong has a real
+    problem, and nothing else in the app will tell them: the field's own
+    validation ran when they typed it, not on this upload. Configured and
+    unusable keeps the strip; never configured does not.
+    """
+    api, _window, _rows = combined_api(
+        tmp_path, monkeypatch, settings={"discord_webhook": "https://example.com/nope"}
     )
     sent = fakes.record_pushes(api)
 

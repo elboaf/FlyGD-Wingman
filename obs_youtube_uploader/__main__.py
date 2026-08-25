@@ -197,7 +197,7 @@ def build_tray(on_open, on_quit):
         draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
 
     menu = pystray.Menu(
-        pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
+        pystray.MenuItem("Open Wingman", lambda *_: on_open(), default=True),
         pystray.MenuItem("Quit", lambda *_: on_quit()),
     )
     return pystray.Icon("obs_youtube_uploader", image, "FlyGD Wingman", menu)

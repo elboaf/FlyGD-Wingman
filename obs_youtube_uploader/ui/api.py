@@ -33,6 +33,7 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .. import __version__ as _version
 from .. import (
     bookmarks,
     combatlog,
@@ -705,6 +706,19 @@ class Api:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
     def start_upload(self, title, description, stitch, logs, ids) -> None:
+        # `logs` is accepted and IGNORED. Uploader 8: the checkbox had no
+        # true second state -- "there is no scenario where I don't want to
+        # upload logs also" -- so the choice moved out of one click from
+        # Upload and into whether a webhook is configured at all, which is
+        # the fact that actually decides it. PRODUCT.md backs an
+        # opinionated default here ("does not have to be neutral"), and a
+        # fork that wants logs off belongs in settings.py, not on the panel.
+        #
+        # The parameter survives the control it served because the page
+        # still passes it: R1 removes the checkbox, and until that lands a
+        # four-argument signature would break every upload. Delete it when
+        # the caller stops sending it, not before.
+        del logs
         # privacy and category are NOT parameters. They are settings, and
         # the settings are Python's -- as they were in the Tk build, which
         # read self.state.settings at dispatch time. A page that holds its
@@ -740,7 +754,11 @@ class Api:
             stitch=bool(stitch),
             privacy=privacy,
             category=category,
-            logs=bool(logs),
+            # Unconditional now. The webhook predicate downstream is what
+            # gates the post, and it is read live in both places that need
+            # it (the confirm, and _post_combat_logs) rather than
+            # snapshotted here -- Settings is reachable between them.
+            logs=True,
         )
         self._upload_thread = threading.Thread(
             target=self._confirm_then_upload, args=(job,), daemon=True
@@ -760,7 +778,6 @@ class Api:
             job.privacy,
             self._state.settings.get("channel_title", ""),
             job.stitch,
-            job.logs,
             # Read here rather than snapshotted onto the job: the confirm
             # has to describe the webhook _post_combat_logs will find when
             # it runs, and Settings is reachable between the two.
@@ -1119,8 +1136,26 @@ class Api:
         window keeps painting through the probe below.
         """
         cfg = self._state.settings
-        hook, error = discord.parse_webhook(cfg.get("discord_webhook"))
+        raw = cfg.get("discord_webhook") or ""
+        hook, error = discord.parse_webhook(raw)
         if hook is None:
+            if not raw.strip():
+                # NOT configured is not the same as configured-and-broken,
+                # and since Uploader 8 removed the checkbox the difference
+                # decides whether saying anything is honest. Nobody asked
+                # for logs on this run -- logs are unconditional now -- so
+                # reporting them as "skipped" would put a WARNING strip on
+                # every upload a webhook-less install ever performs. That
+                # is precisely the failure format_upload_confirm's
+                # docstring records: a strip "reading like a recurring
+                # failure rather than an unconfigured option".
+                #
+                # The no-webhook case is a fact about the install, and it
+                # belongs on the panel where it is true all the time, not
+                # on the strip once per upload. R1 renders it there.
+                return
+            # Configured and unusable IS worth a strip: the user set
+            # something, it does not parse, and nothing else will say so.
             self._skip_logs(f"{error} Set it up in Settings.")
             return
 
@@ -1300,6 +1335,20 @@ class Api:
             "destination": copy_mod.format_destination(
                 cfg.get("channel_title", ""), cfg.get("privacy", "")
             ),
+            # Pushed from __version__, never typed into the page. M2: the
+            # value was already plumbed to the Discord user-agent, the ESI
+            # user-agent and the backup names, and the UI was the only
+            # consumer that never read it -- so a user reporting a bug had
+            # no way to say which build they were on. A hand-typed copy in
+            # the page is exactly the drift DESIGN.md's "State that must
+            # not be retyped" exists to stop.
+            #
+            # It rides the settings payload rather than a bridge method of
+            # its own because get_settings is already the one read the page
+            # makes at load, and a new _push name would need a WM.HANDLERS
+            # entry. Top level, beside the other derived values: it is not
+            # a setting and must never be written back.
+            "version": _version,
         }
 
     def get_settings(self) -> dict:
@@ -2336,6 +2385,67 @@ class Api:
                 {"root": picked, "server": None, "profile": None},
             )
             return picked
+
+    def eve_settings_detect_root(self) -> str:
+        """Detect the EVE settings root, the way Folders detects OBS's.
+
+        Profiles 4: `Detect` exists in Settings > Folders AND on the
+        first-run screen, for a folder that is shallower and better known
+        than this one -- while the EVE settings root, the folder the
+        product is named for, got `Choose folder...` alone. PRODUCT.md
+        names the job directly: "assume fluency. Do not explain EVE. Do
+        explain Wingman -- where a folder is."
+
+        A sibling of eve_settings_pick_root rather than a branch of
+        detect_folder, and the difference is deliberate. detect_folder
+        RETURNS a suggestion and leaves Save to the user, because its
+        fields sit in an immediate-save form where writing under the user
+        would discard their other edits. This screen has no form: its
+        neighbour `Choose folder...` commits the moment the dialog closes.
+        A Detect that only suggested, beside a Choose that commits, would
+        be two behaviours for one question on one screen -- which is the
+        class of inconsistency this whole round is about.
+
+        So: same lock, same selection reset, same return shape as the
+        picker. The lock is held across the probe for the picker's reason
+        -- a mutation must not start midway.
+        """
+        with self._eve_hold() as held:
+            if not held:
+                return ""
+            found = evesettings_tree.default_root()
+            if not found.is_dir():
+                # Named, not just refused. The path is the useful half of
+                # the answer: a user whose EVE lives somewhere else learns
+                # where we looked, which is what tells them Choose folder...
+                # is the way out.
+                self._alert(
+                    "info",
+                    "EVE settings folder not found",
+                    "Could not find an EVE settings folder at:\n"
+                    f"{found}\n\n"
+                    "Use Choose folder... to point at it.",
+                )
+                return ""
+            section = self._eve_section()
+            if str(found) == str(section.get("root") or ""):
+                # Agreement reported as agreement, not as a silent rewrite
+                # -- detect_folder's rule, and the reason it takes the live
+                # value rather than the stored one. Returning "" here also
+                # keeps the selection intact, which the write path below
+                # would otherwise clear for no reason.
+                self._alert(
+                    "info",
+                    "EVE settings folder",
+                    f"Already set to the detected folder:\n{found}",
+                )
+                return ""
+            settings_mod.update_section(
+                self._state.settings,
+                "eve_settings",
+                {"root": str(found), "server": None, "profile": None},
+            )
+            return str(found)
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
         with self._eve_hold() as held:

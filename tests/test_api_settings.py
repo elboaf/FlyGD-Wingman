@@ -7,6 +7,7 @@ live watcher and not just the settings file.
 """
 
 import copy
+import pathlib
 import types
 
 import pytest
@@ -140,6 +141,51 @@ def test_the_settings_payload_describes_the_webhook_without_its_token(
 
     assert "1538615213203656754" in payload["webhook_status"]
     assert "tok" not in payload["webhook_status"].split("/")[-1]
+
+
+def test_the_settings_payload_carries_the_version_from_dunder_version(
+    monkeypatch, tmp_path
+):
+    """M2: the version was plumbed everywhere except the one place a user
+    could read it, so a bug report could not say which build it was against.
+
+    Asserted against obs_youtube_uploader.__version__ rather than against a
+    literal, on purpose. A literal here is a fourth hand-typed copy of the
+    thing this finding exists to stop being hand-typed -- it would pass
+    while disagreeing with the app, which is the exact failure mode.
+
+    Top level, beside the other derived values: it is not a setting and the
+    page must never write it back.
+    """
+    from obs_youtube_uploader import __version__
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    payload = api.get_settings()
+
+    assert payload["version"] == __version__
+    assert "version" not in payload["settings"]
+
+
+def test_the_declared_version_is_the_one_the_installer_ships(monkeypatch, tmp_path):
+    """pyproject.toml derives its version from __version__ since M2, so the
+    two can no longer disagree. packaging/installer.iss cannot -- Inno
+    Pascal has no way to import Python -- so it stays hand-typed and this is
+    the pair that can still drift.
+
+    ci.yml checks the same thing in bash. Duplicated here deliberately: the
+    CI check runs on a workflow file a contributor may not read, and a
+    version bump that misses installer.iss ships an installer whose FILENAME
+    claims one version while the app inside reports another.
+    """
+    import re
+
+    from obs_youtube_uploader import __version__
+
+    iss = pathlib.Path(__file__).resolve().parents[1] / "packaging" / "installer.iss"
+    match = re.search(r'#define AppVersion "([^"]+)"', iss.read_text(encoding="utf-8"))
+    assert match is not None, "installer.iss no longer declares AppVersion"
+    assert match.group(1) == __version__
 
 
 def test_browse_opens_a_native_folder_dialog_at_the_current_folder(

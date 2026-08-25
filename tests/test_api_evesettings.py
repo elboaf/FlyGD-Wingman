@@ -6,6 +6,7 @@ import pytest
 
 from obs_youtube_uploader import paths, settings
 from obs_youtube_uploader.ui import api as api_mod
+from tests import fakes
 from tests.fakes import FakeWindow
 
 
@@ -611,3 +612,74 @@ def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch
     api._eve_section()["auto_keep"] = 3
 
     assert api.eve_settings_state()["auto_keep"] == 3
+
+
+# --- detecting the root, the way Folders detects OBS's ----------------------
+#
+# Profiles 4: `Detect` existed in Settings > Folders AND on first run, for a
+# folder shallower and better known than this one, while the EVE settings
+# root -- the folder the product is named for -- got `Choose folder...`
+# alone. These cover the three answers the probe can give.
+
+
+def test_detect_root_finds_the_default_location_and_commits_it(tmp_path, monkeypatch):
+    """Commits, rather than suggesting. Its neighbour `Choose folder...`
+    writes the moment the dialog closes, and a Detect that only proposed
+    would be two behaviours for one question on one screen."""
+    api = build(tmp_path, monkeypatch)
+    api._alert = fakes.Alerts()
+    root = tmp_path / "CCP" / "EVE"
+    (root / "server_tranquility" / "settings_Default").mkdir(parents=True)
+
+    found = api.eve_settings_detect_root()
+
+    assert found == str(root)
+    assert api._state.settings["eve_settings"]["root"] == str(root)
+    assert api._alert.raised == []
+
+
+def test_detect_root_names_where_it_looked_when_there_is_nothing_there(
+    tmp_path, monkeypatch
+):
+    """The path is the useful half of the answer: a user whose EVE lives
+    elsewhere learns where we looked, which is what tells them
+    `Choose folder...` is the way out."""
+    api = build(tmp_path, monkeypatch)
+    api._alert = fakes.Alerts()
+
+    found = api.eve_settings_detect_root()
+
+    assert found == ""
+    ((kind, _title, body),) = api._alert.raised
+    assert kind == "info"
+    assert str(tmp_path / "CCP" / "EVE") in body
+    assert "Choose folder" in body
+    # Nothing written: the section keeps its unset default.
+    assert api._state.settings["eve_settings"]["root"] is None
+
+
+def test_detect_root_reports_agreement_rather_than_rewriting_the_selection(
+    tmp_path, monkeypatch
+):
+    """detect_folder's rule, and the reason it compares before writing. The
+    write path clears server and profile, so a detection that merely agrees
+    with what is already set would throw away a selection for no reason."""
+    api = build(tmp_path, monkeypatch)
+    api._alert = fakes.Alerts()
+    root = tmp_path / "CCP" / "EVE"
+    (root / "server_tranquility" / "settings_Default").mkdir(parents=True)
+    settings.update_section(
+        api._state.settings,
+        "eve_settings",
+        {"root": str(root), "server": "tranquility", "profile": "Default"},
+    )
+
+    found = api.eve_settings_detect_root()
+
+    assert found == ""
+    ((_kind, _title, body),) = api._alert.raised
+    assert "Already set" in body
+    # The selection survived.
+    section = api._state.settings["eve_settings"]
+    assert section["server"] == "tranquility"
+    assert section["profile"] == "Default"

@@ -63,7 +63,6 @@ def format_upload_confirm(
     privacy: str,
     channel_title: str,
     stitch: bool,
-    logs: bool,
     discord_webhook: str,
 ) -> str:
     """The body of the confirm shown before anything is published.
@@ -79,10 +78,13 @@ def format_upload_confirm(
     reformatted here, so the numbering shown is the numbering that will be
     sent. A second implementation of that rule would drift from it.
 
-    `logs` adds one line rather than a second dialog. One button now
-    publishes to two places, and this is the only screen a user sees
-    between pressing it and the upload starting, so the Discord half has to
-    be named here or it is never disclosed at all.
+    The log line is not conditional on a control any more. Uploader 8
+    removed the checkbox -- it had no true second state for the people who
+    use this -- so what decides whether logs are posted is whether a
+    webhook is configured, and this dialog states which of those two
+    worlds the user is in. One button publishes to two places, and this is
+    the only screen seen between pressing it and the upload starting, so
+    the Discord half has to be named here or it is never disclosed at all.
 
     The RAW webhook is taken rather than a "is one configured" boolean, and
     parsed here with the same discord.parse_webhook the upload half uses
@@ -121,20 +123,33 @@ def format_upload_confirm(
 
     # The same predicate _post_combat_logs runs, not a paraphrase of it:
     # anything that parses to a hook gets posted, and nothing else does.
-    posting = bool(logs and discord.parse_webhook(discord_webhook)[0])
+    posting = bool(discord.parse_webhook(discord_webhook)[0])
 
-    if not logs:
-        logs_line = ""
-    elif posting:
+    if posting:
         logs_line = "Logs:     combat logs posted to Discord afterwards\n"
-    else:
-        # Named rather than omitted. The checkbox is ticked and the user
-        # is looking at the summary of what they asked for, so silence
-        # here reads as agreement -- and the skip is only announced after
-        # the upload, on the status strip, where it is too late to fix.
+    elif not discord_webhook.strip():
+        # Stated as a fact about the install, not as a skipped request --
+        # there is no checkbox to have ticked any more. It stays in the
+        # dialog because this is a cost summary and the reader needs to
+        # know the Discord half will not happen; the wording no longer
+        # implies they asked for it and were refused.
         logs_line = (
-            "Logs:     skipped — no Discord webhook is configured\n"
+            "Logs:     not posted — no Discord webhook is configured\n"
             "          (set one in Settings)\n"
+        )
+    else:
+        # Configured and unusable is NOT the same as never configured, and
+        # telling this user "no webhook is configured" is simply false --
+        # they set one, and it is wrong. They would go to Settings, see a
+        # populated field, and have no idea what the dialog meant.
+        #
+        # Api._post_combat_logs draws the same line for the same reason
+        # (empty stays silent, broken gets a WARNING strip). The two have
+        # to agree: this dialog is read before the upload and that strip
+        # after it, about one webhook.
+        logs_line = (
+            "Logs:     not posted — the Discord webhook is not valid\n"
+            "          (check it in Settings)\n"
         )
 
     final = (
