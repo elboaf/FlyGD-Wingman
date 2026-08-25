@@ -13,7 +13,7 @@ status-strip comment), `web/app.js`, `web/index.html` (titlebar and
 
 ## To S4 — `DESIGN.md`
 
-Three rules S1 settled that belong in `DESIGN.md`, which S1 does not own.
+Four rules S1 settled that belong in `DESIGN.md`, which S1 does not own.
 
 **1. Column headers share the inset of the rows they label.** (Walkthrough
 Skills 7, same defect as Uploader 3.) `PLANS` sits ~22px left of its
@@ -45,7 +45,21 @@ Skills, which owns it in Python (`eveskills/evaluator.py:19`) and in the
 payload; the strip only ever meant "the app is doing nothing" and now says
 so. This removes Skills 3's roster half from R4 entirely.
 
-**4. Accent budget (Uploader 16) — see the open question at the bottom.**
+**4. Accent marks what is selected and what will happen.** (Uploader 16.)
+Approved by the maintainer. `DESIGN.md`'s existing rule — "`.btn.acc` is
+the single brand-accent control" — is written about controls, so the
+`UPLOAD` and `PUBLISH` heading bars never breached its letter; they were
+simply a third and fourth claim on a signal that carries two meanings. The
+rule to add is:
+
+> Accent marks **what is selected** and **what will happen**. A card
+> heading is neither.
+
+On the Uploader that is five accent uses down to three: the checked row's
+checkbox and its left-edge marker (what is selected) and the `Upload`
+button (what will happen). The two `.card > h2` bars lose it. **R1
+executes**; the heading-bar treatment is not confined to that screen, so
+whichever lane owns a card heading elsewhere inherits the same rule.
 
 ## To S4 and S3 — the floor claim survives in two more places
 
@@ -122,17 +136,10 @@ and not by a later event.
 
 ---
 
-## Open question for the maintainer — Uploader 16
+## Nothing left open in S1
 
-S1 owns the *decision* half and R1 the execution. The proposed rule, not
-yet approved:
-
-> Accent marks **what is selected** and **what will happen**. A card
-> heading is neither, so `.card > h2`'s accent bar loses it.
-
-`DESIGN.md`'s existing rule is written about controls, so the two heading
-bars on the Uploader (`UPLOAD`, `PUBLISH`) do not breach its letter — they
-compete with the two places accent is load-bearing. If the rule is
-approved it belongs in `DESIGN.md` (S4) and the edit belongs to R1; if it
-is not, R1's finding 16 closes with no change. Nothing in S1's branch
-depends on the answer.
+Both decisions S1 was asked to settle before starting — the idle status
+word and whether the terms link gets a token or an exemption — were
+answered by the maintainer, and Uploader 16's accent rule was approved
+afterwards. S1 holds no open question. What remains are the items above,
+each owned by a named lane.
