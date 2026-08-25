@@ -31,7 +31,7 @@ import webbrowser
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import application, evaluator, planstore, skillids, tokens
+from . import application, evaluator, plans, planstore, skillids, tokens
 from . import esi as esi_mod
 from . import jwt as jwt_mod
 from . import loopback as loopback_mod
@@ -1365,6 +1365,34 @@ class SkillsController:
             logger.exception("Could not cancel the EVE sign-in listener")
 
     # ----- detail -----------------------------------------------------
+
+    def plan_text(self, plan_name) -> str:
+        """One plan's requirements as plan-file text, or "" if it is gone.
+
+        S7: the maintainer's answer to "what do you end up doing twice" was
+        retyping a character's missing skills into EVE. They also supplied
+        the cheap version -- the WHOLE plan is enough, because EVE drops
+        already-trained skills on import -- so this needs no character and
+        no evaluation, only the plan.
+
+        A read, and deliberately not a payload key: the plan list is pushed
+        on every mutation and is already the largest payload in the app.
+        Carrying every requirement of every plan there would multiply it to
+        serve a button that is pressed rarely, and character_detail's own
+        docstring makes the same argument one level down.
+
+        The formatting is plans.format_lines -- the grammar module that
+        parses these files also writes them, so the text this puts on the
+        clipboard is text this app would read back.
+        """
+        with self._lock:
+            plan = self._find_plan_locked(str(plan_name or ""))
+            if plan is None:
+                return ""
+            requirements = plan.requirements
+        # Formatting outside the lock: it is pure, and the lock is held by
+        # refresh workers committing snapshots.
+        return plans.format_lines(requirements)
 
     def character_detail(self, character_id, plan_name) -> dict:
         """Re-evaluate one character against one plan, in full.

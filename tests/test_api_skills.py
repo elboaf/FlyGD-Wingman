@@ -1,4 +1,4 @@
-"""The nine EVE skills façade methods. The controller is faked whole.
+"""The EVE skills façade methods. The controller is faked whole.
 
 These are pure delegation, so what is worth testing is exactly the two
 things delegation gets wrong: what a mutation returns, and what happens when
@@ -15,6 +15,7 @@ class FakeSkills:
     def __init__(self):
         self.calls = []
         self.forget_result = True
+        self.plan_text_result = "Navigation IV\n"
 
     def state_payload(self):
         self.calls.append(("state_payload",))
@@ -42,6 +43,10 @@ class FakeSkills:
 
     def open_plans_folder(self):
         self.calls.append(("open_plans_folder",))
+
+    def plan_text(self, plan_name):
+        self.calls.append(("plan_text", plan_name))
+        return self.plan_text_result
 
     def select_plan(self, plan_name):
         self.calls.append(("select_plan", plan_name))
@@ -106,6 +111,7 @@ def test_every_method_tolerates_no_controller(tmp_path):
     assert api.skills_reload_plans() is True
     assert api.skills_open_plans_folder() is True
     assert api.skills_select_plan("x") is True
+    assert api.skills_plan_text("x") == ""
     api.shutdown_skills()
 
 
@@ -232,3 +238,40 @@ def test_a_payload_without_characters_is_passed_through_untouched(tmp_path):
     api, _ = make(tmp_path, FakeSkills())
 
     assert api.skills_state() == {"characters": [], "plans": []}
+
+
+def _status_lines(window):
+    """Every onStatus text the api pushed at the fake window, in order."""
+    import json
+    import re
+
+    out = []
+    for script in window.calls:
+        match = re.search(r"window\.onStatus\((.*)\)$", script)
+        if match:
+            out.append(json.loads(match.group(1)))
+    return out
+
+
+def test_copying_a_plan_returns_its_text_and_says_so(tmp_path):
+    """S7. The page owns the clipboard write -- with Tk gone there is no
+    toolkit clipboard -- so this returns the text and reports the outcome on
+    the status strip, exactly the split copy_path uses for `Copy link`."""
+    api = make_api(tmp_path, window=FakeWindow(), skills=FakeSkills())
+
+    assert api.skills_plan_text("Ishtar") == "Navigation IV\n"
+    assert api._skills.calls[-1] == ("plan_text", "Ishtar")
+    assert _status_lines(api._window)[-1]["kind"] == "SUCCESS"
+
+
+def test_a_plan_that_no_longer_exists_is_reported_not_silent(tmp_path):
+    """ "" is a plan the last reload invalidated, never an empty plan:
+    plans.parse rejects a file with no requirements, so a listed plan always
+    has at least one. The page copies nothing; the strip says why."""
+    skills = FakeSkills()
+    skills.plan_text_result = ""
+    api = make_api(tmp_path, window=FakeWindow(), skills=skills)
+
+    assert api.skills_plan_text("Ishtar") == ""
+    line = _status_lines(api._window)[-1]
+    assert line["kind"] == "WARNING" and "Reload plans" in line["text"]

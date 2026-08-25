@@ -441,6 +441,41 @@ class Api:
         except Exception:
             logger.debug("Push of %s failed", handler, exc_info=True)
 
+    def _push_skills(self, handler: str, payload) -> None:
+        """The skills subsystem's push, with presentation labels added.
+
+        D3/S6. `_with_fetch_labels` was applied by the `skills_state`
+        METHOD and nowhere else, while eveskills.controller pushed
+        `state_payload()` raw. skills.js asks for state on first entry only
+        (it says so at skills.js:76-79 -- after that every mutation
+        pushes), and both payloads land in the same renderer, so the first
+        render of the route was labelled and EVERY render after it was not.
+        The page's own fallback then printed "Never fetched" for every
+        character however recently fetched, beside queue timing drawn from
+        the same payload -- which is the contradiction the maintainer
+        reported.
+
+        This is the failure class CLAUDE.md warns about and it is why the
+        fix is here: a missing KEY crossing the bridge is a silent no-op,
+        test_bridge_contract.py checks handler names rather than payload
+        shape, and nothing in the suite renders the page.
+
+        Label-building deliberately stays in ui/ rather than moving into
+        controller.state_payload -- _with_fetch_labels' own docstring gives
+        the reason (the controller is the only writer of the skills
+        document, the label is presentation, and state_payload may hand
+        back structures the document still references, so a key written
+        there is one save away from being persisted). Wrapping the push
+        callback keeps that boundary and closes the gap it created.
+
+        Passed to the controller as this bound method, so onSkillsProgress
+        and any later event go through unchanged -- a name resolved lazily
+        in a lambda is what tests/test_skills_wiring.py forbids.
+        """
+        if handler == "onSkills":
+            payload = _with_fetch_labels(payload)
+        self._push(handler, payload)
+
     # The status strip is global chrome: it is the same strip on every
     # route, and app.js deliberately never tells Python which route is
     # showing. So the page cannot work out on its own whether what the
@@ -3185,6 +3220,28 @@ class Api:
                 "requirements": [],
             }
         return self._skills.character_detail(character_id, plan_name)
+
+    def skills_plan_text(self, plan_name) -> str:
+        """The selected plan as text, for the page to put on the clipboard.
+
+        S7. The write itself is the page's job for the same reason
+        copy_path's is: with Tk gone there is no toolkit clipboard and
+        navigator.clipboard is right there.
+
+        "" means the plan could not be read -- the page holds a plan list
+        that a reload may have invalidated, exactly as skills_select_plan
+        documents. A listed plan always has at least one requirement
+        (plans.parse rejects a file with none), so "" never means "an empty
+        plan" and the page can treat it as the failure it is.
+        """
+        if self._skills is None:
+            return ""
+        text = self._skills.plan_text(plan_name)
+        if not text:
+            self._status("That plan is no longer available. Reload plans.", "WARNING")
+            return ""
+        self._status("Skill plan copied to clipboard", "SUCCESS")
+        return text
 
     def skills_add_character(self) -> bool:
         """Start an interactive EVE sign-in. Returns before it finishes.

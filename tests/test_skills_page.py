@@ -220,3 +220,139 @@ def test_every_outstanding_requirement_state_has_a_rank():
         f"only in skills.js {ranked - outstanding}, "
         f"only in evaluator.py {outstanding - ranked}"
     )
+
+
+# ---- round 3: the numbers, the rows, and the two new controls ----------
+
+
+def test_every_group_count_names_the_noun_it_counts():
+    """S1. The group header names REQUIREMENTS and its number counts
+    CHARACTERS: `Missing requirements 1` sat 34 CSS px above a row reading
+    `Missing 2`, and a plan heading two lines up said `14 requirements` in
+    the same vocabulary. Round 2's finding 2 renamed the words and the
+    mismatch survived the rename, so this pins the NUMBERS -- each one
+    carries the noun it counts, and the plural is derived from the count
+    rather than being two hand-kept strings.
+    """
+    call = re.search(r"'skills-group-count',(.*?)\)\);", CODE, re.DOTALL)
+    assert call, "the group head no longer renders a count"
+    assert "character" in call.group(1), (
+        "the group count is a bare number again; it counts characters and "
+        "must say so, beside a header that names requirements"
+    )
+
+
+def test_no_row_restates_the_status_of_the_group_it_is_in():
+    """S2. The roster groups BY STATUS, so the row's status column could not
+    say anything the header above it had not already said -- each state was
+    stated three times over (swatch, group name, row). What survives is only
+    what varies inside one group: a Missing row's count and a Training row's
+    ETA.
+
+    Checked against GROUP_LABEL, so a group added later cannot quietly
+    reintroduce the restatement: no label may appear as a return value of
+    statusLine(). `Missing` is the one that would slip through -- the row
+    says `2 requirements` and the header says `Missing requirements`, which
+    share a word but not a statement -- so the check is on the FULL label.
+    """
+    body = re.search(r"function statusLine\(ch\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert body, "statusLine() is gone"
+    # The RETURNED literals only. The readiness names also appear on the
+    # left of every `===` in there, and a naive scan of the whole body
+    # would fail on the comparisons that decide the answer.
+    returned = [
+        literal
+        for statement in re.findall(r"return([^;]*);", body.group(1))
+        for literal in re.findall(r"'([^']*)'", statement)
+    ]
+    assert returned, "statusLine() returns no literals at all"
+
+    labels = re.search(r"var GROUP_LABEL = \{(.*?)\};", CODE, re.DOTALL)
+    assert labels, "GROUP_LABEL is gone"
+    for label in re.findall(r":\s*'([^']+)'", labels.group(1)):
+        assert label not in returned, (
+            f"a row restates its own group header ({label!r}); the status "
+            "column may only carry what varies inside one group"
+        )
+
+
+def test_the_destructive_control_is_the_apps_one_destructive_treatment():
+    """S3/S4. `Forget character` was red text with no button -- the fourth
+    of four treatments for "this destroys something", and the only one that
+    was not a control at all, in the same --err the `Missing` row about 130
+    CSS px above it used for an ordinary fact.
+
+    Treatment only: the inline two-step stays, because this row is the only
+    surface in the app for forgetting or re-authenticating a character and a
+    dialog would cover it.
+    """
+    forget = re.search(r"'([\w ]*)', 'Forget character'", CODE)
+    assert forget, "the Forget control moved or was renamed"
+    assert forget.group(1) == "btn danger", (
+        "`Forget character` is not the shared destructive treatment: " + forget.group(1)
+    )
+    assert "confirming = ch.character_id" in CODE, (
+        "the inline two-step is gone; R3 was to convert the treatment, not "
+        "the confirmation"
+    )
+
+
+def test_the_page_does_not_invent_a_fetch_history_it_was_not_sent():
+    """D3/S6. `fetched_label` is Python's, and the page's own
+    `|| 'Never fetched'` fallback printed it for every character on every
+    render after the first -- beside queue timing from the same payload,
+    which is the contradiction the maintainer reported. An absent label is a
+    label we do not have, not a claim about history.
+    """
+    assert "'Never fetched'" not in CODE, (
+        "skills.js invents a fetch history again; the label is Python's, "
+        "and an absent one renders nothing"
+    )
+
+
+def test_a_character_with_no_snapshot_says_so_and_carries_the_control():
+    """S6's surviving half. `Never fetched` explained nothing and had no
+    affordance beside it -- `Refresh characters` is ~700 CSS px away in the
+    rail with nothing connecting them -- and PRODUCT.md obliges Wingman to
+    explain itself.
+
+    The same character is why the requirement list needed its own branch:
+    evaluator.evaluate returns an EMPTY tuple before it scores anything when
+    there is no snapshot, so the list printed "every requirement is trained
+    and active" for a character whose skills had never been read.
+    """
+    note = re.search(r"function fetchedNode\(ch\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert note, "fetchedNode() is gone"
+    assert "skills_refresh" in note.group(1), (
+        "the never-fetched note has no affordance beside it again"
+    )
+
+    empty = re.search(r"if \(!outstanding\.length\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert empty and "Unscored" in empty.group(1), (
+        "the empty requirement list congratulates a character whose skills "
+        "were never read"
+    )
+
+
+def test_the_plan_heading_carries_a_copy_control():
+    """S7, and the maintainer's own answer to "what do you end up doing
+    twice": retyping a character's missing skills into EVE. They supplied
+    the cheap version too -- the whole plan is enough, because the game
+    drops already-trained skills on import -- so the control sits on the
+    plan heading and needs no per-character diffing.
+
+    A .btn, not a .linkbtn: nothing else on that row acts. Disabled with no
+    plan selected, per the vocabulary's disabled-when-the-object-is-absent
+    rule.
+    """
+    head = re.search(r'<header class="skills-head">(.*?)</header>', BODY, re.DOTALL)
+    assert head, "the Skills pane header moved"
+    tag = re.search(r'<button[^>]*id="skills-copy-plan"[^>]*>', head.group(1))
+    assert tag, "the plan heading has no copy control"
+    assert 'class="btn"' in tag.group(0), (
+        "the copy control is not a plain .btn: " + tag.group(0)
+    )
+    assert "disabled" in tag.group(0), "the copy control is live with no plan selected"
+    assert "navigator.clipboard.writeText" in CODE, (
+        "nothing writes the plan text to the clipboard"
+    )

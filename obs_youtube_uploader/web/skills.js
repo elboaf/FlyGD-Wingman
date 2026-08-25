@@ -222,7 +222,30 @@
     });
     WM.el('skills-plan-count').textContent = name
       ? count + (count === 1 ? ' requirement' : ' requirements') : '';
+    // The object of this action is the plan, so with no plan selected
+    // there is nothing to copy and the control says so by being disabled
+    // rather than by failing when pressed.
+    var copy = WM.el('skills-copy-plan');
+    copy.disabled = !name;
+    copy.title = name
+      ? 'Copies every skill in “' + name + '” for EVE\u2019s skill plan '
+        + 'import. The game drops the ones already trained.'
+      : '';
   }
+
+  WM.el('skills-copy-plan').addEventListener('click', function () {
+    var name = (STATE && STATE.selected_plan_name) || '';
+    if (!name) return;
+    // Python returns the text and the page owns the clipboard write, the
+    // same split list.js:396-401 uses for `Copy link`: with Tk gone there
+    // is no toolkit clipboard and navigator.clipboard is right here.
+    // Python has already put the outcome on the status strip either way --
+    // "" is a plan the last reload invalidated, not an empty plan, because
+    // plans.parse rejects a file with no requirements.
+    WM.send('skills_plan_text', name).then(function (text) {
+      if (text) navigator.clipboard.writeText(text);
+    });
+  });
 
   function renderNotices() {
     var host = WM.el('skills-notices');
@@ -370,27 +393,49 @@
     return byName(a, b);
   }
 
-  // The exact strings the design specifies, and the only place they are
-  // composed. "Training -- timing unknown" is a real state, not a fallback:
-  // a queued requirement with no finish date means EVE reported a paused
-  // queue, and claiming an ETA from the rest would be a guess.
+  /* THE ROW MAY NOT RESTATE ITS GROUP HEADER. S2, and the rows are
+   * grouped BY STATUS, so by construction the status column could not say
+   * anything the header above it had not already said: `Ready 2` over two
+   * rows each reading `Ready`, `Untrained requirements` over three rows
+   * each reading `Not trained`. Each state was stated three times -- the
+   * swatch, the group name, the row -- and the maintainer volunteered the
+   * screen had "some unneeded text" before seeing any of this analysis.
+   *
+   * What is left is only what the header CANNOT carry, because it varies
+   * per character inside one group:
+   *
+   *   Missing    how many requirements -- and it carries its noun, which
+   *              is the other half of S1. `Missing 2` under a header
+   *              reading `Missing requirements` was the collision; `2
+   *              requirements` under it is not. The number also explains
+   *              the group's own sort (byMissingThenName, fewest first).
+   *   Training   the ETA, which is the answer someone came here for. The
+   *              word `Training` in front of it was the header's.
+   *   Other      the raw readiness string. NOT a restatement: the
+   *              catch-all header says `Unrecognised` for every row in
+   *              it, so the string that put a character there is stated
+   *              nowhere else. Same reasoning as the OTHER bucket itself.
+   *
+   * Everything else returns "" and the row is a name under a heading.
+   * That also retires one of the three `Ready`s round 2's finding 3 was
+   * left with, and it is what let the roster narrow (S8 sizes the list to
+   * its widest row).
+   *
+   * "timing unknown" is a real state, not a fallback: a queued
+   * requirement with no finish date means EVE reported a paused queue,
+   * and claiming an ETA from the rest would be a guess.
+   */
   function statusLine(ch) {
-    if (ch.readiness === 'Ready') return 'Ready';
     if (ch.readiness === 'Training') {
       var eta = formatEta(ch.estimated_finish_utc);
-      return (ch.queue_timing_unknown || !eta)
-        ? 'Training — timing unknown' : 'Training — ' + eta;
+      return (ch.queue_timing_unknown || !eta) ? 'timing unknown' : eta;
     }
-    if (ch.readiness === 'Locked') return 'Locked';
-    if (ch.readiness === 'Missing') return 'Missing ' + ch.missing_count;
-    // Not 'Unknown'. Same reason as GROUP_LABEL above: the state is a fact
-    // about the character -- a skill it has never injected -- and 'Unknown'
-    // reports it as something the app could not determine.
-    if (ch.readiness === 'Unknown') return 'Not trained';
-    if (ch.readiness === 'Unscored') return 'Unscored';
-    // The catch-all's row shows the raw string rather than inventing a
-    // label for a state this page has never heard of.
-    return ch.readiness || 'Unrecognised';
+    if (ch.readiness === 'Missing') {
+      return ch.missing_count
+        + (ch.missing_count === 1 ? ' requirement' : ' requirements');
+    }
+    if (GROUPS.indexOf(ch.readiness) !== -1) return '';
+    return ch.readiness || '';
   }
 
   // "2d 4h", "4h 20m", "12m". Two units at most: a plan finishing in
@@ -468,8 +513,19 @@
     head.appendChild(WM.make('span', 'skills-key key-' + group.name));
     head.appendChild(WM.make('span', 'skills-group-name',
                              GROUP_LABEL[group.name] || group.name));
+    // S1. The number counts CHARACTERS while the header beside it names
+    // REQUIREMENTS -- `Missing requirements 1` sat 34 CSS px above a row
+    // reading `Missing 2`, the same word with adjacent numbers counting
+    // different nouns, under a plan heading stating a third number in the
+    // same vocabulary (`14 requirements`). Round 2's finding 2 renamed the
+    // vocabulary and the mismatch survived the rename, so the fix this
+    // time is on the NUMBERS: every one on this screen now carries the
+    // noun it counts, and the row half of the same finding is at
+    // statusLine() below.
+    var count = group.rows.length;
     head.appendChild(WM.make('span', 'skills-group-count',
-                             String(group.rows.length)));
+                             count + (count === 1 ? ' character'
+                                                  : ' characters')));
     block.appendChild(head);
     group.rows.forEach(function (ch) { block.appendChild(rowNode(ch)); });
     return block;
@@ -506,8 +562,14 @@
         + 'successfully. The most recent refresh failed.';
       top.appendChild(badge);
     }
-    top.appendChild(WM.make('span', 'skills-status status-' + ch.readiness,
-                            statusLine(ch)));
+    // Appended only when it says something. An empty span still costs the
+    // row's 9px flex gap, and on the four groups whose rows now carry no
+    // status at all that is a gap after the last thing on the line.
+    var status = statusLine(ch);
+    if (status) {
+      top.appendChild(
+        WM.make('span', 'skills-status status-' + ch.readiness, status));
+    }
     top.addEventListener('click', function () { toggle(ch.character_id); });
     row.appendChild(top);
 
@@ -569,6 +631,56 @@
     });
   }
 
+  /* S6/D3. `Never fetched` was printed above rows stating queue timing
+   * for the same character, which cannot both be true, and the maintainer
+   * reported not knowing what the string meant.
+   *
+   * The contradiction was a BRIDGE BUG, not a state: `fetched_label` is
+   * built in ui/api.py and, until D3's fix, only the skills_state METHOD
+   * applied it. The page asks for state on first entry only (see the
+   * wm:route handler above), so every render after the first push arrived
+   * with no such key and this line's own `|| 'Never fetched'` invented the
+   * fact. The fallback is gone with it: an absent label is a label we do
+   * not have, not a claim about history. Python's own "Never fetched" is
+   * still rendered, because when Python says it, it is true.
+   *
+   * The second half of S6 survives that fix and is the branch below.
+   * `Never fetched` on its own explained nothing and had no affordance
+   * beside it -- `Refresh characters` is ~700 CSS px away in the rail, with
+   * nothing connecting them -- and PRODUCT.md obliges Wingman to explain
+   * itself. So a character with no snapshot says what is missing, says
+   * what would fix it, and carries the control that does.
+   *
+   * Not shown when the character needs re-authentication: that banner is
+   * already at the top of this row, says why there is no data, and offers
+   * the only action that can produce any. Two notes stacked would put the
+   * one that cannot work first. */
+  function fetchedNode(ch) {
+    // Null rather than an empty node in both silent cases: .skills-detail
+    // is a flex column with an 8px gap, so an empty <p> is a blank line.
+    if (ch.fetched_utc) {
+      return ch.fetched_label
+        ? WM.make('p', 'row-fetched', ch.fetched_label) : null;
+    }
+    if (ch.needs_reauth) return null;
+    var note = WM.make('div', 'row-note');
+    note.appendChild(WM.make(
+      'span', '',
+      'Wingman has not read this character\u2019s skills from EVE yet, so '
+      + 'nothing has been scored against this plan.'));
+    var now = WM.make('button', 'btn',
+                      STATE.refresh_in_flight ? 'Refreshing…'
+                                              : 'Refresh characters');
+    // The rail's control, in the row that needs it. There is one refresh
+    // and it covers every character, so this is deliberately the SAME
+    // action under the same name rather than a per-character one the
+    // controller does not have.
+    now.disabled = STATE.refresh_in_flight;
+    now.addEventListener('click', function () { WM.send('skills_refresh'); });
+    note.appendChild(now);
+    return note;
+  }
+
   function detailNode(ch) {
     var box = WM.make('div', 'skills-detail');
 
@@ -593,14 +705,8 @@
     }
 
     if (ch.error) box.appendChild(WM.make('p', 'row-error', ch.error));
-    // `fetched_label` is rendered by Python (ui/api.py, through
-    // library.format_date) so this row and the Uploader's age column speak
-    // one time vocabulary: this used to print a toLocaleString() --
-    // "8/25/2026, 12:12:28 AM" -- beside an uploader that says "5h ago",
-    // with seconds precision on a value where seconds cannot matter.
-    // fetched_utc is still read below, by the staleness badge.
-    box.appendChild(WM.make('p', 'row-fetched',
-                            ch.fetched_label || 'Never fetched'));
+    var fetched = fetchedNode(ch);
+    if (fetched) box.appendChild(fetched);
 
     var detail = details[ch.character_id];
     if (!detail) {
@@ -688,9 +794,23 @@
     });
     outstanding = sortByState(outstanding);
     if (!outstanding.length) {
-      list.appendChild(WM.make('p', 'hint',
-                               'Nothing outstanding — every '
-                               + 'requirement is trained and active.'));
+      // TWO reasons for an empty list, and they are opposites. A character
+      // with no snapshot is Unscored with an EMPTY requirement tuple --
+      // evaluator.evaluate returns before it scores anything (its
+      // has_snapshot gate) -- so the congratulation below was printed,
+      // verbatim, for a character whose skills had never been read. That
+      // is the same contradiction S6 reported one line up, from the other
+      // side: `Never fetched` above "every requirement is trained and
+      // active". Unscored is the ONLY way the evaluator produces an empty
+      // list without meaning it, which is what makes readiness the right
+      // thing to branch on.
+      list.appendChild(WM.make(
+        'p', 'hint',
+        detail.readiness === 'Unscored'
+          ? 'Not scored yet — this character\u2019s skills have not been '
+            + 'read from EVE.'
+          : 'Nothing outstanding — every requirement is trained and '
+            + 'active.'));
       return list;
     }
     outstanding.forEach(function (req) {
@@ -730,7 +850,15 @@
   function forgetNode(ch) {
     var foot = WM.make('div', 'forget-row');
     if (confirming !== ch.character_id) {
-      var start = WM.make('button', 'linkbtn danger', 'Forget character');
+      // .btn.danger, the app's one destructive treatment (round 3, L5).
+      // This was the last site of the retired `red text, no button`
+      // vocabulary -- and the worst of the three, because red text is not
+      // a control at all: it read as a warning label, in the same --err
+      // the row above it used for `Missing`, about 130 CSS px away.
+      // TREATMENT only. The two-step below stays: this row is the only
+      // surface in the app for forgetting or re-authenticating a
+      // character, so a dialog would cover the thing being acted on.
+      var start = WM.make('button', 'btn danger', 'Forget character');
       start.addEventListener('click', function () {
         confirming = ch.character_id;
         renderRoster();

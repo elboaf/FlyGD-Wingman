@@ -472,7 +472,12 @@ def build_skills_controller(api):
             # lazily inside a lambda is not checked when this function
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
-            push=api._push,
+            #
+            # _push_skills, not _push: the skills payload carries a rendered
+            # `fetched_label` that only ui/ knows how to build, and the raw
+            # _push is what left every render after the first one unlabelled
+            # (D3/S6). Its docstring holds the whole account.
+            push=api._push_skills,
             alert=api._alert,
         )
     except Exception:

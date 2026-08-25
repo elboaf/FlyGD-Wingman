@@ -814,6 +814,22 @@
       <header class="skills-head">
         <h1 id="skills-plan-name">No plan selected</h1>
         <span class="skills-plan-count" id="skills-plan-count"></span>
+        <!-- S7. The maintainer's answer to "what do you end up doing
+             twice": retyping a character's missing skills into EVE. It
+             sits on the PLAN heading rather than in a character's row
+             because the plan is what it copies -- they supplied that
+             version themselves ("the full skill plan being copyable would
+             be fine, the game removes already-trained skills from an
+             import"), and it is the one that needs no per-character
+             diffing.
+
+             A .btn and not a .linkbtn: nothing else on this row acts, and
+             link-styling the only control present makes it the least
+             control-like thing there -- the same reasoning that decided
+             `Change…` on Profiles, at #es-folder-edit. Disabled rather
+             than hidden when no plan is selected, per the control
+             vocabulary's disabled-when-the-object-is-absent rule. -->
+        <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
 
       <!-- Collapses entirely when empty rather than reserving a blank
