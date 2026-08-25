@@ -306,22 +306,26 @@ somewhere stale and nothing on that screen is worth reviewing.
       be worse than reaching neither. Check the inline hint under a field
       and any refusal message line up with the field. (This item used to
       check a stacked collapse that the window cannot reach; see above.)
-- [ ] **The bind rows collapse too.** Still at the floor, open Settings >
+- [ ] **The bind rows are stacked, and the two lists agree.** Open Settings >
       Bookmarks and read the keybind list, then Settings > Previews. Expected:
       each action or character name on its own line with its keybind button,
       Clear and Edit... on the line below — "Convert EvE-Scout Bookmarks" and
-      "Finisher: C13 (shattered)" readable in one line each, not ragged over
-      three in a ~60px column.
-      This was a known gap for two releases. Both lists take the shared label
-      column away from their rows on purpose, with an ID selector
-      (`#eve-binds .row > .lab`, `#preview-binds .row > .lab`) — and ID
-      specificity also beat the collapse rule, which is written against
-      `.settings .row > .lab`. So the collapse skipped exactly the eighteen
-      rows with three trailing controls that needed it most, and `min-width: 0`
-      made them shrink rather than overflow, so nothing said so.
-      tests/test_page_conventions.py now requires any such override to restore
-      its own collapse. Above 720 CSS px the rows go back to name-left,
-      controls-right; widen the window and confirm that too.
+      "Finisher: C13 (shattered)" readable in one line each. Then check the
+      thing this item exists for: **the keybind button starts at the same
+      distance from the card's left edge in both sections**, as do Clear and
+      Edit.... Do it at the floor AND at a comfortable width; the geometry
+      must not change with either.
+      Round 3's B1 is why. Each list was its own grid whose first column was
+      sized to that list's own longest label, so Bookmarks put the button
+      103.4 CSS px further right than Previews — and Previews' offset moved
+      between sessions, because it tracked whichever characters were logged
+      in. Stacking is the only shape that depends on no content. It is also
+      no longer conditional: it used to live in a `max-width: 720px` block
+      that the window can never reach (the floor is 840), so on the two
+      lists that most needed it the collapse never fired at all.
+      tests/test_page_conventions.py now requires the two grids to declare
+      the same columns and both names to take their own line, so a drift
+      fails the suite rather than waiting for a screenshot.
 
 ### The list
 - [ ] **Clicking ANYWHERE on a row toggles it,** not just the checkbox cell.
@@ -1703,6 +1707,19 @@ so these are the checks that matter and only a Windows machine can run them.
       Profile controls appear. Leave the route and come back: it is one line
       again. This is deliberate and not a bug — the collapse is what puts the
       task on screen, so it is not remembered.
+- [ ] **Widening the window adds roster columns, not gutter.** With a folder
+      chosen and a few dozen characters, put the window at the floor and note
+      how many columns of names the target list has and where `Copy to
+      selected` sits. Now drag the window much wider. Expected: the names
+      reflow into MORE columns and the button climbs; the folder card above
+      keeps its width and its left edge stays flush with the copy card's.
+      Round 3's P10 measured the opposite — every extra pixel became margin,
+      because Profiles wraps its route in the same `.settings` 620px wrapper
+      the eight Settings sections use, so the roster inherited a measure meant
+      for a label/field pair. D1 lifted the cap for the roster's card only:
+      the prose, the `Copy from` row and the filter row are all still held to
+      the old 586px measure on purpose, so a filter row narrower than the
+      roster beneath it is correct here, not a bug.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -1940,6 +1957,20 @@ against a placeholder id; only these items are blocked on the registration.
       so the narrowed-rail states are unreachable through the window and
       840 is not "the one width where this layout was never in doubt", it
       is the only width there is.
+- [ ] **The row separators stop at the answer, not at the pane edge.** Widen
+      the window well past the floor and look at the character list. Expected:
+      every status sits in one column, and the hairline under each row ends a
+      short way past the longest status — the rest of the pane to its right
+      is plain background, with no rule running across it. Expand a row: the
+      requirement names and their states line up with the character names and
+      statuses above, and the wider window does not push either column right.
+      Round 3's S8: the pane is elastic and the content is not (the name
+      column is capped at 240px on purpose, because that is what the longest
+      EVE skill and character names need), so a full-width rule made the dead
+      space read as an unfinished table rather than as margin. The list now
+      takes its width from the row instead. If the statuses ever go ragged,
+      the cause is the name column being sized by `max-width` rather than by
+      `width` — the cap only aligns them while there happens to be room.
 - [ ] **The rail's plan-file actions still work where they now sit.**
       `Open plans folder` and `Reload plans` are link-style actions at the
       foot of the Plans block rather than buttons in a block of their own.
