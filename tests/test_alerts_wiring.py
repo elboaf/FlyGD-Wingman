@@ -228,6 +228,32 @@ def test_start_previews_if_enabled_actually_starts_the_tailer(tmp_path):
         api._alerts.stop()
 
 
+def test_alert_config_tolerates_a_settings_document_with_no_preview_key(tmp_path):
+    """build_alert_service's config callable used to index straight
+    through settings["preview"]["alerts"], which raises KeyError on any
+    settings document that predates the alerts section (an older
+    settings.json, or -- as here -- tests/test_api.make_state's own
+    partial dict, which settings._normalize's own docstring calls out by
+    name). Only visible where AlertService is actually built: host is
+    None off Windows (build_alert_service's docstring), so the crash was
+    Windows-only in practice and slipped past ubuntu-latest CI entirely.
+    Must behave like AlertService._resolved_folder's `cfg = self._config()
+    or {}` and settings._normalize's setdefault -- absence is an empty
+    section, not an error.
+    """
+    from obs_youtube_uploader.__main__ import build_alert_service
+
+    host = FakePreviewHost()
+    api = make_api(tmp_path, preview_host=host)
+    assert "preview" not in api._state.settings
+
+    service = build_alert_service(api._state, host)
+
+    assert service is not None
+    assert service._config() == {}
+    assert service.health().running is False
+
+
 # ---- a test alert is never persistent --------------------------------------
 
 

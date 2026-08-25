@@ -432,7 +432,7 @@ def build_alert_service(state, host):
 
     try:
         return AlertService(
-            config=lambda: state.settings["preview"]["alerts"],
+            config=lambda: state.settings.get("preview", {}).get("alerts", {}),
             folder=folder,
             on_alert=host.raise_alert,
         )
