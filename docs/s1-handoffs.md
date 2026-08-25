@@ -156,6 +156,28 @@ The finding has two halves. S1 took the colour. The other half —
 rather than as a labelled link — is inside `#route-settings` and therefore
 R2's. S1 has not touched that markup.
 
+## To R5 — F3's mechanism, specified by S2
+
+S1 measured F3 (above); **S2 owns `.linkbtn`'s box model and has specified
+how to act on it.** Recorded here because R5 reads this file and a bare
+"6 CSS px" gets the second half wrong:
+
+- **`padding-left: 0` on the first-run skip is wrong**, even though it
+  would move the ink to 0. `.linkbtn:hover` paints `background: #22252c`,
+  so zeroing the left padding leaves the hover rectangle hugging the
+  glyphs on one side and 6px clear on the other. The one button that got
+  the fix would look broken on hover while eighteen bind rows stayed
+  correct.
+- **`margin-left: -6px`, scoped to the first-run action row**, is the
+  right shape: padding and hover rect stay symmetric, the ink lands at 0,
+  and the box overhangs the content edge into the card's own padding.
+  Standard optical alignment for a padded text button — align the text,
+  let the transient chrome overhang. (S1's render corroborates the room
+  for it: the card's box is at 140 and its content edge at 169.)
+- **Either way the padding stays on the class.** That was the boundary the
+  lanes doc warned must not silently become "remove the padding" — bind
+  rows, Skills' link buttons and Profiles' `Change…` are untouched.
+
 ## To R4 — Skills 3 has no roster half left
 
 See item 3 above. The strip changed; `Ready` stays where it is on Skills.
