@@ -238,6 +238,67 @@ def test_label_h_defaults_on_and_matches_todays_behaviour():
     assert w._label_h() == window.LABEL_H
 
 
+class _FakeThumb:
+    """Records every rect passed to update(), standing in for the real
+    Thumbnail that move() would otherwise touch."""
+
+    def __init__(self):
+        self.rects = []
+
+    def update(self, rect):
+        self.rects.append(rect)
+
+
+def test_a_resize_updates_the_thumbnail_rect_with_the_current_label_height():
+    """move()'s thumbnail_rect call must use _label_h(), not a hardcoded
+    LABEL_H, or the mirrored video stays inset behind a band chrome no
+    longer draws once labels are turned off.
+
+    Reverting that one call site back to `LABEL_H` must turn this test
+    red -- checked by hand while writing it."""
+    for show_labels, expected_label_h in ((True, window.LABEL_H), (False, 0)):
+        w = _RecordingWindow(Rect(100, 100, 320, 210))
+        w.show_labels = show_labels
+        thumb = _FakeThumb()
+        w._thumb = thumb
+        new_rect = Rect(100, 100, 400, 260)
+        w.move(new_rect)
+        assert thumb.rects == [
+            window.geometry.thumbnail_rect(new_rect, window.BORDER, expected_label_h)
+        ]
+
+
+def test_redraw_passes_the_current_label_height_to_chrome_render(monkeypatch):
+    """redraw()'s chrome.render(label_h=...) call must reflect show_labels
+    too -- covering the one call site the thumbnail test above does not
+    reach. Hardcoding label_h=LABEL_H here must turn this test red --
+    checked by hand while writing it."""
+    calls = []
+
+    def fake_render(size, label, **kwargs):
+        calls.append(kwargs["label_h"])
+        return type("_Img", (), {"size": size})()
+
+    monkeypatch.setattr(window.chrome, "render", fake_render)
+    monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
+
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    for show_labels, expected_label_h in ((True, window.LABEL_H), (False, 0)):
+        w = window.PreviewWindow(
+            None,
+            client,
+            R,
+            lambda c: None,
+            lambda *a: None,
+            list,
+            lambda: R,
+            show_labels=show_labels,
+        )
+        w.hwnd = 1
+        w.redraw()
+    assert calls == [window.LABEL_H, 0]
+
+
 class _FakeLibs:
     """Just enough Win32 for _on_message, with the cursor under our control."""
 
