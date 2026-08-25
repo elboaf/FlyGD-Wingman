@@ -100,6 +100,42 @@ jobs:
         # steps run in the same job on the same runner.
         run: uv run --extra dev ruff format --check --diff
 
+      - name: Check the build action always goes through uv run
+        # `uv sync` installs into .venv, which a bare `python` does not
+        # see. A step in build-installer that drops its `uv run` prefix
+        # runs against setup-python's interpreter, which has none of the
+        # app's dependencies -- and that does NOT fail loudly. It produces
+        # a confusing import error, or an app frozen without its
+        # dependencies from a green build. build.yml's own comments record
+        # that shipping once.
+        #
+        # This was a manual grep someone had to remember during review.
+        # A protection nobody runs is not a protection, and this whole
+        # effort is about turning silent failures into loud ones.
+        #
+        # The three packaging/fetch_*.py scripts are the deliberate
+        # exception: stdlib-only, no venv wanted, invoked as
+        # `python packaging/fetch_*.py`. They are excluded by name so the
+        # exception has to stay explicit -- adding a fourth bare `python`
+        # will fail this check rather than quietly joining them.
+        # Two forms count as a bypass and the pattern must catch both: an
+        # indented `python ...` inside a `run: |` block, and a single-line
+        # `run: python ...`. An earlier version of this check only matched
+        # the first, which made it cosmetic -- a deliberately injected
+        # `run: python -c ...` sailed straight through it.
+        run: |
+          offenders=$(grep -nE '^[[:space:]]+(python|pyinstaller)\b|run:[[:space:]]*(python|pyinstaller)\b' \
+              .github/actions/build-installer/action.yml \
+              | grep -vE 'python packaging/fetch_(ffmpeg|autohotkey|webview2)\.py' \
+              || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::A step in build-installer/action.yml bypasses 'uv run'."
+            echo "It will use setup-python's interpreter, which has none of the app's dependencies."
+            echo "$offenders"
+            exit 1
+          fi
+          echo "every Python invocation in the build action goes through uv run"
+
   test:
     # windows-latest is not redundant with ubuntu. Seven modules bind
     # windll/winreg, and tests/test_preview_win32.py -- which asserts every
