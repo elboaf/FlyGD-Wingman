@@ -275,6 +275,143 @@
     return Promise.resolve(settingsPayload());
   };
 
+  // ---- Bookmarks and Previews, the two sections the harness could not
+  // reach at all. Both call a real Api method that had no stub here, so
+  // WM.send rejected to the console and the page rendered whatever it
+  // could without the data.
+  //
+  // The Previews one was merely loud: `bridge: no such method:
+  // get_preview_hotkey_state` in the console, three times a load, on every
+  // lane's verification run for two rounds.
+  //
+  // The Bookmarks one was the dangerous kind and is why these are being
+  // added now. #eve-binds is filled entirely from get_bookmarks, so the
+  // section rendered three cards, their headings, their prose and a Reset
+  // button with ZERO keybind rows -- a screen that looks finished and is
+  // missing its whole subject. That is the failure the top of DESIGN.md
+  // opens with, sitting inside the harness five sessions verified through;
+  // the lane that reshaped those eighteen rows had to synthesise them by
+  // hand to see its own work.
+  //
+  // The ids are NOT hand-kept: tests/test_dev_harness.py asserts this
+  // list against bookmarks.BIND_IDS. Four places once carried a count of
+  // these binds and three of them were wrong, so a fixture that quietly
+  // drifted to seventeen would put the harness back to lying, just less
+  // obviously than an empty list does.
+  var bookmarkBinds = [
+    'GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout',
+    'FinH', 'FinL', 'FinN', 'Fin13',
+    'Fin1', 'Fin2', 'Fin3', 'Fin4', 'Fin5', 'Fin6',
+    'FinETag', 'FinSlash', 'FinS', 'FinC'
+  ];
+
+  // Labels come from bookmarks.BIND_LABELS in the real payload; the same
+  // test asserts these against it, for the same reason.
+  var bookmarkLabels = {
+    GrabSig: 'Grab Sig ID', SetRoot: 'Set Root',
+    FormatEnf: 'Format Enforcer',
+    ConvertScout: 'Convert EvE-Scout Bookmarks',
+    FinH: 'Finisher: HS (highsec)', FinL: 'Finisher: LS (lowsec)',
+    FinN: 'Finisher: NS (nullsec)', Fin13: 'Finisher: C13 (shattered)',
+    Fin1: 'Finisher: C1', Fin2: 'Finisher: C2', Fin3: 'Finisher: C3',
+    Fin4: 'Finisher: C4', Fin5: 'Finisher: C5', Fin6: 'Finisher: C6',
+    FinETag: 'e Tag (end of life)', FinSlash: '/ Tag (half mass)',
+    FinS: 'f Tag (frig hole)', FinC: 'c Tag (critical)'
+  };
+
+  api.get_bookmarks = function () {
+    console.log('DEV api.get_bookmarks()');
+    var keybinds = {};
+    bookmarkBinds.forEach(function (id) { keybinds[id] = ''; });
+    // A spread of states rather than DEFAULT_BINDS' one bound key: an
+    // all-blank fixture cannot show what a bound row, a collision or a
+    // shared chord look like, and those are the rows the layout work is
+    // about. ConvertScout keeps its real default.
+    keybinds.ConvertScout = '^+s';
+    keybinds.SetRoot = '^+r';
+    keybinds.GrabSig = '^+g';
+    // Deliberately the same chord twice, so `collisions` below is not an
+    // empty list nobody has seen rendered.
+    keybinds.Fin1 = '^+1';
+    keybinds.Fin2 = '^+1';
+    return Promise.resolve({
+      // settings is the `eve_bookmarks` section verbatim:
+      // {enabled, keybinds, windows}. `windows` is a per-title enabled
+      // MAP, not a list -- the list of titles is the top-level `windows`
+      // below, from evewindows.list_eve_windows(). One of the two is left
+      // off, because a state where every window is ticked is the one that
+      // needs the least looking at.
+      settings: {
+        enabled: true,
+        keybinds: keybinds,
+        windows: { 'EVE - Aiga Otsolen': true, 'EVE - Zuelo Parvi': false }
+      },
+      labels: bookmarkLabels,
+      order: bookmarkBinds,
+      windows: ['EVE - Aiga Otsolen', 'EVE - Zuelo Parvi'],
+      // Keyed by the parsed AHK string, valued with every bind id claiming
+      // it -- bookmarks.collisions() only returns entries of length > 1.
+      collisions: { '^+1': ['Fin1', 'Fin2'] },
+      displays: {
+        ConvertScout: 'Ctrl+Shift+S', SetRoot: 'Ctrl+Shift+R',
+        GrabSig: 'Ctrl+Shift+G', Fin1: 'Ctrl+Shift+1',
+        Fin2: 'Ctrl+Shift+1'
+      },
+      engine: { state: 'on', last_error: null, blockers: [] }
+    });
+  };
+
+  api.get_preview_hotkey_state = function () {
+    console.log('DEV api.get_preview_hotkey_state()');
+    // Shapes taken from Api.get_preview_hotkey_state and the settings
+    // schema, not guessed: `hotkeys` is
+    // {characters: {name: chord}, cycle_next, cycle_prev} -- NOT
+    // cycle_forward/cycle_back -- `registration` is keyed by CHORD with a
+    // boolean value, and `bookmark_chords` is {active: [], latent: []}.
+    // The first draft of this fixture invented three of those and rendered
+    // every row as "Not set" while looking plausible, which is the exact
+    // failure this file's own comment warns about: a double that models a
+    // shape the bridge does not produce.
+    //
+    // `enabled: false`, and everything downstream of it honest about that.
+    // The real method gates on `host.is_running`, so a stopped host
+    // returns characters [] and registration {} -- there is no state in
+    // which previews are off and Windows is holding chords. A fixture
+    // showing registered chords beside an unticked Enable box would be
+    // more complete than the thing it doubles, which is how a harness
+    // starts hiding the bug it exists to catch. Off is also what the
+    // settings payload says, since it carries no `preview` key at all.
+    //
+    // The rows are therefore the offline kind: bound characters whose
+    // client is not running, which is a real and under-looked-at state --
+    // the binding is saved and works the moment they log in.
+    return Promise.resolve({
+      enabled: false,
+      // Preview gestures are stored as preview/gestures.py display()
+      // strings -- "Ctrl+Alt+Right" -- and NOT as AHK. Bookmarks use AHK
+      // and send a separate `displays` table; previews render the stored
+      // value directly, so the two subsystems genuinely differ here. The
+      // first draft of this fixture wrote AHK and rendered "^!Right" in
+      // the button, which looks like a formatting bug in the page rather
+      // than a wrong fixture. Verified by running from_capture() rather
+      // than typed.
+      hotkeys: {
+        characters: {
+          'Aiga Otsolen': 'Ctrl+Alt+1',
+          'Zuelo Parvi': 'Ctrl+Alt+2'
+        },
+        cycle_next: 'Ctrl+Alt+Right',
+        cycle_prev: ''
+      },
+      roster: ['Aiga Otsolen', 'Zuelo Parvi', 'Kaska Rin'],
+      characters: [],
+      registration: {},
+      // Latent rather than active, for the same consistency: bookmarks
+      // register nothing while this chord could still be taken later.
+      bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }
+    });
+  };
+
   api.list_rows = function () {
     console.log('DEV api.list_rows()');
     setTimeout(function () {
