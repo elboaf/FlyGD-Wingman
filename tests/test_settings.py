@@ -45,6 +45,38 @@ def test_defaults_are_the_documented_values():
             "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
             "seen": [],
             "restore_preview_positions": True,
+            "alerts": {
+                "enabled": False,
+                "pve_filter": True,
+                "persist_until_selected": True,
+                "defaults_version": 1,
+                "events": {
+                    "combat": {
+                        "enabled": True,
+                        "duration_ms": 1200,
+                        "pulses": 3,
+                        "cooldown_s": 1,
+                        "color": "#ff4d4d",
+                        "sound": "chime",
+                    },
+                    "warp_scramble": {
+                        "enabled": True,
+                        "duration_ms": 1200,
+                        "pulses": 3,
+                        "cooldown_s": 8,
+                        "color": "#ffd24d",
+                        "sound": "bell",
+                    },
+                    "decloak": {
+                        "enabled": True,
+                        "duration_ms": 1200,
+                        "pulses": 3,
+                        "cooldown_s": 8,
+                        "color": "#4dd2ff",
+                        "sound": "chime",
+                    },
+                },
+            },
         },
         "eve_settings": {
             "root": None,

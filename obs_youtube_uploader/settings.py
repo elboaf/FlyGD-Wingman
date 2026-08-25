@@ -7,13 +7,67 @@ Key names match the pre-2.0 file: ``privacy`` and ``category`` (not
 import contextlib
 import copy
 import json
+import re
 import threading
 from pathlib import Path
 
 from . import bookmarks, paths
+from .alerts import patterns as alert_patterns
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
+
+# Sounds that ship. An id present in the UI dropdown but missing here
+# normalises to silence, which is indistinguishable from a broken alert --
+# so the two lists are checked against the assets folder in the sound task.
+VALID_SOUNDS = {"none", "chime", "bell"}
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Per-event shape. Colours are picked so the three are distinguishable at a
+# glance on a small tile: red for damage, yellow for "you cannot leave",
+# cyan for a decloak.
+_ALERT_EVENT_DEFAULTS = {
+    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "chime"},
+    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "bell"},
+    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "chime"},
+}
+
+
+def _alerts_defaults() -> dict:
+    """Fresh nested structure every call, like _preview_defaults.
+
+    Off by default: enabling costs a second thread and a 1s folder poll on
+    top of what previews already pay.
+    """
+    return {
+        "enabled": False,
+        # The filter is what makes `combat` mean "a player is shooting
+        # you". Without it a Sleeper site alerts continuously on every
+        # client, and a player landing mid-site is indistinguishable from
+        # the NPCs already firing.
+        "pve_filter": True,
+        # An alert that expires while you are in a browser has told you
+        # nothing, which is the whole case for the feature.
+        "persist_until_selected": True,
+        # Carried from the start on TriffView's evidence: it needed exactly
+        # this migration, and rewrote only values that still equalled the
+        # previous default so a customised setting was never overwritten.
+        # No migration code exists yet and none should: at version 1 there
+        # is nothing to migrate from. The field is here so a future v2 can
+        # compare against a retained table of v1 defaults -- building that
+        # harness now would be speculative machinery with no caller.
+        "defaults_version": 1,
+        "events": {
+            name: {
+                "enabled": True,
+                "duration_ms": 1200,
+                "pulses": 3,
+                **_ALERT_EVENT_DEFAULTS[name],
+            }
+            for name in alert_patterns.EVENTS
+        },
+    }
 
 
 def _preview_defaults() -> dict:
@@ -41,6 +95,7 @@ def _preview_defaults() -> dict:
         # last had. On by default -- it is what shipped, and the
         # alternative silently discards existing layouts.
         "restore_preview_positions": True,
+        "alerts": _alerts_defaults(),
     }
 
 
@@ -185,6 +240,62 @@ def validated_preview(raw) -> dict:
                 section["hotkeys"][key] = preview_gestures.display(parsed)
 
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
+    # Without this line the whole section is rebuilt from defaults on every
+    # _normalize -- which every update() runs -- so any writer touching any
+    # preview key silently reverts the user's alert configuration.
+    section["alerts"] = validated_alerts(raw.get("alerts"))
+    return section
+
+
+def _validated_alert_event(raw, defaults: dict) -> dict:
+    event = dict(defaults)
+    if not isinstance(raw, dict):
+        return event
+    if isinstance(raw.get("enabled"), bool):
+        event["enabled"] = raw["enabled"]
+    for key, low, high in (
+        ("cooldown_s", 0, 120),
+        ("duration_ms", 250, 15000),
+        ("pulses", 1, 16),
+    ):
+        value = raw.get(key)
+        # `not isinstance(value, bool)` because bool is an int in Python,
+        # and True would silently become a one-second cooldown.
+        if isinstance(value, int) and not isinstance(value, bool):
+            event[key] = max(low, min(high, value))
+    colour = raw.get("color")
+    if isinstance(colour, str) and _HEX_RE.match(colour):
+        # Rejected rather than coerced: chrome.render hands this to Pillow,
+        # which raises on a malformed value -- on the preview thread, inside
+        # the paint path.
+        event["color"] = colour
+    sound = raw.get("sound")
+    if isinstance(sound, str):
+        event["sound"] = sound if sound in VALID_SOUNDS else "none"
+    return event
+
+
+def validated_alerts(raw) -> dict:
+    """Same two-tier posture as validated_preview: a malformed section
+    falls back whole, a malformed event falls back alone."""
+    section = _alerts_defaults()
+    if not isinstance(raw, dict):
+        return section
+    for key in ("enabled", "pve_filter", "persist_until_selected"):
+        if isinstance(raw.get(key), bool):
+            section[key] = raw[key]
+    version = raw.get("defaults_version")
+    if isinstance(version, int) and not isinstance(version, bool):
+        section["defaults_version"] = max(1, version)
+    raw_events = raw.get("events")
+    if isinstance(raw_events, dict):
+        # Iterating EVENTS rather than raw_events is what drops an unknown
+        # event: a hand-edited file cannot introduce one the renderer has
+        # no colour or severity rank for.
+        for name in alert_patterns.EVENTS:
+            section["events"][name] = _validated_alert_event(
+                raw_events.get(name), section["events"][name]
+            )
     return section
 
 
