@@ -43,19 +43,58 @@
      LIGHT scheme and paints a near-black ring on a near-black page. */
   color-scheme: dark;
 
-  /* ---- colour ---- */
+  /* ---- colour ----
+     EVERY colour in this sheet is decided here. That was already the
+     stated rule and it was already broken: the vermilion-to-purple
+     retheme moved --brand and left 72 hex literals sitting in rules
+     further down, so the tokens went violet and the surfaces they were
+     supposed to describe did not. The visible result was .list-head --
+     a #101216 blue-grey band welded to the top of a violet list, on the
+     first screen the app opens. Finding 7.
+
+     The neutral ramp below is HUE-ROTATED, not re-picked: each grey was
+     taken from hue ~220 to hue 259 -- the hue the shipped purple
+     surfaces (#191426, #1b1528, #14101c) already sat at -- keeping its
+     saturation, and its HSL lightness re-solved so RELATIVE LUMINANCE is
+     preserved to within 2.3%. That is the whole reason the AA figures
+     quoted throughout this file survive the retheme unchanged: nothing
+     got lighter or darker, only warmer. Re-tint anything here the same
+     way, or the measurements below stop being true. */
+
+  /* The one token that is MIRRORED OUTSIDE THIS FILE: ui/window.py's
+     BACKGROUND paints the native frameless surface before the first
+     frame of HTML exists, and tests/test_window.py pins the two
+     together. It is therefore the one neutral left un-rotated -- at
+     rgb(12,13,16) the blue lean is below the threshold of vision anyway,
+     so rotating it would buy nothing and cost a three-file change. If it
+     ever does move, window.py and its test move in the same commit. */
   --bg: #0c0d10;
-  --panel: #14161b;
-  --panel-border: #1e2128;
-  --field: #0a0b0e;
-  --field-border: #23262e;
+  --panel: #17151c;
+  --panel-border: #231f2a;
+  --field: #0c0a0f;
+  --field-border: #282430;
   --text: #e8eaed;
   --text-dim: #9aa2b1;
-  /* 4.82:1 on --panel, 5.17:1 on --bg. Was #6f7681, which measured
-     3.88-4.24:1 -- below AA for normal text on every surface it is used
-     on, including all five nav tabs and all three window buttons in
-     their resting state. */
+  /* 4.81:1 on --panel (was 4.82 before the retint), 5.17:1 on --bg. Was
+     #6f7681, which measured 3.88-4.24:1 -- below AA for normal text on
+     every surface it is used on, including all five nav tabs and all
+     three window buttons in their resting state. */
   --text-faint: #7d8492;
+  /* A fourth text step, between --text-dim and --text-faint, and it is
+     not a rounding error: it is the colour of the two uppercase tracked
+     section labels (.card > h2 and .rail-head), which sit above
+     --text-faint because they are headings and below --text-dim because
+     they are not the content. 5.80:1 at worst. */
+  --text-label: #8b93a1;
+  /* The resting label on a .btn. Below --text and above --text-dim: a
+     button that is not the accent still has to look pressable without
+     competing with the body text beside it. 9.23:1 at worst, hovered. */
+  --text-btn: #c8cdd6;
+  /* The label ON a saturated fill -- the accent gradient, the close
+     button's red, a destructive hover, the drawn checkbox's tick. All
+     six sites were a bare `#fff`. See button.btn.acc for why white and
+     not near-black. */
+  --on-accent: #fff;
   /* Purple needs TWO tokens where vermilion needed one. --brand is a
      SURFACE colour: things are filled with it and something sits on top.
      --brand-text is a TEXT/GLYPH colour: it sits on a dark surface and has
@@ -65,14 +104,85 @@
      got away with one token because it sits high in luminance already. */
   --brand: #8430d9;
   --brand-deep: #4a0083;
-  /* 4.86:1 at worst across all four surfaces it lands on (--panel, --bg,
-     and the gradient-tinted variants of both). #a952ff was the value the
-     mockups used and measures 4.56 -- a pass, but with so little headroom
-     that any later tint change breaks it silently. */
+  /* 4.86:1 at worst across the four PAGE surfaces it lands on (--panel,
+     --bg, and the gradient-tinted variants of both). #a952ff was the value
+     the mockups used and measures 4.56 -- a pass, but with so little
+     headroom that any later tint change breaks it silently.
+
+     That sentence was the whole claim until finding 7 re-measured it, and
+     it enumerates the wrong set: --brand-text also lands on CONTROL
+     surfaces, where it does not pass. .winbtn.gear.active, .glyph-link on
+     hover and .bindbtn.capturing all put it on --hover, which measures
+     4.16:1, and a hovered .bindbtn.capturing reaches --control-hover at
+     3.99:1. Both figures are PRE-EXISTING and untouched here: the neutral
+     retint preserved luminance, so the same pair measured 4.15 and 3.99
+     against the cold greys they replaced. Fixing it means changing a
+     control surface or this token's lightness, and the control blocks are
+     L5's region -- reported, not reached into. */
   --brand-text: #ad5aff;
+  /* The accent gradient's two stops, and the rim that rings it. Held here
+     rather than in button.btn.acc because .list-row.sel's checkbox and
+     .check's checked box take the same rim, so it was three copies of one
+     decision. */
+  --acc-top: #9438e8;
+  --acc-bottom: #7a1fc8;
+  --brand-edge: #a95cf0;
+  /* THE focus indicator. 8.3-9.0:1 against every surface in the app,
+     well over the 3:1 1.4.11 asks of a non-text indicator. */
+  --focus-ring: #c99cff;
+
+  /* ---- severity ----
+     Four rungs and they mean four different things. --err used to mean
+     three of them at once, which is finding S3: it painted an error, it
+     painted a destructive control, and it painted `Not trained` /
+     `Missing` -- states that are the entire reason the Skills screen
+     exists. C2 already settled that those are facts about a character,
+     not failures. One colour cannot say "this went wrong", "this button
+     destroys something" and "this is what you asked to find out". */
   --ok: #4ade80;
   --warn: #d29922;
+  /* Something went wrong: #status.ERROR, .dialog.error, .row-error, a
+     dead token (.reauth), two keybinds on one key (.bindbtn.clash). */
   --err: #f85149;
+  /* This control destroys something. Deliberately the SAME VALUE as --err
+     today -- red is right for both, and the token split is what lets the
+     two be told apart later without a sweep. What it buys immediately is
+     that `Forget character` no longer shares a colour with the `Missing`
+     row 130 CSS px above it, because that row moved to --unmet below.
+     L5/S4 owns the treatment (button vs bare red text); this owns only
+     the colour. */
+  --danger: #f85149;
+  /* The filled state of a destructive control -- hover on .btn.danger,
+     .linkbtn.danger and .winbtn.close. Darker than --danger so
+     --on-accent clears AA on top of it: 4.90:1. */
+  --danger-solid: #d9291c;
+  /* A requirement this character does not meet: `Missing`, `Missing 2`,
+     `Not trained`, and the group swatches for both. The worst rung of
+     the readiness ramp and NOT an error -- the distinction S3 asked for.
+
+     Orange, and the hue is the whole point: 18deg, between --err at 4deg
+     and --warn at 41deg, with a lightness step (HSL L .70) that --err
+     (.63) does not have, so the two reds do not have to be told apart by
+     saturation alone. 7.89:1 at worst, on a hovered row.
+
+     This retires the note in .skills-key that said "there is no fourth
+     severity token to reach for and minting one is a :root edit this
+     block may not make". This is that edit. Missing and Unknown still
+     share a rung -- the WORD carries that distinction, exactly as that
+     note argued -- but the rung is no longer the error colour. */
+  --unmet: #ff9668;
+  /* In progress: `Training`, `Queued - 13h 25m`. Was a bare #7aa2f7,
+     which after the retheme was EXACTLY --link, so blue meant both
+     "follow this out of the app" and "this skill is in the queue", and
+     the queued one is not clickable. Finding S5.
+
+     --link is the token that could not move: its own note below explains
+     that it is a declared exemption carrying a legal obligation. So this
+     one moved instead, to teal -- 186deg, which is the only slot the
+     ramp leaves: 32deg off --link's blue and 44deg off --ok's green,
+     and adjacent to green in a ramp where Training IS the rung before
+     Ready. 8.41:1 at worst, on a hovered row. */
+  --training: #45c8d4;
   /* The one blue in the palette, and the only colour here that is not
      near-black, brand, or a severity. It marks a link OUT of the app --
      today just YouTube's terms -- and it stays blue on purpose: a link
@@ -82,8 +192,70 @@
      place colour is decided, and so a second outbound link cannot invent
      a different blue. Measured against the surfaces it actually lands on
      after the purple retheme: 7.13:1 on a card's tinted top stop
-     (#191426), 7.19:1 on flat --panel, 7.72:1 on --bg. */
+     (--card-top), 7.19:1 on flat --panel, 7.72:1 on --bg. Unmoved by
+     the neutral retint, which preserved luminance. */
   --link: #7aa2f7;
+
+  /* ---- surfaces ----
+     Everything below was a hex literal in a rule until finding 7. The
+     names describe the ROLE, because that is what a later reader needs
+     in order to pick the right one rather than the nearest value. */
+
+  /* The tinted top stop every card, list pane and rail gradient starts
+     from. Tinted sideways into violet, NOT lightened -- see .card. */
+  --card-top: #191426;
+  /* Recessed bands: the list header and footer, .pill, .badge-stale,
+     Skills' notices and issues blocks, .reauth. This is the token that
+     was #101216, and the one the finding could see. */
+  --sunken: #131117;
+  /* The title bar's gradient, its hard bottom edge, and the 1px highlight
+     inset along its top. */
+  --titlebar-top: #1b1528;
+  --titlebar-bottom: #121016;
+  --titlebar-edge: #000;
+  --titlebar-inset: #292530;
+  /* The status strip's gradient -- deeper than the title bar's, so the
+     window reads as lit from above. */
+  --statusbar-top: #14101c;
+  --statusbar-bottom: #0f0c14;
+  /* The two radial washes on html. See the html rule for why they cannot
+     live on body. */
+  --wash-top: #1d1030;
+  --wash-bottom: #170f26;
+
+  /* ---- controls ----
+     Three hover surfaces at three weights, and they are deliberately not
+     one token: --hover is for controls with NO resting fill (nav tabs,
+     window buttons, menu items, .linkbtn), --control-hover is the lift
+     applied to one that already has a fill, and --scrollbar-hover sits
+     on top of the page rather than on a control. Collapsing them would
+     make an unfilled control jump further on hover than a filled one. */
+  --hover: #27232e;
+  --control: #211d28;
+  --control-border: #302c39;
+  --control-hover: #2a2634;
+  /* The rim of a control the CSS draws itself: .box and .ring. Lighter
+     than --control-border because it has to read as an outline at 14px
+     with nothing inside it. */
+  --control-edge: #413c4c;
+  --field-focus-border: #433c52;
+  --scrollbar: #2c2835;
+  --scrollbar-hover: #3b3548;
+  /* The progress groove. Derived, not retyped: it is the panel border
+     weight, and the two have never been meant to differ. */
+  --track: var(--panel-border);
+
+  /* ---- rows ----
+     One vocabulary shared by the recording list, the Skills roster and
+     both rails, so a row cannot mean one thing on one screen and another
+     elsewhere. --row-ring is the inset ring on the FOCUSED row (what
+     Space acts on); --row-ring-focus is the same ring once the scroller
+     itself holds focus, so the two states are distinguishable. */
+  --row-line: #1d1a24;
+  --row-hover: #1b1822;
+  --row-active: #1f1b27;
+  --row-ring: #383244;
+  --row-ring-focus: #554e65;
 
   /* ---- type scale ----
      Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
@@ -119,8 +291,8 @@
    to ship by accident, but is not the token and is not ours to rely on. */
 html {
   background:
-    radial-gradient(1100px 620px at 88% -8%, #1d1030 0%, rgba(29, 16, 48, 0) 62%),
-    radial-gradient(760px 520px at -6% 108%, #170f26 0%, rgba(23, 15, 38, 0) 60%),
+    radial-gradient(1100px 620px at 88% -8%, var(--wash-top) 0%, rgba(29, 16, 48, 0) 62%),
+    radial-gradient(760px 520px at -6% 108%, var(--wash-bottom) 0%, rgba(23, 15, 38, 0) 60%),
     var(--bg);
 }
 body { background-color: transparent; }
@@ -142,9 +314,9 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .titlebar {
   display: flex; align-items: center; gap: 10px;
   height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
-  background: linear-gradient(180deg, #1b1528, #121016);
-  border-bottom: 1px solid #000;
-  box-shadow: inset 0 1px 0 #24272e;
+  background: linear-gradient(180deg, var(--titlebar-top), var(--titlebar-bottom));
+  border-bottom: 1px solid var(--titlebar-edge);
+  box-shadow: inset 0 1px 0 var(--titlebar-inset);
 }
 /* pywebview's documented drag handle for frameless windows. Only this
    element drags: the buttons must stay clickable. */
@@ -184,10 +356,10 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   color: var(--text-faint); font-size: 13px; cursor: pointer;
   border-radius: 5px; font-family: inherit; flex: none;
 }
-.winbtn:hover { background: #22252c; color: var(--text); }
-.winbtn.close:hover { background: #d9291c; color: #fff; }
+.winbtn:hover { background: var(--hover); color: var(--text); }
+.winbtn.close:hover { background: var(--danger-solid); color: var(--on-accent); }
 .winbtn.gear { font-size: 15px; }
-.winbtn.gear.active { background: #22252c; color: var(--brand-text); }
+.winbtn.gear.active { background: var(--hover); color: var(--brand-text); }
 
 /* Peer destinations, visually distinct from the window actions on the
    right. Every pixel here is drag surface given up, so this stays tight;
@@ -204,8 +376,8 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   font: inherit; font-size: 12px; letter-spacing: .04em;
   padding: 5px 10px; border-radius: 5px; cursor: pointer;
 }
-.navbtn:hover { color: var(--text); background: #22252c; }
-.navbtn.active { color: var(--text); background: #22252c; }
+.navbtn:hover { color: var(--text); background: var(--hover); }
+.navbtn.active { color: var(--text); background: var(--hover); }
 /* Author rule, for the same reason .routenav[hidden] carries one: .navbtn
    sets no display, but the buttons live in a flex row and [hidden] must
    still remove them from it. */
@@ -223,15 +395,15 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 /* ---- shared primitives ---------------------------------------------- */
 .card {
   /* Tinted sideways into violet, NOT lightened: --text-faint has just
-     4.82:1 on flat --panel and #191426 holds 4.78:1. A lighter panel puts
+     4.81:1 on flat --panel and --card-top holds 4.78:1. A lighter panel puts
      the faintest text role under AA on every card in the app. */
-  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 14px 16px;
 }
 .card > h2 {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: #8b93a1; margin-bottom: 12px; font-weight: 600;
+  color: var(--text-label); margin-bottom: 12px; font-weight: 600;
   display: flex; align-items: center; gap: 9px;
 }
 /* The short rule preceding every section label. NOT the brand any more.
@@ -274,17 +446,18 @@ input.field.mono, span.field.mono, textarea.field.mono {
 }
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 input.field:focus, textarea.field:focus, select.field:focus {
-  border-color: #39404d;
+  border-color: var(--field-focus-border);
   box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
 }
 textarea.field { resize: none; line-height: 1.5; }
 
 button.btn {
-  background: #1c1f26; border: 1px solid #2a2e37; border-radius: var(--radius-sm);
-  padding: 7px 12px; font-size: var(--fs-mono); color: #c8cdd6; flex: none;
+  background: var(--control); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: var(--fs-mono); color: var(--text-btn); flex: none;
   cursor: pointer; font-family: inherit;
 }
-button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
+button.btn:hover:not(:disabled) { background: var(--control-hover); color: var(--text); }
 button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
 /* White ON the brand -- the exact inverse of what vermilion needed, and
@@ -298,9 +471,9 @@ button.btn.acc {
   /* Held in a custom property because the hover rule below has to restate
      the fill to win, and two hand-kept copies of a gradient are exactly the
      kind of pair that drifts. Declared once, referenced twice. */
-  --acc-fill: linear-gradient(180deg, #9438e8, #7a1fc8);
+  --acc-fill: linear-gradient(180deg, var(--acc-top), var(--acc-bottom));
   background: var(--acc-fill);
-  border-color: #a95cf0; color: #fff; font-weight: 600;
+  border-color: var(--brand-edge); color: var(--on-accent); font-weight: 600;
   box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
 /* Restates the fill AND the label, and neither line is redundant.
@@ -330,15 +503,17 @@ button.btn.acc {
    the :not(:disabled) here keeps a disabled accent button on its gradient,
    so grayscale(.5) below acts on the brand rather than on grey. */
 button.btn.acc:hover:not(:disabled) {
-  background: var(--acc-fill); color: #fff; filter: brightness(1.08);
+  background: var(--acc-fill); color: var(--on-accent); filter: brightness(1.08);
 }
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
    in the app fell back to the UA ring -- which, before `color-scheme: dark`
    above, resolved for a light scheme and drew near-black on a near-black
-   page. #c99cff measures 8.3-9.0:1 against every surface here, well over
-   the 3:1 that 1.4.11 asks of a non-text indicator.
+   page. --focus-ring measures 8.28-8.96:1 against every surface it lands
+   on -- outline-offset puts it OUTSIDE the control, so those surfaces are
+   the page's, not the button's -- well over the 3:1 that 1.4.11 asks of a
+   non-text indicator.
 
    :focus-visible, not :focus: a mouse click on a button must not leave a
    ring behind, which is the reason the ring was removed rather than
@@ -354,7 +529,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
-  outline: 2px solid #c99cff;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 /* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
@@ -375,9 +550,9 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #262a33; border-radius: 5px; border: 2px solid var(--bg);
+  background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg);
 }
-::-webkit-scrollbar-thumb:hover { background: #333845; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* The ship, in the empty lower-right of the Uploader only. Scoped to one
@@ -412,7 +587,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .list-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius); overflow: hidden;
 }
@@ -460,7 +635,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .list-head {
   position: sticky; top: 0; z-index: 2;
-  background: #101216;
+  background: var(--sunken);
   border-bottom: 1px solid var(--panel-border);
   /* --fs-muted, not --fs-body: headers label the data, they are not the
      data. This is the deliberate ordering carried over from 2.2.0. */
@@ -529,18 +704,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* 1px separators, NOT zebra striping: with a card surface and adequate row
    height, zebra is compensation for a flat list. */
 .list-row {
-  border-bottom: 1px solid #191c22;
+  border-bottom: 1px solid var(--row-line);
   border-left: 2px solid transparent;
   cursor: default;
 }
 .list-row:last-child { border-bottom: 0; }
-.list-row:hover { background: #171a20; }
+.list-row:hover { background: var(--row-hover); }
 /* Selected rows take a left brand rule and a slightly lifted surface. */
-.list-row.sel { background: #191d24; border-left-color: var(--brand); }
+.list-row.sel { background: var(--row-active); border-left-color: var(--brand); }
 /* Row focus is a real concept, not styling: it is what Space acts on. */
-.list-row.focused { box-shadow: inset 0 0 0 1px #2f3540; }
+.list-row.focused { box-shadow: inset 0 0 0 1px var(--row-ring); }
 .list-scroll:focus { outline: none; }
-.list-scroll:focus .list-row.focused { box-shadow: inset 0 0 0 1px #4a5260; }
+.list-scroll:focus .list-row.focused {
+  box-shadow: inset 0 0 0 1px var(--row-ring-focus);
+}
 
 .c-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -558,15 +735,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .c-check { display: flex; justify-content: center; }
 .box {
   width: 14px; height: 14px; border-radius: 3px;
-  border: 1.5px solid #3a3f49; background: var(--field);
+  border: 1.5px solid var(--control-edge); background: var(--field);
   display: grid; place-items: center; flex: none;
 }
 .list-row.sel .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #a95cf0;
+  border-color: var(--brand-edge);
 }
 .box::after {
-  content: "\2713"; font-size: 10px; line-height: 1; color: #fff;
+  content: "\2713"; font-size: 10px; line-height: 1; color: var(--on-accent);
   opacity: 0; font-weight: 700;
 }
 .list-row.sel .box::after { opacity: 1; }
@@ -578,7 +755,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 22px; height: 22px; border-radius: 5px;
   color: var(--text-faint); cursor: pointer;
 }
-.glyph-link:hover { background: #22252c; color: var(--brand-text); }
+.glyph-link:hover { background: var(--hover); color: var(--brand-text); }
 .dur-unknown, .dur-pending { color: var(--text-faint); cursor: help; }
 
 .list-foot {
@@ -591,7 +768,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
      it the footer ran 34px past the pane at 608px, with no scrollbar. */
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 8px 10px; border-top: 1px solid var(--panel-border);
-  background: #101216;
+  background: var(--sunken);
 }
 .list-foot .count {
   margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
@@ -632,7 +809,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* ---- context menu (replaces the Tk tk_popup menu) ------------------- */
 .ctxmenu {
   position: fixed; z-index: 40; min-width: 168px; padding: 4px;
-  background: var(--panel); border: 1px solid #2a2e37;
+  background: var(--panel); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
 }
@@ -643,7 +820,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text); font-family: inherit; font-size: var(--fs-mono);
   cursor: pointer;
 }
-.ctxmenu button:hover:not(:disabled) { background: #22252c; }
+.ctxmenu button:hover:not(:disabled) { background: var(--hover); }
 .ctxmenu button:disabled { color: var(--text-faint); cursor: default; }
 
 /* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
@@ -655,7 +832,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   content: attr(data-tip);
   position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px);
   z-index: 50; pointer-events: none;
-  background: var(--panel); border: 1px solid #2a2e37; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--control-border); border-radius: 6px;
   padding: 6px 8px; color: var(--text);
   font-size: var(--fs-muted); line-height: 1.45;
   /* attr() preserves the literal newlines in CELL_HELP's copy. */
@@ -695,7 +872,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .check .box { width: 15px; height: 15px; }
 .check input:checked + .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #a95cf0;
+  border-color: var(--brand-edge);
 }
 .check input:checked + .box::after { opacity: 1; }
 .check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
@@ -859,7 +1036,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .statusbar {
   flex: none; display: flex; align-items: center; gap: 14px;
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
-  background: linear-gradient(180deg, #14101c, #0f0c14);
+  background: linear-gradient(180deg, var(--statusbar-top), var(--statusbar-bottom));
 }
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
@@ -875,7 +1052,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #status.ERROR { color: var(--err); }
 
 .track {
-  flex: 1; height: 4px; border-radius: 2px; background: #1e2128;
+  flex: 1; height: 4px; border-radius: 2px; background: var(--track);
   overflow: hidden; position: relative;
 }
 .bar {
@@ -942,7 +1119,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .dialog {
   width: min(460px, 100%);
-  background: var(--panel); border: 1px solid #2a2e37;
+  background: var(--panel); border: 1px solid var(--control-border);
   border-radius: var(--radius); padding: 18px 20px 16px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
 }
@@ -1335,17 +1512,17 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    button.btn and .winbtn rather than introducing new colour literals. */
 .bindbtn {
   min-width: 150px; text-align: left;
-  background: #1c1f26; border: 1px solid #2a2e37;
+  background: var(--control); border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); padding: 6px 10px;
   font-family: var(--mono); font-size: var(--fs-mono);
   color: var(--text); cursor: pointer; flex: none;
 }
-.bindbtn:hover { background: #242832; }
+.bindbtn:hover { background: var(--control-hover); }
 
 /* Capturing: the label already changes to "Press a key…", but without a
    visual state the row does not read as waiting for input. */
 .bindbtn.capturing {
-  border-color: var(--brand-text); color: var(--brand-text); background: #22252c;
+  border-color: var(--brand-text); color: var(--brand-text); background: var(--hover);
 }
 
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
@@ -1382,7 +1559,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
-.linkbtn:hover { color: var(--text); background: #22252c; }
+.linkbtn:hover { color: var(--text); background: var(--hover); }
 
 .settings {
   display: flex; flex-direction: column; gap: 12px;
@@ -1491,7 +1668,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: inline-flex; align-items: center; gap: 7px; flex: none;
   font-size: var(--fs-muted); color: var(--text-faint);
   padding: 3px 10px 3px 8px; border-radius: 999px;
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .led {
   width: 7px; height: 7px; border-radius: 50%; flex: none;
@@ -1512,7 +1689,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .radio input { position: absolute; opacity: 0; width: 0; height: 0; }
 .ring {
   width: 15px; height: 15px; border-radius: 50%;
-  border: 1.5px solid #3a3f49; flex: none;
+  border: 1.5px solid var(--control-edge); flex: none;
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
@@ -1731,7 +1908,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .rail-head {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: #8b93a1; font-weight: 600;
+  color: var(--text-label); font-weight: 600;
 }
 /* A column header for .rail-ratio, so it sits over the numbers it names.
    Below body size and dim on purpose: it labels the data and is not the
@@ -1781,9 +1958,9 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   cursor: pointer; text-align: left;
 }
 .rail-item[hidden] { display: none; }
-.rail-plan:hover, .rail-item:hover { background: #22252c; color: var(--text); }
+.rail-plan:hover, .rail-item:hover { background: var(--hover); color: var(--text); }
 .rail-plan.active, .rail-item.active {
-  background: #191d24; border-left-color: var(--brand); color: var(--text);
+  background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
 .rail-plan-name { flex: 1; min-width: 0;
                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1804,14 +1981,14 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .skills-notices {
   flex: none; display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .skills-notices[hidden] { display: none; }
 .notice { color: var(--text-dim); font-size: var(--fs-muted); }
 
 .skills-issues {
   flex: none; padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--field-border);
+  background: var(--sunken); border: 1px solid var(--field-border);
 }
 .skills-issues[hidden] { display: none; }
 .skills-issues summary {
@@ -1838,15 +2015,14 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
 /* The colour key.
-   `#7aa2f7` is a literal and this comment used to claim otherwise ("every
-   value is an existing token; this route introduces no new colour
-   literals"). It appears three times below -- .key-Training,
-   .status-Training and .state-Queued -- and since the purple retheme it is
-   also, exactly, the value of `--link`. It is NOT that concept: --link is
-   the declared exemption for a link OUT of the app, and pointing these at
-   it would say a training state leaves the application. A token of its own
-   belongs in `:root`, which this block does not own. Left as a literal
-   deliberately, with the collision recorded rather than laundered.
+   This block used to hold `#7aa2f7` three times over -- .key-Training,
+   .status-Training and .state-Queued -- and carried a note saying so,
+   because after the purple retheme that literal was EXACTLY the value of
+   `--link`, and pointing them at --link would have said a training state
+   leaves the application. The note ended "a token of its own belongs in
+   `:root`, which this block does not own". L1 owns `:root`; the token is
+   `--training`, teal rather than blue, and the collision is gone rather
+   than recorded. Finding S5.
 
    THE ORDER OF THESE IS THE SEVERITY RAMP, and it used to invert itself
    at the last rung. `Unknown` outranks `Missing` as a problem -- Python
@@ -1856,13 +2032,19 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    painted --text-dim: the more severe state, dimmer than the milder one,
    which is the opposite of what a severity colour is for.
 
-   Both now carry --err, and the WORD carries the distinction ("Missing
+   Both now carry --unmet, and the WORD carries the distinction ("Missing
    requirements" / "Untrained requirements"). Not a swap: --warn is already
    Locked's, and Missing genuinely outranks Locked, so demoting Missing to
-   make room would collide two states that are not equal. There is no
-   fourth severity token to reach for and minting one is a `:root` edit
-   this block may not make -- so the ramp ends in one bucket of two
-   equally-actionable reds rather than a fifth colour.
+   make room would collide two states that are not equal.
+
+   The rung was --err until finding S3, and the note here used to explain
+   that as forced: "there is no fourth severity token to reach for and
+   minting one is a `:root` edit this block may not make". That is what
+   L1 minted. It matters beyond tidiness, because --err was also painting
+   `Forget character` -- the control that deletes the character -- about
+   130 CSS px below a `Missing` row in identical red. A state this screen
+   exists to report is not a failure and must not wear the failure
+   colour; C2 settled the same point for `Unknown skill`.
 
    --text-faint stays on Unscored, and that is not an oversight: Unscored
    is the ABSENCE of a judgement, not a bad one. Grey is right for exactly
@@ -1872,27 +2054,27 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   background: currentColor;
 }
 .key-Ready { color: var(--ok); }
-.key-Training { color: #7aa2f7; }
+.key-Training { color: var(--training); }
 .key-Locked { color: var(--warn); }
-.key-Missing { color: var(--err); }
-.key-Unknown { color: var(--err); }
+.key-Missing { color: var(--unmet); }
+.key-Unknown { color: var(--unmet); }
 .key-Unscored { color: var(--text-faint); }
 /* The catch-all bucket. Brand-coloured on purpose: a readiness this page
    has never heard of is worth looking at, not worth hiding. */
 .key-Other { color: var(--brand-text); }
 
 .skills-row {
-  border-bottom: 1px solid #191c22;
+  border-bottom: 1px solid var(--row-line);
   border-left: 2px solid transparent;
 }
-.skills-row.open { background: #171a20; border-left-color: #2f3540; }
+.skills-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
 .skills-row-top {
   display: flex; align-items: center; gap: 9px; width: 100%;
   background: none; border: 0; padding: 7px 10px;
   color: var(--text); font: inherit; font-size: var(--fs-body);
   cursor: pointer; text-align: left;
 }
-.skills-row-top:hover { background: #171a20; }
+.skills-row-top:hover { background: var(--row-hover); }
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
 /* max-width is what closes the ~1000px gap between a row's subject and
    its answer. `flex: 1` alone let the name box eat every spare pixel and
@@ -1924,16 +2106,16 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
 .status-Ready { color: var(--ok); }
-.status-Training { color: #7aa2f7; }
+.status-Training { color: var(--training); }
 .status-Locked { color: var(--warn); }
-.status-Missing { color: var(--err); }
+.status-Missing { color: var(--unmet); }
 /* New rule, not a changed one: there was no .status-Unknown at all, so the
    row that reads `Not trained` fell through to .skills-status' --text-dim
    while its own group key beside it was coloured. See the ramp above. */
-.status-Unknown { color: var(--err); }
+.status-Unknown { color: var(--unmet); }
 .badge-stale {
   flex: none; padding: 1px 7px; border-radius: 999px;
-  background: #101216; border: 1px solid var(--warn);
+  background: var(--sunken); border: 1px solid var(--warn);
   color: var(--warn); font-size: 10px; letter-spacing: .04em;
 }
 
@@ -1944,7 +2126,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .reauth {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: var(--radius-sm);
-  background: #101216; border: 1px solid var(--err);
+  background: var(--sunken); border: 1px solid var(--err);
   color: var(--text-dim); font-size: var(--fs-muted);
 }
 .row-error { color: var(--err); font-size: var(--fs-muted); user-select: text; }
@@ -1962,20 +2144,22 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   font-size: var(--fs-muted);
 }
 .req-state { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
-.state-Missing { color: var(--err); }
+.state-Missing { color: var(--unmet); }
 .state-TrainedInactive { color: var(--warn); }
-.state-Queued { color: #7aa2f7; }
+.state-Queued { color: var(--training); }
 /* Was --text-faint, the faintest colour in the palette, on the state this
    list's own sort ranks second and the evaluator ranks worst. Same fix and
    same reasoning as .key-Unknown above. */
-.state-Unknown { color: var(--err); }
+.state-Unknown { color: var(--unmet); }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
-.linkbtn.danger { color: var(--err); }
-.linkbtn.danger:hover { color: #fff; background: #d9291c; }
-button.btn.danger { border-color: var(--err); color: var(--err); }
-button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
+.linkbtn.danger { color: var(--danger); }
+.linkbtn.danger:hover { color: var(--on-accent); background: var(--danger-solid); }
+button.btn.danger { border-color: var(--danger); color: var(--danger); }
+button.btn.danger:hover:not(:disabled) {
+  background: var(--danger-solid); color: var(--on-accent);
+}
 
 /* The 168px rail step that used to live here has been DELETED, not moved.
    It narrowed the rail to the Settings rail's width below 720px, to buy
