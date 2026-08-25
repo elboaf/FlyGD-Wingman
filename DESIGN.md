@@ -93,8 +93,11 @@ reach for. Reproduce the clip or establish that it cannot be reproduced
 before relying on either number. Deliberately left open rather than
 guessed at.
 
-**What this means for `style.css`.** Of its eight width media queries,
-seven can never fire:
+**What this means for `style.css`.** Every width media query below the
+floor is unreachable through the window. As of the merge that carried this
+correction there were eight, of which seven could never fire — but lanes
+are deleting their own dead blocks, so treat the *rule* as the durable
+part and re-grep before quoting a count:
 
 | Query | Fires at the floor |
 |---|---|
@@ -116,7 +119,7 @@ decision, not a breakpoint. **R1 owns this**; it is recorded here because
 the reason is a DPI fact rather than a CSS one and would otherwise have to
 be rediscovered at the stylesheet.
 
-None of the six dead blocks is load-bearing today, and each owning lane
+None of the dead blocks is load-bearing today, and each owning lane
 decides whether its block is a decision worth keeping or dead weight — a
 rule the window cannot currently reach is not thereby wrong. Note that
 `docs/ui-critique.md` credited one of these queries with doing the
