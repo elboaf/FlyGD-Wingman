@@ -49,12 +49,28 @@ the label sat 12px inboard whether or not the arrow was drawn:
 consistently misaligned instead of intermittently. Only a render caught
 it.
 
-**To R4, who executes the same rule on Skills:** the walkthrough's figures
-for `PLANS` (~22px left) and `READY` (~14px right) are from the same pass
-and deserve the same scepticism. Skills' header row has no scrollbar
-either. Measure the arrow before measuring anything else — `READY`'s
-"~14px right" is the same number this lane measured for `Size`, and it may
-be the same cause.
+**R1 guessed that Skills 7 had the same cause. That guess was wrong, and
+R4 disproved it.** Recorded here rather than quietly deleted, because the
+way it was wrong is the same trap this section is about.
+
+The guess was that `READY`'s reported "~14px right" was the same defect,
+because it was the same number R1 measured for `Size`. R4 checked and
+found: the Skills block contains **zero** `::after`, `::before` and
+`content:` declarations, `READY` is a static span, and nothing on that rail
+is sortable — so there is no arrow to be the mechanism. The real cause is
+arithmetic and closes exactly: `.rail-plan` carries
+`border-left: 2px solid transparent` plus `padding: 6px 8px` and
+`.rail-head-row` carried neither, predicting 10px left and 8px right.
+Measured: `PLANS` −10.00, `READY` +8.00, both to 0.00 after one padding
+declaration. A sort arrow acts on **one** edge of one column; this was two
+opposite edges fixed by one line.
+
+**And the numbers never matched.** R1's `14` is CSS px measured in the
+harness; the walkthrough's `~14` for `READY` is physical off a 200%
+capture, so it is 7 CSS — against R4's measured 8. Likewise `~22` for
+`PLANS` is 11 halved, against a measured 10. The match that made the guess
+look plausible was a unit coincidence, in a figure R1 was simultaneously
+warning R4 not to trust. Two screens, two causes, one rule.
 
 ## To S4 — `DESIGN.md`'s header rule needs one more sentence
 
@@ -118,17 +134,32 @@ lanes and they are the same failure, not three unrelated errors:
 
 | Finding | Reported | Actual |
 |---|---|---|
-| Uploader 3 | ~16px, "the scrollbar gutter" | 14px, the sort arrow, sorted column only |
+| Uploader 3 | ~16px, "the scrollbar gutter" | 14px CSS, the sort arrow, sorted column only |
 | Uploader 4 | right-aligned over left-aligned | left over left; does not reproduce |
+| Skills 7 (R4) | ~22px / ~14px, "no shared inset" | 10 / 8 CSS; one missing padding declaration |
 | F3 (R5) | 11 CSS px | 6px, entirely `.linkbtn`'s `padding-left` |
+| Profiles 2 (R3) | ~1180px card, ~250px column | halved; the card is capped at 620 CSS |
 
 In every case **the box was fine and something inside it moved** — padding
-on the control, an `::after` on the header, ink versus border box. So the
-figure was measuring something that was not the defect, which is why
-correcting the *units* does not rescue these: the mechanism was
-misidentified first. `DESIGN.md` carries the standing instruction; the
-practical form of it is **find the mechanism before you trust the number,
-and measure text ranges rather than boxes.**
+on the control, an `::after` on the header, a missing padding declaration
+on a header row, ink versus border box. So the figure was measuring
+something that was not the defect, which is why correcting the *units*
+does not rescue these: the mechanism was misidentified first.
+
+**Both failure modes are present and they are not the same.** Some figures
+are physical off 200% captures and halve cleanly (Skills 7, Profiles 2);
+some are wrong outright (F3, Uploader 4). Halving is not a general fix, and
+a figure that halves to something plausible is not thereby verified.
+
+**The trap R1 fell into is worth naming, because it is the subtle one.**
+R1 warned R4 that the walkthrough's figures were unreliable and in the same
+message inferred a shared cause from one of them matching a number R1 had
+measured. It matched because R1's was CSS and the walkthrough's was
+physical — a coincidence between a real measurement and an untrusted one.
+**A number you do not trust cannot become evidence by agreeing with one you
+do.** `DESIGN.md` carries the standing instruction; the practical form is
+**find the mechanism before you trust the number, and measure text ranges
+rather than boxes.**
 
 
 ## Findings this lane declined, with the reason
@@ -198,3 +229,29 @@ branch is editing the same block concurrently.
 Neither branch touches `get_preview_hotkey_state`; both looked at it and
 both left it as out of scope, so the harness warning above is still
 unowned by anyone.
+
+## `dev.js` is unowned, and four lanes have now written to it
+
+Reported independently by R3 and R4, and worth acting on rather than
+noting. `docs/ui-work-lanes-2.md`'s region-ownership table does not name an
+owner for `web/dev.js`, and by the end of wave 2 four sessions had edited
+it on the honour system: S1 (the version fake), R1 (`inert_notes`), R3 (the
+whole `eve_settings_*` family — the route had **no** stub at all, so
+`?dev=1` rendered Profiles inert, which is why the screen with the most
+findings was the one nobody could eyeball), and R4 (the skills fixtures).
+The preview-alerts branch makes five.
+
+It merged clean this round. That is luck, not design, and the file is the
+one thing every lane verifies through.
+
+**The concrete consequence, which nobody currently owns:** R3 test-merged
+all four wave-2 PRs with `git merge-tree --write-tree` and found no
+conflicts — but a clean textual merge is not a rendered page, and each of
+us has only vouched for our own route. Whoever lands last produces a
+combination nobody has opened, which is exactly the failure the top of
+`DESIGN.md` describes: a broken screen looks like an empty screen and the
+suite stays green through it.
+
+**Someone should do one `?dev=1` pass over all five routes after the final
+merge**, in addition to the per-lane hand passes. It is one browser load
+and it is the only check that sees the combination.

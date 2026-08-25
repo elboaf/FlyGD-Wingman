@@ -139,15 +139,25 @@ that the tier rendering **at** the floor needs exactly `MIN_WIDTH` —
 tier that held that position.
 
 A rule the window cannot currently reach is not thereby wrong, and
-unreachable is not the same as removable. Two of these blocks are
-**required by a test**: `test_page_conventions.py` brace-matches every
-`max-width: 720px` body and demands that each id override of the shared
-label column — `#eve-binds` and `#preview-binds` — restore its collapse
-inside one. They are unreachable through the window *and* mandatory, which
-is not a contradiction: the override they correct is real at every width,
-and the restore is the record of what happens if the floor ever moves.
-Delete an override and its restore together, or neither. Beyond those two,
-each owning lane decides whether its block is a decision worth keeping. Note that
+unreachable is not the same as removable. Some of these blocks are
+**required by a test**, and this file has already undercounted them once,
+so: **grep `tests/` for the selector before deleting any media query.**
+
+`test_page_conventions.py` brace-matches every `max-width: 720px` body and
+demands that each id override of the shared label column — `#eve-binds` and
+`#preview-binds` — restore its collapse inside one. Those two are
+unreachable through the window *and* mandatory, which is not a
+contradiction: the override they correct is real at every width, and the
+restore is the record of what happens if the floor ever moves. Delete an
+override and its restore together, or neither.
+
+**They were not the only two.** This file previously said "two", and
+`tests/test_skills_page.py` was separately asserting a `max-width: 720px`
+block containing `#route-skills` — a third, named nowhere. R4 found it by
+turning the suite red while deleting a block this file had implied was
+theirs to judge. The count is not the durable part; the grep is. Beyond
+what a test requires, each owning lane decides whether its block is a
+decision worth keeping. Note that
 `docs/ui-critique.md` credited one of these queries with doing the
 scaling arithmetic "correctly": it is the `839px` one, and the credit was
 earned against the wrong model, and the credit was misplaced.
