@@ -965,3 +965,23 @@ def test_a_foreground_window_that_is_not_a_client_selects_nothing(monkeypatch):
     acknowledgement would clear alerts the user never saw."""
     h = _swept_host(monkeypatch, ["Alice"], foreground=0xDEAD)
     assert h._selected_key is None
+
+
+def test_a_stale_selection_clears_once_the_client_loses_the_foreground(monkeypatch):
+    """The from-cold case above cannot tell "correctly clears" from "never
+    had anything to clear": a buggy _apply_selection that only assigns
+    self._selected_key when a client IS found -- i.e. never clears it, the
+    sticky behaviour rejected above -- would also leave _selected_key at its
+    initial None and pass that test. This one actually exercises the clear:
+    select Alice, then move the real foreground off any client, and check
+    the selection follows it back to None.
+
+    This matters beyond cosmetics: a later task clears a persistent alert
+    when its client becomes selected. Sticky selection would mean the
+    client you last used stays "selected" while you are in a browser, and
+    its alert would clear itself without you ever seeing it.
+    """
+    h = _swept_host(monkeypatch, ["Alice"], foreground=0x1000)
+    assert h._selected_key == "Alice"
+    h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
+    assert h._selected_key is None
