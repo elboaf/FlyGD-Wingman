@@ -679,11 +679,20 @@
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_preview_show_labels', wanted).then(function (res) {
-      if (!res || !res.applied) {
-        // Refused: the live value never changed either, so put the box
-        // back rather than show a state the app is not in.
+      // WM.send resolves to null on any bridge failure rather than
+      // rejecting (app.js), and a refusal may carry no error text either --
+      // either way `say(res && res.error)` would clear the status line to
+      // blank, telling the user nothing changed but not why. Put the box
+      // back rather than show a state the app is not in, and always say
+      // something.
+      if (!res) {
         box.checked = !wanted;
-        say(res && res.error);
+        say('Could not reach the app. Nothing was changed.');
+        return;
+      }
+      if (!res.applied) {
+        box.checked = !wanted;
+        say(res.error || 'That value was not accepted.');
         return;
       }
       if (!res.persisted) {
@@ -755,12 +764,22 @@
   box.addEventListener('change', function () {
     var wanted = parseInt(box.value, 10);
     WM.send('set_preview_opacity', wanted).then(function (res) {
-      if (!res || !res.applied) {
+      // Same fallback-message gap as show_labels above: WM.send resolves
+      // to null on a bridge failure, and a refusal may carry no error
+      // text, so `say(res && res.error)` could clear the status line to
+      // blank instead of telling the user anything.
+      if (!res) {
+        box.value = lastGood;
+        readout.textContent = box.value;
+        say('Could not reach the app. Nothing was changed.');
+        return;
+      }
+      if (!res.applied) {
         // Refused: put the slider back where it was rather than show a
         // value the app never actually took.
         box.value = lastGood;
         readout.textContent = box.value;
-        say(res && res.error);
+        say(res.error || 'That value was not accepted.');
         return;
       }
       lastGood = box.value;
@@ -823,9 +842,17 @@
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_minimize_inactive_clients', wanted).then(function (res) {
-      if (!res || !res.applied) {
+      // Same fallback-message gap as show_labels/opacity above: `say(res
+      // && res.error)` clears the status line to blank on a bridge
+      // failure or an unexplained refusal instead of saying anything.
+      if (!res) {
         box.checked = !wanted;
-        say(res && res.error);
+        say('Could not reach the app. Nothing was changed.');
+        return;
+      }
+      if (!res.applied) {
+        box.checked = !wanted;
+        say(res.error || 'That value was not accepted.');
         return;
       }
       // applied is true whether or not persistence succeeded -- update.
