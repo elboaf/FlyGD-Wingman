@@ -202,11 +202,16 @@ exits **0** — no window, no error, no crash dialog, and a success code.
 - [ ] **Display scaling at 100%, 125%, 150% and 200%.** Restart at each.
       Expected: text sharp AND the right apparent size next to Notepad;
       neither route opens larger than the screen; Title, Description,
-      Stitch, the combat-log checkbox, the summary, Retry and Upload all
-      fully visible with nothing clipped.
+      Stitch, the combat-log checkbox, the summary and Upload all fully
+      visible with nothing clipped. (Retry is absent until a failure —
+      see The list and Upload.) The upload panel is deliberately narrower
+      below 840 CSS px — 248px, then 220px — so check the longest prose in
+      it wraps rather than being cut off at the panel edge: clear the
+      webhook first so the two-line combat-log hint is showing, which is
+      the longest string the panel ever holds.
 - [ ] **Nothing is clipped at the minimum window size** at 150%. The
-      Description box shrinks first and the Retry / Delete row is
-      still fully visible. Drag the window down to its floor (840x625
+      Description box shrinks first and **Delete selected** is still fully
+      visible on its own row. Drag the window down to its floor (840x625
       logical) to check this — before resizing existed, "minimum" was the
       only size the window ever had and this was free; now a user can
       actually get here.
@@ -275,11 +280,23 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       "Measuring length…" instead — the two glyphs mean opposite things.
 - [ ] **Hovering the link glyph explains both gestures,** and no tooltip
       appears over an empty Link cell, a filename, a header, or empty space.
-- [ ] **The list at the minimum window width.** Drag the window to its floor
-      (840 logical). Every column still present, Filename truncates rather
-      than pushing others off, NO horizontal scrollbar. That width was
-      measured as the point where this stops being true, so it is the exact
-      edge — not a comfortable margin inside it.
+- [ ] **The list at the minimum window width, at every scaling.** This
+      item used to say "drag the window to its floor (840 logical)", which
+      is the ONE width where the layout is fine — 840 is a PHYSICAL floor,
+      so the CSS viewport is 840/scale, and every scaling above 100% put
+      the list somewhere this check never looked. Do all three:
+      **At 100%** (viewport 840): all six columns present — check,
+      Filename, Modified, Size, Length, Link.
+      **At 125%** (viewport 672): Size and Length are gone deliberately,
+      and the upload panel is narrower. Filename, Modified and Link remain.
+      **At 150%** (viewport 560): Modified is gone too. Filename and Link
+      remain, Filename is comfortably wide, and the footer takes two lines
+      rather than pushing the count off the edge.
+      In every case: NO horizontal scrollbar, no column cut in half at the
+      pane edge, and the header sits over the right column — a header that
+      has kept a cell its rows have dropped is the specific failure the
+      shared grid template exists to prevent.
+      Widen the window back up and confirm the columns come back.
 - [ ] **The Modified column reads as relative time, not a timestamp.** It
       must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
       week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
@@ -297,6 +314,28 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       well past the default. Filename must stop growing once it fits its
       text, keeping Modified/Size/Length/Link near it, rather than
       stretching and pushing them to the far edge with a gap in the middle.
+- [ ] **The empty state names the folder it watched.** Point the app at a
+      folder with no recordings in it. Expected: "No recordings in
+      &lt;the full path&gt;." with the path in the monospace face, and a second
+      line offering Open folder and Settings › Folders. It must name the
+      actual folder, not "the watched folder" — this is the screen a
+      first-run user lands on straight after nominating one, so it is where
+      a wrong pick shows up, and it was the one place that did not say
+      which folder it meant.
+      Then check the other half: with NO folder configured at all (the
+      skipped first run recipe under First run), it must read "No recording
+      folder is set yet." and point at Settings rather than naming an empty
+      path.
+      At 150%, confirm a long path wraps inside the pane instead of running
+      off the edge — a Windows path has no spaces to break at.
+- [ ] **Open folder opens the watched folder.** Press it in the list footer
+      with a folder configured: Explorer opens on that folder. This is the
+      only affordance on this screen that reaches the FILES — double-click
+      and both context-menu entries all act on the YouTube link.
+      Then the two refusals, which report on the status strip and must NOT
+      raise a dialog: with no folder set, "No recording folder is set.
+      Choose one in Settings."; with the configured folder renamed or
+      deleted while the app runs, "That folder is gone: &lt;path&gt;".
 
 ### Frozen build
 - [ ] **LOAD-BEARING: the installed build renders the page at all.** The
@@ -501,10 +540,14 @@ behavior that only shows up at size.
       the app's colours in both Light and Dark rather than a Tk-default
       yellow, and that it disappears on click and when the pointer leaves
       the list.
-- [ ] **Hovering the greyed Retry button explains why it is greyed.**
-      Expected: a tooltip saying it is enabled after a failure and resumes
-      rather than restarts. Disabled is its normal state, so without this it
-      reads as broken.
+- [ ] **Retry is not on screen at all until something has failed.** On a
+      fresh start, the Publish card shows Upload and then **Delete
+      selected** on a row of its own, full width — no greyed Retry beside
+      it. Retry is enabled only after a failure in this session, which for
+      most users is never, so its resting state was a dead control given
+      equal weight to the one button on this screen that removes files from
+      disk. It is hidden, not greyed: there is no tooltip to hover, and
+      tabbing through the panel must skip it entirely.
 
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
@@ -671,8 +714,19 @@ behavior that only shows up at size.
 - [ ] **The combat-log checkbox is where the other upload options are.**
       Confirm **Also post combat logs to Discord** sits in the **Upload card
       on the right, directly under Stitch** — not in the Publish card beside
-      the buttons — and that it is TICKED on a fresh launch. It is not
-      persisted, so every launch starts ticked.
+      the buttons — and that it is TICKED on a fresh launch **when a
+      webhook is configured**. It is not persisted, so every launch starts
+      ticked.
+      With NO webhook stored it must instead be unticked, disabled, and
+      followed by "No Discord webhook is configured, so logs would be
+      skipped. Set one in Settings › Discord." Clear the webhook and
+      confirm the box goes off and dims; put one back and confirm it comes
+      back ticked without a restart. Then untick it by hand, clear the
+      webhook and restore it: it must stay UNTICKED, because that one was
+      the user's decision and not the gate's.
+      Note the gate tests only whether a webhook is STORED. A webhook that
+      is stored but does not parse leaves the box available — the confirm
+      dialog is what reports that case, and it is checked under Upload.
 
 ## Upload
 - [ ] **Upload confirms before publishing anything.** Select two
@@ -767,7 +821,8 @@ behavior that only shows up at size.
       uploaded video plays through the join with audio in sync
 - [ ] No `stitch-*` leftovers (video or concat list) in `%LOCALAPPDATA%\...\tmp`
 - [ ] Killing the network mid-upload shows "retrying in Ns", then resumes
-- [ ] After exhausting retries, the Retry button becomes enabled
+- [ ] After exhausting retries, the Retry button APPEARS beside Delete
+      selected, which gives up its full width to make room
 - [ ] Retry resumes rather than restarting from 0%
 - [ ] Retry of a 3-file batch that failed on file 2 uploads files 2 and 3,
       and fills in links for both
@@ -779,7 +834,7 @@ behavior that only shows up at size.
       quota, or revoke the app's access from your Google account's
       permissions page and then upload. Expected: a plain-language error
       dialog (not a traceback or stack trace), and the Retry button stays
-      DISABLED, since retrying cannot help. This is a distinct code path
+      ABSENT, since retrying cannot help. This is a distinct code path
       from the "kill the network" case above — confirm Retry's state
       differs between the two.
 
@@ -846,7 +901,7 @@ response leaves a worker waiting forever, which presents as a hung upload.
       that stalls means work is running on the wrong thread.
 - [ ] **The retry countdown is visible.** Kill the network mid-upload:
       "retrying in Ns" counting down, then a resume — not a frozen bar. When
-      the retries are exhausted, Retry becomes enabled.
+      the retries are exhausted, Retry appears.
 - [ ] **Status severity colours are distinguishable.** Force a red error, a
       green success and an ordinary status in one session. All three legible
       against the near-black ground and clearly different.

@@ -162,6 +162,51 @@
     document.dispatchEvent(new CustomEvent('wm:selection'));
   }
 
+  // ---- the empty state ----------------------------------------------
+  // "No recordings found in the watched folder" told the user neither
+  // WHICH folder was watched nor how to change it, on the screen a
+  // first-run user lands on immediately after nominating one -- so it is
+  // exactly where a wrong pick surfaces, and the one place it said
+  // nothing. PRODUCT.md's tone rule is to say what happened and what to
+  // do.
+  //
+  // The sentence stays here rather than moving to ui/copy.py, which is
+  // where almost every other user-facing string in the app is composed.
+  // The path is already on the page -- _settings_payload returns
+  // `settings` wholesale and panel.js re-dispatches it -- so naming it
+  // costs a read, while migrating the sentence would mean a new push or
+  // payload key for something that is otherwise static. Moving it is a
+  // separate change from making it true.
+  var recordingDir = '';
+
+  function renderEmpty() {
+    var host = WM.el('list-empty');
+    host.textContent = '';
+    if (!recordingDir) {
+      // No folder configured at all -- a skipped first run. There is
+      // nothing to name, and Settings is the only thing to say.
+      host.appendChild(document.createTextNode(
+        'No recording folder is set yet.'));
+      host.appendChild(WM.make('div', 'where',
+        'Choose one in Settings \u203A Folders.'));
+      return;
+    }
+    host.appendChild(document.createTextNode('No recordings in '));
+    host.appendChild(WM.make('span', 'path', recordingDir));
+    host.appendChild(WM.make('div', 'where',
+      'Open folder below to check it, or change it in '
+      + 'Settings \u203A Folders.'));
+  }
+
+  document.addEventListener('wm:settings', function (ev) {
+    // panel.js owns the onSettings handler and re-dispatches it, so this
+    // listens on the same event settings.js does rather than competing
+    // for the handler.
+    var cfg = (ev.detail || {}).settings || {};
+    recordingDir = cfg.recording_dir || '';
+    renderEmpty();
+  });
+
   // Repaint one row in place, so a landing ffprobe result or a new link
   // does not scroll the list or drop the focus ring.
   function repaint(id) {
@@ -325,6 +370,14 @@
   WM.el('btn-select-none').addEventListener('click', function () {
     rows.forEach(function (r) { selected[r.id] = false; });
     render();
+  });
+
+  // Sends unconditionally, including with no folder configured: every
+  // refusal is a specific message composed in Python and pushed to the
+  // status strip (Api.open_recording_dir), and a page-side early return
+  // would swallow the one that says WHY nothing opened.
+  WM.el('btn-open-folder').addEventListener('click', function () {
+    WM.send('open_recording_dir');
   });
 
   // ---- bridge handlers ----------------------------------------------
