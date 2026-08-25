@@ -416,7 +416,14 @@ exits **0** — no window, no error, no crash dialog, and a success code.
       new recordings in the NEW folder are announced, old folder is ignored
 - [ ] Switching notify mode to popup takes effect on the next recording,
       without a restart
-- [ ] A non-numeric category ID is rejected with a warning
+- [ ] A non-numeric category is rejected with a warning
+- [ ] **The category row does not ask for a YouTube API number.** Settings >
+      Uploads. Expected: the label reads "YouTube category", and the line
+      under the row says what the number is and that 20 is the one to leave
+      it on. It used to read "Category ID" with "(20 = Gaming)" beside it —
+      one disclosed value out of a list this screen will not show, for an
+      audience defined by wormhole multiboxing rather than by fluency in the
+      YouTube Data API.
 - [ ] **The webhook is still masked after a route change.** Open Settings
       with a webhook saved, tick **Show**, navigate back to the list, then
       return. Expected: masked again. A revealed credential that survives
@@ -648,7 +655,8 @@ behavior that only shows up at size.
       delete the archive.
 - [ ] **Settings at 100% and 150% Windows display scaling.** Open Settings
       at each scale factor and walk every rail entry — Account, Uploads,
-      Notifications, Folders, Discord, Bookmarks, Previews. Confirm each
+      Notifications, Folders, Discord, Bookmarks, Previews, General. Confirm
+      each
       section's content is fully visible with nothing clipped, and that the
       rail itself is never pushed off the top by a long section. A previous
       release shipped with a section clipped off the bottom at high DPI,
@@ -886,12 +894,24 @@ only ever checked by hand.
       tests/test_page_conventions.py now holds them in step. If the pane
       and the highlight ever disagree with each other, that test has been
       bypassed rather than the markup being wrong.
-- [ ] **Eight rail entries** — General, Account, Uploads, Notifications,
-      Folders, Discord, Bookmarks, Previews — and clicking each shows its
-      content with exactly one entry highlighted. If that count is wrong,
+- [ ] **Eight rail entries, General last** — Account, Uploads,
+      Notifications, Folders, Discord, Bookmarks, Previews, General — and
+      clicking each shows its content with exactly one entry highlighted.
+      General is last because its only content is the switch that hides
+      Bookmarks and Previews: untick it and the rail must lose its tail,
+      not open a hole in its middle. If that count is wrong,
       trust the rail and fix this line: it said seven for exactly as long
       as it took to add General one commit later, which is the drift this
       checklist exists to catch elsewhere.
+- [ ] **No card heading repeats the rail entry you just clicked.** Walk the
+      rail and read the first heading in each pane. Folders and Discord both
+      repeated themselves ("Folders" / "Folders", "Discord" / "Discord
+      (combat logs)"), which DESIGN.md forbids in as many words and which
+      spends the one line that could say what the card does. Expected now:
+      "Where your recordings and gamelogs live" and "Where combat logs are
+      posted". tests/test_settings_page.py holds this mechanically; what it
+      cannot judge is whether the replacements read well at the window
+      floor, where they wrap.
 - [ ] **Bookmarks and Previews render their real data**, not empty shells:
       the keybind rows, the EVE window list, the per-character preview
       keybinds. Both used to load on entering their own route; they load on
@@ -997,7 +1017,13 @@ pytest — the engine is AutoHotkey.
 - [ ] **Set Root with NOTHING selected gives Home/Zero and touches nothing.**
       The "Nothing" row: fresh numbering at 1/A, and nothing moved to the
       clipboard.
-- [ ] **There is no Copy or Paste row in the Keybinds card**, and no key
+- [ ] **The two keybind cards say which keybinds they are.** Settings >
+      Bookmarks heads its card "EVE-focused keybinds"; Settings > Previews
+      heads its card "Global keybinds". Each names the other set and where
+      it lives. Both were headed "Keybinds", one rail item apart, for two
+      systems that take each other's keys — bind the same combination in
+      both and confirm the Previews row marks the collision.
+- [ ] **There is no Copy or Paste row in the keybinds card**, and no key
       Wingman registers sends a bare `^c` or `^v`
 - [ ] **Rebinding a window-scoped hotkey stops the old key firing** — the
       direct test of the teardown repair, and the bug that shipped for years
@@ -1014,7 +1040,7 @@ pytest — the engine is AutoHotkey.
       `H`/`L`/`N` regardless. Seeing uppercase in root mode is correct, not
       a failure. The lowercase path is reachable only after a Set Root that
       found nothing parseable.
-- [ ] **There is no medium-hole tag** — no `M` row in Keybinds, and no key
+- [ ] **There is no medium-hole tag** — no `M` row in the keybinds card, and no key
       writes an ` M`
 - [ ] **The frig tag writes `f`, not `S`.** Same bind and INI key (`FinS`),
       so an existing binding for it still works

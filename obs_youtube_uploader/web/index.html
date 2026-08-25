@@ -129,7 +129,6 @@
            checkbox for turning most of the product off, which is a
            legitimate control and a poor first impression of the app's
            configuration surface. -->
-      <button class="rail-item" data-section="general">General</button>
       <button class="rail-item active" data-section="account">Account</button>
       <button class="rail-item" data-section="uploads">Uploads</button>
       <button class="rail-item" data-section="notify">Notifications</button>
@@ -137,27 +136,17 @@
       <button class="rail-item" data-section="discord">Discord</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
+      <!-- Last, and directly under the two entries it removes: unticking
+           the switch inside hides Bookmarks and Previews (app.js's
+           EVE_SECTIONS) and lands you here, so the rail loses its tail
+           rather than a hole in its middle. It is also where a rail item
+           visited once, probably never, belongs -- the landing is the
+           entry above the fold, not this one. The panes below are kept in
+           rail order; test_settings_page.py holds the two in step. -->
+      <button class="rail-item" data-section="general">General</button>
     </aside>
 
     <div class="settings-pane">
-
-    <div class="settings" id="section-general">
-
-      <section class="card">
-        <h2>EVE Online tools</h2>
-        <label class="check">
-          <input type="checkbox" id="show-eve-tools"><span class="box"></span>
-          Show the EVE Online tools
-        </label>
-        <p class="hint">
-          Wingman's EVE features &mdash; Profiles, Skills, bookmark keybinds
-          and client previews. Turn this off and Wingman is just the
-          OBS&nbsp;&rarr;&nbsp;YouTube uploader.
-        </p>
-        <p class="field-msg" id="msg-general" hidden></p>
-      </section>
-
-    </div>
 
     <div class="settings active" id="section-account">
 
@@ -182,7 +171,7 @@
       <section class="card">
         <h2>Upload defaults</h2>
         <div class="row">
-          <span class="lab">Privacy</span>
+          <label class="lab" for="f-privacy">Privacy</label>
           <select class="field" id="f-privacy">
             <option value="private">private</option>
             <option value="unlisted">unlisted</option>
@@ -190,11 +179,15 @@
           </select>
         </div>
         <div class="row">
-          <span class="lab">Category ID</span>
+          <label class="lab" for="f-category">YouTube category</label>
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false">
-          <span class="inline-hint">(20 = Gaming)</span>
         </div>
+        <p class="sub-hint">
+          YouTube files every video under one of its own numbered categories.
+          20 is Gaming, which is where fight footage belongs &mdash; leave it
+          unless you know you want a different one.
+        </p>
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
@@ -221,7 +214,7 @@
     <div class="settings" id="section-folders">
 
       <section class="card">
-        <h2>Folders</h2>
+        <h2>Where your recordings and gamelogs live</h2>
         <div class="row">
           <span class="lab">Recordings</span>
           <input class="field mono" id="f-recdir" type="text" spellcheck="false">
@@ -246,7 +239,7 @@
     <div class="settings" id="section-discord">
 
       <section class="card">
-        <h2>Discord (combat logs)</h2>
+        <h2>Where combat logs are posted</h2>
         <div class="row">
           <span class="lab">Webhook URL</span>
           <!-- Masked by default. A webhook URL is a credential: anyone
@@ -303,7 +296,11 @@
       </section>
 
       <section class="card">
-        <h2>Keybinds</h2>
+        <h2>EVE-focused keybinds</h2>
+        <p class="hint">Previews have a second set, registered globally
+          rather than only in EVE &mdash; Settings &rsaquo; Previews. A
+          keybind used there takes one of these while a client is
+          focused.</p>
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
@@ -346,11 +343,13 @@
       </section>
 
       <section class="card">
-        <h2>Keybinds</h2>
+        <h2>Global keybinds</h2>
         <div class="row"><span class="lab"></span>
-          <span class="hint">Keybinds are global: they work from any
-            application, including a browser. They are released while
-            previews are switched off.</span></div>
+          <span class="hint">These work from any application, including a
+            browser, and are released while previews are switched off.
+            Bookmarks have a second set that fires only in EVE &mdash;
+            Settings &rsaquo; Bookmarks. A keybind the two share is marked
+            below.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-off" style="display:none">
             Previews are off, so every keybind below is unregistered until
@@ -360,6 +359,24 @@
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
       </section>
+    </div>
+
+    <div class="settings" id="section-general">
+
+      <section class="card">
+        <h2>EVE Online tools</h2>
+        <label class="check">
+          <input type="checkbox" id="show-eve-tools"><span class="box"></span>
+          Show the EVE Online tools
+        </label>
+        <p class="hint">
+          Wingman's EVE features &mdash; Profiles, Skills, bookmark keybinds
+          and client previews. Turn this off and Wingman is just the
+          OBS&nbsp;&rarr;&nbsp;YouTube uploader.
+        </p>
+        <p class="field-msg" id="msg-general" hidden></p>
+      </section>
+
     </div>
 
     </div>
