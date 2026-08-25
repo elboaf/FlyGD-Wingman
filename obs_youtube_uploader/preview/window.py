@@ -250,6 +250,7 @@ class PreviewWindow:
         neighbours,
         screen,
         locked=False,
+        show_labels=True,
     ):
         self._libs = libs
         self.client = client
@@ -258,6 +259,9 @@ class PreviewWindow:
         # user locked must still be locked after a restart, and reporting
         # locked=False on the next drag would erase the flag.
         self.locked = locked
+        # Set once from the host at creation; Task 4 wires the live-update
+        # path that lets this change on an already-open window.
+        self.show_labels = show_labels
         self.selected = False
         self._perf = None
         # Last key rendered; None forces the first draw.
@@ -288,9 +292,18 @@ class PreviewWindow:
         neighbours,
         screen,
         locked=False,
+        show_labels=True,
     ):
         self = cls(
-            libs, client, rect, on_activate, on_rect_changed, neighbours, screen, locked
+            libs,
+            client,
+            rect,
+            on_activate,
+            on_rect_changed,
+            neighbours,
+            screen,
+            locked,
+            show_labels,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -318,16 +331,31 @@ class PreviewWindow:
         libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
-            self._thumb.update(geometry.thumbnail_rect(self.rect, BORDER, LABEL_H))
+            self._thumb.update(
+                geometry.thumbnail_rect(self.rect, BORDER, self._label_h())
+            )
         return self
 
     # -- rendering -------------------------------------------------------
+    def _label_h(self) -> int:
+        """LABEL_H when labels are on, 0 when off.
+
+        chrome.py needs no change for the off case: its band guard
+        (`band_bottom > border`) is already false when label_h=0, so a
+        bandless tile with no text falls out of the existing render path.
+        """
+        return LABEL_H if self.show_labels else 0
+
     def _chrome_key(self):
         return (
             self.rect.w,
             self.rect.h,
             self.client.character or self.client.title,
             self.selected,
+            # Without this, flipping show_labels on an already-open preview
+            # is a no-op: redraw() short-circuits on an unchanged key and
+            # the bitmap never repaints.
+            self.show_labels,
         )
 
     def redraw(self, force: bool = False) -> None:
@@ -347,7 +375,7 @@ class PreviewWindow:
             label,
             border_color=(0, 200, 220, 255),
             border=BORDER,
-            label_h=LABEL_H,
+            label_h=self._label_h(),
             selected=self.selected,
         )
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
@@ -379,7 +407,9 @@ class PreviewWindow:
             # it or the surface stays at the old dimensions.
             self.redraw()
             if self._thumb is not None:
-                self._thumb.update(geometry.thumbnail_rect(rect, BORDER, LABEL_H))
+                self._thumb.update(
+                    geometry.thumbnail_rect(rect, BORDER, self._label_h())
+                )
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):

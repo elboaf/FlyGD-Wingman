@@ -182,6 +182,62 @@ def test_dragging_back_to_the_origin_restores_the_original_rect():
     assert window.drag_target(start, start, R) == R
 
 
+def test_show_labels_joins_the_chrome_key():
+    """Without this, toggling the flag on an open preview does nothing:
+    redraw() short-circuits on an unchanged key and the bitmap never
+    repaints."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    on_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=True,
+    )._chrome_key()
+    off_key = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=False,
+    )._chrome_key()
+    assert on_key != off_key
+
+
+def test_label_h_reclaims_the_band_when_labels_are_off():
+    """geometry.thumbnail_rect must receive the new label height, or the
+    mirrored video stays inset inside a band that chrome no longer draws."""
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    w = window.PreviewWindow(
+        None,
+        client,
+        R,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: R,
+        show_labels=False,
+    )
+    assert w._label_h() == 0
+    rect = window.geometry.thumbnail_rect(R, window.BORDER, w._label_h())
+    assert rect == window.geometry.thumbnail_rect(R, window.BORDER, 0)
+    assert rect.h == R.h - window.BORDER * 2
+
+
+def test_label_h_defaults_on_and_matches_todays_behaviour():
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    w = window.PreviewWindow(
+        None, client, R, lambda c: None, lambda *a: None, list, lambda: R
+    )
+    assert w._label_h() == window.LABEL_H
+
+
 class _FakeLibs:
     """Just enough Win32 for _on_message, with the cursor under our control."""
 
