@@ -55,14 +55,37 @@ class AlertService:
 
     # ---- lifecycle -----------------------------------------------------
 
+    def _resolved_folder(self) -> Path | None:
+        """The gamelogs folder as a Path, or None if alerts should not run.
+
+        None whenever alerts are off, no folder is configured, or the
+        configured folder no longer resolves to a real directory -- a
+        folder that was valid and stopped being one (an unmounted drive,
+        an unlinked OneDrive folder, a settings.json carried from another
+        machine) must not read as "watching": Path.glob on a missing
+        directory yields nothing and raises nothing, so a stale folder
+        would otherwise look healthy forever. Called once per reconcile
+        pass and cached by the caller, so a folder that becomes None
+        between two reads of the callable cannot be seen valid here and
+        then raise TypeError(None) in the caller a moment later.
+        """
+        cfg = self._config() or {}
+        if not bool(cfg.get("enabled")):
+            return None
+        folder = self._folder()
+        if folder is None:
+            return None
+        path = Path(folder)
+        return path if path.is_dir() else None
+
     def _wanted(self) -> bool:
-        """Running iff alerts are on and a folder resolves.
+        """Running iff alerts are on and a folder resolves to a real
+        directory.
 
         `folder` is composed by the caller to return None unless previews
         are also on, so this callable's answer already carries that gate.
         """
-        cfg = self._config() or {}
-        return bool(cfg.get("enabled")) and self._folder() is not None
+        return self._resolved_folder() is not None
 
     def reconcile(self) -> None:
         """Bring the thread in line with settings. Idempotent, any thread.
@@ -73,13 +96,13 @@ class AlertService:
         that costs: a folder that persisted while the window looked
         healthy and nothing ever polled.
         """
-        if not self._wanted():
+        folder = self._resolved_folder()
+        if folder is None:
             self.stop()
             return
-        folder = self._folder()
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                if self._tailer is not None and self._tailer.folder == Path(folder):
+                if self._tailer is not None and self._tailer.folder == folder:
                     return
                 # The folder moved. Tear down and rebuild rather than
                 # repoint, so file positions cannot carry across.
@@ -90,21 +113,43 @@ class AlertService:
                 thread = None
         if thread is not None:
             thread.join(timeout=POLL_INTERVAL_S * 3)
+            if thread.is_alive():
+                # Wedged in a slow poll -- a OneDrive-redirected or network
+                # Gamelogs path (combatlog.py:82-85) can make a single
+                # readlines() call outlast this join. Logged, not retried:
+                # the stop event it was handed (below) still belongs to it,
+                # so it will exit on its own next wake and never observe
+                # the generation this call installs.
+                logger.warning(
+                    "Alert poll thread did not exit within %.1fs; "
+                    "rebuilding the tailer anyway",
+                    POLL_INTERVAL_S * 3,
+                )
         with self._lock:
-            self._stop = threading.Event()
+            stop_event = threading.Event()
+            self._stop = stop_event
             self._tailer = tailer.Tailer(folder)
             self._cooldowns.clear()
             self._thread = threading.Thread(
-                target=self._run, name="wingman-alerts", daemon=False
+                target=self._run,
+                args=(stop_event,),
+                name="wingman-alerts",
+                daemon=False,
             )
             self._thread.start()
 
     def stop(self) -> None:
         with self._lock:
             thread, self._thread = self._thread, None
-            self._stop.set()
+            stop_event = self._stop
+            stop_event.set()
         if thread is not None:
             thread.join(timeout=POLL_INTERVAL_S * 3)
+            if thread.is_alive():
+                logger.warning(
+                    "Alert poll thread did not exit within %.1fs",
+                    POLL_INTERVAL_S * 3,
+                )
 
     def health(self) -> Health:
         with self._lock:
@@ -118,9 +163,23 @@ class AlertService:
 
     # ---- the thread ----------------------------------------------------
 
-    def _run(self) -> None:
+    def _run(self, stop_event: threading.Event) -> None:
+        """Poll until *stop_event* -- passed in, not read off the instance.
+
+        reconcile() REPLACES self._stop with a fresh Event when it rebuilds
+        the thread (:129-130 above), after a join() whose timeout it does
+        not treat as fatal. If this loop re-read self._stop on every
+        iteration, a thread wedged past that join's timeout (a OneDrive-
+        redirected or network Gamelogs path can make one readlines() call
+        outlast it -- combatlog.py:82-85) would wake, test the NEW
+        generation's event, see it unset, and keep polling: two threads on
+        one tailer, splitting file positions and racing _cooldowns.
+        Capturing the event this thread was actually signalled with as a
+        parameter makes that impossible regardless of what self._stop
+        points to by the time it is checked.
+        """
         last_rescan = 0.0
-        while not self._stop.is_set():
+        while not stop_event.is_set():
             try:
                 now = self._clock()
                 if now - last_rescan >= RESCAN_INTERVAL_S:
@@ -136,7 +195,7 @@ class AlertService:
                 # say so -- silence is this feature's worst failure mode.
                 logger.exception("Alert poll failed")
                 self._record_error(exc)
-            self._stop.wait(POLL_INTERVAL_S)
+            stop_event.wait(POLL_INTERVAL_S)
 
     # ---- the decision core -----------------------------------------------
 

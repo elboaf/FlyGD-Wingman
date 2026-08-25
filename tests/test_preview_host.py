@@ -562,6 +562,51 @@ def test_teardown_clears_the_client_and_registration_reports():
     assert h.hotkey_status() == {}
 
 
+def test_teardown_clears_pending_alerts_and_selection():
+    """_teardown clears _clients and _hotkey_status but had left
+    _pending_alerts, _selected_key, and _foreground behind. Today
+    _apply_alerts is a no-op, but the queue still grows between stop()
+    and the next reconcile (ui/api.py's set_preview_enabled(False) calls
+    host.stop() before alerts.reconcile()), and _apply_selection's
+    `if key == self._selected_key: return` would leave a fresh window
+    unselected forever across a stop/start if this were not cleared."""
+
+    class _TeardownUser32(_FakeUser32):
+        def __getattr__(self, name):
+            return lambda *a, **k: 0
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    # Queued before _hwnd exists, same as test_raise_alert_queues_without_a_
+    # window -- so _post's `if self._hwnd:` guard skips the real Win32 call
+    # this fake libs object does not need to answer for.
+    h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    h._hwnd = 0x99
+    h._selected_key = "Alice"
+    h._foreground = 0x1234
+    libs = _FakeLibs(_TeardownUser32())
+
+    h._teardown(libs)
+
+    assert h._pending_alerts == []
+    assert h._selected_key is None
+    assert h._foreground == 0
+
+
+def test_raise_alert_drops_oldest_beyond_the_cap():
+    """The queue is drained every ~80ms in normal operation (WM_APP_ALERT
+    fires _apply_alerts on the pump), so anything beyond a handful means
+    nothing is draining -- previews disabled, or the host window not yet
+    created. An hour of accumulated alerts must not all replay once the
+    pump comes back; only the most recent ones should."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    for i in range(host.PENDING_ALERTS_MAX + 5):
+        h.raise_alert(str(i), "combat", {})
+    assert len(h._pending_alerts) == host.PENDING_ALERTS_MAX
+    # Oldest dropped, newest kept.
+    kept = [character for character, _event, _spec in h._pending_alerts]
+    assert kept == [str(i) for i in range(5, host.PENDING_ALERTS_MAX + 5)]
+
+
 def test_hotkey_focuses_the_named_character(monkeypatch):
     activated = []
     monkeypatch.setattr(

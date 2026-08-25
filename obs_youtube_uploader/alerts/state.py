@@ -96,9 +96,13 @@ def progress(alert, now: float) -> float:
 
 def alpha_for(progress: float, pulses: int) -> int:
     wave = (math.sin(progress * pulses * 2 * math.pi) + 1) / 2
-    # Floored well above zero: the ring pulses rather than blinking off,
-    # because an alpha of 0 mid-pulse reads as the alert having ended.
-    return max(90, min(255, int(110 + wave * 145)))
+    # 110, not 0: a pulse that dims to fully transparent mid-cycle reads
+    # as the alert having ended, so the floor is baked into the constant
+    # term rather than clamped after the fact -- 110 + wave * 145 already
+    # ranges over [110, 255] for wave in [0, 1], so a max(90, ...) here
+    # could never bind and would only mislead about which term is the
+    # floor.
+    return min(255, int(110 + wave * 145))
 
 
 def frame_index(alert, now: float) -> int:

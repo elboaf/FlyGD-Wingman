@@ -25,6 +25,10 @@ SWEEP_MS = 700  # TriffView uses the same interval
 SWEEP_TIMER_ID = 1
 JOIN_TIMEOUT_S = 5.0
 DEFAULT_SIZE = (320, 210)
+# Anything beyond a handful means the pump has stopped draining, not that
+# a lot of characters are in a fight at once -- raise_alert's docstring
+# has the reasoning.
+PENDING_ALERTS_MAX = 10
 
 
 def reconcile(current: set, desired: set):
@@ -198,9 +202,18 @@ class PreviewHost:
         The queue is filled whether or not a window exists to post to:
         start() returns before the preview thread has created _hwnd, and
         an alert raised in that gap would otherwise be dropped.
+
+        Bounded to PENDING_ALERTS_MAX: _apply_alerts drains this every
+        WM_APP_ALERT, and in normal operation that is within ~80ms. Only
+        a pump that is not running at all -- previews disabled, the host
+        window not yet created -- lets this grow, and there the right
+        answer is dropping the oldest, not remembering an unbounded
+        session's worth of fights for whenever the pump comes back.
         """
         with self._lock:
             self._pending_alerts.append((character, event, dict(spec)))
+            if len(self._pending_alerts) > PENDING_ALERTS_MAX:
+                del self._pending_alerts[:-PENDING_ALERTS_MAX]
         self._post(win32.WM_APP_ALERT)
 
     def _post(self, msg) -> None:
@@ -726,6 +739,19 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
+        # Same reasoning, for state the held render path will start
+        # reading: _apply_alerts is a no-op today, but once it renders,
+        # an hour-old batch queued between stop() and the next enable
+        # would arm every preview at once with a stale fight (raise_alert
+        # is safe from any thread and keeps filling this while the pump
+        # is torn down). And _apply_selection's `if key == self.
+        # _selected_key: return` would otherwise leave a freshly-created
+        # window unselected forever across a stop/start, since nothing
+        # else resets it.
+        with self._lock:
+            self._pending_alerts = []
+        self._selected_key = None
+        self._foreground = 0
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)  # 1. hook
             self._hook = None

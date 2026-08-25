@@ -404,6 +404,24 @@ def test_get_alert_state_tolerates_no_alert_service(tmp_path):
     assert state["characters"] == []
 
 
+def test_get_alert_state_hides_a_gamelogs_folder_that_no_longer_exists(tmp_path):
+    """set_folder validates is_dir() at write time, so the exposure this
+    guards is a folder that was valid and stopped being one -- an
+    unmounted drive, an unlinked OneDrive folder, a settings.json carried
+    from another machine. Without this check the card would show
+    'Watching gamelogs' with the no-folder banner hidden, exactly the
+    'believes alerts are armed when nothing is watching' failure the
+    feature exists to prevent. Mirrors AlertService._wanted's own is_dir()
+    check in service.py."""
+    missing = tmp_path / "gone"
+    api = make_api(tmp_path)
+    api._state.settings["gamelogs_dir"] = str(missing)
+
+    state = api.get_alert_state()
+
+    assert state["gamelogs_folder"] is None
+
+
 # ---- The Alerts card itself -------------------------------------------------
 #
 # No JS test harness exists (test_preview_wiring.py's comment above
@@ -496,3 +514,24 @@ def test_dev_harness_can_render_the_alerts_card():
     dev_js = _web("dev.js")
     assert "get_alert_state" in dev_js
     assert "preview:" in dev_js.split("function settingsPayload")[1].split("\n\n")[0]
+
+
+def test_the_card_refreshes_when_previews_are_toggled_without_navigating():
+    """#preview-enabled and this card share ONE section (#section-previews)
+    with no navigation between them, so refresh() firing only on wm:section
+    and after set_alert_enabled left the card stale the moment previews
+    were toggled off: the backend really did stop the poll thread, but the
+    card kept showing 'Watching gamelogs' with the previews-off banner
+    hidden, indefinitely. settings.js dispatches a custom event once its
+    own set_preview_enabled call settles (not on the raw DOM change, so
+    this cannot race ahead of host.stop()/alerts.reconcile()); alerts.js
+    must listen for it."""
+    settings_js = _web("settings.js")
+    preview_block = settings_js.split("EVE client previews")[1].split(
+        "// ---- Where a preview opens"
+    )[0]
+    assert "wm:preview-enabled-changed" in preview_block
+
+    js = _web("alerts.js")
+    assert "wm:preview-enabled-changed" in js
+    assert "refresh" in js.split("wm:preview-enabled-changed")[1][:80]

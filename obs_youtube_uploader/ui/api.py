@@ -2021,6 +2021,13 @@ class Api:
         alerts = section.get("alerts", {})
         gamelogs = self._state.settings.get("gamelogs_dir")
         folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        # Same test as AlertService._wanted(): a folder that was valid and
+        # stopped being one (an unmounted drive, an unlinked OneDrive
+        # folder, a settings.json carried from another machine) must show
+        # the no-folder banner, not the healthy card, even though the
+        # setting still holds a path.
+        if folder is not None and not folder.is_dir():
+            folder = None
         if self._alerts is not None:
             health = self._alerts.health()
             running = health.running

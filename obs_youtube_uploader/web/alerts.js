@@ -160,4 +160,13 @@
   document.addEventListener('wm:section', function (event) {
     if (event.detail === 'previews') { refresh(); }
   });
+
+  // #preview-enabled and this card share ONE section (#section-previews)
+  // with no navigation between them, so toggling previews off must not
+  // wait for a route change to stop showing a healthy-looking card:
+  // set_preview_enabled really does stop the poll thread. settings.js
+  // dispatches this once its own bridge call settles (not on the raw
+  // DOM change), so this refresh cannot race ahead of the host.stop() /
+  // alerts.reconcile() that call performs.
+  document.addEventListener('wm:preview-enabled-changed', refresh);
 }());

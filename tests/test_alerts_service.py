@@ -4,6 +4,8 @@ _handle takes `now` and returns what it dispatched, so the whole decision
 layer is covered without a thread or a clock.
 """
 
+import threading
+
 from obs_youtube_uploader.alerts import service, tailer
 
 PLAYER = "Bob Smith[BURN](Rifter)"
@@ -188,5 +190,104 @@ def test_reconcile_twice_with_an_unchanged_str_folder_does_not_restart(tmp_path)
         first_thread = s._thread
         s.reconcile()
         assert s._thread is first_thread
+    finally:
+        s.stop()
+
+
+# ---- the stop event is a parameter, not a re-read instance attribute -------
+
+
+def test_run_stops_on_the_event_it_was_given_not_a_later_generation(tmp_path):
+    """reconcile() replaces self._stop with a fresh Event when it rebuilds
+    the thread (a folder move, or a wedged join timeout). A _run that
+    re-read self._stop on every iteration would, in that second case, see
+    the NEW generation's unset Event and keep polling forever -- two
+    threads on one tailer. Passing the event in as a parameter and
+    capturing it as a local makes the thread deaf to whatever self._stop
+    is reassigned to after it started."""
+    cfg = _config()
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: str(tmp_path),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    s._tailer = tailer.Tailer(tmp_path)
+    my_generation = threading.Event()
+    thread = threading.Thread(target=s._run, args=(my_generation,))
+    thread.start()
+    try:
+        # Simulate what reconcile() does when a join times out: install a
+        # later generation while the old thread is still alive.
+        s._stop = threading.Event()
+        my_generation.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+    finally:
+        my_generation.set()
+        thread.join(timeout=2.0)
+
+
+def test_a_timed_out_join_is_logged_not_silent(monkeypatch, tmp_path, caplog):
+    """stop() and reconcile()'s teardown both check the join's result now,
+    matching PreviewHost.stop's existing posture -- a thread that outlives
+    its timeout must say so, not be assumed gone."""
+    cfg = _config()
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: str(tmp_path),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    stuck = threading.Event()  # never set -- stands in for a wedged thread
+    stuck_thread = threading.Thread(target=stuck.wait, daemon=True)
+    s._thread = stuck_thread
+    stuck_thread.start()
+    s._stop = threading.Event()
+    try:
+        with caplog.at_level("WARNING"):
+            s.stop()
+        assert "did not exit within" in caplog.text
+    finally:
+        stuck.set()
+        stuck_thread.join(timeout=2.0)
+
+
+# ---- _wanted requires a real directory, not merely a configured path ------
+
+
+def test_wanted_is_false_when_the_folder_no_longer_exists(tmp_path):
+    """Path.glob on a missing directory yields nothing and raises nothing,
+    so without this check a folder that was valid and stopped being one
+    (an unmounted drive, an unlinked OneDrive folder) would still read as
+    'watching' forever."""
+    missing = tmp_path / "gone"
+    s = service.AlertService(
+        config=lambda: _config(),
+        folder=lambda: str(missing),
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    assert s._wanted() is False
+
+
+def test_reconcile_stops_the_thread_when_the_folder_disappears(tmp_path):
+    """The design's own predicate is 'resolves to a real directory' -- a
+    folder that vanishes out from under a running poll thread must be
+    torn down by the next reconcile, not left polling a directory that is
+    no longer there."""
+    folder = {"path": str(tmp_path)}
+    s = service.AlertService(
+        config=lambda: _config(),
+        folder=lambda: folder["path"],
+        on_alert=lambda *a: None,
+        sound=lambda _id: None,
+    )
+    try:
+        s.reconcile()
+        assert s.health().running
+        folder["path"] = str(tmp_path / "gone")
+        s.reconcile()
+        assert s.health().running is False
     finally:
         s.stop()
