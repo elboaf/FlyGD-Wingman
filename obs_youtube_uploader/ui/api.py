@@ -79,6 +79,13 @@ FIRST_RUN_PUSH_S = 1.5
 # reached the page, which _push swallows silently.
 EVE_CONFIRM_TIMEOUT_S = 300.0
 
+# Much shorter than EVE_CONFIRM_TIMEOUT_S, and for the opposite reason. That
+# one bounds a worker holding a lock; this one bounds the PYSTRAY thread,
+# which services the whole tray menu -- so a page that never answers takes
+# the tray with it until this expires. Long enough to read two sentences
+# and click, short enough that a wedged page does not make Quit look broken.
+QUIT_CONFIRM_TIMEOUT_S = 60.0
+
 YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
 # set_alert_event's writable fields. Kept as a set to check against rather
@@ -761,6 +768,54 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
+    def _confirm_quit_if_busy(self) -> bool:
+        """Answer "may the app exit now?" for the tray's Quit item.
+
+        Quit destroys the window, which returns from the GUI loop and ends
+        the process. `_upload_thread` is a daemon, so an upload in flight
+        dies mid-chunk: no message, no log line, and a multi-gigabyte
+        transfer discarded by one menu click. This is the only thing
+        standing between that click and the discard.
+
+        Private, and called from `__main__.on_quit` -- the same reach
+        `__main__` already makes for `_busy`, `_push` and `_alert`. It may
+        NOT be public: pywebview builds its JS proxy from public attributes,
+        so a public name here would hand the page a way to ask the user to
+        quit.
+
+        Three things this gets right that the obvious version does not.
+
+        It raises the window BEFORE asking. This is a tray app whose window
+        is usually hidden -- `--hidden` is how the login entry starts it --
+        and `_push` into a hidden window is swallowed, so the dialog would
+        never be seen and the wait would run to its timeout. Quit would
+        look broken.
+
+        It uses a BOUNDED wait. `_confirm` blocks forever by design, which
+        is right for a worker and wrong here: this runs on the pystray
+        thread, and parking it stops the whole tray menu.
+
+        Silence means DO NOT QUIT. A page that crashed or is mid-reload
+        never answers, and the two failures are not symmetric -- reading
+        silence as "stay running" costs a second click, reading it as
+        "quit" costs the upload.
+        """
+        if not self._busy():
+            return True
+        window = self._window
+        if window is None:
+            # No page to ask and no way to warn. Refusing here would make
+            # Quit inert with nothing on screen explaining why, which is a
+            # worse failure than the discard this guard exists to prevent.
+            logger.warning("Quit requested with an upload running and no window.")
+            return True
+        window.show()
+        return self._ask(
+            "Upload in progress",
+            copy_mod.format_quit_confirm(self._last_pct),
+            timeout=QUIT_CONFIRM_TIMEOUT_S,
+        )
+
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
         # state -- "there is no scenario where I don't want to upload logs
@@ -885,6 +940,13 @@ class Api:
         from googleapiclient.http import MediaFileUpload
 
         index = job.start_index
+        # Reset per job, not per process. `_last_pct` is only ever written
+        # by a progress callback, so without this a job carries the PREVIOUS
+        # job's number until its first chunk lands -- reaching on_retry's
+        # bar, and the quit confirm, both of which state it as fact. Not
+        # reset on the resume path: there the last value belongs to the same
+        # job and is still true.
+        self._last_pct = 0.0
         try:
             creds = uploader.load_credentials(paths.token_file())
             if uploader.needs_reauth(creds):

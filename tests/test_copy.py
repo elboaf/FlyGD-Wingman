@@ -264,3 +264,43 @@ def test_the_progress_text_carries_the_percent_the_bar_can_show():
     )
     assert copy_mod.format_progress(0, 1, 0.005) == "Uploading… 1%"
     assert copy_mod.format_progress(0, 1, 0.025) == "Uploading… 3%"
+
+
+# --- the tray-Quit confirm -------------------------------------------------
+
+
+def test_the_quit_confirm_states_the_cost_with_the_real_number_in_it():
+    """PRODUCT.md's rule for an irreversible action, applied to the one
+    action that discards work rather than publishing it."""
+    body = copy_mod.format_quit_confirm(69.4)
+    assert "69%" in body
+    assert "(s)" not in body
+
+
+def test_the_quit_confirm_rounds_rather_than_carrying_a_decimal():
+    """The strip carries a decimal because it moves; a modal sentence read
+    once does not, and 17's finding was one number in two precisions."""
+    assert "69%" in copy_mod.format_quit_confirm(69.4)
+    assert "70%" in copy_mod.format_quit_confirm(69.6)
+
+
+def test_the_quit_confirm_rounds_percent_exactly_as_the_strip_does():
+    """REGRESSION GUARD. This function shipped with "{:.0f}" -- the
+    round-half-even L2 had just removed from format_progress -- so the two
+    renderings of one number disagreed at every tie. Asserted as equality
+    between the surfaces rather than against literals, so a third surface
+    cannot be added with a fourth rule and still pass.
+    """
+    for pct in (0.5, 1.5, 2.5, 68.5, 69.5, 99.5):
+        strip = copy_mod.format_progress(0, 1, pct / 100).split("… ")[1]
+        assert f"{strip} complete" in copy_mod.format_quit_confirm(pct), (
+            f"the quit confirm and the upload strip disagree at {pct}%"
+        )
+
+
+def test_the_quit_confirm_does_not_claim_finished_uploads_are_lost():
+    """A cancelled multi-item job leaves earlier videos ON the channel --
+    _upload_worker links each one as it lands -- so the dialog may not say
+    the upload is discarded without qualifying which part."""
+    body = copy_mod.format_quit_confirm(50.0)
+    assert "already uploaded" in body

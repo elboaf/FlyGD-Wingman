@@ -26,6 +26,7 @@ class FakeWindow:
         self.evaluated: list[str] = []
         self.minimized = 0
         self.hidden = 0
+        self.shown = 0
         self.destroyed = 0
         self._fail = fail
 
@@ -39,6 +40,9 @@ class FakeWindow:
 
     def hide(self):
         self.hidden += 1
+
+    def show(self):
+        self.shown += 1
 
     def destroy(self):
         self.destroyed += 1
