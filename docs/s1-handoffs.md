@@ -61,15 +61,27 @@ button (what will happen). The two `.card > h2` bars lose it. **R1
 executes**; the heading-bar treatment is not confined to that screen, so
 whichever lane owns a card heading elsewhere inherits the same rule.
 
-## To S4 and S3 — the floor claim survives in two more places
+## To S4 and S3 — the floor claim, and the two out-of-lane instances
 
 S4 is correcting `DESIGN.md:56-58` and `PRODUCT.md:137`. The same wrong
-claim also sits in:
+claim sat in two more places, both outside every lane's ownership:
 
-- `obs_youtube_uploader/ui/window.py:40-46`, in a comment that ends "do
-  not 'correct' this to logical" — **S3's file**, and not in any S3
-  finding, so it needs the maintainer's word before anyone edits it.
-- `CLAUDE.md:128-130` — in no lane at all.
+- `obs_youtube_uploader/ui/window.py`, in a comment that ended "do not
+  'correct' this to logical" — nominally S3's file, and in none of S3's
+  findings.
+- `CLAUDE.md`, in no lane at all.
+
+**The maintainer has authorised S1 to fix both, and this branch does.**
+`window.py`'s comment now states the logical-unit result and the
+839x621-at-200% measurement; correcting it also repaired a mangled
+sentence, since the physical-pixel paragraph had been inserted into the
+middle of the one about the two provisional estimates and left its second
+half orphaned. `CLAUDE.md`'s line now reads **logical**, with the
+consequence spelled out. Neither is a behaviour change: `MIN_WIDTH` and
+`MIN_HEIGHT` are untouched at 840 and 625.
+
+**S3 should know** that `ui/window.py` is touched by this branch, so a
+rebase may be needed — the change is comment-only and in no method.
 
 S1 has corrected the one instance inside its own region:
 `style.css`, above `@media (max-width: 720px) { .evestat { display: none; } }`.
