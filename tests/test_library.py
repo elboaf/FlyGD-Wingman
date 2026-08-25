@@ -255,8 +255,9 @@ def test_format_date_defaults_now_to_the_clock():
     branches above pin literal strings, so this cannot become a time bomb."""
     mtime = datetime.datetime.now().timestamp()  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
     assert library.format_date(mtime) == library.format_date(
-        mtime, now=datetime.datetime.now()
-    )  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
+        mtime,
+        now=datetime.datetime.now(),  # noqa: DTZ005 - local wall-clock, matching format_date's own convention
+    )
 
 
 def test_date_str_delegates_to_format_date(tmp_path):

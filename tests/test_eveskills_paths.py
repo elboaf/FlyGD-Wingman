@@ -90,8 +90,8 @@ def test_all_three_issuer_spellings_are_accepted():
     TriffView's own validator (EveJwtValidator.cs:12-15) accepts all
     three -- the bare authority, the full origin, and the full origin
     with a trailing slash, since OAuth issuers appear both ways."""
-    assert application.ACCEPTED_ISSUERS == frozenset(
-        {  # noqa: SIM300
+    assert application.ACCEPTED_ISSUERS == frozenset(  # noqa: SIM300
+        {
             "login.eveonline.com",
             "https://login.eveonline.com",
             "https://login.eveonline.com/",
