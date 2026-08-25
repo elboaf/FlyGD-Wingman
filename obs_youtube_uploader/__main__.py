@@ -197,7 +197,7 @@ def build_tray(on_open, on_quit):
         draw.polygon([(27, 22), (27, 42), (45, 32)], fill="#ffffff")
 
     menu = pystray.Menu(
-        pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
+        pystray.MenuItem("Open Wingman", lambda *_: on_open(), default=True),
         pystray.MenuItem("Quit", lambda *_: on_quit()),
     )
     return pystray.Icon("obs_youtube_uploader", image, "FlyGD Wingman", menu)
@@ -579,7 +579,18 @@ def main() -> int:
     # the app is already quitting. No-op unless the user enabled previews.
     api.start_previews_if_enabled()
 
-    window = window_mod.create(api)
+    # M3: the login entry autostart.command() registers carries --hidden, so
+    # the boot launch lands in the tray without raising a window. Read from
+    # argv rather than from a setting: the flag describes HOW THIS PROCESS
+    # was started, which no stored value can know -- the same binary opened
+    # from the Start menu a minute later must show its window.
+    #
+    # Bare membership test rather than argparse. This is the only argument
+    # the app takes, and argparse would exit(2) with a usage message on any
+    # unrecognised one -- in a windowed build with no console, that is a
+    # launch that dies with nothing on screen and nothing in the log.
+    # Ignoring what we do not understand is the right failure here.
+    window = window_mod.create(api, hidden="--hidden" in sys.argv[1:])
 
     def start_watching(directory) -> None:
         """Create the watcher and start the poll loop. Idempotent.

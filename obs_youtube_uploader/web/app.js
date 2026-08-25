@@ -87,6 +87,40 @@
     return node;
   };
 
+  // ---- enabled state --------------------------------------------------
+  // THE way a control is made inert. There is no styling half to this: the
+  // disabled treatment already exists and works (style.css, the
+  // `button.btn.acc:disabled` rule -- first run's Continue renders as a
+  // muted maroon through it). What three screens were missing is the
+  // `disabled` ATTRIBUTE, so Upload with nothing selected, Copy to
+  // selected with no targets, and Show / Remove with no webhook were
+  // genuinely live in states where they cannot act, not merely dressed as
+  // live.
+  //
+  // The rule that decides when to call this, because the screens answered
+  // it three different ways: a control is disabled when the app already
+  // knows the action cannot be carried out from the state it is holding --
+  // nothing selected, no folder chosen, no webhook configured. It is NOT
+  // for an action that might fail once attempted; that is what the status
+  // strip and the dialog layer are for. A disabled control must also be
+  // reachable back out of the state that disabled it, so nothing here is
+  // permitted to disable the only route to its own precondition.
+  //
+  // Takes an element or an id so callers can pass either without wrapping
+  // every site in WM.el(). A missing element is warned about rather than
+  // ignored: the failure mode of a typo'd id is a button that stays live
+  // in exactly the state this exists to cover, and silence there is how
+  // the finding happened in the first place.
+  WM.setEnabled = function (target, enabled) {
+    var node = (typeof target === 'string') ? WM.el(target) : target;
+    if (!node) {
+      console.warn('setEnabled: no such element: ' + target);
+      return null;
+    }
+    node.disabled = !enabled;
+    return node;
+  };
+
   // ---- routing ------------------------------------------------------
   // Settings is a route in this window, not a second OS window. Switching
   // is pure client state; Python is not told which route is showing.
@@ -212,6 +246,14 @@
   document.addEventListener('wm:settings', function (ev) {
     var cfg = (ev.detail || {}).settings || {};
     WM.apply_eve_gate(cfg.show_eve_tools !== false);
+    // The version rides the settings payload rather than a push of its
+    // own: get_settings is a RETURN, deliberately (api.py argues a push of
+    // the whole settings dict would throw away unsaved edits in an open
+    // form), so this is the one moment the page is handed app-level state
+    // it did not compose. An older build that has not learned the key
+    // leaves the titlebar as it was rather than printing `undefined`.
+    var version = (ev.detail || {}).version;
+    if (version) { WM.el('app-version').textContent = version; }
   });
 
   // ---- title bar ----------------------------------------------------

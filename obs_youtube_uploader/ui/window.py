@@ -39,15 +39,21 @@ HEIGHT = 680
 # stay visible, not an arithmetic result.
 #
 # Read off the real page at 840x625, approached from both
-# directions. NOTE these are PHYSICAL pixels, not logical: pywebview's
-# WinForms MinimumSize is device pixels under this app's
-# system-DPI-awareness (see ui/chrome.py:220-228), so the CSS viewport
-# floor is 840/scale -- 672px at 125%, 560px at 150%. web/style.css
-# depends on that reading; do not "correct" this to logical.
 # directions. Both provisional estimates were wrong in OPPOSITE directions:
 # 880 was 41px too generous, and 560 was 65px too SMALL -- that one would
 # have let a user drag the window into a state where part of the layout is
 # not viewable, which nothing in the test suite could have caught.
+#
+# These are LOGICAL pixels, and the CSS viewport floor is ~840x625 at EVERY
+# scaling. An earlier revision of this comment claimed the opposite -- that
+# WinForms MinimumSize is device pixels under this app's system-DPI
+# awareness, so the viewport would be 840/scale, 672px at 125% and 560px at
+# 150% -- and instructed the reader not to "correct" it to logical. That was
+# wrong, and measurement settles it: at 200% scaling the window at its floor
+# captures 839x621 CSS px, which is these two numbers unscaled rather than
+# halved. Nothing in web/style.css should be sized against a 560px or 672px
+# viewport, because neither can occur; the media queries written against
+# them cannot fire.
 #
 # Width rounded up by 1 to an even number; the height is used as measured,
 # since it is the constraint that actually bites.
@@ -167,8 +173,15 @@ def _silence_pywebview_logging() -> None:
     log.propagate = True
 
 
-def create(api) -> "webview.Window":
+def create(api, hidden: bool = False) -> "webview.Window":
     """Build the main window and hand *api* its back-reference.
+
+    `hidden` builds the window without showing it, for the login launch
+    (M3): the app is tray-resident, and a start-on-login that raises a
+    window at every boot is worse than no setting at all. The window is
+    fully constructed either way -- only its visibility differs -- so the
+    tray's Open item (__main__.on_open, which calls window.show()) needs no
+    special case for it.
 
     The `api._window = window` assignment MUST use the underscore name and
     MUST stay a separate step:
@@ -205,6 +218,7 @@ def create(api) -> "webview.Window":
         # (winforms.py:210), and now that the window can be resized a user
         # can drag it down to a size the layout cannot render at all.
         min_size=(MIN_WIDTH, MIN_HEIGHT),
+        hidden=hidden,
     )
     api._window = window
 

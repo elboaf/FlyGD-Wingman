@@ -2,9 +2,9 @@
 
 Same approach and same reason as test_page_conventions.py: nothing in this
 suite renders index.html or executes web/*.js, so what this screen depends
-on is enforced by reading its source. These are the five facts the UI
-critique's Profiles findings turned into code, each of which would fail
-silently rather than loudly if it were undone.
+on is enforced by reading its source. These are the facts the UI critique's
+and the walkthrough's Profiles findings turned into code, each of which
+would fail silently rather than loudly if it were undone.
 
 They are mechanical. Whether the collapsed card is the right shape is a
 question for docs/smoke-checklist.md; whether the pill still exists at all
@@ -222,4 +222,187 @@ def test_the_card_re_collapses_on_every_visit():
     )
     assert route and "expanded = false" in route.group(1), (
         "entering the route no longer re-collapses the folder card"
+    )
+
+
+# ---- the commit says what it will do, and to how many ------------------
+
+
+def test_the_commit_row_carries_the_count_and_the_hazard():
+    """Profiles 1. `Copy to selected` sits at the bottom of the second card;
+    the `EVE running` pill lives in the first card's heading, and in the
+    scrolled capture the button is on screen and the pill is not. The count
+    is Profiles 3's other half -- ui/copy.py puts one in the confirm, and
+    the page printed no quantity at all.
+    """
+    commit = re.search(r'<div class="row" id="es-commit">(.*?)</div>', BODY, re.DOTALL)
+    assert commit, "the commit row is gone"
+    for part in ('id="es-copy"', 'id="es-copy-count"', 'id="es-eve-state-commit"'):
+        assert part in commit.group(1), part
+
+
+def test_the_second_pill_is_the_same_pill_and_not_a_second_sentence():
+    """A hand-written hazard string here would be free to drift from the one
+    ui/copy.py states in the confirm a second later. One painter, two mount
+    points -- so there is exactly one place the words are decided.
+    """
+    paint = re.search(r"function paintPill\(running\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert paint, "paintPill is gone"
+    body = paint.group(1)
+    assert "es-eve-state'" in body and "es-eve-state-commit'" in body, (
+        "both mount points must be painted by paintPill"
+    )
+    assert CODE.count("'EVE running'") == 1, (
+        "the hazard string is written twice; it may only be written once"
+    )
+
+
+def test_the_commit_pill_overrides_hidden():
+    """.pill sets display: inline-flex, and an author rule beats the UA
+    stylesheet's [hidden] { display: none } regardless of specificity. Without
+    the override the pill evesettings.js hides stays on screen -- DESIGN.md's
+    named trap, which six rules in this file carry a note about and one
+    shipped without anyway.
+    """
+    assert re.search(r"#es-eve-state-commit\[hidden\]\s*\{[^}]*display:\s*none", CSS)
+    assert "es-eve-state-commit').hidden" in CODE, (
+        "nothing sets hidden on the pill, so the override guards nothing"
+    )
+
+
+# ---- the roster is a verification surface ------------------------------
+
+
+def test_the_roster_is_columned_and_uncapped():
+    """Profiles 2. Select-all is the normal path, so what is wanted is to SEE
+    who is about to be overwritten. A single column capped at 38vh gave two
+    nested scrollbars and rows clipped mid-name at both edges, with a
+    half-legible name directly above a full-strength accent button.
+
+    The cap on #es-backups stays: a backup history is consulted one row at a
+    time and is not the record of what one irreversible press will do.
+    """
+    assert '<div id="es-targets" class="es-roster"></div>' in BODY, (
+        "the roster must not be a .list-scroll -- that is the inner scroller"
+    )
+    rule = re.search(r"\.es-roster \{([^}]*)\}", CSS)
+    assert rule, ".es-roster has no rule"
+    assert "columns:" in rule.group(1), "the roster must be columned"
+    assert "max-height" not in rule.group(1), (
+        "a cap here is what produced the nested scrollbars"
+    )
+    cap = re.search(r"#es-backups \{([^}]*)\}", CSS)
+    assert cap and "max-height" in cap.group(1), "backups keep their cap"
+    assert "#es-targets, #es-backups" not in CSS, (
+        "the two lists no longer share a rule; they are not the same kind of list"
+    )
+
+
+def test_a_name_may_not_break_across_a_column():
+    """Half a name in one column and half in the next is the clipping this
+    finding is about, reintroduced by a different mechanism."""
+    assert re.search(r"\.es-roster > \.check \{[^}]*break-inside:\s*avoid", CSS)
+
+
+# ---- where a folder is, is Wingman's job -------------------------------
+
+
+def test_the_settings_root_can_be_detected_not_only_chosen():
+    """Profiles 4. Detect exists in Settings > Folders and on the first-run
+    screen, for a folder shallower and better known than this one, while the
+    folder the product is named for got `Choose folder...` alone.
+    PRODUCT.md: "Do explain Wingman -- where a folder is."
+    """
+    assert 'id="es-detect"' in BODY
+    assert "eve_settings_detect_root" in CODE, "the button is not wired"
+
+
+def test_choosing_and_detecting_end_the_same_way():
+    """Both answer the same question, so both must drop the selection (a
+    source picked in the old tree does not exist in the new one), re-read the
+    state and re-resolve names. Two hand-rolled copies would drift.
+    """
+    fn = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert fn, "chooseRoot is gone -- the two paths have been forked again"
+    for term in ("selected = {}", "refresh()", "eve_settings_resolve_names"):
+        assert term in fn.group(1), term
+    for method in ("eve_settings_pick_root", "eve_settings_detect_root"):
+        assert "chooseRoot('" + method + "')" in CODE, method
+
+
+# ---- name what is blocking you, not what is downstream -----------------
+
+
+def test_the_empty_roster_names_the_blocking_condition_first():
+    """Profiles 5. With no folder chosen this said "No other characters in
+    this profile." There is no profile. The filter case is last because it is
+    the only one of the four the user reached deliberately.
+    """
+    fn = re.search(r"function emptyText\(needle\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn, "emptyText is gone"
+    body = fn.group(1)
+    root_at = body.index("state.root")
+    needle_at = body.index("if (needle)")
+    assert root_at < needle_at, (
+        "the blocking condition must be tested before the filter"
+    )
+    assert "unreadable" in body, "an unread folder is not an empty one"
+
+
+def test_an_empty_dropdown_does_not_render_as_a_working_one():
+    """Profiles 6. Blank, un-placeholdered and undimmed before a folder
+    exists, Server and Profile read as broken rather than as not-yet-
+    applicable. `Copy from` is the same control with the same failure and is
+    held to the same rule.
+    """
+    fill = re.search(
+        r"function fill\(id, items, current, empty\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert fill, "fill no longer takes an empty-state label"
+    assert "el.disabled = !list.length" in fill.group(1)
+    source = re.search(r"function renderSource\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert source and "el.disabled = !list.length" in source.group(1), (
+        "Copy from must not be the one blank dropdown beside two placeholdered ones"
+    )
+    assert re.search(
+        r"#es-server:disabled, #es-profile:disabled, #es-source:disabled \{[^}]*color:",
+        CSS,
+    ), "nothing makes the disabled state visible; the UA's own is light-scheme grey"
+
+
+# ---- the one control on its row looks like one -------------------------
+
+
+def test_change_is_a_button_not_a_link():
+    """Profiles 7. The summary row is a mono boxed path that looks
+    interactive and is not, dim static text, and then the only thing on it
+    that acts -- which was link-styled, borderless, and no more prominent
+    than the text beside it.
+    """
+    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
+    assert 'id="es-folder-edit" class="btn"' in summary, (
+        "the row's one control must not be the quietest thing on it"
+    )
+
+
+# ---- X1's execution on this route --------------------------------------
+
+
+def test_copy_is_inert_when_it_cannot_act():
+    """X1. The disabled treatment already existed and worked; the attribute
+    was missing, so `Copy to selected` was full-strength accent with nothing
+    ticked and "No other characters in this profile" printed above it.
+
+    Busy and empty are one decision because they are one question, and
+    setBusy setting .disabled itself is what let a finished copy re-enable a
+    button whose selection the same push had cleared.
+    """
+    paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert paint, "paintCommit is gone"
+    assert "WM.setEnabled('es-copy'" in paint.group(1), (
+        "the shared helper decides what is inert, not a hand-rolled variant"
+    )
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy and "es-copy').disabled" not in busy.group(1), (
+        "setBusy must go through paintCommit, which owns the whole question"
     )

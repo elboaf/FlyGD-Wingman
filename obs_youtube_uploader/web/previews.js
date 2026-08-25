@@ -18,6 +18,10 @@
   // Set when a render is skipped because a capture is armed; flushed by
   // endCapture(). See requestRender() below for why this exists.
   var pendingRender = false;
+  // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
+  // first payload lands, which is why render() falls back to the sentence
+  // in the markup rather than blanking the element.
+  var inertNotes = {};
 
   function bookmarkClash(gesture) {
     // Active: the bookmark bind is registered right now, so this chord
@@ -198,7 +202,21 @@
     host.textContent = '';
 
     var off = WM.el('preview-binds-off');
-    if (off) { off.style.display = state.enabled ? 'none' : ''; }
+    if (off) {
+      // Settings 1. The sentence is ui/copy.py's INERT_NOTES, delivered on
+      // the settings payload as `inert_notes`. The whole table ships and
+      // the page picks the entry that applies, because which notes are
+      // showing is a render decision made from state this file already
+      // holds -- putting that predicate in Python would put it in two
+      // places. index.html carries no copy of the words at all, for the
+      // same reason.
+      //
+      // So the slot is empty until the first payload lands, and an empty
+      // note stays hidden rather than opening a blank row: inert_note()'s
+      // own docstring names "" as the shape the page handles.
+      off.textContent = inertNotes.previews_off || '';
+      off.style.display = (state.enabled || !off.textContent) ? 'none' : '';
+    }
 
     // `true`, not state.enabled: the cycle chords are not characters and
     // have no online state to report. Dimming them while previews were
@@ -330,6 +348,16 @@
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
+    requestRender();
+  });
+
+  // The inert-note table, which is settings-payload state rather than
+  // hotkey state. panel.js owns the onSettings handler and re-dispatches
+  // it, so this listens on the same custom event settings.js uses rather
+  // than claiming a handler that already has an owner. A re-render is
+  // requested (not called) so it cannot detach an armed capture button.
+  document.addEventListener('wm:settings', function (event) {
+    inertNotes = (event.detail || {}).inert_notes || {};
     requestRender();
   });
 

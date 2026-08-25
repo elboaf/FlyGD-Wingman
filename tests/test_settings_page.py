@@ -112,3 +112,114 @@ def test_no_two_settings_cards_share_a_heading():
                 f"{heading!r} heads a card in both {seen[key]} and {name}"
             )
             seen[key] = name
+
+
+# ---- state that must not be retyped into the page ----------------------
+
+
+def test_the_page_never_types_a_version_number():
+    """M2's whole point. `__version__` reaches the page on the settings
+    payload and is written into the titlebar and into ABOUT by JS; a third
+    hand-typed copy in the markup is the drift DESIGN.md's "State that must
+    not be retyped" exists to prevent, and the copy a user reads is the one
+    that matters when they report a bug.
+
+    pyproject.toml already derives its version from `__version__` rather
+    than carrying one, and tests/test_packaging_version.py asserts that
+    chain. This is the same rule for the surface the user actually sees.
+    """
+    body = re.sub(r"<!--.*?-->", "", HTML, flags=re.DOTALL)
+    literals = re.findall(r"\b\d+\.\d+\.\d+\b", body)
+    assert not literals, (
+        "index.html types a version-shaped literal: "
+        f"{literals!r} -- push it from __version__ instead"
+    )
+
+
+def test_the_previews_inert_note_is_not_typed_into_the_page():
+    """Walkthrough Settings 1. "Previews are off, so every keybind below is
+    unregistered..." is ui/copy.py's INERT_NOTES["previews_off"], shipped
+    on the settings payload. It was ALSO typed into index.html, which is
+    one sentence in two files with nothing holding them in step -- and the
+    Python one is the tested one.
+
+    The slot stays in the markup and stays empty; previews.js writes it.
+    """
+    from obs_youtube_uploader.ui import copy as copy_mod
+
+    note = copy_mod.INERT_NOTES["previews_off"]
+    # Compare on words, not on the raw markup: the page wraps and indents,
+    # so a substring test would pass while the sentence really was there.
+    flat = " ".join(re.sub(r"<[^>]+>", " ", HTML).split())
+    assert note not in flat, (
+        "index.html types INERT_NOTES['previews_off'] instead of rendering "
+        "it from the payload"
+    )
+
+    previews_js = (WEB / "previews.js").read_text(encoding="utf-8")
+    assert "inertNotes.previews_off" in previews_js, (
+        "previews.js no longer reads the note off the settings payload"
+    )
+
+
+def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
+    """dev.js is the one file allowed to fabricate data, and it fabricates
+    this table so the Previews card can be verified in ?dev=1 at all. A
+    double that has drifted from the thing it doubles hides exactly the bug
+    it should catch -- the same argument dev.js's own comment makes about
+    pushing onSettings when the bridge returns it.
+
+    Escapes are decoded before comparing. dev.js writes the guillemet in
+    "Settings > Discord" as `\\u203a`, which is the same character as
+    copy.py's and not the same bytes; a raw substring test passes or fails
+    on which of the two spellings the author happened to use. That was
+    hidden until R1's and R2's copies of this table were de-duplicated --
+    R2's used the literal and satisfied the test for both.
+    """
+    from obs_youtube_uploader.ui import copy as copy_mod
+
+    dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
+    # The strings are wrapped across source lines by ' + ', so join them
+    # back before comparing, then decode \uXXXX to the characters they name.
+    flat = re.sub(r"'\s*\+\s*'", "", dev_js)
+    flat = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), flat)
+    for key, note in copy_mod.INERT_NOTES.items():
+        assert key in flat, f"dev.js's inert_notes is missing {key!r}"
+        assert note in flat, (
+            f"dev.js's inert_notes[{key!r}] has drifted from ui/copy.py"
+        )
+
+
+def test_the_dev_harness_declares_each_payload_key_once():
+    """A duplicate key in an object literal is legal JavaScript. The last
+    one wins, nothing warns, and the fixture the harness renders is not the
+    one you are reading.
+
+    This is not hypothetical. R1 and R2 of round 2 both needed
+    `inert_notes` in dev.js's settings payload -- R1 for the Uploader
+    panel's no_webhook sentence, R2 for Previews' previews_off -- and added
+    it independently, five lines apart. Git merged the two cleanly, and the
+    test above still passed, because both copies carry the right strings.
+
+    Keys are checked across the whole file rather than per literal: dev.js
+    builds its doubles from flat literals, and a repeated key anywhere in
+    it is either this bug or a fixture shadowing another one.
+    """
+    dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
+    payload = dev_js[dev_js.index("function settingsPayload") :]
+    payload = payload[: payload.index("\n  }")]
+
+    # The payload's own top-level keys sit at exactly six spaces; anything
+    # deeper belongs to a nested literal and may legitimately repeat (the
+    # fake characters are a list of same-shaped objects). Asserting the
+    # count first, because a regex that silently matches nothing is a test
+    # that passes for the wrong reason -- the trap the max-width:720px
+    # check in test_page_conventions.py records having fallen into.
+    keys = re.findall(r"(?m)^ {6}([a-z_][\w]*)\s*:", payload)
+    assert len(keys) >= 5, f"settingsPayload key scan found only {keys!r}"
+
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    assert not dupes, (
+        "dev.js declares these settings-payload keys more than once, so the "
+        "harness renders whichever came last: " + repr(dupes)
+    )

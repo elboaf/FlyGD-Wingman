@@ -9,8 +9,16 @@
 
   <div class="titlebar">
     <div class="pywebview-drag-region">
-      <span class="mark">&#9654;</span>
+      <img class="mark" src="assets/emblem.png" alt="">
       <span class="name">WINGMAN</span>
+      <!-- Filled from the settings payload's `version` key, never typed
+           here: __init__.py holds the value and pyproject.toml already
+           carries a hand-kept second copy of it. A third copy in the page
+           is the drift DESIGN.md's "state that must not be retyped" exists
+           to stop, and the copy a user reads out in a bug report is the
+           one that matters. Empty until the payload arrives, which is the
+           page's own get_settings read at startup. -->
+      <span class="version" id="app-version"></span>
     </div>
     <!-- Sibling of the drag region, never a child: style.css:100-102 says
          only that element drags and buttons must stay clickable. A
@@ -69,56 +77,100 @@
              Reports through the status strip, not a dialog: see
              Api.open_recording_dir. -->
         <button class="btn" id="btn-open-folder">Open folder</button>
+        <!-- Uploader 2, third seam: this deletes files from disk and was
+             filed under a card headed PUBLISH, beside the button that
+             sends them to YouTube. It belongs with the files it acts on.
+             Moving it also took 43px out of the panel, which is what
+             Uploader 9 needed -- but the reason is the seam, not the
+             pixels. -->
+        <button class="btn" id="btn-delete">Delete selected</button>
         <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
 
-    <!-- Filled by Task 12 (upload panel). -->
     <div id="panel-slot">
       <div class="panel">
 
+        <!-- ONE card, not two. Uploader 2: the card headed UPLOAD did not
+             contain the Upload button -- that lived in a second card
+             headed PUBLISH, which is one concept under two names on one
+             screen (DESIGN.md, "One name per concept"). It also repeated
+             the route's own tab name as its first card heading, which
+             DESIGN.md forbids and lane 2 already fixed for Settings.
+             Collapsing the two answers all of that AND returns ~54px of
+             card chrome to Uploader 9, whose whole complaint is that the
+             most-pressed control in the app is last in a stack that
+             overflows the pane at the window floor.
+
+             The heading names the job, not the screen: "This upload". -->
         <section class="card">
-          <h2>Upload</h2>
+          <h2>This upload</h2>
+
+          <!-- Uploader 13. The panel used to read identically with zero
+               recordings in the folder: live fields, full-strength accent
+               Upload, nothing acknowledging there was nothing to act on.
+               panel.js unhides this and disables the controls below it.
+               `hidden` is enough on its own -- .hint sets no display, so
+               it needs no [hidden] override (DESIGN.md). -->
+          <p class="hint" id="panel-empty-note" hidden>There are no
+            recordings in this folder yet, so there is nothing to
+            upload.</p>
+
           <label class="lab" for="f-title" id="lab-title">Title</label>
           <input class="field" id="f-title" type="text" spellcheck="false"
                  placeholder="Title for this upload">
           <label class="lab" for="f-desc" style="margin-top:10px">Description</label>
           <textarea class="field" id="f-desc" spellcheck="false"
                     placeholder="Optional description"></textarea>
-          <label class="check" style="margin-top:12px">
+
+          <!-- Uploader 15 was "two adjacent checkboxes are too close to
+               distinguish by aim", and the maintainer hit the wrong one.
+               Uploader 8 deleted the other one (combat logs are
+               unconditional now), so one checkbox cannot be confused with
+               its neighbour and 15 needs no separate work. What remains is
+               that Stitch is meaningless below two selected: panel.js
+               disables it there rather than hiding it. Hiding was the
+               walkthrough's suggestion (17) and was rejected -- a control
+               that appears and disappears under the pointer is a new
+               hazard on the one screen with a recorded mis-click, and the
+               height it would have saved is already paid for by the card
+               merge above and the Delete move below. -->
+          <label class="check" id="lab-stitch" style="margin-top:12px">
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <!-- Ticked by default, and panel.js unticks and disables it when
-               no webhook is stored. On a fresh install this used to be a
-               feature the user appeared to have: the box was on, the
-               confirm promised a Discord post, and every upload then ended
-               on a WARNING strip about logs being skipped, which reads as a
-               recurring failure rather than as an unconfigured option.
-               The hint is `hidden` rather than absent so the sentence has
-               one home whichever way the payload lands; .hint sets no
-               display, so the attribute is enough on its own here. -->
-          <label class="check" id="lab-logs" style="margin-top:8px">
-            <input type="checkbox" id="f-logs" checked><span class="box"></span>
-            Also post combat logs to Discord
-          </label>
-          <p class="hint" id="logs-hint" hidden>No Discord webhook is
-            configured, so logs would be skipped. Set one in
-            Settings &rsaquo; Discord.</p>
+          <p class="hint" id="stitch-hint" hidden>Select two or more
+            recordings to stitch them into one video.</p>
+
+          <!-- Uploader 8's sentence, which outlives the control it used to
+               footnote. With no checkbox this is a fact about the install
+               rather than a caveat on an option, so it is stated whenever
+               it is true. The text comes from the payload
+               (INERT_NOTES["no_webhook"]) and is NOT typed here: S3 put
+               the app's one voice for an unmet precondition in copy.py so
+               two screens cannot drift, and Api._post_combat_logs stays
+               silent in exactly this case precisely because the panel says
+               it instead. -->
+          <p class="hint" id="logs-note" hidden></p>
+
           <p class="summary" id="selection-summary"
              style="margin-top:12px">Nothing selected</p>
-        </section>
 
-        <section class="card">
-          <h2>Publish</h2>
-          <p class="destination" id="destination">Channel confirmed after the first upload</p>
+          <!-- Uploader 1: the loudest element on the screen was the one
+               that could not act, and the state that blocked it was dim
+               body text 200px away at the foot of the card ABOVE it. Both
+               halves are fixed here -- the button takes the disabled
+               treatment through WM.setEnabled, and the selection summary
+               is now the line directly above it rather than a card away.
+               #destination follows the button rather than heading the
+               card: it is a standing fact about the account, read once,
+               and it was occupying the position directly above the
+               most-pressed control in the app. -->
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
-            <div class="secondary-row">
-              <button class="btn" id="btn-retry" disabled>Retry</button>
-              <button class="btn" id="btn-delete">Delete selected</button>
-            </div>
+            <button class="btn" id="btn-retry" disabled>Retry</button>
           </div>
+          <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>
 
       </div>
@@ -180,8 +232,13 @@
           <button class="btn" id="btn-auth">Sign in with Google</button>
         </div>
         <p class="hint">
-          Videos are uploaded to YouTube and are subject to the YouTube Terms of Service:
-          <span class="linkish" id="tos-link">https://www.youtube.com/t/terms</span>
+          Videos are uploaded to YouTube and are subject to the
+          <!-- The link is the words, not the address. This was the raw
+               https://www.youtube.com/t/terms printed as its own text --
+               the only bare URL in the app, and the only blue in it. S1
+               made the colour a declared token (--link); this is the other
+               half. settings.js still holds the URL it opens. -->
+          <span class="linkish" id="tos-link">YouTube Terms of Service</span>.
         </p>
       </section>
 
@@ -204,10 +261,16 @@
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false">
         </div>
+        <!-- Settings 13. The maintainer settled the control half: this
+             stays a free string, and set_category still validates
+             digits-only, so what was left of the finding was the copy.
+             It ran to three lines whose burden was "do not use this
+             field". The number is YouTube's rather than EVE's, so it
+             still needs explaining -- PRODUCT.md's line is assume fluency
+             in EVE, explain Wingman -- but saying it once is enough. -->
         <p class="sub-hint">
-          YouTube files every video under one of its own numbered categories.
-          20 is Gaming, which is where fight footage belongs &mdash; leave it
-          unless you know you want a different one.
+          20 is YouTube&rsquo;s Gaming category, which is where fight
+          footage belongs. Change it only if you know the number you want.
         </p>
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
@@ -298,12 +361,24 @@
             Register keybinds in EVE
           </label>
         </div>
-        <div class="row"><span class="lab"></span>
+        <!-- `hidden` is the resting state, not a bug. bookmarks.js shows
+             this row only where the line is news -- see showEngineRow.
+             Without it the markup's own "Not running" is on screen from
+             first paint until the first payload lands, under an unticked
+             switch that already said so. -->
+        <div class="row" id="eve-engine-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-engine-state">Not running</span></div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
-        <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-import">Import from an existing helper&hellip;</button></div>
+        <!-- No `Import from an existing helper...` button. It held the only
+             button position in the first card of this section, directly
+             under the feature's own switch, and the maintainer's use report
+             is that nobody uses it: "No one uses import from an existing
+             helper." It also assumed knowledge of a third-party tool, which
+             PRODUCT.md puts on the wrong side of its own line -- assume
+             fluency in EVE, explain Wingman. Api.import_bookmarks and its
+             tests are deliberately left in place; removing a bridge method
+             is another lane's file. -->
       </section>
 
 
@@ -371,10 +446,16 @@
             Bookmarks have a second set that fires only in EVE &mdash;
             Settings &rsaquo; Bookmarks. A keybind the two share is marked
             below.</span></div>
+        <!-- Deliberately EMPTY. The sentence is ui/copy.py's
+             INERT_NOTES["previews_off"], delivered on the settings payload
+             and written in by previews.js (walkthrough Settings 1). It
+             used to be typed here as well, which put one sentence in two
+             files with nothing holding them in step; inert_note()'s
+             docstring already says the page hides the slot when the string
+             is empty, so blank-until-the-payload-lands is the designed
+             state and not a gap. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-off" style="display:none">
-            Previews are off, so every keybind below is unregistered until
-            you turn them back on.</span></div>
+          <span class="hint" id="preview-binds-off" style="display:none"></span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to
@@ -488,6 +569,38 @@
         <p class="field-msg" id="msg-general" hidden></p>
       </section>
 
+      <!-- M2 and M3. `General` is one checkbox and last in the rail, so it
+           has the room for a second card; a ninth rail item is deferred
+           until THIRD-PARTY-NOTICES.md has a surface of its own to justify
+           one. The version is deliberately in TWO places -- the titlebar
+           (S1) and here -- because the titlebar cannot hold the licence or
+           the login switch, and this is the card a user is sent to when
+           they are asked which build they are running. -->
+      <section class="card">
+        <h2>About Wingman</h2>
+        <!-- Pushed from __version__ through the settings payload, never
+             typed into this page. .hint carries user-select: text, so the
+             number can be copied into a bug report. -->
+        <p class="hint" id="about-version">Version &mdash;</p>
+        <!-- The one string on this card that IS typed here. There is no
+             payload key for it and ui/api.py belongs to another lane; the
+             SPDX identifier is also stable in a way the version is not --
+             pyproject.toml's `license = "GPL-3.0-only"` has outlived every
+             version this app has shipped. If a licence change ever makes
+             that untrue, this line is the one that has to move with it. -->
+        <p class="hint">Free software under the GPL-3.0-only licence.</p>
+        <label class="check">
+          <input type="checkbox" id="start-on-login"><span class="box"></span>
+          Start Wingman when I sign in to Windows
+        </label>
+        <p class="hint">
+          Wingman starts hidden in the tray. Bookmark keybinds only fire
+          while it is running, so this is what keeps them available without
+          launching it by hand.
+        </p>
+        <p class="field-msg" id="msg-about" hidden></p>
+      </section>
+
     </div>
 
     </div>
@@ -504,25 +617,51 @@
         <!-- Two faces of one card. Folder, server and profile are set on the
              first visit and rarely again, while the copy card below is why
              the screen exists; five controls above it pushed the target list
-             under the fold at the 560px floor. evesettings.js chooses which
+             under the fold at the window floor. evesettings.js chooses which
              face renders and forces the controls open when there is nothing
-             to summarise. -->
+             to summarise.
+
+             The floor is 840x625 CSS at every scaling (DESIGN.md). This
+             comment used to say "the 560px floor", a viewport S4 established
+             cannot occur; the reason the card collapses is unchanged, only
+             the number it was argued against. -->
         <div class="row" id="es-folder-summary" hidden>
           <span class="lab">Folder</span>
           <span id="es-folder-root" class="field mono"></span>
           <span id="es-folder-set"></span>
-          <button id="es-folder-edit" class="linkbtn">Change…</button>
+          <!-- Profiles 7: a .btn, not a .linkbtn. This row is a mono boxed
+               path that looks interactive and is not, dim static text, and
+               then the one thing on it that acts -- which was link-styled,
+               borderless, and no more prominent than the text beside it.
+               The one control was the least control-like element present.
+               .linkbtn's own box model is not touched; the class is simply
+               the wrong one for a row where nothing else is a control. -->
+          <button id="es-folder-edit" class="btn">Change…</button>
         </div>
         <div id="es-folder-detail">
           <div class="row">
             <!-- A span, not <label for>: #es-root is a span and nothing
                  labelable sits in this row. The class is what matters --
                  this was the one path in the app rendering in the
-                 proportional face, off the shared 118px column, with
-                 nothing to stop a long root pushing the button out. -->
+                 proportional face, off the shared label treatment, with
+                 nothing to stop a long root pushing the button out. (That
+                 treatment is a stacked full-width .lab now, not the 118px
+                 right-aligned column this comment used to name -- see
+                 style.css's `.settings .row > .lab`.) -->
             <span class="lab">Folder</span>
             <span id="es-root" class="field mono">No folder selected</span>
             <button id="es-pick" class="btn">Choose folder…</button>
+            <!-- Profiles 4. Detect existed in Settings > Folders and on the
+                 first-run screen, for a folder shallower and better known
+                 than this one, while the EVE settings root -- the folder
+                 the product is named for -- got Choose folder... alone.
+                 Chooser first, then Detect, matching both existing sites.
+                 The backend half is Api.eve_settings_detect_root, which
+                 COMMITS rather than suggesting, unlike Settings' detect_folder:
+                 its neighbour here commits the moment the dialog closes, and
+                 two behaviours for one question on one screen is the class of
+                 inconsistency this round is about. -->
+            <button id="es-detect" class="btn">Detect</button>
           </div>
           <div class="row">
             <label class="lab" for="es-server">Server</label>
@@ -539,11 +678,13 @@
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
              opacity:0 and the styled .ring is the visible control, so a
              bare radio here rendered as a native white Windows dot against
-             the dark card. The .lab puts them on the same 118px column as
+             the dark card. The .lab puts them on the same left edge as
              every labelled row on the screen, and carries the word: this
              switch changes what the source dropdown, the target list and
              the filter below it all mean, and was the one unlabelled
-             control on the screen. -->
+             control on the screen. (That edge is a stacked full-width .lab
+             now; this comment used to name the 118px right-aligned column
+             it replaced.) -->
         <div class="row">
           <span class="lab">Copy</span>
           <label class="radio">
@@ -565,9 +706,45 @@
           <button id="es-all" class="btn">Select all</button>
           <button id="es-none" class="btn">Clear</button>
         </div>
-        <div id="es-targets" class="list-scroll"></div>
-        <div class="row">
+        <!-- Profiles 2: NOT .list-scroll any more. The roster is a picking
+             surface being used as a verification surface -- "select all" is
+             the normal path, so what is wanted here is to SEE who is about
+             to be overwritten, which needs everyone visible at once. A
+             capped inner scroller gave the opposite: two nested scrollbars
+             (its own and the page's) and a list clipped mid-row at BOTH
+             edges, with a half-legible name sitting directly above a
+             full-strength accent button. Columns reclaim the dead width
+             beside every name; the route's own overflow-y is now the one
+             scrollbar on the screen. See .es-roster in style.css. -->
+        <div id="es-targets" class="es-roster"></div>
+        <!-- Profiles 1. The hazard and the cost both belong AT the commit,
+             and neither was here: the "EVE running" pill lives in the
+             folder card at the top of the page, and in the scrolled capture
+             the button is on screen and the pill is not -- the card has left
+             the viewport entirely. The count is the other half of Profiles 3
+             (ui/copy.py puts it in the confirm; the page had no quantity at
+             all, while the Uploader prints "1 selected - 108.8 MB").
+
+             The pill is the SAME pill, painted by the same paintPill over
+             both mount points, not a second sentence about the same fact --
+             a hand-written copy of the hazard here would be free to drift
+             from the one ui/copy.py states in the dialog. It needs no rule
+             of its own: #es-eve-state's only job is undoing the .card > h2
+             treatment, and nothing here is a heading. -->
+        <div class="row" id="es-commit">
           <button id="es-copy" class="btn acc">Copy to selected</button>
+          <span id="es-copy-count" class="es-count">Nothing selected</span>
+          <!-- No `hidden` attribute here, and evesettings.js sets one at
+               wire() instead. Not a style choice: .pill sets a display and
+               has no [hidden] override of its own (that rule is S2's), so
+               test_page_conventions' hidden guard reads this element as
+               unhideable through its CLASS. It is hideable through its id
+               -- #es-eve-state-commit[hidden] outranks .pill on specificity
+               -- but the guard does not model that, and it is right to be
+               conservative about the trap DESIGN.md says six rules in
+               style.css nearly shipped. Handoff recorded for S2: .pill
+               wants the override, and this screen is the first to need it. -->
+          <span id="es-eve-state-commit" class="pill">EVE closed</span>
         </div>
       </section>
 
@@ -662,20 +839,50 @@
 
   <div class="route" id="route-firstrun">
     <div class="firstrun">
-      <h1>Choose your recording folder</h1>
-      <!-- Two paragraphs, and the first one is the only place in the app
-           that says what Wingman is. The screen used to open with "Wingman
-           watches one folder for new OBS recordings", which is the
-           uploader half describing itself as the whole product to someone
-           who has seen nothing else -- PRODUCT.md calls that framing out
-           of date by name. The second paragraph's last sentence is what
-           makes the skip below legible rather than arbitrary: the folder
-           configures the uploader half, and the two halves are
-           independent. -->
+      <!-- The heading names the PRODUCT, not this screen's task.
+           `Choose your recording folder` is uploader-scoped, and it was
+           the largest text in the application: the sequence a new user
+           experienced was `this is a folder chooser`, then, one size
+           down, `actually it is a toolkit`. PRODUCT.md names that framing
+           and says it "is out of date and should not be used to decide
+           anything" -- so it cannot be the first sentence of the app at
+           its largest type size. #49 fixed the prose and left the
+           heading. The folder ask is carried by the paragraph, the
+           placeholder and the button, which is where it was doing most of
+           its work already.
+
+           `Welcome to Wingman` and not bare `Wingman`: the titlebar
+           wordmark reads WINGMAN and stays visible here (app.js hides the
+           destinations and the gear on this route, not the drag region),
+           so the bare name would repeat a word already on screen 170px
+           above it. DESIGN.md's "a screen may not repeat its own tab name
+           as its first card heading" is the same rule one surface over.
+
+           The first paragraph loses its opening "Wingman is an EVE
+           multiboxing toolkit" -- the heading now says that, and
+           PRODUCT.md's tone rule leaves "no room for a sentence that only
+           restates a heading". What survives is the appositive.
+
+           STILL TWO PARAGRAPHS, and that is a decision rather than an
+           omission. Walkthrough F5 proposed that once the heading changed
+           the two-paragraph block could become one. Rendered, it cannot:
+           merging puts "...to YouTube. Uploading is the half..." mid-line
+           in a five-line slab, which leaves the two jobs -- what this is,
+           and what to do now -- less distinguished than the blank line
+           F5 objected to, not more. The screen has one heading and no
+           other structure, so the paragraph break is the only separator
+           available.
+
+           The last sentence is what makes the skip below legible rather
+           than arbitrary: the folder configures the uploader half, and
+           PRODUCT.md holds the two halves independent. It is also checked
+           by name in docs/smoke-checklist.md -- the EVE half is named
+           before the OBS ask, and the deferral is stated. -->
+      <h1>Welcome to Wingman</h1>
       <p class="firstrun-body">
-        Wingman is an EVE multiboxing toolkit &mdash; client previews,
-        bookmark keybinds and settings profiles &mdash; that also uploads
-        your fight footage to YouTube.
+        An EVE multiboxing toolkit &mdash; client previews, bookmark
+        keybinds and settings profiles &mdash; that also uploads your
+        fight footage to YouTube.
       </p>
       <p class="firstrun-body">
         Uploading is the half that needs a folder: Wingman watches one for
@@ -717,7 +924,16 @@
         <span class="evelabel">NEXT</span><span id="eve-next">—</span>
         <span class="evewarn" id="eve-warn" hidden>⚠</span>
       </span>
-      <span id="status" class="FG">Ready</span>
+      <!-- `Idle`, not `Ready`. This is the strip's resting text, which is
+           what an unconfigured first run reads while its folder field is
+           empty and Continue is disabled -- and there `Ready` is taken to
+           mean "you are set up" rather than "the app is doing nothing".
+           The word is also spoken for: `Ready` is a skill-plan readiness
+           value (eveskills/evaluator.py:19), a roster count and a group
+           header on the Skills route, three of which can be on screen at
+           once. Skills keeps the word because it owns it in Python and in
+           the payload; the strip, which only ever meant "idle", says so. -->
+      <span id="status" class="FG">Idle</span>
       <div class="track" id="track"><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
     </div>

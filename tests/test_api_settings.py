@@ -142,6 +142,30 @@ def test_the_settings_payload_describes_the_webhook_without_its_token(
     assert "tok" not in payload["webhook_status"].split("/")[-1]
 
 
+def test_the_settings_payload_carries_the_version_from_dunder_version(
+    monkeypatch, tmp_path
+):
+    """M2: the version was plumbed everywhere except the one place a user
+    could read it, so a bug report could not say which build it was against.
+
+    Asserted against obs_youtube_uploader.__version__ rather than against a
+    literal, on purpose. A literal here is a fourth hand-typed copy of the
+    thing this finding exists to stop being hand-typed -- it would pass
+    while disagreeing with the app, which is the exact failure mode.
+
+    Top level, beside the other derived values: it is not a setting and the
+    page must never write it back.
+    """
+    from obs_youtube_uploader import __version__
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    payload = api.get_settings()
+
+    assert payload["version"] == __version__
+    assert "version" not in payload["settings"]
+
+
 def test_browse_opens_a_native_folder_dialog_at_the_current_folder(
     monkeypatch, tmp_path
 ):

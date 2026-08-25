@@ -1,0 +1,288 @@
+"""Start Wingman when the user signs in to Windows.
+
+M3, argued from PRODUCT.md rather than from convenience. The product calls
+itself "A tray app that starts hidden" and names bookmark keybinds as "the
+only feature that runs continuously in the background". Keybinds fire only
+while Wingman is running, so start-on-login serves a co-primary feature --
+which makes its absence an omission rather than an addition. Nothing in
+"What it must not become" is touched: no telemetry, no account, no gameplay
+automation, no EVE window handling.
+
+**The registry is the state.** There is deliberately no `start_on_login`
+key in settings.json. A stored copy would be a second answer to a question
+the registry already answers, and the two drift the moment a user deletes
+the entry from Task Manager's Startup tab -- which is the supported way to
+turn this off and the one the walkthrough asked for an answer to. Reading
+HKCU live cannot disagree with what Windows will actually do at boot.
+DESIGN.md's "State that must not be retyped", applied to state that lives
+outside the app entirely.
+
+**HKCU, never HKLM.** A per-user key needs no elevation and cannot affect
+anyone else who signs in to the same machine. Nothing here writes outside
+the current user's own hive.
+
+The registered command carries `--hidden`, because a login that raises a
+window every boot is worse than no setting at all.
+
+Importable on Linux: `winreg` is bound lazily through `_winreg()`, which is
+also the seam the tests inject a fake through. Every entry point degrades
+rather than raising ImportError, so a non-Windows import of this module --
+which the whole test suite does -- costs nothing.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+# What the user sees in Task Manager's Startup tab, so it is the product
+# name and not the package name. Changing it orphans every existing entry:
+# the old value keeps launching the app and nothing here can find it to
+# report or remove it, so the checkbox would read "off" on an install that
+# still starts at login. If it ever has to change, the new build has to
+# delete the old name before writing the new one.
+VALUE_NAME = "FlyGD Wingman"
+
+# The mechanism this replaced, and the reason every entry point below has to
+# know about it.
+#
+# packaging/installer.iss shipped a "Start automatically when I log in" task
+# long before the app had a setting for it, and implemented it as a shortcut
+# in the user's Startup folder with NO arguments. Two consequences, both
+# live in the wild:
+#
+#   * that login launch raised the window at every boot, on a tray app;
+#   * it is invisible to the registry, so a user who ticked the box during
+#     install saw an UNTICKED checkbox in Settings describing an app that
+#     demonstrably did start at login -- and ticking it produced two login
+#     entries at once, one of them still raising the window.
+#
+# The installer now writes the same Run value this module does. But the
+# shortcut exists on every machine that ever ticked that box, so reading the
+# registry alone would keep lying to exactly those users until they happened
+# to reinstall. is_enabled() reports either; disable() removes both; enable()
+# writes the value and clears the shortcut, so the first toggle migrates
+# them onto one mechanism.
+#
+# Two names because the product was renamed and AppId was pinned across it,
+# so pre-rename installs upgrade in place and can still be carrying the old
+# spelling. installer.iss deletes both as well -- belt and braces, because
+# the installer only runs on upgrade and this runs whenever Settings opens.
+_LEGACY_SHORTCUT_NAMES = ("FlyGD Wingman.lnk", "OBS YouTube Uploader.lnk")
+
+
+def _startup_dir() -> Path | None:
+    """The user's Startup folder, or None when it cannot be located.
+
+    %APPDATA% rather than SHGetKnownFolderPath: this only ever has to find a
+    shortcut the installer wrote to the default location, and a COM call for
+    that would be the only COM dependency in the module. A redirected
+    Startup folder means the legacy shortcut is not found and the checkbox
+    falls back to reporting only the registry -- which is the pre-existing
+    behaviour, not a regression.
+    """
+    if sys.platform != "win32":
+        return None
+    base = os.environ.get("APPDATA")
+    if not base:
+        return None
+    return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def legacy_shortcuts() -> list[Path]:
+    """Every legacy Startup-folder shortcut that currently exists."""
+    directory = _startup_dir()
+    if directory is None:
+        return []
+    found = []
+    for name in _LEGACY_SHORTCUT_NAMES:
+        candidate = directory / name
+        try:
+            if candidate.is_file():
+                found.append(candidate)
+        except OSError:
+            # A path that cannot be stat'ed is not one we can act on, and
+            # this feeds a checkbox. Treated as absent.
+            continue
+    return found
+
+
+def _remove_legacy_shortcuts() -> None:
+    """Delete them, ignoring the ones that vanish underneath us.
+
+    Errors are logged and swallowed rather than raised. Removing the legacy
+    shortcut is a migration riding along with whatever the user actually
+    asked for; failing their toggle because a stale .lnk is locked would
+    report the wrong thing about the wrong action.
+    """
+    for shortcut in legacy_shortcuts():
+        try:
+            shortcut.unlink()
+        except OSError:
+            logger.exception(
+                "Could not remove the legacy startup shortcut %s", shortcut
+            )
+
+
+def _winreg():
+    """The winreg module, or None off Windows.
+
+    A function rather than a module-level import so this file imports on
+    Linux, where the entire test suite runs.
+    """
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    return winreg
+
+
+def command() -> str:
+    """The command line Windows should run at login.
+
+    Two shapes, because a frozen build and a source checkout do not launch
+    the same way:
+
+      * frozen -- sys.frozen is set and sys.executable IS Wingman, so the
+        exe runs itself;
+      * source -- sys.executable is python.exe, which knows nothing about
+        this package, so the command has to name the module.
+
+    Quoted unconditionally. "C:\\Program Files\\..." is the normal install
+    location and an unquoted path containing a space is read by the shell
+    as a command plus arguments -- it would launch "C:\\Program" at every
+    login, forever, with no error anyone would see.
+    """
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --hidden'
+    module = __name__.split(".")[0]
+    return f'"{sys.executable}" -m {module} --hidden'
+
+
+def is_enabled() -> bool:
+    """Whether a login entry exists for Wingman right now.
+
+    Reports the presence of the VALUE, not whether its command matches the
+    one `command()` would write today. That is deliberate and it is the
+    conservative reading: the value that exists is what Windows will run,
+    so reporting it as "on" is true even when the path is stale from a
+    reinstall to a different folder. Comparing commands would flip the
+    checkbox to "off" after such a move, telling a user their app does not
+    start at login while it demonstrably still does.
+
+    Re-enabling rewrites the command, so the repair is one toggle away.
+
+    Reports EITHER mechanism. A legacy Startup-folder shortcut starts the
+    app at login just as effectively as the Run value does, so a checkbox
+    that ignored it would read "off" on a machine that demonstrably does
+    start Wingman at login -- the precise failure this module's
+    registry-is-the-state design was meant to prevent, arrived at from the
+    other direction.
+
+    Never raises. A read that cannot answer is answered "off": this feeds
+    a checkbox rendered at load, and a settings screen that fails to open
+    because a registry read threw would be a worse failure than a checkbox
+    that starts unticked.
+    """
+    if legacy_shortcuts():
+        return True
+    winreg = _winreg()
+    if winreg is None:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, VALUE_NAME)
+    except FileNotFoundError:
+        # The Run key itself, or our value under it. Both mean "off", and
+        # neither is an error worth logging on every settings render.
+        return False
+    except OSError:
+        # Policy or permissions. Logged because unlike the above it is a
+        # genuine surprise, and a user reporting "the checkbox will not
+        # stay ticked" needs this in the log to be diagnosable.
+        logger.exception("Could not read the login entry")
+        return False
+    return bool(str(value).strip())
+
+
+def enable() -> None:
+    """Register the login entry, overwriting any existing one.
+
+    Overwrites rather than checking first, which is what makes re-ticking
+    the box the repair for a stale path after a reinstall.
+
+    Raises OSError when the write is refused -- by policy, by a locked
+    hive, or because this is not Windows. The caller turns that into a
+    message; it must not be swallowed here, because a checkbox that
+    silently fails to take is exactly the outcome DESIGN.md's commit
+    contract exists to prevent.
+    """
+    winreg = _winreg()
+    if winreg is None:
+        raise OSError("Start on login is only available on Windows.")
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+        winreg.SetValueEx(key, VALUE_NAME, 0, winreg.REG_SZ, command())
+    # AFTER the write, never before. If the registry write is refused, the
+    # user must keep the login entry they already had rather than losing it
+    # to a migration that then failed -- ticking an already-ticked box must
+    # not be able to turn start-on-login off.
+    _remove_legacy_shortcuts()
+
+
+def disable() -> None:
+    """Remove the login entry. Already-absent is success, not an error.
+
+    Idempotent on purpose: the user can delete this from Task Manager's
+    Startup tab, and unticking a box that is already off must not report a
+    failure for having nothing to do.
+    """
+    # First, and unconditionally. "Off" has to mean the app does not start
+    # at login, and leaving the shortcut behind while reporting success
+    # would be the same lie in the opposite direction.
+    _remove_legacy_shortcuts()
+    winreg = _winreg()
+    if winreg is None:
+        raise OSError("Start on login is only available on Windows.")
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.DeleteValue(key, VALUE_NAME)
+    except FileNotFoundError:
+        return
+
+
+def installed_command() -> str:
+    """The registered command, or "" -- for diagnostics and tests only.
+
+    Not shown in the UI. Returns the raw stored string rather than a parsed
+    path, because that is what Windows stores and what a bug report needs to
+    quote verbatim.
+    """
+    winreg = _winreg()
+    if winreg is None:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, VALUE_NAME)
+    except OSError:
+        return ""
+    return str(value)
+
+
+__all__ = [
+    "VALUE_NAME",
+    "command",
+    "disable",
+    "enable",
+    "installed_command",
+    "is_enabled",
+    "legacy_shortcuts",
+]

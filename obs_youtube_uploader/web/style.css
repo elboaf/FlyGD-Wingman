@@ -56,11 +56,34 @@
      on, including all five nav tabs and all three window buttons in
      their resting state. */
   --text-faint: #7d8492;
-  --brand: #ff5a4d;
-  --brand-deep: #c81e12;
+  /* Purple needs TWO tokens where vermilion needed one. --brand is a
+     SURFACE colour: things are filled with it and something sits on top.
+     --brand-text is a TEXT/GLYPH colour: it sits on a dark surface and has
+     to clear 4.5:1. No single purple does both -- light enough to read as
+     text on --panel puts white on the Upload button below 4.5:1, and dark
+     enough for white puts the accent text near 3:1. Vermilion only ever
+     got away with one token because it sits high in luminance already. */
+  --brand: #8430d9;
+  --brand-deep: #4a0083;
+  /* 4.86:1 at worst across all four surfaces it lands on (--panel, --bg,
+     and the gradient-tinted variants of both). #a952ff was the value the
+     mockups used and measures 4.56 -- a pass, but with so little headroom
+     that any later tint change breaks it silently. */
+  --brand-text: #ad5aff;
   --ok: #4ade80;
   --warn: #d29922;
   --err: #f85149;
+  /* The one blue in the palette, and the only colour here that is not
+     near-black, brand, or a severity. It marks a link OUT of the app --
+     today just YouTube's terms -- and it stays blue on purpose: a link
+     recoloured into the app's own palette stops reading as a link, and
+     this one carries a legal obligation to be followed. It is a token
+     rather than a hex in .linkish so the exception is declared in the one
+     place colour is decided, and so a second outbound link cannot invent
+     a different blue. Measured against the surfaces it actually lands on
+     after the purple retheme: 7.13:1 on a card's tinted top stop
+     (#191426), 7.19:1 on flat --panel, 7.72:1 on --bg. */
+  --link: #7aa2f7;
 
   /* ---- type scale ----
      Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
@@ -83,9 +106,26 @@
   --titlebar-h: 44px;
 }
 
+/* The wash lives on html and the base --bg layer must stay UNDER it in the
+   same shorthand. body is transparent on purpose: #route-main::after below
+   is a z-index -1 pseudo-element, and a negative-z child paints beneath its
+   OWN parent's background, so any background on body hides the watermark
+   completely.
+
+   Do not fold this back into the `html, body` rule. background-color there
+   would override the var(--bg) layer here, leaving the page with only two
+   fading radial gradients over the UA's color-scheme canvas -- which looks
+   nearly right in Chromium (#121212 vs #0c0d10) and is therefore very easy
+   to ship by accident, but is not the token and is not ours to rely on. */
+html {
+  background:
+    radial-gradient(1100px 620px at 88% -8%, #1d1030 0%, rgba(29, 16, 48, 0) 62%),
+    radial-gradient(760px 520px at -6% 108%, #170f26 0%, rgba(23, 15, 38, 0) 60%),
+    var(--bg);
+}
+body { background-color: transparent; }
 html, body {
   height: 100%;
-  background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: var(--fs-body);
@@ -102,7 +142,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .titlebar {
   display: flex; align-items: center; gap: 10px;
   height: var(--titlebar-h); padding: 0 6px 0 16px; flex: none;
-  background: linear-gradient(180deg, #16181d, #101216);
+  background: linear-gradient(180deg, #1b1528, #121016);
   border-bottom: 1px solid #000;
   box-shadow: inset 0 1px 0 #24272e;
 }
@@ -111,13 +151,34 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .pywebview-drag-region {
   flex: 1; height: 100%; display: flex; align-items: center; gap: 10px;
 }
+/* A roundel, not a glyph. Two rounds of hand-drawn cobra marks were tried
+   here first and every one of them read as something else at this size --
+   airplane, pause button, map pin -- because a cobra head reduces to a
+   silhouette and the badge it comes from relies on outlines separating
+   purple masses. The ring is what survives reduction; whatever sits inside
+   it does not have to be legible for the mark to read as a mark.
+   24px, not 20px: below ~22px the ring closes up into a dot. */
 .mark {
-  width: 20px; height: 20px; border-radius: 5px; flex: none;
-  background: linear-gradient(150deg, var(--brand), var(--brand-deep));
-  display: grid; place-items: center; font-size: 9px; color: #fff;
-  box-shadow: 0 0 12px rgba(230, 50, 45, .45);
+  width: 24px; height: 24px; border-radius: 50%; flex: none;
+  /* Decorative, and it sits INSIDE .pywebview-drag-region. An <img> is
+     natively draggable, so without this, dragging the window by its own
+     logo starts an image drag instead of moving the frameless window --
+     the one spot on the title bar where dragging would appear to be dead.
+     The span this replaced could not have this problem. */
+  pointer-events: none; -webkit-user-drag: none; user-select: none;
+  box-shadow: 0 0 12px rgba(132, 48, 217, .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
+/* Dimmed and below body size: it is an identifier for a bug report, not
+   something to read on the way to a control. Bare `3.2.1` rather than
+   `v3.2.1` because the title bar is the scarce surface in this window --
+   every pixel here is drag region given up, and the `v` buys nothing that
+   the position after the wordmark does not already say. Tabular figures
+   so the width does not jitter across releases. */
+.version {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  letter-spacing: 0; font-variant-numeric: tabular-nums; flex: none;
+}
 .winbtn {
   width: 44px; height: 32px; border: 0; background: transparent;
   color: var(--text-faint); font-size: 13px; cursor: pointer;
@@ -126,7 +187,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 .winbtn:hover { background: #22252c; color: var(--text); }
 .winbtn.close:hover { background: #d9291c; color: #fff; }
 .winbtn.gear { font-size: 15px; }
-.winbtn.gear.active { background: #22252c; color: var(--brand); }
+.winbtn.gear.active { background: #22252c; color: var(--brand-text); }
 
 /* Peer destinations, visually distinct from the window actions on the
    right. Every pixel here is drag surface given up, so this stays tight;
@@ -161,7 +222,11 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 
 /* ---- shared primitives ---------------------------------------------- */
 .card {
-  background: var(--panel); border: 1px solid var(--panel-border);
+  /* Tinted sideways into violet, NOT lightened: --text-faint has just
+     4.82:1 on flat --panel and #191426 holds 4.78:1. A lighter panel puts
+     the faintest text role under AA on every card in the app. */
+  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 14px 16px;
 }
 .card > h2 {
@@ -169,10 +234,22 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   color: #8b93a1; margin-bottom: 12px; font-weight: 600;
   display: flex; align-items: center; gap: 9px;
 }
-/* The short brand rule preceding every section label. */
+/* The short rule preceding every section label. NOT the brand any more.
+   DESIGN.md, after Uploader 16: "Accent marks what is selected and what
+   will happen. A card heading is neither." The Uploader spent the brand in
+   five places -- the checked row's checkbox and its left-edge marker (what
+   is selected), the Upload button (what will happen), and these two card
+   heading bars, which mark neither and diluted the signal for the three
+   that do. The rule is written about `.card > h2` generally rather than
+   about one screen, so it is made here, once, in the shared primitive.
+
+   The bar survives as a neutral: it is the visual anchor for a heading
+   whose type is small, uppercase and widely tracked, and deleting it would
+   restyle five screens to settle an argument about colour. It now reads as
+   punctuation rather than as a claim, which is what a heading is. */
 .card > h2::before {
   content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
-  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  background: var(--field-border);
 }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -198,7 +275,7 @@ input.field.mono, span.field.mono, textarea.field.mono {
 span.field { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 input.field:focus, textarea.field:focus, select.field:focus {
   border-color: #39404d;
-  box-shadow: 0 0 0 2px rgba(255, 90, 77, .14);
+  box-shadow: 0 0 0 2px rgba(132, 48, 217, .14);
 }
 textarea.field { resize: none; line-height: 1.5; }
 
@@ -210,28 +287,57 @@ button.btn {
 button.btn:hover:not(:disabled) { background: #242832; color: var(--text); }
 button.btn:disabled { opacity: .45; cursor: default; }
 /* The ONE brand-accent control on any screen. */
-/* Near-black ON the brand, not white on it. White measured 3.08:1 against
-   the old gradient's top stop -- a fail for 12px/600 normal text over
-   roughly the upper half of every primary button in the app. Darkening the
-   fill enough for white text needs ~#cf3b28, which visibly dulls the
-   brand; inverting keeps the vermilion at FULL strength and measures
-   6.31:1. The gradient is narrowed to stay inside the range where the dark
-   label holds: 6.96:1 at the top stop, 5.32:1 at the bottom. */
+/* White ON the brand -- the exact inverse of what vermilion needed, and
+   for the same reason. The near-black label was worth 6.31:1 on vermilion
+   BECAUSE vermilion is a light colour; on purple it measures 2.64-3.69:1
+   and fails outright. Purple is dark enough to carry white directly, so
+   the label flips back and the fill keeps full strength: white measures
+   5.26:1 at the top stop and 7.35:1 at the bottom. Do not "restore" the
+   dark label from git history -- it was never a matter of taste. */
 button.btn.acc {
-  background: linear-gradient(180deg, #ff6b5e, #f04a3c);
-  border-color: #ff8a80; color: #0c0d10; font-weight: 600;
-  box-shadow: 0 2px 14px rgba(230, 50, 45, .35);
+  /* Held in a custom property because the hover rule below has to restate
+     the fill to win, and two hand-kept copies of a gradient are exactly the
+     kind of pair that drifts. Declared once, referenced twice. */
+  --acc-fill: linear-gradient(180deg, #9438e8, #7a1fc8);
+  background: var(--acc-fill);
+  border-color: #a95cf0; color: #fff; font-weight: 600;
+  box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
 }
-/* brightness(1.08) used to make this button HARDER to read -- it lightened
-   the fill under white text, 3.08 -> 2.96. With a dark label the same
-   gesture improves it, 6.31 -> 6.56. */
-button.btn.acc:hover:not(:disabled) { filter: brightness(1.08); }
+/* Restates the fill AND the label, and neither line is redundant.
+   `button.btn:hover:not(:disabled)` above is (0,3,1) and beats
+   `button.btn.acc` at (0,2,1), so through two accent colours hovering the
+   app's most prominent button REPLACED the brand gradient with the plain
+   #242832 fill -- a grey slab still ringed by the accent's purple border
+   and glow, with the brightness() below brightening the grey. This
+   selector is (0,3,1) too, so it wins on ORDER: it must stay below the
+   generic rule. Excluding .acc from that rule instead would lift it to
+   (0,4,1), where it would beat `button.btn.danger:hover` at (0,3,1) and
+   put the same bug on the destructive button.
+
+   `color` is the trap. Drop it and the generic rule's --text wins the
+   property at equal specificity: #e8eaed on the brightened top stop is
+   3.84:1, a fail introduced by fixing the fill. White holds at 4.63:1.
+
+   brightness(1.08) is a ceiling, not a taste setting. The label is white
+   ON the gradient, so brightening the fill spends label contrast -- 1.09
+   is the last passing step and 1.10 measures 4.48:1. Going brighter needs
+   the near-black label back, which purple rejected above for its own
+   measured reason. 1.08 moves the top stop 1.136:1 rest-to-hover; a plain
+   .btn moves 1.119:1, so the accent hovers by the same amount as every
+   other button. It is louder at rest, not louder in its transitions.
+
+   :disabled was never affected, contrary to what this note used to claim:
+   the :not(:disabled) here keeps a disabled accent button on its gradient,
+   so grayscale(.5) below acts on the brand rather than on grey. */
+button.btn.acc:hover:not(:disabled) {
+  background: var(--acc-fill); color: #fff; filter: brightness(1.08);
+}
 button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* THE focus indicator. Nothing below styled :focus at all, so every button
    in the app fell back to the UA ring -- which, before `color-scheme: dark`
    above, resolved for a light scheme and drew near-black on a near-black
-   page. #ff8a80 measures 7.2-8.5:1 against every surface here, well over
+   page. #c99cff measures 8.3-9.0:1 against every surface here, well over
    the 3:1 that 1.4.11 asks of a non-text indicator.
 
    :focus-visible, not :focus: a mouse click on a button must not leave a
@@ -248,7 +354,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
-  outline: 2px solid #ff8a80;
+  outline: 2px solid #c99cff;
   outline-offset: 2px;
 }
 /* The list scroller keeps its own inset ring on the FOCUSED ROW (a real
@@ -260,7 +366,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-faint); font-size: var(--fs-muted);
   line-height: 1.5; margin-top: 8px; user-select: text;
 }
-.linkish { color: #7aa2f7; cursor: pointer; user-select: text; }
+.linkish { color: var(--link); cursor: pointer; user-select: text; }
 .linkish:hover { text-decoration: underline; }
 
 /* ---- scrollbar ------------------------------------------------------
@@ -274,13 +380,40 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 ::-webkit-scrollbar-thumb:hover { background: #333845; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
+/* The ship, in the empty lower-right of the Uploader only. Scoped to one
+   route deliberately: Skills' content area is transparent and full-width,
+   so the same watermark there lands directly behind live rows and reads as
+   clutter rather than as fill. Uploader has real dead space below the
+   panel; that is the whole reason it works.
+
+   background-image, NOT mask-image, and the tint is baked into the PNG at
+   --brand-text (#ad5aff). This is deliberate and it is a downgrade forced
+   by the platform: masking white line art would have taken the colour from
+   the token automatically, but mask-image is a CORS-restricted resource and
+   window.py hands create_window() a filesystem path, so the page runs on
+   file:// -- where Chromium/WebView2 refuses the mask and the element
+   renders as NOTHING, with no error anywhere in the app. background-image
+   is not CORS-checked and loads fine. If --brand-text ever changes, this
+   PNG has to be regenerated to match; there is no way to make it follow.
+
+   z-index -1 puts it under every opaque card and the list pane, so it is
+   visible ONLY in genuinely empty space. See the html/body note above for
+   why the page wash cannot live on body. */
+#route-main::after {
+  content: ""; position: fixed; z-index: -1; pointer-events: none;
+  right: -40px; bottom: 26px; width: 640px; height: 550px;
+  opacity: .18;
+  background: url("assets/ship.png") no-repeat right bottom / contain;
+}
+
 /* ====================== recording list ============================== */
 /* Two panes, preserving today's split: list left, upload panel right. */
 #route-main { padding: 12px; gap: 12px; align-items: stretch; }
 
 .list-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: var(--panel); border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, #191426, var(--panel) 78%);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius); overflow: hidden;
 }
 
@@ -300,14 +433,26 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
      in the middle that reads as misalignment rather than as spacing.
 
      52ch tracks the text, not the window, so a long name still gets room
-     while a short one stops the group drifting apart. The 120px floor is
-     the same one the narrow-window smoke item checks.
+     while a short one stops the group drifting apart.
+
+     The floor is 212px, and it was 120px until round 2. 120 was not a
+     measurement of anything the column has to hold: "Fight 2026-08-24
+     17-57-37.mkv" measures 205px in this font including the cell's own
+     8px of padding, so a 120px floor truncated it to "Fight 2026-08-24
+     17-57-…" -- eating the seconds, which are the only characters that
+     tell one row from another (Uploader 11). 212 is what the window floor
+     affords once Modified gives way, and it clears the measured need by
+     7px. A materially longer scene name than this group's will still
+     ellipsise; the tail is what goes, so a prefix much longer than
+     "Fight " would reach the timestamp again. That bound is known and not
+     designed around, because OBS's default template is what the finding
+     was confirmed against.
 
      No 1fr anywhere is deliberate: with nothing elastic the grid packs to
      content width and the slack collects at the right edge, keeping the
      name and its metadata legible as one group. The header uses this same
      rule, so the two can never disagree. */
-  grid-template-columns: 34px minmax(120px, 52ch) 92px 84px 76px 46px;
+  grid-template-columns: 34px minmax(212px, 52ch) 92px 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
   padding: 0 10px;
@@ -328,16 +473,58 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
 .list-head > span:hover { color: var(--text); }
-.list-head > span.sorted { color: var(--brand); }
-/* Direction indicator on the active column only. */
-.list-head > span.sorted::after { content: "\25B2"; font-size: 8px; }
+.list-head > span.sorted { color: var(--brand-text); }
+/* Direction indicator on the active column only -- but the SLOT for it is
+   on every header, always, and that is the fix rather than a detail of it.
+   (Uploader 3.)
+
+   The walkthrough reported headers sitting ~16px right of their data on
+   every column, and blamed the scroll container's gutter. Re-measured in
+   the ?dev=1 harness with 30 rows, comparing text ranges rather than
+   boxes: unsorted, every header agrees with its column to within 2px --
+   which is .list-row's own 2px transparent left border, not an inset --
+   and the gutter cannot move anything anyway, because .grid-row has no
+   1fr, so the tracks are left-packed and a narrower body only eats slack
+   at the right edge.
+
+   What does move is this arrow. On a flex-end header it takes the right
+   end of the column and pushes the LABEL off it: measured, "Size" landed
+   14px left of the right edge of "108.8 MB" the moment that column was
+   sorted, and back in line the moment another was. One column at a time,
+   changing under the pointer, which is how it read as "every column, every
+   visit". Reserving the width unconditionally costs the label 12px it was
+   never entitled to keep and makes the header stop moving. */
+.list-head > span::after {
+  content: "\25B2"; font-size: 8px; flex: none;
+  width: 8px; visibility: hidden;
+}
+.list-head > span.sorted::after { visibility: visible; }
 .list-head > span.sorted.desc::after { content: "\25BC"; }
 /* Each header is anchored like its column — headers centred over
    right-aligned data read as misalignment, not as a choice. */
 .list-head > span.c-check { justify-content: center; padding: 0; }
 .list-head > span.c-size,
 .list-head > span.c-len  { justify-content: flex-end; }
+/* On a right-aligned header the arrow goes BEFORE the label, not after
+   it. Reserving its width was not enough on its own: an ::after at the
+   right end of a flex-end header still owns the column's right edge, so
+   the label sat 12px inboard of the number it labels whether or not the
+   arrow was drawn -- consistently misaligned instead of intermittently,
+   which is not the fix the finding asked for. Ordered first, the LABEL
+   holds the edge and the arrow hangs off its left, which is also where a
+   numeric column conventionally puts one. */
+.list-head > span.c-size::after,
+.list-head > span.c-len::after { order: -1; }
 .list-head > span.c-link { justify-content: center; padding: 0; }
+/* The two CENTRED headers need the arrow's width mirrored on the other
+   side or reserving it decentres them by half its own box. The
+   left-aligned headers need nothing: an ::after cannot move a label that
+   is anchored at the opposite edge. Only the flex-end pair was ever
+   displaced, and it is the pair the finding measured. */
+.list-head > span.c-check::before,
+.list-head > span.c-link::before {
+  content: ""; width: 8px; flex: none;
+}
 
 /* 1px separators, NOT zebra striping: with a card surface and adequate row
    height, zebra is compensation for a flat list. */
@@ -376,7 +563,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .list-row.sel .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #ff7a6f;
+  border-color: #a95cf0;
 }
 .box::after {
   content: "\2713"; font-size: 10px; line-height: 1; color: #fff;
@@ -391,7 +578,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 22px; height: 22px; border-radius: 5px;
   color: var(--text-faint); cursor: pointer;
 }
-.glyph-link:hover { background: #22252c; color: var(--brand); }
+.glyph-link:hover { background: #22252c; color: var(--brand-text); }
 .dur-unknown, .dur-pending { color: var(--text-faint); cursor: help; }
 
 .list-foot {
@@ -409,10 +596,25 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .list-foot .count {
   margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
 }
+/* Uploader 14. The message was centred horizontally and top-aligned
+   vertically, leaving ~750px of empty pane under it with the column
+   headers still up labelling nothing -- neither deliberate placement nor
+   natural flow. First run proves the app can centre a card, so this was an
+   omission and not a layout limit.
+
+   The scroller is the centring context rather than .empty itself: .empty
+   is the only thing in it when it shows, and #list-scroll is already the
+   full-height flex child. [hidden] is restated because this sets a display
+   (DESIGN.md) -- and #list-empty is hidden on every non-empty render, so
+   without it the list would draw 25 rows underneath a centred sentence. */
+.list-scroll:has(> #list-empty:not([hidden])) {
+  display: flex; align-items: center; justify-content: center;
+}
 .empty {
   padding: 28px 16px; text-align: center;
   color: var(--text-faint); font-size: var(--fs-muted);
 }
+#list-empty[hidden] { display: none; }
 /* The empty state names the folder it watched, so both pieces below are
    scoped to #list-empty rather than added to .empty -- Skills renders
    #skills-empty with that class and evesettings.js builds its "no match"
@@ -493,103 +695,171 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .check .box { width: 15px; height: 15px; }
 .check input:checked + .box {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  border-color: #ff7a6f;
+  border-color: #a95cf0;
 }
 .check input:checked + .box::after { opacity: 1; }
-.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+.check input:focus-visible + .box { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
 /* Scoped to this one label by id: .check is the shared wrapper Settings,
    Bookmarks and Previews all build on, and an opacity on it would dim
    every checkbox in the app. Same .45 button.btn:disabled uses, so an
-   unavailable control reads the same way wherever it appears. */
-#lab-logs.disabled { opacity: .45; cursor: default; }
+   unavailable control reads the same way wherever it appears.
+
+   #lab-logs until round 2, when the combat-log checkbox went (Uploader 8)
+   and Stitch inherited the treatment: it is the one control on the panel
+   with a precondition the app can check for itself (two rows selected). */
+#lab-stitch.disabled { opacity: .45; cursor: default; }
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
 }
 /* The upload destination, learned from the videos.insert response. Always
-   visible so the user can see where uploads actually go. */
+   visible so the user can see where uploads actually go -- but BELOW the
+   button now, not above it. Uploader 1 and 9: this is a standing fact
+   about the account, read once and never acted on, and it was occupying
+   the line directly above the most-pressed control in the app while the
+   thing that actually blocks that control (the selection count) sat a
+   whole card away. They have swapped places. */
 .destination {
   color: var(--text-faint); font-size: var(--fs-muted);
-  margin-bottom: 10px; line-height: 1.4;
+  margin-top: 10px; line-height: 1.4;
 }
 .actions { display: flex; flex-direction: column; gap: 8px; }
 .actions button.btn { width: 100%; text-align: center; padding: 9px 12px; }
-.actions .secondary-row { display: flex; gap: 8px; }
-.actions .secondary-row button.btn { flex: 1; }
 /* Retry is enabled only after an upload has failed IN THIS SESSION, which
    for most users is never -- so its resting state was a dead control given
    the same weight as the one button on this screen that removes files from
-   disk. Hidden rather than greyed, and hidden from CSS rather than from
-   panel.js, because `disabled` IS the whole of "there is nothing to retry":
-   onRetryAvailable already maintains it, .secondary-row's flex:1 then gives
-   Delete the row to itself, and display:none takes it out of the tab order,
-   which greying does not. */
+   disk. That neighbour (Delete selected) has since moved to the list
+   footer, where the files it deletes are, but the reasoning holds for
+   Retry on its own: hidden rather than greyed, and hidden from CSS rather
+   than from panel.js, because `disabled` IS the whole of "there is nothing
+   to retry" -- onRetryAvailable already maintains it, and display:none
+   takes it out of the tab order, which greying does not. */
 #btn-retry[disabled] { display: none; }
 
 /* ---- the two panes at the real window floor -------------------------
-   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py:54) and the app is
-   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at
-   125%, 560px at 150%, 420px at 200%. The layout above was laid out
-   against 840 and needs every one of those to be 840 too. Both overflow
-   rules on .list-pane and .list-scroll are `hidden`, so the columns that
-   did not fit were not crowded -- they left the screen with nothing to
-   say they had ever been there.
+   MIN_WIDTH is 840 LOGICAL pixels and the CSS viewport floor is 840x625
+   at EVERY display scaling -- the minimum lands in WinForms MinimumSize
+   and ptMinTrackSize, both of which Windows DPI-scales for a
+   system-DPI-aware process, so the number is already in the units the
+   page sees. Measured: the floor capture is 839x621 CSS at 200%, which is
+   those two numbers unscaled rather than halved.
 
-   The arithmetic, which is why these breakpoints are not round numbers.
-   A pane costs 12px before a single column renders (1px of .list-pane
+   This block used to open "MIN_WIDTH is 840 PHYSICAL pixels ... so the CSS
+   viewport floor is 840/scale: 672px at 125%, 560px at 150%, 420px at
+   200%", and every breakpoint under it was derived from that. The
+   arithmetic was wrong; DESIGN.md carries the correction and the
+   measurement. **Do not size anything against a 560px or 672px viewport.
+   Neither can occur.** Both overflow rules on .list-pane and .list-scroll
+   are still `hidden`, so a column that does not fit still leaves the
+   screen with nothing to say it was ever there -- which is why the tiers
+   below exist at all.
+
+   The arithmetic that IS right, and why these numbers are not round. A
+   pane costs 12px before a single column renders (1px of .list-pane
    border each side plus the 10px scrollbar), and .grid-row adds 20px of
    its own padding:
 
      six columns    34+120+92+84+76+46 = 452 + 20 + 12 = 484
-     four columns   34+120+92+      46 = 292 + 20 + 12 = 324
+     five columns   34+120+   84+76+46 = 360 + 20 + 12 = 392
      three columns  34+120+         46 = 200 + 20 + 12 = 232
 
-   The route spends 24px on padding and 12px on the gap, so the viewport
-   a tier needs is that figure plus 36px plus the panel. Each breakpoint
-   below is one pixel under the width where the filename would be forced
-   below its 120px floor: 484+36+320 = 840, 484+36+248 = 768,
-   324+36+248 = 608. That the first lands exactly on MIN_WIDTH is the
-   check on all of it -- window.py says its floor was "read off the real
-   page", and this is the number it read.
+   The route spends 24px on padding and 12px on the gap, so the viewport a
+   tier needs is that figure plus 36px plus the panel: 484+36+320 = 840,
+   392+36+248 = 676. That the six-column tier lands exactly on MIN_WIDTH is
+   the check on all of it -- window.py says its floor was "read off the
+   real page", and this is the number it read.
 
-   WHAT GOES, AND WHY IN THIS ORDER. Size and Length are metadata nobody
-   scans to find the recording they just made. Modified is very nearly
-   redundant with the filename, because OBS names a recording after its
-   own timestamp -- the header comment in index.html makes that argument
-   at length, which is why the column is called Modified and not Date. So
+   WHAT NOW GOES, AND WHY AT THE FLOOR RATHER THAN BELOW IT. The tiers
+   under the top one used to sit at 767px and 607px, which the correction
+   above puts permanently out of reach: the window cannot be narrower than
+   840, so neither could ever fire and the six-column layout was the only
+   one that ever rendered. That is what made Uploader 11 visible. At 840
+   the name track gets exactly its 120px floor, while
+   "Fight 2026-08-24 17-57-37.mkv" needs ~200px -- so it truncates to
+   "Fight 2026-08-24 17-57-…", eating the seconds, which are the only
+   characters that tell one row from another. The column carrying the
+   identity was the one being cut, while Modified sat intact beside it
+   carrying the same timestamp in a friendlier form. That is Uploader 6 and
+   11 as one fact: the timestamp is printed twice, and the wider copy is
+   the one that gets destroyed.
+
+   So Modified sheds AT the floor instead of at a width that cannot
+   happen. The order is the one this block always argued for, and the
+   reason is unchanged: Modified is very nearly redundant with the
+   filename, because OBS names a recording after its own timestamp --
+   confirmed with the maintainer that this is OBS's default template, so it
+   holds for every user and not just this one. Dropping it returns 92px to
+   the name, which is enough for the whole filename. Size and Length go
+   next, being metadata nobody scans to find the recording they just made;
    the narrowest tier keeps identity and status (which recording, and
-   whether it is already up) and sheds the rest.
+   whether it is already up).
 
-   The name's floor becomes 0 rather than 120px in every narrow tier, so
-   below 488px -- 175% and 200% scaling -- it goes on shrinking and
-   ellipsising instead of overflowing. There is still no 1fr anywhere,
-   for the reason the base template gives.
-
-   Hidden through `.grid-row >` (0,2,0) and not `.c-size` (0,1,0),
+   Hidden through `.grid-row >` (0,2,0) and not `.c-date` (0,1,0),
    because `.list-head > span` is (0,1,1) and would otherwise keep the
    HEADER cell while the body cell went -- the header/row disagreement
    the shared template exists to make impossible. */
+
+/* WHERE EACH TIER FIRES, and the arithmetic behind it. A pane costs 12px
+   before a single column renders (1px of .list-pane border each side plus
+   the 10px scrollbar), .grid-row adds 20px of its own padding, and the
+   route spends 24px on padding plus 12px on the gap. So a tier needs the
+   sum of its track floors, plus 68px, plus the panel:
+
+     six    212+34+92+84+76+46 = 544 + 32 + 36 + 320 = 932
+     five   212+34+   84+76+46 = 452 + 32 + 36 + 320 = 840   <- the floor
+     five   the same, with the 248px panel            = 768
+     three    0+34+         46 =  80 + 32 + 36 + 248 = 396
+
+   Each ceiling is one pixel under what the tier above it needs, so a tier
+   never fires while the wider layout still fitted.
+
+   The five-column tier landing EXACTLY on MIN_WIDTH is the check on all
+   of it, and it moved there in round 2. The six-column tier used to hold
+   that position, on a 120px name floor -- which is why six columns
+   rendered at the floor with the filename truncated, and why the two
+   tiers that would have dropped Modified sat at 767px and 607px, below a
+   floor the window can never reach. Widening the name track to what a
+   filename actually needs moves the agreement one tier down and puts the
+   drop where it can happen. */
+@media (max-width: 931px) {
+  .grid-row { grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px; }
+  .grid-row > .c-date { display: none; }
+}
+
+/* The panel step, and the one query on this screen that was never dead.
+   It fires at 200% scaling and not at 100%: at 100% the floor viewport is
+   840 CSS and this does not match, while at 200% the floor measures 839
+   (a 840 logical minimum lands a 1678 physical client area, and 1678/2 is
+   839), so it matches at the floor and nowhere else. The panel was
+   therefore 248px wide on one machine and 320px on another at the same
+   window size, with nothing in the stylesheet predicting which -- a
+   rounding artefact holding a layout decision. DESIGN.md records that and
+   hands it here.
+
+   Kept, and now the narrower of two real floors rather than an accident:
+   839 is where the five-column layout above stops fitting beside a 320px
+   panel, so the panel is what gives. */
 @media (max-width: 839px) {
   .panel { width: 248px; }
 }
 
+/* Below what five columns need beside the 248px panel (768). Unreachable
+   through the window, like its predecessors -- but unlike them it is the
+   tier the name track's `minmax(0, ...)` protects, so it is what stops a
+   filename overflowing rather than ellipsising if the floor ever moves.
+   Kept as that record, per DESIGN.md's "unreachable is not the same as
+   removable"; nothing new should be sized against it. */
 @media (max-width: 767px) {
-  .grid-row { grid-template-columns: 34px minmax(0, 52ch) 92px 46px; }
-  .grid-row > .c-size, .grid-row > .c-len { display: none; }
-}
-
-@media (max-width: 607px) {
   .grid-row { grid-template-columns: 34px minmax(0, 52ch) 46px; }
-  .grid-row > .c-date { display: none; }
-  .panel { width: 220px; }
+  .grid-row > .c-size, .grid-row > .c-len { display: none; }
 }
 
 /* ====================== status strip ================================ */
 .statusbar {
   flex: none; display: flex; align-items: center; gap: 14px;
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
-  background: #101216;
+  background: linear-gradient(180deg, #14101c, #0f0c14);
 }
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
@@ -611,7 +881,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .bar {
   height: 100%; width: 0%; border-radius: 2px;
   background: linear-gradient(90deg, var(--brand-deep), var(--brand));
-  box-shadow: 0 0 10px rgba(255, 90, 77, .6);
+  box-shadow: 0 0 10px rgba(132, 48, 217, .6);
   transition: width .12s linear;
 }
 /* Indeterminate: an ffmpeg stitch reports no readable progress, so the bar
@@ -643,10 +913,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    specificity, so the display:flex above would keep this visible for every
    user who never turns the feature on. Same fix as .routenav[hidden]. */
 .evestat[hidden] { display: none; }
-/* NOT dead code, despite MIN_WIDTH being 840 (ui/window.py:44). That is a
-   PHYSICAL-pixel floor: the app is system-DPI-aware (ui/chrome.py:180), so
-   the CSS viewport is 840/scale -- 672px at 125%, 560px at 150%. This rule
-   fires at any scaling above 100%, which is most Windows laptops. */
+/* This comment used to argue the rule was live because MIN_WIDTH was a
+   PHYSICAL-pixel floor, so the CSS viewport would be 840/scale -- 672px at
+   125%, 560px at 150%. That is wrong, and the arithmetic every rule of
+   this shape was written against never happened: the minimum resolves in
+   LOGICAL units, so the viewport floor is ~840 CSS px at 100%, 125%, 150%
+   and 200% alike. Measured at 200%, the window at its floor is 839x621
+   CSS, which is MIN_WIDTH/MIN_HEIGHT unscaled.
+
+   So this query cannot fire today -- 720 is below a floor the window
+   cannot go under. It is kept rather than deleted because it is the only
+   thing that says what the strip does when it does run out of room, and
+   the answer (the EVE segment yields, upload progress does not) is a
+   decision worth keeping written down if the floor ever moves. Do not
+   size anything new against a 560px or 672px viewport. */
 @media (max-width: 720px) { .evestat { display: none; } }
 
 /* ====================== modal dialog layer ==========================
@@ -678,7 +958,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
 .dialog.confirm h3::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  box-shadow: 0 0 9px rgba(255, 90, 77, .5);
+  box-shadow: 0 0 9px rgba(132, 48, 217, .5);
 }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
@@ -732,16 +1012,46 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    and either exceeds the window height. */
 
 /* Character names, like bookmarks' action names, are not short field
-   labels -- see the #eve-binds override below for why the shared 118px
-   column is wrong here. */
+   labels, so they do not take the stacked label treatment every other
+   settings row gets -- see the #eve-binds block below, which carries the
+   reasoning and the measurements for both lists. */
+/* ABOUT is the one card on this route that states facts BEFORE it offers a
+   control -- every other card leads with the control and explains it
+   underneath. Without this the licence line and the login switch touch,
+   and the four lines read as one run instead of "this is the build you are
+   running" followed by "and here is something you can change". 12px is the
+   gap .card > h2 already uses, not a new number.
+
+   Sibling of #about-version, so it cannot reach the EVE-tools card above,
+   whose own checkbox opens its card and must not gain a top margin. */
+#about-version ~ .check { margin-top: 12px; }
+
+/* The one paragraph in this card that CHANGES. Its neighbour above is
+   permanent -- what global keybinds are, and where the other set lives --
+   and both were .hint at --text-faint, so the sentence that reports live
+   state looked exactly like the one that never moves (walkthrough Settings
+   5). One step up the same text ramp, not a severity token: previews being
+   off is a fact the user chose, not a warning. Its words come from
+   ui/copy.py's INERT_NOTES, so this is the treatment only. */
+#preview-binds-off { color: var(--text-dim); }
+
+#preview-binds {
+  display: grid; gap: 10px; align-items: center; justify-content: start;
+  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+}
+#preview-binds .row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity, which is the
+   [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
+   children with the row itself gone. */
+#preview-binds .row[hidden] { display: none; }
 #preview-binds .row > .lab {
-  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+  width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 
-/* Collapsed below 720px like every other row -- see the #eve-binds
-   override below, which carries the reason for both. */
+/* The name takes the whole line at narrow widths -- the grid equivalent of
+   the flex `flex: 0 0 100%`, and the same reason. See #eve-binds below. */
 @media (max-width: 720px) {
-  #preview-binds .row > .lab { flex: 0 0 100%; }
+  #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
 
 /* Offline is information, not an error (previews.js): dim rather than
@@ -773,10 +1083,60 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 #route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
 
 /* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
-   anything, and .card is not one -- so both lists take content height and
-   grow the route instead of scrolling. Capped the same way the dialog body
-   is, so forty characters scroll inside the card. */
-#es-targets, #es-backups { max-height: 38vh; }
+   anything, and .card is not one -- so the list takes content height and
+   grows the route instead of scrolling. Capped the same way the dialog body
+   is, so a long backup history scrolls inside the card.
+
+   Backups only, now. #es-targets used to share this cap and no longer does
+   -- see .es-roster below. The two lists look alike and are not: backups
+   are a history you consult one row of, and the roster is the record of
+   who a single irreversible press is about to overwrite. Capping the
+   second is what put a name half-drawn above the accent button. */
+#es-backups { max-height: 38vh; }
+
+/* Profiles 2 -- the roster, in columns, uncapped.
+
+   Measured in the ?dev=1 harness at the 840x625 floor with 34 names, NOT
+   converted from the walkthrough's figures: card box 620, content 586, the
+   widest checkbox-plus-name 139.7 and the median 105.7. So a single column
+   left 446 CSS px of nothing beside every row, in a card wide enough for
+   three columns. Height is the sharper number: 34 names in one column stack
+   680px and the 38vh cap is 237px at this floor, so the list showed about a
+   THIRD of the roster and scrolled for the rest -- inside a page that was
+   also scrolling.
+
+   The walkthrough reports "~35 names in a ~250px column inside a ~1180px
+   card. Roughly 900px of dead card". Those are physical pixels off a 200%
+   display (its own X2 says the captures are physical; DESIGN.md's floor
+   capture establishes the scaling), so they are double throughout. Halving
+   them gives 590 and 450, close enough to the measured 586 and 446 to look
+   like confirmation -- and it is not one. The unit correction is sourced,
+   but a figure that halves to something plausible has not thereby been
+   checked, and the 590 it produces disagrees with this stylesheet's own 620
+   by thirty pixels. The measurements above are the ones to trust; the
+   walkthrough's are kept so the finding stays traceable.
+
+   column-width, not column-count: the count then follows the width the card
+   actually has, which is 586px inside .settings' 620px cap today and would
+   be more if that cap ever moves. At 586 this is three columns, which is
+   what the finding asked for, and ~35 names become ~12 rows.
+
+   Columns rather than a grid because the reading order is the point. A
+   grid fills row-wise, so an alphabetical roster reads across; multi-column
+   fills column-wise, so it reads DOWN each column the way a name list is
+   scanned. DOM order is column order, so the tab order agrees with the eye.
+
+   No max-height on purpose. The route already sets overflow-y: auto, so the
+   page is the one scrollbar; a cap here is what produced the nested pair
+   and the rows clipped mid-name at both edges. A very large roster makes a
+   long page, which is the honest rendering of "here is everyone about to be
+   overwritten". */
+.es-roster { columns: 170px; column-gap: 16px; }
+/* A name split across a column break is worse than an uneven column. */
+.es-roster > .check { break-inside: avoid; padding: 2px 0; }
+/* The empty state is a statement about the whole list, not an entry in it,
+   so it spans rather than sitting in column one. */
+.es-roster > .empty { column-span: all; }
 
 /* Accented, unlike a plain .hint: "couldn't read that folder" is a warning
    rather than an error (the root may simply not exist yet), following
@@ -819,6 +1179,64 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   flex: none; color: var(--text-dim); font-size: var(--fs-muted);
 }
 
+/* Profiles 1 -- the commit row. The button keeps the left edge every other
+   control on this screen starts at; the cost and the hazard follow it, in
+   that order, and the pill is pushed to the right edge so it reads as a
+   condition of the screen rather than as a third word in the sentence.
+   Nothing here is accent: the one accent on this screen is the button, and
+   a warning that competed with it would be arguing about which is primary.
+
+   flex-wrap, because three things on one row at the 840 floor is the case
+   this screen has been caught by before -- at 586px of card the count and
+   the pill drop to their own line rather than squeezing the button.
+
+   The top margin is the other half of Profiles 2's collision. .row has a
+   bottom margin and no top one, so with the roster's inner scroller gone
+   the last name sat directly on the accent button -- which is what the
+   walkthrough saw through the clipped scroll boundary, minus the clipping.
+   Uncapping the list removed the half-drawn name; this is what stops the
+   whole one from touching the button. */
+#es-commit { flex-wrap: wrap; row-gap: 8px; margin-top: 14px; }
+
+/* The quantity, stated before the irreversible action (PRODUCT.md). Body
+   size, not muted: it is the number the user is meant to check, and the
+   Uploader's own "1 selected - 108.8 MB" line is not whispered either.
+   It goes dim, not hidden, when nothing is selected -- an empty slot beside
+   a disabled button would read as a layout gap rather than as an answer. */
+.es-count { color: var(--text); font-size: var(--fs-body); }
+.es-count.none { color: var(--text-faint); }
+
+/* Right edge, so the hazard is the last thing before the eye leaves the
+   row -- and so it lands in the same place whether or not the count wrapped.
+
+   The [hidden] override is REQUIRED, not decorative: .pill sets
+   display: inline-flex, and an author rule beats the UA stylesheet's
+   [hidden] { display: none } regardless of specificity, so without this the
+   pill evesettings.js hides stays on screen. DESIGN.md names this trap and
+   six rules in this file already carry the same note; one shipped without
+   it anyway. */
+#es-eve-state-commit { margin-left: auto; }
+#es-eve-state-commit[hidden] { display: none; }
+
+/* Profiles 6 -- an empty Server or Profile rendered exactly like a working
+   one: blank, un-placeholdered and undimmed before a folder exists, so it
+   read as broken rather than as not-yet-applicable. evesettings.js disables
+   the select and gives it a placeholder option; this is what makes the
+   disabled state visible, since nothing in style.css styles a disabled
+   select and the UA's own treatment is a light-scheme grey.
+
+   #es-source is here too. The finding names Server and Profile, and `Copy
+   from` is the same control with the same failure -- once its two
+   neighbours carry a placeholder, the one blank dropdown left beside them
+   states the finding more loudly than before rather than less.
+
+   Scoped to these three ids rather than added to .field: every other .field
+   on the page is disabled by setBusy for the length of a copy, and dimming
+   those would make a two-second mutation look like a broken form. */
+#es-server:disabled, #es-profile:disabled, #es-source:disabled {
+  color: var(--text-faint); opacity: 1; cursor: default;
+}
+
 /* Ten backups produced ten different button positions, because the whole
    row was a single text node and Restore landed wherever the stem ended.
    Fixed columns either side of a flexing description put both buttons on
@@ -850,27 +1268,66 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 /* Bind rows hold long action names ("Convert EvE-Scout Bookmarks",
    "Finisher: C13 (shattered)"), not short field labels like the rest of
-   this route's cards -- the shared `.settings .row > .lab` column below
-   is a fixed 118px right-aligned width tuned for "Privacy" and
-   "Category" and would wrap these onto several right-ragged lines. This
-   override gives the label the row's remaining width instead. */
+   this route's cards, so they opt out of the stacked label above every
+   other settings row and keep the name beside its binding.
+
+   THE COLUMN IS SIZED TO THE WIDEST NAME, NOT TO THE ROW. Measured in the
+   ?dev=1 harness at the 840 floor, with the eighteen real BIND_LABELS: the
+   row is 586px, the widest name's ink is 190px, and the old `flex: 1` gave
+   the label a 316px box regardless. That surplus became a void between
+   each name and its binding -- 137px on the longest name and 274px on
+   "Set Root", eighteen times down the card. The walkthrough called it
+   ~600px, which is not reachable inside a 620px-max-width .settings; the
+   real figures are the ones above.
+
+   The rule, which Skills' plan rail shares (walkthrough Skills 6) and is
+   recorded for it in docs/r2-handoffs.md: a full-width row does not
+   stretch its label to fill. The value column sits at the widest label
+   plus one gap, and the width left over stays unused at the right rather
+   than becoming a gap in the middle.
+
+   Grid on the CONTAINER with `display: contents` on the rows, because that
+   is the only way the column can be one column: max-content on a per-row
+   grid sizes each row separately and the bindings stop aligning, which is
+   worse than the void -- eighteen buttons at eighteen x-positions. The
+   rows keep no box of their own, so .row's 10px gap and 10px margin-bottom
+   are re-stated here as the grid's own gap.
+
+   minmax(0, max-content) rather than max-content on the name: a
+   pathologically long character name must be able to shrink rather than
+   push the buttons out of the card, which is what `min-width: 0` did
+   under flex. */
+#eve-binds {
+  display: grid; gap: 10px; align-items: center; justify-content: start;
+  grid-template-columns: minmax(0, max-content) repeat(3, max-content);
+}
+#eve-binds .row { display: contents; }
+/* display:contents above beats .row[hidden] on specificity -- the
+   [hidden] trap DESIGN.md names, and the one .row itself already carries a
+   note about. */
+#eve-binds .row[hidden] { display: none; }
 #eve-binds .row > .lab {
-  width: auto; flex: 1; min-width: 0; text-align: left; color: var(--text);
+  width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 
-/* Settings 1's third case. Lane 0's `max-width: 720px` block collapses the
-   shared label column above its field, but it sets `.settings .row > .lab`
-   -- which this id-specificity override beats, so the rule never reached
-   these rows: the name kept `flex: 1; min-width: 0` and SHRANK instead,
-   which is the failure the collapse exists to prevent. At the 560px floor
-   the row is ~324px and spends 150px on .bindbtn plus Clear and Type...,
-   leaving about 60px for "Convert EvE-Scout Bookmarks", eighteen times.
+/* Settings 1's third case, kept in its grid form. Lane 0's
+   `max-width: 720px` block collapses the shared label column above its
+   field, but it sets `.settings .row > .lab` -- which this id-specificity
+   override beats, so the rule never reached these rows and the name
+   SHRANK instead, which is the failure the collapse exists to prevent.
    #preview-binds carries the same override and the same repair.
-   flex-basis, not width: `flex: 1` above sets a basis of 0%, and only a
-   full basis forces the wrap that `.settings .row`'s flex-wrap allows. The
-   controls then take their own line at their natural widths. */
+
+   `grid-column: 1 / -1` is the grid equivalent of the flex `flex: 0 0
+   100%` this used to be: the name takes the whole line and the controls
+   take the next one at their natural widths.
+
+   By C1 this can never fire in the app window -- the CSS floor is 840x625
+   at every scaling, so 720px is below it. It is kept because it still
+   fires in the ?dev=1 harness, it is the guard that would make lowering
+   MIN_WIDTH safe, and tests/test_page_conventions.py requires every id
+   override of the shared label column to restore its collapse. */
 @media (max-width: 720px) {
-  #eve-binds .row > .lab { flex: 0 0 100%; }
+  #eve-binds .row > .lab { grid-column: 1 / -1; }
 }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture
@@ -888,13 +1345,38 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 /* Capturing: the label already changes to "Press a key…", but without a
    visual state the row does not read as waiting for input. */
 .bindbtn.capturing {
-  border-color: var(--brand); color: var(--brand); background: #22252c;
+  border-color: var(--brand-text); color: var(--brand-text); background: #22252c;
 }
 
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
 
+/* The 4px 6px padding STAYS. This is the record of that decision, because
+   from one screen it looks like a bug.
+
+   First run's `Set this up later` reads about 6 CSS px right of the h1,
+   the prose and the field, which all share the card's content edge.
+   Measured, the button's BORDER BOX is already flush with them; only its
+   ink is inset, by this padding-left. Three measurements by two methods --
+   text-range origin and computed-box arithmetic -- agree on 6.0. (A
+   walkthrough capture reported 22 physical px, i.e. 11 CSS. That does not
+   reproduce and its cause is unknown; do not size anything to it.)
+
+   So the fix is optical rather than positional, and it belongs to the one
+   screen that wants it, not to this class:
+
+     - `padding-left: 0` is WRONG. :hover paints a background, so zeroing
+       one side leaves the hover rect hugging the glyphs on the left with
+       6px still clear on the right.
+     - `margin-left: -6px`, scoped to `.firstrun-actions .linkbtn`, is the
+       shape: symmetric padding, symmetric hover, ink on the column, and
+       the box overhangs into the card's own 28px padding rather than out
+       of the card.
+
+   Changing the padding here instead would move eighteen bookmark bind
+   rows, Skills' two link buttons and Profiles' `Change...`, none of which
+   anyone reported. */
 .linkbtn {
   background: none; border: 0; color: var(--text-faint);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
@@ -907,12 +1389,42 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   width: 100%; max-width: 620px; margin: 0 auto;
 }
 
-/* One label column for the WHOLE screen, not per-card: label columns that
-   do not align across groups are the first thing wrong in settings.png. */
+/* Labels sit ABOVE their control, full width, on every row and at every
+   window size.
+
+   This replaces a 118px right-aligned column. That column was the fix for
+   settings.png's per-card labels and it did align every labelled row --
+   but only labelled rows. Notifications and General have no .lab at all;
+   their controls are direct children of the card. So flipping the rail
+   moved the first thing on the screen sideways, measured from the card's
+   content edge at the 840 floor:
+
+     Account / Uploads / Folders / Discord   control 128, text 128
+     Bookmarks / Previews                    control 128, text 152
+     Notifications / General                 control   0, text  24
+
+   Three edges, each internally consistent inside its own section, which is
+   why this was invisible in any single capture and obvious when switching.
+
+   Stacking is the only answer available in CSS alone that gives all three
+   the same edge: the sections without a column cannot grow one without
+   markup, and the markup is another lane's. The column's own job survives
+   -- labels still align with each other; they now align at 0 with
+   everything else as well.
+
+   row-gap, because the collapse creates a vertical relationship the column
+   never had. .row's own 10px gap applies to both axes, which would leave a
+   label exactly as far from its field as from the row above it, belonging
+   to neither. */
+.settings .row { flex-wrap: wrap; row-gap: 4px; }
 .settings .row > .lab {
-  width: 118px; flex: none; color: var(--text-dim);
-  font-size: var(--fs-body); text-align: right;
+  width: 100%; flex: none; color: var(--text-dim);
+  font-size: var(--fs-body); text-align: left;
 }
+/* An empty .lab exists only to hold the alignment -- Profiles' mode switch
+   is one, deliberately. Stacked, it would contribute a blank line of
+   line-height and nothing else. */
+.settings .row > .lab:empty { display: none; }
 /* Fields and their buttons share a baseline by sitting in the same
    align-items:center flex row at the same padding — the second thing
    wrong in settings.png. */
@@ -922,11 +1434,59 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);
-  margin: 6px 0 0 128px;
+  margin: 6px 0 0;
 }
 .settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
 
-/* "Connected" as a status PILL, not an oversized button. */
+/* A hint that follows a checkbox explains the checkbox's SENTENCE, not its
+   box. The sentence starts 24px in -- .check's 15px .box plus its 9px gap
+   -- so a hint left at the card's own edge begins 24px to the LEFT of the
+   words it belongs to. It is aligned to a real element, which is exactly
+   why it reads as a mis-indent instead of as alignment.
+
+   Two selectors because the markup has two shapes: a hint that is the
+   checkbox's own next sibling (General), and a hint in a continuation row
+   after the checkbox's row (Previews, Bookmarks). Those continuation rows
+   exist only to carry an empty .lab, which used to align them to the field
+   column -- the column this file no longer has.
+
+   :has() is the only way to say "the row before this one holds a
+   checkbox", and it is the first use in this file. WebView2 is evergreen
+   Chromium, which has had it since 105; if a runtime ever lacks it the
+   whole rule is dropped and the hint stays exactly where it sits today, so
+   the failure mode is no improvement rather than a broken card.
+
+   Deliberately NOT applied to a continuation hint that opens a card --
+   Previews' "Global keybinds" prose is the case. It follows no control, so
+   there is no sentence for it to sit under and 24px would be a stray
+   indent with nothing above it. */
+.settings .check + .hint,
+.settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
+
+/* "Connected" as a status PILL, not an oversized button.
+
+   The two have separate jobs, stated here because they were being used as
+   if either were optional:
+
+   .pill is the READOUT -- a word, plus exactly one severity token
+   (.ok / .warn / .err / .idle). Both pills in the app set that token from
+   JS on every update, so a pill is never severity-less in practice.
+
+   .led is the same severity made SCANNABLE. It takes its colour from the
+   pill via currentColor and pulses under .warn, so it is what lets a
+   reader take the state without reading the word. It is not emphasis and
+   not decoration.
+
+   Which means: a pill that carries a severity token and omits the .led
+   spends the token on tinting text and nothing else, and asks to be read
+   rather than glanced at. Today #auth-pill (Account) has one and
+   #es-eve-state (Profiles) does not, though both set .warn / .idle at
+   runtime. That is markup, so it is R3's to reconcile -- one <span
+   class="led"> -- not a restyle here.
+
+   Skills' green/grey square group markers are a third shape for the same
+   concept and live in that route's own block; out of reach from here and
+   R4's to weigh against this rule. */
 .pill {
   display: inline-flex; align-items: center; gap: 7px; flex: none;
   font-size: var(--fs-muted); color: var(--text-faint);
@@ -956,9 +1516,9 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
-  box-shadow: 0 0 10px rgba(255, 90, 77, .5);
+  box-shadow: 0 0 10px rgba(132, 48, 217, .5);
 }
-.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(255, 90, 77, .3); }
+.radio input:focus-visible + .ring { box-shadow: 0 0 0 2px rgba(132, 48, 217, .3); }
 
 /* Radios laid out INLINE in a .row, rather than stacked down a card: the
    8px stacked margin applies to the first of the pair and not the last
@@ -976,12 +1536,14 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    that queues (web/panel.js), so a webhook URL typed a character at a time
    used to stack a pile of dialogs on top of each other.
 
-   Indented to the field column, not the label column, so it reads as
-   belonging to the control it is about. Author [hidden] rule for the same
+   It used to be indented 128px to clear the label column and sit under
+   the control rather than under the label. With the column stacked there
+   is no such distinction and the card's own edge IS the field's edge.
+   Author [hidden] rule for the same
    reason .routenav and .evestat carry one: this sets display, and an
    author rule beats the UA stylesheet's [hidden] { display: none }. */
 .field-msg {
-  display: block; margin: 8px 0 0 128px;
+  display: block; margin: 8px 0 0;
   font-size: var(--fs-muted); line-height: 1.45; color: var(--text-dim);
 }
 .field-msg[hidden] { display: none; }
@@ -990,52 +1552,37 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
 
-/* ---- the settings row at the window floor ----------------------------
-   MIN_WIDTH is 840 PHYSICAL pixels (ui/window.py) and the app is
-   system-DPI-aware, so the CSS viewport floor is 840/scale: 672px at 125%
-   scaling and 560px at 150%, both common laptop settings. Every rule above
-   was laid out against 840.
+/* ---- the floor this block used to be written against -----------------
+   There was a `@media (max-width: 720px)` block here that stacked the
+   label column, dropped an empty .lab, and zeroed the .sub-hint and
+   .field-msg indents at narrow widths. Every one of those rules is now
+   unconditional above, so the block is gone rather than kept as five
+   no-ops shadowing the rules they duplicate.
 
-   The arithmetic they lose at: the settings pane is
-   `viewport - 24 (route padding) - 12 (gap) - 168 (rail)`, less 32px of
-   card padding. At 560 that is 324px of row, of which the label column
-   takes 118px and three 10px gaps take 30 -- leaving roughly 30px for a
-   monospace Windows path, and about 40px for a masked webhook the user is
-   expected to verify by eye. `.field`'s `min-width: 0` guarantees it
-   shrinks rather than pushing anything out, so nothing overflows, no
-   scrollbar appears, and nothing says so.
+   Both reasons it existed were wrong, and it is worth recording which:
 
-   The lever is the label column, because it is the only 118px on the row
-   that is not a control. Below the threshold it stops being a column and
-   sits above its field, handing the whole 118px and a gap back while
-   leaving every button on the field's own line.
+   1. It derived the CSS viewport floor as MIN_WIDTH/scale, from MIN_WIDTH
+      being "840 PHYSICAL pixels" -- 672px at 125% scaling, 560px at 150%.
+      The minimum resolves in LOGICAL units. The CSS floor is 840x625 at
+      every scaling; measured at 200%, the floor capture is 839x621 CSS
+      against MIN_WIDTH = 840 / MIN_HEIGHT = 625 (ui/window.py). 720px sits
+      below the floor, so this block could never match in the app window at
+      all. DESIGN.md and PRODUCT.md repeat the same error and are corrected
+      separately.
 
-   720px rather than a second number: .evestat above already uses it as
-   this page's "anything above 100% scaling" line. It is also where the
-   arithmetic runs out -- at 672 the Folders row still leaves the path
-   about 144px, which is under half a plausible OBS output path.
+   2. Its stated purpose was to hand 118px back to a row that had run out
+      of width -- "roughly 30px for a monospace Windows path" at 560. At
+      the real floor the settings pane is 840 - 24 (route padding) - 12
+      (gap) - 168 (rail) = 636, less 32px of card padding: a 604px row.
+      There was no width crisis to solve.
 
-   This block renders on TWO screens. index.html carries class="settings"
-   on the Profiles route as well, so its folder and copy rows collapse
-   with these. That is the point of a shared column: the alternative is
-   two screens answering the same question differently. */
-@media (max-width: 720px) {
-  .settings .row { flex-wrap: wrap; }
-  /* width, not flex-basis: `.lab` is flex:none above, so a full width is
-     honoured exactly and forces the field onto the next line. */
-  .settings .row > .lab { width: 100%; text-align: left; }
-  /* An empty .lab exists only to hold the alignment -- Profiles' mode
-     switch is one, deliberately. Collapsed it would contribute a blank
-     line of line-height and nothing else. */
-  .settings .row > .lab:empty { display: none; }
-  /* Both indents are the 118px column plus its 10px gap, so with no
-     column to line up against they are a margin against nothing. The
-     .field-msg one matters most: it carries refusals, and 128px of it on
-     a 324px row leaves an explanation narrower than the control it is
-     about. */
-  .settings .sub-hint { margin-left: 0; }
-  .field-msg { margin-left: 0; }
-}
+   What still needs the 720px breakpoint is the pair of id overrides that
+   out-specify the shared label column (#eve-binds, #preview-binds). Those
+   restores live beside their own overrides, and
+   tests/test_page_conventions.py requires each of them to exist -- see the
+   note at #eve-binds. Anyone reinstating a narrow-width block here should
+   check that test first, because it brace-matches every max-width:720px
+   block in the file. */
 
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
@@ -1056,14 +1603,41 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-dim); line-height: 1.55; margin-bottom: 10px;
 }
 .firstrun .row { margin-top: 18px; }
+/* Right-aligned in its RESTING state only, which is F4.
+
+   The standing sentence explains Detect, and Detect is the last control in
+   the row above -- its ink at 452 in a 502px column, with the note's first
+   word at 0. The sentence names its subject first, which carries it, but
+   the eye still crosses the whole card to connect them, and a hint at the
+   field's left edge parses as the field's hint. Right-aligned, the
+   sentence ends at 502, which is exactly Detect's right edge.
+
+   Not the same complaint as F3 or Settings 4. Those are controls whose ink
+   falls a few px off a column the rest of the card holds, reading as a
+   mistake. This is a deliberate full-width shift of one line that belongs
+   to the row above it rather than to the prose column, and at that
+   distance it reads as attachment rather than as misalignment.
+
+   The two message states go back to the left, below. */
 .firstrun-note {
   color: var(--text-faint); font-size: var(--fs-muted); margin-top: 10px;
+  text-align: right;
 }
 /* The note carries a failed detection and a refused folder as well as its
    standing explanation, and severity is a token, not a local colour --
-   the same two .field-msg and the status strip use. */
+   the same two .field-msg and the status strip use.
+
+   They are also the two states that go back to text-align: left. A
+   refusal is about the field or about the whole screen, not about Detect
+   -- "Could not reach the app." is neither control's fault -- and these
+   are the long strings: right-aligned, the detection failure wraps to two
+   lines and leaves a ragged left edge against an otherwise straight
+   column. The alignment moving with the colour is the intended tell that
+   this is a different kind of message, not the standing one restyled. */
 .firstrun-note.warn { color: var(--warn); }
 .firstrun-note.err { color: var(--err); }
+.firstrun-note.warn,
+.firstrun-note.err { text-align: left; }
 /* Skip on the left, Continue on the right: they are opposite answers to
    the same question, and stacking the quiet one beside the accent reads
    as two commit buttons. gap, not just space-between, because the note
@@ -1072,18 +1646,52 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-top: 20px;
 }
+/* F3, and the mechanism is not the obvious one. `Set this up later` reads
+   6 CSS px right of the h1, the paragraph and the field, which all sit on
+   the card's content edge. Measured in the ?dev=1 harness at an 840
+   viewport, the content edge is 169 and the button's BORDER BOX is already
+   there -- only its ink is at 175. So the displacement is entirely
+   .linkbtn's 6px padding-left and the box is not out of line with
+   anything. (The walkthrough reported 11 CSS px. It does not reproduce;
+   see the note on .linkbtn, where S1 settled this by rendering it.)
+
+   The fix is therefore optical, and it belongs here rather than on the
+   class: .linkbtn also renders on eighteen bookmark bind rows, Skills'
+   plan-file actions and Profiles' `Change...`, none of which anyone
+   reported. Two ways it could go wrong:
+
+     - `padding-left: 0` is WRONG. :hover paints a background, so zeroing
+       one side leaves the hover rect hugging the glyphs on the left with
+       6px still clear on the right.
+     - a negative margin on .firstrun-actions itself would drag Continue
+       left too, and Continue is flush right against the card's other edge.
+
+   `margin-left: -6px` on the child keeps the padding and the hover rect
+   symmetric, lands the ink at 0, and overhangs into the card's own 28px
+   padding rather than out of the card. Same shape as
+   .rail-plan-actions > .linkbtn, which solved this once already. */
+.firstrun-actions > .linkbtn { margin-left: -6px; }
 
 /* ====================== skills route ================================
    NOT the .settings form the previews and bookmarks routes use: a fixed
    rail beside a scrolling roster.
 
-   "626 CSS pixels beside the rail" is the 100%-scaling case and was the
-   only one this block was sized against. min_size is (840, 625) PHYSICAL
-   (ui/window.py:44-45) and the app is system-DPI-aware, so the CSS
-   viewport floor is 672px at 125% and 560px at 150% -- where a 214px rail
-   is 38% of the window and the roster keeps 310px. The media query at the
-   foot of this block is the other half of the sizing; see it for which
-   width the rail gives back and why 168.
+   THE FLOOR ARITHMETIC THIS BLOCK WAS SIZED AGAINST WAS WRONG, and the
+   correction is why the media query that used to sit at the foot of this
+   block is gone. It said min_size was (840, 625) PHYSICAL and the app
+   system-DPI-aware, so the CSS viewport floor would be 840/scale -- 672px
+   at 125%, 560px at 150% -- "where a 214px rail is 38% of the window and
+   the roster keeps 310px", and it gave the rail back 46px at 720px to
+   repair that. MIN_WIDTH and MIN_HEIGHT resolve in LOGICAL units
+   (ui/window.py, DESIGN.md): the CSS viewport floor is 840x625 at every
+   display scaling, measured 839x621 at 200%. So the 38% case never
+   existed, no viewport this window can reach is under 720px, and the
+   query could not fire. Do not size anything here against a 560px or
+   672px viewport.
+
+   The rail is 214px at every width the window can be. At the real floor
+   that leaves the roster 590px, which is the number to check a change
+   against.
 
    minmax(0, 1fr) rather than 1fr: a bare 1fr floors at min-content, and
    one long character name would push the roster wider than the window. */
@@ -1107,8 +1715,18 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    shrinking proportionally. */
 .rail-plans-block { flex: 1; min-height: 0; }
 .rail-plans { flex: 1; overflow-y: auto; min-height: 0; }
+/* The padding is NOT decoration and must not be rounded off: it is
+   .rail-plan's own inset, restated, so the two headings land on the
+   column each one labels. A .rail-plan is `border-left: 2px` plus
+   `padding: 6px 8px`, and this row had neither -- so PLANS sat 10 CSS px
+   left of the plan names and READY sat 8 CSS px right of the ratios,
+   measured in the ?dev=1 harness at 840 and at 1600, identically. Two
+   visible errors, one cause, and DESIGN.md now states the rule: a header
+   row is laid out by the same padding as the rows beneath it, with no
+   separate inset. Change .rail-plan's padding and this has to follow. */
 .rail-head-row {
   flex: none; display: flex; align-items: baseline; gap: 8px;
+  padding: 0 8px 0 10px;
   margin-bottom: 2px;
 }
 .rail-head {
@@ -1219,8 +1837,36 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .skills-group-count {
   color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
-/* The colour key. Every value is an existing token; this route introduces
-   no new colour literals. */
+/* The colour key.
+   `#7aa2f7` is a literal and this comment used to claim otherwise ("every
+   value is an existing token; this route introduces no new colour
+   literals"). It appears three times below -- .key-Training,
+   .status-Training and .state-Queued -- and since the purple retheme it is
+   also, exactly, the value of `--link`. It is NOT that concept: --link is
+   the declared exemption for a link OUT of the app, and pointing these at
+   it would say a training state leaves the application. A token of its own
+   belongs in `:root`, which this block does not own. Left as a literal
+   deliberately, with the collision recorded rather than laundered.
+
+   THE ORDER OF THESE IS THE SEVERITY RAMP, and it used to invert itself
+   at the last rung. `Unknown` outranks `Missing` as a problem -- Python
+   says so, evaluator.READINESS_ORDER runs best-first and puts UNKNOWN
+   after MISSING -- because a skill that was never injected is further from
+   flying the plan than one trained below the level asked for. It was
+   painted --text-dim: the more severe state, dimmer than the milder one,
+   which is the opposite of what a severity colour is for.
+
+   Both now carry --err, and the WORD carries the distinction ("Missing
+   requirements" / "Untrained requirements"). Not a swap: --warn is already
+   Locked's, and Missing genuinely outranks Locked, so demoting Missing to
+   make room would collide two states that are not equal. There is no
+   fourth severity token to reach for and minting one is a `:root` edit
+   this block may not make -- so the ramp ends in one bucket of two
+   equally-actionable reds rather than a fifth colour.
+
+   --text-faint stays on Unscored, and that is not an oversight: Unscored
+   is the ABSENCE of a judgement, not a bad one. Grey is right for exactly
+   that one. */
 .skills-key {
   width: 8px; height: 8px; border-radius: 2px; flex: none;
   background: currentColor;
@@ -1229,11 +1875,11 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .key-Training { color: #7aa2f7; }
 .key-Locked { color: var(--warn); }
 .key-Missing { color: var(--err); }
-.key-Unknown { color: var(--text-dim); }
+.key-Unknown { color: var(--err); }
 .key-Unscored { color: var(--text-faint); }
 /* The catch-all bucket. Brand-coloured on purpose: a readiness this page
    has never heard of is worth looking at, not worth hiding. */
-.key-Other { color: var(--brand); }
+.key-Other { color: var(--brand-text); }
 
 .skills-row {
   border-bottom: 1px solid #191c22;
@@ -1248,8 +1894,32 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 }
 .skills-row-top:hover { background: #171a20; }
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
+/* max-width is what closes the ~1000px gap between a row's subject and
+   its answer. `flex: 1` alone let the name box eat every spare pixel and
+   push the status to the far edge: measured 427 CSS px of nothing between
+   the two AT THE 840 FLOOR, and 1187 at 1600 -- so this is not only a
+   wide-window problem, and the screen exists to associate a name with a
+   state.
+
+   max-width and not `flex: 0 1 auto`, because the flexed box still grows
+   to the cap on every row, which keeps the statuses in a COLUMN. Letting
+   each name size to its own text would put the status at a different x on
+   every row, and a ragged state column is harder to scan than a distant
+   one. Below the cap the flex still shrinks, so the floor is unaffected.
+
+   The number is MEASURED, not chosen: it is the width the widest realistic
+   label needs, because everything past the cap is dead space on every
+   other row. Rendered in the ?dev=1 harness, `Heavy Assault Missile
+   Specialization IV` -- 39 characters, the longest skill name EVE has --
+   sets 212 CSS px at --fs-muted, and a 37-character EVE character name
+   sets ~228 at --fs-body. 240 is the smallest cap that truncates neither,
+   and anything longer than that ellipsises as it always did. Do not round
+   it up for comfort: 320 was the first value tried and reserved 80px that
+   nothing on the screen could ever fill. */
+.skills-main { --name-col: 240px; }
+
 .skills-name {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; max-width: var(--name-col);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .skills-status { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
@@ -1257,6 +1927,10 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 .status-Training { color: #7aa2f7; }
 .status-Locked { color: var(--warn); }
 .status-Missing { color: var(--err); }
+/* New rule, not a changed one: there was no .status-Unknown at all, so the
+   row that reads `Not trained` fell through to .skills-status' --text-dim
+   while its own group key beside it was coloured. See the ramp above. */
+.status-Unknown { color: var(--err); }
 .badge-stale {
   flex: none; padding: 1px 7px; border-radius: 999px;
   background: #101216; border: 1px solid var(--warn);
@@ -1278,12 +1952,23 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 
 .req-list { display: flex; flex-direction: column; gap: 3px; }
 .req { display: flex; align-items: baseline; gap: 10px; }
-.req-name { flex: 1; min-width: 0; font-size: var(--fs-muted); }
+/* Same cap, same reason, and deliberately the same value: a requirement
+   row is the character row's answer one level down, and two different
+   caps would put the two state columns at two different offsets in a
+   block the eye reads as one list. */
+.req-name {
+  flex: 1; min-width: 0; max-width: var(--name-col);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-muted);
+}
 .req-state { flex: none; font-size: var(--fs-muted); color: var(--text-dim); }
 .state-Missing { color: var(--err); }
 .state-TrainedInactive { color: var(--warn); }
 .state-Queued { color: #7aa2f7; }
-.state-Unknown { color: var(--text-faint); }
+/* Was --text-faint, the faintest colour in the palette, on the state this
+   list's own sort ranks second and the evaluator ranks worst. Same fix and
+   same reasoning as .key-Unknown above. */
+.state-Unknown { color: var(--err); }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
@@ -1292,25 +1977,15 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
 button.btn.danger { border-color: var(--err); color: var(--err); }
 button.btn.danger:hover:not(:disabled) { background: #d9291c; color: #fff; }
 
-/* The rail gives width back below the 100%-scaling case. What it spends
-   214px on is mostly setup -- a count line, Add character (used once per
-   account, ever), Refresh characters, then the plan list -- while the
-   roster, which is what the screen is for, is the track that has to
-   absorb every pixel the rail keeps.
-
-   168px, not a third number: it is the Settings rail's width, which
-   already survives this viewport with a list of eight entries in it. At
-   560px CSS that moves the roster from 310px to 356px.
-
-   720px, not a second one: .evestat and `.settings .row` already treat it
-   as this page's "anything above 100% scaling" line.
-
-   The rail's real width floor is its widest full-width button label,
-   which is why the plan-file actions became .linkbtn in index.html rather
-   than staying two more 100%-wide buttons. */
-@media (max-width: 720px) {
-  #route-skills { grid-template-columns: 168px minmax(0, 1fr); }
-}
+/* The 168px rail step that used to live here has been DELETED, not moved.
+   It narrowed the rail to the Settings rail's width below 720px, to buy
+   the roster 46px back at a 560px viewport -- a viewport this window
+   cannot reach. See the correction in the banner at the top of this
+   block. It is not one of the two `max-width: 720px` bodies
+   test_page_conventions.py requires (those restore the label column for
+   #eve-binds and #preview-binds, and are mandatory precisely because the
+   override they correct is real at every width). This one corrected
+   nothing at any width the window has. */
 
 /* ====================== reduced motion ==============================
    Both animations below are INFINITE and long-running -- `slide` for the

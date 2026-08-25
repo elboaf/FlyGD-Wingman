@@ -23,6 +23,8 @@ import itertools
 import pathlib
 import re
 
+from obs_youtube_uploader.ui import copy as copy_mod
+
 WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
 UI = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "ui"
 
@@ -212,10 +214,10 @@ def test_the_stylesheet_parse_found_the_uploader_geometry():
     assert len([t for t in _tiers() if t[0]]) >= 2
 
 
-def test_the_widest_layout_needs_exactly_the_measured_window_floor():
+def test_the_layout_that_renders_at_the_floor_needs_exactly_the_floor():
     """MIN_WIDTH was MEASURED -- ui/window.py calls it "read off the real
     page at 840x625, approached from both directions" and says it could
-    not be computed on paper. It can be, and this is the sum: the six
+    not be computed on paper. It can be, and this is the sum: one tier's
     column tracks, the row padding, the pane's borders and scrollbar, the
     route's padding and gap, and the panel.
 
@@ -223,9 +225,31 @@ def test_the_widest_layout_needs_exactly_the_measured_window_floor():
     they ever disagree, either a column changed without the floor moving
     or the floor moved without the columns -- and the first of those is
     invisible in a pane that clips.
+
+    The tier that holds the agreement moved in round 2, and the move IS
+    Uploader 11. It used to be the six-column base, on a 120px name floor
+    -- a number that measured nothing the column had to hold. So six
+    columns rendered at the floor with the filename cut to
+    "Fight 2026-08-24 17-57-…", losing the seconds that tell one row from
+    another, while Modified sat intact beside it carrying the same
+    timestamp; and the two tiers that would have dropped Modified sat at
+    767px and 607px, under a floor the window can never reach.
+
+    Widening the name track to what a filename actually needs (205px
+    measured, 212px afforded) moves the agreement one tier down. The
+    layout that renders AT the floor is now the five-column one, and it is
+    the one that has to come out at MIN_WIDTH exactly.
     """
     min_width = int(re.search(r"(?m)^MIN_WIDTH = (\d+)", WINDOW_PY).group(1))
-    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) == min_width
+    at_floor = [
+        (template, panel)
+        for ceiling, template, panel, _ in _tiers()
+        if ceiling is None or ceiling >= min_width
+    ][-1]
+    assert _viewport_needed(*at_floor) == min_width
+    # And the wider layout really is wider, so the tier above is a tier
+    # rather than a duplicate of this one.
+    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) > min_width
 
 
 def test_every_breakpoint_sits_where_the_filename_would_be_squeezed():
@@ -302,15 +326,42 @@ def test_retry_is_hidden_while_it_is_disabled():
     assert re.search(r"#btn-retry\[disabled\]\s*\{[^}]*display:\s*none", CSS)
 
 
-def test_the_combat_log_box_is_gated_on_a_stored_webhook():
-    """Ticked in markup with nothing gating it, this promised a Discord
-    post that a fresh install cannot make. The gate is a read of the
-    settings payload panel.js already receives; without it the box, the
-    confirm dialog and the post itself disagree three ways."""
-    assert 'id="f-logs" checked' in HTML, "the box should still default ticked"
-    assert 'id="logs-hint"' in HTML
+def test_the_combat_log_control_is_gone_and_its_sentence_is_not():
+    """Uploader 8. The checkbox had no true second state -- "there is no
+    scenario where I don't want to upload logs also" -- so logs became
+    unconditional and the control went. The SENTENCE had to outlive it:
+    with no checkbox and no panel note, a webhook-less install gets no
+    statement of the fact anywhere, because Api._post_combat_logs is
+    deliberately silent in exactly that case (a strip per upload, forever,
+    is the recurring-failure pattern it exists to avoid).
+
+    So the two halves are asserted together. If the note goes, the silence
+    downstream becomes a feature that fails without saying so."""
+    assert 'id="f-logs"' not in HTML, "the checkbox should be gone"
+    assert "start_upload" not in HTML
+    assert 'id="logs-note"' in HTML, "the fact still needs a home"
     assert "discord_webhook" in PANEL_JS
-    assert re.search(r"\.disabled\s*=\s*!configured", PANEL_JS)
+    # Read off the payload, not typed into the page: S3 put the app's one
+    # voice for an unmet precondition in copy.py so two screens cannot
+    # drift. A literal here would be the third copy.
+    assert "no_webhook" in PANEL_JS
+    assert "no_webhook" in copy_mod.INERT_NOTES
+
+
+def test_start_upload_is_called_with_what_it_now_accepts():
+    """The signature lost its `logs` parameter in the same commit that
+    removed the control. Nothing executes this page, so a five-argument
+    call against a four-argument method fails at a user's click and
+    nowhere else -- this is the only thing that reads both sides."""
+    call = re.search(r"WM\.send\('start_upload',(.*?)\);", PANEL_JS, re.DOTALL)
+    assert call, "panel.js should still start uploads"
+    # title, description, stitch, ids
+    assert call.group(1).count(",") == 3
+
+    signature = re.search(r"def start_upload\(self,([^)]*)\)", API_PY)
+    assert signature
+    params = [p.strip() for p in signature.group(1).split(",") if p.strip()]
+    assert params == ["title", "description", "stitch", "ids"]
 
 
 def test_the_empty_state_names_the_folder_it_watched():
@@ -331,3 +382,186 @@ def test_the_folder_this_screen_is_about_can_be_opened_from_it():
     assert 'id="btn-open-folder"' in HTML
     assert "WM.send('open_recording_dir')" in LIST_JS
     assert "def open_recording_dir(self)" in API_PY
+
+
+# --- round 2: the panel the maintainer actually uses ------------------------
+
+
+def test_the_named_folder_is_re_read_when_the_list_is_empty():
+    """Uploader 12: "No recordings in D:\\Videos", where D:\\Videos was the
+    folder that DID have the recordings.
+
+    S3 confirmed the cause in Api.set_folder -- it persists, rebinds the
+    watcher and calls list_rows, but never re-delivers the settings
+    payload, so list.js's cached recordingDir keeps naming the previous
+    folder while the scan is of the new one. The fix is on the page: read
+    it again.
+
+    Deliberately NOT by re-dispatching wm:settings. That event repaints
+    every field on the Settings route and list_rows fires on every watcher
+    poll, so riding it would rewrite a folder path the user was mid-way
+    through typing, several times a minute -- the trap DESIGN.md records
+    under "an endpoint whose effect reaches outside its own control".
+    """
+    assert re.search(r"WM\.send\('get_settings'\)", LIST_JS)
+    # Read for its own value only. Listening to wm:settings is fine and
+    # predates this; RE-DISPATCHING it from a rows push is the trap.
+    assert "dispatchEvent(new CustomEvent('wm:settings'" not in LIST_JS
+    assert "window.onSettings" not in LIST_JS
+    # And it has to be reached from the rows push, not only at startup.
+    assert "refreshRecordingDir()" in LIST_JS.split("WM.handle('onRows'")[1]
+
+
+def test_the_panel_says_when_there_is_nothing_to_act_on():
+    """Uploader 13. With zero recordings the right column was unchanged --
+    live Title, live Description, full-strength accent Upload -- so the
+    empty and full states read as the same product in the wrong
+    direction. Combined with Uploader 1 the accent button was inoperable
+    in two different states and dressed identically in both."""
+    assert 'id="panel-empty-note"' in HTML
+    assert "rowCount()" in PANEL_JS
+    assert re.search(r"panel-empty-note'\)\.hidden", PANEL_JS)
+
+
+def test_upload_goes_inert_without_a_selection():
+    """Uploader 1 and X1. The loudest element on the screen was the one
+    that could not act; the state blocking it was dim body text at the
+    foot of the card ABOVE it, 200px away.
+
+    Through S1's WM.setEnabled rather than a fourth hand-rolled variant.
+    The style was never the problem -- button.btn.acc:disabled has always
+    worked -- so nothing here may restyle it."""
+    assert re.search(r"WM\.setEnabled\('btn-upload', selected > 0\)", PANEL_JS)
+    # The blocker moved next to the button, which is the other half of the
+    # finding: the summary is now the line directly above the action.
+    panel_card = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
+    assert panel_card.index('id="selection-summary"') < panel_card.index(
+        'id="btn-upload"'
+    )
+
+
+def test_stitch_is_inert_rather_than_absent_below_two_selected():
+    """Uploader 17 proposed revealing Stitch only above one selection, and
+    that was declined: a control appearing and disappearing under the
+    pointer is a new hazard on the one screen with a recorded mis-click,
+    and the height it would have saved is paid for by the card merge and
+    the Delete move instead. Disabled says the same thing and stays put."""
+    assert re.search(r"WM\.setEnabled\('f-stitch', selected > 1\)", PANEL_JS)
+    assert 'id="stitch-hint"' in HTML
+    # A box left ticked while inert would still be read at send time.
+    assert re.search(r"selected < 2\) WM\.el\('f-stitch'\)\.checked = false", PANEL_JS)
+
+
+def test_the_upload_button_is_in_the_card_that_names_the_upload():
+    """Uploader 2. Two cards, UPLOAD and PUBLISH: one concept under two
+    names on one screen, with the Upload button in the one not called
+    Upload. The route is also named Uploader, and DESIGN.md forbids a
+    screen repeating its own tab name as its first card heading."""
+    route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
+    headings = re.findall(r"<h2>(.*?)</h2>", route)
+    assert len(headings) == 1, f"the panel should be one card, got {headings}"
+    assert headings[0].strip().lower() != "upload", "must not echo the tab name"
+    assert route.index("<h2>") < route.index('id="btn-upload"')
+
+
+def test_deleting_files_lives_with_the_files():
+    """Uploader 2's third seam: a local file deletion filed under a card
+    headed PUBLISH, beside the button that sends them to YouTube. It acts
+    on the same selection as Select all / Select none and on the files the
+    list is showing, so it belongs in the footer and list.js owns it."""
+    route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
+    foot = route[route.index('class="list-foot"') : route.index('id="panel-slot"')]
+    assert 'id="btn-delete"' in foot
+    assert "WM.send('delete_selected'" in LIST_JS
+    assert "WM.send('delete_selected'" not in PANEL_JS
+
+
+def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
+    """Uploader 3, re-measured. The walkthrough reported headers ~16px
+    right of their data on every column and blamed the scroll gutter; in
+    the harness, unsorted headers agree with their columns to within the
+    2px of .list-row's own transparent left border, and the gutter cannot
+    move a left-packed track anyway.
+
+    What moves is this arrow: on a flex-end header it takes the right end
+    of the column and pushes the label off it, measured at 14px the moment
+    that column is sorted. Reserving the width unconditionally is the fix,
+    so the header stops moving when the sort changes."""
+    assert re.search(r"\.list-head > span::after\s*\{[^}]*visibility:\s*hidden", CSS), (
+        "every header needs the slot, not just the sorted one"
+    )
+    assert re.search(
+        r"\.list-head > span\.sorted::after\s*\{[^}]*visibility:\s*visible", CSS
+    )
+    # The two centred headers need it mirrored or reserving it decentres
+    # them by half its own box.
+    assert re.search(r"\.c-check::before,\s*\.list-head > span\.c-link::before", CSS)
+
+
+def test_the_empty_pane_is_centred_rather_than_half_centred():
+    """Uploader 14. The message was centred horizontally and top-aligned
+    vertically, leaving ~750px of empty pane under it. First run proves the
+    app can centre a card, so this was an omission and not a limit."""
+    assert re.search(
+        r"\.list-scroll:has\(> #list-empty:not\(\[hidden\]\)\)\s*\{[^}]*"
+        r"align-items:\s*center",
+        CSS,
+    )
+    # Sets a display, so it needs its own [hidden] override or 25 rows draw
+    # underneath a centred sentence (DESIGN.md).
+    assert re.search(r"#list-empty\[hidden\]\s*\{\s*display:\s*none", CSS)
+
+
+def test_a_card_heading_no_longer_claims_the_brand_accent():
+    """Uploader 16, settled by S1 and written into DESIGN.md: "Accent marks
+    what is selected and what will happen. A card heading is neither." The
+    Uploader spent the brand five times -- the checked row's checkbox and
+    its left-edge marker, the Upload button, and two card heading bars --
+    diluting the signal for the three uses that carry meaning.
+
+    The rule is about .card > h2 generally, so the edit is in the shared
+    primitive and reaches every screen. The three load-bearing uses stay."""
+    heading_bar = re.search(r"\.card > h2::before\s*\{([^}]*)\}", CSS)
+    assert heading_bar, "the heading rule should still exist"
+    assert "--brand" not in heading_bar.group(1)
+    # Still spent where it means something.
+    assert re.search(
+        r"\.list-row\.sel\s*\{[^}]*border-left-color:\s*var\(--brand\)", CSS
+    )
+    assert re.search(r"\.list-row\.sel \.box\s*\{[^}]*var\(--brand\)", CSS)
+
+
+def test_modified_sheds_at_a_width_the_window_can_actually_reach():
+    """Uploader 6 and 11 as one fact. The timestamp is printed twice -- in
+    the filename and in Modified -- and it was the wider copy that got
+    destroyed, because the name track sat on a 120px floor while an OBS
+    filename needs 205px.
+
+    The tiers that would have dropped Modified sat at 767px and 607px,
+    which the floor correction puts permanently out of reach, so the
+    six-column layout was the only one that ever rendered. The drop now
+    happens above the floor, which means Modified is absent AT the floor
+    and present on any window wider than 931px.
+
+    Guarded by width rather than by tier index because the first attempt
+    got this wrong in a way only a render caught: the drop was written
+    against 839, which is the floor at 200% scaling ONLY, so 100% -- the
+    ordinary case on the ordinary machine -- still rendered six columns
+    with the filename truncated.
+    """
+    min_width = int(re.search(r"(?m)^MIN_WIDTH = (\d+)", WINDOW_PY).group(1))
+    tiers = _tiers()
+
+    def hidden_at(width):
+        applying = [t for t in tiers if t[0] is None or t[0] >= width]
+        return applying[-1][3]
+
+    assert "c-date" in hidden_at(min_width), (
+        "Modified must be gone at the floor, which is where it destroys "
+        "the filename beside it"
+    )
+    assert "c-date" not in hidden_at(1280), (
+        "and present at any comfortable width, where both fit"
+    )
+    # Nothing else is sacrificed to make room for it at the floor.
+    assert hidden_at(min_width) == {"c-date"}

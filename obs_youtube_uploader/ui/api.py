@@ -33,7 +33,9 @@ import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .. import __version__ as _version
 from .. import (
+    autostart,
     bookmarks,
     combatlog,
     discord,
@@ -112,6 +114,43 @@ def _open_file_dialog_kind():
     import webview
 
     return webview.FileDialog.OPEN
+
+
+def _with_fetch_labels(payload: dict) -> dict:
+    """Add a rendered `fetched_label` beside each character's fetched_utc.
+
+    Skills 8: the Skills route rendered its fetch time with the page's own
+    toLocaleString ("8/25/2026, 12:12:28 AM") while the Uploader rendered
+    the same class of fact as "5h ago". Two time vocabularies in one app,
+    and the Skills one carried seconds precision on a value where seconds
+    cannot matter.
+
+    Added HERE rather than in eveskills.controller, which builds the
+    payload: controller.py is the only writer of the skills state document
+    and this is presentation, not state. The label is derived on every read
+    and never persisted -- a stored one would be wrong within the hour,
+    which is exactly the property that makes a relative time useful.
+
+    `fetched_utc` stays untouched beside it. skills.js reads the raw value
+    for its own staleness logic, so removing it would break the freshness
+    badge; this only gives the page a string it no longer has to invent.
+
+    Copied shallowly per character so the controller's own dicts are not
+    mutated -- state_payload may hand back structures the document still
+    references, and a presentation key written into those would be one
+    save away from being persisted after all.
+    """
+    characters = payload.get("characters")
+    if not isinstance(characters, list):
+        return payload
+    out = dict(payload)
+    out["characters"] = [
+        {**ch, "fetched_label": copy_mod.format_fetched(ch.get("fetched_utc", ""))}
+        if isinstance(ch, dict)
+        else ch
+        for ch in characters
+    ]
+    return out
 
 
 def _empty_skills_state() -> dict:
@@ -722,7 +761,20 @@ class Api:
     def _busy(self) -> bool:
         return self._upload_thread is not None and self._upload_thread.is_alive()
 
-    def start_upload(self, title, description, stitch, logs, ids) -> None:
+    def start_upload(self, title, description, stitch, ids) -> None:
+        # No `logs` parameter. Uploader 8: the checkbox had no true second
+        # state -- "there is no scenario where I don't want to upload logs
+        # also" -- so the choice moved out of one click from Upload and
+        # into whether a webhook is configured at all, which is the fact
+        # that actually decides it. PRODUCT.md backs an opinionated default
+        # here ("does not have to be neutral"), and a fork that wants logs
+        # off belongs in settings.py, not on the panel.
+        #
+        # S3 left the parameter accepted-and-ignored so the page could keep
+        # calling with five arguments until this lane removed the control.
+        # The control is gone (index.html #route-main), so the parameter
+        # goes with it, in the same commit -- the two are one change and a
+        # signature that outlives its caller is a trap for the next reader.
         # privacy and category are NOT parameters. They are settings, and
         # the settings are Python's -- as they were in the Tk build, which
         # read self.state.settings at dispatch time. A page that holds its
@@ -758,7 +810,11 @@ class Api:
             stitch=bool(stitch),
             privacy=privacy,
             category=category,
-            logs=bool(logs),
+            # Unconditional now. The webhook predicate downstream is what
+            # gates the post, and it is read live in both places that need
+            # it (the confirm, and _post_combat_logs) rather than
+            # snapshotted here -- Settings is reachable between them.
+            logs=True,
         )
         self._upload_thread = threading.Thread(
             target=self._confirm_then_upload, args=(job,), daemon=True
@@ -778,7 +834,6 @@ class Api:
             job.privacy,
             self._state.settings.get("channel_title", ""),
             job.stitch,
-            job.logs,
             # Read here rather than snapshotted onto the job: the confirm
             # has to describe the webhook _post_combat_logs will find when
             # it runs, and Settings is reachable between the two.
@@ -1137,8 +1192,26 @@ class Api:
         window keeps painting through the probe below.
         """
         cfg = self._state.settings
-        hook, error = discord.parse_webhook(cfg.get("discord_webhook"))
+        raw = cfg.get("discord_webhook") or ""
+        hook, error = discord.parse_webhook(raw)
         if hook is None:
+            if not raw.strip():
+                # NOT configured is not the same as configured-and-broken,
+                # and since Uploader 8 removed the checkbox the difference
+                # decides whether saying anything is honest. Nobody asked
+                # for logs on this run -- logs are unconditional now -- so
+                # reporting them as "skipped" would put a WARNING strip on
+                # every upload a webhook-less install ever performs. That
+                # is precisely the failure format_upload_confirm's
+                # docstring records: a strip "reading like a recurring
+                # failure rather than an unconfigured option".
+                #
+                # The no-webhook case is a fact about the install, and it
+                # belongs on the panel where it is true all the time, not
+                # on the strip once per upload. R1 renders it there.
+                return
+            # Configured and unusable IS worth a strip: the user set
+            # something, it does not parse, and nothing else will say so.
             self._skip_logs(f"{error} Set it up in Settings.")
             return
 
@@ -1318,6 +1391,39 @@ class Api:
             "destination": copy_mod.format_destination(
                 cfg.get("channel_title", ""), cfg.get("privacy", "")
             ),
+            # Pushed from __version__, never typed into the page. M2: the
+            # value was already plumbed to the Discord user-agent, the ESI
+            # user-agent and the backup names, and the UI was the only
+            # consumer that never read it -- so a user reporting a bug had
+            # no way to say which build they were on. A hand-typed copy in
+            # the page is exactly the drift DESIGN.md's "State that must
+            # not be retyped" exists to stop.
+            #
+            # It rides the settings payload rather than a bridge method of
+            # its own because get_settings is already the one read the page
+            # makes at load, and a new _push name would need a WM.HANDLERS
+            # entry. Top level, beside the other derived values: it is not
+            # a setting and must never be written back.
+            "version": _version,
+            # Settings 1's words half. Delivered rather than templated into
+            # index.html, where the Previews one used to live: static markup
+            # is unreachable from any test and unreusable by any other
+            # screen, which is how one release ended up explaining the same
+            # situation two different ways.
+            #
+            # The whole table, not the one entry that happens to apply right
+            # now: which notes are showing is a render decision the page
+            # makes from state it already has (previews on/off, webhook
+            # configured or not), and re-deriving that here would put the
+            # predicate in two places.
+            "inert_notes": dict(copy_mod.INERT_NOTES),
+            # M3. Read from the registry on every render, not stored: the
+            # login entry IS the state, and a user can delete it from Task
+            # Manager's Startup tab at any time. A settings.json copy would
+            # be a second answer that goes stale the first time they do,
+            # and the checkbox would then describe a world that no longer
+            # exists. Derived, top level, never written back.
+            "start_on_login": autostart.is_enabled(),
         }
 
     def get_settings(self) -> dict:
@@ -1457,6 +1563,49 @@ class Api:
             # be able to say the choice is not saved.
             logger.exception("Could not persist %s", key)
             return self._field_ok(persisted=False)
+        return self._field_ok()
+
+    def set_start_on_login(self, value) -> dict:
+        """Add or remove Wingman's Windows login entry.
+
+        Not a _write_setting: nothing about this touches settings.json.
+        The registry entry is the whole state, so there is no in-memory
+        "applied" half that could succeed while the write fails -- and
+        that collapses the commit contract's three outcomes to two here,
+        honestly rather than by pretending:
+
+          refused + error -> the write was denied; nothing changed
+          applied+persisted -> the entry is now what the user asked for
+
+        `applied True, persisted False` is unreachable, and faking it
+        would tell the page a setting is "in effect but not saved" about a
+        setting whose only effect is the saving. Naming that here so the
+        next reader does not add a third branch to match the neighbours.
+
+        Refusals are real on Windows: a managed machine can deny writes to
+        the Run key by policy, and a checkbox that assumed success would
+        silently do nothing every boot. PRODUCT.md's opt-in default lives
+        on the page -- an unticked box on an install that was never asked
+        -- and this endpoint has no opinion about it.
+        """
+        if not isinstance(value, bool):
+            # The page sends a checkbox state. Anything else is a caller
+            # bug, and coercing it would let a stray string enable a
+            # login entry the user never ticked.
+            return self._field_refused("Start on login is on or off.")
+        try:
+            if value:
+                autostart.enable()
+            else:
+                autostart.disable()
+        except OSError as exc:
+            logger.exception(
+                "Could not %s the login entry", "add" if value else "remove"
+            )
+            action = "add" if value else "remove"
+            return self._field_refused(
+                f"Windows would not let Wingman {action} its login entry. {exc}"
+            )
         return self._field_ok()
 
     def set_privacy(self, value) -> dict:
@@ -2576,6 +2725,67 @@ class Api:
             )
             return picked
 
+    def eve_settings_detect_root(self) -> str:
+        """Detect the EVE settings root, the way Folders detects OBS's.
+
+        Profiles 4: `Detect` exists in Settings > Folders AND on the
+        first-run screen, for a folder that is shallower and better known
+        than this one -- while the EVE settings root, the folder the
+        product is named for, got `Choose folder...` alone. PRODUCT.md
+        names the job directly: "assume fluency. Do not explain EVE. Do
+        explain Wingman -- where a folder is."
+
+        A sibling of eve_settings_pick_root rather than a branch of
+        detect_folder, and the difference is deliberate. detect_folder
+        RETURNS a suggestion and leaves Save to the user, because its
+        fields sit in an immediate-save form where writing under the user
+        would discard their other edits. This screen has no form: its
+        neighbour `Choose folder...` commits the moment the dialog closes.
+        A Detect that only suggested, beside a Choose that commits, would
+        be two behaviours for one question on one screen -- which is the
+        class of inconsistency this whole round is about.
+
+        So: same lock, same selection reset, same return shape as the
+        picker. The lock is held across the probe for the picker's reason
+        -- a mutation must not start midway.
+        """
+        with self._eve_hold() as held:
+            if not held:
+                return ""
+            found = evesettings_tree.default_root()
+            if not found.is_dir():
+                # Named, not just refused. The path is the useful half of
+                # the answer: a user whose EVE lives somewhere else learns
+                # where we looked, which is what tells them Choose folder...
+                # is the way out.
+                self._alert(
+                    "info",
+                    "EVE settings folder not found",
+                    "Could not find an EVE settings folder at:\n"
+                    f"{found}\n\n"
+                    "Use Choose folder... to point at it.",
+                )
+                return ""
+            section = self._eve_section()
+            if str(found) == str(section.get("root") or ""):
+                # Agreement reported as agreement, not as a silent rewrite
+                # -- detect_folder's rule, and the reason it takes the live
+                # value rather than the stored one. Returning "" here also
+                # keeps the selection intact, which the write path below
+                # would otherwise clear for no reason.
+                self._alert(
+                    "info",
+                    "EVE settings folder",
+                    f"Already set to the detected folder:\n{found}",
+                )
+                return ""
+            settings_mod.update_section(
+                self._state.settings,
+                "eve_settings",
+                {"root": str(found), "server": None, "profile": None},
+            )
+            return str(found)
+
     def eve_settings_select(self, server: str, profile: str) -> bool:
         with self._eve_hold() as held:
             if not held:
@@ -2812,7 +3022,7 @@ class Api:
         """Everything the Skills route renders, in one call."""
         if self._skills is None:
             return _empty_skills_state()
-        return self._skills.state_payload()
+        return _with_fetch_labels(self._skills.state_payload())
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
         if self._skills is None:

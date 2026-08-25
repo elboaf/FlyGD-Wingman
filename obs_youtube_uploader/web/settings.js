@@ -102,6 +102,16 @@
     el.value = value;
   }
 
+  // Same activeElement guard as setField, for the same reason: the title
+  // must not start describing a value the field no longer holds while the
+  // user is mid-edit. An empty title attribute is removed rather than left
+  // as an empty tooltip.
+  function setTitle(id, value) {
+    var el = WM.el(id);
+    if (!el || el === document.activeElement) { return; }
+    if (value) { el.title = value; } else { el.removeAttribute('title'); }
+  }
+
   function render(payload) {
     var s = payload.settings || {};
     var d = payload.detected || {};
@@ -120,6 +130,16 @@
     }
     setField('f-recdir', s.recording_dir || '');
     setField('f-gamelogs', s.gamelogs_dir || '');
+    // An <input> cannot ellipsize and does not wrap, so a path longer than
+    // the field is cut mid-word with nothing to say it was cut
+    // (walkthrough Settings 16). S2's stacking widened the field to 422px,
+    // which is enough for the reported path and not enough for a
+    // OneDrive-redirected Documents folder -- measured, it clips from about
+    // 59 characters. The hover title is the only place the whole value can
+    // be read back, on a field whose entire job is naming a location the
+    // user has to confirm.
+    setTitle('f-recdir', s.recording_dir || '');
+    setTitle('f-gamelogs', s.gamelogs_dir || '');
     // The input holds the REAL value and the browser draws the mask, so
     // the mask can never be written back over the stored webhook — the
     // failure mode a hand-rolled bullet string invites.
@@ -129,12 +149,41 @@
     // token by construction. TOP-LEVEL key, and never reconstructed here.
     WM.el('webhook-status').textContent = payload.webhook_status
       || (s.discord_webhook ? '' : 'not configured');
+    // X1 / Settings 14. Show reveals nothing and Remove removes nothing
+    // when there is no webhook stored, and both rendered at full strength.
+    // The app already KNOWS neither can act from the state it is holding,
+    // which is exactly WM.setEnabled's rule; a refusal from Python would
+    // have been unreachable once these are inert, so there is no backend
+    // half to this.
+    //
+    // The FIELD stays live -- it is the only route back out of the state
+    // that disabled these two, which the helper's own comment forbids
+    // closing off.
+    var configured = !!s.discord_webhook;
+    WM.setEnabled('btn-webhook-show', configured);
+    WM.setEnabled('btn-webhook-remove', configured);
+    // A revealed webhook that is then removed would leave `Hide` on a
+    // disabled button over an empty field.
+    if (!configured) { remask(); }
     // Detect is always offered, but say so when there is nothing to find.
     WM.el('detect-note').textContent = (d.recording || d.gamelogs)
       ? 'Detect reads the recording folder from OBS’s own config, and the '
         + 'gamelogs folder from your EVE Online documents folder.'
       : 'Detect found neither folder automatically — use Browse to pick '
         + 'them yourself.';
+    // M2. Pushed from __version__ through the payload, never typed here. A
+    // payload without the key leaves the em dash rather than painting
+    // "undefined" -- the same tolerance app.js gives the titlebar copy, so
+    // merge order between the two surfaces cannot matter.
+    if (payload.version) {
+      WM.el('about-version').textContent = 'Version ' + payload.version;
+    }
+    // M3. Read live from the registry on every render rather than from a
+    // stored setting, so an entry the user deleted by hand outside Wingman
+    // shows as off here instead of claiming to be on.
+    if (WM.el('start-on-login') !== document.activeElement) {
+      WM.el('start-on-login').checked = !!payload.start_on_login;
+    }
     // Last: everything above has painted real values, so a commit fired
     // from here on sends what is stored rather than a blank form.
     hydrated = true;
@@ -155,6 +204,19 @@
            // edited. Without this the value was written and nothing
            // repainted until the next launch -- the tabs stayed put.
            function () { WM.apply_eve_gate(box.checked); });
+  });
+
+  // M3. Start-on-login writes outside the app's own config -- an
+  // HKCU\...\Run value -- so a refusal is real: a managed machine can deny
+  // the key by policy. It goes through the same commit() as every other
+  // field, which reports {applied, persisted, error} without this site
+  // hand-rolling a branch for an outcome set_start_on_login cannot
+  // produce: the registry entry IS the state, so there is no in-memory
+  // half that could apply while the write fails.
+  WM.el('start-on-login').addEventListener('change', function () {
+    var box = WM.el('start-on-login');
+    commit('msg-about', ['set_start_on_login', box.checked],
+           function () { box.checked = !box.checked; });
   });
 
   // Discrete controls commit on change. There is nothing to mistype, the
@@ -402,6 +464,37 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
+  // Walkthrough Settings 2: with previews switched off, this checked box
+  // was the ONE accent-coloured element on the whole section -- the eye
+  // pulled to the least consequential control present, below the switch
+  // that turned its feature off.
+  //
+  // The accent is not the fault. S1's approved rule is that accent marks
+  // what is SELECTED and what will happen, and a ticked box is what is
+  // selected; taking the colour off it would be a wave-1 reversal, and the
+  // rule lives in a region this lane does not own either way. Nor can the
+  // control be disabled: S3's handoff is explicit that Previews controls
+  // stay live, because recording a preference for later is an action that
+  // CAN be carried out.
+  //
+  // What is actually wrong is that a dependent option is rendered as a
+  // peer of the switch it depends on, with nothing saying so. So the row
+  // says so, in the same voice as INERT_NOTES' previews_off sentence one
+  // card below -- and only while it is true.
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  // Read from the switch itself rather than cached from the payload. The
+  // Enable checkbox lives in the block above and commits through its own
+  // endpoint, which does NOT push a settings payload, so a cached copy
+  // would keep reporting the state this row had when the section opened.
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
   box.addEventListener('change', function () {
     var wanted = box.checked;
     // WM.send resolves to null on any bridge failure rather than
@@ -423,6 +516,7 @@
         // hint (rather than confirming) clears a prior failure message
         // without adding noise on every successful toggle.
         say('');
+        sayDependence();
       }
     });
   });
@@ -436,5 +530,24 @@
     // showing the box unchecked would misreport what will happen.
     box.checked = !(s.preview
       && s.preview.restore_preview_positions === false);
+    refreshDependence();
   });
+
+  // The switch this row depends on. Its own handler is in the block above
+  // and reverts the box on a bridge failure without re-firing `change`, so
+  // this can be one push behind in that one case -- the next settings
+  // payload corrects it, and a failed bridge call has already put more
+  // than this sentence out of step.
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) {
+    enableBox.addEventListener('change', refreshDependence);
+  }
+
+  // Only ever overwrites the default hint, never a live message. A failure
+  // reported by the commit above is more urgent than a dependence note and
+  // must not be wiped by an unrelated field's settings push.
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
 }());

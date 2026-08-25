@@ -44,21 +44,46 @@ def test_unknown_columns_get_no_tooltip():
     assert copy_mod.tooltip_for_cell("nonsense", "?") is None
 
 
+def test_a_measurement_never_taken_blames_the_install_not_the_file():
+    """Uploader 5 and 10. "?" says ffprobe could not open THIS FILE; the
+    dash says ffprobe was never found. They shared the "?" glyph until
+    round 2, so a build with no ffprobe accused all 25 recordings in the
+    folder of being unreadable, one row at a time.
+
+    The two must say different things about different subjects, and the
+    dash has to name a way out -- the binary is bundled, so the install is
+    the thing that is wrong and reinstalling is the fix."""
+    unreadable = copy_mod.tooltip_for_cell("duration", "?")
+    unmeasured = copy_mod.tooltip_for_cell("duration", "—")
+    assert unmeasured is not None
+    assert unmeasured != unreadable
+    assert "this file" in unreadable
+    assert "this file" not in unmeasured
+    assert "not found" in unmeasured
+    assert "reinstall" in unmeasured.lower()
+
+
 @pytest.mark.parametrize(
-    "probed,duration,expected_help",
+    "probed,answered,duration,expected_help",
     [
-        (False, None, True),  # "…"
-        (True, None, True),  # "?"
-        (True, 90.0, False),  # "1:30"
+        (False, True, None, True),  # "…" measuring
+        (True, True, None, True),  # "?" ffprobe read it and could not
+        (True, False, None, True),  # "—" ffprobe never gave a verdict
+        (True, True, 90.0, False),  # "1:30"
     ],
 )
 def test_the_keys_match_what_video_info_actually_renders(
-    probed, duration, expected_help
+    probed, answered, duration, expected_help
 ):
     """Guards the coupling: the table is keyed on rendered text, so a change
     to duration_str's glyphs would silently orphan these entries."""
     info = library.VideoInfo(
-        path=Path("a.mkv"), mtime=0.0, size=1, duration=duration, probed=probed
+        path=Path("a.mkv"),
+        mtime=0.0,
+        size=1,
+        duration=duration,
+        probed=probed,
+        answered=answered,
     )
     got = copy_mod.tooltip_for_cell("duration", info.duration_str)
     assert (got is not None) is expected_help

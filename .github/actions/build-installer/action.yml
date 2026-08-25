@@ -375,6 +375,23 @@ runs:
           }
         }
 
+    - name: Generate the installer's version define
+      # installer.iss #includes packaging/version.iss, which is gitignored
+      # and therefore absent on a fresh checkout. This writes it from
+      # obs_youtube_uploader.__version__, so the installer's AppVersion --
+      # and the OutputBaseFilename built from it -- cannot disagree with the
+      # version the app reports at runtime. That pair WAS hand-kept and was
+      # the last of four copies in the tree.
+      #
+      # Bare `python`, matching the three fetch_*.py steps above: stdlib
+      # only, no venv needed. See this action's header for why that
+      # requires setup-python of the caller.
+      #
+      # Immediately before iscc, not earlier: a step added between them
+      # that rewrites __init__.py would otherwise leave a stale define.
+      shell: pwsh
+      run: python packaging/write_version_iss.py
+
     - name: Build installer
       shell: pwsh
       run: iscc packaging/installer.iss
