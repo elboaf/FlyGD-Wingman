@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 
 MIN_SIZE = (120, 90)
-BORDER = 5
+BORDER = 2
 LABEL_H = 30
 DRAG_MIN = 4
 
@@ -352,6 +352,13 @@ class PreviewWindow:
         )
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
         self._chrome_cache_key = key
+
+    def set_selected(self, selected: bool) -> None:
+        if selected == self.selected:
+            return
+        self.selected = selected
+        # Already part of _chrome_key() above, so this repaints.
+        self.redraw()
 
     def move(self, rect) -> None:
         """Reposition and, only if the size changed, re-render.

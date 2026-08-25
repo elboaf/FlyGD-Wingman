@@ -382,11 +382,14 @@ def test_cycle_actions_carry_direction():
 
 
 class _FakeUser32:
-    def __init__(self, refuse=()):
+    def __init__(self, refuse=(), foreground=0):
         self.registered = {}
         self.unregistered = []
         self.calls = []
         self._refuse = set(refuse)
+        # Read by _apply_selection when the hook has not yet recorded a
+        # foreground hwnd for this sweep (see _swept_host below).
+        self._foreground = foreground
 
     def RegisterHotKey(self, hwnd, ident, mods, vk):
         self.calls.append(("register", ident))
@@ -400,6 +403,9 @@ class _FakeUser32:
         self.unregistered.append(ident)
         self.registered.pop(ident, None)
         return 1
+
+    def GetForegroundWindow(self):
+        return self._foreground
 
 
 class _FakeLibs:
@@ -920,3 +926,42 @@ def test_positions_are_recorded_even_while_restoring_is_off():
     h._layout_changed("Isiga", rect, False)
     assert recorded == [("Isiga", rect, False)]
     assert h._saved["Isiga"].rect == rect
+
+
+# --- selection follows the real foreground window ---------------------------
+
+
+def _swept_host(monkeypatch, keys, foreground):
+    """A host swept once, with *keys* as the running clients and
+    *foreground* as the real foreground hwnd -- following the _sweep fake
+    set used throughout this file. Each client gets its own hwnd
+    (0x1000, 0x2000, ...) so *foreground* can select any one of them.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient(key, hwnd=0x1000 * (i + 1)) for i, key in enumerate(keys)],
+    )
+    libs = _FakeLibs(_FakeUser32(foreground=foreground))
+    h._sweep(libs)
+    return h
+
+
+def test_the_foreground_client_becomes_the_selected_preview(monkeypatch):
+    h = _swept_host(monkeypatch, ["Alice", "Bravo"], foreground=0x1000)
+    assert h._selected_key == "Alice"
+
+
+def test_a_foreground_window_that_is_not_a_client_selects_nothing(monkeypatch):
+    """Deliberately not "the last EVE client used". A sticky highlight
+    could not be told apart from an alert on that same client, and
+    acknowledgement would clear alerts the user never saw."""
+    h = _swept_host(monkeypatch, ["Alice"], foreground=0xDEAD)
+    assert h._selected_key is None

@@ -136,6 +136,15 @@ class PreviewHost:
         # field under the lock and only the signal is posted. A list, not
         # one slot, because two clients can be alerted between ticks.
         self._pending_alerts = []
+        # Recorded by the foreground hook (an arbitrary thread) and
+        # resolved by _sweep, never the other way around -- see
+        # _install_hook and _apply_selection.
+        self._foreground = 0
+        # The stable_key whose client currently owns the foreground
+        # window, or None when it is not a client at all (a browser,
+        # Discord, or Wingman itself). Read by PreviewWindow.set_selected
+        # callers in _apply_selection.
+        self._selected_key = None
 
     @property
     def is_running(self) -> bool:
@@ -341,6 +350,12 @@ class PreviewHost:
         there is the thread-affinity violation that hangs."""
 
         def on_event(hook, event, hwnd, obj, child, tid, ms):
+            # Recorded, not resolved: this callback arrives on an arbitrary
+            # thread and must not touch a preview. _sweep resolves it, which
+            # is also the only place _clients is refreshed -- so a
+            # just-launched client's first focus cannot resolve against a
+            # stale registry.
+            self._foreground = int(hwnd) if hwnd else 0
             self.request_sweep()
 
         cb = win32.winevent_proc_type()(on_event)
@@ -418,6 +433,29 @@ class PreviewHost:
                 self._on_clients_changed(now)
             except Exception:
                 logger.exception("on_clients_changed callback raised")
+
+        self._apply_selection(libs)
+
+    def _apply_selection(self, libs) -> None:
+        """Mark the preview whose client owns the foreground window.
+
+        Nothing is selected when the foreground is not an EVE client --
+        a browser, Discord, or Wingman itself. That is deliberate: a
+        sticky "last client used" highlight could not be distinguished
+        from an alert on that same client, and acknowledging the alert
+        would then clear one the user never saw.
+        """
+        foreground = self._foreground or (
+            libs.user32.GetForegroundWindow() if libs is not None else 0
+        )
+        key = next((k for k, c in self._clients.items() if c.hwnd == foreground), None)
+        if key == self._selected_key:
+            return
+        previous, self._selected_key = self._selected_key, key
+        for candidate in (previous, key):
+            win = self._windows.get(candidate) if candidate else None
+            if win is not None:
+                win.set_selected(candidate == key)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
