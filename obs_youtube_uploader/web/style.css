@@ -61,6 +61,15 @@
   --ok: #4ade80;
   --warn: #d29922;
   --err: #f85149;
+  /* The one blue in the palette, and the only colour here that is not
+     near-black, brand, or a severity. It marks a link OUT of the app --
+     today just YouTube's terms -- and it stays blue on purpose: a link
+     recoloured into the app's own palette stops reading as a link, and
+     this one carries a legal obligation to be followed. It is a token
+     rather than a hex in .linkish so the exception is declared in the one
+     place colour is decided, and so a second outbound link cannot invent
+     a different blue. 7.4:1 on --panel, 7.7:1 on --bg. */
+  --link: #7aa2f7;
 
   /* ---- type scale ----
      Three steps, adopted from 2.2.0's sv-ttk-derived scale, not reinvented:
@@ -118,6 +127,16 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   box-shadow: 0 0 12px rgba(230, 50, 45, .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
+/* Dimmed and below body size: it is an identifier for a bug report, not
+   something to read on the way to a control. Bare `3.2.1` rather than
+   `v3.2.1` because the title bar is the scarce surface in this window --
+   every pixel here is drag region given up, and the `v` buys nothing that
+   the position after the wordmark does not already say. Tabular figures
+   so the width does not jitter across releases. */
+.version {
+  color: var(--text-faint); font-size: var(--fs-muted);
+  letter-spacing: 0; font-variant-numeric: tabular-nums; flex: none;
+}
 .winbtn {
   width: 44px; height: 32px; border: 0; background: transparent;
   color: var(--text-faint); font-size: 13px; cursor: pointer;
@@ -260,7 +279,7 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
   color: var(--text-faint); font-size: var(--fs-muted);
   line-height: 1.5; margin-top: 8px; user-select: text;
 }
-.linkish { color: #7aa2f7; cursor: pointer; user-select: text; }
+.linkish { color: var(--link); cursor: pointer; user-select: text; }
 .linkish:hover { text-decoration: underline; }
 
 /* ---- scrollbar ------------------------------------------------------
@@ -643,10 +662,20 @@ button.btn.acc:disabled { box-shadow: none; filter: grayscale(.5); }
    specificity, so the display:flex above would keep this visible for every
    user who never turns the feature on. Same fix as .routenav[hidden]. */
 .evestat[hidden] { display: none; }
-/* NOT dead code, despite MIN_WIDTH being 840 (ui/window.py:44). That is a
-   PHYSICAL-pixel floor: the app is system-DPI-aware (ui/chrome.py:180), so
-   the CSS viewport is 840/scale -- 672px at 125%, 560px at 150%. This rule
-   fires at any scaling above 100%, which is most Windows laptops. */
+/* This comment used to argue the rule was live because MIN_WIDTH was a
+   PHYSICAL-pixel floor, so the CSS viewport would be 840/scale -- 672px at
+   125%, 560px at 150%. That is wrong, and the arithmetic every rule of
+   this shape was written against never happened: the minimum resolves in
+   LOGICAL units, so the viewport floor is ~840 CSS px at 100%, 125%, 150%
+   and 200% alike. Measured at 200%, the window at its floor is 839x621
+   CSS, which is MIN_WIDTH/MIN_HEIGHT unscaled.
+
+   So this query cannot fire today -- 720 is below a floor the window
+   cannot go under. It is kept rather than deleted because it is the only
+   thing that says what the strip does when it does run out of room, and
+   the answer (the EVE segment yields, upload progress does not) is a
+   decision worth keeping written down if the floor ever moves. Do not
+   size anything new against a 560px or 672px viewport. */
 @media (max-width: 720px) { .evestat { display: none; } }
 
 /* ====================== modal dialog layer ==========================

@@ -11,6 +11,14 @@
     <div class="pywebview-drag-region">
       <span class="mark">&#9654;</span>
       <span class="name">WINGMAN</span>
+      <!-- Filled from the settings payload's `version` key, never typed
+           here: __init__.py holds the value and pyproject.toml already
+           carries a hand-kept second copy of it. A third copy in the page
+           is the drift DESIGN.md's "state that must not be retyped" exists
+           to stop, and the copy a user reads out in a bug report is the
+           one that matters. Empty until the payload arrives, which is the
+           page's own get_settings read at startup. -->
+      <span class="version" id="app-version"></span>
     </div>
     <!-- Sibling of the drag region, never a child: style.css:100-102 says
          only that element drags and buttons must stay clickable. A
@@ -627,7 +635,16 @@
         <span class="evelabel">NEXT</span><span id="eve-next">—</span>
         <span class="evewarn" id="eve-warn" hidden>⚠</span>
       </span>
-      <span id="status" class="FG">Ready</span>
+      <!-- `Idle`, not `Ready`. This is the strip's resting text, which is
+           what an unconfigured first run reads while its folder field is
+           empty and Continue is disabled -- and there `Ready` is taken to
+           mean "you are set up" rather than "the app is doing nothing".
+           The word is also spoken for: `Ready` is a skill-plan readiness
+           value (eveskills/evaluator.py:19), a roster count and a group
+           header on the Skills route, three of which can be on screen at
+           once. Skills keeps the word because it owns it in Python and in
+           the payload; the strip, which only ever meant "idle", says so. -->
+      <span id="status" class="FG">Idle</span>
       <div class="track" id="track"><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
     </div>
