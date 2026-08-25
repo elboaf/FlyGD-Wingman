@@ -573,20 +573,46 @@
   <div class="route" id="route-firstrun">
     <div class="firstrun">
       <h1>Choose your recording folder</h1>
+      <!-- Two paragraphs, and the first one is the only place in the app
+           that says what Wingman is. The screen used to open with "Wingman
+           watches one folder for new OBS recordings", which is the
+           uploader half describing itself as the whole product to someone
+           who has seen nothing else -- PRODUCT.md calls that framing out
+           of date by name. The second paragraph's last sentence is what
+           makes the skip below legible rather than arbitrary: the folder
+           configures the uploader half, and the two halves are
+           independent. -->
       <p class="firstrun-body">
-        Wingman watches one folder for new OBS recordings. Point it at the
-        folder OBS saves to &mdash; you can change this later in Settings.
+        Wingman is an EVE multiboxing toolkit &mdash; client previews,
+        bookmark keybinds and settings profiles &mdash; that also uploads
+        your fight footage to YouTube.
+      </p>
+      <p class="firstrun-body">
+        Uploading is the half that needs a folder: Wingman watches one for
+        new OBS recordings. Point it at the folder OBS saves to. The EVE
+        tools do not need it, so you can set this up later in Settings.
       </p>
       <div class="row">
+        <!-- An example, not a status report. The field is typeable, and
+             its placeholder is the one piece of text inside it; "no folder
+             chosen yet" spent it restating the disabled Continue button
+             below. -->
         <input class="field mono" id="f-firstrun-dir" type="text"
-               spellcheck="false" placeholder="No folder chosen yet">
+               spellcheck="false" placeholder="C:\Users\you\Videos">
         <button class="btn" id="btn-firstrun-browse">Browse&hellip;</button>
         <button class="btn" id="btn-firstrun-detect">Detect</button>
       </div>
+      <!-- One slot, three jobs: this standing explanation, a detection
+           that found nothing, and a refused folder. firstrun.js owns the
+           precedence rule and reads this sentence back out of the DOM
+           rather than carrying a second copy of it. -->
       <p class="firstrun-note" id="firstrun-note">
         Detect reads the folder from OBS&rsquo;s own configuration.
       </p>
       <div class="firstrun-actions">
+        <!-- .linkbtn, not a second .btn: skipping is the quiet way out of
+             the screen, and Continue is the one accent per screen. -->
+        <button class="linkbtn" id="btn-firstrun-skip">Set this up later</button>
         <button class="btn acc" id="btn-firstrun-continue" disabled>Continue</button>
       </div>
     </div>
