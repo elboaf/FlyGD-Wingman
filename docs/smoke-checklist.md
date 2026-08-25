@@ -1408,79 +1408,88 @@ headless.
 - [ ] **With alerts off, no `wingman-alerts` thread exists.** Check Task
       Manager's process detail tab or run `threading.enumerate()` in a
       Python debug console. Expected: no thread named `wingman-alerts`.
-      Turn alerts on in Settings > General and confirm the thread appears.
+      Turn alerts on in Settings > Previews and confirm the thread appears.
 - [ ] **Turn alerts on with no Gamelogs folder set.** Open Settings >
-      General and tick Enable alerts without setting a Gamelogs folder.
-      Expected: the Alerts card reads "Gamelogs folder not set." and names
-      the Settings > Folders setting where it can be configured.
+      Previews and tick Enable alerts without setting a Gamelogs folder.
+      Expected: the Alerts card displays "Your EVE Gamelogs folder is not
+      set. Alerts cannot run without it — set it under Settings › Folders."
 - [ ] **Set the folder.** Browse to your EVE Gamelogs folder in Settings
-      > Folders, then return to the Alerts card. Expected: it reports which
-      characters Wingman is watching and displays the thread count beside
-      each — e.g. "Watching 3 characters (thread: alive)" or "(thread:
-      stalled)" if the thread fails to start.
+      > Folders, then return to the Alerts card. Expected: it reports the
+      number of characters being watched — e.g. "Watching gamelogs — 3
+      characters online."
 - [ ] **Change the Gamelogs folder while running.** With the Alerts card
       open and showing a character list, change the path in Settings >
       Folders and return. Expected: the count re-derives from the new
       folder without restarting the app — the card updates to show the
       characters in the new Gamelogs.
+- [ ] **Run a Sleeper site.** In a wormhole, start a Sleeper combat site
+      with alerts active. Expected: no combat alerts fire — incoming attacks
+      from NPCs are dropped by the PvE filter. Uncheck the PvE filter in the
+      Alerts card and run another site. Expected: alerts fire normally.
+- [ ] **Alt-tab between two logged-in clients repeatedly.** With both
+      previews visible, switch focus between them. Expected: the selection
+      ring (a thin outline marking the foreground client) follows the focused
+      client, and the switch does not feel slower than it did before alerts
+      were enabled.
+- [ ] **Alt-tab to a browser or other non-EVE window.** With previews
+      visible, switch focus away from EVE. Expected: every preview loses its
+      selection ring (the thin outline marking the foreground client).
+- [ ] **Confirm sounds play in the frozen build.** This is the only place
+      the winsound module's packaging entry can be verified. Launch the
+      installed build, trigger an alert, and confirm you hear the sound.
+- [ ] **The colour input renders correctly in dark theme.** Open Settings >
+      Previews and scroll to the Alerts card. Each event type (Combat, Warp
+      scramble, Decloak) has a colour picker (`<input type="color">`).
+      Expected: each appears as a clickable swatch matching your Windows
+      theme (dark or light), not as a browser's native light-theme colour
+      widget. You can also verify this with `?dev=1` appended to the URL
+      (e.g., `http://localhost:…/?dev=1`) — `web/dev.js` carries a
+      `preview.alerts` payload so the Alerts card renders. Click one to
+      confirm the colour picker opens and works. If the colour input does not
+      render, the documented fallback is three fixed swatches per event —
+      verify that they are offered instead.
+
+### Cannot run until the render path lands
+
+The eight items below depend on work not yet implemented: the rendering
+path that draws alert rings on previews, the pulsing-to-blinking transition
+for large previews, frame caching, and the alert timer. `PreviewHost._apply_alerts`
+is currently a no-op that drains the queue and logs at debug level. They
+are listed here so the checklist is complete for when that work lands.
+
 - [ ] **Take fire from a player.** In a wormhole with your preview visible,
       have another player shoot your character with weapons. Expected: the
-      preview pulses red and keeps pulsing while you are focused on a
-      different application (e.g. a browser). The pulsing stops when you
-      switch back to the EVE client. The sound plays each time the alert
-      fires.
+      preview pulses in the configured colour and keeps pulsing while you are
+      focused on a different application (e.g. a browser). The pulsing stops
+      when you switch back to the EVE client.
 - [ ] **Click the pulsing preview to clear it.** While the preview is
       pulsing from an alert, click anywhere on it. Expected: the ring clears
       immediately **even if the client does not come to the foreground** —
       clicking the preview is its own action. This is window.py:102-116's
       expected failure mode before a click goes through to EVE.
-- [ ] **Run a Sleeper site.** In a wormhole, start a Sleeper combat site
-      with alerts active. Expected: no combat alerts fire — Sleeper kills do
-      not trigger player-fire events. Disable the Sleeper filter in the
-      Alerts card and run another site. Expected: alerts fire normally.
-- [ ] **Alt-tab between two logged-in clients repeatedly.** With both
-      previews visible and alerts armed, switch focus between them. Expected:
-      the alert ring (if any) follows the foreground client, and the switch
-      does not feel slower than it did before alerts were enabled.
-- [ ] **Alt-tab to a browser or other non-EVE window.** With previews armed
-      and possibly pulsing, switch focus away from EVE. Expected: no preview
-      has a ring, even if an alert just fired — the ring is only visible
-      when that character's client is in the foreground.
 - [ ] **Drag an alerting preview without stutter.** Start a combat that
       generates alerts on a visible client, then drag its preview to a new
-      position. Expected: the preview moves smoothly and the ring keeps
+      position. Expected: the preview moves smoothly and the alert ring keeps
       pulsing with no visible lag or skipped frames.
 - [ ] **Quit an EVE client mid-alert.** Start combat that generates alerts,
       then close that client's window while the preview is pulsing. Expected:
       no crash, and the alert timer stops (the preview disappears within ~1s
       as the client exits). The app remains responsive.
-- [ ] **Confirm sounds play in the frozen build.** This is the only place
-      the winsound module's packaging entry can be verified. Launch the
-      installed build, trigger an alert, and confirm you hear the sound.
 - [ ] **DPI scaling: on a 150% or 200% display, both rings are visible.**
       With a monitor at 150% or 200% Windows display scaling, arm an alert
-      and observe the pulsing preview. Expected: both the normal 2px ring
-      outline and the 6px alert pulsing ring are clearly visible at their
-      designed size, not bleeding together or becoming indistinct.
-- [ ] **The colour input renders correctly in dark theme.** Open Settings >
-      General and scroll to the Alerts card. Each event type (player fire,
-      scramble, decloak) has a colour picker (`<input type="color">`).
-      Expected: each appears as a clickable swatch matching your Windows
-      theme (dark or light), not as a browser's native light-theme colour
-      widget. Click one to confirm the colour picker opens and works. If the
-      colour input does not render, the documented fallback is three fixed
-      swatches per event — verify that they are offered instead.
-
-### Cannot run until the render path lands
-
-The two items below depend on work not yet implemented: the conditional
-thumbnail inset, frame caching, and the pulsing-to-blinking transition
-for large previews. They are listed here so the checklist is complete for
-when that work lands, but they cannot be verified until the rendering path
-is implemented.
-
+      and observe the pulsing preview. Expected: both the normal 2px selection
+      ring (outline of the focused client) and the 6px alert pulsing ring are
+      clearly visible at their designed size, not bleeding together or
+      becoming indistinct.
+- [ ] **Alt-tab between clients with an active alert.** With an alert armed
+      on one client, switch focus away and back to that client. Expected: the
+      alert ring (not the selection ring) stays on the preview while any
+      other client is focused, then reappears when you return to the alerted
+      client. This is the contrast with the selection ring: a selection ring
+      only appears on the foreground client, but an alert ring pulses
+      regardless of focus until cleared.
 - [ ] **Press Test on each event type.** In the Alerts card, for each of
-      the three events (player fire, scramble, decloak), click its Test
+      the three events (Combat, Warp scramble, Decloak), click its Test
       button. Expected: the ring pulses on a character's preview in the
       configured colour, a sound plays, and the ring stops on its own after
       a few seconds — a test alert is never persistent.
