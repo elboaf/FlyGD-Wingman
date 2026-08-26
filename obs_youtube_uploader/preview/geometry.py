@@ -5,6 +5,7 @@ own client coordinates happens at the Win32 boundary, not here, so this
 module stays testable on any platform.
 """
 
+import re
 from typing import NamedTuple
 
 EDGE_MARGIN = 18  # gap from the screen edge for the default stack
@@ -194,3 +195,25 @@ def clamp_to_monitors(rect: Rect, monitors: list) -> Rect:
     x = min(max(rect.x, target.x), max(target.x, target.right - rect.w))
     y = min(max(rect.y, target.y), max(target.y, target.bottom - rect.h))
     return Rect(x, y, rect.w, rect.h)
+
+
+_SIZE_RE = re.compile(r"^\s*(\d{1,5})\s*[xX×]\s*(\d{1,5})\s*$")
+
+
+def parse_size(text):
+    """Parse "1280x720" into a (w, h) pair, or None.
+
+    Same contract as gestures.parse: None for anything not accepted, never
+    an exception. Deliberately does NOT clamp -- the floor belongs to the
+    caller, which knows the chrome, and a parser that silently repaired a
+    typo would hand back a size the user never typed.
+    """
+    if not isinstance(text, str):
+        return None
+    match = _SIZE_RE.match(text)
+    if not match:
+        return None
+    w, h = int(match.group(1)), int(match.group(2))
+    if w <= 0 or h <= 0:
+        return None
+    return w, h

@@ -231,3 +231,33 @@ def test_default_stack_on_the_real_arrangement_is_off_screen_without_clamping():
 
 def _intersects(r, m):
     return not (r.right <= m.x or r.x >= m.right or r.bottom <= m.y or r.y >= m.bottom)
+
+
+# --- Task 1: parse_size ---
+
+
+def test_parse_size_accepts_the_obvious_spelling():
+    assert g.parse_size("1280x720") == (1280, 720)
+
+
+def test_parse_size_tolerates_spacing_and_capital_x():
+    assert g.parse_size("  640 X 360 ") == (640, 360)
+    assert g.parse_size("640×360") == (640, 360)
+
+
+def test_parse_size_rejects_junk_rather_than_raising():
+    """Same contract as gestures.parse: the caller gets None, never an
+    exception, because this runs on typed input."""
+    for text in ("", "x", "640", "640x", "axb", "640x720x480", None, 640):
+        assert g.parse_size(text) is None
+
+
+def test_parse_size_rejects_zero_and_negative():
+    assert g.parse_size("0x720") is None
+    assert g.parse_size("-640x360") is None
+
+
+def test_parse_size_does_not_clamp():
+    """The floor belongs to the caller, which knows the chrome. A parser
+    that silently repaired a typo would hand back a size nobody typed."""
+    assert g.parse_size("1x1") == (1, 1)
