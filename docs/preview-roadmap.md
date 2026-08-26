@@ -145,15 +145,35 @@ Lowest priority, largest pure-parsing job.
   `UpdateLayeredWindow` on that window, which is the preview's only means of
   drawing its own chrome. #87 took the thumbnail route independently and is
   correct; the claim is recorded here because it survived in this file long
-  enough to have been followed. Putting opacity in the Pillow bitmap's alpha
-  remains wrong for the original reason: a layered window is hit-tested
-  against its alpha channel, so that reintroduces click-through.
+  enough to have been followed.
 
-  It also never collided with the alert render path, which this file once
-  claimed it did. They touch different surfaces — thumbnail opacity dims the
-  game content, the ring frames repaint the chrome around it — which is why
-  they landed independently and in the opposite order to the one this file
-  warned about.
+  This entry also used to say that putting opacity in the Pillow bitmap's
+  alpha "remains wrong … a layered window is hit-tested against its alpha
+  channel, so that reintroduces click-through." **That holds at alpha 0 and
+  nowhere else**, and taking it to mean every value is what left the slider
+  shipping a dim preview rather than a translucent one for two releases.
+  `DWM_TNP_OPACITY` alone cannot produce translucency: DWM composites the
+  thumbnail over `chrome.render`'s own interior fill, so lowering the
+  opacity blended the game content toward near-black instead of revealing
+  the desktop. Measured on Windows, red backdrop, thumbnail at opacity 128:
+
+  | interior alpha | sampled pixel | `WindowFromPoint` |
+  | --- | --- | --- |
+  | 255 (as shipped) | (4, 5, 135) — backdrop invisible | preview |
+  | 1 | (126, 0, 128) — clean 50/50 over the backdrop | preview |
+  | 0 | (127, 0, 128) | the window behind — click-through |
+
+  So `chrome.render` now punches the thumbnail's own rect down to
+  `THUMBNAIL_ALPHA = 1`: see-through where DWM draws, opaque everywhere the
+  chrome is actually visible, and still hit-testable everywhere. The hole is
+  derived from `geometry.thumbnail_rect`, so it cannot drift from the
+  destination rect `window.py` hands DWM.
+
+  Opacity still never collided with the alert render path, which this file
+  once claimed it did. They touch different surfaces — thumbnail opacity
+  fades the game content, the ring frames repaint the chrome around it —
+  which is why they landed independently and in the opposite order to the
+  one this file warned about.
 
 - **Lock previews has a UI** (#87): `previews.js` drives `set_preview_locked`
   per character.

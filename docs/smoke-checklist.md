@@ -1678,6 +1678,33 @@ foreground.
       intro tells the user everything in it is a global keybind, and
       minimize-inactive is not one. Worth noticing during the walk.
 
+### Opacity is translucency, not dimming
+
+Nothing in CI renders a preview window, so this is the only place the fix
+is observed. Put something with COLOUR behind a preview before you start —
+a browser on a white page, not the desktop wallpaper. Against a dark
+background dimming and translucency look identical, which is how the
+original bug survived a smoke pass.
+
+- [ ] Drag a preview over that bright window, then Settings > Previews and
+      pull Opacity down to roughly half. Expected: the bright window shows
+      THROUGH the game content. If the preview merely goes darker and the
+      window behind never appears, the thumbnail is still blending against
+      `chrome.render`'s interior fill and the hole is not being punched.
+- [ ] At the same setting, click the preview's middle. It must still take
+      the click and raise its client. `THUMBNAIL_ALPHA` is 1 rather than 0
+      for exactly this reason, and 0 would look identical right up until
+      the click lands in whatever is behind.
+- [ ] With labels ON, look along the top edge of the game content at a low
+      opacity. There must be no 1px dark seam between the label band and
+      the thumbnail — the band ends on the row before the hole starts.
+- [ ] Leave opacity at 255 and confirm nothing changed: the tile reads as
+      solid, and an unselected preview still shows its thin near-black
+      edge. That edge is chrome, not fill, and must survive at every
+      opacity.
+- [ ] Trigger an alert while opacity is low. The ring must still draw at
+      full strength — chrome is painted over the hole, not under it.
+
 ## EVE preview hotkeys
 
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
