@@ -145,7 +145,11 @@ def test_the_watch_url_is_written_exactly_once():
         text = re.sub(r"(?m)^\s*(#|//).*$", "", text)
         hits = len(re.findall(r"youtube\.com/watch", text))
         if hits:
-            found[str(path.relative_to(package.parent))] = hits
+            # as_posix(), because the message names a file and the suite runs
+            # on windows-latest as well as ubuntu-latest. The first draft
+            # compared against a typed "a/b.py" and failed on Windows alone
+            # -- over the separator, with the finding itself correct.
+            found[path.relative_to(package.parent).as_posix()] = hits
 
     assert found == {"obs_youtube_uploader/uploader.py": 1}, (
         f"the watch URL must be written once, in uploader.watch_url. Found: {found}"
