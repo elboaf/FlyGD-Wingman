@@ -668,6 +668,80 @@ def test_the_type_scale_comment_still_describes_the_type_scale():
     )
 
 
+def test_the_uppercase_tracked_labels_split_headings_from_sub_labels():
+    """Four rules carry the `.14em` uppercase treatment. Two ranks, not one.
+
+    Round 5's G3 came in two parts. The type-scale lane moved --fs-muted;
+    the card-titles lane moved two CONSUMERS -- `.card > h2` and
+    `.rail-head`, the app's two uppercase tracked headings -- from
+    --fs-label up to --fs-body, because a heading set below the prose
+    beneath it gives a screen no skimmable skeleton. The other two rules
+    are subordinate and stayed: `.bind-group-name` is a divider inside a
+    card and `.alert-head > span` is a column header.
+
+    This is asserted rather than left to the comments because the four
+    rules LOOK like one pattern implemented four times, and the obvious
+    tidy-up -- "these should all be the same size" -- is exactly the
+    regression. The split is the decision. The `.14em` treatment is what
+    they still share, so that is pinned too: a fifth rule joining the
+    group has to choose a rank, and a rule leaving --fs-body silently is
+    what this catches.
+
+    Derived from the sheet, not retyped: the group is found by grepping
+    for the tracking, so adding a rule to it cannot skip the check.
+
+    The pattern is deliberately looser than the four selectors it expects,
+    because the failure that matters here is a SILENT one -- a fifth rule
+    the grep cannot see passes this test while breaking the rank. So it
+    accepts a leading indent (a rule nested in a media query, and also any
+    rule whose preceding comment was just stripped), a bare element
+    selector, and the `0.14em` spelling, none of which an anchored
+    `\\n[.#]...\\.14em` would have matched. Known and accepted gap: a
+    selector list split across lines is captured by its last line only.
+    That still fails the set comparison below rather than passing quietly,
+    which is the property being bought.
+    """
+    group = re.findall(
+        r"(?m)^[ \t]*([^\n{}@/][^\n{}]*?)\s*\{"
+        r"([^{}]*letter-spacing:\s*0?\.14em[^{}]*)\}",
+        CSS,
+    )
+    # Counted BEFORE the dict: two rules sharing a selector collapse to one
+    # key, and "four keys" would then be true of a sheet with five rules.
+    assert len(group) == 4, (
+        "expected exactly four rules carrying the .14em uppercase treatment, "
+        f"found {len(group)}: {sorted(sel.strip() for sel, _ in group)} -- a "
+        "new one must pick a rank (see .card > h2's comment) and be added here"
+    )
+    selectors = {sel.strip(): body for sel, body in group}
+
+    headings = {".card > h2", ".rail-head"}
+    sub_labels = {".bind-group-name", ".alert-head > span"}
+    assert set(selectors) == headings | sub_labels, (
+        f"the .14em group is {sorted(selectors)}, expected "
+        f"{sorted(headings | sub_labels)}"
+    )
+
+    for sel in sorted(headings):
+        assert "font-size: var(--fs-body)" in selectors[sel], (
+            f"{sel} is a HEADING and must stay at --fs-body: it heads prose "
+            "and rail entries that are themselves --fs-body, and --fs-label "
+            "put it below them. See .card > h2's comment for why --fs-head "
+            "was the wrong token to reach for instead"
+        )
+    for sel in sorted(sub_labels):
+        assert "font-size: var(--fs-label)" in selectors[sel], (
+            f"{sel} is SUBORDINATE to a card heading -- a divider or a "
+            "column header -- and must stay at --fs-label. Raising it to "
+            "match the headings is the tidy-up that erases the rank"
+        )
+    for sel, body in selectors.items():
+        assert "text-transform: uppercase" in body, (
+            f"{sel} carries .14em tracking without uppercase; the two are "
+            "one treatment and tracking alone reads as a spacing bug"
+        )
+
+
 def test_nothing_hides_itself_with_an_inline_display_style():
     """There are two hiding mechanisms and there must not be a third.
 
