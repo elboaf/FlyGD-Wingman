@@ -354,6 +354,12 @@
      rows. The 1112 also independently reproduces the figure D3 recorded
      for eighteen stacked rows, which is why the harness is trusted here.
 
+     Those four numbers are a RECORD OF WHAT THIS CHANGE COST, not the
+     current geometry, and two of them have since moved: round 5's C8
+     grouped the bookmark binds, so #eve-binds is 804.00 and
+     section-bookmarks 1184 at the same floor. The deltas above are still
+     the deltas this token produced. See .bind-dense for the new figures.
+
      No route or section gained horizontal overflow at the floor
      (scrollWidth vs clientWidth, [data-tip] stripped first as a cause
      test), and route-main and route-skills grew by 0.

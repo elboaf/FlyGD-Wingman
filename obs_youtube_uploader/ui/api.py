@@ -2857,7 +2857,7 @@ class Api:
             # stays the flat list -- it is still the identity of the route's
             # display order, and the page falls back to it if this is
             # missing (an older payload, a fork that stripped it).
-            "groups": [dict(group) for group in bookmarks.bind_groups()],
+            "groups": list(bookmarks.bind_groups()),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
             # Round 5, C6: the mirror of _bookmark_chords. Previews warned
