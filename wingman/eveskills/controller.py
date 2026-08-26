@@ -374,7 +374,20 @@ class SkillsController:
 
     @staticmethod
     def _in_group(ch, group_name: str) -> bool:
-        """True when no group is selected, or this character is in it."""
+        """True when no group is selected, or this character is in it.
+
+        Folded with `.casefold()`, which is NOT the same fold the page
+        applies with `.toLowerCase()` in `matching()` (wingman/web/skills.js)
+        -- they disagree on input like German sharp S, where
+        `'Straße'.casefold() == 'STRASSE'.casefold()` is True in Python but
+        `'Straße'.toLowerCase() === 'STRASSE'.toLowerCase()` is false in JS.
+        Python can therefore collapse two spellings into one group that the
+        page's own matching then treats as two, so a count and its visible
+        rows can disagree. Do not "fix" this by hand-rolling a Unicode fold
+        in ES5 on the page side to match Python -- that is new surface area
+        for a cosmetic mismatch on an edge case nobody has reported. Leave it
+        commented rather than papered over.
+        """
         if not group_name:
             return True
         return ch.group.casefold() == group_name.casefold()
@@ -387,6 +400,14 @@ class SkillsController:
         from it. Keyed case-insensitively with the FIRST spelling kept,
         matching _find_plan_locked's rule for plan names -- `Wolfpack` and
         `wolfpack` are one crew, and two rail rows for it read as a bug.
+
+        This is the other half of the invariant documented on
+        `_selected_group_locked`: both iterate `self._state.characters` in
+        the same order under the same lock hold, so the spelling recorded
+        here for a given key is always the spelling that function returns
+        for the current selection. Keep that ordering agreement if either
+        function changes -- it is what keeps the page's `scopedTotal()`
+        zero-fallback (wingman/web/skills.js) unreachable.
         """
         counts: dict = {}
         for ch in self._state.characters:
@@ -407,6 +428,18 @@ class SkillsController:
         selection, never rewritten. Rewriting would discard the name at the
         moment its last member left, so re-adding that member would not
         bring the selection back.
+
+        Returns the FIRST roster character's spelling for a casefold match,
+        same as `_groups_locked` below. Both run under the same lock hold in
+        `_state_payload_locked`, over the same `self._state.characters`
+        iteration order, so this always returns the exact string
+        `_groups_locked` recorded for that key -- which is what keeps the
+        page's `scopedTotal()` zero-fallback (wingman/web/skills.js)
+        unreachable: the selection it looks up in `groups()` is always
+        present there, by construction. Reordering either loop, or having
+        one of them prefer a different spelling, breaks that agreement
+        silently -- `scopedTotal()` would then return 0 for a group that
+        plainly has members, and nothing would flag it.
         """
         target = self._state.selected_group.casefold()
         if not target:
@@ -456,6 +489,12 @@ class SkillsController:
         name = self._clean_group_name(group_name)
         if name is None:
             logger.warning("Refusing an over-long group name: %r", group_name)
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The character was not assigned.",
+            )
             return False
         with self._lock:
             character = self._state.find(wanted)
@@ -527,6 +566,12 @@ class SkillsController:
         replacement = self._clean_group_name(new_name)
         if target is None or replacement is None:
             logger.warning("Refusing an over-long group name")
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The group was not renamed.",
+            )
             return False
         if not target or not replacement:
             # Delete is its own command with its own confirmation; a rename
@@ -803,6 +848,12 @@ class SkillsController:
         name = self._clean_group_name(group_name)
         if name is None:
             logger.warning("Refusing an over-long group name: %r", group_name)
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The selection was not changed.",
+            )
             return False
         with self._lock:
             previous = self._state.selected_group

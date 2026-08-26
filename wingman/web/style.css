@@ -3432,8 +3432,8 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    (`.settings .row > select.field { flex: 0 0 150px }`) -- a slightly wider
    basis here because a group name is free text and can run longer than the
    fixed vocabularies those rows carry. */
-.detail-row { display: flex; align-items: center; gap: 8px; }
-.detail-row > select.field { flex: 0 1 200px; }
+.skills-detail-row { display: flex; align-items: center; gap: 8px; }
+.skills-detail-row > select.field { flex: 0 1 200px; }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }

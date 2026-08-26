@@ -80,7 +80,16 @@
   /* How many characters the current scope holds. This is the denominator
    * of every rail ratio AND the population the roster shows, so it is
    * derived once: two places deriving it separately is how `4/9` for a
-   * four-character crew happens. */
+   * four-character crew happens.
+   *
+   * `found` stays 0 if `current` matches nothing in `groups()` -- which
+   * would render as an n/0 ratio. That is unreachable today only because
+   * controller.py's `_groups_locked` and `_selected_group_locked` are
+   * proven, by a shared iteration order under one lock hold, to always
+   * agree on which spelling represents the selection (see the comments on
+   * those two functions). Do not paper over this with a
+   * `|| characters().length` fallback if it ever fires -- that would show a
+   * confidently WRONG denominator instead of an obviously broken one. */
   function scopedTotal() {
     var current = selectedGroup();
     if (!current) return characters().length;
@@ -881,7 +890,7 @@
    * on the rail because a group exists exactly as long as someone is in
    * it: there is nothing to create until a character joins one. */
   function groupPickerNode(ch) {
-    var row = WM.make('div', 'detail-row');
+    var row = WM.make('div', 'skills-detail-row');
     var label = WM.make('label', '', 'Group');
     var select = WM.make('select', 'field');
     label.setAttribute('for', 'skills-group-' + ch.character_id);

@@ -1863,12 +1863,17 @@ def test_an_empty_group_name_clears_membership(tmp_path):
 
 
 def test_an_over_long_group_name_is_refused_not_shortened(tmp_path):
-    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga")])
     long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
 
     assert controller.set_character_group(1, long_name) is False
 
     assert controller.state_payload()["characters"][0]["group"] == ""
+    # The page never reads set_character_group's return value and has no
+    # cap of its own to enforce client-side, so a refusal that only logged
+    # would be indistinguishable from nothing happening at all.
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
 
 
 def test_assigning_an_unknown_character_is_refused(tmp_path):
@@ -1926,6 +1931,17 @@ def test_selecting_stores_the_rosters_spelling_not_the_callers(tmp_path):
     assert controller.select_group("wolfpack") is True
 
     assert controller.state_payload()["selected_group"] == "Wolfpack"
+
+
+def test_selecting_an_over_long_name_is_refused_with_an_alert(tmp_path):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.select_group(long_name) is False
+
+    assert controller.state_payload()["selected_group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
 
 
 def test_a_failed_save_rolls_the_selection_back(tmp_path, monkeypatch):
@@ -2029,6 +2045,19 @@ def test_renaming_to_an_empty_name_is_refused(tmp_path):
     assert controller.state_payload()["groups"] == [
         {"name": "Wolfpack", "member_count": 1}
     ]
+
+
+def test_renaming_onto_an_over_long_name_is_refused_with_an_alert(tmp_path):
+    controller, _, alerts = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.rename_group("Wolfpack", long_name) is False
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 1}
+    ]
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
 
 
 def test_deleting_clears_every_member_and_the_selection(tmp_path):
