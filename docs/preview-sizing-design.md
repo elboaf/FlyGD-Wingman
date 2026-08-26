@@ -88,23 +88,31 @@ configured default already exists and is already what unsaved previews use.
 **D4. Snap distance stays deferred.** A toggle was asked for; a slider for a
 12px pull is a control nobody tunes.
 
-**D5. The aspect maths uses `BORDER`, never the live `_inset`.** An armed
-alert widens the inset to `ALERT_BORDER`; reading it live would make a
-preview change shape when a neighbour is shot at.
+**D5. The aspect maths reads `label_h` live but `BORDER` fixed.** These pull
+opposite ways and both are deliberate. `_label_h()` reflects a setting the
+user chose, and ignoring it distorts the picture for everyone who turned
+labels off (`window.py:363`). `_inset` reflects a transient alert state, and
+reading *it* live would make a preview change shape when a neighbour is shot
+at. So: live label height, constant `BORDER`, never `_inset`.
 
 ## Observable behaviour
 
 **Resize.** The handle keeps the picture at its client's shape. The lock
 applies to the picture area, not the window: the window is the picture plus
-`BORDER * 2` horizontally and `BORDER * 2 + LABEL_H` vertically. Both drag
-axes stay live. Precisely: subtract the chrome to get the candidate picture
-size, take `pw = max(candidate_pw, candidate_ph * aspect)`, derive
-`ph = pw / aspect`, then add the chrome back. Taking the max rather than
-driving from width alone is what makes a mostly-vertical drag do anything.
-`MIN_SIZE` is applied after the ratio correction, so the floor cannot
-distort it either. A client with no readable client rect -- at character
-select, or gone mid-drag -- falls back to today's freeform resize rather
-than freezing.
+`BORDER * 2` horizontally and `BORDER * 2 + label_h` vertically, where
+`label_h` is **live** -- `PreviewWindow._label_h()` returns `LABEL_H` when
+labels are on and **0 when they are off** (`window.py:363`). Every consumer
+in that file already reads it live rather than using the constant; so must
+this one. Captured once at drag start, beside the aspect.
+
+Both drag axes stay live. Precisely: subtract the chrome to get the
+candidate picture size, take `pw = max(candidate_pw, candidate_ph * aspect)`,
+derive `ph = pw / aspect`, then add the chrome back. Taking the max rather
+than driving from width alone is what makes a mostly-vertical drag do
+anything. `MIN_SIZE` is applied after the ratio correction, so the floor
+cannot distort it either. A client with no readable client rect -- at
+character select, or gone mid-drag -- falls back to today's freeform resize
+rather than freezing.
 
 **Size...** A per-row button beside `Edit...`, opening `WM.prompt` with the
 current window size as its default text. Accepts `1280x720`, tolerant of
@@ -117,10 +125,13 @@ opens, from the row's current width and the client's rect:
 > Your client is 1920x1080. At this width an undistorted preview is
 > 640x392; a different shape will stretch the picture.
 
-The chrome is `(4, 34)` -- `BORDER * 2` and `BORDER * 2 + LABEL_H` -- so a
-640-wide window holds a 636-wide picture, and 636 at 16:9 needs 358 of
-picture, hence 392 of window. Worked through here because getting it wrong
-is silent: the preview simply renders slightly stretched.
+The chrome is `(BORDER * 2, BORDER * 2 + label_h)`, and `label_h` depends on
+the live `show_labels` setting: **`(4, 34)` with labels on, `(4, 4)` with
+them off**. With labels on, a 640-wide window holds a 636-wide picture, and
+636 at 16:9 needs 358 of picture, hence 392 of window. With labels off the
+same 640 gives 362 of window. Worked through here because getting it wrong
+is silent -- the preview simply renders slightly stretched, and only for the
+users who turned labels off, while the control reports success.
 
 For an offline character there is no client to compare against, the hint says
 so, and the size is written to the saved layout for next time.
@@ -144,9 +155,10 @@ separate lists.
   `gestures.parse`: no exceptions, no clamping.
 - `geometry.lock_to_aspect(w, h, aspect, chrome, min_size)` -- the freeform
   candidate in, the ratio-corrected window size out. `chrome` is the
-  `(BORDER * 2, BORDER * 2 + LABEL_H)` pair, passed in rather than imported,
+  `(BORDER * 2, BORDER * 2 + label_h)` pair, passed in rather than imported,
   so the window/picture conversion lives in one tested function instead of
-  being open-coded at three call sites.
+  being open-coded at three call sites -- and so the labels-off case is a
+  test argument rather than a branch.
 - `window.resize_result` gains `aspect=None` and delegates. `None` reproduces
   today's rect exactly.
 
@@ -170,14 +182,22 @@ integers only. This is `set_hotkeys`' shape exactly.
 
 **Reset clears three things, in this order**, on the preview thread:
 
-1. Cancel the store's pending debounce. A drag that ended under a second ago
-   has an unwritten entry in `_pending`; without this it fires after the
+1. Cancel the store's pending debounce, **discarding pending layouts but
+   keeping pending roster names**. A drag that ended under a second ago has
+   an unwritten entry in `_pending`; without cancelling, it fires after the
    clear and resurrects exactly one preview's old position, intermittently.
+   But `record_character` deliberately shares this one timer rather than
+   adding a second (`store.py:51-64`), so `_pending_names` is riding it too
+   -- and a client discovered moments before the reset would be silently
+   dropped from the roster, taking any binding it has no row for with it.
+   `clear()` therefore drops `_pending`, retains `_pending_names`, and
+   writes both the emptied layouts and those names in the single
+   `update_settings()` block below.
 2. Clear the persisted `preview.layouts`, via a new `LayoutStore.clear()`
    that writes inside the same `update_settings()` context manager, under
    `_SAVE_LOCK`. Not a new call site doing a read-then-save pair, and not
-   `record()` -- the store's first rule is merge-per-key-never-wholesale, and
-   this is the one operation that legitimately needs the opposite.
+   `record()` -- the store's first rule is merge-per-key-never-wholesale,
+   and this is the one operation that legitimately needs the opposite.
 3. Clear `self._saved` and re-place every open window through
    `_resolve_rect`. Without this the next sweep re-places from memory.
 
@@ -185,17 +205,33 @@ A reset landing mid-drag is left alone: the button-up writes the old rect
 back. Rare, self-correcting on the next reset, and cheaper to accept than to
 add a cancel path through the capture state machine.
 
-**Bridge surface.** Three `Api` methods, all returning
-`{applied, persisted, error}`:
+**Bridge surface.** Four `Api` methods. Three return
+`{applied, persisted, error}`; the parser returns its own shape, mirroring
+`parse_preview_bind` (`api.py:2267`):
 
+- `parse_preview_size(text)` -- returns `{w, h, error}`. The dialog produces
+  **text**, and the established flow sends that text to Python for
+  validation before committing (`previews.js:153`). Without this the page
+  would have to re-implement `geometry.parse_size` in JavaScript, where
+  nothing tests it.
 - `set_preview_snap(bool)` -- one line through
   `_write_preview_setting(("snap",), ...)` plus `restyle()`, identical in
   shape to `set_preview_show_labels`.
-- `set_preview_size(name, w, h)` -- writes the layout entry, and resizes the
-  live window if one exists. An offline character is
-  `applied: False, persisted: True`, reported as "saved; takes effect when
-  that client is next running" rather than as a failure.
+- `set_preview_size(name, w, h)` -- takes the already-parsed numbers from
+  the call above. Writes the layout entry, and resizes the live window if
+  one exists.
 - `reset_preview_layouts()` -- the sequence above.
+
+**An offline character returns `applied: True, persisted: True`.** The
+contract at `api.py:1837-1844` enumerates exactly three legal combinations,
+and `applied: False` is defined as *rejected -- page reverts and explains*.
+`applied: False, persisted: True` is not a state that contract has, and
+inventing a fourth would make every row control that tests `!res.applied`
+(`previews.js:206`) revert a change that actually took. For a character with
+no open preview the saved layout **is** the effect, so the write applied.
+The "takes effect when that client is next running" note is UI copy, derived
+by the page from what it already knows -- whether the row is in
+`state.characters` or only in `state.roster`.
 
 `get_preview_hotkey_state`'s payload gains a `sizes` map so the dialog can
 open with the current numbers and compare against the client's shape. No new
@@ -229,6 +265,10 @@ No layout schema change: `layout.Entry` already carries `w` and `h`.
 - `Size...` calls `endCapture()` before `WM.prompt`. This is mechanically
   enforced: `test_page_conventions.py:511-534` asserts `endCapture()` within
   400 characters above every `WM.prompt(` in this file.
+- The flow is `WM.prompt` -> `parse_preview_size(text)` -> on `error`, the
+  same refusal treatment a bad keybind gets -> `set_preview_size(name, w, h)`.
+  This mirrors `previews.js:148-160` step for step; the page never parses
+  the string itself.
 - Commit shape follows the row controls already there: patch `state` in place
   on success, guarded by the `pushes` counter so a save resolving after a
   newer table has landed does not write into a stale render.
@@ -251,9 +291,12 @@ retyped.
 
 **CI can prove:** `parse_size` (whitespace, `X`, junk, zero, negative,
 absurd); `lock_to_aspect` (both drag axes, the minimum applied after
-correction, `aspect=None` reproducing today's rect); `resize_result`
-delegating; the snap bypass; `LayoutStore.clear()` cancelling a pending
-debounce. Plus the existing lexical guards staying green.
+correction, `aspect=None` reproducing today's rect, **and both chrome
+values -- labels on and labels off -- since that is the case the first
+draft of this design got wrong**); `resize_result` delegating; the snap
+bypass; `LayoutStore.clear()` cancelling a pending layout debounce **while
+preserving pending roster names**. Plus the existing lexical guards staying
+green.
 
 Also added, because this slice makes it cheap and
 `docs/preview-roadmap.md` names it as unguarded: `validated_preview
