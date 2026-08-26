@@ -38,6 +38,10 @@ HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = re.sub(
     r"/\*.*?\*/", "", (WEB / "style.css").read_text(encoding="utf-8"), flags=re.DOTALL
 )
+# The same sheet WITH its comments, for the one guard whose subject IS a
+# comment: the type scale states its own ratios in prose, and prose is the
+# thing that drifts off the values it describes.
+RAW_CSS = (WEB / "style.css").read_text(encoding="utf-8")
 
 # Read OFF the page rather than typed here: these two rules exist to catch
 # the page drifting from settings.py, and a third hand-kept copy in the
@@ -589,6 +593,78 @@ def test_no_colour_is_decided_outside_the_root_token_block():
         + ", ".join(sorted(set(copied)))
         + " -- add a `--x-rgb: r g b` token and use rgb(var(--x-rgb) / a), "
         + "the way --brand-rgb does, so moving the token moves these too"
+    )
+
+
+def test_the_type_scale_comment_still_describes_the_type_scale():
+    """:root's type-scale note prints a size-and-ratio table. Check it.
+
+    Round 5 (G3) asked for the scale to be stated with its ratios so a
+    screen's hierarchy is a decision on the record rather than five loose
+    numbers. A table in a comment is exactly the hand-kept copy CLAUDE.md
+    says must be derived or asserted -- four places once carried a count
+    of the bookmark binds and three of them were wrong.
+
+    So the RATIOS ARE THE FIXTURE and the tokens are the truth: this
+    parses the table out of the comment and recomputes every row against
+    the values below it. Changing a token without touching the table
+    fails here, which is the drift that matters -- the table is what a
+    reader trusts, and nothing else in the suite reads it.
+
+    Also pinned: --fs-muted stays UNDER --fs-body and --fs-label stays
+    under --fs-muted. That ordering is the "column headers label the data,
+    they are not the data" decision the note argues at length, and raising
+    --fs-muted to 12px in round 5 is exactly the change that could have
+    quietly ended it.
+    """
+    root = re.search(r":root\s*\{(.*?)\n\}", RAW_CSS, flags=re.DOTALL)
+    assert root, "style.css has no :root block?"
+    block = root.group(1)
+
+    tokens = {
+        name: float(value)
+        for name, value in re.findall(r"(--fs-[\w-]+):\s*([\d.]+)px;", block)
+    }
+    assert tokens, "no --fs-* tokens found in :root"
+
+    # `--fs-head   17px   1.31 over body    h1 x2, .dialog h3`
+    rows = re.findall(
+        r"^\s*(--fs-[\w-]+)\s+([\d.]+)px\s+"
+        r"(?:--\s|([\d.]+)\s+(over|under|of)\s+(body|muted)\b)",
+        block,
+        flags=re.MULTILINE,
+    )
+    assert len(rows) == len(tokens), (
+        f"the type-scale table lists {len(rows)} sizes but :root declares "
+        f"{len(tokens)} --fs-* tokens: {sorted(tokens)}"
+    )
+
+    for name, stated_px, ratio, direction, against in rows:
+        assert name in tokens, f"{name} is in the table but not in :root"
+        assert float(stated_px) == tokens[name], (
+            f"the table says {name} is {stated_px}px; :root says {tokens[name]}px"
+        )
+        if not ratio:  # the `--` row: the size everything else is relative to
+            continue
+        base = tokens[f"--fs-{against}"]
+        computed = {
+            "over": tokens[name] / base,
+            "of": tokens[name] / base,
+            "under": base / tokens[name],
+        }[direction]
+        assert round(computed, 2) == float(ratio), (
+            f"the table says {name} is {ratio} {direction} --fs-{against}; "
+            f"{tokens[name]}px against {base}px is {computed:.2f}"
+        )
+
+    assert tokens["--fs-muted"] < tokens["--fs-body"], (
+        "--fs-muted reached --fs-body -- column headers are no longer below "
+        "the data they label, which is the decision the :root note defends"
+    )
+    assert tokens["--fs-label"] < tokens["--fs-muted"], (
+        "--fs-label reached --fs-muted -- the uppercase section labels are "
+        "no longer a step below the muted text, which is what --fs-label's "
+        "own note claims"
     )
 
 
