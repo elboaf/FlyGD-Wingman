@@ -103,6 +103,16 @@
      enough for white puts the accent text near 3:1. Vermilion only ever
      got away with one token because it sits high in luminance already. */
   --brand: #8430d9;
+  /* The same colour as --brand, as channels, for the glows. A glow needs
+     an alpha and CSS cannot take one from a hex token, so every one of
+     them hand-copied `rgba(132, 48, 217, ...)` -- five rules carrying an
+     uncounted second copy of the brand hue. That is the retheme failure
+     test_no_colour_is_decided_outside_the_root_token_block exists to
+     catch, and it could not see them: its regex reads `#hex` only, so the
+     one syntax the copies were written in was the one syntax it was blind
+     to. Move --brand and these moved with it now; the test reads token
+     VALUES rather than a syntax, so a sixth copy fails. */
+  --brand-rgb: 132 48 217;
   --brand-deep: #4a0083;
   /* 4.86:1 at worst across the four PAGE surfaces it lands on (--panel,
      --bg, and the gradient-tinted variants of both). #a952ff was the value
@@ -222,6 +232,15 @@
      live on body. */
   --wash-top: #1d1030;
   --wash-bottom: #170f26;
+  /* Channels, for the transparent stop of each wash gradient below. A
+     radial-gradient has to fade to its OWN colour at alpha 0 rather than
+     to `transparent`, which interpolates through premultiplied black and
+     leaves a dark halo. That second stop was written as a channel literal,
+     so the two ends of one gradient were the token and a copy of it: move
+     --wash-top and the fade still ran to the old purple. Found by widening
+     test_no_colour_is_decided_outside_the_root_token_block past `#hex`. */
+  --wash-top-rgb: 29 16 48;
+  --wash-bottom-rgb: 23 15 38;
 
   /* ---- controls ----
      Three hover surfaces at three weights, and they are deliberately not
@@ -311,8 +330,8 @@
    to ship by accident, but is not the token and is not ours to rely on. */
 html {
   background:
-    radial-gradient(1100px 620px at 88% -8%, var(--wash-top) 0%, rgba(29, 16, 48, 0) 62%),
-    radial-gradient(760px 520px at -6% 108%, var(--wash-bottom) 0%, rgba(23, 15, 38, 0) 60%),
+    radial-gradient(1100px 620px at 88% -8%, var(--wash-top) 0%, rgb(var(--wash-top-rgb) / 0) 62%),
+    radial-gradient(760px 520px at -6% 108%, var(--wash-bottom) 0%, rgb(var(--wash-bottom-rgb) / 0) 60%),
     var(--bg);
 }
 body { background-color: transparent; }
@@ -358,7 +377,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
      the one spot on the title bar where dragging would appear to be dead.
      The span this replaced could not have this problem. */
   pointer-events: none; -webkit-user-drag: none; user-select: none;
-  box-shadow: 0 0 12px rgba(132, 48, 217, .45);
+  box-shadow: 0 0 12px rgb(var(--brand-rgb) / .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
 /* Dimmed and below body size: it is an identifier for a bug report, not
@@ -560,7 +579,7 @@ button.btn.acc {
   --acc-fill: linear-gradient(180deg, var(--acc-top), var(--acc-bottom));
   background: var(--acc-fill);
   border-color: var(--brand-edge); color: var(--on-accent); font-weight: 600;
-  box-shadow: 0 2px 14px rgba(132, 48, 217, .35);
+  box-shadow: 0 2px 14px rgb(var(--brand-rgb) / .35);
 }
 /* Restates the fill AND the label, and neither line is redundant.
 
@@ -1299,7 +1318,7 @@ button.btn:disabled,
 .bar {
   height: 100%; width: 0%; border-radius: 2px;
   background: linear-gradient(90deg, var(--brand-deep), var(--brand));
-  box-shadow: 0 0 10px rgba(132, 48, 217, .6);
+  box-shadow: 0 0 10px rgb(var(--brand-rgb) / .6);
   transition: width .12s linear;
 }
 /* Indeterminate: an ffmpeg stitch reports no readable progress, so the bar
@@ -1376,7 +1395,7 @@ button.btn:disabled,
 .dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
 .dialog.confirm h3::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  box-shadow: 0 0 9px rgba(132, 48, 217, .5);
+  box-shadow: 0 0 9px rgb(var(--brand-rgb) / .5);
 }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
@@ -2286,7 +2305,7 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
-  box-shadow: 0 0 10px rgba(132, 48, 217, .5);
+  box-shadow: 0 0 10px rgb(var(--brand-rgb) / .5);
 }
 /* Paired with .check's, and for the same reason. */
 .radio input:focus-visible + .ring {
