@@ -416,6 +416,66 @@ class SkillsController:
                 return ch.group
         return ""
 
+    @staticmethod
+    def _clean_group_name(raw) -> "str | None":
+        """Trim, then refuse anything over the cap. None means refused.
+
+        Refusing rather than truncating is the same rule state.py applies
+        on load, and for the same reason: a shortened name is not a shorter
+        pointer to the same group, it is a pointer to a DIFFERENT one that
+        may already have members.
+        """
+        text = str(raw or "").strip()
+        if len(text) > state_mod.MAX_GROUP_NAME_CHARS:
+            return None
+        return text
+
+    def _existing_spelling_locked(self, name: str) -> str:
+        """The roster's own spelling of *name*, or *name* when it is new."""
+        target = name.casefold()
+        for ch in self._state.characters:
+            if ch.group and ch.group.casefold() == target:
+                return ch.group
+        return name
+
+    def set_character_group(self, character_id, group_name) -> bool:
+        """Put one character in a group, or clear it with "".
+
+        There is no separate create step: D2 makes a group exist exactly as
+        long as someone is in it, so assigning IS creating. Joining takes
+        the spelling already on the roster rather than the caller's, which
+        is the rule _find_plan_locked applies to plan names.
+        """
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            # Arrives from JavaScript, where a missing dataset attribute is
+            # undefined -> None. Refused rather than coerced.
+            logger.warning("Refusing a non-numeric character id: %r", character_id)
+            return False
+        name = self._clean_group_name(group_name)
+        if name is None:
+            logger.warning("Refusing an over-long group name: %r", group_name)
+            return False
+        with self._lock:
+            character = self._state.find(wanted)
+            if character is None:
+                return False
+            previous = character.group
+            character.group = self._existing_spelling_locked(name) if name else ""
+            saved = self._save_locked()
+            if not saved:
+                character.group = previous
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The character's group was not changed.",
+            )
+            return False
+        return True
+
     # ----- persistence ------------------------------------------------
 
     def _save_locked(self) -> bool:

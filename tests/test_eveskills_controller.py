@@ -1826,3 +1826,62 @@ def test_every_character_row_carries_its_own_group(tmp_path):
     controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
 
     assert controller.state_payload()["characters"][0]["group"] == "Wolfpack"
+
+
+def test_assigning_a_character_creates_the_group_implicitly(tmp_path):
+    controller, pushed, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+
+    assert controller.set_character_group(1, "Wolfpack") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert pushed[-1][0] == "onSkills"
+
+
+def test_joining_keeps_the_spelling_already_on_the_roster(tmp_path):
+    """`wolfpack` typed into a roster holding `Wolfpack` joins it. Without
+    this the rail grows a near-duplicate row that reads as a bug."""
+    controller, _, _ = build(
+        tmp_path, characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo")]
+    )
+
+    assert controller.set_character_group(2, "wolfpack") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 2}
+    ]
+
+
+def test_an_empty_group_name_clears_membership(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.set_character_group(1, "") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == []
+    assert payload["characters"][0]["group"] == ""
+
+
+def test_an_over_long_group_name_is_refused_not_shortened(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.set_character_group(1, long_name) is False
+
+    assert controller.state_payload()["characters"][0]["group"] == ""
+
+
+def test_assigning_an_unknown_character_is_refused(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+
+    assert controller.set_character_group(99, "Wolfpack") is False
+
+
+def test_a_failed_save_rolls_the_assignment_back(tmp_path, monkeypatch):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga")])
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.set_character_group(1, "Wolfpack") is False
+
+    assert controller.state_payload()["characters"][0]["group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
