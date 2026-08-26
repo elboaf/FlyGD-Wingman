@@ -583,8 +583,13 @@ def main() -> int:
     if handle is None:
         return 0  # Another instance owns the tray; nothing to do.
 
+    # BEFORE ensure_dirs(), which creates state_dir() and would otherwise
+    # make the migration a no-op that strands 3.x state. The status is
+    # returned rather than logged because logging is not up yet.
+    migration_status = paths.migrate_state_dir()
     paths.ensure_dirs()
     configure_logging()
+    logger.info("State directory: %s", migration_status)
     stitch.sweep_orphans(paths.tmp_dir())
     cfg = settings_mod.load()
 

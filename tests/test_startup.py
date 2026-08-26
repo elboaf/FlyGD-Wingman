@@ -228,3 +228,36 @@ def test_a_second_4x_instance_blocks_startup(monkeypatch):
     monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
 
     assert main_mod.acquire_single_instance() is None
+
+
+def test_state_migration_runs_before_ensure_dirs(monkeypatch, tmp_path):
+    """Ordering is the whole feature, and it is invisible to unit tests
+    of migrate_state_dir() itself.
+
+    ensure_dirs() creates state_dir(). If it runs first, migration finds an
+    empty new directory, decides there is nothing to do, and strands the
+    user's real state permanently. A green test_paths.py proves nothing
+    about this.
+    """
+    order = []
+
+    monkeypatch.setattr(main_mod, "set_dpi_awareness", lambda: None)
+    monkeypatch.setattr(main_mod, "acquire_single_instance", lambda: object())
+    monkeypatch.setattr(
+        main_mod.paths, "migrate_state_dir", lambda: order.append("migrate") or "ok"
+    )
+    monkeypatch.setattr(
+        main_mod.paths, "ensure_dirs", lambda: order.append("ensure_dirs")
+    )
+    monkeypatch.setattr(
+        main_mod, "configure_logging", lambda: order.append("configure_logging")
+    )
+    monkeypatch.setattr(
+        main_mod.stitch, "sweep_orphans", lambda d: (_ for _ in ()).throw(SystemExit)
+    )
+    monkeypatch.setattr(main_mod.paths, "tmp_dir", lambda: tmp_path)
+
+    with pytest.raises(SystemExit):
+        main_mod.main()
+
+    assert order == ["migrate", "ensure_dirs", "configure_logging"]
