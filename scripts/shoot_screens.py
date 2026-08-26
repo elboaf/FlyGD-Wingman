@@ -267,6 +267,12 @@ class TargetError(Exception):
     """No target could be confirmed as the real app page."""
 
 
+# Without this the socket blocks forever, and a hang (unlike an exception)
+# never reaches main()'s finally -- so restore_incumbent() never runs and
+# the user's own Wingman stays closed.
+CDP_TIMEOUT_S = 30.0
+
+
 class CDP:
     """A minimal Chrome DevTools Protocol client over one websocket."""
 
@@ -328,15 +334,28 @@ def attach(port: int, timeout_s: float = 30.0) -> CDP:
         targets = json.loads(raw)
         seen = [t.get("url", "") for t in targets]
         for target in page_candidates(targets):
-            ws = websocket.create_connection(
-                target["webSocketDebuggerUrl"], suppress_origin=True
-            )
-            cdp = CDP(ws)
-            # The decisive check. dev.js activates ONLY when
-            # window.pywebview is absent, so a page that HAS it cannot be
-            # the fabricating harness. This is proof, where the URL filter
-            # was only a cheap pre-filter.
-            if cdp.evaluate("typeof window.pywebview !== 'undefined'") is True:
+            cdp = None
+            try:
+                ws = websocket.create_connection(
+                    target["webSocketDebuggerUrl"],
+                    suppress_origin=True,
+                    timeout=CDP_TIMEOUT_S,
+                )
+                cdp = CDP(ws)
+                # The decisive check. dev.js activates ONLY when
+                # window.pywebview is absent, so a page that HAS it cannot
+                # be the fabricating harness. This is proof, where the URL
+                # filter was only a cheap pre-filter.
+                is_real = cdp.evaluate("typeof window.pywebview !== 'undefined'")
+            except Exception:  # noqa: BLE001 -- a candidate that cannot be
+                # interrogated (connect refused, target vanished between
+                # /json/list and connect, a mid-handshake CDP error) is
+                # simply not our page; close what was opened and let the
+                # next candidate have its own try.
+                if cdp is not None:
+                    cdp.close()
+                continue
+            if is_real is True:
                 return cdp
             cdp.close()
         time.sleep(0.5)
