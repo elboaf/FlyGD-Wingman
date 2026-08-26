@@ -74,6 +74,53 @@ def test_resize_result_respects_the_label_band_being_off():
     assert on.h - off.h == 30
 
 
+# A rect ALREADY at 16:9 once the chrome is removed: picture 640x360
+# inside a 644x394 window. This is the state every preview is in after
+# its first locked drag, which is what makes the dead handle below the
+# common case rather than an edge one.
+LOCKED = Rect(100, 100, 644, 394)
+CHROME = (4, 34)
+
+
+def test_resize_shrinks_on_a_horizontal_drag_with_the_aspect_locked():
+    """The user drags the handle left; the preview must get smaller.
+
+    This was a dead handle. `lock_to_aspect` believed whichever axis
+    implied the LARGER picture, so an untouched height beat a shortened
+    width and the rect came back byte-identical -- growing worked from
+    either axis, shrinking from neither alone.
+    """
+    out = window.resize_result(
+        (200, 200), (100, 200), LOCKED, min_size=(80, 60), aspect=16 / 9, chrome=CHROME
+    )
+    assert out.w < LOCKED.w
+    assert abs((out.w - 4) / (out.h - 34) - 16 / 9) < 0.01
+
+
+def test_resize_shrinks_on_a_vertical_drag_with_the_aspect_locked():
+    """The same dead handle in Y: dragging up alone did nothing."""
+    out = window.resize_result(
+        (200, 200), (200, 100), LOCKED, min_size=(80, 60), aspect=16 / 9, chrome=CHROME
+    )
+    assert out.h < LOCKED.h
+    assert abs((out.w - 4) / (out.h - 34) - 16 / 9) < 0.01
+
+
+def test_resize_believes_the_axis_the_user_actually_dragged():
+    """A mostly-vertical drag is driven by height, a mostly-horizontal one
+    by width. Keeping a mostly-vertical drag effective is what the old
+    max() was protecting, and the dominant axis preserves that without
+    breaking shrink."""
+    vertical = window.resize_result(
+        (0, 0), (10, 200), LOCKED, min_size=(80, 60), aspect=16 / 9, chrome=CHROME
+    )
+    assert vertical.h == LOCKED.h + 200
+    horizontal = window.resize_result(
+        (0, 0), (200, 10), LOCKED, min_size=(80, 60), aspect=16 / 9, chrome=CHROME
+    )
+    assert horizontal.w == LOCKED.w + 200
+
+
 def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     """__main__.py:64 sets the root logger to INFO. A DEBUG line about a
     failed activation is therefore invisible in the only log a user will
@@ -614,3 +661,37 @@ def test_a_preview_defaults_to_snapping():
     """The attribute exists before any restyle lands, so a preview created
     between launch and the first settings push still snaps."""
     assert window.PreviewWindow.snap is True
+
+
+def _resize_drag(lock_aspect):
+    """Grab the bottom-right handle of a 320x210 preview whose client is
+    320x210 (a 32:21 source, per _FakeLibs.GetClientRect) and drag it
+    100px right and 0px down."""
+    w, libs = _window_for_gestures(locked=False)
+    w.lock_aspect = lock_aspect
+    libs.cursor = (100 + 320 - 4, 100 + 210 - 4)  # inside the resize handle
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, _lparam(316, 206))
+    libs.cursor = (libs.cursor[0] + 100, libs.cursor[1])
+    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    return w.rect
+
+
+def _lparam(x, y):
+    return (y << 16) | x
+
+
+def test_a_resize_holds_the_client_shape_while_the_aspect_is_locked():
+    """The default, and what has always shipped: a purely horizontal drag
+    still changes the height, because the picture keeps its ratio."""
+    rect = _resize_drag(lock_aspect=True)
+    assert rect.w == 420
+    assert rect.h != 210
+
+
+def test_unlocking_the_aspect_makes_the_handle_freeform():
+    """The escape hatch. Width follows the pointer and the height is left
+    exactly where it was -- the picture stretches, which is the documented
+    cost and the same one a mismatched typed size already carries."""
+    rect = _resize_drag(lock_aspect=False)
+    assert rect.w == 420
+    assert rect.h == 210

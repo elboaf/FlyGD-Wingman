@@ -51,7 +51,10 @@
    'set_preview_size', 'reset_preview_layouts',
    // Task 9: same shape; settings.js reverts the checkbox on anything
    // that is not `applied`, same as show_labels/opacity above.
-   'set_preview_snap'
+   'set_preview_snap',
+   // Same shape again: settings.js reverts the checkbox on anything that
+   // is not `applied`.
+   'set_preview_lock_aspect'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -345,7 +348,7 @@
           // ships preview.alerts for free (a shallow dict(cfg)), so this
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
-            show_labels: true, opacity: 255, snap: true,
+            show_labels: true, opacity: 255, snap: true, lock_aspect: true,
             // Task 10: read here by settings.js's own wm:settings listener
             // AND by previews.js's (previews.js needs it to decide whether
             // each row's Never-minimize checkbox is enabled).

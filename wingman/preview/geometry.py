@@ -219,7 +219,7 @@ def parse_size(text):
     return w, h
 
 
-def lock_to_aspect(w, h, aspect, chrome, min_size):
+def lock_to_aspect(w, h, aspect, chrome, min_size, drive="w"):
     """The nearest window size whose PICTURE is *aspect* wide per unit tall.
 
     *chrome* is (dw, dh): the pixels the window spends on border and label
@@ -228,9 +228,20 @@ def lock_to_aspect(w, h, aspect, chrome, min_size):
     distorts the picture for everyone who turned labels off, silently,
     while the control reports success.
 
-    Both drag axes stay live: driving from width alone would make a
-    mostly-vertical drag do nothing, so the picture width is the larger of
-    the one implied by w and the one implied by h.
+    *drive* names the axis to believe, "w" or "h"; the other is derived.
+    It is the caller's job to decide, because only the caller knows which
+    way the pointer actually moved.
+
+    This used to take `pw = max(pw, ph * aspect)` instead -- believe
+    whichever axis implies the LARGER picture -- to stop a mostly-vertical
+    drag being inert. It did that, and in exchange it made SHRINKING
+    impossible: on a rect already at the locked ratio, which is every rect
+    after the first locked drag, a pure-horizontal drag left the untouched
+    height winning and a pure-vertical drag left the untouched width
+    winning. Either one returned the rect byte-identical, so the handle
+    was dead in both directions unless the user happened to drag the
+    diagonal. Growing worked from either axis throughout, which is what
+    made it read as a mystery rather than a limit.
 
     The floor is applied in PICTURE space and the height re-derived from
     it, so clamping cannot itself distort the result.
@@ -239,8 +250,8 @@ def lock_to_aspect(w, h, aspect, chrome, min_size):
     if not aspect or aspect <= 0:
         return max(min_size[0], w), max(min_size[1], h)
     pw = max(1, w - dw)
-    ph = max(1, h - dh)
-    pw = max(pw, ph * aspect)
+    if drive == "h":
+        pw = max(1, h - dh) * aspect
     pw = max(pw, min_size[0] - dw, 1)
     floor_h = max(1, min_size[1] - dh)
     if pw / aspect < floor_h:

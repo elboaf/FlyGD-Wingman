@@ -2047,3 +2047,26 @@ def test_record_client_sizes_samples_a_real_rect_and_skips_a_failed_probe():
     h._record_client_sizes(libs, clients)
 
     assert h.client_sizes() == {"Alice": (1920, 1080), "Cleo": (800, 600)}
+
+
+def test_lock_aspect_defaults_on_without_a_callable():
+    """The behaviour that predates the toggle: the handle has always held
+    the client's shape."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._locking_aspect() is True
+
+
+def test_lock_aspect_reads_the_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, lock_aspect=lambda: False)
+    assert h._locking_aspect() is False
+
+
+def test_a_raising_lock_aspect_callable_falls_back_to_locked():
+    """Runs on the preview thread inside _sweep and WM_APP_RESTYLE; a raise
+    here must not be the thing that kills the pump."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, lock_aspect=boom)
+    assert h._locking_aspect() is True

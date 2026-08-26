@@ -57,7 +57,14 @@ def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(
     dx, dy = current[0] - start[0], current[1] - start[1]
     w, h = rect.w + dx, rect.h + dy
     if aspect:
-        w, h = geometry.lock_to_aspect(w, h, aspect, chrome, min_size)
+        # The axis the pointer actually travelled furthest along is the one
+        # believed; the other is derived from it. Deciding here rather than
+        # in lock_to_aspect is not an arrangement of convenience -- this is
+        # the only place the deltas exist at all. The rect alone cannot say
+        # which way the user dragged, and guessing from it is what left the
+        # handle dead for every inward drag.
+        drive = "w" if abs(dx) >= abs(dy) else "h"
+        w, h = geometry.lock_to_aspect(w, h, aspect, chrome, min_size, drive)
         return rect._replace(w=w, h=h)
     return rect._replace(w=max(min_size[0], w), h=max(min_size[1], h))
 
@@ -247,6 +254,7 @@ class PreviewWindow:
     # Class-level so a preview created before the first restyle still has
     # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
     snap = True
+    lock_aspect = True
 
     def __init__(
         self,
@@ -261,6 +269,7 @@ class PreviewWindow:
         show_labels=True,
         opacity: int = 255,
         snap=True,
+        lock_aspect=True,
     ):
         self._libs = libs
         self.client = client
@@ -279,6 +288,11 @@ class PreviewWindow:
         # Set once from the host at creation; PreviewHost._restyle pushes
         # live updates, like show_labels and locked.
         self.snap = snap
+        # Whether the resize handle holds the client's shape. Read once per
+        # drag rather than per mouse-move, at the same point _start_aspect
+        # is sampled -- flipping the setting mid-drag must not change the
+        # gesture already in flight under the user's hand.
+        self.lock_aspect = lock_aspect
         self.selected = False
         # Whether the client owns the foreground right now, as opposed to
         # `selected` above, which is the sticky ring. Only the alerts read
@@ -328,6 +342,7 @@ class PreviewWindow:
         show_labels=True,
         opacity: int = 255,
         snap=True,
+        lock_aspect=True,
     ):
         self = cls(
             libs,
@@ -341,6 +356,7 @@ class PreviewWindow:
             show_labels,
             opacity,
             snap,
+            lock_aspect,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -672,7 +688,11 @@ class PreviewWindow:
             # has a documented stutter history and a WINGMAN_PREVIEW_PERF
             # harness built to measure it, and a syscall per mouse move is
             # the cost that harness exists to catch.
-            self._start_aspect = self._source_aspect()
+            # None is already the freeform path -- it is what a client at
+            # character select or one gone mid-drag produces -- so the
+            # unlock reuses it rather than adding a second branch to
+            # resize_result. The syscall is skipped entirely when unlocked.
+            self._start_aspect = self._source_aspect() if self.lock_aspect else None
             self._start_chrome = (BORDER * 2, BORDER * 2 + self._label_h())
             if msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt

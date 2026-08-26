@@ -147,6 +147,11 @@ def _preview_defaults() -> dict:
         # defaults_version bump: the migration exists for defaults that
         # CHANGE, and this one has no previous value to protect.
         "snap": True,
+        # On by default for the same reason as snap: it is what shipped.
+        # The drag handle has always held the client's shape, so a default
+        # of False would silently restyle every existing install's
+        # previews on upgrade.
+        "lock_aspect": True,
     }
 
 
@@ -257,6 +262,8 @@ def validated_preview(raw) -> dict:
         section["restore_preview_positions"] = raw["restore_preview_positions"]
     if isinstance(raw.get("snap"), bool):
         section["snap"] = raw["snap"]
+    if isinstance(raw.get("lock_aspect"), bool):
+        section["lock_aspect"] = raw["lock_aspect"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):

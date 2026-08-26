@@ -295,8 +295,10 @@ def test_lock_to_aspect_uses_the_chrome_it_is_given():
 
 
 def test_lock_to_aspect_lets_a_vertical_drag_do_something():
-    """Driving from width alone would make a downward drag inert."""
-    grown = g.lock_to_aspect(640, 900, 16 / 9, LABELS_ON, FLOOR)
+    """Driving from width alone would make a downward drag inert. The
+    axis is now the caller's to name rather than inferred from whichever
+    one implies the larger picture, but the guarantee is unchanged."""
+    grown = g.lock_to_aspect(640, 900, 16 / 9, LABELS_ON, FLOOR, drive="h")
     assert grown[0] > 640
 
 
@@ -313,3 +315,33 @@ def test_lock_to_aspect_without_an_aspect_only_floors():
     freeform behaviour, unchanged."""
     assert g.lock_to_aspect(500, 400, None, LABELS_ON, FLOOR) == (500, 400)
     assert g.lock_to_aspect(10, 10, None, LABELS_ON, FLOOR) == (120, 90)
+
+
+def test_lock_to_aspect_shrinks_from_a_horizontal_drag():
+    """Dragging the handle inward along X alone must make the window
+    smaller. Deriving the picture from `max(pw, ph * aspect)` made the
+    untouched height win every time, so a pure-horizontal shrink was a
+    dead handle -- the window did not move a pixel."""
+    w, h = g.lock_to_aspect(540, 392, 16 / 9, LABELS_ON, FLOOR, drive="w")
+    assert w < 640
+    pw, ph = _picture((w, h), LABELS_ON)
+    assert abs(pw / ph - 16 / 9) < 0.01
+
+
+def test_lock_to_aspect_shrinks_from_a_vertical_drag():
+    """The same dead handle in the other axis: dragging up alone left the
+    untouched width driving, so nothing happened."""
+    w, h = g.lock_to_aspect(640, 292, 16 / 9, LABELS_ON, FLOOR, drive="h")
+    assert h < 392
+    pw, ph = _picture((w, h), LABELS_ON)
+    assert abs(pw / ph - 16 / 9) < 0.01
+
+
+def test_lock_to_aspect_drive_picks_which_axis_is_believed():
+    """The whole point of the parameter: the same candidate rect resolves
+    two different ways depending on which axis the user actually dragged."""
+    by_w = g.lock_to_aspect(540, 392, 16 / 9, LABELS_ON, FLOOR, drive="w")
+    by_h = g.lock_to_aspect(540, 392, 16 / 9, LABELS_ON, FLOOR, drive="h")
+    assert by_w[0] == 540
+    assert by_h[1] == 392
+    assert by_w != by_h

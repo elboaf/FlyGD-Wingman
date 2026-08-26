@@ -455,6 +455,12 @@ def build_preview_host(state, api_box):
             # setting is changed while previews are running.
             return state.settings.get("preview", {}).get("snap", True) is not False
 
+        def lock_aspect():
+            # Live, same as snap: the checkbox must reach an open preview.
+            return (
+                state.settings.get("preview", {}).get("lock_aspect", True) is not False
+            )
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
@@ -477,6 +483,7 @@ def build_preview_host(state, api_box):
             never_minimize=never_minimize,
             locked=locked,
             snap=snap,
+            lock_aspect=lock_aspect,
         )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
