@@ -313,7 +313,7 @@
       // note stays hidden rather than opening a blank row: inert_note()'s
       // own docstring names "" as the shape the page handles.
       off.textContent = inertNotes.previews_off || '';
-      off.style.display = (state.enabled || !off.textContent) ? 'none' : '';
+      off.hidden = !!(state.enabled || !off.textContent);
     }
 
     // `true`, not state.enabled: the cycle chords are not characters and
@@ -343,7 +343,7 @@
     });
 
     var empty = WM.el('preview-binds-empty');
-    if (empty) { empty.style.display = list.length ? 'none' : ''; }
+    if (empty) { empty.hidden = list.length > 0; }
   }
 
   function send(next) {

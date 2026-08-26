@@ -592,6 +592,49 @@ def test_no_colour_is_decided_outside_the_root_token_block():
     )
 
 
+def test_nothing_hides_itself_with_an_inline_display_style():
+    """There are two hiding mechanisms and there must not be a third.
+
+    `hidden` is the one the page uses, and test_every_hidden_element_can
+    _actually_hide above checks that anything carrying it has an
+    author-rule override wherever its own selector sets a display -- the
+    trap DESIGN.md names in six places.
+
+    Five elements hid with `style="display:none"` plus `el.style.display =
+    'none' | ''` instead. They WORKED, which is why nothing noticed: .hint
+    sets no display, so nothing had to be overridden. What they were not
+    was covered -- the guard above inspects the `hidden` attribute, so an
+    inline-styled element is invisible to it, and two of the five were in
+    the Alerts card. Give .hint a display one day and the guard would stay
+    green while those five stopped hiding.
+
+    Both halves are pinned: the attribute in markup, and the property in
+    the modules, so a module cannot reintroduce it on an element that
+    starts out correct.
+    """
+    assert 'style="display:none"' not in HTML, (
+        "an element hides with an inline display style; use the `hidden` "
+        "attribute so test_every_hidden_element_can_actually_hide sees it"
+    )
+    for name in (
+        "alerts.js",
+        "previews.js",
+        "settings.js",
+        "bookmarks.js",
+        "skills.js",
+        "list.js",
+        "panel.js",
+        "app.js",
+        "firstrun.js",
+        "evesettings.js",
+    ):
+        src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
+        assert ".style.display" not in src, (
+            f"{name} hides an element by writing style.display; set "
+            f"`el.hidden` instead so the [hidden] guard covers it"
+        )
+
+
 def test_a_readiness_state_is_not_painted_in_the_error_colour():
     """`Missing` / `Not trained` are facts about a character, not failures.
 

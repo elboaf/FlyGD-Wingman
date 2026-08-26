@@ -99,7 +99,7 @@
   function showDepends(enabled) {
     if (!depends) { return; }
     setText(depends, enabled ? '' : DEPENDS);
-    depends.style.display = enabled ? 'none' : '';
+    depends.hidden = enabled;
   }
 
   function eventRow(id) {
@@ -378,10 +378,10 @@
   // is DOING; the controls belong to whoever last touched them.
   function render(state, controls) {
     if (offBanner) {
-      offBanner.style.display = state.previews_enabled ? 'none' : '';
+      offBanner.hidden = !!state.previews_enabled;
     }
     if (folderBanner) {
-      folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
+      folderBanner.hidden = !!state.gamelogs_folder;
     }
     setText(healthLine, healthText(state));
     // Read from get_alert_state's own `enabled`, not the checkbox: the box

@@ -589,7 +589,7 @@
              is empty, so blank-until-the-payload-lands is the designed
              state and not a gap. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-off" style="display:none"></span></div>
+          <span class="hint" id="preview-binds-off" hidden></span></div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
@@ -624,11 +624,11 @@
                true, so the state clause was the one part carrying nothing
                new; what is left is the consequence and the way out, which
                is the shape ui/copy.py's INERT_NOTES keeps. -->
-          <span class="hint" id="alerts-previews-off" style="display:none">
+          <span class="hint" id="alerts-previews-off" hidden>
             Alerts pulse a preview, so they need previews switched on. The
             switch is in the card above.</span></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-no-folder" style="display:none">
+          <span class="hint" id="alerts-no-folder" hidden>
             Your EVE Gamelogs folder is not set. Alerts cannot run without
             it &mdash; set it under Settings &rsaquo; Folders.</span></div>
         <div class="row">
@@ -652,7 +652,7 @@
              option rendered as a peer of the switch it depends on, with
              nothing saying so. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-depends" style="display:none"></span></div>
+          <span class="hint" id="alerts-depends" hidden></span></div>
         <div class="row">
                     <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
                is {combat, warp_scramble}; decloak is excluded there
