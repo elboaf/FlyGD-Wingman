@@ -190,6 +190,14 @@ somewhere stale and nothing on that screen is worth reviewing.
 
 ## Look and feel
 
+- [ ] **The screenshot shooter produces a complete set.** Run
+      `scripts/shoot_screens.py` with Wingman idle. Expected: `9/9 screens`
+      (or a `4/9` plus an explicit "EVE gate off, skipped:" line), every PNG
+      showing populated content, `manifest.json` naming the checkout you
+      meant to shoot, and the previously-running Wingman restored. A blank
+      screen in the set is a real defect, not a capture artifact -- one bad
+      handler name silently disables every registration below it.
+
 ### Window chrome
 - [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
       bar is gone; dragging is the page's `pywebview-drag-region`. Grab the
