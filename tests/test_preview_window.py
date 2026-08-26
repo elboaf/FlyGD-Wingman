@@ -492,3 +492,85 @@ def test_a_real_drag_release_reports_the_rect_instead_of_activating(monkeypatch)
 
     assert activated == []
     assert len(reported) == 1
+
+
+# --- the ring and the foreground are separate flags --------------------------
+#
+# They were one flag until a sticky ring was asked for. `selected` draws
+# the ring and now survives tabbing out to a browser; `focused` means the
+# client really does hold the foreground, and it alone decides whether an
+# alert counts as seen. Conflating them again is exactly the regression
+# these tests exist to catch: the ring would go back to blinking off
+# whenever you left EVE, or a persistent alert on the client you last used
+# would expire unread while you were reading Discord.
+
+
+class _FakeAlert:
+    color = "#ff4d4d"
+    # Persistent: alerts_state.acknowledge reads this, and set_focused(True)
+    # runs the real acknowledgement path against whatever arm returned.
+    expires = None
+
+
+def _bare_window(**kw):
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    return window.PreviewWindow(
+        None, client, R, lambda c: None, lambda *a: None, list, lambda: R, **kw
+    )
+
+
+def test_the_ring_alone_does_not_acknowledge_an_alert(monkeypatch):
+    """Ringing a preview is now just "this is the client you last used" and
+    says nothing about whether anyone looked at it."""
+    w = _bare_window()
+    monkeypatch.setattr(window.PreviewWindow, "redraw", lambda self, force=False: None)
+    acked = []
+    monkeypatch.setattr(
+        window.PreviewWindow, "acknowledge_alert", lambda self: acked.append(True)
+    )
+
+    w.set_selected(True)
+
+    assert w.selected is True
+    assert acked == []
+
+
+def test_taking_the_foreground_acknowledges_a_persistent_alert(monkeypatch):
+    """The acknowledgement moved off set_selected, and this is where it
+    landed. It has to stay the single choke point every route to the
+    client passes through -- clicking the preview, a cycle keybind and
+    plain alt-tab all arrive as a foreground change."""
+    w = _bare_window()
+    acked = []
+    monkeypatch.setattr(
+        window.PreviewWindow, "acknowledge_alert", lambda self: acked.append(True)
+    )
+
+    w.set_focused(True)
+    w.set_focused(True)  # idempotent: a re-sweep must not re-acknowledge
+
+    assert w.focused is True
+    assert acked == [True]
+
+
+def test_an_alert_on_a_ringed_but_unfocused_client_is_persistent(monkeypatch):
+    """`target_is_selected` tells alerts/state.py "you are already looking
+    at this, so let it expire". Feeding it the sticky ring would mean the
+    client you last used never raises a persistent alert again."""
+    w = _bare_window()
+    monkeypatch.setattr(window.PreviewWindow, "redraw", lambda self, force=False: None)
+    monkeypatch.setattr(window.PreviewWindow, "_rebuild_frames", lambda self: None)
+    monkeypatch.setattr(window.PreviewWindow, "_set_inset", lambda self, px: None)
+    seen = []
+    monkeypatch.setattr(
+        window.alerts_state,
+        "arm",
+        lambda *a, **kw: seen.append(kw["target_is_selected"]) or _FakeAlert(),
+    )
+
+    w.set_selected(True)  # ringed, but the foreground is a browser
+    w.arm_alert("combat", {"persist_until_selected": True}, 0.0)
+    w.set_focused(True)  # now you actually switched to it
+    w.arm_alert("combat", {"persist_until_selected": True}, 0.0)
+
+    assert seen == [False, True]

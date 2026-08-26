@@ -269,6 +269,10 @@ class PreviewWindow:
         # live-update path that lets this change on an already-open window.
         self.opacity = opacity
         self.selected = False
+        # Whether the client owns the foreground right now, as opposed to
+        # `selected` above, which is the sticky ring. Only the alerts read
+        # it; see set_focused.
+        self.focused = False
         self._perf = None
         # Last key rendered; None forces the first draw.
         self._chrome_cache_key = None
@@ -406,19 +410,41 @@ class PreviewWindow:
         self._chrome_cache_key = key
 
     def set_selected(self, selected: bool) -> None:
+        """Draw or drop the ring. Cosmetic only -- see set_focused for the
+        half of this that used to live here."""
         if selected == self.selected:
             return
         self.selected = selected
-        # Selecting the client is what acknowledges a persistent alert, and
-        # this is the ONLY place that catches every route to selection:
-        # clicking the preview, a cycle keybind, and plain alt-tab all end
-        # up here through the foreground hook. Acknowledging in the click
-        # handler alone would leave a ring pulsing forever for anyone who
-        # switched clients any other way.
-        if selected:
-            self.acknowledge_alert()
         # Already part of _chrome_key() above, so this repaints.
         self.redraw()
+
+    def set_focused(self, focused: bool) -> None:
+        """Record whether this client actually owns the foreground.
+
+        Nothing about this is visible: the ring follows `selected`, which
+        is sticky and stays on the last client used. What hangs off this
+        flag is the alerts, and both directions matter.
+
+        Taking the foreground is what acknowledges a persistent alert, and
+        this is the ONLY place that catches every route to a client:
+        clicking the preview, a cycle keybind, and plain alt-tab all end up
+        here through the foreground hook. Acknowledging in the click
+        handler alone would leave a ring pulsing forever for anyone who
+        switched clients any other way.
+
+        Losing it matters just as much. This flag is what arm_alert reads
+        as "you are already looking at this client, so the alert need not
+        persist" -- so it has to go false the moment you tab out to a
+        browser, or an alert on the client you last used would count as
+        seen and expire while you were reading something else. The ring
+        was that signal until it went sticky; splitting the two is what
+        let it.
+        """
+        if focused == self.focused:
+            return
+        self.focused = focused
+        if focused:
+            self.acknowledge_alert()
 
     # -- alerts ----------------------------------------------------------
     def _set_inset(self, px: int) -> None:
@@ -476,7 +502,14 @@ class PreviewWindow:
             # `events` in the alerts section, and AlertService merges it
             # into the spec it dispatches so this stays one dict.
             persist=bool(spec.get("persist_until_selected")),
-            target_is_selected=self.selected,
+            # `focused`, NOT `selected`: the ring is sticky and survives a
+            # trip to a browser, and passing it here would make every alert
+            # on the client you last used non-persistent -- expiring in its
+            # 1200ms while you are looking at something else. The setting is
+            # still named persist_until_selected in settings and on the
+            # Alerts card; "selected" there means "you switched to it",
+            # which is this flag.
+            target_is_selected=self.focused,
         )
         # Size, label and label height as well as colour: the frames ARE a
         # bitmap, and _chrome_key already treats (w, h, label, show_labels)
