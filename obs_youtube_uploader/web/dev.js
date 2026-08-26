@@ -490,12 +490,26 @@
       labels: bookmarkLabels,
       order: bookmarkBinds,
       groups: bookmarkGroups,
-      // C6's mirror of `bookmark_chords` on the Previews payload below, and
-      // deliberately the SAME chord: 'Ctrl+Alt+1' is bound to a character
-      // there, so the harness shows the latent mark on both screens at once
-      // rather than only on the one whose lane happened to be looking.
-      // Latent, because the previews fixture below ships enabled: false.
-      preview_chords: { active: [], latent: ['Ctrl+Alt+1'] },
+      // C6's counterpart of `bookmark_chords` on the Previews payload
+      // below, and deliberately the SAME chord: 'Ctrl+Alt+1' is bound to a
+      // character there, so the harness shows the collision on both
+      // screens at once rather than only on the one whose lane happened to
+      // be looking.
+      //
+      // ACTIVE, because that is what Api._preview_chords would return for
+      // the fixture below: it ships `enabled: true` with 'Ctrl+Alt+1' in
+      // its `registration` map as `true`, so Windows is holding the chord
+      // and the bookmark bind genuinely cannot fire. The first draft said
+      // latent under a comment claiming previews shipped off, which was
+      // simply wrong about the fixture two hundred lines down -- and a
+      // harness whose payload contradicts its own neighbouring payload is
+      // the failure this file's tests exist to prevent, just spread across
+      // two calls where no test could see it.
+      //
+      // The dim/latent branch is therefore NOT covered here. It was
+      // verified in the real window instead, by binding Ctrl+Alt+F9 on
+      // both sides with previews off.
+      preview_chords: { active: ['Ctrl+Alt+1'], latent: [] },
       windows: ['EVE - Aiga Otsolen', 'EVE - Zuelo Parvi'],
       // Keyed by the parsed AHK string, valued with every bind id claiming
       // it -- bookmarks.collisions() only returns entries of length > 1.
@@ -590,9 +604,13 @@
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
       never_minimize: ['Tanuki Solette'],
-      // Latent rather than active, for the same consistency: bookmarks
-      // register nothing while this chord could still be taken later.
-      bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }
+      // ACTIVE, matching what Api._bookmark_chords would return for the
+      // get_bookmarks fixture above: it ships `enabled: true` with
+      // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
+      // bookmark chord registered. This said `latent` under a comment
+      // reasoning that "bookmarks register nothing" -- true of no fixture
+      // in this file. Caught by review while C6 was adding the other half.
+      bookmark_chords: { active: ['Ctrl+Alt+1'], latent: [] }
     });
   };
 

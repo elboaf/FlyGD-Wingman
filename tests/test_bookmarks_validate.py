@@ -214,3 +214,32 @@ def test_labels_that_share_no_token_fall_back_to_one_flat_group(monkeypatch):
     assert len(groups) == 1
     assert groups[0]["name"] == ""
     assert groups[0]["ids"] == list(bookmarks.BIND_IDS)
+
+
+def test_a_group_marker_that_stops_being_contiguous_cannot_reorder_the_list(
+    monkeypatch,
+):
+    """CodeRabbit caught this, and it is worth the test rather than only the
+    fix: the first version accumulated into one bucket per group NAME, so a
+    fork that renamed only its LAST tag -- leaving it matching neither
+    marker -- dropped that id into the unnamed bucket the first action had
+    opened, and it then rendered fourth, ahead of every finisher.
+
+    BIND_IDS is the route's display order (see its own comment), so a
+    silent reorder is a user-visible defect with nothing on screen to show
+    it happened. Segmenting contiguously makes the output BIND_IDS with
+    dividers inserted and nothing else, which is what this asserts."""
+    labels = dict(bookmarks.BIND_LABELS)
+    labels["FinC"] = "Critical"  # no "Finisher: " and no " Tag"
+    monkeypatch.setattr(bookmarks, "BIND_LABELS", labels)
+
+    groups = bookmarks.bind_groups()
+    assert [bid for group in groups for bid in group["ids"]] == list(bookmarks.BIND_IDS)
+    # The renamed tag opens its OWN trailing unnamed group rather than
+    # joining the leading one.
+    assert [(g["name"], len(g["ids"])) for g in groups] == [
+        ("", 4),
+        ("Finishers", 10),
+        ("Tags", 3),
+        ("", 1),
+    ]

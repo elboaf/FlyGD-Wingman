@@ -743,6 +743,67 @@ def test_bookmark_chords_are_active_only_when_they_are_registered(tmp_path):
     assert chords == {"active": [], "latent": ["Ctrl+Q"]}
 
 
+def test_preview_chords_are_active_only_when_windows_actually_holds_them(tmp_path):
+    """C6's half of the collision, and deliberately NOT inferred the way
+    _bookmark_chords infers its own. A preview chord is a RegisterHotKey, so
+    the host can say whether Windows granted it -- and a chord Windows
+    REFUSED takes nothing, so telling the Bookmarks screen that a preview
+    keybind has stolen that bind would be a false accusation about a bind
+    that is broken for an entirely different reason.
+
+    Three outcomes: registered -> active; host not holding chords -> latent;
+    running-but-refused (or not yet reported) -> neither, because both
+    sentences the page could say would be untrue.
+    """
+    fake_host = _FakeHost()
+    api = make_api(tmp_path, preview_host=fake_host)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {"Alice": "Ctrl+Alt+1"},
+            "cycle_next": "Ctrl+Alt+Right",
+            "cycle_prev": "",
+        }
+    }
+    # get_bookmarks reads its own section too; this test is about the
+    # preview half of the payload, so the bookmark half is minimal.
+    api._state.settings["eve_bookmarks"] = {
+        "enabled": False,
+        "keybinds": {},
+        "windows": {},
+    }
+
+    fake_host.is_running = True
+    fake_host.status = {"Ctrl+Alt+1": True, "Ctrl+Alt+Right": True}
+    assert api.get_bookmarks()["preview_chords"] == {
+        "active": ["Ctrl+Alt+1", "Ctrl+Alt+Right"],
+        "latent": [],
+    }
+
+    # Windows refused one of them: it holds nothing, so it takes nothing.
+    fake_host.status = {"Ctrl+Alt+1": False, "Ctrl+Alt+Right": True}
+    assert api.get_bookmarks()["preview_chords"] == {
+        "active": ["Ctrl+Alt+Right"],
+        "latent": [],
+    }
+
+    # Host stopped: every configured chord is latent, because turning
+    # previews back on WOULD take them.
+    fake_host.is_running = False
+    assert api.get_bookmarks()["preview_chords"] == {
+        "active": [],
+        "latent": ["Ctrl+Alt+1", "Ctrl+Alt+Right"],
+    }
+
+    # No host at all reports the same shape as a stopped one.
+    bare = make_api(tmp_path)
+    bare._state.settings["eve_bookmarks"] = {
+        "enabled": False,
+        "keybinds": {},
+        "windows": {},
+    }
+    assert bare.get_bookmarks()["preview_chords"] == {"active": [], "latent": []}
+
+
 def test_bookmark_chords_are_rendered_in_gesture_display_form(tmp_path):
     """The two features store different notation on purpose, so the clash
     check needs a common form or it silently never matches."""

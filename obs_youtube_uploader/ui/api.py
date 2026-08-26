@@ -2894,20 +2894,38 @@ class Api:
     def _preview_chords(self) -> dict:
         """Preview chords, split by whether they are registered right now.
 
-        The mirror of _bookmark_chords() -- read that docstring for why the
-        collision exists at all and why the split is not a filter. This is
-        the same fact told from the other end: there, a bookmark chord that
-        a preview will take; here, the preview chords that take one.
+        The counterpart of _bookmark_chords() -- read that docstring for why
+        the collision exists at all and why the split is not a filter. This
+        is the same fact told from the other end: there, a bookmark chord
+        that a preview will take; here, the preview chords that take one.
 
-        "active" means previews are on, so Windows is holding these globally
-        and the matching bookmark bind cannot fire while EVE is focused.
-        "latent" means previews are off, so nothing is taken yet -- turning
-        them on would, which is exactly the state that leaves a user with a
-        bind that silently stopped working and nothing on screen about it.
+        NOT a straight mirror, and the asymmetry is the point rather than an
+        oversight. _bookmark_chords() has to infer from configuration --
+        AHK's `#HotIf WinActive` hotkey is not a RegisterHotKey
+        registration, so Windows can report nothing about it and "enabled,
+        with a window ticked" is the closest it can get. A preview chord IS
+        a RegisterHotKey, so the host can say whether Windows actually
+        granted it, and inferring from `preview.enabled` here would claim a
+        bookmark had lost its key to a chord Windows refused.
+
+        Three outcomes, not two, which is the same three previews.js's
+        clashes() already distinguishes and for the same reason:
+
+        - registered right now -> "active". The bookmark cannot fire while
+          EVE is focused.
+        - the host is not holding chords at all (previews off, or stopped)
+          -> "latent". Nothing is taken yet and turning previews on would
+          take it, which is exactly what the page says.
+        - the host IS running and this chord is refused, or has not been
+          reported on yet -> NEITHER. We cannot say a preview takes the key,
+          and we cannot say turning previews on would, because they are on.
+          An unmarked bind is the honest answer; previews.js surfaces the
+          refusal on its own screen, where the user can act on it.
 
         Compared in display form, the common ground the two notations meet
-        on: preview gestures are STORED in display form
-        (preview/gestures.py), which is why nothing is rendered here.
+        on: preview gestures are STORED in display form -- settings.py runs
+        every one through preview.gestures.display() on load -- which is why
+        nothing is rendered here.
         """
         preview = self._state.settings.get("preview") or {}
         hotkeys = preview.get("hotkeys") or {}
@@ -2920,10 +2938,16 @@ class Api:
             ]
             if chord
         }
-        live = bool(preview.get("enabled"))
+        host = self._preview_host
+        # is_running, not `host is not None` -- the same window between
+        # stop() and _teardown that get_preview_hotkey_state() gates on.
+        live = host is not None and host.is_running
+        if not live:
+            return {"active": [], "latent": sorted(chords)}
+        status = host.hotkey_status()
         return {
-            "active": sorted(chords) if live else [],
-            "latent": [] if live else sorted(chords),
+            "active": sorted(c for c in chords if status.get(c) is True),
+            "latent": [],
         }
 
     def save_bookmarks(self, section) -> dict:
