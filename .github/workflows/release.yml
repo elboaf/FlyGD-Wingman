@@ -68,6 +68,22 @@ jobs:
           # The OAuth app is PUBLISHED (production) and Google-verified,
           # so anyone can sign in with no warning interstitial.
           prerelease: false
+          # Until this line, a release body was the static blurb below and
+          # nothing else: the notes never said what changed in the version
+          # being downloaded. GitHub builds the list from the titles of the
+          # PRs merged since the previous release, which in this repo are
+          # already written as prose sentences, and appends a compare link.
+          # Nothing has to be maintained by hand for that to work, which is
+          # why there is no CHANGELOG.md to keep in sync.
+          #
+          # `body` below is pre-pended to the generated notes rather than
+          # replaced, so the unsigned-installer warning stays at the top
+          # where someone about to download needs to read it.
+          #
+          # The range is measured from the previous *release*, not the
+          # previous tag. A tag pushed without a release being created would
+          # silently make the next release's list span two versions.
+          generate_release_notes: true
           body: |
             [FlyGD Wingman](https://wingman.zoolanders.vip/) — your OBS
             recording wingman. Watches your OBS recording folder, and uploads
