@@ -476,6 +476,105 @@ class SkillsController:
             return False
         return True
 
+    def _rewrite_group_locked(self, target: str, replacement: str) -> "tuple | None":
+        """Point every member of *target* at *replacement*. None if unheld.
+
+        Returns the undo record -- the (character, previous group) pairs
+        plus the previous selection -- so the caller can restore ALL of it
+        on a save failure. Membership and selected_group are two
+        representations of one name; restoring one without the other
+        recreates the dangling pointer this function exists to avoid.
+        """
+        key = target.casefold()
+        touched = [ch for ch in self._state.characters if ch.group.casefold() == key]
+        if not touched:
+            return None
+        # Which spelling the members end up holding. A rename that differs
+        # from the current name only in case is a deliberate RESPELL, so it
+        # wins outright. Any other rename onto a name another group already
+        # holds is a MERGE, and must adopt that group's existing spelling --
+        # set_character_group already normalises this way, and without it a
+        # merge leaves two spellings on the roster and _groups_locked shows
+        # whichever character happens to come first, so the rail's label
+        # would depend on roster order.
+        if replacement.casefold() == key:
+            spelling = replacement
+        else:
+            spelling = self._existing_spelling_locked(replacement)
+        undo = [(ch, ch.group) for ch in touched]
+        for ch in touched:
+            ch.group = spelling
+        previous_selection = self._state.selected_group
+        if previous_selection.casefold() == key:
+            self._state.selected_group = spelling
+        return (undo, previous_selection)
+
+    def _undo_group_rewrite_locked(self, record) -> None:
+        undo, previous_selection = record
+        for ch, previous in undo:
+            ch.group = previous
+        self._state.selected_group = previous_selection
+
+    def rename_group(self, old_name, new_name) -> bool:
+        """Rename a group, moving its members and the selection together.
+
+        Renaming onto a name that already has members MERGES the two, which
+        is the honest reading of the operation -- the page confirms it
+        first. A rename differing only in case is not a merge: it is one
+        group respelled, and the page shows no confirmation for it.
+        """
+        target = self._clean_group_name(old_name)
+        replacement = self._clean_group_name(new_name)
+        if target is None or replacement is None:
+            logger.warning("Refusing an over-long group name")
+            return False
+        if not target or not replacement:
+            # Delete is its own command with its own confirmation; a rename
+            # that silently became one would bypass it.
+            return False
+        with self._lock:
+            record = self._rewrite_group_locked(target, replacement)
+            if record is None:
+                return False
+            saved = self._save_locked()
+            if not saved:
+                self._undo_group_rewrite_locked(record)
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The group was not renamed.",
+            )
+            return False
+        return True
+
+    def delete_group(self, name) -> bool:
+        """Remove a group by clearing it from every member.
+
+        D2: a group exists exactly as long as someone is in it, so there is
+        nothing else to delete. The selection goes with it.
+        """
+        target = self._clean_group_name(name)
+        if target is None or not target:
+            return False
+        with self._lock:
+            record = self._rewrite_group_locked(target, "")
+            if record is None:
+                return False
+            saved = self._save_locked()
+            if not saved:
+                self._undo_group_rewrite_locked(record)
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The group was not deleted.",
+            )
+            return False
+        return True
+
     # ----- persistence ------------------------------------------------
 
     def _save_locked(self) -> bool:

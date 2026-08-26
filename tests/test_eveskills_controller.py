@@ -1936,3 +1936,153 @@ def test_a_failed_save_rolls_the_selection_back(tmp_path, monkeypatch):
 
     assert controller.state_payload()["selected_group"] == ""
     assert alerts and alerts[-1][0] == "warning"
+
+
+def _seeded(tmp_path, characters, selected_group=""):
+    seed = state_mod.SkillsState(
+        characters=list(characters), selected_group=selected_group
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    return build(tmp_path)
+
+
+def test_renaming_moves_every_member(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")]
+    )
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Nightcrew", "member_count": 2}
+    ]
+
+
+def test_renaming_the_selected_group_carries_the_selection(tmp_path):
+    """Membership and selected_group are two representations of one name.
+    Rewriting only the members would leave the selection pointing at a name
+    nobody holds, and the screen would drop to All mid-rename."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is True
+
+    assert controller.state_payload()["selected_group"] == "Nightcrew"
+
+
+def test_renaming_onto_an_existing_group_merges_them(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.rename_group("Wolfpack", "Mining") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 2}
+    ]
+
+
+def test_a_case_only_rename_rewrites_the_spelling_for_everyone(tmp_path):
+    """Not a merge: one group, respelled. The page shows no merge confirm
+    for this, so the controller must not treat it as joining a second."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")]
+    )
+
+    assert controller.rename_group("Wolfpack", "WOLFPACK") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "WOLFPACK", "member_count": 2}
+    ]
+
+
+def test_a_merge_adopts_the_surviving_groups_spelling(tmp_path):
+    """Renaming onto `mining` when the roster holds `Mining` must not leave
+    two spellings behind. _groups_locked collapses them into one row and
+    keeps whichever it meets first, so without normalising here the rail's
+    label would depend on the order characters happen to sit in."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.rename_group("Wolfpack", "mining") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 2}
+    ]
+
+
+def test_renaming_a_group_nobody_holds_is_refused(tmp_path):
+    controller, _, _ = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.rename_group("Mining", "Nightcrew") is False
+
+
+def test_renaming_to_an_empty_name_is_refused(tmp_path):
+    """Delete is its own command with its own confirmation. A rename that
+    silently became one would bypass it."""
+    controller, _, _ = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.rename_group("Wolfpack", "   ") is False
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 1}
+    ]
+
+
+def test_deleting_clears_every_member_and_the_selection(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path,
+        [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")],
+        selected_group="Wolfpack",
+    )
+
+    assert controller.delete_group("Wolfpack") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == []
+    assert payload["selected_group"] == ""
+    assert [c["group"] for c in payload["characters"]] == ["", ""]
+
+
+def test_deleting_leaves_other_groups_alone(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.delete_group("Wolfpack") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 1}
+    ]
+
+
+def test_a_failed_rename_restores_members_and_selection_together(tmp_path, monkeypatch):
+    """A partial rollback is the same dangling pointer arrived at from the
+    other direction, so both fields are asserted."""
+    controller, _, alerts = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is False
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert payload["selected_group"] == "Wolfpack"
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def test_a_failed_delete_restores_members_and_selection_together(tmp_path, monkeypatch):
+    controller, _, alerts = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.delete_group("Wolfpack") is False
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert payload["selected_group"] == "Wolfpack"
+    assert alerts and alerts[-1][0] == "warning"
