@@ -15,6 +15,8 @@ import pytest
 
 from wingman.alerts import patterns
 
+CHARACTER = "Torvin Wexley"
+
 DAMAGE = (
     "[ 2026.08.24 20:42:50 ] (combat) <color=0xffcc0000><b>142</b> "
     "<color=0xff7fffff><font size=10>from</font> "
@@ -38,6 +40,45 @@ SCRAMBLE = (
     "<color=0xffffffff><b><color=0xffffffff><fontsize=12>Bob Smith [BURN]</color>"
     "<color=0xfff0f000> Rifter</color><color=0xffffffff></b> "
     "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>you!"
+)
+# EVE writes a warp-attempt notification into EVERY fleet member's
+# gamelog, naming the real source and target -- neither of whom need be
+# the log's own pilot. Confirmed against a live install: one disruption
+# line appeared verbatim in four different characters' logs, none of them
+# either party. Without an ownership gate this is ~80% of all warp lines
+# and every preview on the screen flashes for a fight none of them is in.
+THIRD_PARTY_SCRAMBLE = (
+    "[ 2026.08.24 20:43:05 ] (combat) <color=0xffffffff>"
+    "<b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> "
+    "<color=0xffffffff><b><color=0xffffffff><fontsize=12>Bob Smith [BURN]</color>"
+    "<color=0xfff0f000> Claw</color><color=0xffffffff></b> "
+    "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    "<color=0xffffffff><fontsize=12>Jane Doe [KVOS]</color>"
+    "<color=0xfff0f000> Loki</color><color=0xffffffff>"
+)
+# The pilot doing the scrambling is rendered as a literal "you" in the
+# source position. This is the warp-line twin of OUTGOING above.
+OUTGOING_SCRAMBLE = (
+    "[ 2026.08.24 20:43:06 ] (combat) <color=0xffffffff>"
+    "<b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> "
+    "<color=0xffffffff><b>you</b> "
+    "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    "<color=0xffffffff><fontsize=12>Jane Doe [KVOS]</color>"
+    "<color=0xfff0f000> Loki</color><color=0xffffffff>"
+)
+# The second rendering of "you are the one being held": the target is
+# spelled out by name instead of as "you!". Both shapes are real -- this
+# one is what tests/fixtures/gamelogs/npc_scramble.txt carries, and the
+# live corpus has it inside the named pilot's OWN log. A gate that only
+# looked for "you!" would drop it and go silent during a real tackle.
+SELF_NAMED_SCRAMBLE = (
+    "[ 2026.08.24 20:43:07 ] (combat) <color=0xffffffff>"
+    "<b>Warp scramble attempt</b> <color=0x77ffffff><font size=10>from</font> "
+    "<color=0xffffffff><b><color=0xffffffff><fontsize=12>Bob Smith [BURN]</color>"
+    "<color=0xfff0f000> Rifter</color><color=0xffffffff></b> "
+    "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    "<color=0xffffffff><fontsize=12>" + CHARACTER + " [OXWLD]</color>"
+    "<color=0xfff0f000> Drekavac</color><color=0xffffffff>"
 )
 DECLOAK = (
     "[ 2026.08.24 20:43:10 ] (notify) Your cloak deactivates due to a nearby object."
@@ -85,36 +126,39 @@ UNRESOLVED_PLAYER_SCRAMBLE = (
     ],
 )
 def test_each_shape_matches_its_event(line, event):
-    assert patterns.match_line(line).event == event
+    assert patterns.match_line(line, CHARACTER).event == event
 
 
 def test_damage_and_miss_are_one_event():
     """TriffView splits these because the two lines look nothing alike --
     a colour code versus a literal. That is a parsing detail; a pilot being
     shot at and missed is being shot at."""
-    assert patterns.match_line(DAMAGE).event == patterns.match_line(MISS).event
+    assert (
+        patterns.match_line(DAMAGE, CHARACTER).event
+        == patterns.match_line(MISS, CHARACTER).event
+    )
 
 
 def test_outgoing_damage_does_not_alert():
     """The colour code is the whole discriminator. Without it, every shot
     you fire alerts you about yourself, continuously, during every fight."""
-    assert patterns.match_line(OUTGOING) is None
+    assert patterns.match_line(OUTGOING, CHARACTER) is None
 
 
 @pytest.mark.parametrize("line", ["", "   ", "[ 2026.08.24 20:42:50 ] (None) x"])
 def test_uninteresting_lines_return_none(line):
-    assert patterns.match_line(line) is None
+    assert patterns.match_line(line, CHARACTER) is None
 
 
 def test_source_is_extracted_without_markup():
-    assert patterns.match_line(DAMAGE).source == "Bob Smith[BURN](Rifter)"
+    assert patterns.match_line(DAMAGE, CHARACTER).source == "Bob Smith[BURN](Rifter)"
 
 
 def test_scramble_source_is_extracted_without_markup():
     """The real corpus's first surprise: every warp-scramble line's source
     came back empty until _SOURCE_RE stopped mistaking <fontsize=12> for
     the <font ...> terminator it was looking for."""
-    assert patterns.match_line(SCRAMBLE).source == "Bob Smith [BURN] Rifter"
+    assert patterns.match_line(SCRAMBLE, CHARACTER).source == "Bob Smith [BURN] Rifter"
 
 
 def test_miss_source_is_preserved():
@@ -123,9 +167,10 @@ def test_miss_source_is_preserved():
     ever carries a corp ticket or hull. That is now safe to hand to
     is_likely_npc, because it is a closed allowlist rather than "bare
     means NPC": see the corresponding assertions below."""
-    assert patterns.match_line(MISS).source == "Bob Smith[BURN](Rifter)"
+    assert patterns.match_line(MISS, CHARACTER).source == "Bob Smith[BURN](Rifter)"
     assert (
-        patterns.match_line(DRONE_MISS).source == "Hammerhead II belonging to Bob Smith"
+        patterns.match_line(DRONE_MISS, CHARACTER).source
+        == "Hammerhead II belonging to Bob Smith"
     )
 
 
@@ -133,8 +178,10 @@ def test_an_npc_miss_is_classified_as_npc_but_a_player_miss_is_not():
     """The load-bearing pair for preserving the miss source: an NPC miss
     must still be filterable, and a player's miss (bracket-less, same
     shape as the NPC's) must not be swallowed alongside it."""
-    assert patterns.is_likely_npc(patterns.match_line(NPC_MISS).source) is True
-    assert patterns.is_likely_npc(patterns.match_line(MISS).source) is False
+    assert (
+        patterns.is_likely_npc(patterns.match_line(NPC_MISS, CHARACTER).source) is True
+    )
+    assert patterns.is_likely_npc(patterns.match_line(MISS, CHARACTER).source) is False
 
 
 def test_strip_markup_drops_the_timestamp():
@@ -178,18 +225,25 @@ def test_npc_heuristic(source, npc):
 
 
 def test_npc_damage_fixture_is_classified_as_npc():
-    assert patterns.is_likely_npc(patterns.match_line(NPC_DAMAGE).source) is True
+    assert (
+        patterns.is_likely_npc(patterns.match_line(NPC_DAMAGE, CHARACTER).source)
+        is True
+    )
 
 
 def test_unresolved_player_is_not_classified_as_an_npc():
     """The corpus's central finding: a real player attacking with no
     corp/hull at all must still survive the filter."""
     assert (
-        patterns.is_likely_npc(patterns.match_line(UNRESOLVED_PLAYER_DAMAGE).source)
+        patterns.is_likely_npc(
+            patterns.match_line(UNRESOLVED_PLAYER_DAMAGE, CHARACTER).source
+        )
         is False
     )
     assert (
-        patterns.is_likely_npc(patterns.match_line(UNRESOLVED_PLAYER_SCRAMBLE).source)
+        patterns.is_likely_npc(
+            patterns.match_line(UNRESOLVED_PLAYER_SCRAMBLE, CHARACTER).source
+        )
         is False
     )
 
@@ -206,6 +260,44 @@ def test_events_and_severity_agree():
     assert set(patterns.EVENTS) == set(patterns.SEVERITY)
 
 
+def test_a_third_party_scramble_does_not_alert():
+    """The reported bug. EVE broadcasts a warp-attempt line to every
+    fleet member's log, so without this gate one tackle lights up every
+    preview on the screen -- measured at ~80% of all warp lines in a live
+    Gamelogs folder."""
+    assert patterns.match_line(THIRD_PARTY_SCRAMBLE, CHARACTER) is None
+
+
+def test_outgoing_scramble_does_not_alert():
+    """Same reasoning as test_outgoing_damage_does_not_alert: the alert
+    means "I cannot leave", and holding someone else is the opposite of
+    that. Without this, your own preview pulses for as long as you hold
+    a target."""
+    assert patterns.match_line(OUTGOING_SCRAMBLE, CHARACTER) is None
+
+
+def test_incoming_scramble_alerts_when_the_target_is_you():
+    assert patterns.match_line(SCRAMBLE, CHARACTER).event == "warp_scramble"
+
+
+def test_incoming_scramble_alerts_when_the_target_is_named():
+    """The other real rendering of the same event -- see
+    SELF_NAMED_SCRAMBLE."""
+    assert patterns.match_line(SELF_NAMED_SCRAMBLE, CHARACTER).event == "warp_scramble"
+
+
+def test_a_named_target_alerts_only_the_pilot_it_names():
+    """The same line, read on behalf of a fleet-mate, is third-party."""
+    assert patterns.match_line(SELF_NAMED_SCRAMBLE, "Umochi Tawate") is None
+
+
+def test_scramble_ownership_does_not_leak_across_similar_names():
+    """A prefix match on the target would let "Bob Smith" answer for
+    "Bob Smithson"."""
+    line = SELF_NAMED_SCRAMBLE.replace(CHARACTER, CHARACTER + "son")
+    assert patterns.match_line(line, CHARACTER) is None
+
+
 # ---- the real corpus -------------------------------------------------
 #
 # Short, hand-anonymised excerpts from a live EVE install's Gamelogs
@@ -219,13 +311,27 @@ FIXTURES = Path(__file__).parent / "fixtures" / "gamelogs"
 
 
 def _corpus_lines():
+    """(listener, line) for every line in the corpus.
+
+    The listener is carried alongside deliberately: a warp-attempt line
+    names its own target, and whether that target is this log's pilot is
+    the whole question -- flattening the corpus to bare lines would throw
+    away the only thing that can answer it.
+    """
     if not FIXTURES.is_dir():
         return []
-    lines = []
+    pairs = []
     for path in sorted(FIXTURES.glob("*.txt")):
         with open(path, encoding="utf-8-sig", errors="replace") as fh:
-            lines.extend(fh.read().splitlines())
-    return lines
+            body = fh.read().splitlines()
+        who = ""
+        for line in body:
+            stripped = line.strip()
+            if stripped.startswith("Listener:"):
+                who = stripped.split(":", 1)[1].strip()
+                break
+        pairs.extend((who, line) for line in body)
+    return pairs
 
 
 # Hand-built by reading the corpus and deciding, line by line, which
@@ -247,7 +353,12 @@ PLAYER_SOURCES = [
 def test_corpus_yields_at_least_one_of_every_event():
     """A corpus that cannot produce an event is not exercising that
     matcher, and the matcher's first real input would be a fight."""
-    seen = {m.event for m in filter(None, map(patterns.match_line, _corpus_lines()))}
+    seen = {
+        m.event
+        for m in filter(
+            None, (patterns.match_line(line, who) for who, line in _corpus_lines())
+        )
+    }
     assert seen == set(patterns.EVENTS)
 
 
@@ -257,3 +368,33 @@ def test_no_player_attack_in_the_corpus_is_classified_as_an_npc():
     a human confirmed was a player must survive the filter."""
     for source in PLAYER_SOURCES:
         assert patterns.is_likely_npc(source) is False
+
+
+@pytest.mark.skipif(not FIXTURES.is_dir(), reason="no gamelog corpus committed")
+def test_every_corpus_warp_line_yields_a_target():
+    """The ownership gate fails closed on an unreadable target, so an
+    extraction that quietly stopped working would read as "no fights
+    today" rather than as an error. This is the assertion that keeps that
+    branch unreachable in practice -- it is the target-side twin of
+    test_scramble_source_is_extracted_without_markup, which exists
+    because the source extractor DID silently return empty against real
+    markup once."""
+    warp = [
+        line
+        for _who, line in _corpus_lines()
+        if "warp scramble attempt" in line.lower()
+        or "warp disruption attempt" in line.lower()
+    ]
+    assert warp, "corpus has no warp lines to check"
+    for line in warp:
+        assert patterns._extract_target(line), line
+
+
+@pytest.mark.skipif(not FIXTURES.is_dir(), reason="no gamelog corpus committed")
+def test_a_corpus_warp_line_alerts_only_the_pilot_it_belongs_to():
+    """Read on behalf of a pilot the line names nowhere, every warp line
+    in the corpus must go quiet -- the fleet-broadcast case."""
+    for _who, line in _corpus_lines():
+        if "warp" not in line.lower():
+            continue
+        assert patterns.match_line(line, "Nobody Atall") is None or "you!" in line

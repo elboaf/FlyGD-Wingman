@@ -43,6 +43,19 @@ _SOURCE_RE = re.compile(
 _SOURCE_FALLBACK_RE = re.compile(
     r"from\s+(?P<source>.+?)(?:\s+to\s+|\s+-\s+|$)", re.IGNORECASE
 )
+# A warp-attempt line names its target as well as its source, and the
+# target is the only thing that says whose alert it is. EVE writes these
+# notifications into EVERY fleet member's gamelog -- confirmed against a
+# live install, where one disruption line appeared verbatim in four
+# different characters' logs, none of them either party -- so without
+# reading the target, one tackle arms every preview on the screen. In a
+# real Gamelogs folder that is 4670 of 5825 warp lines.
+#
+# The terminator problem _SOURCE_RE documents does not arise here: the
+# target runs to end of line in every real shape, so this captures the
+# rest and lets strip_markup do the work.
+_TARGET_RE = re.compile(r"<font[^>]*>\s*to\s*<b>(?P<target>.*)$", re.IGNORECASE)
+_TARGET_FALLBACK_RE = re.compile(r"\bto\s+(?P<target>.+)$", re.IGNORECASE)
 _MISS_RE = re.compile(r"\]\s*\(combat\)\s*(?P<source>.+?)\s+misses you", re.IGNORECASE)
 _TAG_RE = re.compile(r"<.*?>")
 _WS_RE = re.compile(r"\s+")
@@ -156,6 +169,55 @@ def is_likely_npc(source: str) -> bool:
     )
 
 
+def _extract_target(line: str) -> str:
+    m = _TARGET_RE.search(line)
+    if m:
+        return strip_markup(m.group("target"))
+    m = _TARGET_FALLBACK_RE.search(strip_markup(line))
+    if m:
+        return m.group("target").strip()
+    return ""
+
+
+def _target_is_character(target: str, character: str) -> bool:
+    """True when *target* is the pilot whose log this line came from.
+
+    Two real renderings, both confirmed against a live install's corpus:
+    the log's own pilot appears either as the literal "you!" (594 lines)
+    or spelled out by name with corp ticker and hull, exactly as a third
+    party would be (the shape tests/fixtures/gamelogs/npc_scramble.txt
+    carries). Only checking for "you!" would go silent during a real
+    tackle rendered the second way, which is this feature's worst
+    failure mode.
+
+    A target that could not be extracted returns False -- i.e. no alert.
+    That is the uncomfortable direction for this module, which elsewhere
+    prefers noise to silence, but the ratio decides it: four in five real
+    warp lines belong to someone else, so treating an unreadable target
+    as "probably mine" restores the every-preview-flashes bug wholesale
+    rather than risking one missed alert. The corpus test below asserts
+    extraction actually works on every real shape, which is what keeps
+    this branch from being reached in practice.
+    """
+    if not target:
+        return False
+    # The trailing "!" belongs to EVE's phrasing ("to you!"), not the name.
+    text = target.strip().rstrip("!").strip()
+    if text.lower() == "you":
+        return True
+    name = (character or "").strip()
+    if not name:
+        return False
+    lowered, wanted = text.lower(), name.lower()
+    if lowered == wanted:
+        return True
+    # Boundary-checked prefix, not a bare startswith: the target carries a
+    # corp ticker and hull after the name ("Bob Smith [BURN] Rifter"), but
+    # an unchecked prefix would also let "Bob Smith" answer for a
+    # different pilot named "Bob Smithson".
+    return lowered.startswith(wanted) and lowered[len(wanted)] in " ["
+
+
 def _extract_source(line: str) -> str:
     m = _SOURCE_RE.search(line)
     if m:
@@ -166,8 +228,12 @@ def _extract_source(line: str) -> str:
     return ""
 
 
-def match_line(line: str) -> Match | None:
-    """The only entry point. None means "not interesting"."""
+def match_line(line: str, character: str) -> Match | None:
+    """The only entry point. None means "not interesting".
+
+    *character* is the Listener of the log the line came from -- the
+    pilot this line is being read on behalf of.
+    """
     if not line:
         return None
     lower = line.lower()
@@ -195,6 +261,18 @@ def match_line(line: str) -> Match | None:
             or "warp disruption attempt" in lower
             or "warp disruption zone" in lower
         ):
+            # The ownership gate. Damage lines get this for free -- they
+            # only ever appear in the log of the pilot taking them, and
+            # _INCOMING_COLOR separates incoming from outgoing. A warp
+            # line has neither property: it is broadcast to the whole
+            # fleet and it names both parties, so the target has to be
+            # read and compared against this log's pilot. This also drops
+            # the outgoing case ("from you to X"), for the same reason
+            # test_outgoing_damage_does_not_alert drops outgoing damage:
+            # the alert means "I cannot leave", and holding someone else
+            # is the opposite of that.
+            if not _target_is_character(_extract_target(line), character):
+                return None
             return Match("warp_scramble", _extract_source(line))
 
     if "(notify)" in lower and "cloak deactivates" in lower:

@@ -179,7 +179,7 @@ class Tailer:
 
         events = []
         for line in lines:
-            match = patterns.match_line(line)
+            match = patterns.match_line(line, character)
             if match is not None:
                 events.append(Event(character, match.event, match.source))
         return events
