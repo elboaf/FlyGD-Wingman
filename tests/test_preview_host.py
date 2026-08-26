@@ -2070,3 +2070,68 @@ def test_a_raising_lock_aspect_callable_falls_back_to_locked():
 
     h = host.PreviewHost(on_layout_changed=lambda *a: None, lock_aspect=boom)
     assert h._locking_aspect() is True
+
+
+def test_restyle_pushes_lock_aspect_onto_every_open_window():
+    """The checkbox is read when a resize drag BEGINS, so a restyle that
+    updated chrome but not this flag would leave an already-open preview
+    obeying the old setting until it was closed and reopened -- with the
+    box in Settings showing the new one. _RestyleWindow duck-types the
+    real window, and Python would happily accept the attribute without
+    anyone asserting it arrived."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        lock_aspect=lambda: False,
+    )
+    alice = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    bravo = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    h._windows = {"Alice": alice, "Bravo": bravo}
+
+    h._restyle()
+
+    assert alice.lock_aspect is False
+    assert bravo.lock_aspect is False
+
+
+def test_a_newly_created_preview_is_born_with_the_current_lock_aspect(monkeypatch):
+    """The other half of the restyle guard above. _restyle only reaches
+    windows that already exist, so a client that STARTS while the box is
+    unticked must be created unlocked -- otherwise it holds its client's
+    shape until the next unrelated restyle happens to correct it, and the
+    setting appears to apply to some previews and not others."""
+    seen = {}
+
+    class _Win:
+        rect = geometry.Rect(0, 0, 320, 210)
+        locked = False
+
+        def destroy(self):
+            pass
+
+        # _apply_focus runs at the end of every sweep and touches both.
+        def set_focused(self, value):
+            pass
+
+        def set_selected(self, value):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kw):
+        seen.update(kw)
+        return _Win()
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        size=(320, 210),
+        lock_aspect=lambda: False,
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Guarzo Togenada")]
+    )
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+
+    h._sweep(libs=None)
+
+    assert seen["lock_aspect"] is False
