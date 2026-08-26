@@ -154,6 +154,40 @@ def test_each_finished_upload_is_persisted_as_it_lands(monkeypatch, tmp_path):
     ) == uploader.watch_url("vid123")
 
 
+def test_a_refresh_landing_mid_upload_does_not_lose_the_link(monkeypatch, tmp_path):
+    """`_link` must not re-resolve the row id against the snapshot.
+
+    UploadJob's docstring already says why it carries `items` parallel to
+    `ids` -- the snapshot can be rebuilt underneath the worker, and the
+    watcher finding one new recording is enough to do it. The first draft
+    resolved anyway, so a refresh arriving between the upload and the link
+    left `resolve()` returning None and the link was never persisted: the
+    video was on YouTube and the next launch showed an empty Link cell.
+    """
+    store_file = tmp_path / "links.json"
+    api, _window, rows = api_with(tmp_path, links_file=store_file)
+    uploaded = rows.infos["r1"]
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+
+    inner = fake_upload_ok()
+
+    def refresh_then_upload(*args, **kwargs):
+        # The rebuild: new ids, so every id the job is holding is now stale.
+        rows.infos.clear()
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(uploader, "upload", refresh_then_upload)
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    stored = links_mod.load(store_file)
+    assert links_mod.lookup(
+        stored, uploaded.path, uploaded.size, uploaded.mtime
+    ) == uploader.watch_url("vid123")
+
+
 def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
     monkeypatch, tmp_path
 ):

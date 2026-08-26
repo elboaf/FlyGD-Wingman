@@ -524,6 +524,50 @@ def test_the_row_id_link_map_does_not_grow_across_refreshes(recordings, tmp_path
     assert set(api._links) <= live
 
 
+def test_a_re_recording_within_one_session_loses_the_link_too(recordings, tmp_path):
+    """The same-session half of the rule, and the one that nearly shipped
+    wrong.
+
+    RowSnapshot._links is keyed by PATH and survives rebuild -- that is
+    deliberate, it is what keeps a link through the refresh an upload itself
+    triggers. But it means a file re-recorded at a path that was uploaded
+    earlier in this session inherits the old link from the snapshot,
+    whatever the persisted store says. The restore loop is therefore
+    authoritative in both directions: it sets a link when the store has one
+    for this exact file, and CLEARS it when the store does not.
+    """
+    links_file = tmp_path / "links.json"
+    target = recordings / "a.mkv"
+    url = uploader.watch_url("abc123")
+    _seed_link(links_file, target, url)
+
+    window = FakeWindow()
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    )
+    api.list_rows()
+    first = {r["name"]: r for r in pushes(window)[0][1]["rows"]}
+    assert first["a.mkv"]["link"] == url, "fixture is wrong if this fails"
+
+    # OBS writes a new recording over the same filename, same session.
+    target.write_bytes(b"\0" * 4096)
+    os.utime(target, (5000, 5000))
+    window.evaluated.clear()
+    api.list_rows()
+
+    after = {r["name"]: r for r in pushes(window)[0][1]["rows"]}
+    assert after["a.mkv"]["link"] is None, (
+        "the row inherited the previous recording's video -- the one failure "
+        "mode the (size, mtime) key exists to prevent"
+    )
+    assert api.copy_path(after["a.mkv"]["id"]) == ""
+
+
 def test_a_re_recording_at_the_same_path_is_not_given_the_old_link(
     recordings, tmp_path
 ):

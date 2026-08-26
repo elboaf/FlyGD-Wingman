@@ -714,6 +714,16 @@ class Api:
         # launch, including for recordings that were already on YouTube --
         # which is the question the column is there to answer.
         #
+        # AUTHORITATIVE IN BOTH DIRECTIONS, which is not optional. The
+        # snapshot's own link map is keyed by PATH and survives rebuild on
+        # purpose, so a file re-recorded at a path uploaded earlier in this
+        # session comes back out of rebuild() carrying the previous
+        # recording's video. Only the persisted store can tell the two
+        # apart, because only it is keyed on (size, mtime) -- so a miss has
+        # to CLEAR rather than be skipped. Setting without clearing passed
+        # every test that used a fresh Api and failed the moment one
+        # session did both.
+        #
         # BOTH maps are filled. self._links is keyed by row id and is what
         # copy_path and open_path read back; the snapshot's is keyed by path
         # and is what renders the cell. A restore that filled only the
@@ -722,7 +732,7 @@ class Api:
             url = links.lookup(self._link_store, info.path, info.size, info.mtime)
             if url:
                 self._links[row_id] = url
-                self._rows.set_link(row_id, url)
+            self._rows.set_link(row_id, url)
 
         self._push("onRows", {"rows": self._rows.rows()})
         work = [
@@ -1110,7 +1120,7 @@ class Api:
             return
         self._upload_worker(job)
 
-    def _link(self, row_id: str, video_id: str) -> None:
+    def _link(self, row_id: str, video_id: str, info) -> None:
         """Record and announce one uploaded row.
 
         _links is kept here as well as in the snapshot because the
@@ -1122,6 +1132,15 @@ class Api:
         build a watch URL of its own, which made web/list.js the third
         writer of a string uploader.watch_url already owned.
 
+        *info* is the VideoInfo the job captured, NOT one resolved from
+        row_id here. UploadJob's own docstring says why: "`ids` runs
+        parallel to `items` so a finished upload can be linked back to the
+        row the page is showing without the worker re-resolving an id
+        against a snapshot that may have been rebuilt underneath it." The
+        first draft of this method resolved anyway, and a refresh landing
+        mid-upload -- the watcher finding a new recording is enough -- made
+        resolve() return None and the link was never persisted at all.
+
         Persisted here rather than at the end of the job, and saved on every
         link rather than once: a batch that dies halfway -- crash, power
         cut, a kill from the tray -- must not lose the record of the videos
@@ -1131,15 +1150,8 @@ class Api:
         url = uploader.watch_url(video_id)
         self._links[row_id] = url
         self._rows.set_link(row_id, url)
-        info = self._rows.resolve(row_id)
-        # Nothing to persist for a row that has been rebuilt or deleted out
-        # from under the upload: the store is keyed on the file's identity
-        # and resolve() is the only thing that knows it. The in-memory
-        # entries above still stand, so this session keeps the link; only
-        # the next launch loses it. Same shape as set_link's own no-op.
-        if info is not None:
-            links.remember(self._link_store, info.path, info.size, info.mtime, url)
-            links.save(self._links_file, self._link_store)
+        links.remember(self._link_store, info.path, info.size, info.mtime, url)
+        links.save(self._links_file, self._link_store)
         self._push("onLink", {"id": row_id, "url": url})
 
     def _upload_done(self, job: UploadJob) -> None:
@@ -1232,8 +1244,10 @@ class Api:
                     vid = self._upload_one(
                         youtube, MediaFileUpload, merged, job, 0, 1, close_media=True
                     )
-                for row_id in job.ids:
-                    self._link(row_id, vid)
+                # Every source recording gets the stitched video's URL,
+                # each persisted against its own file identity.
+                for row_id, item in zip(job.ids, job.items):
+                    self._link(row_id, vid, item)
             else:
                 total = len(job.items)
                 self._push("onCancelAvailable", {"available": True})
@@ -1246,7 +1260,7 @@ class Api:
                         index,
                         total,
                     )
-                    self._link(job.ids[index], vid)
+                    self._link(job.ids[index], vid, job.items[index])
             self._upload_done(job)
         except uploader.UploadCancelled:
             # `index` is the item that was interrupted, so items 0..index-1
@@ -1482,7 +1496,11 @@ class Api:
                 on_progress=on_progress,
                 should_cancel=self._cancel.is_set,
             )
-            self._link(state.job.ids[state.resume_index], vid)
+            self._link(
+                state.job.ids[state.resume_index],
+                vid,
+                state.job.items[state.resume_index],
+            )
         except uploader.UploadCancelled:
             # Everything before resume_index finished on the earlier
             # attempt and is on the channel, so the count is about the job,

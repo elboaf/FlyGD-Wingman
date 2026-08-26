@@ -1049,13 +1049,19 @@ behavior that only shows up at size.
       `%LOCALAPPDATA%\OBSYouTubeUploader\links.json` is the store; deleting
       it must cost the links and nothing else, so try that too and confirm
       the list still renders with an empty Link column.
-- [ ] **A re-recording at the same filename shows NO link.** Upload a
-      recording, then make OBS write a new file over that same name (or
-      copy a different recording onto it). Expected: the Link cell is
-      **empty**, not the old video. The store is keyed on `(size, mtime)`
-      rather than the path precisely so this cannot serve the previous
-      fight's link — the one failure here sends the user to the wrong
-      video, which is why it is worth reproducing by hand.
+- [ ] **A re-recording at the same filename shows NO link — in the same
+      session AND after a restart.** Upload a recording, then make OBS write
+      a new file over that same name (or copy a different recording onto
+      it). Expected: the Link cell is **empty**, not the old video, without
+      restarting; then restart and confirm it is still empty. The store is
+      keyed on `(size, mtime)` rather than the path precisely so this cannot
+      serve the previous fight's link — the one failure here sends the user
+      to the wrong video, which is why it is worth reproducing by hand.
+      **Both halves, because they have different mechanisms and the
+      same-session one nearly shipped broken:** across a restart the store
+      is the only source, but within a session `RowSnapshot._links` is keyed
+      by PATH and survives the rebuild, so the row would inherit the old
+      link unless the refresh actively clears it.
 - [ ] **Open video opens the uploaded video**, and **Copy link** puts the
       same URL on the clipboard with "Link copied to clipboard" in the
       status line.
