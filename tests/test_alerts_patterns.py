@@ -45,8 +45,10 @@ SCRAMBLE = (
 # gamelog, naming the real source and target -- neither of whom need be
 # the log's own pilot. Confirmed against a live install: one disruption
 # line appeared verbatim in four different characters' logs, none of them
-# either party. Without an ownership gate this is 4674 of 5839 warp lines
-# and every preview on the screen flashes for a fight none of them is in.
+# either party. Without an ownership gate 5238 of 5839 warp lines in a
+# live folder alert the wrong pilot -- 4674 that name two other pilots,
+# plus 564 of the reader's own outgoing tackles -- and every preview on
+# the screen flashes for a fight none of them is in.
 THIRD_PARTY_SCRAMBLE = (
     "[ 2026.08.24 20:43:05 ] (combat) <color=0xffffffff>"
     "<b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> "
@@ -264,7 +266,7 @@ def test_a_third_party_scramble_does_not_alert():
     """The reported bug. EVE broadcasts a warp-attempt line to every
     fleet member's log, so without this gate one tackle lights up every
     preview on the screen -- 4674 of 5839 warp lines in a live Gamelogs
-    folder."""
+    folder name two pilots who are not the one reading them."""
     assert patterns.match_line(THIRD_PARTY_SCRAMBLE, CHARACTER) is None
 
 
@@ -372,13 +374,17 @@ def test_no_player_attack_in_the_corpus_is_classified_as_an_npc():
 
 @pytest.mark.skipif(not FIXTURES.is_dir(), reason="no gamelog corpus committed")
 def test_every_corpus_warp_line_yields_a_target():
-    """The ownership gate fails closed on an unreadable target, so an
-    extraction that quietly stopped working would read as "no fights
-    today" rather than as an error. This is the assertion that keeps that
-    branch unreachable in practice -- it is the target-side twin of
-    test_scramble_source_is_extracted_without_markup, which exists
-    because the source extractor DID silently return empty against real
-    markup once."""
+    """_TARGET_RE, not the fallback, must handle every real shape.
+
+    Asserting the target is merely non-empty is not enough and was the
+    first version of this test: _TARGET_FALLBACK_RE's ".+" makes an empty
+    result nearly unreachable, so a MIS-ANCHORED target comes back long,
+    wrong, and truthy -- it clears the gate's emptiness check and then
+    matches nobody, and the tackle goes quiet with no error anywhere.
+    Pinning the primary pattern is what actually rules that out. It is
+    the target-side twin of test_scramble_source_is_extracted_without_
+    markup, which exists because the source extractor DID silently return
+    empty against real markup once."""
     warp = [
         line
         for _who, line in _corpus_lines()
@@ -387,6 +393,7 @@ def test_every_corpus_warp_line_yields_a_target():
     ]
     assert warp, "corpus has no warp lines to check"
     for line in warp:
+        assert patterns._TARGET_RE.search(line), line
         assert patterns._extract_target(line), line
 
 
@@ -413,3 +420,52 @@ def test_a_three_word_name_is_not_answered_for_by_its_two_word_prefix():
     line = SELF_NAMED_SCRAMBLE.replace(CHARACTER, CHARACTER + " Jones")
     assert patterns.match_line(line, CHARACTER) is None
     assert patterns.match_line(line, CHARACTER + " Jones").event == "warp_scramble"
+
+
+# The corpus has a real pilot named "Yoshi To". A leftmost-anchored
+# target match reads the word in his surname as the line's preposition
+# and returns everything after it -- a long, wrong, TRUTHY target that
+# clears the emptiness check and then matches nobody.
+SOURCE_NAME_ENDING_IN_TO = SELF_NAMED_SCRAMBLE.replace(
+    "Bob Smith [BURN]", "Yoshi To [SUNGR]"
+)
+# Warp lines render the preposition "<font size=10>to <b>", but the same
+# Gamelogs folder renders other message types "<font size=10>to</font>
+# <b>" a quarter of a million times. A warp line adopting that shape must
+# not fall through to the fallback.
+ALTERNATE_TO_MARKUP = SELF_NAMED_SCRAMBLE.replace(
+    "<font size=10>to <b>", "<font size=10>to</font> <b>"
+)
+
+
+# Neither factor alone is dangerous -- it takes both. The markup shape
+# is what pushes the line off the primary pattern and onto the fallback;
+# the surname is what the fallback then mis-anchors on. Each on its own
+# still resolved correctly before the fix, which is exactly why this
+# combination is the one worth pinning.
+BOTH_AT_ONCE = ALTERNATE_TO_MARKUP.replace("Bob Smith [BURN]", "Yoshi To [SUNGR]")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [SOURCE_NAME_ENDING_IN_TO, ALTERNATE_TO_MARKUP, BOTH_AT_ONCE],
+    ids=["source name ends in 'To'", "to</font> markup", "both at once"],
+)
+def test_the_target_is_read_correctly_despite_the_source_half(line):
+    """ "both at once" silently dropped a real tackle before the target
+    pattern was widened and the fallback anchored on the LAST " to " --
+    the other two resolved correctly by luck and are pinned so they stay
+    that way."""
+    assert patterns._extract_target(line).startswith(CHARACTER)
+    assert patterns.match_line(line, CHARACTER).event == "warp_scramble"
+
+
+def test_the_fallback_anchors_on_the_last_preposition():
+    """Exercised directly because the primary pattern wins on every real
+    line today, so nothing else would notice this regressing."""
+    plain = (
+        "[ 2026.01.19 21:48:57 ] (combat) Warp disruption attempt from "
+        "Yoshi To [SUNGR] Exequror Navy Issue to Mpmoller1 [I P A] Hyperion"
+    )
+    assert patterns._TARGET_RE.search(plain) is None, "should exercise the fallback"
+    assert patterns._extract_target(plain) == "Mpmoller1 [I P A] Hyperion"

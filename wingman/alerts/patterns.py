@@ -49,13 +49,33 @@ _SOURCE_FALLBACK_RE = re.compile(
 # live install, where one disruption line appeared verbatim in four
 # different characters' logs, none of them either party -- so without
 # reading the target, one tackle arms every preview on the screen. In a
-# real Gamelogs folder that is 4674 of 5839 warp lines.
+# real Gamelogs folder 5238 of 5839 warp lines are not the pilot reading
+# them: 4674 name two other pilots entirely, and a further 564 are that
+# pilot's OWN outgoing tackle, which lit their preview just as wrongly.
 #
 # The terminator problem _SOURCE_RE documents does not arise here: the
 # target runs to end of line in every real shape, so this captures the
 # rest and lets strip_markup do the work.
-_TARGET_RE = re.compile(r"<font[^>]*>\s*to\s*<b>(?P<target>.*)$", re.IGNORECASE)
-_TARGET_FALLBACK_RE = re.compile(r"\bto\s+(?P<target>.+)$", re.IGNORECASE)
+#
+# The optional "</font>" is not speculative. Warp lines render the
+# preposition as "<font size=10>to <b>", but the SAME folder renders
+# other message types as "<font size=10>to</font> <b>" a quarter of a
+# million times, and a warp line that ever adopted that shape would fall
+# through to the fallback below -- which is where the "Yoshi To" problem
+# in its comment starts biting.
+_TARGET_RE = re.compile(
+    r"<font[^>]*>\s*to\s*(?:</font>)?\s*<b>(?P<target>.*)$", re.IGNORECASE
+)
+# Leading ".*" is load-bearing: it is greedy, so this anchors on the LAST
+# " to " in the line rather than the first. The source half sits to the
+# left and can contain the word, which is not hypothetical -- the corpus
+# has a pilot named "Yoshi To", and a leftmost match on
+# "from Yoshi To [SUNGR] Exequror Navy Issue to Mpmoller1 [I P A]
+# Hyperion" returns everything after the pilot's SURNAME as the target.
+# That is worse than returning nothing: a non-empty wrong target passes
+# the gate's emptiness check and then silently fails to match anyone, so
+# a real tackle goes quiet with no error anywhere.
+_TARGET_FALLBACK_RE = re.compile(r"^.*\bto\s+(?P<target>.+)$", re.IGNORECASE)
 _MISS_RE = re.compile(r"\]\s*\(combat\)\s*(?P<source>.+?)\s+misses you", re.IGNORECASE)
 _TAG_RE = re.compile(r"<.*?>")
 _WS_RE = re.compile(r"\s+")
@@ -196,9 +216,15 @@ def _target_is_character(target: str, character: str) -> bool:
     warp lines (90%) are not the pilot reading them, so treating an
     unreadable target as "probably mine" restores the
     every-preview-flashes bug wholesale rather than risking one missed
-    alert. The corpus test below asserts
-    extraction actually works on every real shape, which is what keeps
-    this branch from being reached in practice.
+    alert.
+
+    What keeps that branch off the hot path is _TARGET_RE, not this
+    function: the corpus test asserts the PRIMARY pattern matches every
+    real warp line, so the fallback -- and with it an empty target --
+    never runs today. The sharper failure is not an empty target anyway
+    but a non-empty WRONG one, which clears the check below and then
+    matches nobody; that is what the greedy anchor on
+    _TARGET_FALLBACK_RE exists to prevent.
     """
     if not target:
         return False
@@ -272,14 +298,25 @@ def match_line(line: str, character: str) -> Match | None:
         if (
             "warp scramble attempt" in lower
             or "warp disruption attempt" in lower
+            # Dead, and now dead twice over: real bubble lines read
+            # "(notify) You are within a warp disruption zone", so this
+            # never matched inside a (combat) branch, and the gate below
+            # rejects it a second time because that phrasing names no
+            # target. Left for a separate change -- moving it to the
+            # (notify) branch alongside decloak puts it outside this
+            # gate, which is right, since the wording is already
+            # self-referential.
             or "warp disruption zone" in lower
         ):
-            # The ownership gate. Damage lines get this for free -- they
-            # only ever appear in the log of the pilot taking them, and
-            # _INCOMING_COLOR separates incoming from outgoing. A warp
-            # line has neither property: it is broadcast to the whole
-            # fleet and it names both parties, so the target has to be
-            # read and compared against this log's pilot. This also drops
+            # The ownership gate. Damage lines get this for free: they
+            # name no target at all, so _INCOMING_COLOR alone settles
+            # whose they are. (34 of 44950 distinct incoming-damage lines
+            # do appear verbatim in more than one pilot's log, which is
+            # what identically-fit fleetmates taking the same bomb looks
+            # like -- 0.08%, nowhere near a broadcast rate.) A warp line
+            # has neither property: it is broadcast to the whole fleet
+            # AND it names both parties, so the target has to be read and
+            # compared against this log's pilot. This also drops
             # the outgoing case ("from you to X"), for the same reason
             # test_outgoing_damage_does_not_alert drops outgoing damage:
             # the alert means "I cannot leave", and holding someone else
