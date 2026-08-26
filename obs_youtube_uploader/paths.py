@@ -38,6 +38,18 @@ def durations_file() -> Path:
     return state_dir() / "durations.json"
 
 
+def links_file() -> Path:
+    """Which recordings have already been uploaded, and to what URL.
+
+    Beside durations.json and keyed the same way, but NOT the same kind of
+    file: deleting this one costs something that cannot be recomputed. The
+    Link column is the only record the app keeps of an upload, so a lost
+    store means the user has to search YouTube to answer "did I already
+    upload this fight?".
+    """
+    return state_dir() / "links.json"
+
+
 def eve_settings_backup_dir() -> Path:
     """Where EVE settings backups live.
 

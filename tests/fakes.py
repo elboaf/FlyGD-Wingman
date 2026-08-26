@@ -128,7 +128,7 @@ def info(path, size=1000, duration=60.0, mtime=1000.0, probed=True):
     )
 
 
-def build_api(tmp_path, rows=None, settings=None, watcher=None):
+def build_api(tmp_path, rows=None, settings=None, watcher=None, links_file=None):
     """Construct an Api the way ui.window.create() does: state in, window after."""
     cfg = {
         "privacy": "unlisted",
@@ -153,7 +153,9 @@ def build_api(tmp_path, rows=None, settings=None, watcher=None):
         ffprobe_bin=None,
     )
     window = FakeWindow()
-    api = api_mod.Api(state, rows=rows if rows is not None else FakeRows())
+    api = api_mod.Api(
+        state, rows=rows if rows is not None else FakeRows(), links_file=links_file
+    )
     api._window = window
     api._watcher = watcher
     return api, window

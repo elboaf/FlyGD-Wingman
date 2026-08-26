@@ -21,6 +21,7 @@ def test_named_files_live_under_state_dir(monkeypatch, tmp_path):
     assert paths.token_file() == root / "token.json"
     assert paths.seen_file() == root / "seen.json"
     assert paths.durations_file() == root / "durations.json"
+    assert paths.links_file() == root / "links.json"
     assert paths.log_dir() == root / "logs"
     assert paths.tmp_dir() == root / "tmp"
 

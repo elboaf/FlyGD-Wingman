@@ -42,6 +42,7 @@ from .. import (
     durations,
     evewindows,
     library,
+    links,
     obsconfig,
     paths,
     stitch,
@@ -333,6 +334,7 @@ class Api:
         id_factory=lambda: uuid.uuid4().hex,
         rows=None,
         durations_file=None,
+        links_file=None,
         drain_interval_s=PROBE_DRAIN_S,
         spawn=threading.Thread,
         probe=library.probe,
@@ -394,6 +396,8 @@ class Api:
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
         self._cache = durations.load(self._durations_file)
+        self._links_file = links_file or paths.links_file()
+        self._link_store = links.load(self._links_file)
         self._drain_interval_s = drain_interval_s
         self._spawn = spawn
         self._probe = probe
@@ -695,6 +699,23 @@ class Api:
         for row_id, info in zip(ids, infos):
             if id(info) not in outstanding:
                 self._rows.set_duration(row_id, info.duration, True)
+
+        # Links, from the same place and for the same reason: rebuild()
+        # mints new ids and freezes each Row before anything is known about
+        # it, so a link that is not re-applied here never reaches the page.
+        # Before this loop existed the Link column was empty on every fresh
+        # launch, including for recordings that were already on YouTube --
+        # which is the question the column is there to answer.
+        #
+        # BOTH maps are filled. self._links is keyed by row id and is what
+        # copy_path and open_path read back; the snapshot's is keyed by path
+        # and is what renders the cell. A restore that filled only the
+        # snapshot would draw a link the context menu could not open.
+        for row_id, info in zip(ids, infos):
+            url = links.lookup(self._link_store, info.path, info.size, info.mtime)
+            if url:
+                self._links[row_id] = url
+                self._rows.set_link(row_id, url)
 
         self._push("onRows", {"rows": self._rows.rows()})
         work = [
@@ -1093,10 +1114,20 @@ class Api:
         round 5's link-state: with a bare id the page had no choice but to
         build a watch URL of its own, which made web/list.js the third
         writer of a string uploader.watch_url already owned.
+
+        Persisted here rather than at the end of the job, and saved on every
+        link rather than once: a batch that dies halfway -- crash, power
+        cut, a kill from the tray -- must not lose the record of the videos
+        that DID publish. There is no way to recover one of those from
+        inside the app afterwards.
         """
         url = uploader.watch_url(video_id)
         self._links[row_id] = url
         self._rows.set_link(row_id, url)
+        info = self._rows.resolve(row_id)
+        if info is not None:
+            links.remember(self._link_store, info.path, info.size, info.mtime, url)
+            links.save(self._links_file, self._link_store)
         self._push("onLink", {"id": row_id, "url": url})
 
     def _upload_done(self, job: UploadJob) -> None:

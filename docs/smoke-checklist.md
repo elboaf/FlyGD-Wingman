@@ -1039,6 +1039,23 @@ behavior that only shows up at size.
       used to clear `self.links` — so the link appeared and then vanished a
       moment later. Trigger an extra rebuild by recording something new,
       and confirm the link still survives.
+- [ ] **The finished upload's link survives a RESTART.** After the above,
+      quit from the tray and start the app again. Expected: that row still
+      carries its ↗, double-click still opens the video, and right-click →
+      Copy link still gives the same URL. Round 5's link-state: the link
+      used to live only in `RowSnapshot._links`, so the column was empty on
+      every launch and the question it exists to answer — *did I already
+      upload this fight?* — was unanswerable in the normal case.
+      `%LOCALAPPDATA%\OBSYouTubeUploader\links.json` is the store; deleting
+      it must cost the links and nothing else, so try that too and confirm
+      the list still renders with an empty Link column.
+- [ ] **A re-recording at the same filename shows NO link.** Upload a
+      recording, then make OBS write a new file over that same name (or
+      copy a different recording onto it). Expected: the Link cell is
+      **empty**, not the old video. The store is keyed on `(size, mtime)`
+      rather than the path precisely so this cannot serve the previous
+      fight's link — the one failure here sends the user to the wrong
+      video, which is why it is worth reproducing by hand.
 - [ ] **Open video opens the uploaded video**, and **Copy link** puts the
       same URL on the clipboard with "Link copied to clipboard" in the
       status line.

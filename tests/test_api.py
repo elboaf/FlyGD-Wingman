@@ -8,12 +8,13 @@ production, and a test does it directly.
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import durations, library
+from obs_youtube_uploader import durations, library, links, uploader
 from obs_youtube_uploader.ui.api import Api, AppState
 from obs_youtube_uploader.ui.rows import RowSnapshot
 from tests.test_scheduler import FakeClock
@@ -268,11 +269,12 @@ def recordings(tmp_path):
     return folder
 
 
-def rows_api(recordings, tmp_path, clock, probe, window=None):
+def rows_api(recordings, tmp_path, clock, probe, window=None, links_file=None):
     api = Api(
         make_state(recordings),
         rows=RowSnapshot(),
         durations_file=tmp_path / "durations.json",
+        links_file=links_file or tmp_path / "links.json",
         spawn=InlineThread,
         probe=probe,
         timer=clock.timer,
@@ -443,6 +445,95 @@ def test_a_cached_duration_reaches_the_page_on_the_very_first_push(
 
     _, payload = pushes(window)[0]
     assert [row["duration"] for row in payload["rows"]] == ["1:30", "1:30"]
+
+
+def _seed_link(links_file, path, url):
+    """Record *url* against the file's real (size, mtime), as an upload
+    would have on a previous run."""
+    stat = path.stat()
+    store = links.load(links_file)
+    links.remember(store, path, stat.st_size, stat.st_mtime, url)
+    links.save(links_file, store)
+
+
+def test_a_link_from_a_previous_session_reaches_the_page_on_first_push(
+    recordings, tmp_path
+):
+    """The whole point of persisting links. RowSnapshot._links is
+    in-memory, so before the store existed the Link column was empty on
+    every launch -- including for recordings that were already on YouTube,
+    which is the one question the column is there to answer.
+    """
+    links_file = tmp_path / "links.json"
+    url = uploader.watch_url("abc123")
+    _seed_link(links_file, recordings / "a.mkv", url)
+
+    window = FakeWindow()
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    )
+    api.list_rows()
+
+    _, payload = pushes(window)[0]
+    by_name = {row["name"]: row for row in payload["rows"]}
+    assert by_name["a.mkv"]["link"] == url
+    assert by_name["b.mkv"]["link"] is None
+    # And the context menu can act on it: copy_path/open_path read a map
+    # keyed by row id, which a restore that only filled the snapshot would
+    # have left empty behind a link the page was already drawing.
+    assert api.copy_path(by_name["a.mkv"]["id"]) == url
+
+
+def test_a_re_recording_at_the_same_path_is_not_given_the_old_link(
+    recordings, tmp_path
+):
+    """The reason the store is keyed on (size, mtime). A wrong duration is
+    cosmetic; a wrong link opens a different fight, or somebody else's."""
+    links_file = tmp_path / "links.json"
+    target = recordings / "a.mkv"
+    _seed_link(links_file, target, uploader.watch_url("abc123"))
+    # OBS reuses filenames: same path, new recording.
+    target.write_bytes(b"\0" * 4096)
+    os.utime(target, (5000, 5000))
+
+    window = FakeWindow()
+    rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    ).list_rows()
+
+    _, payload = pushes(window)[0]
+    assert [row["link"] for row in payload["rows"]] == [None, None]
+
+
+def test_a_corrupt_link_store_costs_the_links_and_nothing_else(recordings, tmp_path):
+    """Unlike durations, a lost link cannot be recomputed -- but it still
+    must not stop the list rendering."""
+    links_file = tmp_path / "links.json"
+    links_file.write_text("{not json", encoding="utf-8")
+
+    window = FakeWindow()
+    rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    ).list_rows()
+
+    _, payload = pushes(window)[0]
+    assert len(payload["rows"]) == 2
+    assert [row["link"] for row in payload["rows"]] == [None, None]
 
 
 def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):

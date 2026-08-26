@@ -9,6 +9,7 @@ import datetime
 import threading
 
 from obs_youtube_uploader import combatlog, discord, library, uploader
+from obs_youtube_uploader import links as links_mod
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 
@@ -128,6 +129,29 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     }
     # The messages really went through evaluate_js, not just through the spy.
     assert window.calls
+
+
+def test_each_finished_upload_is_persisted_as_it_lands(monkeypatch, tmp_path):
+    """Written per link, not once at the end of the job.
+
+    A batch that dies halfway -- crash, power cut, Quit from the tray --
+    must not lose the record of the videos that DID publish. Nothing in the
+    app can recover one afterwards; the user would have to search YouTube.
+    """
+    store_file = tmp_path / "links.json"
+    api, _window, _rows = api_with(tmp_path, links_file=store_file)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    info = api._rows.resolve("r1")
+    stored = links_mod.load(store_file)
+    assert links_mod.lookup(
+        stored, info.path, info.size, info.mtime
+    ) == uploader.watch_url("vid123")
 
 
 def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
