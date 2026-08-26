@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader import autostart
+from wingman import autostart
 
 
 class FakeKey:
@@ -126,7 +126,7 @@ def test_a_source_checkout_registers_the_module_not_the_interpreter(monkeypatch)
 
     command = autostart.command()
 
-    assert "-m obs_youtube_uploader" in command
+    assert "-m wingman" in command
     assert command.endswith("--hidden")
 
 

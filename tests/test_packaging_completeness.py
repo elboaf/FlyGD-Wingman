@@ -19,6 +19,6 @@ def test_every_subpackage_is_declared():
         declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])
     on_disk = {
         ".".join(p.parent.relative_to(ROOT).parts)
-        for p in (ROOT / "obs_youtube_uploader").rglob("__init__.py")
+        for p in (ROOT / "wingman").rglob("__init__.py")
     }
     assert on_disk <= declared, f"undeclared packages: {sorted(on_disk - declared)}"

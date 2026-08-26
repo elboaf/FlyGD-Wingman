@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 # Safe to import at module scope, unlike webview: chrome.py builds its
 # Win32 types lazily so it imports cleanly off Windows (see its docstring).
-from obs_youtube_uploader.ui import chrome
+from wingman.ui import chrome
 
 if TYPE_CHECKING:  # pragma: no cover - the import is real only to type checkers
     import webview

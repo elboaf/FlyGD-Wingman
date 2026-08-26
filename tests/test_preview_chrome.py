@@ -6,7 +6,7 @@ CI on Linux, where no Windows drawing API exists.
 
 from pathlib import Path
 
-from obs_youtube_uploader.preview import chrome, geometry
+from wingman.preview import chrome, geometry
 
 CYAN = (0, 200, 220, 255)
 
@@ -112,7 +112,7 @@ def test_degenerate_size_does_not_raise():
 def test_font_path_prefers_the_frozen_location(monkeypatch, tmp_path):
     """uploader.spec collects the fonts folder at destination "assets/fonts",
     which lands it at bundle_dir() / "assets" / "fonts" in a frozen build --
-    NOT bundle_dir() / "obs_youtube_uploader" / "assets" / "fonts". A bare
+    NOT bundle_dir() / "wingman" / "assets" / "fonts". A bare
     Path(__file__) resolution disagreed with the spec by one path segment
     and silently fell back to Pillow's default face in every shipped build."""
 

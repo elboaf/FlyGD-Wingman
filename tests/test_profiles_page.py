@@ -14,7 +14,7 @@ after someone edits the card is a question for here.
 import pathlib
 import re
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
 JS = (WEB / "evesettings.js").read_text(encoding="utf-8")

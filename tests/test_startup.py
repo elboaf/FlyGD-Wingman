@@ -19,8 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from obs_youtube_uploader import __main__ as main_mod
 from tests import fakes
+from wingman import __main__ as main_mod
 
 
 class FakeIcon:
@@ -146,7 +146,7 @@ def test_the_auth_check_is_handed_to_the_gui_loop_to_run(startup):
 def test_a_normal_launch_shows_its_window(startup, monkeypatch):
     """Everything except the login entry raises a window. A Start menu
     shortcut that silently did nothing visible would read as a crash."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader"])
+    monkeypatch.setattr(sys, "argv", ["wingman"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False
 
@@ -157,7 +157,7 @@ def test_the_hidden_flag_reaches_the_window(startup, monkeypatch):
     the flag describes how THIS process was started, which no stored value
     can know: the same binary opened from the Start menu a minute later
     must show its window."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--hidden"])
+    monkeypatch.setattr(sys, "argv", ["wingman", "--hidden"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is True
 
@@ -166,6 +166,6 @@ def test_an_unrecognised_argument_does_not_kill_a_windowed_launch(startup, monke
     """Deliberately not argparse. It exits(2) with a usage message on any
     unknown argument, and in a windowed build with no console that is a
     launch which dies with nothing on screen and nothing in the log."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--what-is-this"])
+    monkeypatch.setattr(sys, "argv", ["wingman", "--what-is-this"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False

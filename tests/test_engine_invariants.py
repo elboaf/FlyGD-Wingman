@@ -23,7 +23,7 @@ import re
 
 import pytest
 
-from obs_youtube_uploader import paths
+from wingman import paths
 
 
 def _code(source: str) -> str:

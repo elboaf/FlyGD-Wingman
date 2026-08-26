@@ -18,10 +18,10 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-WEB = ROOT / "obs_youtube_uploader" / "web"
+WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 JS = (WEB / "firstrun.js").read_text(encoding="utf-8")
-API = (ROOT / "obs_youtube_uploader" / "ui" / "api.py").read_text(encoding="utf-8")
+API = (ROOT / "wingman" / "ui" / "api.py").read_text(encoding="utf-8")
 
 
 def _route() -> str:

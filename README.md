@@ -324,7 +324,7 @@ python -m pip install -e ".[dev]"
 python -m pytest tests/
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .
-python -m obs_youtube_uploader
+python -m wingman
 ```
 
 CI gates on all three: the suite, `ruff check`, and `ruff format --check`.
@@ -346,19 +346,19 @@ Official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which injects
 the project's own Google OAuth desktop-client configuration from repository
 secrets at build time. **Those credentials are never committed to this
-repository** — `obs_youtube_uploader/credentials.py` contains only
+repository** — `wingman/credentials.py` contains only
 placeholders in the source tree.
 
 So a build from source has no working OAuth client until you supply your own.
 To run it end to end you need to create a Google Cloud project, enable the
 YouTube Data API v3, create an **OAuth client ID of type "Desktop app"**, and
 put its client ID and secret into `CLIENT_CONFIG` in
-`obs_youtube_uploader/credentials.py`. Everything except **Connect Google
+`wingman/credentials.py`. Everything except **Connect Google
 Account** works without this. Do not commit real credentials back to the
 repository.
 
 The Python package directory, the executable name, and the
-`%LOCALAPPDATA%` state folder are all still named `obs_youtube_uploader` /
+`%LOCALAPPDATA%` state folder are all still named `wingman` /
 `OBSYouTubeUploader`. These are internal identifiers kept unchanged so that
 existing installations keep their settings and stay upgradeable; only the
 product name has changed.

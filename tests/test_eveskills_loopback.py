@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from obs_youtube_uploader.eveskills import loopback
+from wingman.eveskills import loopback
 
 HOST = "127.0.0.1:51779"
 PATH = "/callback/"

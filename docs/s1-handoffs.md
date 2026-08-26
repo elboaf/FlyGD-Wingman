@@ -91,7 +91,7 @@ whichever lane owns a card heading elsewhere inherits the same rule.
 S4 is correcting `DESIGN.md:56-58` and `PRODUCT.md:137`. The same wrong
 claim sat in two more places, both outside every lane's ownership:
 
-- `obs_youtube_uploader/ui/window.py`, in a comment that ended "do not
+- `wingman/ui/window.py`, in a comment that ended "do not
   'correct' this to logical" — nominally S3's file, and in none of S3's
   findings.
 - `CLAUDE.md`, in no lane at all.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import atomicio
+from wingman import atomicio
 
 
 def test_writes_the_content(tmp_path):

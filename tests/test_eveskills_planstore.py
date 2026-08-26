@@ -8,7 +8,7 @@ at the write.
 
 import pytest
 
-from obs_youtube_uploader.eveskills import planstore
+from wingman.eveskills import planstore
 
 # ---------------------------------------------------------------------------
 # Cycle A -- name validation

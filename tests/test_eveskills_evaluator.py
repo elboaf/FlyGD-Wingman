@@ -8,8 +8,8 @@ inherit.
 
 from datetime import UTC, datetime, timedelta
 
-from obs_youtube_uploader.eveskills import evaluator as ev
-from obs_youtube_uploader.eveskills.plans import Requirement
+from wingman.eveskills import evaluator as ev
+from wingman.eveskills.plans import Requirement
 
 T0 = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 

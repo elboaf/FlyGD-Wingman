@@ -2,8 +2,8 @@
 stored value must fall back, never raise -- a corrupt layout key should
 cost you one preview's position, not the app's launch."""
 
-from obs_youtube_uploader.preview import layout
-from obs_youtube_uploader.preview.geometry import Rect
+from wingman.preview import layout
+from wingman.preview.geometry import Rect
 
 
 def test_round_trips():

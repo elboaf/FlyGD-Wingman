@@ -4,7 +4,7 @@ in for the browser tests we deliberately do not have."""
 
 import pytest
 
-from obs_youtube_uploader import bookmarks
+from wingman import bookmarks
 
 NONE = {"ctrl": False, "alt": False, "shift": False, "meta": False}
 

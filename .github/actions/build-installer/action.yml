@@ -128,8 +128,8 @@ runs:
         # dependency, a typo surviving a rename) would otherwise surface
         # only once the Skills route is opened in the frozen app, not
         # here where the failure is actually actionable.
-        uv run python -c "from obs_youtube_uploader.eveskills.controller import SkillsController; print('SkillsController importable')"
-        if ($LASTEXITCODE -ne 0) { throw "obs_youtube_uploader.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the frozen app" }
+        uv run python -c "from wingman.eveskills.controller import SkillsController; print('SkillsController importable')"
+        if ($LASTEXITCODE -ne 0) { throw "wingman.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the frozen app" }
 
     - name: Inject OAuth credentials
       if: ${{ inputs.inject-credentials == 'true' }}
@@ -140,7 +140,7 @@ runs:
       run: |
         if (-not $env:OAUTH_CLIENT_ID) { throw "inject_credentials was requested but OAUTH_CLIENT_ID is not set" }
         if (-not $env:OAUTH_CLIENT_SECRET) { throw "inject_credentials was requested but OAUTH_CLIENT_SECRET is not set" }
-        $file = "obs_youtube_uploader/credentials.py"
+        $file = "wingman/credentials.py"
         $content = Get-Content $file -Raw
         # Longest placeholder first: the secret's placeholder is a substring
         # of the client ID's, so the reverse order would corrupt the ID.
@@ -378,7 +378,7 @@ runs:
     - name: Generate the installer's version define
       # installer.iss #includes packaging/version.iss, which is gitignored
       # and therefore absent on a fresh checkout. This writes it from
-      # obs_youtube_uploader.__version__, so the installer's AppVersion --
+      # wingman.__version__, so the installer's AppVersion --
       # and the OutputBaseFilename built from it -- cannot disagree with the
       # version the app reports at runtime. That pair WAS hand-kept and was
       # the last of four copies in the tree.

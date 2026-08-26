@@ -25,9 +25,9 @@ import types
 
 import pytest
 
-from obs_youtube_uploader import uploader
-from obs_youtube_uploader.ui.api import RetryState, UploadJob
 from tests import fakes
+from wingman import uploader
+from wingman.ui.api import RetryState, UploadJob
 
 
 def _job(ids=("r1",), stitch=True):
@@ -100,7 +100,7 @@ def test_stitched_worker_asks_upload_one_to_close_the_media(tmp_path, monkeypatc
     """
     import contextlib
 
-    from obs_youtube_uploader import paths, stitch
+    from wingman import paths, stitch
 
     recorded = {}
 

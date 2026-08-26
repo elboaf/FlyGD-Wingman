@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from obs_youtube_uploader import paths
+from wingman import paths
 
 
 def test_state_dir_uses_localappdata(monkeypatch, tmp_path):
@@ -48,7 +48,7 @@ def test_bundle_dir_prefers_meipass(monkeypatch, tmp_path):
 
 def test_resolve_binary_prefers_the_bundled_copy(tmp_path, monkeypatch):
     """The frozen layout: bundle_dir()/bin/<name>.exe."""
-    from obs_youtube_uploader import paths as paths_mod
+    from wingman import paths as paths_mod
 
     binaries = tmp_path / "bin"
     binaries.mkdir()
@@ -62,7 +62,7 @@ def test_resolve_binary_finds_the_source_checkout_copy(tmp_path, monkeypatch):
     """packaging/fetch_ffmpeg.py writes to packaging/bin, not <repo>/bin.
     Without this lookup, running from source silently falls back to PATH
     and ignores the ffmpeg the build script just fetched."""
-    from obs_youtube_uploader import paths as paths_mod
+    from wingman import paths as paths_mod
 
     packaging_bin = tmp_path / "packaging" / "bin"
     packaging_bin.mkdir(parents=True)
@@ -74,7 +74,7 @@ def test_resolve_binary_finds_the_source_checkout_copy(tmp_path, monkeypatch):
 
 
 def test_resolve_binary_falls_back_to_path(tmp_path, monkeypatch):
-    from obs_youtube_uploader import paths as paths_mod
+    from wingman import paths as paths_mod
 
     monkeypatch.setattr(paths_mod, "bundle_dir", lambda: tmp_path)
     monkeypatch.setattr(paths_mod.shutil, "which", lambda name: "/usr/bin/" + name)

@@ -4,11 +4,11 @@ import os
 
 import pytest
 
-from obs_youtube_uploader import paths, settings
-from obs_youtube_uploader.evesettings import tree
-from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.fakes import FakeWindow
+from wingman import paths, settings
+from wingman.evesettings import tree
+from wingman.ui import api as api_mod
 
 
 class ImmediateThread:

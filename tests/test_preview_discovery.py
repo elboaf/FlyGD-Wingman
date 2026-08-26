@@ -1,7 +1,7 @@
 """Client discovery. Every collaborator is injected so identity and
 filtering logic is testable off Windows."""
 
-from obs_youtube_uploader.preview import discovery
+from wingman.preview import discovery
 
 WINDOWS = [(0x10, "EVE - Pilot One"), (0x20, "Firefox"), (0x30, "EVE - Pilot Two")]
 PIDS = {0x10: 100, 0x20: 200, 0x30: 300}

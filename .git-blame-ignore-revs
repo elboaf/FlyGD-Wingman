@@ -27,7 +27,7 @@
 # created by splitting a signature):
 #
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
-#   git blame -L 134,134 obs_youtube_uploader/uploader.py
+#   git blame -L 134,134 wingman/uploader.py
 #
 # It should name the author who wrote the line, NOT the reformat. If it
 # names the reformat, the hash below is stale: delete the line rather

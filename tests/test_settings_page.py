@@ -20,7 +20,7 @@ Every rule below is here because it was broken and shipped:
 import pathlib
 import re
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 
 
@@ -145,7 +145,7 @@ def test_the_previews_inert_note_is_not_typed_into_the_page():
 
     The slot stays in the markup and stays empty; previews.js writes it.
     """
-    from obs_youtube_uploader.ui import copy as copy_mod
+    from wingman.ui import copy as copy_mod
 
     note = copy_mod.INERT_NOTES["previews_off"]
     # Compare on words, not on the raw markup: the page wraps and indents,
@@ -248,7 +248,7 @@ def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
     hidden until R1's and R2's copies of this table were de-duplicated --
     R2's used the literal and satisfied the test for both.
     """
-    from obs_youtube_uploader.ui import copy as copy_mod
+    from wingman.ui import copy as copy_mod
 
     dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
     # The strings are wrapped across source lines by ' + ', so join them
@@ -273,7 +273,7 @@ def test_the_remove_confirm_recognises_a_real_webhook_description():
     typed into JavaScript: if describe() ever stops rendering the path,
     the confirm degrades silently to "this webhook" with nothing failing.
     """
-    from obs_youtube_uploader import discord as discord_mod
+    from wingman import discord as discord_mod
 
     described = discord_mod.describe(
         discord_mod.parse_webhook("https://discord.com/api/webhooks/1/tok")[0]
@@ -295,7 +295,7 @@ def test_the_dev_harness_shows_the_webhook_line_the_app_shows():
     naming branch untestable by hand: the harness said "this webhook"
     while the app named it.
     """
-    from obs_youtube_uploader import discord as discord_mod
+    from wingman import discord as discord_mod
 
     dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
     stored = re.search(r"discord_webhook: '([^']+)'", dev_js)

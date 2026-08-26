@@ -8,8 +8,8 @@ their only harness.
 import pathlib
 from pathlib import Path
 
-from obs_youtube_uploader import library
-from obs_youtube_uploader.ui import copy as copy_mod
+from wingman import library
+from wingman.ui import copy as copy_mod
 
 
 def _info(name="a.mkv", size=10, duration=60.0, probed=True, answered=True):
@@ -334,10 +334,7 @@ def test_the_progress_text_carries_the_percent_the_bar_can_show():
     # reading 1% -- the disagreement this whole change removes, back one
     # value at a time.
     panel = (
-        pathlib.Path(__file__).resolve().parents[1]
-        / "obs_youtube_uploader"
-        / "web"
-        / "panel.js"
+        pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web" / "panel.js"
     ).read_text(encoding="utf-8")
     assert "Math.round(value)" in panel, (
         "the bar no longer rounds half-up; format_progress's int(x + 0.5) "

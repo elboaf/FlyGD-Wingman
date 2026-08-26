@@ -13,9 +13,9 @@ anything failing.
 import pathlib
 import re
 
-from obs_youtube_uploader.eveskills import evaluator
+from wingman.eveskills import evaluator
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 SKILLS = (WEB / "skills.js").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")

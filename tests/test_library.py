@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import library
+from wingman import library
 
 
 def _touch(p: Path, size: int = 10, mtime: float | None = None) -> Path:

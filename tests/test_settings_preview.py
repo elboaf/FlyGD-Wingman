@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import settings
+from wingman import settings
 
 
 @pytest.mark.parametrize("raw", [None, [], "nope", 3])

@@ -4,7 +4,7 @@
 
 The standalone AutoHotkey script the EVE bookmark feature was ported from.
 It is kept verbatim, and is **not** built, shipped, or executed — the
-vendored engine at `obs_youtube_uploader/engine/eve_bookmarks.ahk` replaces
+vendored engine at `wingman/engine/eve_bookmarks.ahk` replaces
 it.
 
 It stays in the tree because roughly a dozen comments and tests cite it by

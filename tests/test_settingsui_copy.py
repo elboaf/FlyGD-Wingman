@@ -7,7 +7,7 @@ that can be tested without standing one up.
 
 import datetime
 
-from obs_youtube_uploader.ui import copy as copy_mod
+from wingman.ui import copy as copy_mod
 
 # --- webhook_status --------------------------------------------------------
 

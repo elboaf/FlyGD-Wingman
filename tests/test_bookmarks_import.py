@@ -2,7 +2,7 @@
 every existing user's configuration, which -- since Wingman is meant to
 REPLACE the script -- is everyone, not an edge case."""
 
-from obs_youtube_uploader import bookmarks
+from wingman import bookmarks
 
 LEGACY = (
     "[Settings]\r\n"

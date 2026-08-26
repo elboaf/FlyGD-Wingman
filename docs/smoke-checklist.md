@@ -1277,10 +1277,10 @@ response leaves a worker waiting forever, which presents as a hung upload.
       covers only `pyproject.toml`, `__init__.py` and `installer.iss` — so a
       bump that misses the lockfile passes CI and ships a lock claiming the
       previous version. Run `uv lock` after bumping the three, confirm the
-      `obs-youtube-uploader` entry matches, and commit it with the bump.
+      `wingman` entry matches, and commit it with the bump.
       (It was last observed stale at `2.0.0` against `2.1.0`.)
 - [ ] **Version-consistency check catches a mismatch.** Bump one of
-      `pyproject.toml`, `obs_youtube_uploader/__init__.py`, or
+      `pyproject.toml`, `wingman/__init__.py`, or
       `packaging/installer.iss`'s `AppVersion` (but not the other two),
       push, and confirm CI's "Check version consistency" step fails and
       names all three versions, including the mismatched one.
@@ -2266,7 +2266,7 @@ bundle.
 **Register the EVE application first.** Until someone creates it at
 developers.eveonline.com, sets the redirect URI to
 `http://127.0.0.1:51779/callback/`, requests the two read-only scopes, and
-puts the client id in `obs_youtube_uploader/eveskills/application.py`, none
+puts the client id in `wingman/eveskills/application.py`, none
 of the SSO items below can run at all — `Add character` is disabled and says
 so. Every module below the auth stack is testable with stubs before that
 happens, which is why the rest of the feature can be built and merged

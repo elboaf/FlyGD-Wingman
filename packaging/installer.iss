@@ -5,7 +5,7 @@
 
 #define AppName "FlyGD Wingman"
 ; GENERATED, not edited. packaging/write_version_iss.py writes version.iss
-; from obs_youtube_uploader.__version__ and the build runs it immediately
+; from wingman.__version__ and the build runs it immediately
 ; before iscc. It is gitignored on purpose: a committed copy is still a copy,
 ; and this file used to carry the third hand-typed version in the tree.
 ;
@@ -74,7 +74,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 ;     app that demonstrably did start at login, and ticking it produced two
 ;     login entries at once.
 ;
-; Same key, same value name, same --hidden as obs_youtube_uploader/
+; Same key, same value name, same --hidden as wingman/
 ; autostart.py writes, so the installer and the Settings checkbox now
 ; produce a byte-identical entry and cannot disagree. If you change the
 ; value name here, change VALUE_NAME there in the same commit -- an orphaned
@@ -121,7 +121,7 @@ Type: filesandordirs; Name: "{app}"
   That is why this exists.
 
   This installer is only HALF the fix. The runtime can be uninstalled or
-  broken after a successful install, so obs_youtube_uploader/ui/preflight.py
+  broken after a successful install, so wingman/ui/preflight.py
   runs the same check at every launch and shows a native message box before
   webview.start() is ever called.
 

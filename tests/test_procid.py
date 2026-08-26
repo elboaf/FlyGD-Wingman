@@ -4,7 +4,7 @@ non-zero without raising must not be reported as a successful kill."""
 
 from types import SimpleNamespace
 
-from obs_youtube_uploader import procid
+from wingman import procid
 
 
 def fake_runner(returncode, stderr=""):

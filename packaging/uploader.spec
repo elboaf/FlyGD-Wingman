@@ -6,8 +6,8 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 BIN = ROOT / "packaging" / "bin"
-ICON = ROOT / "obs_youtube_uploader" / "assets" / "app.ico"
-WEB = ROOT / "obs_youtube_uploader" / "web"
+ICON = ROOT / "wingman" / "assets" / "app.ico"
+WEB = ROOT / "wingman" / "web"
 
 a = Analysis(
     [str(ROOT / "run.py")],
@@ -54,17 +54,17 @@ a = Analysis(
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green
         # build and an engine that never starts.
-        (str(ROOT / "obs_youtube_uploader" / "engine"), "engine"),
+        (str(ROOT / "wingman" / "engine"), "engine"),
         # Pillow loads this by path at render time, so modulegraph never
         # sees it -- same class of miss as web/ above, and the same silent
         # outcome: chrome.py logs a warning and falls back to Pillow's
         # bitmap default, so every preview label ships in the wrong face
         # with no failure anywhere in the build.
-        (str(ROOT / "obs_youtube_uploader" / "assets" / "fonts"), "assets/fonts"),
+        (str(ROOT / "wingman" / "assets" / "fonts"), "assets/fonts"),
         # Alert sounds, resolved by alerts.service.sound_path() through
         # paths.bundle_dir() -- the same web/-style precedent as above, not
         # chrome.py's font lookup, which this destination does not match.
-        (str(ROOT / "obs_youtube_uploader" / "assets" / "sounds"), "assets/sounds"),
+        (str(ROOT / "wingman" / "assets" / "sounds"), "assets/sounds"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at

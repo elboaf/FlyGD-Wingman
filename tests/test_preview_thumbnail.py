@@ -3,8 +3,8 @@ failed registration degrades instead of raising, and that close() is
 idempotent: a double-unregister is a use-after-free in DWM's handle
 table, and the crash lands nowhere near this file."""
 
-from obs_youtube_uploader.preview import thumbnail
-from obs_youtube_uploader.preview.geometry import Rect
+from wingman.preview import thumbnail
+from wingman.preview.geometry import Rect
 
 
 class FakeDwm:

@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import durations, library, links, uploader
-from obs_youtube_uploader.ui.api import Api, AppState
-from obs_youtube_uploader.ui.rows import RowSnapshot
 from tests.test_scheduler import FakeClock
+from wingman import durations, library, links, uploader
+from wingman.ui.api import Api, AppState
+from wingman.ui.rows import RowSnapshot
 
 
 class FakeWindow:
@@ -736,7 +736,7 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     duration measured so far -- and pays for the whole scan again on the
     next launch, which is the exact cost this cache exists to avoid.
     """
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     saves = []
     real_save = api_mod.durations.save

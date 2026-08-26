@@ -200,7 +200,7 @@ def build_tray(on_open, on_quit):
         pystray.MenuItem("Open Wingman", lambda *_: on_open(), default=True),
         pystray.MenuItem("Quit", lambda *_: on_quit()),
     )
-    return pystray.Icon("obs_youtube_uploader", image, "FlyGD Wingman", menu)
+    return pystray.Icon("wingman", image, "FlyGD Wingman", menu)
 
 
 def notify(icon, message: str) -> None:

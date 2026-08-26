@@ -12,7 +12,7 @@ import urllib.parse
 
 import pytest
 
-from obs_youtube_uploader.eveskills import application, sso
+from wingman.eveskills import application, sso
 
 # RFC 7636 Appendix B, verbatim. These 32 octets encode to the verifier
 # below, whose ASCII bytes hash to the challenge below. Any drift in the

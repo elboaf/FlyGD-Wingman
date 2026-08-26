@@ -21,7 +21,7 @@ from email.message import Message
 
 import pytest
 
-from obs_youtube_uploader.eveskills import esi
+from wingman.eveskills import esi
 
 
 def test_a_normal_path_is_returned_unchanged():

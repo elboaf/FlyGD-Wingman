@@ -11,8 +11,8 @@ build-backend = "setuptools.build_meta"
 # The distribution/import name is deliberately unchanged by the FlyGD Wingman
 # rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
 # entry point, and the release workflow's credential-injection step.
-name = "obs-youtube-uploader"
-# Derived from obs_youtube_uploader.__version__, not retyped. M2 found the
+name = "wingman"
+# Derived from wingman.__version__, not retyped. M2 found the
 # version was carried by hand here AND in __init__.py, which is exactly the
 # drift DESIGN.md's "State that must not be retyped" exists to stop -- and it
 # started mattering the moment the page began showing the value to users.
@@ -75,19 +75,19 @@ dev = ["pytest", "ruff==0.16.4"]
 # and fails at import time in the built artifact, not in the checkout where
 # the source tree makes it work anyway.
 packages = [
-    "obs_youtube_uploader",
-    "obs_youtube_uploader.ui",
-    "obs_youtube_uploader.preview",
-    "obs_youtube_uploader.alerts",
-    "obs_youtube_uploader.evesettings",
-    "obs_youtube_uploader.eveskills",
+    "wingman",
+    "wingman.ui",
+    "wingman.preview",
+    "wingman.alerts",
+    "wingman.evesettings",
+    "wingman.eveskills",
 ]
 
 [tool.setuptools.dynamic]
 # attr=, so the build reads the literal without importing the package --
-# obs_youtube_uploader/__init__.py must stay import-light for this to hold,
+# wingman/__init__.py must stay import-light for this to hold,
 # and today it is a single assignment.
-version = { attr = "obs_youtube_uploader.__version__" }
+version = { attr = "wingman.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

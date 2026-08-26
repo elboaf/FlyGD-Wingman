@@ -2,7 +2,7 @@
 here: a user with AutoHotkey v2 installed would have their v2 interpreter
 handed a v1 script and fail with parse errors that look like our bug."""
 
-from obs_youtube_uploader import paths
+from wingman import paths
 
 
 def test_state_files_live_together(monkeypatch, tmp_path):

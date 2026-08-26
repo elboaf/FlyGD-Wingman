@@ -18,7 +18,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import win32
+from wingman.preview import win32
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32", reason="binds user32/gdi32/dwmapi"

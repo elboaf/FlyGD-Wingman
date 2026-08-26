@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import library
-from obs_youtube_uploader.ui import copy as copy_mod
+from wingman import library
+from wingman.ui import copy as copy_mod
 
 
 def test_unreadable_duration_explains_itself():
@@ -106,10 +106,7 @@ def test_the_page_carries_the_same_table_this_one_describes():
     entries as `+`-concatenated literals.
     """
     source = (
-        Path(__file__).resolve().parent.parent
-        / "obs_youtube_uploader"
-        / "web"
-        / "list.js"
+        Path(__file__).resolve().parent.parent / "wingman" / "web" / "list.js"
     ).read_text(encoding="utf-8")
     start = source.index("var CELL_HELP = {")
     block = source[start : source.index("};", start)]

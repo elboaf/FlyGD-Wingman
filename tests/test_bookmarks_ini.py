@@ -4,7 +4,7 @@ script we cannot test."""
 
 import pytest
 
-from obs_youtube_uploader import bookmarks, settings
+from wingman import bookmarks, settings
 
 
 def section(**over):

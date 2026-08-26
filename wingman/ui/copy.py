@@ -1,4 +1,4 @@
-# obs_youtube_uploader/ui/copy.py
+# wingman/ui/copy.py
 """Every user-visible string the UI decides, as pure module-level functions.
 
 2.2.0 established this split one function at a time (format_selection_summary,

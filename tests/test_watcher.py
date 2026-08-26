@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from obs_youtube_uploader import watcher
+from wingman import watcher
 
 
 def _write(p: Path, size: int) -> Path:

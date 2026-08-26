@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.ui import preflight
+from wingman.ui import preflight
 
 
 def _reader(present: dict):

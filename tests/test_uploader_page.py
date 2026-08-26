@@ -23,11 +23,11 @@ import itertools
 import pathlib
 import re
 
-from obs_youtube_uploader import library
-from obs_youtube_uploader.ui import copy as copy_mod
+from wingman import library
+from wingman.ui import copy as copy_mod
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
-UI = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "ui"
+WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
+UI = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "ui"
 
 CSS_RAW = (WEB / "style.css").read_text(encoding="utf-8")
 HTML = (WEB / "index.html").read_text(encoding="utf-8")

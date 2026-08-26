@@ -5,8 +5,8 @@ about these strings is decided in module-level functions, because the labels
 and dialogs they feed sit in the one layer this repo has no test harness for.
 """
 
-from obs_youtube_uploader import library
-from obs_youtube_uploader.ui import copy as copy_mod
+from wingman import library
+from wingman.ui import copy as copy_mod
 
 # A webhook that discord.parse_webhook actually accepts. The confirm parses
 # it with the same function the upload half does, so a placeholder string

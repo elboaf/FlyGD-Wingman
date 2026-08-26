@@ -4,7 +4,7 @@ import itertools
 
 import pytest
 
-from obs_youtube_uploader.preview import geometry as g
+from wingman.preview import geometry as g
 
 SCREEN = g.Rect(0, 0, 1920, 1080)
 

@@ -5,7 +5,7 @@ Windows-only, and it is the same keyword-only-with-a-production-default
 seam discord.py:196-197 uses for its transport.
 """
 
-from obs_youtube_uploader.eveskills import tokens
+from wingman.eveskills import tokens
 
 
 def _reverse_protect(data: bytes) -> bytes:

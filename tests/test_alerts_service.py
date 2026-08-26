@@ -6,8 +6,8 @@ layer is covered without a thread or a clock.
 
 import threading
 
-from obs_youtube_uploader.alerts import service, tailer
-from obs_youtube_uploader.alerts.service import POLL_INTERVAL_S
+from wingman.alerts import service, tailer
+from wingman.alerts.service import POLL_INTERVAL_S
 
 PLAYER = "Bob Smith[BURN](Rifter)"
 NPC = "Sleepless Sentinel"

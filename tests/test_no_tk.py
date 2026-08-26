@@ -26,7 +26,7 @@ def test_the_tk_ui_modules_are_gone(name):
     """Deleted, not deprecated -- the same reasoning that removed the
     unscaled pad constants rather than leaving them importable."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module(f"obs_youtube_uploader.{name}")
+        importlib.import_module(f"wingman.{name}")
 
 
 def test_importing_the_entry_point_does_not_pull_in_tkinter():
@@ -37,7 +37,7 @@ def test_importing_the_entry_point_does_not_pull_in_tkinter():
         [
             sys.executable,
             "-c",
-            "import obs_youtube_uploader.__main__ as m, sys;"
+            "import wingman.__main__ as m, sys;"
             "print(','.join(n for n in sys.modules if n.startswith('tkinter')))",
         ],
         capture_output=True,
