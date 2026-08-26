@@ -73,6 +73,37 @@ class LayoutStore:
                 self._timer = None
         self._write()
 
+    def clear(self) -> None:
+        """Discard every saved layout. The one wholesale write this class allows.
+
+        Pending LAYOUT deltas are dropped: they describe positions being
+        erased anyway, and a debounce firing after the clear would resurrect
+        exactly one preview's old position, intermittently.
+
+        Pending NAMES are kept and written here. record_character shares this
+        single timer deliberately (see its docstring), so cancelling without
+        draining them would silently lose a character discovered moments
+        before the reset -- and with it any binding whose row that character
+        is the only reason to show.
+        """
+        with self._lock:
+            self._pending = {}
+            names, self._pending_names = list(self._pending_names), []
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+        try:
+            with self._update_settings() as live:
+                section = live.setdefault("preview", {})
+                section["layouts"] = {}
+                for name in names:
+                    bound = set(section.get("hotkeys", {}).get("characters", {}))
+                    section["seen"] = roster.touch(
+                        section.get("seen", []), name, protected=bound
+                    )
+        except OSError:
+            logger.exception("Could not clear preview layouts")
+
     def _write(self) -> None:
         with self._lock:
             pending, self._pending = dict(self._pending), {}

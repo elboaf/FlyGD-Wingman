@@ -227,3 +227,34 @@ def test_layout_and_roster_writes_share_one_transaction():
     assert opened.count("enter") == 1
     assert live["preview"]["seen"] == ["Alice"]
     assert "Alice" in live["preview"]["layouts"]
+
+
+def test_clear_empties_every_saved_layout():
+    live = {"preview": {"layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4}}}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    store.clear()
+    assert live["preview"]["layouts"] == {}
+
+
+def test_clear_drops_a_pending_layout_write():
+    """A drag that ended under a second ago has an unwritten entry. If the
+    debounce fires after the clear it resurrects exactly one preview's old
+    position -- intermittently, which is the worst way for this to fail."""
+    live = {"preview": {"layouts": {}}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    store.record("Alice", Entry(Rect(1, 2, 3, 4)))
+    timer = store._timer
+    store.clear()
+    assert timer.cancelled
+    assert live["preview"]["layouts"] == {}
+
+
+def test_clear_keeps_a_pending_roster_name():
+    """record_character shares this one timer deliberately, so cancelling
+    without draining it silently loses a character discovered moments
+    before the reset -- and any binding whose row it is the reason for."""
+    live = {"preview": {"layouts": {}, "seen": []}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    store.record_character("Bob")
+    store.clear()
+    assert live["preview"]["seen"] == ["Bob"]
