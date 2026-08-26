@@ -26,6 +26,16 @@
 ; %LOCALAPPDATA% state folder survives the predecessor's uninstall and is
 ; migrated by wingman/paths.py on first launch.
 AppId=FlyGD Wingman
+; Both mutex names are named so Inno refuses to install over EITHER version
+; while it is running: Global\OBSYouTubeUploader is 3.x's single-instance
+; mutex, Global\FlyGDWingman is 4.0's. Without this, Inno will happily
+; install over a running 3.x -- RemovePredecessor() then tries to uninstall
+; an app whose exe is locked, and the post-install "Launch" checkbox starts
+; 4.0 while 3.x is still resident. With it, Inno asks the user to close the
+; application first, which is the correct and standard behaviour. Keep both
+; names until no 3.x installs remain in the wild -- the same lifetime as
+; LEGACY_MUTEX_NAME in wingman/__main__.py.
+AppMutex=Global\OBSYouTubeUploader,Global\FlyGDWingman
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=FlyGD
@@ -96,10 +106,12 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [InstallDelete]
 ; Both spellings of the legacy Startup-folder shortcut. The pre-rename
-; installer wrote "OBS YouTube Uploader.lnk" (AppId is still pinned to that
-; string, so those installs upgrade in place and reach this); the
-; post-rename one wrote "FlyGD Wingman.lnk". Neither can be {#AppName} in
-; both cases, so both are spelled out.
+; installer wrote "OBS YouTube Uploader.lnk"; that shortcut can exist on any
+; machine that ever ticked the install-time box, regardless of how the
+; install was later replaced -- upgraded in place, or (as of 4.0)
+; uninstalled and reinstalled by RemovePredecessor(). The post-rename
+; installer writes "FlyGD Wingman.lnk". Neither can be {#AppName} in both
+; cases, so both are spelled out.
 ;
 ; Unconditional, NOT gated on Tasks: startup. An upgrade that leaves the
 ; task unticked must still remove the old shortcut, or the app keeps
@@ -279,14 +291,19 @@ begin
   Command := RemoveQuotes(Command);
   Log('Predecessor: running ' + Command);
 
-  { A failed uninstall must NOT abort the install. The worst case is a
-    stale Add/Remove entry pointing at a directory we are about to leave
-    alone; blocking the upgrade over that is strictly worse. User state is
-    untouched either way -- [UninstallDelete] removes only {app}.
-
-    /VERYSILENT rather than /SILENT: /SILENT still shows the uninstaller's
-    own progress window, which would appear as a stray dialog on top of our
-    wizard. }
+  // A failed uninstall must NOT abort the install. The worst case is a
+  // stale Add/Remove entry pointing at a directory we are about to leave
+  // alone; blocking the upgrade over that is strictly worse. User state is
+  // untouched either way -- [UninstallDelete] removes only {app}.
+  //
+  // Line comments, not a braced { } block: the text above has to name
+  // {app}, and a braced comment is ended by the FIRST closing brace, so
+  // that one would close it early and leave the rest to be parsed as code
+  // -- the same trap WebView2RuntimePresent() avoids above.
+  //
+  // /VERYSILENT rather than /SILENT: /SILENT still shows the uninstaller's
+  // own progress window, which would appear as a stray dialog on top of our
+  // wizard.
   if not Exec(Command, '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE,
               ewWaitUntilTerminated, ResultCode) then
   begin
