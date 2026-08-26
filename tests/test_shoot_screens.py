@@ -98,3 +98,46 @@ def test_gated_column_matches_the_apps_own_gate():
         assert screen.gated == expected, (
             f"{screen.key} gated flag disagrees with app.js"
         )
+
+
+def test_page_candidates_keeps_the_real_app_page():
+    targets = [
+        {"type": "page", "url": "http://127.0.0.1:52913/index.html"},
+    ]
+    assert shoot.page_candidates(targets) == targets
+
+
+def test_page_candidates_rejects_the_dev_harness():
+    """dev.js fabricates bridge replies and photographs convincingly.
+
+    A stray ?dev=1 page holding the debug port once returned
+    {applied: true} for a call that never reached Python, which invented a
+    bug that did not exist. Any query string is refused.
+    """
+    targets = [{"type": "page", "url": "file:///C:/dev/web/index.html?dev=1"}]
+    assert shoot.page_candidates(targets) == []
+
+
+def test_page_candidates_rejects_non_page_targets():
+    """targets[0] is routinely a Chrome extension background page.
+
+    Attaching to one succeeds and evaluates fine, then reports
+    "WM is not defined" -- which reads exactly like the page failing to
+    load, and has cost a previous session an entire debugging session.
+    """
+    targets = [
+        {"type": "background_page", "url": "chrome-extension://abc/index.html"},
+        {"type": "service_worker", "url": "http://127.0.0.1:1/index.html"},
+    ]
+    assert shoot.page_candidates(targets) == []
+
+
+def test_page_candidates_ignores_the_debug_port():
+    """pywebview serves the page from its OWN random port.
+
+    ui/window.py hands pywebview a local file and 6.2.1 serves it through a
+    separate HTTP server, so requiring the URL to carry the debug port
+    rejects every legitimate target.
+    """
+    targets = [{"type": "page", "url": "http://127.0.0.1:1/index.html"}]
+    assert shoot.page_candidates(targets) == targets

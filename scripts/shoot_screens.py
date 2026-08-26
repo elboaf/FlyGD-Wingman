@@ -11,6 +11,7 @@ Windows shell below them holds none.
 """
 
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 
 class Screen(NamedTuple):
@@ -56,3 +57,27 @@ def screens_for_gate(eve_shown: bool) -> tuple[list[Screen], list[Screen]]:
     to_shoot = [s for s in SCREENS if not s.gated]
     skipped = [s for s in SCREENS if s.gated]
     return to_shoot, skipped
+
+
+def page_candidates(targets: list[dict]) -> list[dict]:
+    """Narrow a /json/list payload to plausible Wingman page targets.
+
+    Deliberately NOT a URL-port match: pywebview serves index.html from its
+    own random port (ui/window.py:202-205), unrelated to the debug port, so
+    matching the debug port rejects every real target.
+
+    Any query string disqualifies a target, which is what excludes the
+    ?dev=1 harness. That is a cheap pre-filter, not the proof -- the caller
+    still confirms window.pywebview exists on whichever candidate it picks.
+    """
+    keep = []
+    for target in targets:
+        if target.get("type") != "page":
+            continue
+        parsed = urlparse(target.get("url", ""))
+        if parsed.query:
+            continue
+        if not parsed.path.endswith("/index.html"):
+            continue
+        keep.append(target)
+    return keep
