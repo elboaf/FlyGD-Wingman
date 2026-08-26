@@ -489,6 +489,41 @@ def test_a_link_from_a_previous_session_reaches_the_page_on_first_push(
     assert api.copy_path(by_name["a.mkv"]["id"]) == url
 
 
+def test_the_row_id_link_map_does_not_grow_across_refreshes(recordings, tmp_path):
+    """Every key in Api._links is a row id, and rebuild() mints new ones --
+    so after a refresh they are all unreachable by definition.
+
+    This became worth asserting when the restore loop was added: it re-adds
+    a key per linked row on every refresh, and refresh runs on launch, tray
+    open, settings save, delete and every watcher find. Left uncleared the
+    map would grow for the life of the process, holding ids nothing can
+    resolve.
+    """
+    links_file = tmp_path / "links.json"
+    _seed_link(links_file, recordings / "a.mkv", uploader.watch_url("abc123"))
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        links_file=links_file,
+    )
+    api.list_rows()
+    first = dict(api._links)
+    assert len(first) == 1
+
+    api.list_rows()
+    api.list_rows()
+
+    assert len(api._links) == 1, (
+        "one linked recording, one entry, however many refreshes"
+    )
+    # And it is the CURRENT id, not a survivor of an earlier snapshot.
+    assert set(api._links) != set(first)
+    live = {row["id"] for row in api._rows.rows()}
+    assert set(api._links) <= live
+
+
 def test_a_re_recording_at_the_same_path_is_not_given_the_old_link(
     recordings, tmp_path
 ):

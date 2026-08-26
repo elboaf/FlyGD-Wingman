@@ -671,6 +671,13 @@ class Api:
         self._stop_drain()
 
         rebuilt = self._rows.rebuild(self._state.recording_dir, preselect=preselect)
+        # rebuild() mints new ids, so every key already in _links is dead --
+        # rows.py's whole contract is that a stale id resolves to nothing.
+        # Cleared rather than left, because the restore loop below re-adds a
+        # key per linked row on EVERY refresh (launch, tray open, settings
+        # save, delete, watcher find) and this map would otherwise grow
+        # without bound across a long session, holding ids nothing can reach.
+        self._links.clear()
         ids = [row["id"] for row in rebuilt]
         infos = self._rows.resolve_many(ids)
         pending = durations.resolve(self._cache, infos)
