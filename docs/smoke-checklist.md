@@ -917,6 +917,15 @@ behavior that only shows up at size.
       "Look and feel > Display scaling" items above for the general scaling
       checks — this item covers the rail specifically, not a duplicate of
       those.
+- [ ] **The Settings rail is as tall as its entries, and the ship fills the
+      rest.** Round 5's G3-rail and G2. Open Settings on Account, Discord or
+      General: the rail ends just below **General** rather than running to
+      the status strip, and the space below and right of it is page wash
+      with the ship watermark in the lower right — not a bordered box beside
+      a void. Then click **Bookmarks** and **Previews**: those two scroll,
+      so the watermark is **absent** on them by design. Scroll one of them
+      to the bottom and confirm no part of the ship appears between the
+      cards. The rail must still not scroll away at the top on any section.
 - [ ] **One upload at a time, both halves included.** Start an upload with
       a webhook configured, and while the Discord half is still posting press
       **Upload** again. Expected: the "An upload is already in progress"
@@ -1164,6 +1173,13 @@ response leaves a worker waiting forever, which presents as a hung upload.
 
 ## Progress
 
+- [ ] **No progress control is drawn at rest.** Round 5's G1. On a fresh
+      launch the strip reads **Idle** with nothing to its right — no groove,
+      no percentage. The bar appears when an upload or stitch starts and
+      goes again when the strip clears. Check the error case too: force an
+      upload failure (a bad webhook URL will not do it — kill the network
+      mid-transfer and exhaust the retries). The red line must not be
+      followed by an empty groove sitting at 0%.
 - [ ] **LOAD-BEARING: the progress bar is indeterminate during a stitch.**
       Select two, tick Stitch, upload. While ffmpeg runs the bar animates
       continuously with NO percentage — stitching reports no progress and a
@@ -1187,7 +1203,8 @@ response leaves a worker waiting forever, which presents as a hung upload.
       100% were still on screen in a capture of a *different folder with
       zero recordings*, and again on Profiles and Skills. Complete one
       upload, then click Skills, Profiles and the gear. The strip must read
-      **Idle** with an empty bar and no percentage on each, and stay Idle
+      **Idle** with no progress bar drawn at all and no percentage on each,
+      and stay Idle
       when you come back. It clears on leaving the route, so the completion
       is still there while you are looking at the folder it was about.
 - [ ] **LOAD-BEARING: a job still running is never cleared.** The opposite

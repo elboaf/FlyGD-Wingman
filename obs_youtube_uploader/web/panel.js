@@ -211,8 +211,10 @@
     if (stripBusy) return;
     setStatus(IDLE, 'FG');
     WM.el('track').classList.remove('indeterminate');
-    // Back to the markup's resting state: no inline width, and an EMPTY
-    // percentage rather than `0%`, which would read as a stalled job.
+    // Back to the markup's resting state: the track HIDDEN (G1), no inline
+    // width, and an EMPTY percentage rather than `0%`, which would read as
+    // a stalled job.
+    WM.el('track').hidden = true;
     WM.el('bar').style.width = '';
     WM.el('pct').textContent = '';
   }
@@ -227,6 +229,7 @@
   WM.handle('onProgress', function (p) {
     stripBusy = !!p.busy;
     var track = WM.el('track'), bar = WM.el('bar'), pct = WM.el('pct');
+    var value = 0;
     if (p.mode === 'indeterminate') {
       // A stitch reports no readable percentage. The bar must say
       // "working" without claiming one, so the number is blanked too.
@@ -235,10 +238,34 @@
       pct.textContent = '';
     } else {
       track.classList.remove('indeterminate');
-      var value = Math.max(0, Math.min(100, Number(p.pct) || 0));
+      value = Math.max(0, Math.min(100, Number(p.pct) || 0));
       bar.style.width = value + '%';
       pct.textContent = Math.round(value) + '%';
     }
+    // G1: the track is drawn only while there is a job to report. A push
+    // that reports a POSITION shows it -- an animating stitch, any real
+    // percentage, and the deliberate 0% that opens an upload (api.py's
+    // `_progress(0.0, busy=True)`), where an empty groove is correct
+    // because it is about to move.
+    //
+    // The one push that arrives at 0% with nothing running is api.py's
+    // error path, which sends `_progress(0.0, busy=False)` to STOP the
+    // indeterminate animation rather than to claim a position. Showing an
+    // empty groove beside a red error would put G1's defect back on screen
+    // in a state a user can reach, so "put the bar back" is honoured by
+    // putting it away. A finished job keeps its bar: 100% is a position,
+    // and round 3's finding 14 requires the result to survive until the
+    // route changes.
+    //
+    // The percentage goes with it. .pct is a sibling of the track, not a
+    // child, so hiding one leaves the other -- and this lane's first cut
+    // left a bare `0%` floating beside the error with no groove under it,
+    // which is the stalled-job reading resetStrip's own comment rules out.
+    // Caught in the ?dev=1 harness driving api.py's six real pushes; the
+    // suite renders nothing and could not have seen it.
+    var show = p.mode === 'indeterminate' || value > 0 || stripBusy;
+    track.hidden = !show;
+    if (!show) pct.textContent = '';
     if (p.text) setStatus(p.text, p.kind);
   });
 
