@@ -231,3 +231,25 @@ def test_the_legacy_lock_migration_does_not_run_twice():
         }
     )
     assert out["locked"] == []
+
+
+def test_snap_defaults_to_on():
+    """On by default because it is what shipped; turning it off would
+    silently change how every existing install's previews drag."""
+    assert settings._preview_defaults()["snap"] is True
+
+
+def test_snap_survives_a_round_trip():
+    assert settings.validated_preview({"snap": False})["snap"] is False
+
+
+def test_snap_falls_back_when_it_is_not_a_bool():
+    assert settings.validated_preview({"snap": "yes"})["snap"] is True
+
+
+def test_the_preview_defaults_are_a_fixed_point_of_their_own_validator():
+    """Normalising runs on every save, so a default its own validator
+    rewrites would drift the file on the first write. Named as unguarded
+    in docs/preview-roadmap.md; this slice makes it cheap to add."""
+    defaults = settings._preview_defaults()
+    assert settings.validated_preview(defaults) == defaults

@@ -608,3 +608,9 @@ def test_an_alert_on_a_ringed_but_unfocused_client_is_persistent(monkeypatch):
     w.arm_alert("combat", {"persist_until_selected": True}, 0.0)
 
     assert seen == [False, True]
+
+
+def test_a_preview_defaults_to_snapping():
+    """The attribute exists before any restyle lands, so a preview created
+    between launch and the first settings push still snaps."""
+    assert window.PreviewWindow.snap is True

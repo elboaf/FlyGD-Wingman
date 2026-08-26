@@ -85,6 +85,7 @@ def test_defaults_are_the_documented_values():
             "minimize_inactive_clients": False,
             "never_minimize": [],
             "locked": [],
+            "snap": True,
         },
         "eve_settings": {
             "root": None,

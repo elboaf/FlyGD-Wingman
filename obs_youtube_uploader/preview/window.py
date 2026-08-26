@@ -244,6 +244,10 @@ class PreviewWindow:
     is a hang, not an exception.
     """
 
+    # Class-level so a preview created before the first restyle still has
+    # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
+    snap = True
+
     def __init__(
         self,
         libs,
@@ -256,6 +260,7 @@ class PreviewWindow:
         locked=False,
         show_labels=True,
         opacity: int = 255,
+        snap=True,
     ):
         self._libs = libs
         self.client = client
@@ -271,6 +276,9 @@ class PreviewWindow:
         # _chrome_key() below. Set once at creation; Task 4 wires the
         # live-update path that lets this change on an already-open window.
         self.opacity = opacity
+        # Set once from the host at creation; PreviewHost._restyle pushes
+        # live updates, like show_labels and locked.
+        self.snap = snap
         self.selected = False
         # Whether the client owns the foreground right now, as opposed to
         # `selected` above, which is the sticky ring. Only the alerts read
@@ -319,6 +327,7 @@ class PreviewWindow:
         locked=False,
         show_labels=True,
         opacity: int = 255,
+        snap=True,
     ):
         self = cls(
             libs,
@@ -331,6 +340,7 @@ class PreviewWindow:
             locked,
             show_labels,
             opacity,
+            snap,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -715,7 +725,9 @@ class PreviewWindow:
                 )
             else:
                 moved = drag_target(self._start, cur, self._start_rect)
-                self.move(geometry.snap(moved, self._neighbours(), self._screen()))
+                if self.snap:
+                    moved = geometry.snap(moved, self._neighbours(), self._screen())
+                self.move(moved)
             if PERF:
                 now = time.perf_counter()
                 self._perf["handler"] += now - t0

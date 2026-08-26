@@ -117,6 +117,7 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
+        snap=None,
     ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
@@ -150,6 +151,11 @@ class PreviewHost:
         # _is_locked below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
+        # Same reasoning as _restore_positions/_show_labels/etc.: read
+        # live so a Settings toggle mid-session reaches previews already
+        # open. None means "the caller has not wired this yet" -- see
+        # _snapping.
+        self._snap = snap
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -510,6 +516,7 @@ class PreviewHost:
                 locked=self._is_locked(key),
                 show_labels=self._labels_shown(),
                 opacity=self._current_opacity(),
+                snap=self._snapping(),
             )
             if win is not None:
                 self._windows[key] = win
@@ -960,6 +967,22 @@ class PreviewHost:
             )
             return True
 
+    def _snapping(self) -> bool:
+        """Whether a dragged preview snaps, read live.
+
+        Same posture as _restoring(): this runs on the preview thread
+        inside the pump, so a callable that raises must not be the thing
+        that kills it. Falls back to snapping -- the behaviour that
+        predates the toggle.
+        """
+        if self._snap is None:
+            return True
+        try:
+            return bool(self._snap())
+        except Exception:
+            logger.exception("Could not read preview.snap; leaving snapping on")
+            return True
+
     def _labels_shown(self) -> bool:
         """Whether preview chrome draws a label band, read live.
 
@@ -1047,6 +1070,7 @@ class PreviewHost:
             win.show_labels = show_labels
             win.opacity = opacity
             win.locked = self._is_locked(key)
+            win.snap = self._snapping()
             win.redraw()
             # Mirrors PreviewWindow.create/.move: opacity is a DWM
             # thumbnail property, not a chrome pixel, so it needs its own
