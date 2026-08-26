@@ -1,5 +1,6 @@
 // ---- Gamelog alerts --------------------------------------------------
-// Third card in Settings > Previews, alongside previews.js and the
+// Its own section, Settings > Alerts, since round 5's D1 -- it was the
+// third card in Settings > Previews, alongside previews.js and the
 // keybind block in settings.js. Not folded into either: this owns none
 // of the win32/AutoHotkey machinery those files do, and gets its own
 // bridge endpoints for the same reason set_preview_enabled does --
