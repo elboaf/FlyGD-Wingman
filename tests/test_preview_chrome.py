@@ -6,7 +6,7 @@ CI on Linux, where no Windows drawing API exists.
 
 from pathlib import Path
 
-from obs_youtube_uploader.preview import chrome
+from obs_youtube_uploader.preview import chrome, geometry
 
 CYAN = (0, 200, 220, 255)
 
@@ -19,7 +19,7 @@ def test_border_is_drawn_in_the_requested_colour():
     assert img.getpixel((319, 209)) == CYAN
 
 
-def test_every_pixel_is_opaque_so_the_window_is_clickable():
+def test_no_pixel_is_fully_transparent_so_the_window_is_clickable():
     """A layered window hit-tests against its ALPHA CHANNEL: any pixel at
     alpha 0 passes the click through to whatever is behind it.
 
@@ -34,7 +34,7 @@ def test_every_pixel_is_opaque_so_the_window_is_clickable():
     assert 0 not in alphas, "transparent pixels are click-through"
 
 
-def test_a_degenerate_size_is_still_fully_opaque():
+def test_a_degenerate_size_is_still_clickable():
     """Resize passes through tiny sizes; a transparent frame there would
     briefly make the preview unclickable mid-drag."""
     img = chrome.render((6, 6), "P", border_color=CYAN)
@@ -44,10 +44,11 @@ def test_a_degenerate_size_is_still_fully_opaque():
 def test_label_band_is_opaque_and_the_right_height():
     img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=5, label_h=30)
     assert img.getpixel((160, 6))[3] > 200  # inside the band
-    # Below the band is the thumbnail area: opaque (see the hit-testing
-    # test above) but a different colour from the band.
-    assert img.getpixel((160, 40))[3] == 255
-    assert img.getpixel((160, 40))[:3] != img.getpixel((160, 6))[:3]
+    # Below the band is the thumbnail area, which is deliberately NOT
+    # opaque -- see the thumbnail-hole tests below. The band has to stand
+    # apart from it either way.
+    assert img.getpixel((160, 40))[3] == chrome.THUMBNAIL_ALPHA
+    assert img.getpixel((160, 6))[3] > img.getpixel((160, 40))[3]
 
 
 def test_label_text_is_actually_drawn():
@@ -81,10 +82,17 @@ def test_the_selected_preview_draws_its_ring():
     assert img.getpixel((0, 100))[:3] == (0, 200, 220)
 
 
-def test_the_interior_stays_opaque_either_way():
-    """Opacity is load-bearing, not cosmetic: a layered window is
-    hit-tested against its own alpha, so a transparent pixel is
-    click-through and drag breaks (chrome.py:22-30)."""
+def test_the_interior_stays_clickable_either_way():
+    """Hit-testing is load-bearing, not cosmetic: a layered window is
+    hit-tested against its own alpha, so a FULLY transparent pixel is
+    click-through and drag breaks.
+
+    This used to assert alpha 255 and read that as the same thing. It is
+    not: only alpha 0 is click-through, and requiring 255 here is what
+    made preview.opacity dim the game content instead of revealing the
+    desktop behind it. See THUMBNAIL_ALPHA in chrome.py for the
+    measurements.
+    """
     for selected in (True, False):
         img = chrome.render(
             (200, 150),
@@ -93,7 +101,7 @@ def test_the_interior_stays_opaque_either_way():
             border=2,
             selected=selected,
         )
-        assert img.getpixel((100, 100))[3] == 255
+        assert img.getpixel((100, 100))[3] > 0
 
 
 def test_degenerate_size_does_not_raise():
@@ -144,3 +152,69 @@ def test_missing_font_is_logged_not_swallowed(monkeypatch, caplog):
         chrome.render((320, 210), "Pilot", border_color=CYAN)
     chrome._font.cache_clear()
     assert any("font" in r.message.lower() for r in caplog.records)
+
+
+# -- the thumbnail hole -------------------------------------------------
+# DWM composites the thumbnail OVER this bitmap, so whatever alpha sits
+# under it is what preview.opacity blends the game content against.
+# Measured on Windows: an opaque fill there means a translucent preview
+# blends toward near-black -- it dims, and the desktop never shows
+# through, which is what users reported the opacity slider doing.
+
+
+def test_the_thumbnail_region_is_transparent_so_opacity_reveals_the_desktop():
+    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=2, label_h=0)
+    assert img.getpixel((160, 105))[3] == chrome.THUMBNAIL_ALPHA
+    assert chrome.THUMBNAIL_ALPHA < 255, "an opaque fill dims instead of revealing"
+
+
+def test_the_thumbnail_region_is_still_hit_testable():
+    """Alpha 1 rather than 0, and the difference is the whole design.
+
+    Measured: WindowFromPoint over an alpha-1 pixel returns the preview,
+    over an alpha-0 pixel it returns the window behind. Zero would give
+    the same translucency and make the tile click-through -- the exact
+    regression chrome's opaque fill was introduced to fix.
+    """
+    assert chrome.THUMBNAIL_ALPHA > 0
+
+
+def test_the_thumbnail_hole_matches_the_rect_the_thumbnail_is_drawn_into():
+    """Derived from geometry, never retyped: the hole and the DWM
+    destination rect must be the same rectangle, or the seam shows as a
+    ring of near-black the thumbnail does not cover."""
+    w, h, border, label_h = 320, 210, 2, 30
+    img = chrome.render(
+        (w, h), "Pilot", border_color=CYAN, border=border, label_h=label_h
+    )
+    thumb = geometry.thumbnail_rect(geometry.Rect(0, 0, w, h), border, label_h)
+    for x, y in (
+        (thumb.x, thumb.y),
+        (thumb.right - 1, thumb.bottom - 1),
+    ):
+        assert img.getpixel((x, y))[3] == chrome.THUMBNAIL_ALPHA, (x, y)
+    # Just outside every edge is chrome, and chrome stays solid.
+    assert img.getpixel((thumb.x - 1, thumb.y))[3] == 255
+    assert img.getpixel((thumb.right, thumb.y))[3] == 255
+    assert img.getpixel((thumb.x, thumb.bottom))[3] == 255
+
+
+def test_the_unselected_edge_stays_opaque():
+    """An unselected preview shows the interior fill at the inset width
+    instead of a ring. Punching the thumbnail hole must not take that
+    edge with it -- it is the only thing separating two stacked previews
+    when neither is selected."""
+    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=2, label_h=0)
+    assert img.getpixel((0, 0))[3] == 255
+    assert img.getpixel((1, 1))[3] == 255
+    assert img.getpixel((319, 209))[3] == 255
+
+
+def test_the_alert_ring_is_drawn_over_the_hole_not_under_it():
+    """Alert frames render at ALERT_BORDER, and window.py widens the
+    thumbnail inset to match. The ring must survive the punch or an armed
+    alert draws nothing."""
+    img = chrome.render(
+        (320, 210), "Pilot", border_color=CYAN, border=6, label_h=0, selected=True
+    )
+    assert img.getpixel((160, 3)) == CYAN
