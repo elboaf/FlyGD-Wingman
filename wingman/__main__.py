@@ -397,6 +397,13 @@ def build_preview_host(state, api_box):
             if api is not None:
                 api.push_preview_hotkeys(status)
 
+        def on_bind_captured(gesture):
+            # Same shape and same reason as on_hotkey_status above: fires
+            # on the preview thread, and api_box may not be populated yet.
+            api = api_box.get("api")
+            if api is not None:
+                api.push_bind_captured(gesture)
+
         def restore_positions():
             # Read per placement, never captured. The toggle changes
             # mid-session, and settings._normalize replaces the whole
@@ -462,6 +469,7 @@ def build_preview_host(state, api_box):
             clear_layouts=store.clear,
             on_clients_changed=on_clients_changed,
             on_hotkey_status=on_hotkey_status,
+            on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,
             show_labels=show_labels,
             opacity=opacity,

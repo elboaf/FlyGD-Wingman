@@ -365,20 +365,43 @@ def test_plan_drops_unparseable_and_empty_gestures():
             "cycle_prev": "",
         }
     )
-    assert [entry[2] for entry in plan] == [("focus", "Carol")]
+    assert [entry[2] for entry in plan] == [("focus", ("Carol",))]
 
 
-def test_plan_drops_a_duplicate_chord():
-    """Windows would refuse the second registration anyway; catching it
-    here keeps the reported status honest about which binding lost."""
+def test_plan_merges_duplicate_chords():
+    """Two characters on one chord is a supported setup, not a mistake.
+
+    A multiboxer runs a different subset of their characters each session
+    and wants one physical key to mean "go to whichever of these is up".
+    One registration carries every name bound to it -- Windows only has
+    one to give -- and _on_hotkey picks among the names actually running.
+    """
     plan = host.plan_registrations(
         {
-            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
+            "characters": {"Bravo": "Ctrl+F1", "Alice": "Ctrl+F1"},
             "cycle_next": "",
             "cycle_prev": "",
         }
     )
     assert len(plan) == 1
+    assert plan[0][2] == ("focus", ("Alice", "Bravo"))
+
+
+def test_plan_drops_a_cycle_chord_a_character_already_owns():
+    """Merging is for characters only.
+
+    A cycle chord is a different ACTION, so there is nothing to merge into
+    -- one of the two has to lose, and it is still the cycle chord, which
+    is what the missing hotkey_status entry tells the page.
+    """
+    plan = host.plan_registrations(
+        {
+            "characters": {"Alice": "Ctrl+Alt+Right"},
+            "cycle_next": "Ctrl+Alt+Right",
+            "cycle_prev": "",
+        }
+    )
+    assert [entry[2] for entry in plan] == [("focus", ("Alice",))]
 
 
 def test_cycle_actions_carry_direction():
@@ -651,6 +674,100 @@ def test_hotkey_focuses_the_named_character(monkeypatch):
     assert activated == [0x1234]
 
 
+def test_shared_hotkey_skips_the_client_already_in_front(monkeypatch):
+    """The tie-break for a chord several characters share.
+
+    Both are running, so "focus the one bound to this key" has two
+    answers. Picking the one that is NOT already in front means a press
+    always moves you; picking first-by-name would make the key a no-op
+    half the time.
+    """
+    activated = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0x1111
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert activated == [0x2222]
+
+
+def test_shared_hotkey_ignores_names_that_are_not_running(monkeypatch):
+    """The whole point of the feature: the same key every session, whoever
+    of that group happens to be logged in."""
+    activated = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    # Alice is bound first by name but is not logged in this session.
+    h._clients = {"Bravo": _FakeClient("Bravo", hwnd=0x2222)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert activated == [0x2222]
+
+
+def test_shared_hotkey_refocuses_the_only_running_match(monkeypatch):
+    """One running match that is ALREADY in front is still the answer.
+
+    The not-in-front preference is a tie-break, not a filter -- dropping
+    the only candidate would make the key dead exactly when the user is
+    looking at that client.
+    """
+    activated = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1111)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0x1111
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F1"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert activated == [0x1111]
+
+
 def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
     activated = []
     monkeypatch.setattr(
@@ -694,6 +811,116 @@ def test_a_focus_chord_for_an_absent_character_does_nothing(monkeypatch):
     assert activated == []
 
 
+def test_an_armed_capture_reports_the_chord_instead_of_switching(monkeypatch):
+    """The bug this exists for: rebinding a key that is already bound.
+
+    A registered chord is delivered to THIS window as WM_HOTKEY and never
+    reaches the focused WebView2 window, so previews.js' keydown listener
+    never sees it -- the row sat on "Press a key..." while the press did
+    its normal job and focused a client. Users found the workaround
+    (clear the bind first, which unregisters it, then capture) which is
+    exactly the shape of the diagnosis.
+    """
+    activated = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
+    h.set_capture(True)
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert captured == ["Ctrl+F1"]
+    # The chord must not ALSO do its normal job: the press that was meant
+    # to rebind a row would otherwise yank the foreground to a client and
+    # take the window being typed into away with it.
+    assert activated == []
+
+
+def test_capture_expires_so_a_stuck_flag_cannot_kill_the_hotkeys(monkeypatch):
+    """The failure mode that decides this is a deadline and not a bool.
+
+    The page disarms on every exit path it knows about, but a WebView2
+    crash or a reload with a capture armed knows none of them, and a flag
+    left set turns every preview hotkey into a silent no-op with nothing
+    on screen to say why. Expiry is checked where it is read, so no timer
+    has to fire for the hotkeys to come back.
+    """
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
+    h.set_capture(True)
+    h._capture_until -= host.CAPTURE_TIMEOUT_S + 1
+
+    h._on_hotkey(libs, next(iter(user32.registered)))
+
+    assert captured == []
+
+
+def test_capture_is_disarmed_by_the_chord_it_captured(monkeypatch):
+    """One press, one capture. The page sends set_capture(False) too, but
+    the round trip is not instant and a second press arriving inside it
+    must not be eaten as well."""
+    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._hwnd = 0x99
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs, {"characters": {"Alice": "Ctrl+F1"}, "cycle_next": "", "cycle_prev": ""}
+    )
+    h.set_capture(True)
+    ident = next(iter(user32.registered))
+
+    h._on_hotkey(libs, ident)
+    h._on_hotkey(libs, ident)
+
+    assert captured == ["Ctrl+F1"]
+
+
+def test_a_raising_capture_callback_does_not_kill_the_pump():
+    """on_bind_captured is outside code called from the wndproc, where
+    sys.unraisablehook would swallow the traceback -- the same reasoning
+    as on_hotkey_status and on_clients_changed."""
+
+    def boom(text):
+        raise RuntimeError("bridge is gone")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, on_bind_captured=boom)
+    h._hwnd = 0x99
+    h._registered = {1: ("focus", ("Alice",))}
+    h._registered_text = {1: "Ctrl+F1"}
+    h.set_capture(True)
+
+    h._on_hotkey(_FakeLibs(_FakeUser32()), 1)  # must not raise
+
+
 def test_hotkey_dispatch_is_logged_including_silent_early_returns(monkeypatch, caplog):
     """_on_hotkey had no logging at all: an unknown id and a not-running
     target both returned silently, and a field report of 'my hotkey does
@@ -715,8 +942,8 @@ def test_hotkey_dispatch_is_logged_including_silent_early_returns(monkeypatch, c
         },
     )
     ident_by_action = {v: k for k, v in h._registered.items()}
-    alice_ident = ident_by_action[("focus", "Alice")]
-    ghost_ident = ident_by_action[("focus", "Ghost")]
+    alice_ident = ident_by_action[("focus", ("Alice",))]
+    ghost_ident = ident_by_action[("focus", ("Ghost",))]
 
     with caplog.at_level(logging.DEBUG):
         h._on_hotkey(libs, alice_ident)  # fires: target is running

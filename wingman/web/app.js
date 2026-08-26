@@ -52,6 +52,7 @@
                  'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
+                 'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSkills', 'onSkillsProgress'];
