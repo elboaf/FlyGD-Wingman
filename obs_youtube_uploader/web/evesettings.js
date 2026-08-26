@@ -85,6 +85,19 @@
     return match ? match.name : '';
   }
 
+  // R5: each name carries its noun. Collapsed, this row read `Folder
+  // <path> Tranquility - Default`: one labelled value beside two unlabelled
+  // ones, though the server and the profile decide what a copy will hit
+  // exactly as much as the folder does, and `Default` on its own is not
+  // obviously a profile name at all. The words go IN the text rather than
+  // into two more .lab elements, because `.settings .row > .lab` is
+  // width:100% -- a second label in this row would stack and break it
+  // across three lines -- and because the labelled form is what the
+  // expanded face already shows, in its own Server and Profile rows.
+  function setLabel(name, noun) {
+    return name ? name + ' ' + noun : '';
+  }
+
   function paintFolder() {
     var open = forcedOpen() || expanded;
     WM.el('es-folder-summary').hidden = open;
@@ -92,8 +105,8 @@
     if (open) return;
     WM.el('es-folder-root').textContent = state.root;
     WM.el('es-folder-set').textContent =
-      [nameOf(state.servers, state.server),
-       nameOf(state.profiles, state.profile)]
+      [setLabel(nameOf(state.servers, state.server), 'server'),
+       setLabel(nameOf(state.profiles, state.profile), 'profile')]
         .filter(Boolean).join(' \u00b7 ');
   }
 

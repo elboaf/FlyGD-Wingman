@@ -1933,7 +1933,11 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] **The folder card is one line on every visit after the first.** With a
       folder already chosen, open the route. Expected: the EVE settings
       folder card is a single row — `Folder`, the path, the server and
-      profile, and a `Change…` button — and the Copy EVE settings card's
+      profile, and a `Change…` button. The server and the profile each
+      carry their noun, `Tranquility server · Default profile` (round 5's
+      R5); bare, `Default` did not read as a profile name at all. Check the
+      path still fits beside them at the floor with the default EVE root.
+      And the Copy EVE settings card's
       target list is on screen without scrolling. Press `Change…`: the
       folder, Server and Profile controls appear. Leave the route and come
       back: it is one line again. This is deliberate and not a bug — the
@@ -1981,13 +1985,29 @@ so these are the checks that matter and only a Windows machine can run them.
       a long root ends in an ellipsis rather than pushing `Change…` or
       `Choose folder…` toward the right edge. Check at 150% scaling, where
       the card is narrower than its own 620px.
-- [ ] **The Characters / Accounts switch says what it is.** Expected: the
-      word `Copy` in the label column in front of the two radios, on the
+- [ ] **The Characters / Accounts switch says what it is.** Expected:
+      `Settings for` in the label column in front of the two radios, on the
       same column as `Copy from` below it. It was the only unlabelled
       control on the screen, and it changes what the source dropdown, the
-      target list and the filter all mean.
+      target list and the filter all mean. **The word is no longer `Copy`**
+      (round 5's R3): that made four labels in one card say `Copy` with
+      three different meanings, and this was the one whose options —
+      `Characters`, `Accounts` — already say what they select. The label
+      itself must still be there; an unlabelled switch is the defect the
+      label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **The roster reads alphabetically, down each column** (round 5's
+      R1/D4). With a few dozen characters, look at the target list and the
+      `Copy from` dropdown. Expected: both are in NAME order, not in the
+      order of the ids in the filenames, and because the roster is a
+      `columns` layout the names run A-Z down column one, then continue
+      down column two. The order is applied where the names are
+      (`Api.eve_settings_state`), not in `evesettings.tree`, which has only
+      file ids — so check it again a second after the route opens, once the
+      real names have replaced `Character <id>`: the roster re-sorts when
+      they land, and that push is the only thing that can produce the
+      finished order.
 - [ ] Point the folder picker at a `settings_*` directory. The root heals
       upward and the tree still populates.
 - [ ] Create a junction inside the EVE settings folder pointing outside it
@@ -2043,8 +2063,10 @@ so these are the checks that matter and only a Windows machine can run them.
       read from the pill.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
       Ten auto-backups remain; the manual ones are untouched.
-      **Read the note under the Backups heading while you are there**: it
-      must say ten, and it must say the newest ten *of each* thing — the
+      **Read the retention note while you are there** — it sits UNDER
+      `Back up this profile` and above the list, not under the heading
+      (round 5's R2: a policy was the first thing the card said and the
+      action it qualifies came second). It must say ten, and it must say the newest ten *of each* thing — the
       prune is per character, account or profile, so eleven copies onto
       eleven different characters prune nothing. The number comes off the
       payload, so setting `auto_keep` to 3 in `settings.json` and reopening
@@ -2180,9 +2202,12 @@ against a placeholder id; only these items are blocked on the registration.
       should never fire at all in a build that matches its own bridge.
 - [ ] **The counts line and the plan ratio agree, and the ratio is
       keyed.** With at least one character and one plan, confirm the rail's
-      counts line (how many characters, how many ready) and that each plan
-      row's ratio is `ready characters / all characters` — the SAME two
-      numbers the counts line just gave, not a count of the plan's skills.
+      counts line reads `N characters added` — the whole roster, and
+      scoped, because a group head 200px away says `3 characters` about a
+      readiness group and the two used to be word-for-word identical
+      (round 5's S3). Then confirm each plan row's ratio is `ready
+      characters / all characters`, whose denominator is that same roster
+      count, not a count of the plan's skills.
       The `READY` header sits over that column, and hovering a plan row
       spells both numbers out. The pane header's `N requirements` beside it
       counts the plan's skills and is a different quantity: with a roster
@@ -2222,11 +2247,20 @@ against a placeholder id; only these items are blocked on the registration.
       foot of the Plans block rather than buttons in a block of their own.
       Both still do what they say; neither wraps off the rail at 150%
       scaling.
-- [ ] **`What is a plan?` opens without moving the plan list.** Expand it
-      in the rail. It states the file format — a `.txt` of skill names with
-      roman-numeral levels — and expanding it shrinks the plan list's
-      scroll area rather than pushing anything off the bottom of the rail.
-      Collapse it again and the list returns to its height.
+- [ ] **`What is a plan?` sits under the plans, not under the void**
+      (round 5's S5). With two or three plans in the folder, look at the
+      rail: the disclosure and the two plan-file actions follow the last
+      plan row directly, and the rail's leftover space is BELOW them. It
+      used to be the other way round — the list took the slack and pinned
+      the only onboarding copy on the screen to the bottom of a ~620px
+      gap.
+- [ ] **`What is a plan?` opens without pushing anything off the rail.**
+      Expand it. With few plans it simply pushes the actions down into the
+      slack; with enough plans to fill the rail (eight or more) the plan
+      list shrinks and scrolls instead, and the actions stay on screen.
+      Check the second case at the window floor — that is the one the
+      list's `min-height: 0` exists for. Collapse it again and the list
+      returns to its height.
 - [ ] **An empty roster names the control.** With no characters
       authorised, the roster reads `No characters yet. Press “Add
       character” to sign one in with EVE SSO.` — the name on the button,
@@ -2240,6 +2274,18 @@ against a placeholder id; only these items are blocked on the registration.
 - [ ] **Typing in the filter box narrows the roster live**, and the
       `Clear filter` action appears only while a filter is active and
       removes it when clicked.
+- [ ] **A small roster opens expanded** (round 5's S1). With six or fewer
+      characters, open Skills from cold. Expected: every row is already
+      open, so `Forget character` and any re-authenticate banner — the
+      only surface in the whole app for either — are on screen without
+      hunting for a chevron, and the requirement lists fill a pane that
+      was ~70% empty. Collapse a row, leave the route and come back: it
+      stays collapsed. The expansion is one-shot, on the first payload
+      that carries anyone; it must not re-open rows you closed.
+- [ ] **A large roster does not.** With seven or more characters, the same
+      cold open leaves every row collapsed — the cap is about how many
+      requirement evaluations the page orders without being asked, and a
+      fleet-sized roster did not ask for one each.
 - [ ] **Expanding a row shows the right pieces together:** the `Stale`
       badge (if any), a re-authenticate banner placed above the
       requirements list (not interleaved with them), and the outstanding

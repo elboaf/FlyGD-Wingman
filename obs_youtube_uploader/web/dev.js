@@ -729,8 +729,19 @@
     eve_running: null,
     servers: [{ path: 'tq', name: 'Tranquility' }],
     profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
+    // Name-ordered, because the payload is: R1/D4 moved the roster's sort
+    // out of evesettings.tree (which has only file ids) and into
+    // Api.eve_settings_state (which has the resolved labels), so a
+    // fixture in hand-written order would show a screen the app no longer
+    // produces -- and R1 is precisely a finding about the order 32 names
+    // arrive in. Same key as api.py's `roster`: case-folded name, id as
+    // the tie-break.
     characters: eveNames.map(function (name, i) {
       return { path: 'c' + i, id: String(90000000 + i), name: name };
+    }).sort(function (a, b) {
+      var an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+      if (an !== bn) return an < bn ? -1 : 1;
+      return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
     }),
     accounts: [
       { path: 'a0', id: '1001', name: 'Account 1001' },

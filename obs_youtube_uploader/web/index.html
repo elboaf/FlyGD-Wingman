@@ -940,9 +940,19 @@
              the filter below it all mean, and was the one unlabelled
              control on the screen. (That edge is a stacked full-width .lab
              now; this comment used to name the 118px right-aligned column
-             it replaced.) -->
+             it replaced.)
+
+             R3: the word is "Settings for", not "Copy". The label itself
+             is kept for the reason above -- this was the one unlabelled
+             control on the screen and the reasoning that put a label here
+             is unchanged -- but "Copy" was carrying three different
+             meanings in one card, across four labels: the card title, this
+             switch, `Copy from` and `Copy to selected`. This is the one of
+             the four whose word was doing no work, because `Characters`
+             and `Accounts` already say what they select; what it was
+             missing is the noun the switch actually changes. -->
         <div class="row">
-          <span class="lab">Copy</span>
+          <span class="lab">Settings for</span>
           <label class="radio">
             <input type="radio" name="es-kind" value="characters" checked><span class="ring"></span>
             Characters
@@ -1006,12 +1016,21 @@
 
       <section class="card">
         <h2>Backups</h2>
-        <!-- Filled by evesettings.js, because the keep depth is the
-             payload's and must not be typed into the page. -->
-        <p id="es-backup-note" class="hint"></p>
         <div class="row">
           <button id="es-backup-profile" class="btn">Back up this profile</button>
         </div>
+        <!-- R2. This paragraph OPENED the card, so a retention policy was
+             the first thing said in the one card whose point is an action,
+             and the button it qualifies came second. It is not cut,
+             because it is the promise that makes the copy in the card
+             above this one safe -- it is moved to where a trailing note
+             belongs, under the control it describes and above the list of
+             what that control has produced. Settings > Folders states its
+             cost the same way, at #detect-note.
+
+             Filled by evesettings.js, because the keep depth is the
+             payload's and must not be typed into the page. -->
+        <p id="es-backup-note" class="hint"></p>
         <div id="es-backups" class="list-scroll"></div>
       </section>
     </div>

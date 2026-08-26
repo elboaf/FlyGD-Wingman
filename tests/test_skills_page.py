@@ -356,3 +356,95 @@ def test_the_plan_heading_carries_a_copy_control():
     assert "navigator.clipboard.writeText" in CODE, (
         "nothing writes the plan text to the clipboard"
     )
+
+
+# ---- round 5: the roster opens, and its numbers are scoped -------------
+
+# Whitespace-collapsed: the checklist is wrapped prose, so a sentence this
+# file needs to match is as likely to arrive with a newline in the middle
+# of it as not.
+SMOKE = re.sub(
+    r"\s+",
+    " ",
+    (
+        pathlib.Path(__file__).resolve().parents[1] / "docs" / "smoke-checklist.md"
+    ).read_text(encoding="utf-8"),
+)
+
+
+def test_the_small_roster_expansion_is_one_shot_and_capped():
+    """S1. The expanded row is the only surface in the app for forgetting a
+    character or re-authenticating it, and it opened behind a chevron above
+    ~900 CSS px of void. Three things have to hold together, and each of
+    them silently undoes the fix on its own: there IS a cap, the cap gates
+    the expansion, and the whole thing runs once rather than on every push
+    (which would re-open every row the user had closed).
+    """
+    cap = re.search(r"var AUTO_EXPAND_MAX = (\d+);", CODE)
+    assert cap, "the small-roster expansion no longer states a cap"
+    assert re.search(r"chars\.length > AUTO_EXPAND_MAX", CODE), (
+        "the cap is declared but nothing is gated on it"
+    )
+    body = re.search(r"function autoExpand\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert body, "autoExpand is gone"
+    assert "if (autoExpanded) return;" in body.group(1), (
+        "the expansion is no longer one-shot: onSkills is pushed once per "
+        "character during a refresh, so this would re-open closed rows"
+    )
+    assert re.search(r"if \(!chars\.length\) return;", body.group(1)), (
+        "the one-shot flag arms on an empty roster, which is the state the "
+        "page is in before the first refresh answers"
+    )
+    # Stated in two places by necessity -- a smoke item cannot read a JS
+    # constant -- so the pair is asserted rather than kept by hand.
+    spelled = {6: ("six", "seven"), 5: ("five", "six"), 10: ("ten", "eleven")}
+    below, above = spelled[int(cap.group(1))]
+    assert f"With {below} or fewer characters" in SMOKE, (
+        "the cap moved and docs/smoke-checklist.md still names the old one"
+    )
+    assert f"With {above} or more characters" in SMOKE
+
+
+def test_the_disclosure_says_whether_it_is_open():
+    """S1's other half: the chevron is the entire disclosure, and a glyph is
+    not a name. settings.js states the same kind of thing with aria-pressed
+    on its reveal toggle."""
+    assert "aria-expanded" in CODE, (
+        "the row's disclosure button no longer reports its own state"
+    )
+
+
+def test_the_roster_count_is_scoped_and_the_group_count_is_not_its_twin():
+    """S3. This line and a group head both rendered the bare words
+    `3 characters`, 200 CSS px apart in two panes, counting two different
+    sets. The group head is scoped by the group name printed beside it; this
+    one had nothing beside it. The noun stays -- every number on this screen
+    carries the noun it counts -- and the scope is what was missing.
+    """
+    line = re.search(r"'skills-counts'\)\.textContent = (.*?);", CODE, re.DOTALL)
+    assert line, "the rail's counts line is gone"
+    assert "character" in line.group(1), "the roster count dropped its noun"
+    assert "added" in line.group(1), (
+        "the roster count is unscoped again, and reads word-for-word like a "
+        "group head counting one readiness group"
+    )
+
+
+def test_the_plan_list_does_not_take_the_rails_slack():
+    """S5. `flex: 1` on the list grew it to the full height of the rail, so
+    the format disclosure and the two plan-file actions were pinned to the
+    bottom of a ~620px void -- the only onboarding copy on the screen, under
+    the emptiest part of it. It must still SHRINK (min-height:0 plus a
+    shrink factor) or the eighth plan pushes them off the rail instead.
+    """
+    rule = re.search(r"\.rail-plans \{([^}]*)\}", CSS)
+    assert rule, ".rail-plans lost its rule"
+    body = rule.group(1)
+    assert "flex: 0 1 auto" in body, (
+        "the plan list takes the rail's slack again, which puts a void "
+        "between the plans and everything under them"
+    )
+    assert "min-height: 0" in body, (
+        "without this the list cannot shrink past its content and a full "
+        "plan folder pushes the disclosure off the bottom of the rail"
+    )

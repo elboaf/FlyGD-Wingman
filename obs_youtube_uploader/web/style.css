@@ -2666,11 +2666,21 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .rail-block { display: flex; flex-direction: column; gap: 6px; }
 /* Only the plan list scrolls. Seven plans fit; the format disclosure and
    the two plan-file actions below it must not be pushed off the bottom by
-   the eighth -- so the list takes the slack (flex: 1) and its siblings
-   keep their own height (flex: none) rather than all four children
-   shrinking proportionally. */
+   the eighth -- so the list is the only child allowed to shrink, and its
+   siblings keep their own height (flex: none) rather than all four
+   children shrinking proportionally.
+
+   S5: the list used to TAKE THE SLACK as well (flex: 1), which is a
+   different claim and the wrong one. With two plans in the folder it grew
+   to the full height of the rail, so `What is a plan?` and the two
+   plan-file actions were pinned to the bottom of a ~650px void that
+   belonged to nothing -- the only onboarding copy on the screen, below the
+   emptiest part of it. `flex: 0 1 auto` takes its height from its plans
+   and keeps the shrink the eighth plan needs (min-height:0 is what lets it
+   shrink past its content and scroll). The slack is now the block's own,
+   at the foot of the rail, where nothing is pushed by it. */
 .rail-plans-block { flex: 1; min-height: 0; }
-.rail-plans { flex: 1; overflow-y: auto; min-height: 0; }
+.rail-plans { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
 /* The padding is NOT decoration and must not be rounded off: it is
    .rail-plan's own inset, restated, so the two headings land on the
    column each one labels. A .rail-plan is `border-left: 2px` plus
