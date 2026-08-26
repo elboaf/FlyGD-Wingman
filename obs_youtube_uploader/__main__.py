@@ -409,6 +409,11 @@ def build_preview_host(state, api_box):
             # construction time, which this function does not have.
             return list(state.settings.get("preview", {}).get("locked", []))
 
+        def snap():
+            # Read live for the same reason as restore_positions: the
+            # setting is changed while previews are running.
+            return state.settings.get("preview", {}).get("snap", True) is not False
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
@@ -418,6 +423,9 @@ def build_preview_host(state, api_box):
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
             flush_layouts=store.flush,
+            # Same reasoning as flush_layouts above: a bound method, never a
+            # lambda wrapping it.
+            clear_layouts=store.clear,
             on_clients_changed=on_clients_changed,
             on_hotkey_status=on_hotkey_status,
             restore_positions=restore_positions,
@@ -426,6 +434,7 @@ def build_preview_host(state, api_box):
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,
             locked=locked,
+            snap=snap,
         )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to

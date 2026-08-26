@@ -231,3 +231,85 @@ def test_default_stack_on_the_real_arrangement_is_off_screen_without_clamping():
 
 def _intersects(r, m):
     return not (r.right <= m.x or r.x >= m.right or r.bottom <= m.y or r.y >= m.bottom)
+
+
+# --- Task 1: parse_size ---
+
+
+def test_parse_size_accepts_the_obvious_spelling():
+    assert g.parse_size("1280x720") == (1280, 720)
+
+
+def test_parse_size_tolerates_spacing_and_capital_x():
+    assert g.parse_size("  640 X 360 ") == (640, 360)
+    assert g.parse_size("640×360") == (640, 360)  # noqa: RUF001
+
+
+def test_parse_size_rejects_junk_rather_than_raising():
+    """Same contract as gestures.parse: the caller gets None, never an
+    exception, because this runs on typed input."""
+    for text in ("", "x", "640", "640x", "axb", "640x720x480", None, 640):
+        assert g.parse_size(text) is None
+
+
+def test_parse_size_rejects_zero_and_negative():
+    assert g.parse_size("0x720") is None
+    assert g.parse_size("-640x360") is None
+
+
+def test_parse_size_does_not_clamp():
+    """The floor belongs to the caller, which knows the chrome. A parser
+    that silently repaired a typo would hand back a size nobody typed."""
+    assert g.parse_size("1x1") == (1, 1)
+
+
+# --- Task 2: lock_to_aspect ---
+
+
+LABELS_ON = (4, 34)  # BORDER * 2, BORDER * 2 + LABEL_H
+LABELS_OFF = (4, 4)  # the same window with show_labels off
+FLOOR = (120, 90)
+
+
+def _picture(size, chrome):
+    return size[0] - chrome[0], size[1] - chrome[1]
+
+
+def test_lock_to_aspect_matches_the_picture_not_the_window():
+    """The label band is not part of the picture. Locking the WINDOW to
+    16:9 leaves the picture stretched by exactly the band's height."""
+    w, h = g.lock_to_aspect(640, 999, 16 / 9, LABELS_ON, FLOOR)
+    pw, ph = _picture((w, h), LABELS_ON)
+    assert abs(pw / ph - 16 / 9) < 0.01
+
+
+def test_lock_to_aspect_uses_the_chrome_it_is_given():
+    """Labels off removes 30px of band, so the same window width needs a
+    different window height for the same picture shape. A fixed chrome
+    distorts the picture for everyone who turned labels off -- silently,
+    while the control reports success."""
+    on = g.lock_to_aspect(1284, 100, 16 / 9, LABELS_ON, FLOOR)
+    off = g.lock_to_aspect(1284, 100, 16 / 9, LABELS_OFF, FLOOR)
+    assert on[0] == off[0] == 1284
+    assert on[1] - off[1] == 30
+
+
+def test_lock_to_aspect_lets_a_vertical_drag_do_something():
+    """Driving from width alone would make a downward drag inert."""
+    grown = g.lock_to_aspect(640, 900, 16 / 9, LABELS_ON, FLOOR)
+    assert grown[0] > 640
+
+
+def test_lock_to_aspect_applies_the_floor_without_distorting():
+    """The clamp must not be the thing that breaks the ratio."""
+    w, h = g.lock_to_aspect(1, 1, 16 / 9, LABELS_ON, FLOOR)
+    assert w >= FLOOR[0] and h >= FLOOR[1]
+    pw, ph = _picture((w, h), LABELS_ON)
+    assert abs(pw / ph - 16 / 9) < 0.01
+
+
+def test_lock_to_aspect_without_an_aspect_only_floors():
+    """None is the character-select and client-gone fallback: today's
+    freeform behaviour, unchanged."""
+    assert g.lock_to_aspect(500, 400, None, LABELS_ON, FLOOR) == (500, 400)
+    assert g.lock_to_aspect(10, 10, None, LABELS_ON, FLOOR) == (120, 90)

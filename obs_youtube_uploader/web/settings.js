@@ -831,6 +831,91 @@
   }
 }());
 
+// ---- Snap to neighbours and screen edges -------------------------------
+// Same shape as preview-show-labels above: a per-field endpoint that
+// reports {applied, persisted, error}, a box that goes back if the write
+// is refused, and the previews-off note when the setting is inert.
+// set_preview_snap's writer is _write_preview_setting, same as show_labels,
+// so a persistence failure always comes back as `applied: false` -- there
+// is no separate "saved for this session only" case to report here.
+(function () {
+  var box = WM.el('preview-snap');
+  var status = WM.el('preview-snap-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_snap', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        box.checked = !wanted;
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      say('Snapping is ' + (wanted ? 'on' : 'off') + '.');
+      sayDependence();
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    box.checked = !(s.preview && s.preview.snap === false);
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());
+
+// ---- Reset previews to defaults ----------------------------------------
+// A one-shot action, not a persistent field: there is nothing to revert
+// on refusal and nothing to read back from wm:settings. WM.confirm's
+// body names the irreversibility plainly and quotes no count -- the
+// number of saved layouts is derivable, and this repo's rule is that a
+// derived number is derived or test-asserted, never retyped by hand.
+(function () {
+  var btn = WM.el('preview-reset');
+  var status = WM.el('preview-reset-status');
+  if (!btn || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  btn.addEventListener('click', function () {
+    WM.confirm('Reset previews',
+               'Every preview goes back to its default size and place. The '
+             + 'positions you have dragged are discarded, and Wingman '
+             + 'cannot get them back.')
+      .then(function (ok) {
+        if (!ok) { return; }
+        WM.send('reset_preview_layouts').then(function (res) {
+          say(res && res.applied
+              ? 'Previews are back at their defaults.'
+              : ((res && res.error) || 'Could not reset previews.'));
+        });
+      });
+  });
+}());
+
 // ---- Minimize inactive clients ---------------------------------------
 // Same {applied, persisted, error} shape and revert-on-refusal posture as
 // show_labels/opacity above. One difference worth flagging: unlike those

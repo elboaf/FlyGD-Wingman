@@ -141,6 +141,12 @@ def _preview_defaults() -> dict:
         # never dragged their preview -- and so has no layouts entry --
         # would be silently discarded on the very next save.
         "locked": [],
+        # On by default -- it is what shipped, and turning it off would
+        # silently change how every existing install's previews drag.
+        # A new key whose default matches current behaviour needs no
+        # defaults_version bump: the migration exists for defaults that
+        # CHANGE, and this one has no previous value to protect.
+        "snap": True,
     }
 
 
@@ -249,6 +255,8 @@ def validated_preview(raw) -> dict:
         section["enabled"] = raw["enabled"]
     if isinstance(raw.get("restore_preview_positions"), bool):
         section["restore_preview_positions"] = raw["restore_preview_positions"]
+    if isinstance(raw.get("snap"), bool):
+        section["snap"] = raw["snap"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):

@@ -554,3 +554,129 @@ def test_a_non_boolean_is_refused_rather_than_coerced(monkeypatch, tmp_path):
 
     assert result["applied"] is False
     assert fake.calls == []
+
+
+# ---- preview size / snap / reset --------------------------------------
+
+
+def test_parse_preview_size_reports_an_error_rather_than_raising(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    assert api.parse_preview_size("nonsense")["error"]
+    assert api.parse_preview_size("1280x720") == {"w": 1280, "h": 720, "error": None}
+
+
+def test_set_preview_size_refuses_below_the_floor(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_size("Alice", 10, 10)
+
+    assert result["applied"] is False
+    assert "120x90" in result["error"]
+
+
+def test_set_preview_size_refuses_a_character_with_no_saved_rect(monkeypatch, tmp_path):
+    """There is no x/y to write, and layout.deserialize drops any entry
+    missing a full rect -- so a w/h written alone vanishes at the next
+    load, after the page has reported it accepted."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_size("Nobody", 640, 392)
+
+    assert result["applied"] is False
+
+
+def test_set_preview_size_rewrites_an_offline_entry_in_place(monkeypatch, tmp_path):
+    # No _api(layouts=...) helper exists; seed the saved layout directly on
+    # the state built by settings_api, same as production code would see
+    # it after settings.load() ran the entry through preview_layout.
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {
+        "x": 5,
+        "y": 6,
+        "w": 320,
+        "h": 210,
+    }
+
+    result = api.set_preview_size("Alice", 640, 392)
+
+    assert result["applied"] is True
+    saved = api._state.settings["preview"]["layouts"]["Alice"]
+    assert (saved["w"], saved["h"], saved["x"]) == (640, 392, 5)
+
+
+class _FakeSizeHost:
+    """Just enough of PreviewHost for _preview_sizes: characters() and
+    is_running. Not fakes.py's build_api-produced host, because
+    settings_api/build_api take no preview_host kwarg -- this is assigned
+    onto the built Api the same way settings_api tests already assign
+    api._alert."""
+
+    def __init__(self, characters=(), is_running=True):
+        self._characters = list(characters)
+        self.is_running = is_running
+
+    def characters(self):
+        return list(self._characters)
+
+
+def test_preview_sizes_falls_back_to_the_configured_default(monkeypatch, tmp_path):
+    """A character with no layout entry has never been dragged or typed
+    into, so the Size... dialog must not open on an empty field quoting a
+    number that matches nothing on screen -- it should show
+    preview.width/height, the pair every unsaved preview actually opens
+    at (__main__.py's PreviewHost(size=...))."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["width"] = 800
+    api._state.settings["preview"]["height"] = 500
+    api._state.settings["preview"]["seen"] = ["Alice"]
+
+    assert api._preview_sizes() == {"Alice": [800, 500]}
+
+
+def test_preview_sizes_prefers_a_real_layout_entry_over_the_default(
+    monkeypatch, tmp_path
+):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {
+        "x": 0,
+        "y": 0,
+        "w": 640,
+        "h": 392,
+    }
+
+    assert api._preview_sizes() == {"Alice": [640, 392]}
+
+
+def test_preview_sizes_skips_a_malformed_layout_entry_rather_than_raising(
+    monkeypatch, tmp_path
+):
+    """layout.deserialize already drops an entry missing a full rect before
+    it ever reaches settings, but _preview_sizes reads the settings dict
+    straight rather than through that path -- so it needs its own guard
+    against an entry that lost its "w" some other way."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {"x": 0, "y": 0, "h": 210}
+
+    assert api._preview_sizes() == {}
+
+
+def test_preview_sizes_defaults_a_running_character_the_host_has_not_dragged(
+    monkeypatch, tmp_path
+):
+    """The common case the bug report was about: a preview opened and never
+    dragged reports host.characters() but no layout entry."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _FakeSizeHost(characters=["Bob"], is_running=True)
+
+    assert api._preview_sizes() == {"Bob": [320, 210]}
+
+
+def test_preview_sizes_ignores_a_stopped_hosts_characters(monkeypatch, tmp_path):
+    """Same gate get_preview_hotkey_state already uses: a stopped host's
+    last-known characters() must not be treated as rows that need a
+    default, the same as it must not be reported as registered chords."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _FakeSizeHost(characters=["Bob"], is_running=False)
+
+    assert api._preview_sizes() == {}

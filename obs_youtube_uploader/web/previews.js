@@ -10,7 +10,7 @@
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
-               locked: [], never_minimize: []};
+               locked: [], never_minimize: [], sizes: {}, client_sizes: {}};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -19,6 +19,11 @@
   // the wm:settings listener below (already read for inert_notes) avoids
   // a second round trip for one boolean.
   var minimizeInactive = false;
+  // preview.show_labels, off the same settings payload and for the same
+  // reason as minimizeInactive above: sizeHint's own math needs to know
+  // whether the label band is on screen, and Settings' Previews card owns
+  // this field, not this file.
+  var showLabels = true;
   // Bumped every time `state` is replaced wholesale, by a push or by a
   // refresh. send() samples it before its bridge call so a save that
   // resolves late can tell that a newer table has landed meanwhile.
@@ -164,11 +169,13 @@
     });
     row.appendChild(typed);
 
+    if (character) { row.appendChild(makeSizeButton(character)); }
+
     // Cycle forward/back have no `character` -- they are chords, not
     // characters, and neither Lock nor Never-minimize means anything for
     // them. #preview-binds is a CSS grid with `.row { display: contents }`
     // (style.css), so every row must contribute the same number of cells
-    // or a short row's children bleed into the next row's columns. Two
+    // or a short row's children bleed into the next row's columns. Three
     // empty fillers keep the grid aligned instead of shrinking the column
     // count for those two rows only.
     //
@@ -188,10 +195,88 @@
       row.appendChild(makeLockCheck(character));
       if (minimizeInactive) { row.appendChild(makeNeverMinimizeCheck(character)); }
     } else {
+      // Three fillers with never-minimize on, two with it off. One stands
+      // in for Size…, one for Lock, and the third mirrors the conditional
+      // checkbox above -- so the count tracks the character branch instead
+      // of being stated twice. A constant here would be right in exactly
+      // one of the two states and silently pull every row after this one
+      // into the previous row's leftover columns in the other.
+      row.appendChild(document.createElement('span'));
       row.appendChild(document.createElement('span'));
       if (minimizeInactive) { row.appendChild(document.createElement('span')); }
     }
     return row;
+  }
+
+  // Follows the same shape as the Edit… path: disarm, prompt, send the raw
+  // text to Python to parse, then commit. The page never parses the string
+  // itself -- nothing in the suite executes this file, so the one
+  // definition of what a size looks like belongs in geometry.py. Unlike
+  // Edit…, an empty submission here is a no-op identical to Cancel, not a
+  // clear -- there is no "unset size" to clear to, only the fallback this
+  // dialog already shows as its default.
+  function makeSizeButton(name) {
+    var btn = WM.make('button', 'linkbtn', 'Size…');
+    btn.addEventListener('click', function () {
+      // Same trap bookmarks.js documents: an armed capture's document
+      // keydown handler preventDefault()s every key, so a prompt opened
+      // while one is live cannot be typed into.
+      endCapture();
+      var size = (state.sizes || {})[name];
+      WM.prompt('Size for "' + name + '"', sizeHint(name),
+                size ? size[0] + 'x' + size[1] : '')
+        .then(function (text) {
+          if (text === null || text === '') { return; }
+          WM.send('parse_preview_size', text).then(function (parsed) {
+            if (!parsed) { return; }
+            if (parsed.error) {
+              WM.send('alert_bookmarks', parsed.error);
+              return;
+            }
+            var before = pushes;
+            WM.send('set_preview_size', name, parsed.w, parsed.h)
+              .then(function (res) {
+                if (!res || !res.applied) {
+                  if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+                  return;
+                }
+                if (pushes !== before) { return; }
+                state.sizes = state.sizes || {};
+                state.sizes[name] = [parsed.w, parsed.h];
+              });
+          });
+        });
+    });
+    return btn;
+  }
+
+  // Plain prose: panel.js sets the dialog body with textContent, so no
+  // markup survives here.
+  function sizeHint(name) {
+    var client = (state.client_sizes || {})[name];
+    if (!client) {
+      return 'Width x height in pixels, for example 1280x720. This client is '
+           + 'not running, so the size applies next time it is.';
+    }
+    var size = (state.sizes || {})[name];
+    // _preview_sizes (api.py) now guarantees an entry for every name that
+    // can reach this branch -- client is truthy here only for a character
+    // in host.client_sizes(), which is a subset of host.characters(), and
+    // the bridge defaults exactly that set to (preview.width, height) when
+    // no dragged/typed layout exists yet. 320 -- preview.width's own
+    // default -- is kept only as a defensive fallback, not because this
+    // path is expected to run.
+    var width = size ? size[0] : 320;
+    // Chrome: BORDER*2 across, BORDER*2 + the label band down. The band is
+    // 30px or 0 depending on the labels setting, which is why the number
+    // is computed rather than baked in. showLabels comes off the SETTINGS
+    // payload, not the hotkey-state one -- same route and same reason as
+    // minimizeInactive above: it lives in Settings' own Previews card.
+    var dw = 4, dh = 4 + (showLabels ? 30 : 0);
+    var tall = Math.round((width - dw) * client[1] / client[0]) + dh;
+    return 'Your client is ' + client[0] + 'x' + client[1] + '. At this width '
+         + 'an undistorted preview is ' + width + 'x' + tall
+         + '; a different shape will stretch the picture.';
   }
 
   function isLocked(name) { return (state.locked || []).indexOf(name) !== -1; }
@@ -507,6 +592,11 @@
     // Absent means off, matching build_preview_host's own default: turning
     // on Never-minimize before this exists must not look possible.
     minimizeInactive = !!(s.preview && s.preview.minimize_inactive_clients);
+    // Absent means on, matching settings.py's default -- same spelling as
+    // settings.js's own box.checked line and minimizeInactive above, which
+    // is `!!(...)` for the identical reason: when s.preview is missing,
+    // `s.preview.show_labels !== false` is undefined, not true.
+    showLabels = !(s.preview && s.preview.show_labels === false);
     requestRender();
   });
 

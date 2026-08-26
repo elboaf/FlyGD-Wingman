@@ -4,6 +4,7 @@ reconcile() is where a leak would live: a client that disappears without
 being removed leaves a thumbnail registered against a dead source and a
 window that never closes."""
 
+import ctypes
 import itertools
 import logging
 import sys
@@ -286,8 +287,10 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_REBIND,
         host.win32.WM_APP_ALERT,
         host.win32.WM_APP_RESTYLE,
+        host.win32.WM_APP_RESET_LAYOUTS,
+        host.win32.WM_APP_RESIZE_ONE,
     }
-    assert len(commands) == 5
+    assert len(commands) == 7
     assert all(c >= host.win32.WM_APP for c in commands)
 
 
@@ -415,6 +418,14 @@ class _FakeUser32:
 
     def GetForegroundWindow(self):
         return self._foreground
+
+    def GetClientRect(self, hwnd, rect_ptr):
+        # Falsy: these tests are about selection and hotkeys, not sizing,
+        # so declining to sample is the least assumption. A real rect is
+        # exercised directly against _record_client_sizes by
+        # test_record_client_sizes_samples_a_real_rect_and_skips_a_failed_probe,
+        # not through this fake or through _sweep.
+        return 0
 
 
 class _FakeLibs:
@@ -1704,3 +1715,108 @@ def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     assert order == [("foreground", 0xDEAD), ("activate", 0x2222)]
+
+
+# --- resize_preview()/reset_layouts(): on-demand sizing ---------------------
+
+
+def test_resize_preview_stashes_the_payload_and_posts_only_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so the size travels in a field
+    under the lock -- set_hotkeys' shape."""
+    h = _placement_host(monkeypatch)
+    h.resize_preview("Alice", (640, 392))
+    assert h._pending_resize == {"Alice": (640, 392)}
+
+
+def test_reset_layouts_clears_saved_and_calls_the_injected_clear(monkeypatch):
+    cleared = []
+    h = _placement_host(monkeypatch, clear_layouts=lambda: cleared.append(True))
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+    h._saved["Alice"] = layout.Entry(geometry.Rect(1, 2, 3, 4))
+    h._reset_layouts()
+    assert cleared == [True]
+    assert h._saved == {}
+
+
+class _MovableWindow:
+    """Minimal double for the one call both `_apply_resizes` and
+    `_reset_layouts` make on every open preview: `.move(rect)` relocates it,
+    same as the real PreviewWindow's effect on `.rect`."""
+
+    def __init__(self, rect, locked=False):
+        self.rect = rect
+        self.locked = locked
+
+    def move(self, rect):
+        self.rect = rect
+
+
+def test_reset_does_not_record_the_defaults_it_just_placed(monkeypatch):
+    """Writing them back would repopulate the table the reset just
+    emptied -- a reset leaving the file exactly as full as it found it."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+    win = _MovableWindow(geometry.Rect(0, 0, 100, 100))
+    h._windows = {"Alice": win}
+
+    h._reset_layouts()
+
+    # The loop actually ran -- move() placed the preview at its resolved
+    # default rect, not left at its pre-reset position.
+    assert win.rect != geometry.Rect(0, 0, 100, 100)
+    assert recorded == []
+
+
+def test_apply_resizes_moves_the_window_and_records_it_like_a_drag(monkeypatch):
+    """A typed size is the user's choice and must survive a restart exactly
+    as a dragged position does -- unlike _reset_layouts, this one records."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    win = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    h._windows = {"Alice": win}
+
+    h.resize_preview("Alice", (640, 392))
+    h._apply_resizes()
+
+    expected = geometry.Rect(10, 20, 640, 392)
+    assert win.rect == expected
+    assert h._saved["Alice"] == layout.Entry(expected, False)
+    assert recorded == [("Alice", expected, False)]
+
+
+def test_record_client_sizes_samples_a_real_rect_and_skips_a_failed_probe():
+    """The one branch of _record_client_sizes that has never run: every
+    GetClientRect fake in this suite (including the module-level
+    _FakeUser32) returns falsy, so the actual w/h computation and
+    client_sizes()'s return value have never been exercised.
+
+    Also pins the reused win32.RECT() across the loop: Bravo's failed probe
+    must not leave it mapped to a stale size, and Cleo's later successful
+    probe must not inherit whatever the struct held after Bravo's call.
+    """
+
+    class _SizingUser32:
+        def __init__(self, dims):
+            self._dims = dims  # hwnd -> (w, h), or absent to fail
+
+        def GetClientRect(self, hwnd, rect_ptr):
+            dims = self._dims.get(hwnd)
+            if dims is None:
+                return 0
+            r = ctypes.cast(rect_ptr, ctypes.POINTER(host.win32.RECT)).contents
+            r.left, r.top, r.right, r.bottom = 0, 0, dims[0], dims[1]
+            return 1
+
+    libs = _FakeLibs(_SizingUser32({0x1001: (1920, 1080), 0x1003: (800, 600)}))
+    clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1001),
+        "Bravo": _FakeClient("Bravo", hwnd=0x1002),  # absent from _dims -> fails
+        "Cleo": _FakeClient("Cleo", hwnd=0x1003),
+    }
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._record_client_sizes(libs, clients)
+
+    assert h.client_sizes() == {"Alice": (1920, 1080), "Cleo": (800, 600)}

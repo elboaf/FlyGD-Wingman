@@ -117,12 +117,18 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
+        snap=None,
+        clear_layouts=None,
     ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
         # before quitting is simply lost.
         self._flush_layouts = flush_layouts
+        # Called by _reset_layouts to empty the on-disk table, same as
+        # flush_layouts above being called by _teardown: the store owns
+        # persistence, the host only tells it when to act.
+        self._clear_layouts = clear_layouts
         # Reported outward when the discovered set changes, so the page can
         # order the bind list by who is actually online. Nothing else
         # carries that out of the subsystem: _settings_payload returns
@@ -150,6 +156,11 @@ class PreviewHost:
         # _is_locked below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
+        # Same reasoning as _restore_positions/_show_labels/etc.: read
+        # live so a Settings toggle mid-session reaches previews already
+        # open. None means "the caller has not wired this yet" -- see
+        # _snapping.
+        self._snap = snap
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -176,6 +187,15 @@ class PreviewHost:
         # field under the lock and only the signal is posted. A list, not
         # one slot, because two clients can be alerted between ticks.
         self._pending_alerts = []
+        # Same shape as _desired_hotkeys/_pending_alerts: PostMessageW
+        # carries integers only, so a typed size travels in a field under
+        # the lock and only the signal is posted. A dict, keyed by stable
+        # key, because more than one resize can be requested between ticks.
+        self._pending_resize = {}
+        # Last sampled client-area size per character, refreshed every
+        # sweep by _record_client_sizes. Read from the UI thread through
+        # client_sizes(), like hotkey_status() below.
+        self._client_sizes = {}
         # Whether the 80ms alert tick timer is currently running. Tracked
         # rather than derived so KillTimer is called exactly once when the
         # last alert clears, and only ever from the preview thread.
@@ -316,6 +336,26 @@ class PreviewHost:
         """
         return dict(self._hotkey_status)
 
+    def resize_preview(self, stable_key: str, size) -> None:
+        """Set one preview's size on demand. Safe from any thread.
+
+        Same shape as set_hotkeys: PostMessageW carries integers only, so the
+        payload travels in a field under the lock and only the signal is
+        posted.
+        """
+        with self._lock:
+            self._pending_resize[stable_key] = (int(size[0]), int(size[1]))
+        self._post(win32.WM_APP_RESIZE_ONE)
+
+    def reset_layouts(self) -> None:
+        """Forget every saved position and re-place. Safe from any thread."""
+        self._post(win32.WM_APP_RESET_LAYOUTS)
+
+    def client_sizes(self) -> dict:
+        """Last sampled client-area size per character. Safe from any thread."""
+        with self._lock:
+            return dict(self._client_sizes)
+
     # ---- everything below runs ON the preview thread -------------------
 
     def _run(self) -> None:
@@ -428,6 +468,12 @@ class PreviewHost:
         if msg == win32.WM_APP_RESTYLE:
             self._restyle()
             return 0
+        if msg == win32.WM_APP_RESIZE_ONE:
+            self._apply_resizes()
+            return 0
+        if msg == win32.WM_APP_RESET_LAYOUTS:
+            self._reset_layouts()
+            return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
             return 0
@@ -466,6 +512,13 @@ class PreviewHost:
 
     def _sweep(self, libs) -> None:
         clients = {c.stable_key: c for c in discovery.list_clients()}
+        # Guarded like _apply_selection's libs.user32 read below: several
+        # tests drive _sweep with libs=None to exercise placement without
+        # standing up the whole Win32 surface, and GetClientRect is not
+        # needed for those -- only real callers, which always pass real
+        # libs, get sampled sizes.
+        if libs is not None:
+            self._record_client_sizes(libs, clients)
         discovery.flush_image_cache_periodically()
         before = self.characters()
         # Wholesale, never merged. reconcile() compares stable keys only, so
@@ -510,6 +563,7 @@ class PreviewHost:
                 locked=self._is_locked(key),
                 show_labels=self._labels_shown(),
                 opacity=self._current_opacity(),
+                snap=self._snapping(),
             )
             if win is not None:
                 self._windows[key] = win
@@ -960,6 +1014,22 @@ class PreviewHost:
             )
             return True
 
+    def _snapping(self) -> bool:
+        """Whether a dragged preview snaps, read live.
+
+        Same posture as _restoring(): this runs on the preview thread
+        inside the pump, so a callable that raises must not be the thing
+        that kills it. Falls back to snapping -- the behaviour that
+        predates the toggle.
+        """
+        if self._snap is None:
+            return True
+        try:
+            return bool(self._snap())
+        except Exception:
+            logger.exception("Could not read preview.snap; leaving snapping on")
+            return True
+
     def _labels_shown(self) -> bool:
         """Whether preview chrome draws a label band, read live.
 
@@ -1047,6 +1117,7 @@ class PreviewHost:
             win.show_labels = show_labels
             win.opacity = opacity
             win.locked = self._is_locked(key)
+            win.snap = self._snapping()
             win.redraw()
             # Mirrors PreviewWindow.create/.move: opacity is a DWM
             # thumbnail property, not a chrome pixel, so it needs its own
@@ -1064,6 +1135,61 @@ class PreviewHost:
                     geometry.thumbnail_rect(win.rect, win._inset, label_h),
                     win.opacity,
                 )
+
+    def _apply_resizes(self) -> None:
+        """Apply every pending typed size to its still-open window.
+
+        A stable_key with no current window is dropped rather than
+        retried: set_preview_size already reported applied=True to the
+        bridge before this posted message is even read, so if the client
+        quit in the gap between that reply and this running, nothing here
+        can un-report it -- unlike raise_alert, which documents its own
+        pre-window-creation gap because that queue is drained once the
+        window exists. Closing this one properly needs a round trip the
+        bridge does not have.
+        """
+        with self._lock:
+            pending, self._pending_resize = dict(self._pending_resize), {}
+        for key, (w, h) in pending.items():
+            win = self._windows.get(key)
+            if win is None:
+                continue
+            win.move(win.rect._replace(w=w, h=h))
+            # Recorded like a drag: a typed size is the user's choice and
+            # must survive a restart exactly as a dragged position does.
+            self._layout_changed(key, win.rect, win.locked)
+
+    def _reset_layouts(self) -> None:
+        """Clear saved layouts and re-place every open preview.
+
+        Deliberately does NOT record the new rects. They are defaults, and
+        writing them back would repopulate the very table this just cleared --
+        a reset that leaves the file exactly as full as it found it.
+        """
+        if self._clear_layouts is not None:
+            self._clear_layouts()
+        self._saved.clear()
+        monitors = self._monitors()
+        for index, (key, win) in enumerate(self._windows.items()):
+            win.move(self._resolve_rect(key, index, monitors, None))
+
+    def _record_client_sizes(self, libs, clients) -> None:
+        """Sample each client's client-area size, on the preview thread.
+
+        Readable from the UI thread afterwards, like hotkey_status(): the
+        page needs a client's shape to tell the user which size would not
+        distort it, and calling GetClientRect from the bridge thread is the
+        thread-affinity violation this module is organised to avoid.
+        """
+        sizes = {}
+        rect = win32.RECT()
+        for key, client in clients.items():
+            if libs.user32.GetClientRect(client.hwnd, ctypes.byref(rect)):
+                w, h = rect.right - rect.left, rect.bottom - rect.top
+                if w > 0 and h > 0:
+                    sizes[key] = (w, h)
+        with self._lock:
+            self._client_sizes = sizes
 
     def _teardown(self, libs) -> None:
         """Ordered, and all of it on this thread."""
