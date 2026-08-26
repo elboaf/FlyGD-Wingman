@@ -873,7 +873,7 @@
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
     box.checked = !(s.preview && s.preview.snap === false);
-    sayDependence();
+    refreshDependence();
   });
 
   var enableBox = WM.el('preview-enabled');
