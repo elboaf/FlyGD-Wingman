@@ -88,8 +88,6 @@ EVE_CONFIRM_TIMEOUT_S = 300.0
 # and click, short enough that a wedged page does not make Quit look broken.
 QUIT_CONFIRM_TIMEOUT_S = 60.0
 
-YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
-
 # set_alert_event's writable fields. Kept as a set to check against rather
 # than duplicated per-field range checks -- settings.validated_alerts owns
 # the ranges (cooldown_s/duration_ms/pulses clamping, color/sound
@@ -1090,10 +1088,16 @@ class Api:
         _links is kept here as well as in the snapshot because the
         RowSnapshot contract is write-only for links, and open_path /
         copy_path need to read one back.
+
+        The push carries the finished URL rather than the video id. That is
+        round 5's link-state: with a bare id the page had no choice but to
+        build a watch URL of its own, which made web/list.js the third
+        writer of a string uploader.watch_url already owned.
         """
-        self._links[row_id] = YOUTUBE_WATCH.format(video_id=video_id)
-        self._rows.set_link(row_id, video_id)
-        self._push("onLink", {"id": row_id, "video_id": video_id})
+        url = uploader.watch_url(video_id)
+        self._links[row_id] = url
+        self._rows.set_link(row_id, url)
+        self._push("onLink", {"id": row_id, "url": url})
 
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None

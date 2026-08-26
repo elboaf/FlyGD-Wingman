@@ -510,7 +510,10 @@
   WM.handle('onLink', function (payload) {
     var row = byId(payload.id);
     if (!row) return;
-    row.link = 'https://www.youtube.com/watch?v=' + payload.video_id;
+    // The URL arrives finished. This used to concatenate one from
+    // payload.video_id, which made it the third place in the app that knew
+    // what a YouTube watch URL looks like -- see uploader.watch_url.
+    row.link = payload.url;
     repaint(payload.id);
   });
 

@@ -122,7 +122,10 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     links = fakes.payloads(sent, "onLink")
     # KEY IS `id`: the page's onLink handler looks up the row by that field.
     assert [link["id"] for link in links] == ["r1", "r2"]
-    assert rows.links == {"r1": "vid123", "r2": "vid123"}
+    assert rows.links == {
+        "r1": uploader.watch_url("vid123"),
+        "r2": uploader.watch_url("vid123"),
+    }
     # The messages really went through evaluate_js, not just through the spy.
     assert window.calls
 
@@ -341,9 +344,9 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     # The FIRST call reuses the stored session -- that is what makes this
     # resume rather than restart -- and the second file follows on.
     assert resumed[0] is session
-    assert [link["video_id"] for link in fakes.payloads(sent, "onLink")] == [
-        "vidA",
-        "vidB",
+    assert [link["url"] for link in fakes.payloads(sent, "onLink")] == [
+        uploader.watch_url("vidA"),
+        uploader.watch_url("vidB"),
     ]
     assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
     assert api._retry_state is None
@@ -610,7 +613,7 @@ def test_an_unconfigured_webhook_says_nothing_at_all(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     final = fakes.payloads(sent, "onStatus")[-1]
     assert "skipped" not in final["text"].lower()
     assert final["kind"] != "WARNING"
@@ -634,7 +637,7 @@ def test_a_webhook_that_does_not_parse_still_warns(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     final = fakes.payloads(sent, "onStatus")[-1]
     # Finding 13's invariant on the skip path too: whatever went wrong with
     # the logs, the sentence still opens with the upload that worked.
@@ -857,7 +860,7 @@ def test_a_crash_in_the_log_half_does_not_report_the_video_as_failed(
     join(api)
 
     # The video really did publish.
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     assert [t for _, t, _ in api._alert.raised] != ["Upload Failed"]
     final = fakes.payloads(sent, "onStatus")[-1]
     assert final["kind"] != "ERROR"
@@ -1248,7 +1251,7 @@ def test_a_stop_left_over_from_one_job_cannot_abort_the_next(monkeypatch, tmp_pa
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert rows.links == {"r1": "vid123"}
+    assert rows.links == {"r1": uploader.watch_url("vid123")}
 
 
 def test_a_finished_upload_tells_the_page_the_job_is_over(monkeypatch, tmp_path):
