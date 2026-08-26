@@ -48,7 +48,10 @@
    // read `applied`/`error` the same way, even though neither reverts a
    // control state on refusal -- Size… is a one-shot dialog, not a
    // persistent checkbox.
-   'set_preview_size', 'reset_preview_layouts'
+   'set_preview_size', 'reset_preview_layouts',
+   // Task 9: same shape; settings.js reverts the checkbox on anything
+   // that is not `applied`, same as show_labels/opacity above.
+   'set_preview_snap'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -342,7 +345,7 @@
           // ships preview.alerts for free (a shallow dict(cfg)), so this
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
-            show_labels: true, opacity: 255,
+            show_labels: true, opacity: 255, snap: true,
             // Task 10: read here by settings.js's own wm:settings listener
             // AND by previews.js's (previews.js needs it to decide whether
             // each row's Never-minimize checkbox is enabled).
