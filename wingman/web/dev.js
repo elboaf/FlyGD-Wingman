@@ -545,6 +545,16 @@
     });
   };
 
+  api.set_bind_capture = function (armed) {
+    console.log('DEV api.set_bind_capture(' + armed + ')');
+    // False, not true: in a plain browser there is no preview host and so
+    // no chord redirection, and the harness must not imply otherwise. The
+    // page does not branch on the value -- it waits for the call, then
+    // arms the row -- so capture here still works through the ordinary
+    // keydown path, which is the only path a browser has.
+    return Promise.resolve(false);
+  };
+
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
     // Shapes taken from Api.get_preview_hotkey_state and the settings

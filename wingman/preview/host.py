@@ -33,6 +33,11 @@ SWITCH_SETTLE_MS = 10
 # see the SendMessageTimeoutW bind comment in win32.py.
 MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
+# How long an armed bind capture survives without being disarmed. Long
+# enough that nobody meets it while deciding which key to press; short
+# enough that a page which died mid-capture cannot leave the preview
+# hotkeys inert for the rest of the session.
+CAPTURE_TIMEOUT_S = 30.0
 # Runs only while something is armed, and is killed the moment nothing is
 # -- an 80ms timer left running is a wakeup 12 times a second for the life
 # of the session, on the thread that also pumps the hotkey loop.
@@ -63,19 +68,38 @@ def plan_registrations(table) -> list:
     """(hotkey_id, gesture_text, action) for every registerable binding.
 
     Pure, and separated from the Win32 half for exactly that reason: id
-    assignment, duplicate rejection and gesture validation are where the
+    assignment, duplicate merging and gesture validation are where the
     bugs are, and none of them need a window.
 
     Order is deterministic so a rebind that changed nothing produces the
     same ids -- rebinding unregisters and re-registers wholesale, and an
     unstable assignment would churn registrations that did not change.
+
+    A focus action carries a TUPLE of names, not one name. Several
+    characters on one chord is a supported setup: a multiboxer runs a
+    different subset each session and wants one key to mean "go to
+    whichever of these is up". Windows has only one registration per
+    chord to give, so the names ride together on it and _on_hotkey
+    resolves between them against who is actually running.
     """
     table = table if isinstance(table, dict) else {}
     characters = table.get("characters")
-    entries = []
+
+    # Characters first and merged, then the two cycle chords. A cycle
+    # chord cannot join a focus registration -- it is a different action,
+    # so one of the two genuinely loses, and it is the cycle chord, which
+    # is what its missing hotkey_status entry tells the page.
+    by_chord: dict = {}
     if isinstance(characters, dict):
         for name in sorted(characters):
-            entries.append((characters[name], ("focus", name)))
+            parsed = gestures.parse(characters[name])
+            if parsed is None:
+                continue
+            # Insertion order is the plan's order, and sorted(characters)
+            # above fixes it -- no second list is needed to remember it.
+            by_chord.setdefault(gestures.display(parsed), []).append(name)
+
+    entries = [(chord, ("focus", tuple(names))) for chord, names in by_chord.items()]
     entries.append((table.get("cycle_next"), ("cycle", 1)))
     entries.append((table.get("cycle_prev"), ("cycle", -1)))
 
@@ -86,9 +110,11 @@ def plan_registrations(table) -> list:
             continue
         canonical = gestures.display(parsed)
         if canonical in claimed:
-            # Windows would refuse the second registration anyway. Dropping
-            # it here keeps the reported status honest about which binding
-            # actually lost.
+            # Reached only by a cycle chord a character already holds --
+            # the character entries were merged above and cannot collide
+            # with each other any more. Windows would refuse the second
+            # registration anyway; dropping it here keeps the reported
+            # status honest about which binding actually lost.
             continue
         ident = HOTKEY_ID_BASE + len(plan)
         if ident > HOTKEY_ID_MAX:
@@ -111,6 +137,7 @@ class PreviewHost:
         flush_layouts=None,
         on_clients_changed=None,
         on_hotkey_status=None,
+        on_bind_captured=None,
         restore_positions=None,
         show_labels=None,
         opacity=None,
@@ -174,6 +201,27 @@ class PreviewHost:
         self._lock = threading.Lock()
 
         self._on_hotkey_status = on_hotkey_status
+        # Where a chord goes while the bind screen is waiting for one.
+        #
+        # A registered chord is delivered to THIS window as WM_HOTKEY and
+        # never reaches the focused WebView2 window, so the page's keydown
+        # listener cannot see a key that is already bound -- rebinding one
+        # was impossible without clearing it first, and the press focused
+        # a client instead, taking the foreground away mid-capture. While
+        # armed, the chord is reported up rather than acted on; chords
+        # that are NOT registered still arrive at the page as an ordinary
+        # keydown, and between them the two paths cover every key.
+        self._on_bind_captured = on_bind_captured
+        # A DEADLINE, not a flag. The page disarms on every exit path it
+        # knows about, but a WebView2 crash or a reload with a capture
+        # armed knows none of them, and a flag left set would turn every
+        # preview hotkey into a silent no-op for the session.
+        self._capture_until = 0.0
+        # ident -> the canonical chord text registered for it. _registered
+        # holds the ACTION, which is what dispatch needs; a capture needs
+        # to answer with the chord, and re-deriving it from the desired
+        # table would read a table that may have been replaced since.
+        self._registered_text = {}
         # The desired table, written by any thread and read by the preview
         # thread when it processes WM_APP_REBIND. PostMessage cannot carry
         # a dict, so the value travels in a field and only the signal is
@@ -312,6 +360,18 @@ class PreviewHost:
             self._desired_hotkeys = dict(table or {})
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
+
+    def set_capture(self, armed: bool) -> None:
+        """Arm or disarm bind capture. Safe from any thread.
+
+        No PostMessageW: unlike set_hotkeys there is nothing for the
+        preview thread to DO about this, only something for it to read the
+        next time a chord fires. Posting would also lose the race this
+        exists to close -- the page waits for this call to return before
+        it invites the keystroke.
+        """
+        with self._lock:
+            self._capture_until = time.monotonic() + CAPTURE_TIMEOUT_S if armed else 0.0
 
     def restyle(self) -> None:
         """Ask every open preview to re-read show_labels, opacity, locked
@@ -646,6 +706,7 @@ class PreviewHost:
         for ident in list(self._registered):
             libs.user32.UnregisterHotKey(self._hwnd, ident)
         self._registered.clear()
+        self._registered_text.clear()
 
         status = {}
         for ident, text, action in plan_registrations(table):
@@ -656,6 +717,7 @@ class PreviewHost:
             status[text] = ok
             if ok:
                 self._registered[ident] = action
+                self._registered_text[ident] = text
             else:
                 # A chord another application already owns. User-actionable,
                 # not a bug -- and the parent design requires it be visible
@@ -694,9 +756,17 @@ class PreviewHost:
             # because nothing was pressed".
             logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
             return
+        if self._take_capture(self._registered_text.get(ident)):
+            return
         kind, value = action
         if kind == "focus":
-            target = value
+            target = self._pick_focus_target(libs, value)
+            if target is None:
+                # Every name on this chord is offline. Correct no-op, but
+                # logged -- otherwise indistinguishable from the chord
+                # never reaching the process at all.
+                logger.debug("Preview hotkey targets %r are not running", value)
+                return
         else:
             foreground = libs.user32.GetForegroundWindow()
             anchor = next(
@@ -720,6 +790,56 @@ class PreviewHost:
             logger.debug("Preview hotkey target %r is not running", target)
             return
         self._activate_client(libs, client)
+
+    def _take_capture(self, text) -> bool:
+        """Hand *text* to an armed capture. Returns whether it was taken.
+
+        Disarms on the way out: the page sends set_capture(False) too, but
+        that round trip is not instant and a second press arriving inside
+        it must not be eaten as well.
+        """
+        if not text:
+            return False
+        with self._lock:
+            if time.monotonic() >= self._capture_until:
+                return False
+            self._capture_until = 0.0
+        logger.debug("Preview hotkey %s taken by an armed bind capture", text)
+        if self._on_bind_captured is not None:
+            try:
+                self._on_bind_captured(text)
+            except Exception:
+                # Same guard as _on_hotkey_status: this is outside code
+                # called from the wndproc, where sys.unraisablehook would
+                # swallow the traceback and leave the pump in doubt.
+                logger.exception("on_bind_captured callback raised")
+        return True
+
+    def _pick_focus_target(self, libs, names):
+        """Which of the characters sharing this chord to switch to.
+
+        Several names on one chord is the supported multibox setup (see
+        plan_registrations): the same key every session, whoever of that
+        group is up. So offline names are not an error here, they are the
+        normal case -- they are simply skipped.
+
+        Among the ones running, prefer any that is not already in the
+        foreground, so a press always moves you. It is a tie-break and not
+        a filter: with a single running match that happens to be in front,
+        that match is still the answer, or the key would go dead exactly
+        while the user is looking at that client.
+
+        Sorted, so with several running and none in front the choice is
+        stable rather than dependent on discovery order.
+        """
+        running = sorted(name for name in names if name in self._clients)
+        if not running:
+            return None
+        foreground = libs.user32.GetForegroundWindow()
+        for name in running:
+            if self._clients[name].hwnd != foreground:
+                return name
+        return running[0]
 
     def _activate_client(self, libs, client) -> bool:
         """Switch the foreground to *client*. Returns whether it took.

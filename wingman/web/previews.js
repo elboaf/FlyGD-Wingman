@@ -67,16 +67,32 @@
     return out;
   }
 
+  function sharers(gesture) {
+    // Which characters hold this chord. Several is a supported setup, not
+    // a mistake: a multiboxer runs a different subset of their characters
+    // each session and wants one key to mean "go to whoever of these is
+    // up". host.plan_registrations merges them onto one registration and
+    // picks between the running ones, so this is information, not a
+    // warning -- see makeRow.
+    if (!gesture) { return []; }
+    var binds = state.hotkeys.characters || {};
+    return Object.keys(binds).filter(function (n) {
+      return binds[n] === gesture;
+    }).sort();
+  }
+
   function clashes(gesture) {
     if (!gesture) { return null; }
-    var count = 0;
-    var binds = state.hotkeys.characters || {};
-    Object.keys(binds).forEach(function (n) {
-      if (binds[n] === gesture) { count += 1; }
-    });
-    if (state.hotkeys.cycle_next === gesture) { count += 1; }
-    if (state.hotkeys.cycle_prev === gesture) { count += 1; }
-    if (count > 1) { return 'duplicate'; }
+    // Only a collision ACROSS the two kinds is a conflict. Focus and
+    // cycle are different actions with nothing to merge into, so one of
+    // them genuinely loses the registration -- unlike two characters,
+    // which now share it.
+    var cycles = 0;
+    if (state.hotkeys.cycle_next === gesture) { cycles += 1; }
+    if (state.hotkeys.cycle_prev === gesture) { cycles += 1; }
+    if (cycles > 1 || (cycles && sharers(gesture).length)) {
+      return 'duplicate';
+    }
     // Three states, not two. Python sends true for a chord Windows
     // accepted and false for one it refused -- but it sends NEITHER once
     // the host has stopped, because get_preview_hotkey_state gates on
@@ -118,7 +134,8 @@
     if (clash === 'refused') {
       button.title = 'Another application already owns this keybind.';
     } else if (clash === 'duplicate') {
-      button.title = 'This keybind is bound twice here.';
+      button.title = 'A cycle keybind uses this too. Only one of them can '
+                     + 'have it, and the cycle keybind is the one that loses.';
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
                      'Windows has not reported on this keybind yet.';
@@ -128,6 +145,25 @@
     } else if (shadow === 'latent') {
       button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';
+    }
+    // Appended, not another branch in the chain above: a shared chord is
+    // not a warning and does not compete with one. As its own `else if`
+    // it was invisible in the state the tab spends most of its time in --
+    // with previews off every chord is `unknown`, which would have won
+    // the chain and hidden the one sentence explaining what the key does.
+    // Skipped for `duplicate`, where the cycle collision is the thing the
+    // user has to act on, and for the two cycle rows, which cannot share
+    // a registration with a character -- that is `duplicate` by
+    // definition.
+    if (character && clash !== 'duplicate') {
+      var others = sharers(gesture).filter(function (n) {
+        return n !== character;
+      });
+      if (others.length) {
+        var shared = 'Shared with ' + others.join(', ') + '. Pressing it '
+                     + 'goes to whichever of them is logged in.';
+        button.title = button.title ? button.title + ' ' + shared : shared;
+      }
     }
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
@@ -352,9 +388,27 @@
       capturing.button.textContent = capturing.previous || 'Not set';
     }
     capturing = {button: button, onSet: onSet,
-                 previous: button.textContent};
-    button.textContent = 'Press a key…';
-    button.classList.add('capturing');
+                 previous: button.textContent, armed: false};
+    // Armed BEFORE the row says "Press a key…", and only after Python
+    // confirms. A chord that is already registered never reaches this
+    // page -- Windows delivers it to the preview window as WM_HOTKEY --
+    // so a key pressed before the host knew a capture was armed would
+    // switch clients and take the foreground with it, which is what made
+    // overwriting an existing bind impossible without clearing it first.
+    // The host answers such a chord with onPreviewBindCaptured below;
+    // an unregistered chord still arrives as an ordinary keydown.
+    //
+    // The row is left showing its old value until then. That window is
+    // one bridge call, and a row inviting a keystroke it cannot yet
+    // receive is worse than one that invites it a moment late.
+    var session = capturing;
+    WM.send('set_bind_capture', true).then(function () {
+      // Escape, another row, or a Clear may have landed in the meantime.
+      if (capturing !== session) { return; }
+      session.armed = true;
+      button.textContent = 'Press a key…';
+      button.classList.add('capturing');
+    });
   }
 
   function endCapture() {
@@ -362,6 +416,11 @@
     capturing.button.classList.remove('capturing');
     capturing.button.textContent = capturing.previous || 'Not set';
     capturing = null;
+    // Unconditional, including on the paths that never armed the host
+    // (a capture ended inside the round trip above). Disarming something
+    // already disarmed costs one bridge call; leaving it armed makes the
+    // next preview hotkey a no-op until the host's own deadline expires.
+    WM.send('set_bind_capture', false);
     // Flush whatever render() call was deferred while this capture was
     // armed -- see requestRender(). Runs AFTER capturing is cleared, so
     // render() below sees a clean state and does not try to redraw
@@ -488,9 +547,16 @@
         // ...and must not put it back in silence: repainting from the
         // backend with nothing said looks exactly like the click never
         // registering, which is how the same chord gets tried twice.
+        //
+        // The sentence no longer offers "another keybind may already use
+        // it" as a cause. set_preview_binds refuses a chord it cannot
+        // parse or a table it cannot persist, and nothing else -- a chord
+        // another CHARACTER holds is now a supported setup that saves
+        // like any other, so naming it here sent people to look at a row
+        // that was never the problem.
         WM.send('alert_bookmarks',
-                'That binding was not saved. Another keybind may already ' +
-                'use it, or the settings file could not be written.');
+                'That binding was not saved. The keybind could not be ' +
+                'read, or the settings file could not be written.');
         return;
       }
       if (generation !== pushes) {
@@ -534,6 +600,14 @@
 
   document.addEventListener('keydown', function (event) {
     if (!capturing) { return; }
+    // Not armed until Python has confirmed and the row SAYS "Press a
+    // key…". Between the click and that ack there is one bridge call, and
+    // swallowing a keystroke during it would be the armed-but-invisible
+    // failure the smoke checklist already has an entry for -- the key
+    // disappears with nothing on screen claiming to want it. Returning
+    // without preventDefault leaves the press behaving as though the
+    // capture had not started yet, which is the truth.
+    if (!capturing.armed) { return; }
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Escape') { endCapture(); return; }
@@ -577,6 +651,25 @@
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     requestRender();
+  });
+
+  // The other half of the capture path. A chord this app has already
+  // registered is delivered to the preview window as WM_HOTKEY and never
+  // reaches this page, so the keydown listener below cannot see it --
+  // the host redirects it here instead while a capture is armed.
+  //
+  // No parse step: the text is the canonical display form
+  // plan_registrations registered, which is the same notation
+  // capture_preview_bind and parse_preview_bind return. Nothing on this
+  // page has ever decided what a chord looks like, and this does not
+  // start.
+  WM.handle('onPreviewBindCaptured', function (payload) {
+    if (!capturing || !payload || !payload.gesture) { return; }
+    // Same ordering as the keydown path below: hold the session, disarm,
+    // then apply -- onSet re-renders, which detaches the armed button.
+    var apply = capturing.onSet;
+    endCapture();
+    apply(payload.gesture);
   });
 
   // The inert-note table, and now preview.minimize_inactive_clients, both

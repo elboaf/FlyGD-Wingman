@@ -606,8 +606,8 @@ def test_set_preview_size_rewrites_an_offline_entry_in_place(monkeypatch, tmp_pa
 
 
 class _FakeSizeHost:
-    """Just enough of PreviewHost for _preview_sizes: characters() and
-    is_running. Not fakes.py's build_api-produced host, because
+    """Just enough of PreviewHost for _preview_sizes and set_bind_capture:
+    characters(), is_running and set_capture(). Not fakes.py's build_api-produced host, because
     settings_api/build_api take no preview_host kwarg -- this is assigned
     onto the built Api the same way settings_api tests already assign
     api._alert."""
@@ -615,9 +615,13 @@ class _FakeSizeHost:
     def __init__(self, characters=(), is_running=True):
         self._characters = list(characters)
         self.is_running = is_running
+        self.captures = []
 
     def characters(self):
         return list(self._characters)
+
+    def set_capture(self, armed):
+        self.captures.append(armed)
 
 
 def test_preview_sizes_falls_back_to_the_configured_default(monkeypatch, tmp_path):
@@ -680,3 +684,27 @@ def test_preview_sizes_ignores_a_stopped_hosts_characters(monkeypatch, tmp_path)
     api._preview_host = _FakeSizeHost(characters=["Bob"], is_running=False)
 
     assert api._preview_sizes() == {}
+
+
+def test_set_bind_capture_reaches_the_host(monkeypatch, tmp_path):
+    """The page waits on this call before it invites a keystroke, so the
+    answer has to mean the host really knows."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    host = _FakeSizeHost()
+    api._preview_host = host
+
+    assert api.set_bind_capture(True) is True
+    assert host.captures == [True]
+    assert api.set_bind_capture(False) is True
+    assert host.captures == [True, False]
+
+
+def test_set_bind_capture_without_a_host_says_so(monkeypatch, tmp_path):
+    """False, not a raise: previews are optional (build_preview_host
+    returns None off Windows and on a construction failure), and the bind
+    screen is still reachable. The page's own keydown path is unaffected
+    -- with no host there are no registered chords to be swallowed by."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = None
+
+    assert api.set_bind_capture(True) is False

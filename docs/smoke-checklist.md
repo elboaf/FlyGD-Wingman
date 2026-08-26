@@ -1928,6 +1928,25 @@ pytest.
 - [ ] Switching previews off releases the chords: they do nothing, and the
   application that owns them gets them back. Switching previews on reclaims
   them.
+- [ ] **LOAD-BEARING: an existing bind can be overwritten IN PLACE, with
+  previews running.** Bind `Ctrl+Alt+F1` to a character, leave previews on,
+  then click that same row and press `Ctrl+Alt+F1` again — do NOT clear it
+  first. Expected: the row takes the chord. What the bug looked like: the
+  row sat on "Press a key…" and the foreground jumped to the bound client
+  instead, because a registered chord is delivered to the preview window as
+  `WM_HOTKEY` and never reaches WebView2 at all. Clearing first was the
+  workaround users found, and it worked for exactly that reason — so
+  testing this with a cleared row tests nothing.
+- [ ] **The same, for a chord a DIFFERENT row owns.** Press character A's
+  chord while character B's row is armed. Expected: B takes it, A keeps it,
+  and both rows show it — that is now a legal shared bind, not a clash.
+- [ ] **Escape and clicking another row still cancel an armed capture**, and
+  after either, the preview hotkeys work normally again on the very next
+  press. A capture that fails to disarm leaves the host eating the next
+  chord (for 30s, then it expires on its own).
+- [ ] **Previews off: capture still works.** With previews off nothing is
+  registered, so every key reaches the page directly. Both paths have to
+  bind the same chord to the same row.
 - [ ] **With previews off, the Previews tab reads as off, not as live.** Open
   the tab while previews are switched off. Expected: the banner above the
   list says previews are off, and every chord renders as neither registered
@@ -1975,6 +1994,24 @@ pytest.
   here reverses the hierarchy.
 - [ ] Quitting Wingman with chords bound leaves them released: the owning
   application gets them back without a reboot.
+
+## Shared preview keybinds
+
+- [ ] **One chord on several characters is accepted and NOT marked as a
+  clash.** Bind `Ctrl+Alt+F1` to two characters. Expected: neither row goes
+  clash-red; hovering either says it is shared with the other. (Before this
+  change the second row was an error, and only the alphabetically-first
+  character ever responded.)
+- [ ] **It goes to whoever is logged in.** With only the second character
+  running, press the shared chord. Expected: it switches to that character —
+  not a silent no-op because the first one is offline.
+- [ ] **With both running, a press always moves you.** Press it repeatedly
+  from one of the two clients. Expected: it goes to the OTHER one rather
+  than re-focusing the client already in front.
+- [ ] **A character chord that collides with a cycle chord is still a
+  clash.** Bind `Ctrl+Alt+Right` to a character while it is also Cycle
+  forward. Expected: both rows go red and the tooltip says the cycle keybind
+  is the one that loses — those two cannot share a registration.
 
 ## EVE preview alerts
 

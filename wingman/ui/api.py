@@ -2397,6 +2397,29 @@ class Api:
             self._preview_host.set_hotkeys(table)
         return True
 
+    def set_bind_capture(self, armed) -> bool:
+        """Tell the preview host a bind row is waiting for a keystroke.
+
+        Returns rather than pushes, and the page WAITS for it before it
+        invites the key: a chord that is already registered is delivered
+        to the preview window as WM_HOTKEY and never reaches this page at
+        all, so a press landing before this call took effect would switch
+        clients -- and take the foreground away from the window being
+        typed into -- instead of being captured.
+
+        True is "the host knows", not "the key will arrive here": an
+        unregistered chord still comes through the page's own keydown
+        listener, which is the path that always worked.
+        """
+        if self._preview_host is None:
+            return False
+        self._preview_host.set_capture(bool(armed))
+        return True
+
+    def push_bind_captured(self, gesture) -> None:
+        """A registered chord, redirected to the armed bind row."""
+        self._push("onPreviewBindCaptured", {"gesture": gesture})
+
     def get_preview_hotkey_state(self) -> dict:
         """Everything the bind list needs, in one read.
 
