@@ -592,10 +592,23 @@
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
   window.DEV = {
-    determinate: function (pct) {
+    // `busy` defaults to true -- a percentage arriving usually means a live
+    // transfer -- but it is a PARAMETER because the two payloads that carry
+    // busy=false were otherwise unreachable from this harness, and both are
+    // load-bearing since round 5's G1 made the track's visibility depend on
+    // them. `DEV.determinate(100, false)` is a settled result and
+    // `DEV.determinate(0, false)` is the error/cancel-at-zero shape that
+    // must draw no bar at all.
+    //
+    // Without the argument this driver gave a FALSE PASS on finding 14:
+    // DEV.determinate(100) then a route change left the bar on screen
+    // because resetStrip early-returns on stripBusy, i.e. for the opposite
+    // reason to the settled-result rule the check was meant to prove.
+    determinate: function (pct, busy) {
       window.onProgress({ mode: 'determinate', pct: pct,
                           text: 'Uploading file 1 of 3\u2026 ' + pct + '%',
-                          kind: 'FG', busy: true });
+                          kind: 'FG',
+                          busy: busy === undefined ? true : !!busy });
     },
     stitching: function () {
       window.onProgress({ mode: 'indeterminate', pct: 0,

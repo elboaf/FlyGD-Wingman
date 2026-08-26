@@ -850,19 +850,36 @@ button.btn:disabled,
    stops qualifying. Bookmarks holds eighteen keybind rows and Previews one
    row per known character -- the same two named in the .settings-pane
    scroll note below, for the same reason -- so both overflow the pane and
-   scroll. A scrolling section slides its cards over a `position: fixed`
-   watermark, and the 12px `.settings` gap between two cards becomes a
-   moving window onto the ship: measured in the ?dev=1 harness at the
-   840x625 floor, Previews runs 1535px of content in a 521px pane and the
-   hull lines cross the card gap visibly. That is the SAME defect the note
-   above rules Skills out for -- a watermark behind live rows reads as
-   clutter -- so it is ruled out here on the same test rather than tolerated
-   because this route is otherwise a good host. The short sections still
-   get it; those are the ones with the void.
+   scroll.
+
+   THE TEST IS MOTION, not the card gap on its own. The 12px `.settings`
+   gap is a window onto the ship on the short sections too, and that is
+   accepted there: it is the same static sliver the Uploader already shows
+   between its list pane and its panel. What a scrolling section adds is
+   that its cards TRAVEL over a `position: fixed` layer, so the sliver
+   becomes a moving window and the hull lines crawl between two cards while
+   the user scrolls. Measured in the ?dev=1 harness at the 840x625 floor,
+   Previews runs 1535px of content in a 521px pane. Skills is ruled out
+   above for a different mechanism reaching the same place -- a transparent
+   full-width area putting the mark directly behind live rows -- so do not
+   read these two exclusions as one test.
 
    Keyed on the ACTIVE section rather than on scroll, because CSS cannot
    ask whether a box overflows. If a section ever grows a row list, add it
-   here. */
+   here.
+
+   Both selectors use :has(), and a selector list is invalid as a WHOLE if
+   any selector in it is unparsed -- so on a WebView2 older than Chromium
+   105 this rule is dropped entirely and the watermark comes back behind
+   the scrolling rows. preflight.require_webview2 gates on the runtime
+   being PRESENT, not on a version, so nothing else catches that. It is the
+   one piece of new CSS here whose failure mode is the defect it prevents
+   rather than a benign layout; the sheet's other :has() uses degrade
+   harmlessly. Accepted rather than worked around: the evergreen runtime is
+   long past 105, and the alternative is a JS class on #route-settings for
+   a case no supported install reaches. */
+#route-settings:has(#section-bookmarks.active)::after,
+#route-settings:has(#section-previews.active)::after { content: none; }
 #route-settings:has(#section-bookmarks.active)::after,
 #route-settings:has(#section-previews.active)::after { content: none; }
 
@@ -1648,9 +1665,21 @@ button.btn:disabled,
    max-height: 100% keeps the scroll safeguard the stretch used to provide
    for free. align-self: start takes the item out of the row's height, so
    without it a rail longer than the route would overflow it instead of
-   scrolling -- and `overflow-y: auto` below would never fire. Seven
-   entries need 244px against 512px of route at the 840x625 floor, so this
-   is a guard for a rail that grows, not a live tier today.
+   scrolling -- and `overflow-y: auto` below would never fire. Verified by
+   injecting 24 extra entries at the 840x625 floor: the rail caps at 521.5
+   and scrolls, staying inside the route with its 12px bottom padding
+   intact. Seven entries need 244px of that 521.5, so this is a guard for a
+   rail that grows, not a live tier today.
+
+   THE 100% RESOLVES AGAINST THE GRID AREA, and that is a dependency worth
+   naming because nothing here declares it: `.route` is `flex: 1;
+   min-height: 0`, so #route-settings has a definite block size, and its
+   single implicit `auto` row stretches to fill it. Add `align-content:
+   start` or a `grid-template-rows` that content-sizes that row and the
+   area becomes content-sized -- at which point `max-height: 100%` resolves
+   against the rail's own height, the cap silently vanishes and the
+   overflow never scrolls. There is no symptom until a rail long enough to
+   overflow exists, so change the row sizing and this line together.
 
    Not to be confused with .skills-rail, which stretches and should: its
    plans list is variable-length and S5 already sized the slack inside it. */

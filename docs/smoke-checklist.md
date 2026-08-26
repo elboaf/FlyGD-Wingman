@@ -1176,10 +1176,20 @@ response leaves a worker waiting forever, which presents as a hung upload.
 - [ ] **No progress control is drawn at rest.** Round 5's G1. On a fresh
       launch the strip reads **Idle** with nothing to its right — no groove,
       no percentage. The bar appears when an upload or stitch starts and
-      goes again when the strip clears. Check the error case too: force an
-      upload failure (a bad webhook URL will not do it — kill the network
-      mid-transfer and exhaust the retries). The red line must not be
-      followed by an empty groove sitting at 0%.
+      goes again when the strip clears. Then the error case, and **it must
+      be a STITCH failure, not an upload one**: exhausted retries raise
+      `UploadFailed`, which pushes no progress at all and leaves the bar
+      frozen at its last percentage, so killing the network tests nothing
+      here. Tick **Stitch** on two recordings and make ffmpeg fail (point
+      `ffmpeg_bin` at a missing binary, or remove a source mid-join).
+      That reaches the one push this item is about, and the red line must
+      not be followed by an empty groove sitting at 0%.
+- [ ] **Cancel before the first chunk leaves no empty bar.** The second
+      state that reaches the same rule. Start an upload and press **Cancel**
+      immediately, before any percentage appears: the strip says nothing was
+      uploaded and draws no bar. Cancel *after* a percentage has shown and
+      the bar must instead stay where it was — the ground the job covered is
+      kept, and only zero ground means no bar.
 - [ ] **LOAD-BEARING: the progress bar is indeterminate during a stitch.**
       Select two, tick Stitch, upload. While ffmpeg runs the bar animates
       continuously with NO percentage — stitching reports no progress and a
