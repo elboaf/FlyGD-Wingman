@@ -208,10 +208,13 @@
     return row;
   }
 
-  // Mirrors the Edit… path step for step: disarm, prompt, send the raw
-  // text to Python to parse, then commit. The page never parses the
-  // string itself -- nothing in the suite executes this file, so the one
-  // definition of what a size looks like belongs in geometry.py.
+  // Follows the same shape as the Edit… path: disarm, prompt, send the raw
+  // text to Python to parse, then commit. The page never parses the string
+  // itself -- nothing in the suite executes this file, so the one
+  // definition of what a size looks like belongs in geometry.py. Unlike
+  // Edit…, an empty submission here is a no-op identical to Cancel, not a
+  // clear -- there is no "unset size" to clear to, only the fallback this
+  // dialog already shows as its default.
   function makeSizeButton(name) {
     var btn = WM.make('button', 'linkbtn', 'Size…');
     btn.addEventListener('click', function () {
@@ -256,7 +259,14 @@
            + 'not running, so the size applies next time it is.';
     }
     var size = (state.sizes || {})[name];
-    var width = size ? size[0] : 640;
+    // _preview_sizes (api.py) now guarantees an entry for every name that
+    // can reach this branch -- client is truthy here only for a character
+    // in host.client_sizes(), which is a subset of host.characters(), and
+    // the bridge defaults exactly that set to (preview.width, height) when
+    // no dragged/typed layout exists yet. 320 -- preview.width's own
+    // default -- is kept only as a defensive fallback, not because this
+    // path is expected to run.
+    var width = size ? size[0] : 320;
     // Chrome: BORDER*2 across, BORDER*2 + the label band down. The band is
     // 30px or 0 depending on the labels setting, which is why the number
     // is computed rather than baked in. showLabels comes off the SETTINGS
@@ -582,7 +592,11 @@
     // Absent means off, matching build_preview_host's own default: turning
     // on Never-minimize before this exists must not look possible.
     minimizeInactive = !!(s.preview && s.preview.minimize_inactive_clients);
-    showLabels = s.preview && s.preview.show_labels !== false;
+    // Absent means on, matching settings.py's default -- same spelling as
+    // settings.js's own box.checked line and minimizeInactive above, which
+    // is `!!(...)` for the identical reason: when s.preview is missing,
+    // `s.preview.show_labels !== false` is undefined, not true.
+    showLabels = !(s.preview && s.preview.show_labels === false);
     requestRender();
   });
 

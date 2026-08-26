@@ -1137,6 +1137,17 @@ class PreviewHost:
                 )
 
     def _apply_resizes(self) -> None:
+        """Apply every pending typed size to its still-open window.
+
+        A stable_key with no current window is dropped rather than
+        retried: set_preview_size already reported applied=True to the
+        bridge before this posted message is even read, so if the client
+        quit in the gap between that reply and this running, nothing here
+        can un-report it -- unlike raise_alert, which documents its own
+        pre-window-creation gap because that queue is drained once the
+        window exists. Closing this one properly needs a round trip the
+        bridge does not have.
+        """
         with self._lock:
             pending, self._pending_resize = dict(self._pending_resize), {}
         for key, (w, h) in pending.items():

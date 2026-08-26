@@ -2555,14 +2555,36 @@ class Api:
 
         Read from settings rather than from the host so an offline character
         still reports the size it will open at.
+
+        A character only gets a layout entry once _layout_changed has fired
+        -- on drag, or on a prior Size... commit -- so a preview that has
+        never been moved has no entry at all, and Reset previews empties
+        every entry at once. Such a character falls back to
+        (preview.width, preview.height): the same pair __main__.py hands
+        PreviewHost's size= and the one every unsaved preview is actually
+        placed at. Without this the dialog opened on an empty field and the
+        hint quoted a hardcoded 640 that matched nothing on screen.
+
+        The fallback is offered for every name the row list can show --
+        running (host.characters()) and known offline (section["seen"]) --
+        not only names already in layouts, since those are exactly the rows
+        with no entry to read from in the first place.
         """
+        section = self._state.settings.get("preview", {})
+        default = [section.get("width", 320), section.get("height", 210)]
+        layouts = section.get("layouts") or {}
         out = {}
-        layouts = self._state.settings.get("preview", {}).get("layouts") or {}
         for name, entry in layouts.items():
             try:
                 out[name] = [int(entry["w"]), int(entry["h"])]
             except (KeyError, TypeError, ValueError):
                 continue
+        host = self._preview_host
+        names = set(section.get("seen") or [])
+        if host is not None and host.is_running:
+            names |= set(host.characters())
+        for name in names:
+            out.setdefault(name, list(default))
         return out
 
     def set_preview_opacity(self, value) -> dict:
