@@ -326,9 +326,13 @@ def attach(port: int, timeout_s: float = 30.0) -> CDP:
         except OSError:
             # The app has not opened the debug port yet, which is the normal
             # state for the first second or two of startup. Retrying IS the
-            # handling. Note there is no `# noqa: S112` here: that rule fires
-            # only on a bare try-except-continue, and this handler sleeps
-            # first, so a suppression would itself be flagged by RUF100.
+            # handling. Note there is deliberately no S112 suppression here:
+            # that rule fires only on a bare try-except-continue, and this
+            # handler sleeps first, so a suppression would itself be flagged
+            # by RUF100. Do not write the directive token out in this comment
+            # either -- ruff parses it wherever it appears and reports an
+            # invalid-directive warning, which is only visible under
+            # `ruff check --no-cache` and so survived three reviews.
             time.sleep(0.5)
             continue
         targets = json.loads(raw)
