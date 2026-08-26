@@ -554,3 +554,52 @@ def test_a_non_boolean_is_refused_rather_than_coerced(monkeypatch, tmp_path):
 
     assert result["applied"] is False
     assert fake.calls == []
+
+
+# ---- preview size / snap / reset --------------------------------------
+
+
+def test_parse_preview_size_reports_an_error_rather_than_raising(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    assert api.parse_preview_size("nonsense")["error"]
+    assert api.parse_preview_size("1280x720") == {"w": 1280, "h": 720, "error": None}
+
+
+def test_set_preview_size_refuses_below_the_floor(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_size("Alice", 10, 10)
+
+    assert result["applied"] is False
+    assert "120x90" in result["error"]
+
+
+def test_set_preview_size_refuses_a_character_with_no_saved_rect(monkeypatch, tmp_path):
+    """There is no x/y to write, and layout.deserialize drops any entry
+    missing a full rect -- so a w/h written alone vanishes at the next
+    load, after the page has reported it accepted."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_size("Nobody", 640, 392)
+
+    assert result["applied"] is False
+
+
+def test_set_preview_size_rewrites_an_offline_entry_in_place(monkeypatch, tmp_path):
+    # No _api(layouts=...) helper exists; seed the saved layout directly on
+    # the state built by settings_api, same as production code would see
+    # it after settings.load() ran the entry through preview_layout.
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {
+        "x": 5,
+        "y": 6,
+        "w": 320,
+        "h": 210,
+    }
+
+    result = api.set_preview_size("Alice", 640, 392)
+
+    assert result["applied"] is True
+    saved = api._state.settings["preview"]["layouts"]["Alice"]
+    assert (saved["w"], saved["h"], saved["x"]) == (640, 392, 5)

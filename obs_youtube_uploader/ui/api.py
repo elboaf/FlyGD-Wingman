@@ -54,7 +54,9 @@ from ..evesettings import backup as evesettings_backup
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
 from ..evesettings import tree as evesettings_tree
+from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
+from ..preview import window as window_mod
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -2363,6 +2365,13 @@ class Api:
             # the one place previews.js already reads it from.
             "locked": list(section.get("locked") or []),
             "never_minimize": list(section.get("never_minimize") or []),
+            # Sizes for the Size... dialog: what the preview is now, and
+            # what its client's shape is, so the page can name the size
+            # that would not distort it. client_sizes is sampled on the
+            # preview thread (host._record_client_sizes) precisely so the
+            # bridge thread never touches an HWND.
+            "sizes": self._preview_sizes(),
+            "client_sizes": host.client_sizes() if live else {},
         }
 
     def _bookmark_chords(self) -> dict:
@@ -2465,6 +2474,96 @@ class Api:
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result
+
+    def parse_preview_size(self, text) -> dict:
+        """Validate a typed "1280x720", mirroring parse_preview_bind.
+
+        The page sends the raw string rather than parsing it, so the one
+        definition of what a size looks like stays in a pure module CI can
+        test -- web/*.js is never executed by anything in the suite.
+        """
+        parsed = preview_geometry.parse_size(text)
+        if parsed is None:
+            return {"w": 0, "h": 0, "error": "Sizes look like 1280x720."}
+        return {"w": parsed[0], "h": parsed[1], "error": None}
+
+    def set_preview_snap(self, enabled) -> dict:
+        """Persist whether a dragged preview snaps to its neighbours and the
+        screen edges, then push it live via PreviewHost.restyle() -- snap is
+        read per mouse-move, so the live PreviewWindow.snap has to be
+        refreshed or the checkbox would do nothing until restart."""
+        result = self._write_preview_setting(("snap",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_size(self, name, w, h) -> dict:
+        """Persist one preview's size, and apply it live if that client is running.
+
+        Three cases, and the third is the awkward one:
+
+          running        -> resized now; the host records the new rect
+          saved, offline -> the stored entry's w/h are rewritten in place
+          neither        -> refused, because there is no x/y to write
+
+        The third cannot be repaired by inventing coordinates.
+        layout.deserialize drops any entry missing a full rect
+        (preview/layout.py), so a w/h written without an x/y is discarded at
+        the next load -- silently, after the page has already reported the
+        size as accepted.
+        """
+        try:
+            width, height = int(w), int(h)
+        except (TypeError, ValueError):
+            return self._field_refused("Sizes look like 1280x720.")
+        floor_w, floor_h = window_mod.MIN_SIZE
+        if width < floor_w or height < floor_h:
+            return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
+        host = self._preview_host
+        if host is not None and host.is_running and name in host.characters():
+            host.resize_preview(name, (width, height))
+            return self._field_ok()
+        layouts = self._state.settings.get("preview", {}).get("layouts") or {}
+        if name not in layouts:
+            return self._field_refused(
+                "Start this client once, or drag its preview, before setting a size."
+            )
+        entry = dict(layouts[name])
+        entry["w"], entry["h"] = width, height
+        return self._write_preview_setting(("layouts", name), entry)
+
+    def reset_preview_layouts(self) -> dict:
+        """Forget every saved preview position and size.
+
+        Goes through the host when one is running so the open windows move
+        too; falls back to clearing settings directly so a reset with
+        previews switched off still takes effect at the next launch.
+        """
+        if self._preview_host is not None and self._preview_host.is_running:
+            self._preview_host.reset_layouts()
+            return self._field_ok()
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                doc.setdefault("preview", {})["layouts"] = {}
+        except OSError:
+            logger.exception("Could not clear preview layouts")
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
+
+    def _preview_sizes(self) -> dict:
+        """Saved window size per character, for the Size... dialog's default.
+
+        Read from settings rather than from the host so an offline character
+        still reports the size it will open at.
+        """
+        out = {}
+        layouts = self._state.settings.get("preview", {}).get("layouts") or {}
+        for name, entry in layouts.items():
+            try:
+                out[name] = [int(entry["w"]), int(entry["h"])]
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
 
     def set_preview_opacity(self, value) -> dict:
         """Persist the DWM thumbnail opacity, then push it live.

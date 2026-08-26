@@ -619,6 +619,13 @@ class _FakeHost:
     def characters(self):
         return list(self.chars)
 
+    def client_sizes(self):
+        # get_preview_hotkey_state now reads this unconditionally when the
+        # host is live (api.py); the existing fixtures here never set client
+        # geometry, so an empty dict matches what they asserted before this
+        # field existed.
+        return {}
+
     def start(self):
         self.started = True
         self.is_running = True
