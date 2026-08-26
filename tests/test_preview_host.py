@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import geometry, gestures, host, layout
+from obs_youtube_uploader.preview import alertframes, geometry, gestures, host, layout
 
 
 def test_reconcile_reports_additions_and_removals():
@@ -592,6 +592,7 @@ def test_teardown_clears_pending_alerts_and_selection():
     h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
     h._hwnd = 0x99
     h._selected_key = "Alice"
+    h._focused_key = "Alice"
     h._foreground = 0x1234
     libs = _FakeLibs(_TeardownUser32())
 
@@ -599,6 +600,7 @@ def test_teardown_clears_pending_alerts_and_selection():
 
     assert h._pending_alerts == []
     assert h._selected_key is None
+    assert h._focused_key is None
     assert h._foreground == 0
 
 
@@ -854,6 +856,15 @@ def test_the_sweep_places_a_new_preview_at_its_clamped_rect(monkeypatch):
     class _Win:
         rect = geometry.Rect(0, 0, 0, 0)
 
+        # _apply_selection pushes both flags onto every live preview each
+        # sweep, so a fake window has to answer for both even when the test
+        # is only about placement.
+        def set_selected(self, selected):
+            pass
+
+        def set_focused(self, focused):
+            pass
+
         def close(self):
             pass
 
@@ -1014,32 +1025,59 @@ def test_the_foreground_client_becomes_the_selected_preview(monkeypatch):
     assert h._selected_key == "Alice"
 
 
-def test_a_foreground_window_that_is_not_a_client_selects_nothing(monkeypatch):
-    """Deliberately not "the last EVE client used". A sticky highlight
-    could not be told apart from an alert on that same client, and
-    acknowledgement would clear alerts the user never saw."""
-    h = _swept_host(monkeypatch, ["Alice"], foreground=0xDEAD)
-    assert h._selected_key is None
+def test_the_ring_stays_on_the_last_client_used_when_focus_leaves_eve(monkeypatch):
+    """The ring answers "which client are you flying", not "which window
+    has the foreground right now". Clicking a browser, Discord or Wingman
+    itself must leave the ring where it was: the client is still the one
+    on screen, and losing the highlight the moment you tab away was
+    reported as unexpected.
+
+    The old contract cleared it, on the grounds that a sticky ring could
+    not be told apart from an alert on that same client. Selection and
+    focus are separate flags now -- see the focus test below -- so the
+    ring can stick without an alert ever counting as seen.
+    """
+    h = _swept_host(monkeypatch, ["Alice", "Bravo"], foreground=0x1000)
+    assert h._selected_key == "Alice"
+    h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
+    assert h._selected_key == "Alice"
 
 
-def test_a_stale_selection_clears_once_the_client_loses_the_foreground(monkeypatch):
-    """The from-cold case above cannot tell "correctly clears" from "never
-    had anything to clear": a buggy _apply_selection that only assigns
-    self._selected_key when a client IS found -- i.e. never clears it, the
-    sticky behaviour rejected above -- would also leave _selected_key at its
-    initial None and pass that test. This one actually exercises the clear:
-    select Alice, then move the real foreground off any client, and check
-    the selection follows it back to None.
+def test_the_ring_follows_a_switch_to_another_client(monkeypatch):
+    """Sticky must not mean stuck: another client taking the foreground
+    moves the ring, which is the whole point of the highlight."""
+    h = _swept_host(monkeypatch, ["Alice", "Bravo"], foreground=0x1000)
+    h._sweep(_FakeLibs(_FakeUser32(foreground=0x2000)))
+    assert h._selected_key == "Bravo"
 
-    This matters beyond cosmetics: a later task clears a persistent alert
-    when its client becomes selected. Sticky selection would mean the
-    client you last used stays "selected" while you are in a browser, and
-    its alert would clear itself without you ever seeing it.
+
+def test_the_ring_clears_when_the_client_it_marks_exits(monkeypatch):
+    """A sticky key outlives the foreground on purpose; it must not
+    outlive the client. Nothing else clears it, so a logged-out character
+    would keep the ring for the session and, worse, hand it straight back
+    to whatever reappeared under the same stable key.
     """
     h = _swept_host(monkeypatch, ["Alice"], foreground=0x1000)
     assert h._selected_key == "Alice"
+    monkeypatch.setattr(host.discovery, "list_clients", list)
     h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
     assert h._selected_key is None
+
+
+def test_focus_tracks_the_real_foreground_and_clears_off_a_client(monkeypatch):
+    """The flag the alerts depend on. `PreviewWindow.set_focused` is what
+    acknowledges a persistent alert, so it must follow the actual
+    foreground window and clear the moment it leaves EVE -- if focus went
+    sticky along with the ring, an alert arriving on the client you last
+    used while you sit in a browser would count as already seen and expire
+    unread. That is the failure the old non-sticky selection was
+    protecting against; the protection now lives here.
+    """
+    h = _swept_host(monkeypatch, ["Alice"], foreground=0x1000)
+    assert h._focused_key == "Alice"
+    h._sweep(_FakeLibs(_FakeUser32(foreground=0xDEAD)))
+    assert h._focused_key is None
+    assert h._selected_key == "Alice"
 
 
 def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
@@ -1054,9 +1092,13 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
     class _FakeWindow:
         def __init__(self):
             self.selected = False
+            self.focused = False
 
         def set_selected(self, selected):
             self.selected = selected
+
+        def set_focused(self, focused):
+            self.focused = focused
 
         def close(self):
             pass
@@ -1324,12 +1366,15 @@ class _RestyleWindow:
     redraw(), and a thumbnail. Not a real PreviewWindow -- that needs an
     HWND, which is out of reach here."""
 
-    def __init__(self, rect, show_labels=True, opacity=255, locked=False):
+    def __init__(self, rect, show_labels=True, opacity=255, locked=False, inset=None):
         self.rect = rect
         self.show_labels = show_labels
         self.opacity = opacity
         self.locked = locked
         self.redraws = 0
+        # The real PreviewWindow widens this to ALERT_BORDER for the
+        # duration of an alert, so _restyle cannot assume BORDER.
+        self._inset = host.window_mod.BORDER if inset is None else inset
         self._thumb = _FakeRestyleThumb()
 
     def redraw(self, force=False):
@@ -1417,6 +1462,33 @@ def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
     )
     h._sweep(_FakeLibs(_FakeUser32()))
     return captured["on_activate"], calls
+
+
+def test_restyle_keeps_a_widened_alert_inset():
+    """An alert widens the thumbnail's inset to ALERT_BORDER so the 6px
+    ring is not overpainted (PreviewWindow._set_inset). _restyle re-pushes
+    the thumbnail rect, so it has to use the window's CURRENT inset:
+    hardcoding BORDER here means changing any live setting -- opacity,
+    labels, a lock -- while a client is under fire snaps the video back
+    over the ring, leaving it showing as corner brackets until the alert
+    clears and nothing to explain why.
+    """
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, show_labels=lambda: True, opacity=lambda: 255
+    )
+    win = _RestyleWindow(geometry.Rect(0, 0, 320, 210), inset=alertframes.ALERT_BORDER)
+    h._windows = {"Alice": win}
+
+    h._restyle()
+
+    assert win._thumb.calls == [
+        (
+            geometry.thumbnail_rect(
+                win.rect, alertframes.ALERT_BORDER, host.window_mod.LABEL_H
+            ),
+            255,
+        )
+    ]
 
 
 def test_the_host_performs_the_switch_a_clicked_preview_asks_for(monkeypatch):

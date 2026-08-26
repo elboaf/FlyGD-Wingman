@@ -184,10 +184,26 @@ class PreviewHost:
         # resolved by _sweep, never the other way around -- see
         # _install_hook and _apply_selection.
         self._foreground = 0
-        # The stable_key whose client currently owns the foreground
-        # window, or None when it is not a client at all (a browser,
-        # Discord, or Wingman itself). Read by PreviewWindow.set_selected
-        # callers in _apply_selection.
+        # Two keys, deliberately, because two different questions are
+        # being asked and they used to share one answer:
+        #
+        # _focused_key -- the client that owns the foreground RIGHT NOW,
+        #   None the instant you click a browser, Discord or Wingman
+        #   itself. This is the one alerts hang off: PreviewWindow's
+        #   set_focused acknowledges a persistent alert, and arm_alert
+        #   reads `focused` to decide whether you are already looking at
+        #   the client. Making this sticky would mean an alert on the
+        #   client you last used counts as seen and expires unread.
+        #
+        # _selected_key -- the client the ring is drawn on: the last one
+        #   that held the foreground, kept through any amount of time
+        #   spent outside EVE and cleared only when another client takes
+        #   over or that client exits. The ring answers "which client are
+        #   you flying", and clearing it the moment you tabbed out was
+        #   reported as unexpected. It was the same key as the focus one
+        #   until then; the alert reasoning that justified that is now
+        #   carried by _focused_key instead.
+        self._focused_key = None
         self._selected_key = None
 
     @property
@@ -519,40 +535,47 @@ class PreviewHost:
         self._apply_selection(libs)
 
     def _apply_selection(self, libs) -> None:
-        """Mark the preview whose client owns the foreground window.
+        """Push both flags -- which client has the foreground, and which
+        one the ring is drawn on -- onto the previews.
 
-        Nothing is selected when the foreground is not an EVE client --
-        a browser, Discord, or Wingman itself. That is deliberate: a
-        sticky "last client used" highlight could not be distinguished
-        from an alert on that same client, and acknowledging the alert
-        would then clear one the user never saw.
+        They part company whenever the foreground is not an EVE client.
+        Focus goes to None there; the ring stays where it was, on the last
+        client used, because that client is still the one on screen and
+        losing the highlight for the duration of a glance at a browser
+        reads as a bug.
+
+        The ring was cleared here too, once, so that a sticky highlight
+        could never be mistaken for an alert or quietly acknowledge one.
+        That reasoning survives intact -- it just attaches to focus now,
+        which is what PreviewWindow spends `selected`/`focused` on.
         """
         foreground = self._foreground or (
             libs.user32.GetForegroundWindow() if libs is not None else 0
         )
-        key = next((k for k, c in self._clients.items() if c.hwnd == foreground), None)
-        if key == self._selected_key:
-            # Usually a genuine no-op: the common case is a foreground
-            # that has not changed and a window that is already selected,
-            # and PreviewWindow.set_selected is itself idempotent
-            # (window.py:356), so calling it costs a dict lookup and one
-            # no-op call, not a repaint. It is NOT always a no-op though:
-            # a preview whose creation failed on an earlier sweep and
-            # succeeded on this one, while its client stayed foreground
-            # the whole time, reaches this branch with a brand-new window
-            # that has never been told it is selected. Applying it here
-            # is what puts the ring on it without waiting for the user to
-            # tab away and back. The early return itself stays -- that is
-            # the hot path this whole branch exists to keep cheap.
-            win = self._windows.get(key) if key else None
-            if win is not None:
-                win.set_selected(True)
-            return
-        previous, self._selected_key = self._selected_key, key
-        for candidate in (previous, key):
-            win = self._windows.get(candidate) if candidate else None
-            if win is not None:
-                win.set_selected(candidate == key)
+        focus = next(
+            (k for k, c in self._clients.items() if c.hwnd == foreground), None
+        )
+        self._focused_key = focus
+        if focus is not None:
+            self._selected_key = focus
+        elif self._selected_key not in self._clients:
+            # Sticky outlives the foreground, never the client. _clients was
+            # replaced wholesale in _sweep just above, so a character that
+            # has logged out is already gone from it; without this the ring
+            # would sit on a dead key for the session and then be handed
+            # straight back to whatever reappeared under the same name.
+            self._selected_key = None
+
+        # Every window, every sweep, rather than a diff against the previous
+        # keys. Both setters early-return on an unchanged flag (window.py's
+        # set_selected/set_focused), so the cost is one attribute compare per
+        # preview per 700ms -- and applying unconditionally is what puts the
+        # ring on a preview whose creation failed on an earlier sweep and
+        # succeeded on this one, while its client held the foreground
+        # throughout. That case used to need a branch of its own.
+        for key, win in self._windows.items():
+            win.set_focused(key == focus)
+            win.set_selected(key == self._selected_key)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -1030,7 +1053,15 @@ class PreviewHost:
             # push whether or not redraw() decided the bitmap changed.
             if win._thumb is not None:
                 win._thumb.update(
-                    geometry.thumbnail_rect(win.rect, window_mod.BORDER, label_h),
+                    # The window's CURRENT inset, not the BORDER constant.
+                    # An armed alert has widened it to ALERT_BORDER so the
+                    # 6px ring is not overpainted, and re-pushing BORDER
+                    # here would snap the video back over the ring the
+                    # moment any live setting changed under fire -- the
+                    # ring left showing as corner brackets until the alert
+                    # cleared, with nothing to explain it. Same reasoning
+                    # as label_h just above: read the live value.
+                    geometry.thumbnail_rect(win.rect, win._inset, label_h),
                     win.opacity,
                 )
 
@@ -1067,13 +1098,14 @@ class PreviewHost:
         # Same reasoning, for the state the render path reads: an hour-old
         # batch queued between stop() and the next enable would arm every
         # preview at once with a stale fight (raise_alert is safe from any
-        # thread and keeps filling this while the pump is torn down). And
-        # _apply_selection's `if key == self.
-        # _selected_key: return` would otherwise leave a freshly-created
-        # window unselected forever across a stop/start, since nothing
-        # else resets it.
+        # thread and keeps filling this while the pump is torn down).
+        # And the two selection keys would otherwise survive a stop/start:
+        # _selected_key is sticky by design now, so without this the ring
+        # would come back on a character from the previous session before
+        # the first sweep has confirmed it is even running.
         with self._lock:
             self._pending_alerts = []
+        self._focused_key = None
         self._selected_key = None
         self._foreground = 0
         if self._hook:

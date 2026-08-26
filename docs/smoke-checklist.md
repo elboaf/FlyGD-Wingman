@@ -1506,6 +1506,16 @@ Enable previews in Settings before starting.
       load; the log says so explicitly.
 - [ ] Clicking a preview brings that client to the foreground. If nothing
       happens, the log has `Activation of 0x… did not take` at debug.
+- [ ] **The ring marks the client you last used, and stays there.** With
+      two clients running, switch to one: its preview gains the cyan ring
+      and the other loses it. Now click a browser, Discord, or Wingman's
+      own window while that EVE client is still up. Expected: **the ring
+      does not move and does not go out** — it is answering "which client
+      are you flying", not "which window has the foreground". It moves
+      only when the *other* client is switched to, and clears only when
+      the ringed client exits. (It used to clear the moment focus left
+      EVE; that was reported as unexpected and is what
+      `PreviewHost._selected_key` being sticky fixes.)
 - [ ] Dragging a preview moves it. Dragging near another preview or a
       screen edge snaps it flush.
 - [ ] Dragging the bottom-right corner resizes it, and the video follows
@@ -1808,9 +1818,11 @@ were blocked on that and are now live.
 
 Two things decide what you should see, and they are easy to conflate:
 
-- **Persistent alerts** (`Persist` on, the default) clear when you *select*
+- **Persistent alerts** (`Persist` on, the default) clear when you *switch to*
   that client — by clicking its preview, by a cycle keybind, or by plain
-  alt-tab. All three land in `PreviewWindow.set_selected`.
+  alt-tab. All three land in `PreviewWindow.set_focused`, which is the
+  foreground and **not** the ring: the ring is sticky and sitting on a client
+  while you read Discord must never count as having seen its alert.
 - **Timed alerts** (`Persist` off) run their configured duration and are
   **not** cut short by selecting the client. That is deliberate:
   `alerts/state.py:75-83` refuses to acknowledge a timed alert so selecting a
@@ -1822,6 +1834,19 @@ Two things decide what you should see, and they are easy to conflate:
       focused on a different application (e.g. a browser). With `Persist` on,
       it stops when you switch back to that EVE client; with `Persist` off it
       stops on its own after the configured duration.
+- [ ] **Change a setting while an alert is pulsing.** With a ring pulsing on
+      some preview, go to Settings › Previews and move the opacity slider (or
+      toggle labels, or lock that preview). Expected: the ring keeps its full
+      6px width for the rest of the alert. If it thins to brackets at the
+      sides and bottom, `_restyle` has re-pushed the thumbnail at `BORDER`
+      instead of the window's live `_inset`.
+- [ ] **Take fire on the client that is wearing the ring.** Same as above,
+      but make sure the shot character is the one you most recently switched
+      to, then tab out to a browser and leave it there. Expected: the alert
+      is **persistent** — it keeps pulsing until you switch back or click it,
+      exactly as for any other client. The ring being on it is not "you are
+      looking at it". If it instead expires after ~1.2s, `arm_alert` is
+      reading `selected` where it must read `focused`.
 - [ ] **Click the pulsing preview to clear it.** While the preview is
       pulsing from a **persistent** alert, click anywhere on it. Expected: the
       ring clears immediately **even if the client does not come to the
