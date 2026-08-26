@@ -141,3 +141,28 @@ def test_page_candidates_ignores_the_debug_port():
     """
     targets = [{"type": "page", "url": "http://127.0.0.1:1/index.html"}]
     assert shoot.page_candidates(targets) == targets
+
+
+def test_page_candidates_rejects_a_page_that_is_not_index_html():
+    """A same-server page other than index.html is not the app.
+
+    Without pinning the path, /json/list or some other page served by the
+    same pywebview HTTP server would be accepted as a candidate just
+    because it shares a debug session with the real page.
+    """
+    targets = [
+        {"type": "page", "url": "http://127.0.0.1:52913/json/list"},
+        {"type": "page", "url": "http://127.0.0.1:52913/other.html"},
+    ]
+    assert shoot.page_candidates(targets) == []
+
+
+def test_page_candidates_rejects_any_non_dev_query_string_too():
+    """The docstring promises ANY query string is refused, not just ?dev=1.
+
+    A narrower check that only special-cases the literal dev=1 harness
+    would still let a target like ?foo=1 through -- this uses an http://
+    URL so the query string is the only thing that could disqualify it.
+    """
+    targets = [{"type": "page", "url": "http://127.0.0.1:52913/index.html?foo=1"}]
+    assert shoot.page_candidates(targets) == []
