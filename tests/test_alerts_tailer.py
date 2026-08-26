@@ -214,3 +214,50 @@ def test_dedup_runs_before_the_file_cap_not_after(tmp_path):
     t.rescan(NOW)
 
     assert set(t.characters()) == {"Busy", "Alice", "Bravo"}
+
+
+# The same warp-attempt line, byte for byte, as EVE writes it into every
+# fleet member's log. Neither pilot named here owns either log below.
+FLEET_BROADCAST_SCRAMBLE = (
+    "[ 2026.08.25 11:30:05 ] (combat) <color=0xffffffff>"
+    "<b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> "
+    "<color=0xffffffff><b><color=0xffffffff><fontsize=12>Carol Vex [BURN]</color>"
+    "<color=0xfff0f000> Claw</color><color=0xffffffff></b> "
+    "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    "<color=0xffffffff><fontsize=12>Dave Kord [KVOS]</color>"
+    "<color=0xfff0f000> Loki</color><color=0xffffffff>\n"
+)
+INCOMING_SCRAMBLE = FLEET_BROADCAST_SCRAMBLE.replace(
+    "Dave Kord [KVOS]", "Alice Renn [OXWLD]"
+)
+
+
+def test_a_fleet_broadcast_scramble_alerts_nobody_who_is_not_in_it(tmp_path):
+    """The reported bug, end to end. EVE puts this line in every fleet
+    member's log naming two other pilots, so before the ownership gate
+    two boxed clients meant two alerts for a fight neither was in -- and
+    on a real six-client screen, six preview windows flashing at once."""
+    a = _log(tmp_path, "Alice Renn", stem="20260825_110000_111")
+    b = _log(tmp_path, "Bob Tarn", stem="20260825_110000_222")
+    t = tailer.Tailer(tmp_path)
+    t.rescan(NOW)
+    for path in (a, b):
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(FLEET_BROADCAST_SCRAMBLE)
+    assert t.poll() == []
+
+
+def test_the_pilot_the_scramble_names_still_alerts(tmp_path):
+    """The other half of the same gate: silencing the broadcast must not
+    silence the tackle. Same line, same two logs -- only the target
+    changes, and only that pilot hears about it."""
+    a = _log(tmp_path, "Alice Renn", stem="20260825_110000_111")
+    b = _log(tmp_path, "Bob Tarn", stem="20260825_110000_222")
+    t = tailer.Tailer(tmp_path)
+    t.rescan(NOW)
+    for path in (a, b):
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(INCOMING_SCRAMBLE)
+    assert [(e.character, e.event) for e in t.poll()] == [
+        ("Alice Renn", "warp_scramble")
+    ]
