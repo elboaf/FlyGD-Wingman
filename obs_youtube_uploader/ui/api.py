@@ -3044,6 +3044,35 @@ class Api:
                 "name": self._eve_label(record.path),
             }
 
+        def roster(records):
+            """The order the Profiles roster reads in: by name (R1/D4).
+
+            Sorted HERE and not in evesettings.tree, which is where the
+            file_id sort this one supersedes still lives (as its stable
+            base -- see the note there): tree.py has no names. A name
+            is ESI's answer to a character id, resolved through
+            _eve_label, and it arrives after discover() has returned --
+            so the tree can only order by the id in the filename, which
+            is what put 32 characters on screen in an order with no human
+            pattern and made the filter box the only route to one of
+            them. `.es-roster` is `columns: 170px` and flows
+            top-to-bottom, so alphabetical reads down each column.
+
+            Case-folded, and the id is the tie-break: an unresolved name
+            degrades to "Character 98123456" (accounts are always
+            "Account <id>"), and two of those must not be free to swap
+            places between two renders of the same folder.
+
+            This reorders on the name push as well as at first render --
+            eve_settings_resolve_names makes the page refetch once the
+            real names land, which is the moment the roster becomes
+            sortable at all.
+            """
+            return sorted(
+                (describe(r) for r in records),
+                key=lambda row: (row["name"].casefold(), row["id"]),
+            )
+
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         return {
             "root": str(found.root) if found.root else "",
@@ -3064,8 +3093,8 @@ class Api:
                 {"path": str(p.path), "name": p.name, "file_count": p.file_count}
                 for p in found.profiles
             ],
-            "characters": [describe(c) for c in found.characters],
-            "accounts": [describe(a) for a in found.accounts],
+            "characters": roster(found.characters),
+            "accounts": roster(found.accounts),
             # Reported separately from an empty list for the same reason
             # `unreadable` is: "we could not read your backups" and "you
             # have no backups yet" are different answers, and telling a

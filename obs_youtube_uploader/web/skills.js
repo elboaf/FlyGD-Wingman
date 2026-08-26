@@ -27,6 +27,50 @@
   var confirming = 0;     // character_id whose Forget is awaiting confirmation
   var filterText = '';
   var asked = false;      // has the page asked Python for state yet
+  var autoExpanded = false; // has the one-shot small-roster expansion run
+
+  /* S1. The expanded row is the ONLY surface in the whole application for
+   * forgetting a character or re-authenticating it (see THE LOCKOUT GUARD
+   * below), and it opened behind a chevron on a screen with ~900 CSS px of
+   * void under it. Rows still LOAD collapsed in the markup sense -- this
+   * expands them once, on the first payload that carries anyone -- so
+   * nothing about the disclosure or the toggle changes; what changes is
+   * the state the screen is first seen in.
+   *
+   * THE CAP IS ABOUT COST AND CONSENT, NOT ABOUT FIT. One expanded row can
+   * be thirty-six requirement lines, so no cap makes the pane "fit"; what
+   * a cap decides is how many detail evaluations the page orders on entry
+   * without being asked. requestDetail's own note states the ceiling it
+   * was written against -- "a forty-character roster asking for forty
+   * requirement lists on entry would evaluate thirty-nine plans nobody
+   * opened" -- and that reasoning is about FETCH COST and is untouched
+   * here: at or below this cap the cost is a handful of in-process round
+   * trips, and above it the user is running a fleet-sized roster and did
+   * not ask for a fleet-sized evaluation.
+   *
+   * Six because six is this app's existing answer to "how many is a
+   * handful": ui/copy.py's _COPY_NAME_CAP names six targets in the copy
+   * confirm and then counts the rest, reasoning that past a handful a list
+   * stops being read as a list. That is a DIFFERENT question -- how many
+   * names a reader will check -- so this is a precedent for the size of
+   * the word, not a derived value, and the two are free to move apart. If
+   * this one moves, docs/smoke-checklist.md states it too and
+   * tests/test_skills_page.py asserts the pair.
+   *
+   * One-shot, and armed by the first NON-EMPTY payload: a roster that
+   * arrives empty (before the first refresh answers) has nothing to
+   * expand, and re-running this on every push would re-open every row the
+   * user has since collapsed. */
+  var AUTO_EXPAND_MAX = 6;
+
+  function autoExpand() {
+    if (autoExpanded) return;
+    var chars = characters();
+    if (!chars.length) return;
+    autoExpanded = true;
+    if (chars.length > AUTO_EXPAND_MAX) return;
+    chars.forEach(function (ch) { expanded[ch.character_id] = true; });
+  }
 
   function characters() { return (STATE && STATE.characters) || []; }
   function plans() { return (STATE && STATE.plans) || []; }
@@ -56,6 +100,11 @@
     // a refresh always arrives here -- which is what stops "Refreshed 3 of
     // 7 characters" sitting on screen forever after a failure.
     if (!payload.refresh_in_flight) progress = null;
+    // Before the renders, so the roster is BUILT open rather than drawn
+    // shut and reopened, and before the requestDetail loop at the foot of
+    // this function, which is what fetches the details these rows now
+    // need -- no second fetch path.
+    autoExpand();
     renderRail();
     renderHead();
     renderNotices();
@@ -101,10 +150,23 @@
    * under the READY column header beside the plan it belongs to, and again
    * in the roster's `Ready N` group head, both of which say what they are
    * counting. This line now says only the thing that IS roster-scoped. */
+  /* S3. This line and the roster's group heads both rendered the bare
+   * words `3 characters`, 200 CSS px apart in two panes, counting two
+   * different sets: this one is the whole roster, that one is how many
+   * are Ready (or Missing, or Training). The group head is scoped by the
+   * group name printed immediately left of it; this one had nothing
+   * beside it, so it is the one that says what it counts. `added` is the
+   * scope AND the verb of the button directly under it, `Add character`.
+   *
+   * The rule the two comments at groupNode() and statusLine() establish is
+   * unchanged and is why the noun stays: every number on this screen
+   * carries the noun it counts. This adds the scope that noun was missing.
+   */
   function renderRail() {
     var chars = characters();
     WM.el('skills-counts').textContent = chars.length
-      ? chars.length + (chars.length === 1 ? ' character' : ' characters')
+      ? chars.length + (chars.length === 1 ? ' character added'
+                                           : ' characters added')
       : 'No characters yet';
 
     renderRailButtons();
@@ -547,6 +609,13 @@
     if (expanded[ch.character_id]) row.classList.add('open');
 
     var top = WM.make('button', 'skills-row-top');
+    // The other half of S1: the chevron is the whole disclosure, and a
+    // glyph is not a name. settings.js:349 states the same state on its
+    // reveal toggle with aria-pressed; this one is a disclosure, so it is
+    // aria-expanded. Nothing visible changes -- the row already carries
+    // the character's name, which is the label this control wants.
+    top.setAttribute('aria-expanded', expanded[ch.character_id] ? 'true'
+                                                                : 'false');
     top.appendChild(WM.make('span', 'chev',
                             expanded[ch.character_id] ? '▾' : '▸'));
     top.appendChild(WM.make('span', 'skills-name', ch.character_name

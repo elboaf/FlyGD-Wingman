@@ -133,7 +133,17 @@ def test_the_characters_accounts_switch_is_labelled():
         re.DOTALL,
     )
     assert row, "the mode switch no longer leads with a .lab"
-    assert row.group(1).strip(), "the mode switch's label column is empty again"
+    label = row.group(1).strip()
+    assert label, "the mode switch's label column is empty again"
+    # R3. Four labels in this card said "Copy" -- the card title, this
+    # switch, `Copy from` and `Copy to selected` -- across three different
+    # meanings, and this is the one whose options (`Characters`,
+    # `Accounts`) already say what they select. The label stays, for the
+    # reason above; the WORD is what was redundant.
+    assert "copy" not in label.lower(), (
+        "the mode switch is labelled `Copy` again; it is the fourth `Copy` "
+        "in one card and the only one whose options already self-describe"
+    )
 
 
 # ---- the settings-folder path joins the rest of the app ----------------
@@ -493,4 +503,44 @@ def test_copy_is_inert_when_it_cannot_act():
     busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert busy and "es-copy').disabled" not in busy.group(1), (
         "setBusy must go through paintCommit, which owns the whole question"
+    )
+
+
+# ---- round 5: the roster, the summary and the retention note -----------
+
+
+def test_the_retention_note_follows_the_action_it_qualifies():
+    """R2. A retention policy opened the Backups card, ahead of the one
+    control in it. The note is not cut -- it is the promise that makes the
+    copy card above it safe -- but a card whose point is an action may not
+    lead with the policy that governs it.
+    """
+    card = re.search(r"<h2>Backups</h2>(.*?)</section>", BODY, re.DOTALL)
+    assert card, "the Backups card no longer opens with its own heading"
+    button = card.group(1).index('id="es-backup-profile"')
+    note = card.group(1).index('id="es-backup-note"')
+    listing = card.group(1).index('id="es-backups"')
+    assert button < note < listing, (
+        "the retention note is back above `Back up this profile`, or has "
+        "fallen below the list of backups it describes the pruning of"
+    )
+
+
+def test_the_collapsed_summary_names_the_server_and_the_profile():
+    """R5. `Tranquility - Default` sat beside a labelled `Folder`, unlabelled,
+    though the server and the profile decide what a copy will hit exactly as
+    much as the folder does -- and `Default` alone does not read as a profile
+    name. The words go in the TEXT: `.settings .row > .lab` is width:100%, so
+    a second label in that row would stack and break it into three lines.
+    """
+    assert re.search(r"setLabel\(nameOf\(state\.servers", CODE), (
+        "the collapsed summary prints the server name bare again"
+    )
+    assert re.search(r"setLabel\(nameOf\(state\.profiles", CODE), (
+        "the collapsed summary prints the profile name bare again"
+    )
+    summary = re.search(r'id="es-folder-summary".*?</div>', BODY, re.DOTALL).group(0)
+    assert summary.count('class="lab"') == 1, (
+        "a second .lab in the collapsed row: it is width:100% and stacks, "
+        "which breaks the one-line summary the card collapses to"
     )

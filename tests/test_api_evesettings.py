@@ -5,6 +5,7 @@ import os
 import pytest
 
 from obs_youtube_uploader import paths, settings
+from obs_youtube_uploader.evesettings import tree
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.fakes import FakeWindow
@@ -130,6 +131,45 @@ def test_the_copy_confirm_names_the_source_and_the_targets(tmp_path, monkeypatch
     assert "Zircon Gravimeld" in seen[0]
     roster = {c["id"]: c["name"] for c in api.eve_settings_state()["characters"]}
     assert roster["1"] == "Guarzo Opper" and roster["2"] == "Zircon Gravimeld"
+
+
+def test_the_roster_is_ordered_by_name_not_by_file_id(tmp_path, monkeypatch):
+    """R1/D4. evesettings.tree can only order by the id in the filename,
+    and 32 characters in id order have no human pattern, which left the
+    filter box as the only route to one of them. The names exist one layer
+    up, so the roster is ordered there."""
+    profile = eve_tree(
+        tmp_path, files=("core_char_1.dat", "core_char_2.dat", "core_char_3.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_names.names[1] = "Zircon Gravimeld"
+    api._eve_names.names[2] = "guarzo opper"
+    api._eve_names.names[3] = "Aura"
+
+    names = [c["name"] for c in api.eve_settings_state()["characters"]]
+
+    assert names == ["Aura", "guarzo opper", "Zircon Gravimeld"]
+    assert [f.file_id for f in tree.discover(tmp_path / "EVE").characters] == [
+        "1",
+        "2",
+        "3",
+    ], "the tree's own order is the stable base the name sort tie-breaks on"
+    assert profile.is_dir()
+
+
+def test_unresolved_names_keep_a_deterministic_roster_order(tmp_path, monkeypatch):
+    """Every label degrades to "Character <id>" before ESI answers, and two
+    equal labels must not be free to swap places between renders."""
+    eve_tree(tmp_path, files=("core_char_10.dat", "core_char_9.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+
+    twice = [
+        [c["id"] for c in api.eve_settings_state()["characters"]] for _ in range(2)
+    ]
+
+    assert twice[0] == twice[1]
 
 
 def test_the_roster_and_the_confirm_share_one_label_producer(tmp_path, monkeypatch):

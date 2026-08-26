@@ -310,6 +310,13 @@ def _files_in(profile) -> tuple[list, list, bool]:
             continue
         record = SettingsFile(Path(entry.path), kind, file_id(entry.path))
         (characters if kind == "character" else accounts).append(record)
+    # By file_id, which is a STABLE order and not the order the roster
+    # shows. Names are not knowable here -- a character's name comes from
+    # ESI through Api._eve_label and arrives after this function has
+    # returned -- so the human sort (R1/D4) is applied where the labels
+    # exist, in Api.eve_settings_state. This sort is what keeps that one
+    # deterministic for two characters whose labels are equal or both
+    # still unresolved.
     characters.sort(key=lambda f: f.file_id)
     accounts.sort(key=lambda f: f.file_id)
     return characters, accounts, unreadable
