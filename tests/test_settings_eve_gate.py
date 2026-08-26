@@ -134,18 +134,49 @@ def test_startup_still_reads_only_the_feature_flags():
     assert "enabled" in src
 
 
-def test_the_page_gates_both_destinations_and_both_sections():
+def test_the_page_gates_both_destinations_and_every_eve_section():
     """Nothing executes web/*.js, so this asserts on its source the way the
     bridge-contract test does. A destination left out of the list stays
     visible with the tools hidden; a section left out shows a rail entry
-    for a feature the user asked not to see."""
+    for a feature the user asked not to see.
+
+    Round 5's E1 is what this now pins. The rail is five entries, and the
+    claim the merge rests on is that the split runs along PRODUCT.md's own
+    independence axis -- "It must not require the EVE tools to upload a
+    video, or a Google account to use the EVE tools." The observable form
+    of that claim is what the rail becomes with the gate off: **exactly
+    Uploading and General**, the two halves that owe EVE nothing. So the
+    survivors are derived by subtracting EVE_SECTIONS from the real rail
+    rather than retyped -- add a sixth entry and forget to gate it and this
+    fails, which is the mistake worth catching.
+    """
     import pathlib
+    import re
 
     web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
     app = (web / "app.js").read_text(encoding="utf-8")
+    html = (web / "index.html").read_text(encoding="utf-8")
 
     assert "WM.EVE_ROUTES = ['evesettings', 'skills']" in app
-    assert "WM.EVE_SECTIONS = ['bookmarks', 'previews']" in app
+
+    declared = re.search(r"WM\.EVE_SECTIONS = \[([^\]]*)\]", app)
+    assert declared, "app.js no longer declares WM.EVE_SECTIONS"
+    gated = re.findall(r"'([\w-]+)'", declared.group(1))
+
+    rail = re.findall(r'<button class="rail-item[^"]*" data-section="([\w-]+)">', html)
+    assert rail, "index.html no longer carries a Settings rail"
+
+    missing = [name for name in gated if name not in rail]
+    assert not missing, f"EVE_SECTIONS names sections the rail does not have: {missing}"
+
+    survivors = [name for name in rail if name not in gated]
+    assert survivors == ["uploading", "general"], (
+        "with the EVE gate off the rail should be exactly Uploading and "
+        f"General -- the two halves that need no EVE install -- but it is "
+        f"{survivors}. Either a new entry was added without gating it, or "
+        "the merge axis E1 chose has been broken."
+    )
+
     # Hiding the screen you are ON would leave a dead pane with no way back.
     block = app.split("WM.apply_eve_gate")[1]
     assert "WM.route('main')" in block

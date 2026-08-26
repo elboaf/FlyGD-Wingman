@@ -266,10 +266,24 @@
   </div>
 
   <div class="route" id="route-settings">
-    <!-- A rail, not one long column. Folding Bookmarks and Previews in
-         takes this screen to seven groups, which is past what a single
-         scroll can be navigated by. Built from the same pieces as
-         .skills-rail rather than a second rail idiom. -->
+    <!-- A rail, not one long column, and FIVE groups rather than the seven
+         this screen carried until round 5's E1. Seven entries gave equal
+         weight to five holding ten controls between them and two holding
+         about seventy.
+
+         The merge axis is PRODUCT.md's own independence claim -- "It must
+         not require the EVE tools to upload a video, or a Google account
+         to use the EVE tools." That independence was real in the code and
+         invisible in the rail, which interleaved the two halves. Account,
+         Uploads, Folders and Discord were four entries describing one
+         job; they are one now, Uploading. Below it is the EVE half, then
+         General.
+
+         The proof the axis is the right one is what the rail does when the
+         EVE gate is off: it goes to TWO entries, Uploading and General,
+         which is exactly the app the README describes in that mode. Built
+         from the same pieces as .skills-rail rather than a second rail
+         idiom. -->
     <aside class="settings-rail" id="settings-rail">
       <h3 class="rail-head">Settings</h3>
       <!-- `active` marks the LANDING section, and it is the same fact as
@@ -280,18 +294,25 @@
            Previews would have fetched for a pane nobody was looking at.
            tests/test_page_conventions.py holds the three in step.
 
-           General is no longer it on purpose. Its entire content is one
-           checkbox for turning most of the product off, which is a
-           legitimate control and a poor first impression of the app's
-           configuration surface. -->
-      <button class="rail-item active" data-section="account">Account</button>
-      <button class="rail-item" data-section="uploads">Uploads</button>
-      <button class="rail-item" data-section="folders">Folders</button>
-      <button class="rail-item" data-section="discord">Discord</button>
+           Uploading is the landing because it is the half of the product
+           that needs no EVE install, and one of the only two sections
+           still standing with the gate off. General is not it, on purpose:
+           its entire content is one checkbox for turning most of the
+           product off, which is a legitimate control and a poor first
+           impression of the app's configuration surface. -->
+      <button class="rail-item active" data-section="uploading">Uploading</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
-      <!-- Last, and directly under the two entries it removes: unticking
-           the switch inside hides Bookmarks and Previews (app.js's
+      <!-- Its own entry since round 5's D1. It was a card at the bottom of
+           Previews, which is where PRODUCT.md's rule put it -- alerts act
+           on a preview window -- but that rule is about DESTINATION versus
+           CONFIGURATION and a Settings section of its own satisfies it
+           identically. What it did not satisfy was the reader: the card
+           sat below ~70 controls, and the folder the feature actually
+           reads was three rail entries away, under Folders. -->
+      <button class="rail-item" data-section="alerts">Alerts</button>
+      <!-- Last, and directly under the three entries it removes: unticking
+           the switch inside hides Bookmarks, Previews and Alerts (app.js's
            EVE_SECTIONS) and lands you here, so the rail loses its tail
            rather than a hole in its middle. It is also where a rail item
            visited once, probably never, belongs -- the landing is the
@@ -299,10 +320,9 @@
            rail order; test_settings_page.py holds the two in step. -->
       <button class="rail-item" data-section="general">General</button>
     </aside>
-
     <div class="settings-pane">
 
-    <div class="settings active" id="section-account">
+    <div class="settings active" id="section-uploading">
 
       <section class="card">
         <h2>Google account</h2>
@@ -322,10 +342,6 @@
           <span class="linkish" id="tos-link">YouTube Terms of Service</span>.
         </p>
       </section>
-
-    </div>
-
-    <div class="settings" id="section-uploads">
 
       <section class="card">
         <h2>Upload defaults</h2>
@@ -380,33 +396,23 @@
         <p class="field-msg" id="msg-notify" hidden></p>
       </section>
 
-    </div>
-
-    <div class="settings" id="section-folders">
-
       <section class="card">
-        <!-- Round 3, B10. This and Discord's below were the only two
-             card headings in the app that were second-person sentences
-             rather than noun phrases, and at 310 and 225 CSS px the two
-             longest -- set in a uppercase letter-spaced treatment meant
-             for short labels. 31a14ca's "headings that stop echoing the
-             rail" was right (a section named Folders should not head its
-             card FOLDERS); these two over-corrected past the noun. The
-             noun that does not echo the rail is what the rows hold. -->
-        <h2>Recordings and gamelogs</h2>
+        <!-- Round 3's B10 argued this heading down from a second-person
+             sentence to the noun its rows hold, and that noun was
+             "Recordings and gamelogs" while it held both. D2 split them --
+             the gamelogs field drives AlertService and not the watcher
+             (ui/api.py's set_folder branches on exactly that) -- so it
+             went to Alerts and this card is the recording folder alone.
+             One row now, so the label names the input rather than
+             distinguishing it from a second. -->
+        <h2>Recording folder</h2>
         <div class="row">
-          <span class="lab">Recordings</span>
+          <span class="lab">Folder</span>
           <input class="field mono" id="f-recdir" type="text" spellcheck="false">
           <button class="btn" data-browse="recording">Browse&hellip;</button>
           <button class="btn" data-detect="recording">Detect</button>
         </div>
-        <div class="row">
-          <span class="lab">EVE gamelogs</span>
-          <input class="field mono" id="f-gamelogs" type="text" spellcheck="false">
-          <button class="btn" data-browse="gamelogs">Browse&hellip;</button>
-          <button class="btn" data-detect="gamelogs">Detect</button>
-        </div>
-        <p class="field-msg" id="msg-folders" hidden></p>
+        <p class="field-msg" id="msg-recdir" hidden></p>
         <!-- Pre-payload text only; settings.js's render() rewrites this
              slot, and FOLDER_COST there is the source of the sentence.
              Kept in step by hand is exactly what this used to be and how
@@ -418,10 +424,6 @@
           list.
         </p>
       </section>
-
-    </div>
-
-    <div class="settings" id="section-discord">
 
       <section class="card">
         <!-- The other half of B10. Names the two things the card is
@@ -697,9 +699,12 @@
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
       </section>
+    </div>
+
+    <div class="settings" id="section-alerts">
 
       <section class="card">
-        <h2>Alerts</h2>
+        <h2>Gamelog alerts</h2>
         <div class="row"><span class="lab"></span>
           <!-- Round 5, A3. This used to end "when combat starts, your warp
                is scrambled, or you decloak" -- the three rows of the event
@@ -867,6 +872,37 @@
         </div>
         </div>
       </section>
+
+      <section class="card">
+        <!-- E2. This field was the second row of a card headed "Recordings
+             and gamelogs", under a trailing note stating the RECORDING
+             folder's cost -- so changing the gamelogs path showed a
+             sentence about recordings. The note's TEXT was guarded
+             (test_settings_page.py) and its SCOPE was not. D2 fixes it
+             structurally rather than by rewording: each field now sits in
+             the section that uses it, under a note about itself.
+
+             This is the folder the alerts feature reads. ui/api.py's
+             set_folder calls AlertService.reconcile() on this branch and
+             rebinds the recording watcher on the other, which is the same
+             split this markup now makes. -->
+        <h2>Gamelog folder</h2>
+        <div class="row">
+          <span class="lab">Folder</span>
+          <input class="field mono" id="f-gamelogs" type="text" spellcheck="false">
+          <button class="btn" data-browse="gamelogs">Browse&hellip;</button>
+          <button class="btn" data-detect="gamelogs">Detect</button>
+        </div>
+        <p class="field-msg" id="msg-gamelogs" hidden></p>
+        <!-- Same two-author arrangement as #detect-note in Uploading, and
+             asserted against GAMELOG_COST by the same test. Its own
+             sentence, because the two folders cost different things: this
+             one re-reads, the other starts a watcher. -->
+        <p class="sub-hint" id="gamelogs-note">
+          Alerts read this folder. Changing it re-checks it straight away.
+        </p>
+      </section>
+
     </div>
 
     <div class="settings" id="section-general">

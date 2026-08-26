@@ -217,7 +217,7 @@ The column's original job is still done — labels still share one edge —
 they now share it with everything else on the card.
 
 The table above is the measurement that decided this and is left as it was
-taken. Two things have moved under it since, neither of which changes the
+taken. Three things have moved under it since, none of which changes the
 argument: `Notifications` is no longer a rail entry — its one radio pair is
 the second card under `Uploads` — and five labels that only restated the
 control beside them have been deleted, because stacking changed what a
@@ -225,6 +225,15 @@ label costs from 118px of gutter to a whole line. A label now earns its
 line by naming a GROUP the controls do not name themselves (`Status` over
 a pill and a button, `Copy` over a radio pair) or by labelling a text input,
 which has no self-describing text.
+
+The third is round 5's E1, and it renames most of the first column: the
+rail is **five** entries now, not seven. `Account`, `Uploads`, `Folders`
+and `Discord` are one entry, `Uploading`; `Alerts` is a new one of its own
+(D1); `Bookmarks`, `Previews` and `General` are unchanged. The rows above
+still describe the same cards, which is why the measurement stands — the
+first control's left edge is a property of the card, not of the rail entry
+it is reached through. With the EVE gate off the rail is two entries,
+`Uploading` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` take the column away from their rows on

@@ -507,8 +507,14 @@
   // enter/leave contract on this page: the poll must stop, or a card
   // nobody is looking at keeps a bridge call running every two seconds
   // for the life of the session.
+  //
+  // 'alerts', not 'previews', since round 5's D1 gave this card a section
+  // of its own. The name here is the SECTION THIS CARD IS IN and nothing
+  // else -- left at 'previews' it inverts exactly: the poll would run
+  // while the user is on Previews, where the card is no longer rendered,
+  // and stop the moment they open Alerts.
   document.addEventListener('wm:section', function (event) {
-    if (event.detail === 'previews') {
+    if (event.detail === 'alerts') {
       refresh();
       startPolling();
     } else {
@@ -523,12 +529,19 @@
     if (event.detail !== 'settings') { stopPolling(); }
   });
 
-  // #preview-enabled and this card share ONE section (#section-previews)
-  // with no navigation between them, so toggling previews off must not
-  // wait for a route change to stop showing a healthy-looking card:
-  // set_preview_enabled really does stop the poll thread. settings.js
-  // dispatches this once its own bridge call settles (not on the raw
-  // DOM change), so this refresh cannot race ahead of the host.stop() /
-  // alerts.reconcile() that call performs.
+  // Belt and braces since round 5's D1, and KEPT deliberately.
+  //
+  // It was load-bearing: #preview-enabled and this card shared ONE section
+  // with no navigation between them, so toggling previews off had to stop
+  // showing a healthy-looking card without waiting for a route change.
+  // D1 moved this card to a section of its own, so the user must now cross
+  // a section boundary to see it after touching that toggle, and the
+  // wm:section listener above already refreshes on arrival. That makes
+  // this redundant rather than wrong -- and re-deriving it would be the
+  // expensive way to find out, so it stays with the reason written down.
+  //
+  // settings.js dispatches it once its own bridge call settles (not on the
+  // raw DOM change), so this refresh cannot race ahead of the host.stop()
+  // / alerts.reconcile() that call performs.
   document.addEventListener('wm:preview-enabled-changed', refresh);
 }());

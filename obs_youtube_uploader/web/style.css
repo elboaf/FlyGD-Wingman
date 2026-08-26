@@ -893,11 +893,10 @@ button.btn:disabled,
   background: url("assets/ship.png") no-repeat right bottom / contain;
 }
 
-/* Except on the two sections that hold ROW LISTS, which is where Settings
-   stops qualifying. Bookmarks holds eighteen keybind rows and Previews one
-   row per known character -- the same two named in the .settings-pane
-   scroll note below, for the same reason -- so both overflow the pane and
-   scroll.
+/* Except on the sections that TRAVEL, which is where Settings stops
+   qualifying. Bookmarks holds eighteen keybind rows and Previews one row
+   per known character -- the two the .settings-pane scroll note below was
+   written about -- so both overflow the pane and scroll.
 
    THE TEST IS MOTION, not the card gap on its own. The 12px `.settings`
    gap is a window onto the ship on the short sections too, and that is
@@ -915,6 +914,15 @@ button.btn:disabled,
    ask whether a box overflows. If a section ever grows a row list, add it
    here.
 
+   ROUND 5, E1 ADDED TWO, and neither holds a row list -- which is why the
+   rule above is written about MOTION and not about rows. Merging Account,
+   Uploads, Folders and Discord into one section gave Uploading five cards:
+   788px of content in the 521px pane at the 840x625 floor. Alerts became
+   its own section (D1) carrying the event table and the gamelogs folder:
+   605px in the same pane. Both travel, so both take the same exclusion the
+   two row-list sections do. Measured in the ?dev=1 harness at the floor,
+   the same way Previews' 1535px above was.
+
    Both selectors use :has(), and a selector list is invalid as a WHOLE if
    any selector in it is unparsed -- so on a WebView2 older than Chromium
    105 this rule is dropped entirely and the watermark comes back behind
@@ -925,10 +933,10 @@ button.btn:disabled,
    harmlessly. Accepted rather than worked around: the evergreen runtime is
    long past 105, and the alternative is a JS class on #route-settings for
    a case no supported install reaches. */
+#route-settings:has(#section-uploading.active)::after,
 #route-settings:has(#section-bookmarks.active)::after,
-#route-settings:has(#section-previews.active)::after { content: none; }
-#route-settings:has(#section-bookmarks.active)::after,
-#route-settings:has(#section-previews.active)::after { content: none; }
+#route-settings:has(#section-previews.active)::after,
+#route-settings:has(#section-alerts.active)::after { content: none; }
 
 /* ====================== recording list ============================== */
 /* Two panes, preserving today's split: list left, upload panel right. */
@@ -1717,8 +1725,10 @@ button.btn:disabled,
    scrolling -- and `overflow-y: auto` below would never fire. Verified by
    injecting 24 extra entries at the 840x625 floor: the rail caps at 521.5
    and scrolls, staying inside the route with its 12px bottom padding
-   intact. Seven entries need 244px of that 521.5, so this is a guard for a
-   rail that grows, not a live tier today.
+   intact. Seven entries needed 244px of that 521.5 when that was measured;
+   round 5's E1 took the rail to five, and to two with the EVE gate off, so
+   the margin only grew. This is a guard for a rail that grows, not a live
+   tier today.
 
    THE 100% RESOLVES AGAINST THE GRID AREA, and that is a dependency worth
    naming because nothing here declares it: `.route` is `flex: 1;
@@ -1751,7 +1761,10 @@ button.btn:disabled,
    overflow-y instead -- one scroller for every section rather than one per
    route. The reason it is still needed is unchanged: Bookmarks holds
    eighteen keybind rows and Previews holds one row per known character,
-   and either exceeds the window height. */
+   and either exceeds the window height. Round 5's E1 added two more that
+   overflow without holding a row list at all -- Uploading, at five cards,
+   and Alerts -- so this is no longer the two-section safeguard it was;
+   the ::after exclusion above carries those measurements. */
 
 /* Character names, like bookmarks' action names, are long -- but they take
    the stacked label treatment anyway, like every other settings row on the

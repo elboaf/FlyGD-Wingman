@@ -162,36 +162,75 @@ def test_the_previews_inert_note_is_not_typed_into_the_page():
     )
 
 
-def test_the_folder_cost_sentence_is_written_once():
-    """#detect-note has TWO authors: the markup paints it before the first
-    settings payload lands, and settings.js's render() rewrites it on every
-    payload. The slot's previous occupant proved what that costs -- the
-    markup said "OBS's" with a straight apostrophe and settings.js said it
-    with a typographic one, two spellings of one sentence that no reader
+def test_each_folder_cost_sentence_is_written_once_and_sits_under_its_field():
+    """Both folder notes have TWO authors: the markup paints them before the
+    first settings payload lands, and settings.js's render() rewrites them
+    on every payload. The slot's previous occupant proved what that costs --
+    the markup said "OBS's" with a straight apostrophe and settings.js said
+    it with a typographic one, two spellings of one sentence that no reader
     could see and nothing held in step.
 
-    The sentence itself is round 3's B11 answer: what changing the
-    recording folder costs, stated before the click. The number belongs to
+    The sentences are round 3's B11 answer, per folder: what changing that
+    folder costs, stated before the click. The number belongs to
     set_folder's report afterwards, because it depends on the folder.
+
+    **Scope is asserted here too, and that is round 5's E2.** There used to
+    be one note for two fields, stating the RECORDING folder's cost, so
+    changing the gamelogs path explained the recording watcher. Only the
+    note's TEXT was guarded; nothing said it had to sit under the field it
+    describes. So this now pins both: each note is in the same card as its
+    own input, and the two costs are different sentences because the two
+    folders do different things -- one starts a watcher, the other makes
+    AlertService re-read (ui/api.py's set_folder branches on exactly that).
 
     Compared on words, since the markup wraps and indents and the JS is
     split across string concatenations.
     """
     settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
-    literal = re.search(r"var FOLDER_COST = (.+?);\n", settings_js, re.DOTALL)
-    assert literal, "settings.js no longer declares FOLDER_COST"
-    js = re.sub(r"'\s*\+\s*'", "", literal.group(1)).strip().strip("'")
-    js = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), js)
-    js = " ".join(js.split())
+    panes = dict(_panes())
 
-    pane = dict(_panes())["folders"]
-    slot = re.search(r'<p class="sub-hint" id="detect-note">(.*?)</p>', pane, re.DOTALL)
-    assert slot, "index.html no longer carries the #detect-note slot"
-    markup = " ".join(re.sub(r"<[^>]+>", " ", slot.group(1)).split())
+    # (JS constant, note id, the input that note must sit beside, section)
+    cases = [
+        ("FOLDER_COST", "detect-note", "f-recdir", "uploading"),
+        ("GAMELOG_COST", "gamelogs-note", "f-gamelogs", "alerts"),
+    ]
+    seen = set()
+    for const, note_id, field_id, section in cases:
+        literal = re.search(rf"var {const} = (.+?);\n", settings_js, re.DOTALL)
+        assert literal, f"settings.js no longer declares {const}"
+        js = re.sub(r"'\s*\+\s*'", "", literal.group(1)).strip().strip("'")
+        js = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), js)
+        js = " ".join(js.split())
 
-    assert markup == js, (
-        "index.html's #detect-note and settings.js's FOLDER_COST have "
-        f"drifted:\n  markup: {markup!r}\n  js:     {js!r}"
+        assert section in panes, f"there is no {section!r} section"
+        pane = panes[section]
+        slot = re.search(
+            rf'<p class="sub-hint" id="{note_id}">(.*?)</p>', pane, re.DOTALL
+        )
+        assert slot, f"index.html no longer carries #{note_id} in {section}"
+        markup = " ".join(re.sub(r"<[^>]+>", " ", slot.group(1)).split())
+
+        assert markup == js, (
+            f"index.html's #{note_id} and settings.js's {const} have "
+            f"drifted:\n  markup: {markup!r}\n  js:     {js!r}"
+        )
+
+        # E2: the note must be in the same CARD as the field it describes,
+        # not merely in the same section.
+        card = next(
+            (c for c in pane.split('<section class="card">') if field_id in c), None
+        )
+        assert card is not None, f"#{field_id} is not in the {section} section"
+        assert note_id in card, (
+            f"#{note_id} is not in the same card as #{field_id}. That is E2 "
+            "exactly: a cost sentence rendering under a field it does not "
+            "describe."
+        )
+        seen.add(js)
+
+    assert len(seen) == len(cases), (
+        "the two folders were given the same cost sentence; they do "
+        "different things and E2 was the sentence that covered both"
     )
 
 
