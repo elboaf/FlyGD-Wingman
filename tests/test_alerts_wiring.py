@@ -470,17 +470,44 @@ def _web(name):
     return (root / "obs_youtube_uploader" / "web" / name).read_text(encoding="utf-8")
 
 
-def test_the_alerts_card_is_a_third_card_in_the_previews_section():
-    """After the second card, not inside the first: splitting the first
-    card's HTML on '<section' (test_preview_wiring.py's own technique for
-    the position checkbox) would otherwise pick up whatever came next."""
+def test_the_alerts_card_has_its_own_section_and_polls_on_it():
+    """Round 5's D1. This card was the third in the Previews section; it is
+    now the first in a section of its own.
+
+    Two halves, and the second is the one that bites. Moving the markup
+    alone leaves alerts.js polling on the WRONG name: its wm:section
+    listener started the two-second poll on 'previews', which after the
+    move means the poll runs while the user is on a pane this card is not
+    rendered in, and stops the moment they open the pane it is. Inverted,
+    and invisible in a diff of either file alone -- so the section name is
+    asserted against the markup rather than trusted.
+    """
     html = _web("index.html")
-    route = html.split('id="section-previews"')[1].split('id="section-')[0]
-    assert "<h2>Alerts</h2>" in route
-    first_card = route.split("EVE client previews")[1].split("<section")[0]
-    assert "Alerts" not in first_card
-    second_card = route.split("Global keybinds")[1].split("<section")[0]
-    assert "Alerts" not in second_card
+    js = _web("alerts.js")
+
+    assert 'id="section-alerts"' in html, "Alerts has no section of its own"
+
+    section = html.split('id="section-alerts"')[1].split('id="section-')[0]
+    assert "<h2>Gamelog alerts</h2>" in section, (
+        "the Alerts card is not in the Alerts section. Its heading may not "
+        "be the rail label itself -- see test_settings_page.py"
+    )
+
+    previews = html.split('id="section-previews"')[1].split('id="section-')[0]
+    assert "alert-events" not in previews, (
+        "the Alerts card is still in the Previews section as well"
+    )
+
+    # The name alerts.js polls on must be the section the card lives in.
+    # Anchored on the addEventListener call, not on the bare event name:
+    # "wm:section" appears in this file's prose first, and splitting on it
+    # reads a comment and passes or fails for the wrong reason.
+    listener = js.split("addEventListener('wm:section'")[1].split("});")[0]
+    assert "'alerts'" in listener, (
+        "alerts.js still starts its poll on another section's name; after "
+        "D1 the card is only rendered in #section-alerts"
+    )
+    assert "'previews'" not in listener
 
 
 def test_the_alerts_script_is_loaded():

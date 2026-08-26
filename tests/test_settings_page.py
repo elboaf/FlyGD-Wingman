@@ -162,36 +162,75 @@ def test_the_previews_inert_note_is_not_typed_into_the_page():
     )
 
 
-def test_the_folder_cost_sentence_is_written_once():
-    """#detect-note has TWO authors: the markup paints it before the first
-    settings payload lands, and settings.js's render() rewrites it on every
-    payload. The slot's previous occupant proved what that costs -- the
-    markup said "OBS's" with a straight apostrophe and settings.js said it
-    with a typographic one, two spellings of one sentence that no reader
+def test_each_folder_cost_sentence_is_written_once_and_sits_under_its_field():
+    """Both folder notes have TWO authors: the markup paints them before the
+    first settings payload lands, and settings.js's render() rewrites them
+    on every payload. The slot's previous occupant proved what that costs --
+    the markup said "OBS's" with a straight apostrophe and settings.js said
+    it with a typographic one, two spellings of one sentence that no reader
     could see and nothing held in step.
 
-    The sentence itself is round 3's B11 answer: what changing the
-    recording folder costs, stated before the click. The number belongs to
+    The sentences are round 3's B11 answer, per folder: what changing that
+    folder costs, stated before the click. The number belongs to
     set_folder's report afterwards, because it depends on the folder.
+
+    **Scope is asserted here too, and that is round 5's E2.** There used to
+    be one note for two fields, stating the RECORDING folder's cost, so
+    changing the gamelogs path explained the recording watcher. Only the
+    note's TEXT was guarded; nothing said it had to sit under the field it
+    describes. So this now pins both: each note is in the same card as its
+    own input, and the two costs are different sentences because the two
+    folders do different things -- one starts a watcher, the other makes
+    AlertService re-read (ui/api.py's set_folder branches on exactly that).
 
     Compared on words, since the markup wraps and indents and the JS is
     split across string concatenations.
     """
     settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
-    literal = re.search(r"var FOLDER_COST = (.+?);\n", settings_js, re.DOTALL)
-    assert literal, "settings.js no longer declares FOLDER_COST"
-    js = re.sub(r"'\s*\+\s*'", "", literal.group(1)).strip().strip("'")
-    js = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), js)
-    js = " ".join(js.split())
+    panes = dict(_panes())
 
-    pane = dict(_panes())["folders"]
-    slot = re.search(r'<p class="sub-hint" id="detect-note">(.*?)</p>', pane, re.DOTALL)
-    assert slot, "index.html no longer carries the #detect-note slot"
-    markup = " ".join(re.sub(r"<[^>]+>", " ", slot.group(1)).split())
+    # (JS constant, note id, the input that note must sit beside, section)
+    cases = [
+        ("FOLDER_COST", "detect-note", "f-recdir", "uploading"),
+        ("GAMELOG_COST", "gamelogs-note", "f-gamelogs", "alerts"),
+    ]
+    seen = set()
+    for const, note_id, field_id, section in cases:
+        literal = re.search(rf"var {const} = (.+?);\n", settings_js, re.DOTALL)
+        assert literal, f"settings.js no longer declares {const}"
+        js = re.sub(r"'\s*\+\s*'", "", literal.group(1)).strip().strip("'")
+        js = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), js)
+        js = " ".join(js.split())
 
-    assert markup == js, (
-        "index.html's #detect-note and settings.js's FOLDER_COST have "
-        f"drifted:\n  markup: {markup!r}\n  js:     {js!r}"
+        assert section in panes, f"there is no {section!r} section"
+        pane = panes[section]
+        slot = re.search(
+            rf'<p class="sub-hint" id="{note_id}">(.*?)</p>', pane, re.DOTALL
+        )
+        assert slot, f"index.html no longer carries #{note_id} in {section}"
+        markup = " ".join(re.sub(r"<[^>]+>", " ", slot.group(1)).split())
+
+        assert markup == js, (
+            f"index.html's #{note_id} and settings.js's {const} have "
+            f"drifted:\n  markup: {markup!r}\n  js:     {js!r}"
+        )
+
+        # E2: the note must be in the same CARD as the field it describes,
+        # not merely in the same section.
+        card = next(
+            (c for c in pane.split('<section class="card">') if field_id in c), None
+        )
+        assert card is not None, f"#{field_id} is not in the {section} section"
+        assert note_id in card, (
+            f"#{note_id} is not in the same card as #{field_id}. That is E2 "
+            "exactly: a cost sentence rendering under a field it does not "
+            "describe."
+        )
+        seen.add(js)
+
+    assert len(seen) == len(cases), (
+        "the two folders were given the same cost sentence; they do "
+        "different things and E2 was the sentence that covered both"
     )
 
 
@@ -302,3 +341,86 @@ def test_the_dev_harness_declares_each_payload_key_once():
         "dev.js declares these settings-payload keys more than once, so the "
         "harness renders whichever came last: " + repr(dupes)
     )
+
+
+def test_every_message_slot_settings_js_writes_to_exists_in_the_page():
+    """`say()` returns silently when its element is missing.
+
+        function say(slot, text, tone) {
+          var el = WM.el(slot);
+          if (!el) { return; }
+
+    That is the right behaviour at runtime -- a per-field message is not
+    worth throwing over -- and it means a mistyped slot id swallows every
+    error, refusal and warning for that field, permanently and with no
+    symptom anywhere a user or a test would look. The field just stops
+    explaining itself.
+
+    Round 5's E2 made this worth guarding rather than merely true: the two
+    folder fields shared one `#msg-folders` and now have one slot each,
+    because after D2 they sit in different sections and a gamelogs refusal
+    would otherwise have rendered onto a pane the user was not looking at.
+    One id became two, in a file that resolves them through a lookup table
+    rather than a literal, so the chance of a mismatch went up at exactly
+    the moment the failure got quieter.
+
+    Derived from the source both ways round: the literals are grepped out
+    of settings.js, and the lookup table is read as a table. Retyping the
+    list here would be the hand-kept copy CLAUDE.md forbids.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+
+    slots = set(re.findall(r"(?:say|commit)\(\s*'(msg-[\w-]+)'", settings_js))
+
+    table = re.search(r"var TARGET_MSG = \{([^}]*)\}", settings_js)
+    assert table, "settings.js no longer declares TARGET_MSG"
+    mapped = set(re.findall(r"'(msg-[\w-]+)'", table.group(1)))
+    assert mapped, "TARGET_MSG names no message slots"
+    slots |= mapped
+
+    assert len(slots) >= 5, (
+        f"only found {len(slots)} message slots in settings.js, which "
+        "suggests the pattern changed and this guard stopped seeing them"
+    )
+
+    present = set(re.findall(r'class="field-msg" id="([\w-]+)"', HTML))
+    missing = sorted(slots - present)
+    assert not missing, (
+        "settings.js writes to message slots that are not in index.html, so "
+        f"every message for those fields is silently dropped: {missing}"
+    )
+
+
+def test_each_folder_field_reaches_its_own_note_and_message():
+    """The four folder lookup tables must agree on their keys.
+
+    `TARGET_FIELD`, `TARGET_MSG`, `TARGET_NOTE` and `TARGET_COST` are
+    indexed by the same `which` -- the discriminator `Api.set_folder`,
+    `pick_folder` and `detect_folder` all share. A key present in one and
+    missing from another does not throw: `WM.el(undefined)` is null, and
+    both `say()` and the note loop skip a null slot, so that folder simply
+    stops reporting anything.
+
+    Round 5's D2 is why there are four of them. One card held both folders
+    under one note and one message slot; the fields now sit in different
+    sections, each with its own note, its own cost sentence and its own
+    slot, all reached through `which`.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+
+    tables = {}
+    for name in ("TARGET_FIELD", "TARGET_MSG", "TARGET_NOTE", "TARGET_COST"):
+        block = re.search(name + r" = \{([^}]*)\}", settings_js)
+        assert block, f"settings.js no longer declares {name}"
+        tables[name] = set(re.findall(r"(\w+)\s*:", block.group(1)))
+
+    keys = tables["TARGET_FIELD"]
+    assert keys == {"recording", "gamelogs"}, (
+        f"the folder discriminators changed: {sorted(keys)}. They mirror "
+        "Api.set_folder/pick_folder/detect_folder and must match."
+    )
+    for name, got in tables.items():
+        assert got == keys, (
+            f"{name} is keyed {sorted(got)} but the folders are "
+            f"{sorted(keys)}; the odd one out silently reports nothing"
+        )

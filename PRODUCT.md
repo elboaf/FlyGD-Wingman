@@ -82,9 +82,10 @@ missing when the title bar filled up:
 
 | | how important | how often *visited* | where it lives |
 |---|---|---|---|
-| Uploading | primary | constantly | a destination |
+| Uploading | primary | constantly | a destination, **and** a Settings section |
 | Previews | primary | twice, ever | a Settings section |
 | Bookmarks | primary | twice, ever | a Settings section |
+| Alerts | part of previews | twice, ever | a Settings section |
 | Skills | secondary | rarely | a destination |
 
 Two equally primary features are Settings sections and a secondary one is
@@ -93,6 +94,16 @@ a destination. That is not an inconsistency, it is the actual rule:
 **Does the user come here to *do* something and stay, or to *set something
 up* and leave?** The first is a destination. The second is a Settings
 section, however important the feature is.
+
+**Uploading is the one row that is both, and that is the rule working
+rather than an exception to it.** Round 5's E1 merged Account, Uploads,
+Folders and Discord into a single `Uploading` section, so the name now
+appears twice in this table: the Uploader is where you *do* the uploading,
+and Settings › Uploading is where you set it up once. Same feature, both
+answers to the question above, two surfaces. The merge axis was this
+file's own independence claim — that neither half of the product requires
+the other — which the rail had been hiding by interleaving the two halves
+across seven entries.
 
 Previews and Bookmarks are as important as uploading and are still
 configuration, because neither produces anything on its own screen — they
@@ -103,9 +114,20 @@ checking a roster against a doctrine is something you sit and do.
 ### Alerts are part of previews, not a fourth primary
 
 Gamelog alerts pulse a client's preview when combat starts, your warp is
-scrambled, or you decloak. They belong to previews and are configured in
-Settings › Previews, by the rule above: they produce nothing on a screen
-of their own, and what they act on is a preview window.
+scrambled, or you decloak. They belong to previews and are configuration,
+by the rule above: they produce nothing on a screen of their own, and what
+they act on is a preview window.
+
+**They are configured in Settings › Alerts, and that is not a change to
+the rule.** This paragraph said "Settings › Previews" until round 5's D1,
+which gave alerts their own Settings section. The rule the sentence rests
+on is *destination versus configuration*, and a Settings section of its
+own passes it identically — alerts still produce nothing on a screen of
+their own. What changed is only which section, and it changed for a
+reader's reason rather than a product one: the card sat below about
+seventy controls, and the gamelogs folder it depends on was three rail
+entries away. Being a section of Settings is what makes alerts *not* a
+fourth primary; being the third card of another section never was.
 
 They are worth naming here anyway, because they are the only thing in the
 product that **interrupts**. Everything else waits to be looked at. That

@@ -174,9 +174,15 @@
   // writes it into the wrong bind, off-screen and silently persisted.
   // Once those two are sections rather than routes, switching away from
   // them is no longer a route change, and without this event an armed
-  // capture would survive into Folders or Discord and swallow whatever is
+  // capture would survive into Uploading or Alerts and swallow whatever is
   // typed there -- its handler preventDefault()s every key, Tab included.
-  WM.current_section = 'account';
+  //
+  // Round 5's E1 merged Account/Uploads/Folders/Discord into Uploading, so
+  // the landing moved with the section that absorbed it. It is one of the
+  // two sections that survive the EVE gate being switched off, which is
+  // why it is a landing that always exists. Held in step with the rail's
+  // `active` class and the pane's by test_page_conventions.py.
+  WM.current_section = 'uploading';
 
   WM.notify_section = function (name) {
     document.dispatchEvent(new CustomEvent('wm:section', { detail: name }));
@@ -211,7 +217,14 @@
   // With both destinations hidden the nav has one entry left, so it hides
   // altogether -- which is the single-screen app the README describes.
   WM.EVE_ROUTES = ['evesettings', 'skills'];
-  WM.EVE_SECTIONS = ['bookmarks', 'previews'];
+  // Alerts joined this list in round 5 (D1) when it stopped being a card
+  // inside Previews and became a section. It is EVE-gated for the same
+  // reason the other two are: it reads the EVE gamelogs folder and draws
+  // on a preview window, so with the gate off it configures nothing that
+  // can happen. This is also what takes the rail to TWO entries in that
+  // mode -- five, less these three -- which is the whole of E1's argument
+  // that the merge axis is the product's own independence claim.
+  WM.EVE_SECTIONS = ['bookmarks', 'previews', 'alerts'];
 
   WM.apply_eve_gate = function (shown) {
     WM.eve_shown = shown !== false;

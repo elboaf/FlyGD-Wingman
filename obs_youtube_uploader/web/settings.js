@@ -20,6 +20,26 @@
                   + 'Recordings already there won\u2019t be announced, and '
                   + 'arrive unticked in the list.';
 
+  // The gamelogs folder's own cost, and it is a DIFFERENT one -- which is
+  // why round 5's E2 was a defect rather than a wording problem. The two
+  // fields shared one note stating the sentence above, so repointing the
+  // gamelogs path explained the recording watcher. This folder drives no
+  // watcher: ui/api.py's set_folder calls AlertService.reconcile() on the
+  // gamelogs branch, so the change takes effect on the spot rather than
+  // costing anything.
+  var GAMELOG_COST = 'Alerts read this folder. Changing it re-checks it '
+                   + 'straight away.';
+
+  // Per folder, because these are now in two different sections. A single
+  // shared slot is what E2 actually was: with #msg-folders living in
+  // Uploading, a gamelogs refusal would have rendered into a paragraph on
+  // a pane the user was not looking at -- silent, and worse than the
+  // mis-scoped sentence that prompted the split.
+  var TARGET_NOTE = { recording: 'detect-note', gamelogs: 'gamelogs-note' };
+  var TARGET_MSG = { recording: 'msg-recdir', gamelogs: 'msg-gamelogs' };
+  var TARGET_COST = { recording: FOLDER_COST, gamelogs: GAMELOG_COST };
+  var TARGET_NOUN = { recording: 'recording', gamelogs: 'gamelogs' };
+
   var current = {};    // last settings dict from Python
   var detected = {};   // detected-folder suggestions from the same payload
   // Fetched once from Python rather than duplicated here: ui/copy.py's
@@ -185,10 +205,23 @@
     // Detect is always offered, but say so when there is nothing to find.
     // That half is a state report, not mechanism, so it survives -- after
     // the consequence, which is true whichever way the folder gets set.
-    WM.el('detect-note').textContent = FOLDER_COST + ((d.recording || d.gamelogs)
-      ? ''
-      : ' Detect found neither folder automatically — use Browse to pick '
-        + 'them yourself.');
+    //
+    // Round 5, E2: one loop over the two folders rather than one slot for
+    // both. The detect clause used to read "Detect found NEITHER folder
+    // ... pick THEM yourself" off `d.recording || d.gamelogs`, so it was
+    // the second thing on this card scoped to the pair -- and once D2 put
+    // the two fields in different sections it could not follow either one
+    // intact. Each note now tests only its own folder and names it, which
+    // is also strictly more accurate than the old clause: it was silent
+    // when exactly one of the two was found, which is the common case.
+    Object.keys(TARGET_NOTE).forEach(function (which) {
+      var slot = WM.el(TARGET_NOTE[which]);
+      if (!slot) { return; }
+      slot.textContent = TARGET_COST[which] + (d[which]
+        ? ''
+        : ' Detect found no ' + TARGET_NOUN[which] + ' folder automatically'
+          + ' — use Browse to pick it yourself.');
+    });
     // M2. Pushed from __version__ through the payload, never typed here. A
     // payload without the key leaves the em dash rather than painting
     // "undefined" -- the same tolerance app.js gives the titlebar copy, so
@@ -286,7 +319,7 @@
   function commitFolder(which) {
     var field = WM.el(TARGET_FIELD[which]);
     if (!field) { return; }
-    commit('msg-folders', ['set_folder', which, field.value], function () {
+    commit(TARGET_MSG[which], ['set_folder', which, field.value], function () {
       setField(TARGET_FIELD[which],
                (which === 'gamelogs' ? current.gamelogs_dir
                                      : current.recording_dir) || '');
@@ -312,8 +345,8 @@
       var stored = (which === 'gamelogs' ? current.gamelogs_dir
                                          : current.recording_dir) || '';
       if (field.value.trim() === stored) { return; }
-      say('msg-folders', 'Press Enter to use this folder, or click '
-                       + 'Browse\u2026', 'warn');
+      say(TARGET_MSG[which], 'Press Enter to use this folder, or click '
+                           + 'Browse\u2026', 'warn');
     });
   });
 
@@ -445,15 +478,21 @@
   }
 
   // Leaving re-masks, so a revealed credential cannot be left on screen by
-  // navigating away and back. Both events, not just the route: Discord is
-  // one section among several now, and switching to Folders leaves the
-  // webhook just as thoroughly as switching to the Uploader does -- while
+  // navigating away and back. Both events, not just the route: the webhook
+  // is one card in a section among several, and switching to Alerts leaves
+  // it just as thoroughly as switching to the Uploader does -- while
   // firing no route change at all.
+  //
+  // The section named here is the one the webhook card LIVES in, not a
+  // sibling: round 5's E1 folded Discord into Uploading, so 'discord' is
+  // no longer a section any event can carry and this test would have been
+  // true on every switch -- re-masking correctly, but by accident, and
+  // silently wrong again the day the card moves.
   document.addEventListener('wm:route', function (ev) {
     if (ev.detail !== 'settings') remask();
   });
   document.addEventListener('wm:section', function (ev) {
-    if (ev.detail !== 'discord') remask();
+    if (ev.detail !== 'uploading') remask();
   });
 
   // ---- Google account -------------------------------------------------
@@ -512,13 +551,18 @@
         // backend never accepted.
         box.checked = !wanted;
       }
-      // #preview-enabled and the Alerts card share one section with no
-      // navigation between them (alerts.js's wm:section refresh never
-      // fires), so the card would otherwise keep showing a stale "watching
-      // N characters" line -- persistently, since the backend really did
-      // stop the poll thread -- until the user left and returned to the
-      // route. Dispatched after the bridge call settles, not on the raw
-      // change, so alerts.js's get_alert_state read cannot race ahead of
+      // Kept, and no longer load-bearing. #preview-enabled and the Alerts
+      // card used to share one section with no navigation between them
+      // (alerts.js's wm:section refresh never fired), so the card would
+      // otherwise keep showing a stale "watching N characters" line --
+      // persistently, since the backend really did stop the poll thread --
+      // until the user left and returned to the route. Round 5's D1 gave
+      // Alerts its own section, so reaching that card now crosses a
+      // section boundary and alerts.js refreshes on arrival by itself.
+      // See the matching note on the listener there for why it stays.
+      //
+      // Dispatched after the bridge call settles, not on the raw change,
+      // so alerts.js's get_alert_state read cannot race ahead of
       // set_preview_enabled's own host.stop()/alerts.reconcile().
       document.dispatchEvent(new CustomEvent('wm:preview-enabled-changed'));
     });
