@@ -341,3 +341,86 @@ def test_the_dev_harness_declares_each_payload_key_once():
         "dev.js declares these settings-payload keys more than once, so the "
         "harness renders whichever came last: " + repr(dupes)
     )
+
+
+def test_every_message_slot_settings_js_writes_to_exists_in_the_page():
+    """`say()` returns silently when its element is missing.
+
+        function say(slot, text, tone) {
+          var el = WM.el(slot);
+          if (!el) { return; }
+
+    That is the right behaviour at runtime -- a per-field message is not
+    worth throwing over -- and it means a mistyped slot id swallows every
+    error, refusal and warning for that field, permanently and with no
+    symptom anywhere a user or a test would look. The field just stops
+    explaining itself.
+
+    Round 5's E2 made this worth guarding rather than merely true: the two
+    folder fields shared one `#msg-folders` and now have one slot each,
+    because after D2 they sit in different sections and a gamelogs refusal
+    would otherwise have rendered onto a pane the user was not looking at.
+    One id became two, in a file that resolves them through a lookup table
+    rather than a literal, so the chance of a mismatch went up at exactly
+    the moment the failure got quieter.
+
+    Derived from the source both ways round: the literals are grepped out
+    of settings.js, and the lookup table is read as a table. Retyping the
+    list here would be the hand-kept copy CLAUDE.md forbids.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+
+    slots = set(re.findall(r"(?:say|commit)\(\s*'(msg-[\w-]+)'", settings_js))
+
+    table = re.search(r"var TARGET_MSG = \{([^}]*)\}", settings_js)
+    assert table, "settings.js no longer declares TARGET_MSG"
+    mapped = set(re.findall(r"'(msg-[\w-]+)'", table.group(1)))
+    assert mapped, "TARGET_MSG names no message slots"
+    slots |= mapped
+
+    assert len(slots) >= 5, (
+        f"only found {len(slots)} message slots in settings.js, which "
+        "suggests the pattern changed and this guard stopped seeing them"
+    )
+
+    present = set(re.findall(r'class="field-msg" id="([\w-]+)"', HTML))
+    missing = sorted(slots - present)
+    assert not missing, (
+        "settings.js writes to message slots that are not in index.html, so "
+        f"every message for those fields is silently dropped: {missing}"
+    )
+
+
+def test_each_folder_field_reaches_its_own_note_and_message():
+    """The four folder lookup tables must agree on their keys.
+
+    `TARGET_FIELD`, `TARGET_MSG`, `TARGET_NOTE` and `TARGET_COST` are
+    indexed by the same `which` -- the discriminator `Api.set_folder`,
+    `pick_folder` and `detect_folder` all share. A key present in one and
+    missing from another does not throw: `WM.el(undefined)` is null, and
+    both `say()` and the note loop skip a null slot, so that folder simply
+    stops reporting anything.
+
+    Round 5's D2 is why there are four of them. One card held both folders
+    under one note and one message slot; the fields now sit in different
+    sections, each with its own note, its own cost sentence and its own
+    slot, all reached through `which`.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+
+    tables = {}
+    for name in ("TARGET_FIELD", "TARGET_MSG", "TARGET_NOTE", "TARGET_COST"):
+        block = re.search(name + r" = \{([^}]*)\}", settings_js)
+        assert block, f"settings.js no longer declares {name}"
+        tables[name] = set(re.findall(r"(\w+)\s*:", block.group(1)))
+
+    keys = tables["TARGET_FIELD"]
+    assert keys == {"recording", "gamelogs"}, (
+        f"the folder discriminators changed: {sorted(keys)}. They mirror "
+        "Api.set_folder/pick_folder/detect_folder and must match."
+    )
+    for name, got in tables.items():
+        assert got == keys, (
+            f"{name} is keyed {sorted(got)} but the folders are "
+            f"{sorted(keys)}; the odd one out silently reports nothing"
+        )
