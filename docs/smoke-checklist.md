@@ -1834,6 +1834,12 @@ Two things decide what you should see, and they are easy to conflate:
       focused on a different application (e.g. a browser). With `Persist` on,
       it stops when you switch back to that EVE client; with `Persist` off it
       stops on its own after the configured duration.
+- [ ] **Change a setting while an alert is pulsing.** With a ring pulsing on
+      some preview, go to Settings › Previews and move the opacity slider (or
+      toggle labels, or lock that preview). Expected: the ring keeps its full
+      6px width for the rest of the alert. If it thins to brackets at the
+      sides and bottom, `_restyle` has re-pushed the thumbnail at `BORDER`
+      instead of the window's live `_inset`.
 - [ ] **Take fire on the client that is wearing the ring.** Same as above,
       but make sure the shot character is the one you most recently switched
       to, then tab out to a browser and leave it there. Expected: the alert
