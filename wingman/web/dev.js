@@ -728,15 +728,24 @@
     console.log('DEV api.list_rows()');
     setTimeout(function () {
       window.onRows({ rows: [
-        { id: 'r1', name: '2026-08-21 19-04-11.mkv', date: 'Aug 21  19:04',
+        // The `date` values are library.format_date's OWN output forms,
+        // not timestamps. They were absolute ("Aug 21  19:04") here long
+        // after Python went relative, which is the harness lying about
+        // the exact thing this column is sized against -- r5 carries the
+        // widest string format_date can produce so the age track's width
+        // is exercised rather than assumed.
+        { id: 'r1', name: '2026-08-21 19-04-11.mkv', date: 'just now',
           size: '1.4 GB', duration: '12:31', link: null, preselected: true },
-        { id: 'r2', name: '2026-08-21 17-58-02.mkv', date: 'Aug 21  17:58',
+        { id: 'r2', name: '2026-08-21 17-58-02.mkv', date: '3h ago',
           size: '812.0 MB', duration: '\u2026', link: null, preselected: false },
-        { id: 'r3', name: '2026-08-20 22-10-49.mkv', date: 'Aug 20  22:10',
+        { id: 'r3', name: '2026-08-20 22-10-49.mkv', date: 'yesterday',
           size: '2.1 GB', duration: '?', link: null, preselected: false },
-        { id: 'r4', name: '2026-08-19 21-00-03.mkv', date: 'Aug 19  21:00',
+        { id: 'r4', name: '2026-08-19 21-00-03.mkv', date: '6d ago',
           size: '640.5 MB', duration: '4:07',
-          link: 'https://youtu.be/abc123XYZ', preselected: false }
+          link: 'https://youtu.be/abc123XYZ', preselected: false },
+        { id: 'r5', name: '2025-11-02 22-11-40.mkv', date: '2025 Nov 02',
+          size: '318.2 MB', duration: '1:03:09', link: null,
+          preselected: false }
       ] });
       window.onChannel({ channel_id: 'UC123', channel_title: 'FlyGD',
                          destination: 'Uploads go to FlyGD \u00b7 unlisted' });

@@ -1032,7 +1032,23 @@ button.btn:disabled,
      to claim. `52ch` resolves against each grid container's own font, so
      the header computed a different maximum until its font-size moved off
      the box and onto the spans. See the note at .list-head. */
-  grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px;
+  /* The 84px age track is measured, not chosen: library.format_date's
+     widest possible output is "2025 Nov 02" (the year-prefixed calendar
+     form, for a recording from a previous year), which lays out at
+     75.89px in this cell plus its own 8px of padding = 83.89. Sizing it
+     to the widest COMMON value instead ("yesterday", 63.63px) would have
+     clipped exactly the rows whose age is hardest to guess from the
+     filename.
+
+     Measure this with a Range rect over real text in a real cell, NOT
+     with canvas measureText: measureText ignores font-variant-numeric,
+     and the tabular-nums this column inherits widens all six digits of
+     the year form. The canvas figure was 73.72px, which sized the track
+     at 82 and clipped every year-prefixed row by 2px at every width --
+     found by sweeping the rendered page, not by the arithmetic. That the
+     three year forms ("2025 Nov 02", "2025 Dec 30", "2025 Aug 08") now
+     measure within 0.23px of each other is tabular-nums working. */
+  grid-template-columns: 34px minmax(212px, 52ch) 84px 84px 76px 46px;
   align-items: center;
   min-height: var(--row-h);
   padding: 0 var(--row-pad);
@@ -1119,6 +1135,7 @@ button.btn:disabled,
 /* Each header is anchored like its column — headers centred over
    right-aligned data read as misalignment, not as a choice. */
 .list-head > span.c-check { justify-content: center; padding: 0; }
+.list-head > span.c-date,
 .list-head > span.c-size,
 .list-head > span.c-len  { justify-content: flex-end; }
 /* On a right-aligned header the arrow goes BEFORE the label, not after
@@ -1129,6 +1146,7 @@ button.btn:disabled,
    which is not the fix the finding asked for. Ordered first, the LABEL
    holds the edge and the arrow hangs off its left, which is also where a
    numeric column conventionally puts one. */
+.list-head > span.c-date::after,
 .list-head > span.c-size::after,
 .list-head > span.c-len::after { order: -1; }
 .list-head > span.c-link { justify-content: center; padding: 0; }
@@ -1178,10 +1196,20 @@ button.btn:disabled,
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 4px;
 }
-.c-size, .c-len {
+.c-date, .c-size, .c-len {
   text-align: right; color: var(--text-dim);
   font-size: var(--fs-muted); font-variant-numeric: tabular-nums; padding: 0 4px;
 }
+/* Right-aligned with the other two so the three metadata columns read as
+   one block, which also stacks the "ago" of every relative value into a
+   column and leaves the varying number on the ragged edge.
+
+   The ellipsis is insurance rather than an expected state: the track is
+   sized to the widest string this column can hold, but that measurement
+   is in Inter, and the stack falls back to Segoe UI if the bundled font
+   ever fails to load. Without this the fallback's wider metrics would
+   overflow into Size rather than clip. */
+.c-date { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-link { text-align: center; }
 
 /* The checkbox: a real drawn control. app.py generated these with Pillow
@@ -1513,14 +1541,19 @@ button.btn:disabled,
    route spends 24px on padding plus 12px on the gap. So a tier needs the
    sum of its track floors, plus 68px, plus the panel:
 
+     six    212+34+84+84+76+46 = 536 + 32 + 36 + 320 = 924   <- the base
      five   212+34+   84+76+46 = 452 + 32 + 36 + 320 = 840   <- the floor
      five   the same, with the 248px panel            = 768
      three    0+34+         46 =  80 + 32 + 36 + 248 = 396
 
-   The six-column row that used to head this table is gone with Modified
-   (finding 8). Five columns is now the base layout rather than the first
-   step down, and it still lands exactly on MIN_WIDTH -- so the check
-   below survives the change that removed the tier above it.
+   The six-column row is BACK, on a measured 84px age track rather than
+   the 92px Modified guessed at, and it heads the table again -- but it
+   is not the same six-column tier the paragraphs below describe. That
+   one sat ON the floor with a 120px name track, so it rendered at 840
+   with the filename truncated. This one sits 84px ABOVE the floor on the
+   212px name track, so the layout that renders at 840 is still the
+   five-column one that fits there. The distinction is the whole reason
+   the column could come back at all.
 
    Each ceiling is one pixel under what the tier above it needs, so a tier
    never fires while the wider layout still fitted.
@@ -1533,13 +1566,46 @@ button.btn:disabled,
    floor the window can never reach. Widening the name track to what a
    filename actually needs moved the agreement one tier down; round 3
    then dropped Modified outright, which is what makes the five-column
-   figure the BASE rather than a tier that has to fire. */
-/* The six-column tier and the 931px query that shed Modified are both
-   gone: round 3's finding 8 dropped that column at EVERY width, so five
-   columns is the base and there is no wider layout to step down from.
-   The arithmetic that put the shed at 931 is kept above as the record of
-   why the drop is safe -- it is the same reasoning, now applied
-   unconditionally. */
+   figure the BASE rather than a tier that has to fire.
+
+   Superseded in the narrow sense that five columns is no longer the base
+   -- six is, above 923 -- but kept in full, because everything it says
+   about WHY the five-column figure must land exactly on MIN_WIDTH is
+   still what makes the shed below safe. Five columns is now the floor
+   layout rather than the base layout, and that is the only word that
+   changed. */
+/* The 931px query that used to shed Modified is still gone, and the 923px
+   query that sheds Age is not its return: 931 was derived from a 120px
+   name track that no longer exists, and the tier it guarded rendered a
+   truncated filename at the floor. The replacement at 923 is derived
+   from the 212px track and sheds ABOVE the floor, so no width renders
+   six columns squeezed. Same shape, different arithmetic, opposite
+   consequence at 840. */
+
+/* Age sheds first, and it is the one tier on this screen that actually
+   fires through the window rather than being kept as a record.
+
+   Six columns need 536 + 32 + 36 + 320 = 924 (the same arithmetic as the
+   table above, which reproduces its own 840 and 768 figures exactly), so
+   below 924 the age column is what gives. It goes first for the reason
+   round 3 gave when it dropped the column outright: of the metadata here
+   it is the one whose fact the filename most nearly carries already, so
+   losing it costs the least. What round 3 got wrong was concluding that
+   "costs the least" meant "costs nothing" -- at a width where it fits,
+   it earns its track.
+
+   Below this the five-column base takes over unchanged, still landing
+   exactly on the 840 floor, so nothing under here had to move.
+
+   Hidden through `.grid-row >` (0,2,0) and not `.c-date` (0,1,0),
+   because `.list-head > span` is (0,1,1) and would otherwise keep the
+   HEADER while the cell went. test_page_conventions.py now asserts this
+   for every column, so the trap the comment above describes cannot be
+   walked into silently a third time. */
+@media (max-width: 923px) {
+  .grid-row { grid-template-columns: 34px minmax(212px, 52ch) 84px 76px 46px; }
+  .grid-row > .c-date { display: none; }
+}
 
 /* The panel step, and the one query on this screen that was never dead.
    It fires at 200% scaling and not at 100%: at 100% the floor viewport is

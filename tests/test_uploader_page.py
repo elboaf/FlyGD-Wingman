@@ -44,7 +44,7 @@ CSS = re.sub(r"/\*.*?\*/", "", CSS_RAW, flags=re.DOTALL)
 # Column order, as index.html's header spans declare it and list.js's
 # rowNode() builds it. The grid template is shared by both, so a track
 # count that disagrees with this wraps every row onto a second line.
-COLUMNS = ["c-check", "c-name", "c-size", "c-len", "c-link"]
+COLUMNS = ["c-check", "c-name", "c-date", "c-size", "c-len", "c-link"]
 
 
 def _media_blocks():
@@ -268,6 +268,12 @@ def test_the_layout_that_renders_at_the_floor_needs_exactly_the_floor():
     measured, 212px afforded) moves the agreement one tier down. The
     layout that renders AT the floor is now the five-column one, and it is
     the one that has to come out at MIN_WIDTH exactly.
+
+    Restoring Age put a SIXTH column back above it, which is the case the
+    note below anticipated. The five-column layout still holds the floor
+    and still has to equal MIN_WIDTH exactly -- that has not moved and is
+    the assertion that matters. What changed is that it is no longer also
+    the base: the base is 84px wider and sheds down to this at 923.
     """
     min_width = int(re.search(r"(?m)^MIN_WIDTH = (\d+)", WINDOW_PY).group(1))
     at_floor = [
@@ -276,15 +282,25 @@ def test_the_layout_that_renders_at_the_floor_needs_exactly_the_floor():
         if ceiling is None or ceiling >= min_width
     ][-1]
     assert _viewport_needed(*at_floor) == min_width
-    # And it is the BASE layout that lands there, not a tier stepping down
-    # to it. Round 3's finding 8 dropped Modified at every width, which
-    # removed the six-column layout that used to sit above this one -- so
-    # the widest thing the screen can render is also the thing that has to
-    # fit at MIN_WIDTH, and no width-driven column drop happens above the
-    # floor at all. If a wider tier is ever reintroduced, this is the
-    # assertion that has to be reconsidered rather than deleted.
-    assert at_floor == (BASE_TEMPLATE, BASE_PANEL)
-    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) == min_width
+    # A wider tier HAS now been reintroduced (Age), so the assertion that
+    # the floor layout is also the base is the one that was reconsidered.
+    # What replaces it is the property that made the old one worth having:
+    # whatever sits at the floor must fit there exactly, and anything
+    # wider must shed BEFORE the floor rather than be squeezed into it.
+    # A base that merely fitted "well enough" at 840 is precisely the
+    # Uploader 11 failure -- six columns rendering at the floor with the
+    # filename cut -- so the base needing MORE than the floor is the
+    # healthy case, not a regression.
+    assert at_floor != (BASE_TEMPLATE, BASE_PANEL), (
+        "the base layout is the floor layout again; if Age was dropped, "
+        "restore this to the simpler equality the git history holds"
+    )
+    assert _viewport_needed(BASE_TEMPLATE, BASE_PANEL) > min_width
+    # And every column the base declares still has a real track at the
+    # floor or is explicitly hidden there -- no column reaches 840 by
+    # being narrower than it needs.
+    floor_tier = [t for t in _tiers() if t[0] is None or t[0] >= min_width][-1]
+    assert len(_tracks(floor_tier[1])) + len(floor_tier[3]) == len(COLUMNS)
 
 
 def test_every_breakpoint_sits_where_the_filename_would_be_squeezed():
@@ -604,35 +620,50 @@ def test_a_card_heading_no_longer_claims_the_brand_accent():
     )
 
 
-def test_modified_is_gone_at_every_width():
-    """Uploader 6 and 11 as one fact, finished in round 3 (finding 8).
+def test_the_age_column_never_competes_with_the_filename_at_the_floor():
+    """Uploader 6 and 11, protected in the form they now take.
 
-    The timestamp was printed twice -- in the filename and in Modified --
-    and it was the wider copy that got destroyed, because the name track
-    sat on a 120px floor while an OBS filename needs 205px. Round 2 widened
-    the track and dropped Modified at the floor; the A/B that shipped
-    reported nothing lost, because every recording OBS names embeds its own
-    timestamp, so round 3 dropped it everywhere.
+    The original fact: the recording's timestamp was printed twice -- in
+    the filename and in Modified -- and at the floor it was the WIDER copy
+    that got destroyed, because the name track sat on a 120px floor while
+    an OBS filename needs 205px. Round 3 resolved that by deleting the
+    column at every width.
 
-    Asserted as an ABSENCE across all three surfaces rather than as a
-    hidden column, because that is what changed: there is no width at which
-    the app renders Modified, so a tier hiding it would be a tier hiding
-    something that does not exist. The column's own CSS rule went with it,
-    and so did the media query whose only job was to shed it.
+    Deleting it was more than the finding required, and the column is back
+    as Age (relative, which is a different fact from the filename's
+    timestamp rather than a second printing of it). So the protection can
+    no longer be "this column does not exist". It is the narrower thing
+    that was true all along and is what actually prevents Uploader 11:
+    **the age column must be gone by the time the window reaches its
+    floor**, so it never takes a pixel the filename needs there.
 
-    What this deliberately does NOT assert: that `date` is gone from
-    list.js's comparator. It is reachable only through a header that no
-    longer exists, but Python still delivers rows in date order and the
-    comparator's `date` branch is what defines that order, so removing it
-    would change the default sort rather than retire a control.
+    Note what this still does NOT assert -- unchanged from the version
+    this replaces: that `date` is gone from list.js's comparator. Python
+    delivers rows in date order and the comparator's `date` branch is what
+    defines that order.
     """
-    assert "c-date" not in HTML
-    assert "c-date" not in LIST_JS
-    assert "c-date" not in CSS
-    # Five columns everywhere, and the header agrees with the row template.
-    assert len(_tracks(BASE_TEMPLATE)) == 5
-    for _, template, _, _ in _tiers():
-        assert len(_tracks(template)) <= 5
+    min_width = int(re.search(r"(?m)^MIN_WIDTH = (\d+)", WINDOW_PY).group(1))
+    assert "c-date" in HTML and "c-date" in LIST_JS and "c-date" in CSS, (
+        "the age column is gone again; if that was deliberate, this test "
+        "should go back to asserting its absence at every width"
+    )
+    for ceiling, template, panel, hidden in _tiers():
+        if ceiling is not None and ceiling <= min_width:
+            assert "c-date" in hidden, (
+                f"the tier capped at {ceiling}px still renders the age "
+                "column at or below the window floor, where the filename "
+                "needs every pixel (Uploader 11)"
+            )
+    # And it is shed strictly ABOVE the floor, not exactly at it: a tier
+    # that only just fits is the state that made the original bug
+    # invisible.
+    at_floor = [
+        (template, panel)
+        for ceiling, template, panel, _ in _tiers()
+        if ceiling is None or ceiling >= min_width
+    ][-1]
+    assert "c-date" not in _tracks(at_floor[0])
+    assert _viewport_needed(*at_floor) == min_width
 
 
 def _duration_regex():
