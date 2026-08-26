@@ -1317,11 +1317,12 @@ only ever checked by hand.
       text. The label used to be `--brand-text` too, which measures 4.16:1
       on that background and 3.99:1 with the pointer on it — both under
       4.5:1, on the one control in the app that is asking to be read.
-      Pick a row with **no clash warning**: `.bindbtn.clash` is declared
-      below `.bindbtn.capturing` at equal specificity, so a row that is
-      both arms in the clash red rather than the brand purple. That is
-      pre-existing and unowned; it is called out here so this step is not
-      read as a failure on a colliding bind.
+      Pick a row with **no clash warning** first, then repeat on a
+      **clashing** one — D7 gave the two states separate channels, so that
+      row is expected to show the **purple** border with the label still in
+      the clash **red**. Before D7 it took the clash red for both and the
+      armed state was invisible, which is why this step used to say to
+      avoid such a row.
 - [ ] **A disabled control looks disabled and stays inert under the
       pointer.** Hover each control the page switches off: `Upload` with
       nothing selected, `Show` / `Remove` with no webhook configured,
