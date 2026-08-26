@@ -327,6 +327,31 @@
                              function (g) { setBind('cycle_prev', g); }));
 
     var list = rows();
+    // A subhead, because the two rows above are not the same KIND of thing
+    // as the ones below: cycle_next/cycle_prev are app commands with no
+    // character attached, and everything after this is one row per known
+    // character. They were one flat list, so "Cycle forward" read as a
+    // twelfth character on an install with eleven.
+    //
+    // Rendered only when there are characters to head. With none, the
+    // #preview-binds-empty hint below is the whole story and a heading over
+    // nothing is worse than no heading.
+    if (list.length) {
+      var head = WM.make('div', 'bind-group');
+      head.appendChild(WM.make('span', 'bind-group-name', 'Characters'));
+      // The legend earns its place only while a row is actually dimmed.
+      // makeRow dims on a strict false, and `state.enabled ? ... : null`
+      // below means nothing is dim while previews are off -- so this asks
+      // the same question the rows do rather than a second, looser one.
+      var anyOffline = state.enabled && list.some(function (e) {
+        return e.online === false;
+      });
+      if (anyOffline) {
+        head.appendChild(WM.make('span', 'bind-group-note',
+                                 'dimmed = not logged in'));
+      }
+      host.appendChild(head);
+    }
     list.forEach(function (entry) {
       host.appendChild(makeRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],

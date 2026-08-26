@@ -1505,6 +1505,27 @@ button.btn:disabled,
    ui/copy.py's INERT_NOTES, so this is the treatment only. */
 #preview-binds-off { color: var(--text-dim); }
 
+/* The subhead that separates the two cycle COMMANDS from the per-character
+   rows. Spans every track, like .lab does, because it heads the whole row
+   stream rather than sitting in a column -- and #preview-binds is a grid
+   whose .row children are display:contents, so a non-spanning child here
+   would be pulled into the next row's first cell.
+
+   Set like .card > h2 (--fs-label, caps, tracked) one step quieter, so it
+   reads as a divider inside a card rather than a second card heading. */
+.bind-group {
+  grid-column: 1 / -1;
+  display: flex; align-items: baseline; gap: 9px;
+  margin-top: 14px; padding-top: 10px;
+  border-top: 1px solid var(--field-border);
+}
+.bind-group-name {
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+/* Only rendered while something is actually dimmed -- see previews.js. */
+.bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
+
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
