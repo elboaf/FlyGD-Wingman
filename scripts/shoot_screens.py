@@ -10,10 +10,14 @@ decision is a pure function that the Linux test suite covers, and the
 Windows shell below them holds none.
 """
 
+import argparse
 import base64
+import datetime as _dt
 import json
+import os
 import pathlib
 import subprocess
+import sys
 import time
 import urllib.request
 from collections.abc import Callable
@@ -377,3 +381,131 @@ def walk(
         else:
             shots.append({"key": screen.key, "file": name, "error": None})
     return shots, skipped, eve_shown
+
+
+def _git(checkout: str, *args: str) -> str:
+    out = subprocess.run(
+        ["git", "-C", checkout, *args], capture_output=True, text=True, check=False
+    )
+    return out.stdout.strip()
+
+
+def _probe_interpreter(path: str) -> bool:
+    out = subprocess.run(
+        [path, "-c", "import webview, pystray"], capture_output=True, check=False
+    )
+    return out.returncode == 0
+
+
+def _search_interpreters() -> list[str]:
+    """Look where Python actually installs, not where PATH claims.
+
+    where.exe surfaces only the Microsoft Store stub, which prints "Python
+    was not found" -- concluding from it that there is no Windows Python is
+    a mistake that has already cost this project a verification pass.
+    """
+    roots = [
+        pathlib.Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+        pathlib.Path("C:/"),
+    ]
+    found = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for child in sorted(root.glob("Python3*")):
+            candidate = child / "python.exe"
+            if candidate.exists():
+                found.append(str(candidate))
+    return found
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkout", default=str(pathlib.Path.cwd()))
+    parser.add_argument("--python", default=None)
+    parser.add_argument("--port", type=int, default=9700)
+    parser.add_argument("--settle-ms", type=int, default=2500)
+    parser.add_argument("--out", default=None)
+    args = parser.parse_args(argv)
+
+    # Resolve the interpreter BEFORE closing anything: a failure here after
+    # the incumbent is down leaves the user with no app and no screenshots.
+    python = resolve_interpreter(
+        args.python,
+        os.environ.get("WINGMAN_PY"),
+        search=_search_interpreters,
+        probe=_probe_interpreter,
+    )
+
+    stamp = _dt.datetime.now(_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    default_out = pathlib.Path(args.checkout) / "tmp" / "screens" / stamp
+    out_dir = pathlib.Path(args.out) if args.out else default_out
+
+    incumbent = find_incumbent()
+    if incumbent:
+        print(f"Closing: {incumbent}")
+        try:
+            close_incumbent()
+        except BusyError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+    app = None
+    try:
+        app = subprocess.Popen(
+            launch_command(python, args.checkout, args.port), shell=True
+        )
+        cdp = attach(args.port)
+        viewport = {
+            "width": cdp.evaluate("window.innerWidth"),
+            "height": cdp.evaluate("window.innerHeight"),
+        }
+        shots, skipped, eve_shown = walk(cdp, out_dir, args.settle_ms)
+        cdp.close()
+
+        manifest = build_manifest(
+            branch=_git(args.checkout, "branch", "--show-current"),
+            sha=_git(args.checkout, "rev-parse", "--short", "HEAD"),
+            dirty=bool(_git(args.checkout, "status", "--short")),
+            python=python,
+            viewport=viewport,
+            eve_shown=eve_shown,
+            shots=shots,
+            skipped=skipped,
+        )
+        (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    finally:
+        # Close the instance WE launched through the same graceful path, not
+        # app.terminate(): Popen(shell=True) holds the cmd.exe wrapper, and
+        # killing that need not take the python child with it, which would
+        # leave the mutex held and the restore below silently failing.
+        #
+        # The BusyError is swallowed on purpose. Raised out of a finally it
+        # would skip the restore below, so a shot instance that would not
+        # close would cost the user their own Wingman. Restoring theirs
+        # outranks a clean shutdown of ours.
+        if app is not None:
+            try:
+                close_incumbent()
+            except BusyError:
+                print(
+                    "warning: the instance this run launched did not close;"
+                    " it still holds the mutex, so the restore below may fail."
+                    " Close it by hand.",
+                    file=sys.stderr,
+                )
+        if incumbent:
+            print(f"Restoring: {incumbent}")
+            restore_incumbent(incumbent)
+
+    print(f"{manifest['shot_count']}/{manifest['screens_total']} screens -> {out_dir}")
+    if manifest["skipped"]:
+        print(f"EVE gate off, skipped: {', '.join(manifest['skipped'])}")
+    if manifest["failed"]:
+        print(f"FAILED: {', '.join(manifest['failed'])}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
