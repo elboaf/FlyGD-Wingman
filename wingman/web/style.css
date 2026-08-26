@@ -3051,6 +3051,35 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    at the foot of the rail, where nothing is pushed by it. */
 .rail-plans-block { flex: 1; min-height: 0; }
 .rail-plans { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
+/* The cap is the whole reason this rule exists. `.rail-plans-block` is
+   `flex: 1; min-height: 0`, so Plans absorbs every pixel another rail
+   block takes -- all the way to zero. Rendered at nine groups with no
+   cap, the Plans list showed ONE row behind a scrollbar: the screen's
+   primary list starved by a secondary one.
+
+   90px is arithmetic against a rendered rail at the 840x625 floor, not
+   the 168px this comment used to claim -- that number assumed the Plans
+   block's own actions row ("Open plans folder" / "Reload plans") stays on
+   one line at 23px. It does not: at the rail's real 188px content width
+   those two labels wrap to two lines, 54px, a pre-existing fact of this
+   rail unrelated to this change. Measured: the rail is 521px tall, a
+   `.rail-plan` row is 27px, a `.rail-head-row` is 16px, the Groups
+   actions row (Rename/Delete, short enough to stay on one line) is 23px,
+   the wrapped Plans actions row is 54px, the "What is a plan?" disclosure
+   is 15px, and the count-plus-two-buttons block above takes ~89px --
+   leaving ~220px total for the two lists to split between their fixed
+   chrome. At a 90px cap the Groups block totals ~143px, which leaves
+   Plans ~130px, or about four to five plan rows -- the four-row floor the
+   acceptance criterion sets, with a margin rather than sitting on the
+   edge of it. Three to four group rows are visible and the rest scroll.
+
+   The acceptance criterion, not the number, is what must survive a
+   change here: at 840x625 with nine or more groups, the Plans list still
+   shows at least four rows. Re-measure if either block gains chrome. */
+.rail-groups-block { flex: 0 1 auto; min-height: 0; }
+.rail-groups {
+  flex: 0 1 auto; overflow-y: auto; min-height: 0; max-height: 90px;
+}
 /* The padding is NOT decoration and must not be rounded off: it is
    .rail-plan's own inset, restated, so the two headings land on the
    column each one labels. A .rail-plan is `border-left: 2px` plus

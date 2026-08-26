@@ -74,6 +74,8 @@
 
   function characters() { return (STATE && STATE.characters) || []; }
   function plans() { return (STATE && STATE.plans) || []; }
+  function groups() { return (STATE && STATE.groups) || []; }
+  function selectedGroup() { return (STATE && STATE.selected_group) || ''; }
 
   function render(payload) {
     if (!payload) return;
@@ -171,6 +173,7 @@
 
     renderRailButtons();
     renderPlans();
+    renderGroups();
   }
 
   function renderPlans() {
@@ -226,6 +229,47 @@
         requestDetail(parseInt(id, 10));
       });
     });
+  }
+
+  /* `All` is a selection, not a group: it is how you stop scoping, and it
+   * carries the whole roster's count so the rail states the denominator
+   * the ratios below it are using. Rename and delete are disabled while it
+   * is current, per the control vocabulary's disabled-when-the-object-is-
+   * absent rule -- there is no object to rename. */
+  function renderGroups() {
+    var host = WM.el('skills-groups');
+    host.textContent = '';
+    var current = selectedGroup();
+
+    var all = WM.make('button', 'rail-plan');
+    if (!current) all.classList.add('active');
+    all.appendChild(WM.make('span', 'rail-plan-name', 'All'));
+    all.appendChild(WM.make('span', 'rail-ratio',
+                            String(characters().length)));
+    all.addEventListener('click', function () { selectGroup(''); });
+    host.appendChild(all);
+
+    groups().forEach(function (group) {
+      var row = WM.make('button', 'rail-plan');
+      if (group.name.toLowerCase() === current.toLowerCase()) {
+        row.classList.add('active');
+      }
+      row.appendChild(WM.make('span', 'rail-plan-name', group.name));
+      row.appendChild(WM.make('span', 'rail-ratio',
+                              String(group.member_count)));
+      row.addEventListener('click', function () { selectGroup(group.name); });
+      host.appendChild(row);
+    });
+
+    WM.el('skills-rename-group').disabled = !current;
+    WM.el('skills-delete-group').disabled = !current;
+  }
+
+  function selectGroup(name) {
+    if (name.toLowerCase() === selectedGroup().toLowerCase()) return;
+    // Optimistic, then corrected by the push: the same shape selectPlan
+    // uses. Python is the only writer, so a refusal re-renders from truth.
+    WM.send('skills_select_group', name);
   }
 
   function renderRailButtons() {

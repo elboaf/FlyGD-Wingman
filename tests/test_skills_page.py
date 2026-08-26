@@ -448,3 +448,26 @@ def test_the_plan_list_does_not_take_the_rails_slack():
         "without this the list cannot shrink past its content and a full "
         "plan folder pushes the disclosure off the bottom of the rail"
     )
+
+
+def test_the_groups_block_sits_above_the_plans_block():
+    """Not decoration. `.rail-plans-block { flex: 1 }` makes Plans absorb
+    every pixel of squeeze, so a Groups block BELOW it is pinned to the
+    rail floor with a dead gap. Above, the rail also reads in the direction
+    the scoping flows: who, then which plans they can fly."""
+    assert RAIL.index("skills-groups") < RAIL.index("rail-plans-block")
+
+
+def test_the_groups_list_is_scroll_capped():
+    """At nine groups an uncapped list collapses the Plans list to a single
+    row -- the screen's primary list, starved by a secondary one."""
+    block = re.search(r"\.rail-groups\s*\{([^}]*)\}", CSS)
+    assert block, "no .rail-groups rule in style.css"
+    assert "overflow-y" in block.group(1)
+    assert "max-height" in block.group(1)
+
+
+def test_the_group_count_says_what_it_counts():
+    """`4` above `1/4` counts MEMBERS above CHARACTERS READY. Every number
+    on this screen carries the noun it counts, so the column is keyed."""
+    assert "MEMBERS" in RAIL.upper()

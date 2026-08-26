@@ -2578,6 +2578,19 @@ against a placeholder id; only these items are blocked on the registration.
       regression here and a release. A silent reorder or a resorted
       `Missing` group would not error or throw; it would just be wrong,
       and nothing else in this checklist or the suite would catch it.
+- [ ] **The Groups block sits above Plans and its list stays capped.**
+      With `?dev=1`'s seeded groups, confirm the rail reads `All 9`,
+      `Logi Wing 2`, `Wolfpack 4` top to bottom, above the Plans block —
+      not below it, where `.rail-plans-block`'s `flex: 1` would pin Groups
+      to the rail floor under a dead gap. Click a group: the highlight
+      moves and `Rename`/`Delete` enable; click `All` and they disable
+      again. The roster does not filter by the selection yet (that is a
+      later feature) — this item only checks the rail control. Then, at
+      the 840x625 floor with nine or more groups (fake extra ones in
+      devtools if the harness does not have that many), confirm the Plans
+      list still shows at least four rows: `.rail-groups`'s `max-height`
+      exists precisely so a long Groups list cannot starve the screen's
+      primary list down to one row behind a scrollbar.
 
 ### Frozen build
 
