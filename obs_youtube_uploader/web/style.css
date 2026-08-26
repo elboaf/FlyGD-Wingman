@@ -809,11 +809,20 @@ button.btn:disabled,
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* The ship, in the empty lower-right of the Uploader only. Scoped to one
-   route deliberately: Skills' content area is transparent and full-width,
-   so the same watermark there lands directly behind live rows and reads as
-   clutter rather than as fill. Uploader has real dead space below the
-   panel; that is the whole reason it works.
+/* The ship, in the empty lower-right of the Uploader and of Settings.
+   Scoped to those two routes deliberately: Skills' content area is
+   transparent and full-width, so the same watermark there lands directly
+   behind live rows and reads as clutter rather than as fill. Uploader has
+   real dead space below the panel; that is the whole reason it works.
+
+   SETTINGS JOINED IN ROUND 5 (G2), and it qualifies on the same test
+   rather than by exception -- but only for the sections that pass it, see
+   the rule below. Everything the route draws is opaque and bounded:
+   `.settings` is `max-width: 620px; margin: 0 auto` inside a pane 1076px
+   wide at a comfortable size, and `.settings-rail` and every `.card` paint
+   their own background. Measured on merged main at 1280x800, the pane
+   holds 368-563px of void below its last card depending on the section,
+   and 228px of gutter beside it -- more dead space than the Uploader has.
 
    background-image, NOT mask-image, and the tint is baked into the PNG at
    --brand-text (#ad5aff). This is deliberate and it is a downgrade forced
@@ -827,13 +836,52 @@ button.btn:disabled,
 
    z-index -1 puts it under every opaque card and the list pane, so it is
    visible ONLY in genuinely empty space. See the html/body note above for
-   why the page wash cannot live on body. */
-#route-main::after {
+   why the page wash cannot live on body. `.route` is display:none unless
+   active, so only one of these two pseudo-elements is ever generated. */
+#route-main::after,
+#route-settings::after {
   content: ""; position: fixed; z-index: -1; pointer-events: none;
   right: -40px; bottom: 26px; width: 640px; height: 550px;
   opacity: .18;
   background: url("assets/ship.png") no-repeat right bottom / contain;
 }
+
+/* Except on the two sections that hold ROW LISTS, which is where Settings
+   stops qualifying. Bookmarks holds eighteen keybind rows and Previews one
+   row per known character -- the same two named in the .settings-pane
+   scroll note below, for the same reason -- so both overflow the pane and
+   scroll.
+
+   THE TEST IS MOTION, not the card gap on its own. The 12px `.settings`
+   gap is a window onto the ship on the short sections too, and that is
+   accepted there: it is the same static sliver the Uploader already shows
+   between its list pane and its panel. What a scrolling section adds is
+   that its cards TRAVEL over a `position: fixed` layer, so the sliver
+   becomes a moving window and the hull lines crawl between two cards while
+   the user scrolls. Measured in the ?dev=1 harness at the 840x625 floor,
+   Previews runs 1535px of content in a 521px pane. Skills is ruled out
+   above for a different mechanism reaching the same place -- a transparent
+   full-width area putting the mark directly behind live rows -- so do not
+   read these two exclusions as one test.
+
+   Keyed on the ACTIVE section rather than on scroll, because CSS cannot
+   ask whether a box overflows. If a section ever grows a row list, add it
+   here.
+
+   Both selectors use :has(), and a selector list is invalid as a WHOLE if
+   any selector in it is unparsed -- so on a WebView2 older than Chromium
+   105 this rule is dropped entirely and the watermark comes back behind
+   the scrolling rows. preflight.require_webview2 gates on the runtime
+   being PRESENT, not on a version, so nothing else catches that. It is the
+   one piece of new CSS here whose failure mode is the defect it prevents
+   rather than a benign layout; the sheet's other :has() uses degrade
+   harmlessly. Accepted rather than worked around: the evergreen runtime is
+   long past 105, and the alternative is a JS class on #route-settings for
+   a case no supported install reaches. */
+#route-settings:has(#section-bookmarks.active)::after,
+#route-settings:has(#section-previews.active)::after { content: none; }
+#route-settings:has(#section-bookmarks.active)::after,
+#route-settings:has(#section-previews.active)::after { content: none; }
 
 /* ====================== recording list ============================== */
 /* Two panes, preserving today's split: list left, upload panel right. */
@@ -1603,8 +1651,41 @@ button.btn:disabled,
 }
 #route-settings.active { display: grid; }
 
+/* align-self: start, so the rail is as tall as its entries and no taller
+   (round 5's G3-rail). It used to stretch, which is the grid default, and
+   seven single-word entries cannot fill a route: measured on merged main
+   at 1280x800 the rail ran 696px against 244px of content, so 452px of it
+   -- nearly two thirds -- was bordered emptiness standing beside a pane
+   that was itself 368-563px empty below its last card. Two hard edges
+   around nothing is what made the screen read as a rendering failure
+   rather than as a short section, which is the whole of the finding. The
+   void is still there and is still a fact about the screen; it is now page
+   wash with the ship behind it (G2) instead of a box drawn around it.
+
+   max-height: 100% keeps the scroll safeguard the stretch used to provide
+   for free. align-self: start takes the item out of the row's height, so
+   without it a rail longer than the route would overflow it instead of
+   scrolling -- and `overflow-y: auto` below would never fire. Verified by
+   injecting 24 extra entries at the 840x625 floor: the rail caps at 521.5
+   and scrolls, staying inside the route with its 12px bottom padding
+   intact. Seven entries need 244px of that 521.5, so this is a guard for a
+   rail that grows, not a live tier today.
+
+   THE 100% RESOLVES AGAINST THE GRID AREA, and that is a dependency worth
+   naming because nothing here declares it: `.route` is `flex: 1;
+   min-height: 0`, so #route-settings has a definite block size, and its
+   single implicit `auto` row stretches to fill it. Add `align-content:
+   start` or a `grid-template-rows` that content-sizes that row and the
+   area becomes content-sized -- at which point `max-height: 100%` resolves
+   against the rail's own height, the cap silently vanishes and the
+   overflow never scrolls. There is no symptom until a rail long enough to
+   overflow exists, so change the row sizing and this line together.
+
+   Not to be confused with .skills-rail, which stretches and should: its
+   plans list is variable-length and S5 already sized the slack inside it. */
 .settings-rail {
   display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  align-self: start; max-height: 100%;
   background: var(--panel); border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 12px; overflow-y: auto;
 }

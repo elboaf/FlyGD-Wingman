@@ -211,8 +211,10 @@
     if (stripBusy) return;
     setStatus(IDLE, 'FG');
     WM.el('track').classList.remove('indeterminate');
-    // Back to the markup's resting state: no inline width, and an EMPTY
-    // percentage rather than `0%`, which would read as a stalled job.
+    // Back to the markup's resting state: the track HIDDEN (G1), no inline
+    // width, and an EMPTY percentage rather than `0%`, which would read as
+    // a stalled job.
+    WM.el('track').hidden = true;
     WM.el('bar').style.width = '';
     WM.el('pct').textContent = '';
   }
@@ -227,6 +229,7 @@
   WM.handle('onProgress', function (p) {
     stripBusy = !!p.busy;
     var track = WM.el('track'), bar = WM.el('bar'), pct = WM.el('pct');
+    var value = 0;
     if (p.mode === 'indeterminate') {
       // A stitch reports no readable percentage. The bar must say
       // "working" without claiming one, so the number is blanked too.
@@ -235,10 +238,50 @@
       pct.textContent = '';
     } else {
       track.classList.remove('indeterminate');
-      var value = Math.max(0, Math.min(100, Number(p.pct) || 0));
+      value = Math.max(0, Math.min(100, Number(p.pct) || 0));
       bar.style.width = value + '%';
       pct.textContent = Math.round(value) + '%';
     }
+    // G1: the track is drawn only while there is a job to report. A push
+    // that reports a POSITION shows it -- an animating stitch, any real
+    // percentage, and the deliberate 0% api.py sends when a stitch finishes
+    // and the upload phase begins (`_progress(0.0, busy=True)`, inside the
+    // `if job.stitch:` branch), where an empty groove is correct because it
+    // is about to move. A plain upload has no such push; its first is a
+    // real percentage from on_progress.
+    //
+    // TWO pushes arrive at 0% with nothing running, and both put the bar
+    // away rather than drawing an empty groove:
+    //
+    //   - the error path (`_progress(0.0, busy=False)`), which exists to
+    //     STOP the indeterminate animation rather than to claim a position.
+    //     Its real occupant is a stitch failure -- an exhausted retry
+    //     raises UploadFailed and pushes no progress at all, so the bar
+    //     there keeps its last percentage.
+    //   - a Cancel taken before the first chunk callback. Both cancel
+    //     paths push `_progress(self._last_pct, ..., busy=False)`, and
+    //     `_last_pct` is 0.0 until on_progress first writes it.
+    //
+    // The cancel case does NOT contradict api.py's "the bar keeps the
+    // ground the job actually covered rather than resetting to 0". That
+    // rule is about not throwing away ground already covered, and it still
+    // holds -- any non-zero `_last_pct` is a position and still shows. When
+    // the ground covered is zero there is nothing for the bar to keep, and
+    // the strip's own sentence says `0 of 1`. Leaving an empty groove there
+    // would be G1's defect in a state a user can reach.
+    //
+    // A finished job keeps its bar: 100% is a position, and round 3's
+    // finding 14 requires the result to survive until the route changes.
+    //
+    // The percentage goes with it. .pct is a sibling of the track, not a
+    // child, so hiding one leaves the other -- and this lane's first cut
+    // left a bare `0%` floating beside the error with no groove under it,
+    // which is the stalled-job reading resetStrip's own comment rules out.
+    // Caught in the ?dev=1 harness driving api.py's real pushes; the suite
+    // renders nothing and could not have seen it.
+    var show = p.mode === 'indeterminate' || value > 0 || stripBusy;
+    track.hidden = !show;
+    if (!show) pct.textContent = '';
     if (p.text) setStatus(p.text, p.kind);
   });
 

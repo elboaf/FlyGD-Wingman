@@ -1247,7 +1247,16 @@
            once. Skills keeps the word because it owns it in Python and in
            the payload; the strip, which only ever meant "idle", says so. -->
       <span id="status" class="FG">Idle</span>
-      <div class="track" id="track"><div class="bar" id="bar"></div></div>
+      <!-- `hidden` at rest, and panel.js owns it from there (round 5's G1).
+           This shipped with no `hidden` and nothing in the page to set it,
+           so the app drew an empty progress groove permanently -- 968 of
+           the strip's 1280 px at a comfortable width, the widest element in
+           a strip that otherwise reads `Idle`. A progress control that is
+           always on screen says nothing when there is no progress, and at
+           0% it is indistinguishable from a job that has stalled at the
+           start. .track sets no display, so the UA's [hidden] rule is
+           enough here and no override is needed. -->
+      <div class="track" id="track" hidden><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
     </div>
   </div>
