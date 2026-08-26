@@ -236,12 +236,14 @@ rule. See "What this means for `style.css`" above: those two restores are
 unreachable through the window and mandatory, which is not a
 contradiction.
 
-**Open, not decided — the two stacked treatments are 1.5px apart.**
+**Open, not decided — the two stacked treatments are 1px apart.**
 `.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
-`.panel .lab` is `--fs-muted` (11.5px) with a 5px `margin-bottom`. While
+`.panel .lab` is `--fs-muted` (12px) with a 5px `margin-bottom`. (It was
+1.5px and 11.5px when this was written; round 5's G3 moved `--fs-muted`
+to 12px, which narrows the gap and does not close it.) While
 one was a right-aligned column and the other a stacked block, nobody could
-confuse them. Now they read as one pattern implemented twice, a pixel and
-a half apart, and neither difference is recorded as deliberate. Whether
+confuse them. Now they read as one pattern implemented twice, a pixel
+apart, and neither difference is recorded as deliberate. Whether
 they should converge — and on which — belongs to whoever owns both blocks,
 and it is in no lane's findings. Recorded here so it is not rediscovered;
 do not fix it in passing.

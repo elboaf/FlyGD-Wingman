@@ -277,10 +277,24 @@
   --row-ring-focus: #554e65;
 
   /* ---- type scale ----
+     Five sizes, and the RATIOS are what the scale is, so they are stated
+     here rather than left to be re-derived off the values:
+
+       --fs-head   17px   1.31 over body    h1 x2, .dialog h3
+       --fs-body   13px   --                everything that IS the content
+       --fs-mono   12px   0.92 of body      monospace and tabular cells
+       --fs-muted  12px   1.08 under body   column headers, counts, hints
+       --fs-label  11px   1.09 under muted  uppercase tracked section labels
+
+     (tests/test_page_conventions.py parses those five values and asserts
+     the four ratios, so the table above cannot drift off the tokens the
+     way a hand-kept copy always eventually does.)
+
      Adopted from 2.2.0's sv-ttk-derived scale, not reinvented. COLUMN
      HEADERS USE --fs-muted DELIBERATELY — they sit BELOW body size
      because they label the data and are not the data. Making them larger
-     undoes a considered decision.
+     undoes a considered decision, and that is still true: --fs-muted moved
+     to 12px below and stayed under --fs-body precisely so it stays true.
 
      --fs-head was 15.5px, a 1.19 step over body, and that one IS changed:
      at 1.19 the largest text on a screen was not readably larger than the
@@ -291,11 +305,68 @@
 
      Deliberately narrow blast radius: --fs-head has exactly three users
      (h1, .dialog h3, and the skills plan title), all of them real
-     headings. The muted/mono/label steps are NOT touched — widening
-     those is what would make a compact desktop tool feel like a web page. */
+     headings. Re-checked in round 5 and still three: the skills plan title
+     IS one of the two h1 elements, so the rule count is two and the user
+     count is three. The muted/mono/label steps are NOT touched — widening
+     those is what would make a compact desktop tool feel like a web page.
+
+     Round 5, G3, is the exception that sentence did not anticipate, and it
+     is --fs-muted only. The rules that set --fs-muted in --text-faint
+     carry nearly all of the explanatory copy PRODUCT.md asks the app to
+     write -- .hint, .inline-hint, .bind-group-note, .notice -- and the
+     bundled detector counted 22 rendered instances of it. That copy was
+     the SMALLEST text in the app, one rung above the uppercase labels. Two things were wrong with 11.5px and neither is
+     about wanting bigger type:
+
+       - it was the only FRACTIONAL size in the scale, so at the 100%
+         scaling plenty of Windows desktops run it rasterised between two
+         pixel grids. The hint copy is exactly where that showed, and it
+         is the same argument --fs-label's note below already makes about
+         the 2x captures flattering small text.
+       - the muted -> label step was 1.045. That is not a step; 11.5 and
+         11 are indistinguishable at any scaling. --fs-label's note claims
+         it "stays a clear step below --fs-muted", and at 11.5/11 that
+         claim was aspirational. At 12/11 it is 1.09 and it is true.
+
+     12px and not 13px because 13px is --fs-body, and equalling body is
+     what would undo the column-header decision at the top of this note.
+
+     The cost was measured rather than assumed, and the assumption was
+     WRONG in the one place round 5 cared about. The expectation was that
+     taller hints would lengthen the two bind screens. Measured in the
+     ?dev=1 harness at the 840x625 floor, 18 synthesised Bookmarks rows:
+
+       #eve-binds     1112.00px -> 1112.00px   +0.00
+       Alerts card     436.75px ->  439.00px   +2.25
+       section-previews   1432 ->     1443     +11
+       section-bookmarks  1558 ->     1562      +4
+
+     #eve-binds does not move because NOTHING INSIDE A BIND ROW IS MUTED:
+     the row is .lab at --fs-body and .bindbtn at --fs-mono, and the two
+     .linkbtn children per row that ARE --fs-muted are shorter than the
+     .bindbtn beside them, so they grow inside a height they do not set. The
+     section-level growth above is the prose around the rows, not the
+     rows. The 1112 also independently reproduces the figure D3 recorded
+     for eighteen stacked rows, which is why the harness is trusted here.
+
+     No route or section gained horizontal overflow at the floor
+     (scrollWidth vs clientWidth, [data-tip] stripped first as a cause
+     test), and route-main and route-skills grew by 0.
+
+     --text-faint on 12px is still SMALL text under 1.4.3 -- the large-text
+     allowance starts at 18.66px, or 14px bold, and neither 11.5 nor 12
+     is near it -- so the 4.5:1 requirement is the same one it already
+     met: 4.81:1 on --panel, 4.78:1 on --card-top, 5.17:1 on --bg. The
+     size change moves nothing about the colour, which is the answer to
+     "is the faintest text still legible one rung larger".
+
+     --fs-mono and --fs-muted are now the SAME 12px, and that is not a
+     collision to fix. They never meet in one rule, and 12px mono renders
+     visibly larger than 12px Inter, so a mono cell still reads as a
+     different register beside a muted one. */
   --fs-head: 17px;
   --fs-body: 13px;
-  --fs-muted: 11.5px;
+  --fs-muted: 12px;
   --fs-mono: 12px;
   /* Uppercase tracked section labels (direction B). 10.5px was under the
      11px floor that functional text needs to stay comfortably legible, and
