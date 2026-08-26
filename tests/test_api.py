@@ -8,12 +8,13 @@ production, and a test does it directly.
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import durations, library
+from obs_youtube_uploader import durations, library, links, uploader
 from obs_youtube_uploader.ui.api import Api, AppState
 from obs_youtube_uploader.ui.rows import RowSnapshot
 from tests.test_scheduler import FakeClock
@@ -268,11 +269,12 @@ def recordings(tmp_path):
     return folder
 
 
-def rows_api(recordings, tmp_path, clock, probe, window=None):
+def rows_api(recordings, tmp_path, clock, probe, window=None, links_file=None):
     api = Api(
         make_state(recordings),
         rows=RowSnapshot(),
         durations_file=tmp_path / "durations.json",
+        links_file=links_file or tmp_path / "links.json",
         spawn=InlineThread,
         probe=probe,
         timer=clock.timer,
@@ -443,6 +445,174 @@ def test_a_cached_duration_reaches_the_page_on_the_very_first_push(
 
     _, payload = pushes(window)[0]
     assert [row["duration"] for row in payload["rows"]] == ["1:30", "1:30"]
+
+
+def _seed_link(links_file, path, url):
+    """Record *url* against the file's real (size, mtime), as an upload
+    would have on a previous run."""
+    stat = path.stat()
+    store = links.load(links_file)
+    links.remember(store, path, stat.st_size, stat.st_mtime, url)
+    links.save(links_file, store)
+
+
+def test_a_link_from_a_previous_session_reaches_the_page_on_first_push(
+    recordings, tmp_path
+):
+    """The whole point of persisting links. RowSnapshot._links is
+    in-memory, so before the store existed the Link column was empty on
+    every launch -- including for recordings that were already on YouTube,
+    which is the one question the column is there to answer.
+    """
+    links_file = tmp_path / "links.json"
+    url = uploader.watch_url("abc123")
+    _seed_link(links_file, recordings / "a.mkv", url)
+
+    window = FakeWindow()
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    )
+    api.list_rows()
+
+    _, payload = pushes(window)[0]
+    by_name = {row["name"]: row for row in payload["rows"]}
+    assert by_name["a.mkv"]["link"] == url
+    assert by_name["b.mkv"]["link"] is None
+    # And the context menu can act on it: copy_path/open_path read a map
+    # keyed by row id, which a restore that only filled the snapshot would
+    # have left empty behind a link the page was already drawing.
+    assert api.copy_path(by_name["a.mkv"]["id"]) == url
+
+
+def test_the_row_id_link_map_does_not_grow_across_refreshes(recordings, tmp_path):
+    """Every key in Api._links is a row id, and rebuild() mints new ones --
+    so after a refresh they are all unreachable by definition.
+
+    This became worth asserting when the restore loop was added: it re-adds
+    a key per linked row on every refresh, and refresh runs on launch, tray
+    open, settings save, delete and every watcher find. Left uncleared the
+    map would grow for the life of the process, holding ids nothing can
+    resolve.
+    """
+    links_file = tmp_path / "links.json"
+    _seed_link(links_file, recordings / "a.mkv", uploader.watch_url("abc123"))
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        links_file=links_file,
+    )
+    api.list_rows()
+    first = dict(api._links)
+    assert len(first) == 1
+
+    api.list_rows()
+    api.list_rows()
+
+    assert len(api._links) == 1, (
+        "one linked recording, one entry, however many refreshes"
+    )
+    # And it is the CURRENT id, not a survivor of an earlier snapshot.
+    assert set(api._links) != set(first)
+    live = {row["id"] for row in api._rows.rows()}
+    assert set(api._links) <= live
+
+
+def test_a_re_recording_within_one_session_loses_the_link_too(recordings, tmp_path):
+    """The same-session half of the rule, and the one that nearly shipped
+    wrong.
+
+    RowSnapshot._links is keyed by PATH and survives rebuild -- that is
+    deliberate, it is what keeps a link through the refresh an upload itself
+    triggers. But it means a file re-recorded at a path that was uploaded
+    earlier in this session inherits the old link from the snapshot,
+    whatever the persisted store says. The restore loop is therefore
+    authoritative in both directions: it sets a link when the store has one
+    for this exact file, and CLEARS it when the store does not.
+    """
+    links_file = tmp_path / "links.json"
+    target = recordings / "a.mkv"
+    url = uploader.watch_url("abc123")
+    _seed_link(links_file, target, url)
+
+    window = FakeWindow()
+    api = rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    )
+    api.list_rows()
+    first = {r["name"]: r for r in pushes(window)[0][1]["rows"]}
+    assert first["a.mkv"]["link"] == url, "fixture is wrong if this fails"
+
+    # OBS writes a new recording over the same filename, same session.
+    target.write_bytes(b"\0" * 4096)
+    os.utime(target, (5000, 5000))
+    window.evaluated.clear()
+    api.list_rows()
+
+    after = {r["name"]: r for r in pushes(window)[0][1]["rows"]}
+    assert after["a.mkv"]["link"] is None, (
+        "the row inherited the previous recording's video -- the one failure "
+        "mode the (size, mtime) key exists to prevent"
+    )
+    assert api.copy_path(after["a.mkv"]["id"]) == ""
+
+
+def test_a_re_recording_at_the_same_path_is_not_given_the_old_link(
+    recordings, tmp_path
+):
+    """The reason the store is keyed on (size, mtime). A wrong duration is
+    cosmetic; a wrong link opens a different fight, or somebody else's."""
+    links_file = tmp_path / "links.json"
+    target = recordings / "a.mkv"
+    _seed_link(links_file, target, uploader.watch_url("abc123"))
+    # OBS reuses filenames: same path, new recording.
+    target.write_bytes(b"\0" * 4096)
+    os.utime(target, (5000, 5000))
+
+    window = FakeWindow()
+    rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    ).list_rows()
+
+    _, payload = pushes(window)[0]
+    assert [row["link"] for row in payload["rows"]] == [None, None]
+
+
+def test_a_corrupt_link_store_costs_the_links_and_nothing_else(recordings, tmp_path):
+    """Unlike durations, a lost link cannot be recomputed -- but it still
+    must not stop the list rendering."""
+    links_file = tmp_path / "links.json"
+    links_file.write_text("{not json", encoding="utf-8")
+
+    window = FakeWindow()
+    rows_api(
+        recordings,
+        tmp_path,
+        FakeClock(),
+        probe=lambda path, binary: (1.0, True),
+        window=window,
+        links_file=links_file,
+    ).list_rows()
+
+    _, payload = pushes(window)[0]
+    assert len(payload["rows"]) == 2
+    assert [row["link"] for row in payload["rows"]] == [None, None]
 
 
 def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):

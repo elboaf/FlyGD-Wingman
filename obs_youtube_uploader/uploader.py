@@ -21,6 +21,25 @@ RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 # Consumed by app._upload_one when building MediaFileUpload.
 CHUNK_SIZE = 4 * 1024 * 1024
 
+# THE watch URL. It lives beside upload_video because that is what produces
+# the video id -- the module that knows how to get an id owns the address
+# you reach it at.
+#
+# It was written three times before round 5's link-state: ui/api.py held
+# this constant, ui/rows.py.set_link built the same string with an f-string,
+# and web/list.js concatenated a third copy because the onLink push carried
+# a bare video_id and left the page to assemble a URL. The page's copy was
+# the load-bearing one -- it is the only one that could not be removed
+# without changing the bridge payload, which is why the push now carries the
+# finished URL and the page renders what it is handed.
+# test_the_watch_url_is_written_exactly_once fails if a fourth appears.
+_WATCH = "https://www.youtube.com/watch?v={video_id}"
+
+
+def watch_url(video_id: str) -> str:
+    """The public watch page for *video_id*."""
+    return _WATCH.format(video_id=video_id)
+
 
 class Outcome(enum.Enum):
     RETRY = "retry"

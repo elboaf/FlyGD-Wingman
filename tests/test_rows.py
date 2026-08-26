@@ -15,8 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import library
+from obs_youtube_uploader import library, uploader
 from obs_youtube_uploader.ui import rows as rows_mod
+
+# set_link takes a finished URL, not a video id -- uploader.watch_url is the
+# one place that builds one (test_bridge_contract.py guards that). Derived
+# here rather than typed so this file cannot disagree with it.
+WATCH = uploader.watch_url("abc123")
 
 
 def _touch(
@@ -61,7 +66,7 @@ def test_an_id_is_stable_for_the_life_of_its_snapshot(tmp_path):
     snapshot, listed = _snapshot_over(tmp_path)
     row_id = listed[0]["id"]
     snapshot.set_duration(row_id, 90.0, definitive=True)
-    snapshot.set_link(row_id, "abc123")
+    snapshot.set_link(row_id, WATCH)
     assert [row["id"] for row in snapshot.rows()] == [row_id]
 
 
@@ -199,8 +204,8 @@ def test_resolve_many_of_nothing_is_empty(tmp_path):
 def test_set_link_puts_a_watch_url_on_the_row(tmp_path):
     _touch(tmp_path, "a.mkv")
     snapshot, listed = _snapshot_over(tmp_path)
-    snapshot.set_link(listed[0]["id"], "abc123")
-    assert snapshot.rows()[0]["link"] == "https://www.youtube.com/watch?v=abc123"
+    snapshot.set_link(listed[0]["id"], WATCH)
+    assert snapshot.rows()[0]["link"] == WATCH
 
 
 def test_a_row_starts_with_no_link(tmp_path):
@@ -213,7 +218,7 @@ def test_set_link_on_an_unknown_id_is_ignored(tmp_path):
     """An upload finishing against a row deleted mid-flight."""
     _touch(tmp_path, "a.mkv")
     snapshot, _ = _snapshot_over(tmp_path)
-    snapshot.set_link("nonsense", "abc123")
+    snapshot.set_link("nonsense", WATCH)
     assert snapshot.rows()[0]["link"] is None
 
 
@@ -222,9 +227,9 @@ def test_a_link_survives_the_refresh_the_upload_itself_triggers(tmp_path):
     links on rebuild made the glyph appear and vanish a moment later."""
     _touch(tmp_path, "a.mkv")
     snapshot, listed = _snapshot_over(tmp_path)
-    snapshot.set_link(listed[0]["id"], "abc123")
+    snapshot.set_link(listed[0]["id"], WATCH)
     relisted = snapshot.rebuild(tmp_path)
-    assert relisted[0]["link"] == "https://www.youtube.com/watch?v=abc123"
+    assert relisted[0]["link"] == WATCH
 
 
 def test_a_link_is_dropped_once_its_recording_is_gone(tmp_path):
@@ -232,7 +237,7 @@ def test_a_link_is_dropped_once_its_recording_is_gone(tmp_path):
     opened, so retaining it only grows the map for the life of the process."""
     _touch(tmp_path, "a.mkv")
     snapshot, listed = _snapshot_over(tmp_path)
-    snapshot.set_link(listed[0]["id"], "abc123")
+    snapshot.set_link(listed[0]["id"], WATCH)
     (tmp_path / "a.mkv").unlink()
     snapshot.rebuild(tmp_path)
     _touch(tmp_path, "a.mkv")

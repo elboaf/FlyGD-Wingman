@@ -136,16 +136,29 @@ class RowSnapshot:
         wanted = set(ids)
         return [self._infos[row.id] for row in self._rows if row.id in wanted]
 
-    def set_link(self, row_id: str, video_id: str) -> None:
+    def set_link(self, row_id: str, url: str | None) -> None:
         """Record a finished upload against its row. Unknown id: no-op.
 
         The no-op matters -- an upload can finish against a row that was
         deleted or rebuilt out from under it mid-flight.
+
+        Takes the finished URL rather than a video id, and that is the
+        point rather than a convenience: this method used to build the watch
+        URL with an f-string of its own, which was the second of three
+        copies. uploader.watch_url is the one that survived.
+
+        None CLEARS the link, and that is load-bearing rather than
+        permissive. This map is keyed by PATH and survives rebuild on
+        purpose -- it is what keeps a link through the refresh an upload
+        itself triggers -- so a file re-recorded at a path uploaded earlier
+        in the same session would otherwise inherit the previous
+        recording's video. Api.list_rows is what passes the None: it reads
+        the persisted store, which is keyed on (size, mtime) and therefore
+        knows the difference.
         """
         info = self._infos.get(row_id)
         if info is None:
             return
-        url = f"https://www.youtube.com/watch?v={video_id}"
         self._links[info.path] = url
         self._replace(row_id, link=url)
 

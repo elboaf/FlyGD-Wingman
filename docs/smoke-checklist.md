@@ -1039,6 +1039,29 @@ behavior that only shows up at size.
       used to clear `self.links` — so the link appeared and then vanished a
       moment later. Trigger an extra rebuild by recording something new,
       and confirm the link still survives.
+- [ ] **The finished upload's link survives a RESTART.** After the above,
+      quit from the tray and start the app again. Expected: that row still
+      carries its ↗, double-click still opens the video, and right-click →
+      Copy link still gives the same URL. Round 5's link-state: the link
+      used to live only in `RowSnapshot._links`, so the column was empty on
+      every launch and the question it exists to answer — *did I already
+      upload this fight?* — was unanswerable in the normal case.
+      `%LOCALAPPDATA%\OBSYouTubeUploader\links.json` is the store; deleting
+      it must cost the links and nothing else, so try that too and confirm
+      the list still renders with an empty Link column.
+- [ ] **A re-recording at the same filename shows NO link — in the same
+      session AND after a restart.** Upload a recording, then make OBS write
+      a new file over that same name (or copy a different recording onto
+      it). Expected: the Link cell is **empty**, not the old video, without
+      restarting; then restart and confirm it is still empty. The store is
+      keyed on `(size, mtime)` rather than the path precisely so this cannot
+      serve the previous fight's link — the one failure here sends the user
+      to the wrong video, which is why it is worth reproducing by hand.
+      **Both halves, because they have different mechanisms and the
+      same-session one nearly shipped broken:** across a restart the store
+      is the only source, but within a session `RowSnapshot._links` is keyed
+      by PATH and survives the rebuild, so the row would inherit the old
+      link unless the refresh actively clears it.
 - [ ] **Open video opens the uploaded video**, and **Copy link** puts the
       same URL on the clipboard with "Link copied to clipboard" in the
       status line.
@@ -1317,11 +1340,12 @@ only ever checked by hand.
       text. The label used to be `--brand-text` too, which measures 4.16:1
       on that background and 3.99:1 with the pointer on it — both under
       4.5:1, on the one control in the app that is asking to be read.
-      Pick a row with **no clash warning**: `.bindbtn.clash` is declared
-      below `.bindbtn.capturing` at equal specificity, so a row that is
-      both arms in the clash red rather than the brand purple. That is
-      pre-existing and unowned; it is called out here so this step is not
-      read as a failure on a colliding bind.
+      Pick a row with **no clash warning** first, then repeat on a
+      **clashing** one — D7 gave the two states separate channels, so that
+      row is expected to show the **purple** border with the label still in
+      the clash **red**. Before D7 it took the clash red for both and the
+      armed state was invisible, which is why this step used to say to
+      avoid such a row.
 - [ ] **A disabled control looks disabled and stays inert under the
       pointer.** Hover each control the page switches off: `Upload` with
       nothing selected, `Show` / `Remove` with no webhook configured,

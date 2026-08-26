@@ -440,6 +440,48 @@ def test_accent_hover_restates_its_own_fill_and_label():
         )
 
 
+def test_an_armed_bind_and_a_clashing_one_do_not_fight_over_one_channel():
+    """`.bindbtn.capturing` and `.bindbtn.clash` are both (0,2,0) and both
+    set `border-color` and `color`, so a row that is BOTH used to render
+    whichever came last -- which was clash, so an armed row showed no sign
+    of being armed. That state is modal: the next keystroke is captured
+    rather than delivered. Round 5's D7.
+
+    The repair is `.bindbtn.clash.capturing`, which is (0,3,0) and so wins
+    both properties outright regardless of where the two single-class rules
+    sit. What it must declare is DERIVED from them rather than retyped:
+    arming's border colour and clash's label colour, which is the split D7
+    decided. Retyping either would let this test agree with itself while
+    disagreeing with the sheet.
+    """
+
+    def decl(selector, prop):
+        i = CSS.index(selector + " ")
+        block = CSS[i : CSS.index("}", i)]
+        # (?<![-\w]) rather than \b: a hyphen is a non-word character, so
+        # \bcolor happily matches the tail of `border-color` and the first
+        # draft of this test read arming's border into clash's label.
+        m = re.search(rf"(?<![-\w]){prop}\s*:\s*([^;}}]+)", block)
+        assert m, f"{selector} no longer declares {prop}"
+        return m.group(1).strip()
+
+    combined = ".bindbtn.clash.capturing"
+    assert combined in CSS, (
+        "a bind can be armed and clashing at once; without a combined rule "
+        "the two equal-specificity blocks decide it on source order"
+    )
+    assert decl(combined, "border-color") == decl(
+        ".bindbtn.capturing", "border-color"
+    ), (
+        "arming owns the border: it is the only channel here that clears "
+        "the 3:1 that 1.4.11 asks of a non-text indicator"
+    )
+    assert decl(combined, "color") == decl(".bindbtn.clash", "color"), (
+        "the clash mark keeps the label -- if it yielded, clicking a "
+        "clashing row would clear the red and read as resolved"
+    )
+
+
 # ---- reachability ------------------------------------------------------
 
 

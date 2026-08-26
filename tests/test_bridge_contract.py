@@ -109,3 +109,48 @@ def test_the_eve_settings_route_registers_all_three_of_its_pushes():
     for name in ("onEveSettingsNames", "onEveSettingsRunning", "onEveSettingsDone"):
         assert name in allowlist(), name
         assert "evesettings.js" in registered.get(name, []), name
+
+
+def test_the_watch_url_is_written_exactly_once():
+    """One place decides what a YouTube watch URL looks like, and it is
+    uploader.watch_url.
+
+    Round 5 found the string written THREE times: `ui/api.py` held a
+    `YOUTUBE_WATCH` constant, `ui/rows.py`'s `set_link` rebuilt the same
+    thing with an f-string, and `web/list.js` concatenated a third copy.
+    The JS copy was not an oversight -- the `onLink` push carried a bare
+    `video_id`, so the page had nothing else to render and no way to stop
+    knowing. Removing it is what made the push carry the finished URL.
+
+    That is why this guard spans BOTH sides of the bridge rather than
+    living with the Python: a payload that hands the page a fragment
+    recreates the duplicate no matter how tidy the Python is. Same
+    grep-shaped answer as test_page_conventions.py's
+    test_no_colour_is_decided_outside_the_root_token_block, and for the
+    same reason -- the assertion is a count, so a fourth copy fails here
+    rather than drifting a number in a docstring.
+
+    Comments are stripped first: the note in uploader.py explains the rule
+    by naming the sites it replaced, and a guard that fails on its own
+    explanation is a guard people delete.
+    """
+    package = Path(__file__).resolve().parent.parent / "obs_youtube_uploader"
+    sources = sorted(package.rglob("*.py")) + sorted(WEB.glob("*.js"))
+    assert len(sources) > 20, "the sweep found almost nothing -- check the globs"
+
+    found = {}
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        text = re.sub(r"(?m)^\s*(#|//).*$", "", text)
+        hits = len(re.findall(r"youtube\.com/watch", text))
+        if hits:
+            # as_posix(), because the message names a file and the suite runs
+            # on windows-latest as well as ubuntu-latest. The first draft
+            # compared against a typed "a/b.py" and failed on Windows alone
+            # -- over the separator, with the finding itself correct.
+            found[path.relative_to(package.parent).as_posix()] = hits
+
+    assert found == {"obs_youtube_uploader/uploader.py": 1}, (
+        f"the watch URL must be written once, in uploader.watch_url. Found: {found}"
+    )

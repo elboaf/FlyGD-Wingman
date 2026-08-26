@@ -87,7 +87,10 @@ reached through injected seams or lazy `windll` binding):
 - `watcher.py` — polls the recording folder (not FS events); a file is announced
   only after its size holds steady across consecutive polls.
 - `uploader.py`, `stitch.py` (bundled FFmpeg), `combatlog.py` + `discord.py`,
-  `library.py`, `durations.py`, `settings.py`, `paths.py`, `atomicio.py`.
+  `library.py`, `durations.py`, `links.py`, `settings.py`, `paths.py`,
+  `atomicio.py`. `durations.py` and `links.py` are the same `(size, mtime)`
+  key for two different reasons — a stale duration is cosmetic, a stale link
+  opens the wrong video — which is why only the first one prunes.
 
 **Web layer** (`obs_youtube_uploader/web/`): `app.js` is the shell and bridge
 client with a strict `WM.HANDLERS` allowlist; one route/screen per JS file.

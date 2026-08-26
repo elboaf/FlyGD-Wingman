@@ -2493,6 +2493,52 @@ button.btn:disabled,
    618px those ten rows used to take. A third column would need a 182px
    track, and the control line alone is 255.8.
 
+   ROUND 5's D8 ASKED WHETHER TO LIFT THAT CAP the way round 3's D1 lifted
+   it for the Profiles roster (style.css:1899), and the answer measured out
+   NO. The exemption works -- injected as
+   `#section-bookmarks { max-width: none }` with the cards restored to 620
+   and the non-grid children held at 586, exactly D1's shape, the interior
+   becomes `viewport - 248` and the block reflows:
+
+     viewport 840    1040    1080    1280    1920
+     capped   2 col  2 col   2 col   2 col   2 col   (586px interior)
+     exempt   2 col  2 col   3 col   3 col   5 col   (592/792/832/1032/1672)
+
+   Widths are CSS VIEWPORT widths, from the ?dev=1 harness under
+   Emulation.setDeviceMetricsOverride -- not window sizes; see the 1015
+   below for why the two are not the same number.
+
+   Column counts are columns that HOLD A ROW: ten items balanced across a
+   1672px block occupy five of the six the browser opens.
+
+   Three columns need 3x256 + 2x20 = 808px of interior, i.e. a 1056px CSS
+   viewport. THE APP OPENS AT 1015, measured in its own WebView2 at the
+   default 1040x680 window (ui/window.py; the difference is the frameless
+   window's own inset, so 1040 logical is not 1040 CSS), AND NO GEOMETRY IS
+   PERSISTED -- nothing saves or restores a window size, so this is what
+   every launch gets. Out of the box the exemption therefore changes
+   nothing, every time, and it changes nothing at the 840 floor either --
+   586 -> 592. It pays only if the user widens or maximizes, and then has
+   to do it again next launch.
+
+   What it costs is paid at EVERY width: a widened card cannot stay
+   centred with the other four sections, so `#section-bookmarks` left-
+   aligns and the pane jumps horizontally when the rail switches sections
+   -- measured 103px at 1040, 223px at 1280, 543px at 1920. D1 had no such
+   cost because #route-evesettings is a whole ROUTE with no sibling to fall
+   out of line with; Bookmarks is one of five sections sharing one pane.
+
+   And the win D1 was actually justified by does not appear here. There the
+   argument was a gesture crossing the fold ("`Copy to selected` now sits
+   at y=611 in a 625 floor"). Here the section scrolls before and after at
+   every size the app opens at -- 2.06 screens -> 2.06 at 1040x680, 1.71 ->
+   1.59 at 1280x800 -- and only stops scrolling at 1920x1080, maximized on
+   a 1080p display at 100%.
+
+   If the four other Settings sections ever left-align, the alignment cost
+   disappears and this is worth re-measuring. That is a change to the route
+   rather than to this card, and it is not this block's to make.
+
    `columns:` rather than a track count anyway, because the browser is then
    the thing that decides -- if this section ever stops being capped at
    620px, or a fork drops the cap, the block widens on its own and there is
@@ -2546,11 +2592,10 @@ button.btn:disabled,
    --text: 12.75:1 on --hover. The state still reads as armed -- purple ring,
    lifted background, and the label itself already says "Press a key…".
 
-   One caveat, pre-existing and left alone: .bindbtn.clash below is equal
-   specificity and later, so a row that is both clashing and armed takes
-   the clash red for BOTH border and label. Nobody has reported it and the
-   clash warning is arguably the one that should win; the smoke step for
-   this state says to pick a non-clashing row. */
+   A row can be armed AND marked, and .bindbtn.clash.capturing below is
+   what decides that. This block used to carry a caveat instead, saying the
+   collision was pre-existing, unreported and arguably right; round 5's C8
+   grouping made it reachable on ten more rows and D7 settled it. */
 .bindbtn.capturing {
   border-color: var(--brand-text); color: var(--text); background: var(--hover);
 }
@@ -2558,6 +2603,49 @@ button.btn:disabled,
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
+
+/* D7. A bind can be armed and marked at once, and until this rule the two
+   states fought over one channel: .clash is equal specificity to
+   .capturing and later, so it took the border AND the label, and a row
+   waiting for a keystroke looked exactly like one that was not.
+
+   THE RULE THE FOUR ROW STATES NOW FOLLOW. Arming owns border-COLOR and
+   background; a mark keeps whatever channel arming does not claim, if it
+   still clears AA against the armed background:
+
+     clash    keeps the LABEL. --err on --hover measures 4.59:1, over the
+              4.5 that 1.4.3 asks. (It is 4.40 with the pointer on the row,
+              because .bindbtn:hover:not(:disabled) is (0,3,0) and lifts the
+              background to --control-hover -- a PRE-EXISTING shortfall of
+              this colour on this surface, unchanged in kind: a hovered
+              .clash that is not armed already measures the same 4.40.)
+     unknown  keeps its DASHED border-style, which arming never sets.
+     dim      keeps nothing, and that is the one deliberate loss. Its label
+              is --text-faint, 4.09:1 on --hover -- under 4.5 on the one
+              control in the app that is asking to be read -- and its
+              border is chosen to RECEDE (see .bindbtn.dim), which is the
+              opposite of what a modal state may do. Its title stays, and
+              the mark returns the moment capture ends.
+
+   WHY THE MARK DOES NOT SIMPLY YIELD TO ARMING, which was the other
+   candidate and is what already happens to dim: clicking a clashing row
+   would make the red vanish, which reads as "resolved" before a key has
+   been pressed. A stale-looking mark is survivable; a false all-clear on
+   the exact control the user came to fix is not.
+
+   WHY ARMING KEEPS THE BORDER RATHER THAN GIVING IT BACK TO CLASH, which
+   is what D7's card proposed (clash keeps the border, arming takes the
+   background and the label). Measured, that fails 1.4.11: arming's only
+   remaining non-text indicator would be --control -> --hover, #211d28
+   against #27232e, which is 1.07:1 against the 3:1 a non-text indicator
+   owes. The border is the only channel here that clears it.
+
+   Both declarations are restated rather than left to source order --
+   (0,3,0) beats both single-class rules, so moving either block cannot
+   silently change what this renders. */
+.bindbtn.clash.capturing {
+  border-color: var(--brand-text); color: var(--err);
+}
 
 /* The 4px 6px padding STAYS. This is the record of that decision, because
    from one screen it looks like a bug.

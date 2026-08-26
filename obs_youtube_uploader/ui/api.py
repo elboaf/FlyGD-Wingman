@@ -42,6 +42,7 @@ from .. import (
     durations,
     evewindows,
     library,
+    links,
     obsconfig,
     paths,
     stitch,
@@ -87,8 +88,6 @@ EVE_CONFIRM_TIMEOUT_S = 300.0
 # the tray with it until this expires. Long enough to read two sentences
 # and click, short enough that a wedged page does not make Quit look broken.
 QUIT_CONFIRM_TIMEOUT_S = 60.0
-
-YOUTUBE_WATCH = "https://www.youtube.com/watch?v={video_id}"
 
 # set_alert_event's writable fields. Kept as a set to check against rather
 # than duplicated per-field range checks -- settings.validated_alerts owns
@@ -335,6 +334,7 @@ class Api:
         id_factory=lambda: uuid.uuid4().hex,
         rows=None,
         durations_file=None,
+        links_file=None,
         drain_interval_s=PROBE_DRAIN_S,
         spawn=threading.Thread,
         probe=library.probe,
@@ -396,6 +396,8 @@ class Api:
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
         self._cache = durations.load(self._durations_file)
+        self._links_file = links_file or paths.links_file()
+        self._link_store = links.load(self._links_file)
         self._drain_interval_s = drain_interval_s
         self._spawn = spawn
         self._probe = probe
@@ -669,6 +671,13 @@ class Api:
         self._stop_drain()
 
         rebuilt = self._rows.rebuild(self._state.recording_dir, preselect=preselect)
+        # rebuild() mints new ids, so every key already in _links is dead --
+        # rows.py's whole contract is that a stale id resolves to nothing.
+        # Cleared rather than left, because the restore loop below re-adds a
+        # key per linked row on EVERY refresh (launch, tray open, settings
+        # save, delete, watcher find) and this map would otherwise grow
+        # without bound across a long session, holding ids nothing can reach.
+        self._links.clear()
         ids = [row["id"] for row in rebuilt]
         infos = self._rows.resolve_many(ids)
         pending = durations.resolve(self._cache, infos)
@@ -697,6 +706,33 @@ class Api:
         for row_id, info in zip(ids, infos):
             if id(info) not in outstanding:
                 self._rows.set_duration(row_id, info.duration, True)
+
+        # Links, from the same place and for the same reason: rebuild()
+        # mints new ids and freezes each Row before anything is known about
+        # it, so a link that is not re-applied here never reaches the page.
+        # Before this loop existed the Link column was empty on every fresh
+        # launch, including for recordings that were already on YouTube --
+        # which is the question the column is there to answer.
+        #
+        # AUTHORITATIVE IN BOTH DIRECTIONS, which is not optional. The
+        # snapshot's own link map is keyed by PATH and survives rebuild on
+        # purpose, so a file re-recorded at a path uploaded earlier in this
+        # session comes back out of rebuild() carrying the previous
+        # recording's video. Only the persisted store can tell the two
+        # apart, because only it is keyed on (size, mtime) -- so a miss has
+        # to CLEAR rather than be skipped. Setting without clearing passed
+        # every test that used a fresh Api and failed the moment one
+        # session did both.
+        #
+        # BOTH maps are filled. self._links is keyed by row id and is what
+        # copy_path and open_path read back; the snapshot's is keyed by path
+        # and is what renders the cell. A restore that filled only the
+        # snapshot would draw a link the context menu could not open.
+        for row_id, info in zip(ids, infos):
+            url = links.lookup(self._link_store, info.path, info.size, info.mtime)
+            if url:
+                self._links[row_id] = url
+            self._rows.set_link(row_id, url)
 
         self._push("onRows", {"rows": self._rows.rows()})
         work = [
@@ -1084,16 +1120,39 @@ class Api:
             return
         self._upload_worker(job)
 
-    def _link(self, row_id: str, video_id: str) -> None:
+    def _link(self, row_id: str, video_id: str, info) -> None:
         """Record and announce one uploaded row.
 
         _links is kept here as well as in the snapshot because the
         RowSnapshot contract is write-only for links, and open_path /
         copy_path need to read one back.
+
+        The push carries the finished URL rather than the video id. That is
+        round 5's link-state: with a bare id the page had no choice but to
+        build a watch URL of its own, which made web/list.js the third
+        writer of a string uploader.watch_url already owned.
+
+        *info* is the VideoInfo the job captured, NOT one resolved from
+        row_id here. UploadJob's own docstring says why: "`ids` runs
+        parallel to `items` so a finished upload can be linked back to the
+        row the page is showing without the worker re-resolving an id
+        against a snapshot that may have been rebuilt underneath it." The
+        first draft of this method resolved anyway, and a refresh landing
+        mid-upload -- the watcher finding a new recording is enough -- made
+        resolve() return None and the link was never persisted at all.
+
+        Persisted here rather than at the end of the job, and saved on every
+        link rather than once: a batch that dies halfway -- crash, power
+        cut, a kill from the tray -- must not lose the record of the videos
+        that DID publish. There is no way to recover one of those from
+        inside the app afterwards.
         """
-        self._links[row_id] = YOUTUBE_WATCH.format(video_id=video_id)
-        self._rows.set_link(row_id, video_id)
-        self._push("onLink", {"id": row_id, "video_id": video_id})
+        url = uploader.watch_url(video_id)
+        self._links[row_id] = url
+        self._rows.set_link(row_id, url)
+        links.remember(self._link_store, info.path, info.size, info.mtime, url)
+        links.save(self._links_file, self._link_store)
+        self._push("onLink", {"id": row_id, "url": url})
 
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
@@ -1185,8 +1244,10 @@ class Api:
                     vid = self._upload_one(
                         youtube, MediaFileUpload, merged, job, 0, 1, close_media=True
                     )
-                for row_id in job.ids:
-                    self._link(row_id, vid)
+                # Every source recording gets the stitched video's URL,
+                # each persisted against its own file identity.
+                for row_id, item in zip(job.ids, job.items):
+                    self._link(row_id, vid, item)
             else:
                 total = len(job.items)
                 self._push("onCancelAvailable", {"available": True})
@@ -1199,7 +1260,7 @@ class Api:
                         index,
                         total,
                     )
-                    self._link(job.ids[index], vid)
+                    self._link(job.ids[index], vid, job.items[index])
             self._upload_done(job)
         except uploader.UploadCancelled:
             # `index` is the item that was interrupted, so items 0..index-1
@@ -1435,7 +1496,11 @@ class Api:
                 on_progress=on_progress,
                 should_cancel=self._cancel.is_set,
             )
-            self._link(state.job.ids[state.resume_index], vid)
+            self._link(
+                state.job.ids[state.resume_index],
+                vid,
+                state.job.items[state.resume_index],
+            )
         except uploader.UploadCancelled:
             # Everything before resume_index finished on the earlier
             # attempt and is on the channel, so the count is about the job,

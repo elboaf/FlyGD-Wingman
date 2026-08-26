@@ -9,6 +9,7 @@ import datetime
 import threading
 
 from obs_youtube_uploader import combatlog, discord, library, uploader
+from obs_youtube_uploader import links as links_mod
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 
@@ -122,9 +123,69 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     links = fakes.payloads(sent, "onLink")
     # KEY IS `id`: the page's onLink handler looks up the row by that field.
     assert [link["id"] for link in links] == ["r1", "r2"]
-    assert rows.links == {"r1": "vid123", "r2": "vid123"}
+    assert rows.links == {
+        "r1": uploader.watch_url("vid123"),
+        "r2": uploader.watch_url("vid123"),
+    }
     # The messages really went through evaluate_js, not just through the spy.
     assert window.calls
+
+
+def test_each_finished_upload_is_persisted_as_it_lands(monkeypatch, tmp_path):
+    """Written per link, not once at the end of the job.
+
+    A batch that dies halfway -- crash, power cut, Quit from the tray --
+    must not lose the record of the videos that DID publish. Nothing in the
+    app can recover one afterwards; the user would have to search YouTube.
+    """
+    store_file = tmp_path / "links.json"
+    api, _window, _rows = api_with(tmp_path, links_file=store_file)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    info = api._rows.resolve("r1")
+    stored = links_mod.load(store_file)
+    assert links_mod.lookup(
+        stored, info.path, info.size, info.mtime
+    ) == uploader.watch_url("vid123")
+
+
+def test_a_refresh_landing_mid_upload_does_not_lose_the_link(monkeypatch, tmp_path):
+    """`_link` must not re-resolve the row id against the snapshot.
+
+    UploadJob's docstring already says why it carries `items` parallel to
+    `ids` -- the snapshot can be rebuilt underneath the worker, and the
+    watcher finding one new recording is enough to do it. The first draft
+    resolved anyway, so a refresh arriving between the upload and the link
+    left `resolve()` returning None and the link was never persisted: the
+    video was on YouTube and the next launch showed an empty Link cell.
+    """
+    store_file = tmp_path / "links.json"
+    api, _window, rows = api_with(tmp_path, links_file=store_file)
+    uploaded = rows.infos["r1"]
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+
+    inner = fake_upload_ok()
+
+    def refresh_then_upload(*args, **kwargs):
+        # The rebuild: new ids, so every id the job is holding is now stale.
+        rows.infos.clear()
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(uploader, "upload", refresh_then_upload)
+
+    api.start_upload("Fight", "d", False, ["r1"])
+    join(api)
+
+    stored = links_mod.load(store_file)
+    assert links_mod.lookup(
+        stored, uploaded.path, uploaded.size, uploaded.mtime
+    ) == uploader.watch_url("vid123")
 
 
 def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
@@ -341,9 +402,9 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     # The FIRST call reuses the stored session -- that is what makes this
     # resume rather than restart -- and the second file follows on.
     assert resumed[0] is session
-    assert [link["video_id"] for link in fakes.payloads(sent, "onLink")] == [
-        "vidA",
-        "vidB",
+    assert [link["url"] for link in fakes.payloads(sent, "onLink")] == [
+        uploader.watch_url("vidA"),
+        uploader.watch_url("vidB"),
     ]
     assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
     assert api._retry_state is None
@@ -610,7 +671,7 @@ def test_an_unconfigured_webhook_says_nothing_at_all(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     final = fakes.payloads(sent, "onStatus")[-1]
     assert "skipped" not in final["text"].lower()
     assert final["kind"] != "WARNING"
@@ -634,7 +695,7 @@ def test_a_webhook_that_does_not_parse_still_warns(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     final = fakes.payloads(sent, "onStatus")[-1]
     # Finding 13's invariant on the skip path too: whatever went wrong with
     # the logs, the sentence still opens with the upload that worked.
@@ -857,7 +918,7 @@ def test_a_crash_in_the_log_half_does_not_report_the_video_as_failed(
     join(api)
 
     # The video really did publish.
-    assert fakes.payloads(sent, "onLink")[0]["video_id"] == "vid123"
+    assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
     assert [t for _, t, _ in api._alert.raised] != ["Upload Failed"]
     final = fakes.payloads(sent, "onStatus")[-1]
     assert final["kind"] != "ERROR"
@@ -1248,7 +1309,7 @@ def test_a_stop_left_over_from_one_job_cannot_abort_the_next(monkeypatch, tmp_pa
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    assert rows.links == {"r1": "vid123"}
+    assert rows.links == {"r1": uploader.watch_url("vid123")}
 
 
 def test_a_finished_upload_tells_the_page_the_job_is_over(monkeypatch, tmp_path):
