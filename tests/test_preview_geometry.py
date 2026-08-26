@@ -310,6 +310,17 @@ def test_lock_to_aspect_applies_the_floor_without_distorting():
     assert abs(pw / ph - 16 / 9) < 0.01
 
 
+def test_lock_to_aspect_applies_the_floor_through_the_height_branch_too():
+    """The floor clamp lives after the drive branch, so it has to hold for
+    both. Only the width branch was covered when `drive` was added, and
+    the height branch is the half this change introduced."""
+    for w, h in ((1, 1000), (1000, 1), (1, 1)):
+        out = g.lock_to_aspect(w, h, 16 / 9, LABELS_ON, FLOOR, drive="h")
+        assert out[0] >= FLOOR[0] and out[1] >= FLOOR[1]
+        pw, ph = _picture(out, LABELS_ON)
+        assert abs(pw / ph - 16 / 9) < 0.01
+
+
 def test_lock_to_aspect_without_an_aspect_only_floors():
     """None is the character-select and client-gone fallback: today's
     freeform behaviour, unchanged."""

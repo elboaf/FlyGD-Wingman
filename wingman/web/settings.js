@@ -943,7 +943,7 @@
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
   var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-    + 'applies once you turn them on.';
+              + 'applies when you turn them back on.';
 
   function previewsOn() {
     var enabled = WM.el('preview-enabled');

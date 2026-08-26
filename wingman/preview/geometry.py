@@ -231,9 +231,11 @@ def lock_to_aspect(w, h, aspect, chrome, min_size, drive="w"):
     *drive* names the axis to believe, "w" or "h"; the other is derived.
     It is the caller's job to decide, because only the caller knows which
     way the pointer actually moved. Anything that is not "h" is treated as
-    "w" -- the two live callers pass one of the two literals, and a
-    freeform resize is a better failure than a raise on the preview
-    thread, where an exception kills the message pump.
+    "w", because a raise on the preview thread kills the message pump and
+    a freeform resize is the better failure. Note what that costs: the one
+    live caller (window.resize_result) passes a computed variable, not a
+    literal, so a typo here does not raise -- it silently reinstates the
+    old dead-handle-in-Y behaviour. `drive="height"` is exactly `"w"`.
 
     This used to take `pw = max(pw, ph * aspect)` instead -- believe
     whichever axis implies the LARGER picture -- to stop a mostly-vertical

@@ -682,10 +682,15 @@ def _lparam(x, y):
 
 def test_a_resize_holds_the_client_shape_while_the_aspect_is_locked():
     """The default, and what has always shipped: a purely horizontal drag
-    still changes the height, because the picture keeps its ratio."""
+    still changes the height, because the picture keeps its ratio.
+
+    Asserted as the ratio rather than `h != 210`, which passed just as
+    readily for a height of 3 and never checked the one thing the test is
+    named after. _FakeLibs.GetClientRect reports 320x210, so the picture
+    must come back at 32:21 once the chrome is removed."""
     rect = _resize_drag(lock_aspect=True)
     assert rect.w == 420
-    assert rect.h != 210
+    assert abs((rect.w - 4) / (rect.h - 34) - 320 / 210) < 0.01
 
 
 def test_unlocking_the_aspect_makes_the_handle_freeform():

@@ -708,9 +708,12 @@ def test_set_bind_capture_without_a_host_says_so(monkeypatch, tmp_path):
     api._preview_host = None
 
     assert api.set_bind_capture(True) is False
+
+
 def test_set_preview_lock_aspect_persists_and_pushes_live(monkeypatch, tmp_path):
-    """Read per mouse-move by PreviewWindow, exactly like snap, so a write
-    that does not restyle would leave the checkbox inert until restart."""
+    """Sampled by PreviewWindow when a drag BEGINS -- not per mouse-move,
+    which is snap -- so a write that does not restyle would leave the
+    checkbox inert on every already-open preview until restart."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
     api._preview_host = _RestyleSpy()
 

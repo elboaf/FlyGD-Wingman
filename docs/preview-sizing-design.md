@@ -82,6 +82,14 @@ one feature.
 **D2. The aspect lock is unconditional on the drag handle**, with no
 modifier and no setting. The numeric field is the deliberate escape hatch.
 
+> **Superseded.** `preview.lock_aspect` is now a Settings checkbox, on by
+> default, and unchecking it makes the handle freeform. The reasoning above
+> held only while the handle worked in both directions; it did not (see the
+> correction to the Resize paragraph below), and users met the escape hatch
+> as a broken control rather than as a deliberate limit. The rest of D2 --
+> that a mismatched size stretches the picture, and that the numeric field
+> is *an* escape hatch -- still stands.
+
 **D3. Reset re-places at `self._size`, not a literal `DEFAULT_SIZE`.** The
 configured default already exists and is already what unsaved previews use.
 
@@ -110,7 +118,19 @@ candidate picture size, take `pw = max(candidate_pw, candidate_ph * aspect)`,
 derive `ph = pw / aspect`, then add the chrome back. Taking the max rather
 than driving from width alone is what makes a mostly-vertical drag do
 anything. `MIN_SIZE` is applied after the ratio correction, so the floor
-cannot distort it either. A client with no readable client rect -- at
+cannot distort it either.
+
+> **Corrected.** The `max()` did keep a mostly-vertical drag effective, and
+> it also made the handle unable to SHRINK. On a rect already at the locked
+> ratio -- every rect after the first locked drag -- the untouched axis won
+> every time, so a pure-horizontal or pure-vertical inward drag returned the
+> rect byte-identical, while growing worked from either axis. Verified
+> arithmetically from 644x394 (picture 640x360, exactly 16:9): -100 in X and
+> -100 in Y each returned 644x394 unchanged.
+>
+> The axis is now chosen from the pointer deltas in `window.resize_result`
+> and passed to `lock_to_aspect` as `drive="w"|"h"`; the max is gone. The
+> sentence above about `MIN_SIZE` is unaffected and still holds. A client with no readable client rect -- at
 character select, or gone mid-drag -- falls back to today's freeform resize
 rather than freezing.
 

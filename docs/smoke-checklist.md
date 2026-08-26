@@ -1894,6 +1894,14 @@ pytest.
       the lock returns on the very next drag, with no restart. A preview
       already open when you flip it must obey, which is what the live
       restyle is for.
+- [ ] **The off-ratio jump, which is accepted rather than fixed.** Give a
+      preview a deliberately wrong shape (`Size…` something like `700x300`
+      on a 16:9 client, or untick the box and drag it freeform, then
+      re-tick), then drag the handle diagonally through the point where
+      the horizontal and vertical travel are equal. The window jumps once,
+      measured at ~145px, and is then correct for every later drag. This
+      is the documented consequence of choosing an axis from the pointer;
+      it must happen ONCE and must not recur on the same preview.
 - [ ] Flip that checkbox in the MIDDLE of a resize drag (hold the handle,
       flip it with the other hand or a second monitor, keep dragging).
       The gesture in flight keeps the behaviour it started with; the

@@ -63,6 +63,19 @@ def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(
         # the only place the deltas exist at all. The rect alone cannot say
         # which way the user dragged, and guessing from it is what left the
         # handle dead for every inward drag.
+        #
+        # Known consequence, accepted: on a start rect that is ALREADY at
+        # the locked ratio both branches agree at |dx| == |dy|, so the
+        # gesture is smooth. On one that is not, crossing that point jumps
+        # the window in a single WM_MOUSEMOVE -- measured at 145px wide
+        # from a 700x300 rect with a 16:9 client. Three ways to be holding
+        # such a rect: a deliberately mismatched `Size...` (the documented
+        # escape hatch), a layout saved before the lock existed, and
+        # unchecking lock_aspect, dragging freeform, then re-checking it.
+        # The first locked drag corrects the rect, after which it cannot
+        # recur for that preview. Left alone rather than smoothed because
+        # every alternative either reintroduces an axis that ignores the
+        # pointer or makes the handle's behaviour depend on drag history.
         drive = "w" if abs(dx) >= abs(dy) else "h"
         w, h = geometry.lock_to_aspect(w, h, aspect, chrome, min_size, drive)
         return rect._replace(w=w, h=h)
