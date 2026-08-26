@@ -183,7 +183,7 @@ APP_EXE = "Wingman.exe"
 # NOT a `CommandLine -like '*wingman*'` match. The checkout directory is
 # named flygd-wingman, so that pattern matches every process whose command
 # line contains the repo path -- this script included, and an editor with
-# the repo open -- and close_incumbent would taskkill them. Match on
+# the repo open -- and find_incumbent would treat them as the app. Match on
 # process IDENTITY instead: the installed exe by name, or a python
 # running `-m wingman` as its module.
 _MATCH = (
@@ -194,7 +194,7 @@ _MATCH = (
 
 
 class BusyError(Exception):
-    """The app would not close, most likely because it is uploading."""
+    """The incumbent did not exit within the timeout."""
 
 
 def _powershell(script: str) -> str:
@@ -222,39 +222,39 @@ def find_incumbent() -> str | None:
     return _powershell(script) or None
 
 
-def close_incumbent(timeout_s: float = 20.0) -> None:
-    """Ask the app to close, and accept no for an answer.
+def await_incumbent_exit(timeout_s: float = 120.0) -> None:
+    """Wait for the user to quit Wingman from its own tray menu.
 
-    taskkill WITHOUT /F posts WM_CLOSE and lets the app take its own path.
-    There is deliberately no /F escalation:
-
-      - atomicio does NOT cover settings.json, seen.json or token.json
-        (settings.py:559 and watcher.py:47 are plain write_text;
-        uploader.py:340 opens with O_TRUNC), so a forced kill can truncate
-        live state; and
-      - _confirm_quit_if_busy (__main__.py:621) exists precisely so that
-        quitting cannot discard an upload in flight.
-
-    A refusal to exit is very often that guard doing its job. A screenshot
-    is never worth overriding it, so a timeout aborts the run.
+    There is no programmatic way to end this process, and that is not a gap
+    to work around -- it is the app working as designed. WM_CLOSE (which is
+    all `taskkill` without /F can deliver) routes to `api.close()`, and
+    ui/api.py:449 says verbatim: "HIDE, never destroy... Only the tray's
+    Quit destroys." So a taskkill against the user's instance can never make
+    it exit; it can only hide their window, an unwanted side effect on the
+    way to a guaranteed timeout. `taskkill /F` is not the answer either:
+    atomicio does not cover settings.json, seen.json or token.json
+    (settings.py:559 and watcher.py:47 are plain write_text; uploader.py:340
+    opens with O_TRUNC), so a forced kill can truncate live state.
+    __main__.py:145 rules out IPC for the same reason a second instance
+    exits quietly instead of raising the first: proper cross-process
+    signalling needs a named pipe or WM_COPYDATA, which is disproportionate
+    here. Asking and waiting is therefore the only correct move.
     """
-    script = (
-        "Get-CimInstance Win32_Process"
-        f" | Where-Object {{ {_MATCH} }}"
-        " | ForEach-Object { taskkill /PID $_.ProcessId }"
-    )
-    _powershell(script)
+    print("Wingman is running, and only its tray menu can quit it.")
+    print("Right-click the Wingman tray icon and choose Quit, then this")
+    print(f"will continue. Waiting up to {timeout_s:.0f}s...")
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if find_incumbent() is None:
             return
-        time.sleep(0.5)
+        time.sleep(1.0)
     raise BusyError(
-        "Wingman did not close within "
-        f"{timeout_s:.0f}s. It may be uploading -- _confirm_quit_if_busy "
-        "refuses to quit mid-upload on purpose.\n"
+        f"Wingman did not exit within {timeout_s:.0f}s. Either it has not "
+        "been quit yet, or it was and _confirm_quit_if_busy "
+        "(__main__.py:669) refused because an upload is in flight.\n"
         "Nothing was killed and nothing needs restoring. Quit it from the "
-        "tray menu when the upload finishes, then re-run."
+        "tray menu -- once any upload finishes if that is what is blocking "
+        "it -- then re-run."
     )
 
 
@@ -462,9 +462,9 @@ def main(argv: list[str] | None = None) -> int:
 
     incumbent = find_incumbent()
     if incumbent:
-        print(f"Closing: {incumbent}")
+        print(f"Found running: {incumbent}")
         try:
-            close_incumbent()
+            await_incumbent_exit()
         except BusyError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -494,23 +494,33 @@ def main(argv: list[str] | None = None) -> int:
         )
         (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     finally:
-        # Close the instance WE launched through the same graceful path, not
-        # app.terminate(): Popen(shell=True) holds the cmd.exe wrapper, and
-        # killing that need not take the python child with it, which would
-        # leave the mutex held and the restore below silently failing.
+        # Asymmetric on purpose: we ASK for the user's instance above
+        # (nothing else can end it -- see await_incumbent_exit) and FORCE
+        # our own here. That is not a double standard; it is the same
+        # rule applied to different owners. This tool launched `app`
+        # itself, so nothing of the user's is at stake in killing it, and
+        # unlike the user's window it never held anything worth asking
+        # about. `app` is the cmd.exe wrapper Popen(shell=True) gave us;
+        # terminating it also ends the python child cmd.exe spawned.
         #
-        # The BusyError is swallowed on purpose. Raised out of a finally it
-        # would skip the restore below, so a shot instance that would not
-        # close would cost the user their own Wingman. Restoring theirs
-        # outranks a clean shutdown of ours.
+        # Exceptions here are swallowed on purpose. Raised out of a
+        # finally they would skip the restore below, so a launched
+        # instance that refuses to die would cost the user their own
+        # Wingman too. Restoring theirs outranks a clean shutdown of ours.
         if app is not None:
             try:
-                close_incumbent()
-            except BusyError:
+                app.terminate()
+                try:
+                    app.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    app.kill()
+                    app.wait(timeout=5)
+            except Exception as exc:  # noqa: BLE001 -- see comment above:
+                # any failure here must not prevent the restore below.
                 print(
-                    "warning: the instance this run launched did not close;"
-                    " it still holds the mutex, so the restore below may fail."
-                    " Close it by hand.",
+                    "warning: could not terminate the instance this run "
+                    f"launched: {exc}. It may still hold the mutex, so the "
+                    "restore below may fail. Close it by hand.",
                     file=sys.stderr,
                 )
         if incumbent:
