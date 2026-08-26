@@ -1760,12 +1760,12 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Five fixed tracks, then one flexible one. The character name takes a
+  /* Six fixed tracks, then one flexible one. The character name takes a
      line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
      size the CONTROLS on the line beneath it: bind button, Clear, Edit…,
-     Lock, Never minimize -- exactly the five children previews.js's
+     Size…, Lock, Never minimize -- exactly the six children previews.js's
      makeRow appends after the label. The trailing minmax(0, 1fr) absorbs
-     the leftover width so the five stay packed at the start instead of
+     the leftover width so the six stay packed at the start instead of
      spreading.
 
      The count is load-bearing rather than cosmetic. `.row` is
@@ -1773,25 +1773,29 @@ button.btn:disabled,
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
      That is why makeRow always appends exactly one of {both checkboxes} or
-     {two filler spans} -- cycle forward/back have no character, and
+     {three filler spans} -- cycle forward/back have no character, and
      without the fillers those two rows would misalign every row after
      them. Change the number of per-row children and this number changes
      with it. */
-  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
 }
-/* Four, in the default state. Decision D6 (round 5, C3): the per-character
+/* Five, in the default state. Decision D6 (round 5, C3): the per-character
    Never-minimize checkbox does not render while the global minimize toggle
-   is off, so previews.js appends four cells per row instead of five and
-   sets this class in the same render. Declaring five regardless would
+   is off, so previews.js appends five cells per row instead of six and
+   sets this class in the same render. Declaring six regardless would
    leave a max-content track holding nothing -- harmless in itself, but it
    still carries its 10px column-gap, so the row would end in a gap after
    Lock with no control in it.
 
    The count here is one less than the block above BY HAND, which is the
    one thing in this pair that can drift; test_page_conventions.py asserts
-   the difference rather than either number. */
+   the difference rather than either number. Both numbers rose by one when
+   Size… landed, and git merged that change without conflict while leaving
+   this one at four -- a difference of two, which the layout would have
+   shown as every row after the first sliding into the previous row's
+   leftover columns. The asserted difference is what catches that. */
 #preview-binds.no-nm {
-  grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the

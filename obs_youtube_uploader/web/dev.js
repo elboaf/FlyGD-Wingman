@@ -43,7 +43,12 @@
    'set_preview_show_labels', 'set_preview_opacity',
    // Task 10: same shape; settings.js reverts the checkbox on anything
    // that is not `applied`, same as every entry above.
-   'set_minimize_inactive_clients'
+   'set_minimize_inactive_clients',
+   // Task 8: same shape; previews.js and the (future) layout-reset control
+   // read `applied`/`error` the same way, even though neither reverts a
+   // control state on refusal -- Size… is a one-shot dialog, not a
+   // persistent checkbox.
+   'set_preview_size', 'reset_preview_layouts'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -96,6 +101,20 @@
   api.set_never_minimize = function (name, enabled) {
     console.log('DEV api.set_never_minimize(', name, enabled, ')');
     return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  // Task 8: a read that validates rather than a plain double -- the page
+  // sends whatever was typed and expects {w, h, error} back, mirroring
+  // Api.parse_preview_size (geometry.py owns the one definition of what a
+  // size looks like; this fixture only has to match its SHAPE, not
+  // reimplement its rules).
+  api.parse_preview_size = function (text) {
+    console.log('DEV api.parse_preview_size(', text, ')');
+    var m = /^\s*(\d+)\s*[xX]\s*(\d+)\s*$/.exec(text || '');
+    if (!m) {
+      return Promise.resolve({w: 0, h: 0, error: 'Sizes look like 1280x720.'});
+    }
+    return Promise.resolve({w: parseInt(m[1], 10), h: parseInt(m[2], 10), error: null});
   };
 
   api.test_alert = function (event) {
@@ -604,6 +623,14 @@
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
       never_minimize: ['Tanuki Solette'],
+      // Task 8: one character with both a saved size and a live client
+      // size ('Aiga Otsolen' -- exercises sizeHint's computed-height
+      // branch), one with a client size but no saved one yet (defaults to
+      // 640 wide), and one offline with neither ('Tanuki Solette' --
+      // exercises the "not running" branch). Without both branches present
+      // the Size… control cannot be exercised at all under ?dev=1.
+      sizes: { 'Aiga Otsolen': [1280, 720] },
+      client_sizes: { 'Aiga Otsolen': [1920, 1080], 'Zuelo Parvi': [1600, 900] },
       // ACTIVE, matching what Api._bookmark_chords would return for the
       // get_bookmarks fixture above: it ships `enabled: true` with
       // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
