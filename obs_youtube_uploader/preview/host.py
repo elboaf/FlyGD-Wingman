@@ -1090,7 +1090,7 @@ class PreviewHost:
         # Same reasoning, for the state the render path reads: an hour-old
         # batch queued between stop() and the next enable would arm every
         # preview at once with a stale fight (raise_alert is safe from any
-        # thread and keeps filling this while the pump is torn down). And
+        # thread and keeps filling this while the pump is torn down).
         # And the two selection keys would otherwise survive a stop/start:
         # _selected_key is sticky by design now, so without this the ring
         # would come back on a character from the previous session before
