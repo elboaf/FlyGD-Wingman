@@ -245,4 +245,4 @@ def lock_to_aspect(w, h, aspect, chrome, min_size):
     floor_h = max(1, min_size[1] - dh)
     if pw / aspect < floor_h:
         pw = floor_h * aspect
-    return int(round(pw + dw)), int(round(pw / aspect + dh))  # noqa: RUF046
+    return round(pw + dw), round(pw / aspect + dh)
