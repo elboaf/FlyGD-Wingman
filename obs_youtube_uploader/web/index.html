@@ -309,10 +309,15 @@
         <h2>Upload defaults</h2>
         <div class="row">
           <label class="lab" for="f-privacy">Privacy</label>
+          <!-- The value attributes are YouTube's API strings and are what
+               f-privacy sends; the option TEXT is the only part a reader
+               sees, and it was the API string verbatim, lowercase, in a
+               sentence-case UI. Display and wire format are separate
+               things here -- the values are untouched. -->
           <select class="field" id="f-privacy">
-            <option value="private">private</option>
-            <option value="unlisted">unlisted</option>
-            <option value="public">public</option>
+            <option value="private">Private</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="public">Public</option>
           </select>
         </div>
         <div class="row">
