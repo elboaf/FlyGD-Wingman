@@ -8,7 +8,7 @@ only thing asserting them was a widget.
 import datetime
 import threading
 
-from obs_youtube_uploader import combatlog, discord, uploader
+from obs_youtube_uploader import combatlog, discord, library, uploader
 from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 
@@ -706,7 +706,7 @@ def test_an_unprobed_recording_is_probed_rather_than_blamed(monkeypatch, tmp_pat
 
     # KEY IS `id`, matching every other duration message.
     assert fakes.payloads(sent, "onDuration") == [
-        {"id": "r1", "duration": 30.0, "definitive": True}
+        {"id": "r1", "duration": library.format_duration(30.0), "definitive": True}
     ]
     assert "Posted combatlogs.zip." in fakes.payloads(sent, "onStatus")[-1]["text"]
 

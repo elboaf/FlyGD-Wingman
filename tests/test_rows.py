@@ -250,6 +250,29 @@ def test_set_duration_renders_the_measured_length(tmp_path):
     assert snapshot.rows()[0]["duration"] == "1:30"
 
 
+def test_set_duration_returns_the_cell_text_it_rendered(tmp_path):
+    """The bridge payload comes from here, not from the caller's float.
+
+    U1: api.py pushed the value it had passed IN, so a cold duration cache
+    filled the Length column with floats and list.js -- which sorts that
+    column by parsing its own rendered cell -- stopped sorting it.
+    """
+    _touch(tmp_path, "a.mkv")
+    snapshot, listed = _snapshot_over(tmp_path)
+    assert snapshot.set_duration(listed[0]["id"], 90.0, definitive=True) == "1:30"
+
+
+def test_a_declined_update_renders_nothing_for_the_caller_to_push(tmp_path):
+    """None, not the stale cell: the supersede rule above is only as good
+    as what the caller does with it. Pushing over a declined update would
+    leave Python holding "1:30" and the page showing the timeout's "—"."""
+    _touch(tmp_path, "a.mkv")
+    snapshot, listed = _snapshot_over(tmp_path)
+    snapshot.set_duration(listed[0]["id"], 90.0, definitive=True)
+    assert snapshot.set_duration(listed[0]["id"], None, definitive=False) is None
+    assert snapshot.set_duration("nonsense", 90.0, definitive=True) is None
+
+
 def test_set_duration_updates_the_backing_info_too(tmp_path):
     """format_selection_summary reads duration and probed off the infos, not
     off the rows, so the two must not drift."""

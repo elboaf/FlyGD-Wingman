@@ -79,6 +79,13 @@
     var empty = rows === 0;
     WM.el('panel-empty-note').hidden = !empty;
 
+    // U4. The summary's empty rendering ("Nothing selected") duplicated
+    // the disabled Upload button directly below it, in two treatments for
+    // one fact. Hidden here rather than in refreshPanelText, which is
+    // asynchronous: the button's greying and this line would otherwise
+    // settle a round trip apart and the empty state would flash.
+    WM.el('selection-summary').hidden = selected === 0;
+
     WM.setEnabled('btn-upload', selected > 0);
     WM.setEnabled('f-stitch', selected > 1);
     // The stitch hint is gone entirely (round 3, finding 3 -- see the note

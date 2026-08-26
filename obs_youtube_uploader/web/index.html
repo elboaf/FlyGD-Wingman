@@ -75,6 +75,14 @@
       <div class="list-foot">
         <button class="btn" id="btn-select-all">Select all</button>
         <button class="btn" id="btn-select-none">Select none</button>
+        <!-- U6: the count belongs to the two buttons beside it, not to the
+             far right edge. It is the number `Select all` acts on, and it
+             was as far from them as the footer could put it -- one auto
+             margin away, past `Open folder` and `Delete selected`. The
+             file actions take the right-hand group instead (see the
+             margin-left in .list-foot), which also keeps the destructive
+             one at the end of the row rather than beside `Select none`. -->
+        <span class="count" id="list-count">0 recordings</span>
         <!-- The only file affordances on this screen were double-click and
              the context menu, and BOTH act on the YouTube link rather than
              the file (Api.open_path resolves a row to a URL, despite the
@@ -102,7 +110,6 @@
              case _confirm exists for, so it must not be converted to
              WM.confirm either (DESIGN.md, "Which confirmation"). -->
         <button class="btn danger" id="btn-delete">Delete selected</button>
-        <span class="count" id="list-count">0 recordings</span>
       </div>
     </div>
 
@@ -200,8 +207,23 @@
                it instead. -->
           <p class="hint" id="logs-note" hidden></p>
 
+          <!-- U4: hidden until something is selected. The line is NOT
+               deleted -- it carries "3 selected · 1.2 GB · 2:04:35", and
+               moving it next to the button was round 3's deliberate fix to
+               a state that used to sit 200px away in the card above. Only
+               the EMPTY rendering is redundant: "Nothing selected" above a
+               disabled Upload states twice, in two treatments, what the
+               button's own greying already says.
+
+               Hidden in the markup too, not just from panel.js: nothing is
+               selected at load, and refreshEnabled first runs on the
+               list's opening wm:selection, so a visible default would
+               flash the line the state does not want. .summary sets no
+               display, so `hidden` needs no [hidden] override (DESIGN.md).
+               The spacing below it moved to .actions for the same reason
+               -- see the note there. -->
           <p class="summary" id="selection-summary"
-             style="margin-top:12px">Nothing selected</p>
+             style="margin-top:12px" hidden>Nothing selected</p>
 
           <!-- Uploader 1: the loudest element on the screen was the one
                that could not act, and the state that blocked it was dim
