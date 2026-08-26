@@ -318,11 +318,16 @@
      the SMALLEST text in the app, one rung above the uppercase labels. Two things were wrong with 11.5px and neither is
      about wanting bigger type:
 
-       - it was the only FRACTIONAL size in the scale, so at the 100%
-         scaling plenty of Windows desktops run it rasterised between two
-         pixel grids. The hint copy is exactly where that showed, and it
-         is the same argument --fs-label's note below already makes about
-         the 2x captures flattering small text.
+       - it was the only FRACTIONAL size in the scale, and a fractional
+         size costs crispness at the 100% scaling plenty of Windows
+         desktops run. MEASURED, because the first draft of this note
+         asserted it as a metaphor: the same hint captured twice at a
+         true 1:1 raster, 566x40px, counting covered pixels by how much
+         ink they hold -- 11.5px puts 52.3% of them in the partial
+         (antialiased) band against 48.8% at 12px. Real, and modest; it
+         is the second reason below that does the work, not this one.
+         Same argument --fs-label's note makes about 2x captures
+         flattering small text, and the same size of effect.
        - the muted -> label step was 1.045. That is not a step; 11.5 and
          11 are indistinguishable at any scaling. --fs-label's note claims
          it "stays a clear step below --fs-muted", and at 11.5/11 that
