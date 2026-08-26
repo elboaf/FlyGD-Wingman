@@ -697,3 +697,66 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(tmp_p
     state.load(target)
 
     assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+
+
+def test_group_and_selected_group_survive_a_round_trip():
+    built_state = state.SkillsState(
+        characters=[state.Character(character_id=1, group="Wolfpack")],
+        selected_group="Wolfpack",
+    )
+
+    restored = state.from_dict(state.to_dict(built_state))
+
+    assert restored.characters[0].group == "Wolfpack"
+    assert restored.selected_group == "Wolfpack"
+
+
+def test_an_over_long_group_name_is_cleared_not_truncated():
+    """Truncating would MERGE two crews rather than fail to match one.
+
+    _coerce_selected_plan_name already refuses to truncate because a
+    mangled plan name would point at a different file. A group name is the
+    worse case: it is the identity itself, with no folder to check it
+    against, so two distinct 45-character names truncated to 40 become one
+    group silently.
+    """
+    long_name = "W" * (state.MAX_GROUP_NAME_CHARS + 5)
+
+    restored = state.from_dict(
+        {
+            "selected_group": long_name,
+            "characters": [{"character_id": 1, "group": long_name}],
+        }
+    )
+
+    assert restored.characters[0].group == ""
+    assert restored.selected_group == ""
+
+
+def test_a_group_name_over_the_cap_only_by_padding_is_kept():
+    """Trim precedes the length check, matching _coerce_selected_plan_name."""
+    name = "W" * state.MAX_GROUP_NAME_CHARS
+
+    restored = state.from_dict(
+        {"characters": [{"character_id": 1, "group": "   " + name + "   "}]}
+    )
+
+    assert restored.characters[0].group == name
+
+
+def test_a_document_written_before_groups_existed_loads_ungrouped():
+    restored = state.from_dict(
+        {"selected_plan_name": "Ishtar", "characters": [{"character_id": 1}]}
+    )
+
+    assert restored.characters[0].group == ""
+    assert restored.selected_group == ""
+
+
+def test_a_non_string_group_is_dropped_rather_than_stringified():
+    restored = state.from_dict(
+        {"selected_group": {"a": 1}, "characters": [{"character_id": 1, "group": 7}]}
+    )
+
+    assert restored.characters[0].group == ""
+    assert restored.selected_group == ""
