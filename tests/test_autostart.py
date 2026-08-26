@@ -251,8 +251,10 @@ def test_a_legacy_shortcut_alone_reads_as_on(monkeypatch, tmp_path):
 
 
 def test_the_pre_rename_shortcut_name_counts_too(monkeypatch, tmp_path):
-    """AppId is pinned across the rename, so pre-rename installs upgrade in
-    place and can still be carrying the old spelling."""
+    """A machine that ever ticked the install-time box still carries the
+    pre-rename shortcut, whether or not its install was upgraded or
+    replaced. is_enabled() has to see it, or Settings reports "off" for an
+    app that demonstrably starts at login."""
     use(monkeypatch, FakeRegistry())
     (startup_dir(monkeypatch, tmp_path) / "OBS YouTube Uploader.lnk").write_text("x")
 

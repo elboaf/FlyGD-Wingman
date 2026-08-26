@@ -113,7 +113,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="OBSYouTubeUploader",
+    name="Wingman",
     console=False,          # No console window behind the GUI.
     disable_windowed_traceback=False,
     icon=str(ICON),
@@ -125,5 +125,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,              # UPX compression increases antivirus false positives.
-    name="OBSYouTubeUploader",
+    name="Wingman",
 )

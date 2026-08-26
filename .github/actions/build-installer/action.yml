@@ -229,7 +229,7 @@ runs:
     - name: Show what PyInstaller produced
       # The layout is the thing that cannot be verified off-Windows.
       # Confirmed on 2026-08-20 against PyInstaller 6.x: the executable sits
-      # at the top of dist/OBSYouTubeUploader (so installer.iss's
+      # at the top of dist/Wingman (so installer.iss's
       # {app}\{#AppExe} shortcut target is right) and everything else,
       # including the bundled bin/ffmpeg, goes under _internal/. At runtime
       # sys._MEIPASS points at _internal, so app.resolve_binary()'s
@@ -237,10 +237,10 @@ runs:
       # Fails the build if the ffmpeg binaries are not where the app looks.
       shell: pwsh
       run: |
-        Write-Host "--- dist/OBSYouTubeUploader ---"
-        Get-ChildItem dist\OBSYouTubeUploader
+        Write-Host "--- dist/Wingman ---"
+        Get-ChildItem dist\Wingman
         Write-Host "--- _internal/bin (where resolve_binary looks at runtime) ---"
-        $bin = "dist\OBSYouTubeUploader\_internal\bin"
+        $bin = "dist\Wingman\_internal\bin"
         if (-not (Test-Path $bin)) {
           throw "Bundled ffmpeg not found at $bin - resolve_binary() would fall back to PATH and stitching would be silently unavailable"
         }
@@ -256,7 +256,7 @@ runs:
       # label in the wrong font.
       shell: pwsh
       run: |
-        $font = "dist\OBSYouTubeUploader\_internal\assets\fonts\Inter-Regular.ttf"
+        $font = "dist\Wingman\_internal\assets\fonts\Inter-Regular.ttf"
         # -PathType Leaf: a DIRECTORY named Inter-Regular.ttf would
         # satisfy a bare Test-Path and Pillow cannot load one. That is
         # not hypothetical here -- fetch_autohotkey.py exists because a
@@ -286,7 +286,7 @@ runs:
       # docs/smoke-checklist.md, "Look and feel > Frozen build".
       shell: pwsh
       run: |
-        $web = "dist\OBSYouTubeUploader\_internal\web"
+        $web = "dist\Wingman\_internal\web"
         if (-not (Test-Path $web)) {
           throw "web/ not found at $web - the (WEB, 'web') datas entry in uploader.spec did not resolve, and the app will open a blank window and exit 0"
         }
@@ -329,11 +329,11 @@ runs:
       # that.
       shell: pwsh
       run: |
-        $script = "dist/OBSYouTubeUploader/_internal/engine/eve_bookmarks.ahk"
+        $script = "dist/Wingman/_internal/engine/eve_bookmarks.ahk"
         if (-not (Test-Path $script -PathType Leaf)) {
           throw "engine script missing from the bundle - PyInstaller exits 0 when datas fail to collect"
         }
-        $exe = "dist/OBSYouTubeUploader/_internal/bin/AutoHotkeyU64.exe"
+        $exe = "dist/Wingman/_internal/bin/AutoHotkeyU64.exe"
         if (-not (Test-Path $exe -PathType Leaf)) { throw "AutoHotkey interpreter missing from the bundle" }
 
     - name: Verify the app icon is bundled
@@ -344,7 +344,7 @@ runs:
       # Tk feather - a green build of a visibly wrong app.
       shell: pwsh
       run: |
-        $icon = "dist\OBSYouTubeUploader\_internal\app.ico"
+        $icon = "dist\Wingman\_internal\app.ico"
         if (-not (Test-Path $icon)) {
           throw "app.ico not found at $icon - the (ICON, '.') datas entry in uploader.spec did not resolve, and paths.icon_file() will find nothing at runtime"
         }
@@ -367,7 +367,7 @@ runs:
       # a file, defeating the whole point of this check.
       shell: pwsh
       run: |
-        $root = "dist\OBSYouTubeUploader\_internal"
+        $root = "dist\Wingman\_internal"
         foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
           $path = Join-Path $root $file
           if (-not (Test-Path $path -PathType Leaf)) {
