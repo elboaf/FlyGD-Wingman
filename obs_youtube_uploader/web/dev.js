@@ -469,6 +469,12 @@
     // empty list nobody has seen rendered.
     keybinds.Fin1 = '^+1';
     keybinds.Fin2 = '^+1';
+    // C6: the same chord a preview character is bound to in the Previews
+    // fixture below, so the harness renders the "a Previews keybind takes
+    // this one" mark rather than leaving that branch unseen. FormatEnf is
+    // in the leading flat group, so the mark is visible without opening a
+    // dense block.
+    keybinds.FormatEnf = '^!1';
     return Promise.resolve({
       // settings is the `eve_bookmarks` section verbatim:
       // {enabled, keybinds, windows}. `windows` is a per-title enabled
@@ -497,7 +503,7 @@
       displays: {
         ConvertScout: 'Ctrl+Shift+S', SetRoot: 'Ctrl+Shift+R',
         GrabSig: 'Ctrl+Shift+G', Fin1: 'Ctrl+Shift+1',
-        Fin2: 'Ctrl+Shift+1'
+        Fin2: 'Ctrl+Shift+1', FormatEnf: 'Ctrl+Alt+1'
       },
       engine: { state: 'on', last_error: null, blockers: [] }
     });

@@ -2418,9 +2418,18 @@ button.btn:disabled,
    relationship it can read out of this file (the column is at least
    .bindbtn's min-width); the rest of the sum is in two other rules.
 
-   Two columns at the 586px card interior, six at a comfortable width,
-   decided by the browser rather than by a media query -- which is the
-   whole reason to reach for multicol rather than a track count. */
+   TWO COLUMNS, AT EVERY WINDOW WIDTH, and that is a fact about this route
+   rather than about this rule: `.settings` is `max-width: 620px`, so the
+   card interior is 586px at 840 and still 586px at 1400. Round 5's C8 card
+   predicted three columns and ~250px for the finishers from a wider card
+   than Settings has; measured, it is two columns and 335px against the
+   618px those ten rows used to take. A third column would need a 182px
+   track, and the control line alone is 255.8.
+
+   `columns:` rather than a track count anyway, because the browser is then
+   the thing that decides -- if this section ever stops being capped at
+   620px, or a fork drops the cap, the block widens on its own and there is
+   no media query anywhere to find and update. */
 .bind-dense { grid-column: 1 / -1; columns: 256px; column-gap: 20px; }
 
 /* Inside the block the rows are boxes again rather than display:contents

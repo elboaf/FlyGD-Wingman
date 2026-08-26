@@ -669,28 +669,6 @@
   var DEPENDS = 'Previews are off, so this changes nothing yet — it '
               + 'applies when you turn them back on.';
 
-  // Round 5, C2. The control is a PERCENTAGE and the stored setting is the
-  // DWM thumbnail's 0-255 alpha byte; these two are the whole conversion
-  // and they are the only places either unit is crossed.
-  //
-  // The slider used to be min="20" max="255" with the raw value printed
-  // beside it, so its floor read "20" -- which every reader takes for 20%
-  // and which is 7.8%. Round 5 found the same shape three more times in
-  // this app, which is why the fix is a unit change rather than a suffix.
-  //
-  // Not clamped here: index.html's min="8" is settings.validated_preview's
-  // own 20-alpha floor expressed in percent (round(8 * 2.55) == 20), and
-  // the range input enforces it. api.set_preview_opacity deliberately does
-  // not clamp either -- validated_preview owns that range, in one place.
-  var ALPHA_MAX = 255;
-  function toAlpha(percent) {
-    return Math.round(percent * ALPHA_MAX / 100);
-  }
-  function toPercent(alpha) {
-    return Math.round(alpha * 100 / ALPHA_MAX);
-  }
-  function show() { readout.textContent = box.value + '%'; }
-
   function previewsOn() {
     var enable = WM.el('preview-enabled');
     return !!(enable && enable.checked);
@@ -767,6 +745,28 @@
 
   var DEPENDS = 'Previews are off, so this changes nothing yet — it '
               + 'applies when you turn them back on.';
+
+  // Round 5, C2. The control is a PERCENTAGE and the stored setting is the
+  // DWM thumbnail's 0-255 alpha byte; these two are the whole conversion
+  // and they are the only places either unit is crossed.
+  //
+  // The slider used to be min="20" max="255" with the raw value printed
+  // beside it, so its floor read "20" -- which every reader takes for 20%
+  // and which is 7.8%. Round 5 found the same shape three more times in
+  // this app, which is why the fix is a unit change rather than a suffix.
+  //
+  // Not clamped here: index.html's min="8" is settings.validated_preview's
+  // own 20-alpha floor expressed in percent (round(8 * 2.55) == 20), and
+  // the range input enforces it. api.set_preview_opacity deliberately does
+  // not clamp either -- validated_preview owns that range, in one place.
+  var ALPHA_MAX = 255;
+  function toAlpha(percent) {
+    return Math.round(percent * ALPHA_MAX / 100);
+  }
+  function toPercent(alpha) {
+    return Math.round(alpha * 100 / ALPHA_MAX);
+  }
+  function show() { readout.textContent = box.value + '%'; }
 
   function previewsOn() {
     var enable = WM.el('preview-enabled');
