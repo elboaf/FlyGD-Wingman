@@ -228,12 +228,12 @@ def await_incumbent_exit(timeout_s: float = 120.0) -> None:
     There is no programmatic way to end this process, and that is not a gap
     to work around -- it is the app working as designed. WM_CLOSE (which is
     all `taskkill` without /F can deliver) routes to `api.close()`, and
-    ui/api.py:449 says verbatim: "HIDE, never destroy... Only the tray's
+    ui/api.py:450 says verbatim: "HIDE, never destroy... Only the tray's
     Quit destroys." So a taskkill against the user's instance can never make
     it exit; it can only hide their window, an unwanted side effect on the
     way to a guaranteed timeout. `taskkill /F` is not the answer either:
     atomicio does not cover settings.json, seen.json or token.json
-    (settings.py:559 and watcher.py:47 are plain write_text; uploader.py:340
+    (settings.py:560 and watcher.py:47 are plain write_text; uploader.py:340
     opens with O_TRUNC), so a forced kill can truncate live state.
     __main__.py:145 rules out IPC for the same reason a second instance
     exits quietly instead of raising the first: proper cross-process
@@ -394,6 +394,16 @@ def walk(
                     cdp.evaluate(f"WM.section({screen.section!r})")
             time.sleep(settle_ms / 1000)
             (out_dir / name).write_bytes(cdp.screenshot())
+            if screen.key == "dialog":
+                # Dismiss what we just opened. Today this is the last
+                # screen and the instance dies seconds later, so leaving
+                # it open is only cosmetic -- but a screen added after
+                # this one would otherwise be shot through the modal
+                # overlay. Cancel (not Confirm) is the correct action
+                # regardless: it resolves WM.confirm's promise via
+                # panel.js's answer(false), and nothing consumes that
+                # promise here, so it triggers no side effect.
+                cdp.evaluate("WM.el('dlg-cancel').click()")
         except Exception as exc:  # noqa: BLE001 -- one dead screen must not
             # abandon the other eight; the failure is recorded instead.
             shots.append({"key": screen.key, "file": None, "error": str(exc)})
@@ -468,6 +478,11 @@ def main(argv: list[str] | None = None) -> int:
         except BusyError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+    else:
+        print(
+            "No running Wingman found, so nothing will be relaunched when "
+            "this run finishes -- start it yourself afterward if you want it."
+        )
 
     app = None
     try:
