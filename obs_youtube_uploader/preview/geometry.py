@@ -217,3 +217,32 @@ def parse_size(text):
     if w <= 0 or h <= 0:
         return None
     return w, h
+
+
+def lock_to_aspect(w, h, aspect, chrome, min_size):
+    """The nearest window size whose PICTURE is *aspect* wide per unit tall.
+
+    *chrome* is (dw, dh): the pixels the window spends on border and label
+    band. It is a parameter and not a constant because the band is
+    LABEL_H tall or zero depending on a live setting -- a fixed value
+    distorts the picture for everyone who turned labels off, silently,
+    while the control reports success.
+
+    Both drag axes stay live: driving from width alone would make a
+    mostly-vertical drag do nothing, so the picture width is the larger of
+    the one implied by w and the one implied by h.
+
+    The floor is applied in PICTURE space and the height re-derived from
+    it, so clamping cannot itself distort the result.
+    """
+    dw, dh = chrome
+    if not aspect or aspect <= 0:
+        return max(min_size[0], w), max(min_size[1], h)
+    pw = max(1, w - dw)
+    ph = max(1, h - dh)
+    pw = max(pw, ph * aspect)
+    pw = max(pw, min_size[0] - dw, 1)
+    floor_h = max(1, min_size[1] - dh)
+    if pw / aspect < floor_h:
+        pw = floor_h * aspect
+    return int(round(pw + dw)), int(round(pw / aspect + dh))
