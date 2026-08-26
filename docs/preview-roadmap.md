@@ -175,6 +175,15 @@ Lowest priority, largest pure-parsing job.
   which is why they landed independently and in the opposite order to the
   one this file warned about.
 
+- **A DWM thumbnail stretches to fill `rcDestination`; it does not preserve
+  the source aspect ratio.** Measured with two solid-colour windows, a 2:1
+  and a 4:1 source into a 1:1 destination, with a `fVisible=False` control:
+  the picture filled the destination in every case. So a preview whose
+  shape does not match its client has never letterboxed — it has been
+  showing the game **distorted**. This is the third claim about this API
+  to have read plausibly, gone unverified, and been followed; see the
+  `SetLayeredWindowAttributes` and thumbnail-alpha entries above.
+
 - **Lock previews has a UI** (#87): `previews.js` drives `set_preview_locked`
   per character.
 - **Border thickness and colour are constants.** `chrome.render` takes `border`

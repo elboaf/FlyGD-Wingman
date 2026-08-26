@@ -1813,6 +1813,44 @@ original bug survived a smoke pass.
 - [ ] Trigger an alert while opacity is low. The ring must still draw at
       full strength — chrome is painted over the hole, not under it.
 
+### Preview sizing
+
+Aspect-locked resize handles, a per-character `Size…` dialog, the snapping
+toggle, and Reset previews. The lock exists because a DWM thumbnail does
+not letterbox a shape that does not match its client — it stretches to
+fill the destination rect, so a mismatched preview has always been
+distorting the game rather than wasting pixels around it (see
+`docs/preview-roadmap.md`'s corrections). Nothing here renders under
+pytest.
+
+- [ ] Drag a preview's resize handle. The picture stays undistorted against
+      the client's shape — not merely squarish-looking — and both a
+      mostly-horizontal and a mostly-vertical drag change the size; a
+      handle that only tracks one axis is not this feature.
+- [ ] **LOAD-BEARING: turn labels off in the Previews card, then drag the
+      handle again.** The picture must still be undistorted with the label
+      band gone. The window is the picture plus a fixed horizontal margin
+      and a vertical margin that shrinks to just that margin once labels
+      are off; a lock that assumes the band is always there is exactly
+      the case the first draft of this design got wrong.
+- [ ] `Size…` on a running client: type `640x392`, confirm the preview
+      resizes to it, and that the hint text named the client's own
+      undistorted size before you typed anything.
+- [ ] `Size…` on an offline character with a saved position: the size is
+      accepted and applies the next time that client runs.
+- [ ] `Size…` on a character with no saved position: refused, with the
+      sentence telling you to start the client once first.
+- [ ] Turn snapping off in the Previews card, then drag a preview next to
+      another: no magnetism, it lands exactly where dropped. Turn it back
+      on: magnetism returns immediately, without a restart.
+- [ ] **Reset previews** — the `.btn.danger` button in the Previews card:
+      a confirm dialog appears, accepting it returns every preview to the
+      default stack, and locks, never-minimize and keybinds all survive
+      the reset.
+- [ ] Reset previews with previews switched off, then switch them back on:
+      previews open at the default stack rather than any position they
+      held before the reset.
+
 ## EVE preview hotkeys
 
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
