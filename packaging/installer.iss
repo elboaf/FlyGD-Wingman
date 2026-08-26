@@ -145,6 +145,12 @@ const
   WEBVIEW2_CLIENT_PATH = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\';
   WEBVIEW2_DOWNLOAD_URL = 'https://developer.microsoft.com/microsoft-edge/webview2/';
 
+  { 3.x registered itself under the old AppId. No braces: Inno wraps the
+    AppId in braces only when it is a GUID, and this one is a plain string.
+    HKCU because PrivilegesRequired=lowest makes every install per-user. }
+  LEGACY_UNINSTALL_KEY =
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\OBS YouTube Uploader_is1';
+
 var
   WebView2Missing: Boolean;
 
@@ -258,8 +264,38 @@ begin
     Log('WebView2: runtime installed successfully.');
 end;
 
+procedure RemovePredecessor();
+var
+  Command: String;
+  ResultCode: Integer;
+begin
+  if not RegQueryStringValue(HKCU, LEGACY_UNINSTALL_KEY, 'UninstallString', Command) then
+  begin
+    Log('Predecessor: no 3.x install registered; nothing to remove.');
+    Exit;
+  end;
+
+  Command := RemoveQuotes(Command);
+  Log('Predecessor: running ' + Command);
+
+  { A failed uninstall must NOT abort the install. The worst case is a
+    stale Add/Remove entry pointing at a directory we are about to leave
+    alone; blocking the upgrade over that is strictly worse. User state is
+    untouched either way -- [UninstallDelete] removes only {app}. }
+  if not Exec(Command, '/SILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Log('Predecessor: uninstaller could not be started; continuing.')
+  else
+    Log(Format('Predecessor: uninstaller exited with %d', [ResultCode]));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  { ssInstall, not ssPostInstall: the predecessor must be gone before our
+    tree is written, or its uninstaller can delete files we just installed. }
+  if CurStep = ssInstall then
+    RemovePredecessor();
+
   { ssPostInstall runs after the application tree is in place and BEFORE
     the post-install "Launch FlyGD Wingman" checkbox in the Run section can
     fire, so a user who ticks it gets a working runtime.
