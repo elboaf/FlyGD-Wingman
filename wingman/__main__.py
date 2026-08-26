@@ -152,6 +152,10 @@ def acquire_single_instance():
 
     # Legacy FIRST and short-circuiting: if 3.x is up, stop before creating
     # anything, so this process never appears to be the owner of either name.
+    # The handle is discarded here on purpose too, same as the one below:
+    # holding it open for the process lifetime is what stops a 3.x launched
+    # LATER from starting, and it works only because the raw HANDLE is an
+    # int Python never closes.
     _, legacy_running = _create_mutex(LEGACY_MUTEX_NAME)
     if legacy_running:
         return None

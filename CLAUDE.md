@@ -18,10 +18,15 @@ The package, executable, install directory and state directory are all
 named `wingman` / `FlyGD Wingman` as of 4.0.0. Installs from 3.x are
 handled explicitly rather than by keeping the old names: the installer
 uninstalls the predecessor by its old `AppId`, and `paths.migrate_state_dir()`
-renames `%LOCALAPPDATA%\OBSYouTubeUploader` on first launch. Two references
-to the old identity are load-bearing and must not be tidied away — the
-legacy `AppId` lookup in `packaging/installer.iss`, and `LEGACY_MUTEX_NAME`
-in `__main__.py`, which is what stops 3.x and 4.0 running at once.
+renames `%LOCALAPPDATA%\OBSYouTubeUploader` on first launch. Several
+references to the old identity are load-bearing and must not be tidied
+away: `LEGACY_MUTEX_NAME` in `wingman/__main__.py` (stops 3.x and 4.0
+running at once), `LEGACY_APP_NAME` in `wingman/paths.py` (the migration
+source directory), the legacy `AppId` uninstall key in
+`packaging/installer.iss` (`RemovePredecessor()`), the legacy `.lnk` name in
+`installer.iss`'s `[InstallDelete]` and in `autostart.py`'s
+`_LEGACY_SHORTCUT_NAMES`, and the legacy name in `installer.iss`'s
+`AppMutex`.
 
 ## Commands
 

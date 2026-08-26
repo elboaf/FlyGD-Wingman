@@ -34,6 +34,16 @@ Run on Windows against a real install before each release.
       renames the state directory on first launch. If two entries appear,
       or the old state directory is still there afterward, one of those two
       steps is broken.
+- [ ] **Upgrading resets the "start at login" task to checked, even if the
+      3.x user had turned it off.** Because `AppId` changed in 4.0, Inno
+      treats the install as fresh and does not carry forward [Tasks]
+      selections from the predecessor; `startup` has no `unchecked` flag, so
+      it defaults ticked on every install, upgrade included. Expected and
+      not a bug: install 3.x, untick start-at-login (or turn it off in
+      Settings), then upgrade to 4.0 without touching the wizard's task
+      list. Start at login is back ON afterward. Call this out in the 4.0
+      release notes so a user who wants it off knows to untick it in the
+      wizard or turn it off again in Settings.
 - [ ] **Upgrade from 3.x with the old build running.** Install 3.5.1, launch
       it, and leave it in the tray. Install 4.0.0 and launch it. Expected: it
       exits immediately without a window. Close the 3.x tray icon, launch
