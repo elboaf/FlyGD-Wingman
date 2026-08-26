@@ -264,7 +264,6 @@
            configuration surface. -->
       <button class="rail-item active" data-section="account">Account</button>
       <button class="rail-item" data-section="uploads">Uploads</button>
-      <button class="rail-item" data-section="notify">Notifications</button>
       <button class="rail-item" data-section="folders">Folders</button>
       <button class="rail-item" data-section="discord">Discord</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
@@ -310,10 +309,15 @@
         <h2>Upload defaults</h2>
         <div class="row">
           <label class="lab" for="f-privacy">Privacy</label>
+          <!-- The value attributes are YouTube's API strings and are what
+               f-privacy sends; the option TEXT is the only part a reader
+               sees, and it was the API string verbatim, lowercase, in a
+               sentence-case UI. Display and wire format are separate
+               things here -- the values are untouched. -->
           <select class="field" id="f-privacy">
-            <option value="private">private</option>
-            <option value="unlisted">unlisted</option>
-            <option value="public">public</option>
+            <option value="private">Private</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="public">Public</option>
           </select>
         </div>
         <div class="row">
@@ -335,10 +339,11 @@
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
-    </div>
-
-    <div class="settings" id="section-notify">
-
+      <!-- Was its own rail entry and its own pane. One radio pair -- a
+           destination in an eight-item rail for a single binary choice,
+           on ~1300px of empty pane. It is an upload behaviour: it decides
+           what happens when a recording is ready to upload, which is what
+           this section already configures. -->
       <section class="card">
         <h2>When a recording finishes</h2>
         <label class="radio">
@@ -448,7 +453,6 @@
              it just happens to be EVE. -->
         <h2>Bookmark keybinds</h2>
         <div class="row">
-          <span class="lab">Enable</span>
           <!-- The .check/.box pattern is not decoration: .check input is
                opacity:0 and the styled .box is the visible control. A bare
                checkbox here rendered as a native white widget. -->
@@ -523,7 +527,6 @@
       <section class="card">
         <h2>EVE client previews</h2>
         <div class="row">
-          <span class="lab">Enable</span>
           <!-- The .check/.box pattern is not decoration: .check input is
                opacity:0 and the styled .box is the visible control. A bare
                checkbox here rendered as a native white widget. -->
@@ -537,7 +540,6 @@
             Drag to move it, drag the bottom-right corner to resize.
             Positions are remembered per character.</span></div>
         <div class="row">
-          <span class="lab">Position</span>
           <label class="check">
             <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
             Reopen previews where you last put them
@@ -549,7 +551,6 @@
             remembered while this is off, so turning it back on restores
             what you last had.</span></div>
         <div class="row">
-          <span class="lab">Labels</span>
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
             Show the character name on each preview
@@ -593,9 +594,8 @@
              is empty, so blank-until-the-payload-lands is the designed
              state and not a gap. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-off" style="display:none"></span></div>
+          <span class="hint" id="preview-binds-off" hidden></span></div>
         <div class="row">
-          <span class="lab">Minimize inactive</span>
           <label class="check">
             <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
             Minimize a client's window while it is not the one you switched to
@@ -629,16 +629,15 @@
                true, so the state clause was the one part carrying nothing
                new; what is left is the consequence and the way out, which
                is the shape ui/copy.py's INERT_NOTES keeps. -->
-          <span class="hint" id="alerts-previews-off" style="display:none">
+          <span class="hint" id="alerts-previews-off" hidden>
             Alerts pulse a preview, so they need previews switched on. The
             switch is in the card above.</span></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-no-folder" style="display:none">
+          <span class="hint" id="alerts-no-folder" hidden>
             Your EVE Gamelogs folder is not set. Alerts cannot run without
             it &mdash; set it under Settings &rsaquo; Folders.</span></div>
         <div class="row">
-          <span class="lab">Enable</span>
-          <label class="check">
+                    <label class="check">
             <input type="checkbox" id="alert-enabled"><span class="box"></span>
             Watch gamelogs and raise alerts
           </label>
@@ -658,10 +657,9 @@
              option rendered as a peer of the switch it depends on, with
              nothing saying so. -->
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-depends" style="display:none"></span></div>
+          <span class="hint" id="alerts-depends" hidden></span></div>
         <div class="row">
-          <span class="lab">PvE filter</span>
-          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
+                    <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
                is {combat, warp_scramble}; decloak is excluded there
                because it carries no attacker source for the heuristic to
                test. Saying only "combat" while the control sits above
@@ -675,8 +673,7 @@
           </label>
         </div>
         <div class="row">
-          <span class="lab">Persist</span>
-          <label class="check">
+                    <label class="check">
             <input type="checkbox" id="alert-persist"><span class="box"></span>
             Keep pulsing until you select the preview
           </label>
@@ -689,6 +686,17 @@
              "Combat"'s. A table whose columns do not line up is not
              giving the scan it costs a table's markup to get. -->
         <div class="alert-events">
+        <!-- The grid was already a table; nothing said so. Three
+             left-aligned names in a max-content track leave trailing
+             space after the two short ones ("Combat" and "Decloak" sat
+             ~57px from their swatches, "Warp scramble" ~12px), which
+             reads as raggedness at three rows and as ordinary column
+             structure once the columns are named. A minmax() floor on the
+             name track was the other candidate and is the wrong one: it
+             widens every gap instead of equalising them. -->
+        <div class="alert-head" aria-hidden="true">
+          <span>Event</span><span>Colour</span><span>Sound</span><span></span>
+        </div>
         <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>

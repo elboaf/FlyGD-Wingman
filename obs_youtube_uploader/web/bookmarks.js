@@ -87,10 +87,23 @@
                   running: 'Running' }[engine.state] || '';
     // The reason matters more than the state: "Stopped" alone leaves the
     // user with no idea the engine is missing rather than merely idle.
-    el.textContent = engine.last_error
-      ? label + ' — ' + engine.last_error
-      : label;
+    writeEngineState(el, engine.state, engine.last_error, label);
     showEngineRow(engine.state, engine.last_error);
+  }
+
+  // Both engine-state write sites go through this. They already drifted
+  // once over last_error (see the poll handler below), and the class is
+  // the same kind of thing: set in one place and forgotten in the other,
+  // it would leave the route's render red and the next poll tick plain.
+  //
+  // `stale` and `stopped` are failures; `off` is the user's own choice and
+  // is not. A last_error reddens whatever the state, for the same reason
+  // showEngineRow keeps the row for one: it is the record of what broke.
+  function writeEngineState(el, state, lastError, label) {
+    if (!el) return;
+    el.textContent = lastError ? label + ' \u2014 ' + lastError : label;
+    var bad = !!lastError || state === 'stopped' || state === 'stale';
+    el.classList.toggle('err', bad);
   }
 
   // Walkthrough Settings 8. "Not running" directly under an UNTICKED
@@ -433,11 +446,7 @@
     // "Stopped — the engine is missing…" and the next poll tick a second
     // later overwrites it with a bare "Stopped", so the one actionable
     // thing the user was told silently disappears.
-    if (stateEl) {
-      stateEl.textContent = payload.last_error
-        ? label + ' — ' + payload.last_error
-        : label;
-    }
+    writeEngineState(stateEl, payload.state, payload.last_error, label);
     host.classList.toggle('degraded', !live);
   });
 

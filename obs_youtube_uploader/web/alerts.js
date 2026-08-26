@@ -99,7 +99,7 @@
   function showDepends(enabled) {
     if (!depends) { return; }
     setText(depends, enabled ? '' : DEPENDS);
-    depends.style.display = enabled ? 'none' : '';
+    depends.hidden = enabled;
   }
 
   function eventRow(id) {
@@ -123,6 +123,20 @@
     setText(row.msg, text);
     row.msg.className = 'field-msg' + (text && severity ? ' ' + severity : '');
     row.msg.hidden = !text;
+  }
+
+  // Drops every note that was only true while alerts were off. Keyed on
+  // the tag rather than the text, so rewording the sentence cannot quietly
+  // strand it again, and it leaves a row's OWN errors alone -- a refused
+  // colour write is still true after the master switch moves.
+  function clearWhileOffNotes() {
+    EVENTS.forEach(function (id) {
+      var row = eventRow(id);
+      if (row.msg && row.msg.dataset.whileOff) {
+        delete row.msg.dataset.whileOff;
+        sayRow(row, '');
+      }
+    });
   }
 
   // Built here rather than typed into index.html: the page would
@@ -214,7 +228,10 @@
         } else {
           say('');
         }
-        if (method === 'set_alert_enabled') { refresh(); }
+        if (method === 'set_alert_enabled') {
+          clearWhileOffNotes();
+          refresh();
+        }
       });
     });
   }
@@ -296,6 +313,13 @@
         if (!enabledBox.checked) {
           sayRow(row, 'That is what the alert looks like. Alerts are still '
             + 'off, so nothing is watching gamelogs yet.', 'warn');
+          // Tagged because it OUTLIVES the condition it states. Testing an
+          // event with alerts off, then switching them on, left this note
+          // sitting under a ticked Enable next to a health line reading
+          // "Watching gamelogs" -- the card contradicting itself in three
+          // places at once. Nothing cleared it: sayRow is only ever called
+          // by the row's own controls, and the master switch is not one.
+          row.msg.dataset.whileOff = '1';
         } else {
           sayRow(row, '');
         }
@@ -354,10 +378,10 @@
   // is DOING; the controls belong to whoever last touched them.
   function render(state, controls) {
     if (offBanner) {
-      offBanner.style.display = state.previews_enabled ? 'none' : '';
+      offBanner.hidden = !!state.previews_enabled;
     }
     if (folderBanner) {
-      folderBanner.style.display = state.gamelogs_folder ? 'none' : '';
+      folderBanner.hidden = !!state.gamelogs_folder;
     }
     setText(healthLine, healthText(state));
     // Read from get_alert_state's own `enabled`, not the checkbox: the box

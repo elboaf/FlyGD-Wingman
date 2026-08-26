@@ -561,6 +561,79 @@ def test_no_colour_is_decided_outside_the_root_token_block():
         + " -- add a token instead (L1 owns :root; see finding 7)"
     )
 
+    # And the same colours written as channels. The regex above reads `#hex`
+    # ONLY, which is not the syntax a glow can be written in: box-shadow
+    # needs an alpha and CSS cannot take one from a hex token, so five rules
+    # carried `rgba(132, 48, 217, ...)` -- --brand, hand-copied, invisible to
+    # the assertion directly above it. Exactly the drift this test exists to
+    # stop, in the one form it could not see.
+    #
+    # Matched on VALUE, not on syntax: a bare `rgb(` ban would fire on the
+    # legitimate neutrals (rgba(0,0,0,.5) shadows, transparent gradient
+    # stops), which decide nothing about the brand. So :root's own hex
+    # tokens are parsed to channel triples and only those are forbidden
+    # below -- which also means a NEW token is protected the moment it is
+    # added, with nothing here to update.
+    tokens = {}
+    for name, value in re.findall(r"(--[\w-]+):\s*#([0-9a-fA-F]{6})\b", root.group(1)):
+        v = value.lower()
+        tokens[(int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))] = name
+
+    copied = []
+    for chans in re.findall(r"rgba?\(\s*(\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3})", rules):
+        triple = tuple(int(c.strip()) for c in chans.split(","))
+        if triple in tokens:
+            copied.append(f"rgb{triple} == var({tokens[triple]})")
+    assert not copied, (
+        "a :root token's value is hand-copied as channels outside :root: "
+        + ", ".join(sorted(set(copied)))
+        + " -- add a `--x-rgb: r g b` token and use rgb(var(--x-rgb) / a), "
+        + "the way --brand-rgb does, so moving the token moves these too"
+    )
+
+
+def test_nothing_hides_itself_with_an_inline_display_style():
+    """There are two hiding mechanisms and there must not be a third.
+
+    `hidden` is the one the page uses, and test_every_hidden_element_can
+    _actually_hide above checks that anything carrying it has an
+    author-rule override wherever its own selector sets a display -- the
+    trap DESIGN.md names in six places.
+
+    Five elements hid with `style="display:none"` plus `el.style.display =
+    'none' | ''` instead. They WORKED, which is why nothing noticed: .hint
+    sets no display, so nothing had to be overridden. What they were not
+    was covered -- the guard above inspects the `hidden` attribute, so an
+    inline-styled element is invisible to it, and two of the five were in
+    the Alerts card. Give .hint a display one day and the guard would stay
+    green while those five stopped hiding.
+
+    Both halves are pinned: the attribute in markup, and the property in
+    the modules, so a module cannot reintroduce it on an element that
+    starts out correct.
+    """
+    assert 'style="display:none"' not in HTML, (
+        "an element hides with an inline display style; use the `hidden` "
+        "attribute so test_every_hidden_element_can_actually_hide sees it"
+    )
+    for name in (
+        "alerts.js",
+        "previews.js",
+        "settings.js",
+        "bookmarks.js",
+        "skills.js",
+        "list.js",
+        "panel.js",
+        "app.js",
+        "firstrun.js",
+        "evesettings.js",
+    ):
+        src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
+        assert ".style.display" not in src, (
+            f"{name} hides an element by writing style.display; set "
+            f"`el.hidden` instead so the [hidden] guard covers it"
+        )
+
 
 def test_a_readiness_state_is_not_painted_in_the_error_colour():
     """`Missing` / `Not trained` are facts about a character, not failures.

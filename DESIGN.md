@@ -216,6 +216,16 @@ alone: the two sections without a column cannot grow one without markup.
 The column's original job is still done — labels still share one edge —
 they now share it with everything else on the card.
 
+The table above is the measurement that decided this and is left as it was
+taken. Two things have moved under it since, neither of which changes the
+argument: `Notifications` is no longer a rail entry — its one radio pair is
+the second card under `Uploads` — and five labels that only restated the
+control beside them have been deleted, because stacking changed what a
+label costs from 118px of gutter to a whole line. A label now earns its
+line by naming a GROUP the controls do not name themselves (`Status` over
+a pill and a button, `Copy` over a radio pair) or by labelling a text input,
+which has no self-describing text.
+
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` take the column away from their rows on
 purpose, because their labels are long action and character names. ID

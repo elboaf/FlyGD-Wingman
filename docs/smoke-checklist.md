@@ -899,8 +899,7 @@ behavior that only shows up at size.
       delete the archive.
 - [ ] **Settings at 100% and 150% Windows display scaling.** Open Settings
       at each scale factor and walk every rail entry — Account, Uploads,
-      Notifications, Folders, Discord, Bookmarks, Previews, General. Confirm
-      each
+      Folders, Discord, Bookmarks, Previews, General. Confirm each
       section's content is fully visible with nothing clipped, and that the
       rail itself is never pushed off the top by a long section. A previous
       release shipped with a section clipped off the bottom at high DPI,
@@ -1236,9 +1235,12 @@ only ever checked by hand.
       tests/test_page_conventions.py now holds them in step. If the pane
       and the highlight ever disagree with each other, that test has been
       bypassed rather than the markup being wrong.
-- [ ] **Eight rail entries, General last** — Account, Uploads,
-      Notifications, Folders, Discord, Bookmarks, Previews, General — and
-      clicking each shows its content with exactly one entry highlighted.
+- [ ] **Seven rail entries, General last** — Account, Uploads, Folders,
+      Discord, Bookmarks, Previews, General — and clicking each shows its
+      content with exactly one entry highlighted. Notifications was the
+      eighth and is gone: its one radio pair now sits under Uploads as the
+      second card, `When a recording finishes`. Check it is there and that
+      picking an option still sticks across a restart.
       General is last because its only content is the switch that hides
       Bookmarks and Previews: untick it and the rail must lose its tail,
       not open a hole in its middle. If that count is wrong,

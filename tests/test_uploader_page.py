@@ -566,15 +566,42 @@ def test_a_card_heading_no_longer_claims_the_brand_accent():
     diluting the signal for the three uses that carry meaning.
 
     The rule is about .card > h2 generally, so the edit is in the shared
-    primitive and reaches every screen. The three load-bearing uses stay."""
+    primitive and reaches every screen.
+
+    ROUND 4: three became two. S1's direction was right and stopped one
+    step early -- it counted brand uses ACROSS the screen and did not ask
+    what a single row spends. A selected row carried a brand-filled 15px
+    checkbox at its left edge, a lifted surface, AND a 2px brand rule
+    outside both. The rule was the third signal for one state and the
+    weakest of the three; a 2px edge cannot out-say a filled checkbox 30px
+    to its right. It is gone, and so is the Upload button's 14px purple
+    glow -- the fill was already the only brand-filled surface on that
+    screen, so the halo emphasised the element needing it least.
+
+    What must NOT follow is the 2px border itself: .list-head's alignment
+    arithmetic is built on .list-row's transparent left border, so the
+    width stays whatever the colour does. That is asserted here too, or a
+    future tidy-up takes it and moves every Filename cell 2px left."""
     heading_bar = re.search(r"\.card > h2::before\s*\{([^}]*)\}", CSS)
     assert heading_bar, "the heading rule should still exist"
     assert "--brand" not in heading_bar.group(1)
-    # Still spent where it means something.
-    assert re.search(
-        r"\.list-row\.sel\s*\{[^}]*border-left-color:\s*var\(--brand\)", CSS
-    )
+    # Still spent where it means something: the checkbox and the one
+    # primary action. Both are FILLS, which is what accent is for.
     assert re.search(r"\.list-row\.sel \.box\s*\{[^}]*var\(--brand\)", CSS)
+    assert re.search(r"button\.btn\.acc\s*\{[^}]*var\(--acc-fill\)", CSS)
+    # And no longer spent on the row's edge.
+    sel = re.search(r"\.list-row\.sel\s*\{([^}]*)\}", CSS)
+    assert sel, ".list-row.sel should still exist"
+    assert "border-left-color" not in sel.group(1), (
+        "the selected row's brand edge marker is back; the checkbox and "
+        "the lifted surface already say it"
+    )
+    # The WIDTH is load-bearing even though the colour is not.
+    row = re.search(r"\.list-row\s*\{([^}]*)\}", CSS)
+    assert row and "border-left: 2px solid transparent" in row.group(1), (
+        "list-head's alignment arithmetic is built on this border; "
+        "removing it shifts every Filename cell 2px"
+    )
 
 
 def test_modified_is_gone_at_every_width():
