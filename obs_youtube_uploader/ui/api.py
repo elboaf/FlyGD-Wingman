@@ -56,7 +56,7 @@ from ..evesettings import ops as evesettings_ops
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
-from ..preview import window as window_mod
+from ..preview import window as preview_window
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -2516,7 +2516,7 @@ class Api:
             width, height = int(w), int(h)
         except (TypeError, ValueError):
             return self._field_refused("Sizes look like 1280x720.")
-        floor_w, floor_h = window_mod.MIN_SIZE
+        floor_w, floor_h = preview_window.MIN_SIZE
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
@@ -2538,6 +2538,24 @@ class Api:
         Goes through the host when one is running so the open windows move
         too; falls back to clearing settings directly so a reset with
         previews switched off still takes effect at the next launch.
+
+        The two branches do NOT make equally strong promises, and the
+        difference is structural rather than an oversight. The offline
+        branch writes here, so it catches OSError and refuses. The running
+        branch only POSTS: LayoutStore.clear() does the write later on the
+        preview thread and swallows OSError with a log line, and
+        settings.update() restores the live dict on any exception. So a
+        settings file that cannot be written leaves the windows moved to
+        their defaults on screen while the saved layouts survive in memory
+        and on disk, after this has already reported persisted: True.
+
+        Reported that way anyway, because the bridge has no round trip to
+        learn the outcome and a drag makes no stronger claim -- the same
+        optimism _apply_resizes documents for a resize whose window has
+        gone. It fails in the safe direction: the positions are kept, not
+        lost, and reappear at the next launch. Closing it properly means
+        giving the host a way to answer, which is a larger change than the
+        failure justifies.
         """
         if self._preview_host is not None and self._preview_host.is_running:
             self._preview_host.reset_layouts()
