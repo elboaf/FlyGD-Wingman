@@ -8,9 +8,13 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# The distribution/import name is deliberately unchanged by the FlyGD Wingman
-# rename: it is baked into the %LOCALAPPDATA% state path, the PyInstaller
-# entry point, and the release workflow's credential-injection step.
+# The distribution/import name is "wingman" as of the 4.0 rename. It used
+# to be held back because three things were pinned to the old name; the
+# rename is staged across three commits on this branch so each coupling is
+# handled explicitly rather than just avoided: the %LOCALAPPDATA% state
+# path is migrated on first launch by paths.migrate_state_dir(), the
+# PyInstaller entry point is renamed alongside it, and the release
+# workflow's credential-injection step now targets wingman/credentials.py.
 name = "wingman"
 # Derived from wingman.__version__, not retyped. M2 found the
 # version was carried by hand here AND in __init__.py, which is exactly the
