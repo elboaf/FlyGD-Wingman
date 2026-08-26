@@ -10,8 +10,12 @@ decision is a pure function that the Linux test suite covers, and the
 Windows shell below them holds none.
 """
 
+import base64
+import json
+import pathlib
 import subprocess
 import time
+import urllib.request
 from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlparse
@@ -253,3 +257,123 @@ def close_incumbent(timeout_s: float = 20.0) -> None:
 def restore_incumbent(command_line: str) -> None:
     """Relaunch exactly what was running before."""
     subprocess.Popen(["cmd.exe", "/c", "start", "", *command_line.split()])
+
+
+class TargetError(Exception):
+    """No target could be confirmed as the real app page."""
+
+
+class CDP:
+    """A minimal Chrome DevTools Protocol client over one websocket."""
+
+    def __init__(self, ws):
+        self._ws = ws
+        self._next_id = 0
+
+    def _call(self, method: str, params: dict | None = None) -> dict:
+        self._next_id += 1
+        self._ws.send(
+            json.dumps({"id": self._next_id, "method": method, "params": params or {}})
+        )
+        while True:
+            message = json.loads(self._ws.recv())
+            # CDP interleaves unsolicited events with replies; anything
+            # without our id is an event and is not the answer.
+            if message.get("id") == self._next_id:
+                if "error" in message:
+                    raise TargetError(message["error"])
+                return message.get("result", {})
+
+    def evaluate(self, expression: str):
+        result = self._call(
+            "Runtime.evaluate", {"expression": expression, "returnByValue": True}
+        )
+        return result.get("result", {}).get("value")
+
+    def screenshot(self) -> bytes:
+        return base64.b64decode(self._call("Page.captureScreenshot")["data"])
+
+    def close(self) -> None:
+        self._ws.close()
+
+
+def attach(port: int, timeout_s: float = 30.0) -> CDP:
+    """Connect to the real app page, proven by capability rather than URL.
+
+    suppress_origin is required, not optional: WebView2 and Chromium reject
+    the websocket with 403 Forbidden when an Origin header is present, and
+    --remote-allow-origins=* alone does not fix it.
+    """
+    import websocket
+
+    deadline = time.monotonic() + timeout_s
+    seen: list[str] = []
+    while time.monotonic() < deadline:
+        try:
+            raw = urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/list", timeout=2
+            ).read()
+        except OSError:
+            # The app has not opened the debug port yet, which is the normal
+            # state for the first second or two of startup. Retrying IS the
+            # handling. Note there is no `# noqa: S112` here: that rule fires
+            # only on a bare try-except-continue, and this handler sleeps
+            # first, so a suppression would itself be flagged by RUF100.
+            time.sleep(0.5)
+            continue
+        targets = json.loads(raw)
+        seen = [t.get("url", "") for t in targets]
+        for target in page_candidates(targets):
+            ws = websocket.create_connection(
+                target["webSocketDebuggerUrl"], suppress_origin=True
+            )
+            cdp = CDP(ws)
+            # The decisive check. dev.js activates ONLY when
+            # window.pywebview is absent, so a page that HAS it cannot be
+            # the fabricating harness. This is proof, where the URL filter
+            # was only a cheap pre-filter.
+            if cdp.evaluate("typeof window.pywebview !== 'undefined'") is True:
+                return cdp
+            cdp.close()
+        time.sleep(0.5)
+    raise TargetError(
+        f"No real app page found on port {port} within {timeout_s:.0f}s.\n"
+        f"Targets seen: {seen}"
+    )
+
+
+def walk(
+    cdp: CDP, out_dir: pathlib.Path, settle_ms: int = 2500
+) -> tuple[list[dict], list["Screen"], bool]:
+    """Visit each reachable screen and capture it.
+
+    The settle wait is load-bearing. The page populates asynchronously, and
+    reading too early once produced an -886px "delta" that was really a
+    populated page compared against a half-built one.
+    """
+    eve_shown = cdp.evaluate("WM.eve_shown !== false") is True
+    to_shoot, skipped = screens_for_gate(eve_shown)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    shots = []
+    for index, screen in enumerate(to_shoot, start=1):
+        name = f"{index:02d}-{screen.key}.png"
+        try:
+            if screen.key == "dialog":
+                cdp.evaluate("WM.route('main')")
+                cdp.evaluate(
+                    "WM.confirm('Delete recording?',"
+                    " 'This removes the local file. It cannot be undone.')"
+                )
+            else:
+                cdp.evaluate(f"WM.route({screen.route!r})")
+                if screen.section:
+                    cdp.evaluate(f"WM.section({screen.section!r})")
+            time.sleep(settle_ms / 1000)
+            (out_dir / name).write_bytes(cdp.screenshot())
+        except Exception as exc:  # noqa: BLE001 -- one dead screen must not
+            # abandon the other eight; the failure is recorded instead.
+            shots.append({"key": screen.key, "file": None, "error": str(exc)})
+        else:
+            shots.append({"key": screen.key, "file": name, "error": None})
+    return shots, skipped, eve_shown
