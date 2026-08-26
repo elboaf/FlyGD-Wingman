@@ -286,8 +286,10 @@
 
   function selectGroup(name) {
     if (name.toLowerCase() === selectedGroup().toLowerCase()) return;
-    // Optimistic, then corrected by the push: the same shape selectPlan
-    // uses. Python is the only writer, so a refusal re-renders from truth.
+    // The page only sends and waits; Python's push is the sole cause of
+    // what renders. Unlike selectPlan, this deliberately does NOT drop the
+    // detail/pendingDetail caches -- those are scored against the PLAN, and
+    // a group change does not invalidate them the way a plan change does.
     WM.send('skills_select_group', name);
   }
 
@@ -334,6 +336,56 @@
   // Every one is a mutation, and a mutation pushes onSkills on both its
   // success and failure paths -- the push is the answer, and acting on
   // the return as well would render the same state twice.
+
+  WM.el('skills-rename-group').addEventListener('click', function () {
+    var current = selectedGroup();
+    if (!current) return;
+    // Third argument is the PREFILLED VALUE, not a callback: the current
+    // name, so a rename starts from what is being renamed. WM.prompt
+    // resolves with the typed text or null on cancel.
+    WM.prompt('Rename group', 'A new name for this group.', current)
+      .then(function (text) {
+        if (text === null) return;
+        var wanted = text.trim();
+        if (!wanted || wanted === current) return;
+        // A rename ONTO a name that already has members merges two crews.
+        // That is the honest reading of the operation, not an error -- but
+        // it is not what someone correcting a typo expects, so it is asked
+        // first. A case-only change is NOT a merge (it is one group
+        // respelled), which is why the collision test excludes a name that
+        // differs from the current one only in case.
+        var collides = false;
+        groups().forEach(function (group) {
+          if (group.name.toLowerCase() === wanted.toLowerCase()
+              && group.name.toLowerCase() !== current.toLowerCase()) {
+            collides = true;
+          }
+        });
+        if (!collides) {
+          WM.send('skills_rename_group', current, wanted);
+          return;
+        }
+        WM.confirm('Merge groups',
+                   '“' + wanted + '” already exists. Renaming “'
+                   + current + '” will merge the two into one group.')
+          .then(function (ok) {
+            if (ok) WM.send('skills_rename_group', current, wanted);
+          });
+      });
+  });
+
+  WM.el('skills-delete-group').addEventListener('click', function () {
+    var current = selectedGroup();
+    if (!current) return;
+    var total = scopedTotal();
+    WM.confirm('Delete group',
+               'Delete “' + current + '”? Its ' + total
+               + (total === 1 ? ' character' : ' characters')
+               + ' stay on the roster and become ungrouped.')
+      .then(function (ok) {
+        if (ok) WM.send('skills_delete_group', current);
+      });
+  });
 
   // ---- main pane header ------------------------------------------------
   function renderHead() {

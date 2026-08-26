@@ -487,3 +487,17 @@ def test_the_group_control_uses_the_styled_select_vocabulary():
     the app's existing styled vocabulary for one -- #f-privacy, #es-profile
     and #es-source all use it."""
     assert "'select', 'field'" in CODE or '"select", "field"' in CODE
+
+
+def test_no_two_functions_in_skills_js_share_a_name():
+    """A duplicate `function f()` in one scope silently replaces the first.
+
+    It happened: a new group-picker helper was called `groupNode`, which is
+    also the readiness-bucket renderer, and the roster broke with every test
+    still green -- nothing here executes this file, so a name collision is
+    invisible until someone opens the page.
+    """
+    names = re.findall(r"^\s*function (\w+)\s*\(", CODE, re.MULTILINE)
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+
+    assert not duplicates, f"duplicate function declarations: {duplicates}"
