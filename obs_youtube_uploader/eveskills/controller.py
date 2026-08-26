@@ -694,6 +694,45 @@ class SkillsController:
             return False
         return True
 
+    def select_group(self, group_name) -> bool:
+        """Scope the screen to one group. "" is All and is always valid.
+
+        Modelled on select_plan, including its rollback: a selection held
+        in memory but never written would silently revert on the next
+        launch with nothing ever having been shown.
+        """
+        name = self._clean_group_name(group_name)
+        if name is None:
+            logger.warning("Refusing an over-long group name: %r", group_name)
+            return False
+        with self._lock:
+            previous = self._state.selected_group
+            if name:
+                held = any(
+                    ch.group.casefold() == name.casefold()
+                    for ch in self._state.characters
+                )
+                if not held:
+                    # The page can hold a stale rail across a change that
+                    # emptied this group. Reported rather than coerced to
+                    # All, which would silently discard a click.
+                    return False
+                self._state.selected_group = self._existing_spelling_locked(name)
+            else:
+                self._state.selected_group = ""
+            saved = self._save_locked()
+            if not saved:
+                self._state.selected_group = previous
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the selected group",
+                "Your selection was not saved and has been reverted.",
+            )
+            return False
+        return True
+
     def open_plans_folder(self) -> None:
         """Show the plans folder in the shell. Never raises.
 

@@ -1885,3 +1885,54 @@ def test_a_failed_save_rolls_the_assignment_back(tmp_path, monkeypatch):
 
     assert controller.state_payload()["characters"][0]["group"] == ""
     assert alerts and alerts[-1][0] == "warning"
+
+
+def test_selecting_a_group_scopes_the_payload(tmp_path):
+    controller, _, _ = build(
+        tmp_path, characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.select_group("Wolfpack") is True
+
+    assert controller.state_payload()["selected_group"] == "Wolfpack"
+
+
+def test_selecting_the_empty_string_returns_to_all(tmp_path):
+    seed = state_mod.SkillsState(
+        characters=[_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path)
+
+    assert controller.select_group("") is True
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_selecting_a_group_nobody_holds_is_refused(tmp_path):
+    """The page can hold a stale rail across a change that emptied the
+    group. Reported rather than coerced to All, which would silently
+    discard a click."""
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.select_group("Mining") is False
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_selecting_stores_the_rosters_spelling_not_the_callers(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.select_group("wolfpack") is True
+
+    assert controller.state_payload()["selected_group"] == "Wolfpack"
+
+
+def test_a_failed_save_rolls_the_selection_back(tmp_path, monkeypatch):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.select_group("Wolfpack") is False
+
+    assert controller.state_payload()["selected_group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
