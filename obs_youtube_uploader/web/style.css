@@ -2594,7 +2594,7 @@ button.btn:disabled,
 
    A row can be armed AND marked, and .bindbtn.clash.capturing below is
    what decides that. This block used to carry a caveat instead, saying the
-   collision was pre-existing, unreported and arguably right; round 5's C2
+   collision was pre-existing, unreported and arguably right; round 5's C8
    grouping made it reachable on ten more rows and D7 settled it. */
 .bindbtn.capturing {
   border-color: var(--brand-text); color: var(--text); background: var(--hover);

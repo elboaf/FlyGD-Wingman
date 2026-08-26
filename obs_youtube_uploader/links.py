@@ -25,14 +25,16 @@ pay at all. The same rule here would silently destroy the answer this file
 exists to give, permanently, for a folder the user might switch back to.
 An orphaned entry costs nothing instead: rows are built from the recording
 folder, so an entry for a file that is no longer listed is never looked up.
-Growth is bounded by uploads actually performed -- a few dozen bytes each,
-a handful per session -- not by recordings scanned.
+Growth is bounded by uploads actually performed -- one short JSON object
+each, a handful per session -- not by recordings scanned.
 """
 
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import atomicio
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +83,22 @@ def save(path: Path, store: dict[str, LinkEntry]) -> None:
 
     Never raises: this is called the moment an upload succeeds, and a
     read-only or full disk must not turn a finished upload into a crash.
+
+    Through atomicio rather than write_text, which is where this parts
+    company with durations.save a second time. write_text truncates before
+    it writes, so a crash, a power cut or a tray Quit landing inside that
+    window leaves a half-written file -- and load() reads a half-written
+    file as an empty one, which here means EVERY link is gone, not just the
+    one being added. durations pays the same risk for a re-probe;
+    eveskills/controller.py already takes this route for the same reason,
+    that the file holds something nothing can rebuild.
     """
     try:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             key: {"size": e.size, "mtime": e.mtime, "url": e.url}
             for key, e in store.items()
         }
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        atomicio.write_atomic(Path(path), json.dumps(payload))
     except OSError:
         logger.warning("Could not persist upload links to %s", path, exc_info=True)
 

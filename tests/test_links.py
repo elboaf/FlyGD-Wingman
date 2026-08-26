@@ -59,6 +59,30 @@ def test_save_never_raises_on_an_unwritable_path(tmp_path):
     links.save(blocker / "links.json", store)
 
 
+def test_a_failed_save_leaves_the_previous_store_intact(tmp_path, monkeypatch):
+    """The reason save() goes through atomicio. A plain write_text truncates
+    before it writes, so a crash inside that window costs EVERY link rather
+    than the one being added -- and unlike a duration, none of them can be
+    rebuilt by re-running anything.
+    """
+    p = tmp_path / "links.json"
+    store = {}
+    links.remember(store, tmp_path / "a.mkv", 10, 100.0, URL)
+    links.save(p, store)
+
+    def boom(*args, **kwargs):
+        raise OSError("destination locked")
+
+    monkeypatch.setattr(links.atomicio, "replace_with_retry", boom)
+    links.remember(store, tmp_path / "b.mkv", 20, 200.0, URL)
+    links.save(p, store)
+
+    reloaded = links.load(p)
+    assert links.lookup(reloaded, tmp_path / "a.mkv", 10, 100.0) == URL
+    # And no debris beside it, which is atomicio's own guarantee.
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["links.json"]
+
+
 def test_one_malformed_entry_does_not_cost_the_others(tmp_path):
     """A duration can be recomputed by probing again. A link cannot be
     recomputed by anything, so discarding the whole file over one bad

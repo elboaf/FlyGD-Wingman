@@ -1125,6 +1125,11 @@ class Api:
         self._links[row_id] = url
         self._rows.set_link(row_id, url)
         info = self._rows.resolve(row_id)
+        # Nothing to persist for a row that has been rebuilt or deleted out
+        # from under the upload: the store is keyed on the file's identity
+        # and resolve() is the only thing that knows it. The in-memory
+        # entries above still stand, so this session keeps the link; only
+        # the next launch loses it. Same shape as set_link's own no-op.
         if info is not None:
             links.remember(self._link_store, info.path, info.size, info.mtime, url)
             links.save(self._links_file, self._link_store)
