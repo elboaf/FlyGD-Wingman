@@ -116,3 +116,53 @@ def resolve_interpreter(
         f"Tried: {tried or 'nothing -- no candidates at all'}\n"
         "Pass one with --python, or set WINGMAN_PY."
     )
+
+
+def launch_command(python: str, checkout: str, port: int) -> str:
+    """Build the cmd.exe invocation that starts the app with a debug port.
+
+    The `set` statements MUST run inside cmd.exe. WSL environment variables
+    do not cross into a Windows process at all, so the usual `FOO=x cmd`
+    form silently arrives as unset.
+
+    LOCALAPPDATA is deliberately NOT set: this tool shoots live state.
+    """
+    args = f"--remote-debugging-port={port} --remote-allow-origins=*"
+    return (
+        "cmd.exe /c "
+        f'"set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS={args}'
+        f" && cd /d {checkout}"
+        f' && {python} -m wingman"'
+    )
+
+
+def build_manifest(
+    *,
+    branch: str,
+    sha: str,
+    dirty: bool,
+    python: str,
+    viewport: dict,
+    eve_shown: bool,
+    shots: list[dict],
+    skipped: list[Screen],
+) -> dict:
+    """Describe the run precisely enough that the set cannot mislead.
+
+    A run that shot four screens because the EVE gate was off is correct; a
+    run that shot four and looks truncated is not. The difference is only
+    visible if the gate state and the skip list are recorded.
+    """
+    return {
+        "branch": branch,
+        "sha": sha,
+        "dirty": dirty,
+        "python": python,
+        "viewport": viewport,
+        "eve_shown": eve_shown,
+        "screens_total": len(SCREENS),
+        "shot_count": sum(1 for s in shots if not s.get("error")),
+        "failed": [s["key"] for s in shots if s.get("error")],
+        "skipped": [s.key for s in skipped],
+        "shots": shots,
+    }

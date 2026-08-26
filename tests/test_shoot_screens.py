@@ -217,3 +217,70 @@ def test_resolve_interpreter_reports_every_place_it_looked():
     with pytest.raises(shoot.InterpreterError) as excinfo:
         shoot.resolve_interpreter(None, None, search=list, probe=lambda path: True)
     assert "--python" in str(excinfo.value)
+
+
+def test_launch_command_sets_the_env_inside_cmd():
+    """WSL environment variables do NOT cross into a Windows process.
+
+    Passing FOO=x before the exe arrives as NOT PASSED. When PYTHONPATH was
+    lost this way the package resolved from cwd instead, so a run silently
+    exercised the MAIN checkout while the worktree fix sat unused -- and the
+    fix was declared broken against code that never contained it.
+    """
+    cmd = shoot.launch_command("C:/py/python.exe", "C:/dev/wingman", 9600)
+    assert cmd.startswith("cmd.exe /c ")
+    assert "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=" in cmd
+    assert "--remote-debugging-port=9600" in cmd
+    assert "--remote-allow-origins=*" in cmd
+    assert "cd /d C:/dev/wingman" in cmd
+    assert "-m wingman" in cmd
+
+
+def test_launch_command_does_not_redirect_localappdata():
+    """The agreed design shoots LIVE state. Redirecting it is a real
+    behaviour change, so assert it is absent rather than assume."""
+    cmd = shoot.launch_command("C:/py/python.exe", "C:/dev/wingman", 9600)
+    assert "LOCALAPPDATA" not in cmd
+
+
+def test_manifest_records_what_the_gate_skipped():
+    _, skipped = shoot.screens_for_gate(False)
+    manifest = shoot.build_manifest(
+        branch="main",
+        sha="abc1234",
+        dirty=False,
+        python="C:/py/python.exe",
+        viewport={"width": 1015, "height": 700},
+        eve_shown=False,
+        shots=[{"key": "uploader", "file": "01-uploader.png", "error": None}],
+        skipped=skipped,
+    )
+    assert manifest["eve_shown"] is False
+    assert sorted(manifest["skipped"]) == [
+        "profiles",
+        "settings-alerts",
+        "settings-bookmarks",
+        "settings-previews",
+        "skills",
+    ]
+    assert manifest["shot_count"] == 1
+    assert manifest["python"] == "C:/py/python.exe"
+
+
+def test_manifest_counts_a_failed_shot_as_not_shot():
+    """A set that looks complete but is not is the failure mode here."""
+    manifest = shoot.build_manifest(
+        branch="main",
+        sha="abc1234",
+        dirty=True,
+        python="C:/py/python.exe",
+        viewport={"width": 1015, "height": 700},
+        eve_shown=True,
+        shots=[
+            {"key": "uploader", "file": "01-uploader.png", "error": None},
+            {"key": "skills", "file": None, "error": "TypeError: x is undefined"},
+        ],
+        skipped=[],
+    )
+    assert manifest["shot_count"] == 1
+    assert manifest["failed"] == ["skills"]
