@@ -689,17 +689,31 @@ def test_the_uppercase_tracked_labels_split_headings_from_sub_labels():
 
     Derived from the sheet, not retyped: the group is found by grepping
     for the tracking, so adding a rule to it cannot skip the check.
+
+    The pattern is deliberately looser than the four selectors it expects,
+    because the failure that matters here is a SILENT one -- a fifth rule
+    the grep cannot see passes this test while breaking the rank. So it
+    accepts a leading indent (a rule nested in a media query, and also any
+    rule whose preceding comment was just stripped), a bare element
+    selector, and the `0.14em` spelling, none of which an anchored
+    `\\n[.#]...\\.14em` would have matched. Known and accepted gap: a
+    selector list split across lines is captured by its last line only.
+    That still fails the set comparison below rather than passing quietly,
+    which is the property being bought.
     """
     group = re.findall(
-        r"\n([.#][^\n{]*?)\s*\{([^}]*letter-spacing:\s*\.14em[^}]*)\}", CSS
+        r"(?m)^[ \t]*([^\n{}@/][^\n{}]*?)\s*\{"
+        r"([^{}]*letter-spacing:\s*0?\.14em[^{}]*)\}",
+        CSS,
+    )
+    # Counted BEFORE the dict: two rules sharing a selector collapse to one
+    # key, and "four keys" would then be true of a sheet with five rules.
+    assert len(group) == 4, (
+        "expected exactly four rules carrying the .14em uppercase treatment, "
+        f"found {len(group)}: {sorted(sel.strip() for sel, _ in group)} -- a "
+        "new one must pick a rank (see .card > h2's comment) and be added here"
     )
     selectors = {sel.strip(): body for sel, body in group}
-
-    assert len(selectors) == 4, (
-        "expected exactly four rules carrying the .14em uppercase treatment, "
-        f"found {len(selectors)}: {sorted(selectors)} -- a new one must pick "
-        "a rank below (see .card > h2's comment) and be added here"
-    )
 
     headings = {".card > h2", ".rail-head"}
     sub_labels = {".bind-group-name", ".alert-head > span"}
