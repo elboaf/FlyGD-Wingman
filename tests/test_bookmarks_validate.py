@@ -164,3 +164,53 @@ class TestRegistrationBlockers:
                 "no_windows",
                 "no_binds",
             ], section
+
+
+def test_the_groups_partition_every_bind_exactly_once():
+    """Round 5, C8. The route renders one block per group, so a bind that
+    fell through the derivation would not be shown at all -- and the screen
+    it disappeared from is one that already looks finished with no rows in
+    it at all (see tests/test_dev_harness.py's module docstring)."""
+    groups = bookmarks.bind_groups()
+    seen = [bid for group in groups for bid in group["ids"]]
+    assert seen == list(bookmarks.BIND_IDS), (
+        "bind_groups() dropped, duplicated or re-ordered a bind"
+    )
+    for group in groups:
+        assert set(group["short"]) == set(group["ids"])
+
+
+def test_the_group_shorts_are_the_labels_with_the_shared_token_lifted():
+    """The point of the split: the ten finishers opened with the same five
+    characters, which is why the route spent 618px of an 1112px card on
+    them. The heading carries the token now, so the SHORT label must be the
+    full one minus exactly that token -- if it is not, the block is a
+    second set of names for the same binds rather than the same names
+    read once."""
+    groups = {group["name"]: group for group in bookmarks.bind_groups()}
+    assert set(groups) == {"", "Finishers", "Tags"}
+
+    for bid, short in groups["Finishers"]["short"].items():
+        assert bookmarks.BIND_LABELS[bid] == "Finisher: " + short
+    for bid, short in groups["Tags"]["short"].items():
+        assert bookmarks.BIND_LABELS[bid].replace(" Tag", "", 1) == short
+    # The leading group heads nothing, so nothing is lifted out of it and
+    # its rows render at full length exactly as they always did.
+    for bid, short in groups[""]["short"].items():
+        assert bookmarks.BIND_LABELS[bid] == short
+
+
+def test_labels_that_share_no_token_fall_back_to_one_flat_group(monkeypatch):
+    """The failure mode for a fork is the OLD screen, not a broken one.
+    PRODUCT.md makes BIND_LABELS the table a fork rewrites for its own
+    house style; a fork whose scheme has no shared prefix gets a single
+    unnamed group, which renders as the flat list this replaced."""
+    monkeypatch.setattr(
+        bookmarks,
+        "BIND_LABELS",
+        {bid: bid.upper() for bid in bookmarks.BIND_IDS},
+    )
+    groups = bookmarks.bind_groups()
+    assert len(groups) == 1
+    assert groups[0]["name"] == ""
+    assert groups[0]["ids"] == list(bookmarks.BIND_IDS)

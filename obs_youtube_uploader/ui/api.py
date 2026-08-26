@@ -2850,8 +2850,20 @@ class Api:
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
             "order": list(bookmarks.BIND_IDS),
+            # Round 5, C8. Derived in bookmarks.bind_groups() from
+            # BIND_LABELS, never listed in the page: PRODUCT.md makes that
+            # table the one place a fork rewrites, and a second copy in JS
+            # is the copy a fork would not know to change. `order` above
+            # stays the flat list -- it is still the identity of the route's
+            # display order, and the page falls back to it if this is
+            # missing (an older payload, a fork that stripped it).
+            "groups": [dict(group) for group in bookmarks.bind_groups()],
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
+            # Round 5, C6: the mirror of _bookmark_chords. Previews warned
+            # about this collision on the screen that WINS it; the screen
+            # whose bind is the one silently overridden showed nothing.
+            "preview_chords": self._preview_chords(),
             # Human labels for the bound keys. Computed here rather than in
             # the page, which is the entire reason to_ahk returns a display
             # string: the page holds no mapping table and cannot drift from
@@ -2877,6 +2889,41 @@ class Api:
                     else []
                 ),
             },
+        }
+
+    def _preview_chords(self) -> dict:
+        """Preview chords, split by whether they are registered right now.
+
+        The mirror of _bookmark_chords() -- read that docstring for why the
+        collision exists at all and why the split is not a filter. This is
+        the same fact told from the other end: there, a bookmark chord that
+        a preview will take; here, the preview chords that take one.
+
+        "active" means previews are on, so Windows is holding these globally
+        and the matching bookmark bind cannot fire while EVE is focused.
+        "latent" means previews are off, so nothing is taken yet -- turning
+        them on would, which is exactly the state that leaves a user with a
+        bind that silently stopped working and nothing on screen about it.
+
+        Compared in display form, the common ground the two notations meet
+        on: preview gestures are STORED in display form
+        (preview/gestures.py), which is why nothing is rendered here.
+        """
+        preview = self._state.settings.get("preview") or {}
+        hotkeys = preview.get("hotkeys") or {}
+        chords = {
+            chord
+            for chord in [
+                *(hotkeys.get("characters") or {}).values(),
+                hotkeys.get("cycle_next"),
+                hotkeys.get("cycle_prev"),
+            ]
+            if chord
+        }
+        live = bool(preview.get("enabled"))
+        return {
+            "active": sorted(chords) if live else [],
+            "latent": [] if live else sorted(chords),
         }
 
     def save_bookmarks(self, section) -> dict:

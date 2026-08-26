@@ -432,6 +432,28 @@
     FinS: 'f Tag (frig hole)', FinC: 'c Tag (critical)'
   };
 
+  // The groups Api.get_bookmarks derives from BIND_LABELS via
+  // bookmarks.bind_groups(). A literal here for the same reason the two
+  // fixtures above are literals -- dev.js must not re-implement a rule it
+  // is meant to be a fixture for -- and asserted against the real
+  // derivation by tests/test_dev_harness.py, so it cannot drift.
+  var bookmarkGroups = [
+    { name: '', ids: ['GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout'],
+      short: { GrabSig: 'Grab Sig ID', SetRoot: 'Set Root',
+               FormatEnf: 'Format Enforcer',
+               ConvertScout: 'Convert EvE-Scout Bookmarks' } },
+    { name: 'Finishers',
+      ids: ['FinH', 'FinL', 'FinN', 'Fin13',
+            'Fin1', 'Fin2', 'Fin3', 'Fin4', 'Fin5', 'Fin6'],
+      short: { FinH: 'HS (highsec)', FinL: 'LS (lowsec)',
+               FinN: 'NS (nullsec)', Fin13: 'C13 (shattered)',
+               Fin1: 'C1', Fin2: 'C2', Fin3: 'C3',
+               Fin4: 'C4', Fin5: 'C5', Fin6: 'C6' } },
+    { name: 'Tags', ids: ['FinETag', 'FinSlash', 'FinS', 'FinC'],
+      short: { FinETag: 'e (end of life)', FinSlash: '/ (half mass)',
+               FinS: 'f (frig hole)', FinC: 'c (critical)' } }
+  ];
+
   api.get_bookmarks = function () {
     console.log('DEV api.get_bookmarks()');
     var keybinds = {};
@@ -461,6 +483,13 @@
       },
       labels: bookmarkLabels,
       order: bookmarkBinds,
+      groups: bookmarkGroups,
+      // C6's mirror of `bookmark_chords` on the Previews payload below, and
+      // deliberately the SAME chord: 'Ctrl+Alt+1' is bound to a character
+      // there, so the harness shows the latent mark on both screens at once
+      // rather than only on the one whose lane happened to be looking.
+      // Latent, because the previews fixture below ships enabled: false.
+      preview_chords: { active: [], latent: ['Ctrl+Alt+1'] },
       windows: ['EVE - Aiga Otsolen', 'EVE - Zuelo Parvi'],
       // Keyed by the parsed AHK string, valued with every bind id claiming
       // it -- bookmarks.collisions() only returns entries of length > 1.

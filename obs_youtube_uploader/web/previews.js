@@ -171,12 +171,25 @@
     // or a short row's children bleed into the next row's columns. Two
     // empty fillers keep the grid aligned instead of shrinking the column
     // count for those two rows only.
+    //
+    // Round 5, C3 and decision D6: the Never-minimize cell exists only
+    // while the global "Minimize a client's window..." toggle is ON. It
+    // used to be built for every character and then DISABLED whenever the
+    // global was off -- which is the default -- so the ordinary state of
+    // this screen was ~13 permanently dead controls, one per character,
+    // each carrying a tooltip explaining why it could not be used. D6
+    // keeps the setting per-character and stops it rendering at all in
+    // the state where it can do nothing.
+    //
+    // The cell count stays uniform ACROSS rows within one render, which is
+    // the invariant #preview-binds' grid actually needs; it is the track
+    // COUNT that varies, and render() tells the stylesheet which it is.
     if (character) {
       row.appendChild(makeLockCheck(character));
-      row.appendChild(makeNeverMinimizeCheck(character));
+      if (minimizeInactive) { row.appendChild(makeNeverMinimizeCheck(character)); }
     } else {
       row.appendChild(document.createElement('span'));
-      row.appendChild(document.createElement('span'));
+      if (minimizeInactive) { row.appendChild(document.createElement('span')); }
     }
     return row;
   }
@@ -216,25 +229,22 @@
     return label;
   }
 
+  // Only ever called with the global minimize toggle ON -- see makeRow.
+  // Until round 5 it was called unconditionally and disabled itself when
+  // the global was off, which is what D6 removed; the `.check.nm.disabled`
+  // rule that dimmed it went with it, and style.css records that where the
+  // rule used to be.
   function makeNeverMinimizeCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isNeverMinimize(name);
-    // `.nm`, not the bare `.check` DESIGN.md warns against dimming
-    // wholesale (`#lab-stitch.disabled` is scoped by id for exactly that
-    // reason): this label is the only place `.check.nm` is used, so
-    // scoping the disabled treatment to it dims this one control and
-    // nothing else on the page, the same intent with a class instead of
-    // an id because there is one of these per character rather than one
-    // on the whole screen.
+    // `.nm` is kept as the control's name in the DOM even with no rule
+    // hanging off it: it is how the smoke pass and the layout probes tell
+    // this checkbox from Lock, which are otherwise two identical .check
+    // labels in the same row.
     var label = WM.make('label', 'check nm', ' Never minimize');
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
-    if (!minimizeInactive) {
-      WM.setEnabled(box, false);
-      label.classList.add('disabled');
-      label.title = 'Turn on "Minimize inactive" above to use this.';
-    }
     box.addEventListener('change', function () {
       var wanted = box.checked;
       WM.send('set_never_minimize', name, wanted).then(function (res) {
@@ -298,6 +308,11 @@
 
   function render() {
     host.textContent = '';
+    // D6: which grid template #preview-binds takes. makeRow appends four
+    // cells per row instead of five while this is off, and a grid whose
+    // template still declared five would leave a max-content track holding
+    // nothing plus its 10px column-gap after the last live control.
+    host.classList.toggle('no-nm', !minimizeInactive);
 
     var off = WM.el('preview-binds-off');
     if (off) {

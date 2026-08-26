@@ -259,3 +259,38 @@ def test_the_bookmark_labels_are_not_a_hand_kept_copy():
     assert pairs == dict(bookmarks.BIND_LABELS), (
         "dev.js's bookmarkLabels has drifted from bookmarks.BIND_LABELS"
     )
+
+
+def test_the_bookmark_groups_are_not_a_hand_kept_copy():
+    """Round 5, C8's fixture. The route no longer renders eighteen rows in
+    one flat list: `bookmarks.bind_groups()` splits them and shortens the
+    labels, and the page renders a named group as a multi-column block.
+
+    That makes this fixture load-bearing in the same way `bookmarkLabels`
+    is, and in one extra way. A harness whose groups disagree with the
+    derivation would render the layout the lane was verifying at a row
+    count and a label length the app never produces -- and the derivation
+    is exactly the part with no other coverage on screen, because the
+    grouping is invisible in the payload and only visible in the shape of
+    the rendered card.
+    """
+    block = DEV_JS[DEV_JS.index("var bookmarkGroups = [") :]
+    block = block[: block.index("\n  ];")]
+    # Each `{ name: ..., ids: [...], short: {...} }` in source order.
+    groups = []
+    for chunk in re.findall(
+        r"\{\s*name:\s*'([^']*)',\s*ids:\s*\[(.*?)\],\s*short:\s*\{(.*?)\}\s*\}",
+        block,
+        re.DOTALL,
+    ):
+        name, ids, short = chunk
+        groups.append(
+            {
+                "name": name,
+                "ids": re.findall(r"'([^']+)'", ids),
+                "short": dict(re.findall(r"(\w+):\s*'([^']*)'", short)),
+            }
+        )
+    assert groups == [dict(g) for g in bookmarks.bind_groups()], (
+        "dev.js's bookmarkGroups has drifted from bookmarks.bind_groups()"
+    )

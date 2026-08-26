@@ -460,20 +460,29 @@
          the app on one of its least-visited screens. -->
     <div class="settings" id="section-bookmarks">
       <section class="card">
-        <!-- Round 2's finding 7: three card headings in this section
-             all opened with the same word, in a section already named
-             Bookmarks. This one now leads with what distinguishes it --
-             the feature this card switches on, named as the rest of the
-             app names it (General's hint, PRODUCT.md, CLAUDE.md all say
-             "bookmark keybinds").
+        <!-- Round 5, C7. This card and the switch that opens it USED TO BE
+             TWO CARDS. `Bookmark keybinds` was a titled card holding one
+             checkbox and the word `Running` -- ~113 CSS px of card for one
+             control -- and it was the third name for one idea in a single
+             viewport: rail `Bookmarks`, card `BOOKMARK KEYBINDS`, card
+             `EVE-FOCUSED KEYBINDS`. Merged, so the switch now opens the
+             thing it switches on and there are two names left.
 
-             The other two keep EVE first ON PURPOSE, and the finding is
-             wrong about them: `EVE windows` led by `Windows` reads as the
-             operating system, and `EVE-focused` is precisely the fact
-             that separates that card from the global set under Previews.
-             Two of the three lead with their distinguishing word already;
-             it just happens to be EVE. -->
-        <h2>Bookmark keybinds</h2>
+             Round 2's finding 7 is preserved rather than reverted: it asked
+             that three headings not all open with the same word, and the
+             two that are left do not. `EVE-focused` stays first here
+             ON PURPOSE, because it is precisely the fact that separates
+             this set from the global one under Previews, and `EVE windows`
+             keeps its lead word because `Windows` alone reads as the
+             operating system.
+
+             It is also the FIRST card in the section now, ahead of
+             `EVE windows`. The feature's own switch belongs at the top of
+             its section; the window list is set once and revisited rarely
+             (see the `(running)` note in bookmarks.js), and eighteen binds
+             between it and the switch would have put the gate ~800px below
+             the fold. -->
+        <h2>EVE-focused keybinds</h2>
         <div class="row">
           <!-- The .check/.box pattern is not decoration: .check input is
                opacity:0 and the styled .box is the visible control. A bare
@@ -501,44 +510,42 @@
              fluency in EVE, explain Wingman. Api.import_bookmarks and its
              tests are deliberately left in place; removing a bridge method
              is another lane's file. -->
-      </section>
 
+        <!-- Round 5, C5. This used to STATE the precedence rule in full,
+             in the same words as the matching note under Previews &rsaquo;
+             Global keybinds -- round 3's R4 finding 4 put it in both
+             places deliberately, so that neither screen left the reader to
+             assemble the rule from two halves. That fixed the wording and
+             left the duplication: two cards, ~400px apart in one settings
+             route, each spending a paragraph explaining the other.
 
-      <section class="card">
-        <h2>EVE windows</h2>
-        <p class="hint">Keybinds only fire while one of these windows is
-          active.</p>
-        <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-refresh-windows">Refresh</button></div>
-        <div id="eve-windows"></div>
-      </section>
-
-      <section class="card">
-        <h2>EVE-focused keybinds</h2>
-        <!-- Round 3, R4's finding 4. This and the matching hint under
-             Previews &rsaquo; Global keybinds pointed at each other and
-             left the reader to work out what `takes` meant: precedence,
-             consumption, or disabling. It is precedence, and the app
-             already knows which way it runs -- Api._bookmark_chords: a
-             preview chord is a global RegisterHotKey and a bookmark chord
-             is an AHK hotkey scoped with #HotIf WinActive, so where they
-             collide the preview wins while EVE is focused and the
-             bookmark simply does not fire. Windows reports nothing,
-             because the scoped hotkey is not a registration to collide
-             with.
-
-             Both sections now state that one rule in the same words, so
-             it is learned once rather than assembled from two halves. The
-             cross-reference stays: PRODUCT.md asks for it, and a user who
-             cannot find the other set is the worse outcome. -->
-        <p class="hint">Previews have a second set that fires anywhere, not
-          only in EVE &mdash; Settings &rsaquo; Previews. Where both use
-          the same keys the Previews one wins, and the bookmark does not
-          fire.</p>
+             The full statement now lives ONCE, under Previews, because
+             that is the set that wins and the set whose chords are global.
+             What is left here is the pointer plus the one thing this
+             screen adds: the binds that LOSE are marked, which is C6 and
+             is new -- until this round the warning was only ever on the
+             screen that wins. -->
+        <p class="hint">Previews have a second set of keybinds that fire in
+          any application &mdash; Settings &rsaquo; Previews, which states
+          what happens when both use the same key. A bookmark that loses its
+          key is marked below.</p>
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
           <button class="btn" id="eve-reset-binds">Reset to defaults</button></div>
+      </section>
+
+      <section class="card">
+        <h2>EVE windows</h2>
+        <!-- The second sentence is C9's half of the fix and is load-bearing,
+             not padding: bookmarks.js marks only the exception now, and this
+             is what stops "no mark" being something the reader has to infer.
+             See the comment on that branch for what it replaced. -->
+        <p class="hint">Keybinds only fire while one of these windows is
+          active. All of these are running unless marked otherwise.</p>
+        <div class="row"><span class="lab"></span>
+          <button class="btn" id="eve-refresh-windows">Refresh</button></div>
+        <div id="eve-windows"></div>
       </section>
     </div>
 
@@ -572,6 +579,36 @@
             each preview in a default stack instead. Positions are still
             remembered while this is off, so turning it back on restores
             what you last had.</span></div>
+        <!-- Round 5, C4. This lived under GLOBAL KEYBINDS until round 5,
+             where it was the one control in that card that is not a
+             keybind: it changes what happens to a client's WINDOW when you
+             switch away from it, which is the same kind of fact as
+             "reopen previews where you last put them" directly above.
+             It is also the control that governs every per-character
+             Never-minimize box, and since D6 those boxes do not exist
+             until it is on -- so it now sits with the other window
+             behaviour, one card above the rows it creates. -->
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
+            Minimize a client's window while it is not the one you switched to
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Static baseline text, same DEFAULT_HINT/say() pattern as
+               preview-show-labels-status: settings.js overwrites this with
+               a persistence failure or the previews-off dependence note,
+               then restores it.
+
+               The second sentence changed with D6: the per-character
+               exemption is no longer something the reader can go and look
+               at while this is off, because it is not rendered then. So it
+               says what turning this on ADDS, rather than pointing at a
+               row of dimmed checkboxes that used to be there. -->
+          <span class="hint" id="preview-minimize-inactive-status">Applies
+            the next time a client is switched away from, not this one.
+            Turning it on gives each character a "Never minimize" box under
+            Global keybinds below, to exempt them.</span></div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -582,7 +619,21 @@
           <span class="hint" id="preview-show-labels-status"></span></div>
         <div class="row">
           <label class="lab" for="preview-opacity">Opacity</label>
-          <input type="range" id="preview-opacity" min="20" max="255">
+          <!-- PERCENT, not the DWM alpha byte. Round 5's C2: this control
+               was min="20" max="255" and its readout printed box.value, so
+               the slider at its floor said "20" -- which reads as 20% and
+               is 7.8%. settings.js converts on both edges; the stored key
+               is still the 0-255 byte the thumbnail wants.
+
+               min="8" is NOT a rounded-off 10. settings.validated_preview
+               clamps opacity to 20-255, and 8% is that floor expressed in
+               this control's units: round(8 * 255 / 100) == 20 exactly, so
+               the slider can still reach the lowest value the backend will
+               keep, and a stored 20 renders back as 8 rather than as a
+               number the slider cannot show. test_page_conventions.py
+               asserts that round-trip against settings.py rather than
+               against this comment. -->
+          <input type="range" id="preview-opacity" min="8" max="100">
           <span class="range-value" id="preview-opacity-value"></span>
         </div>
         <div class="row"><span class="lab"></span>
@@ -597,16 +648,30 @@
 
       <section class="card">
         <h2>Global keybinds</h2>
-        <!-- The other half of finding 4. Same rule, same words as the
-             hint under Bookmarks &rsaquo; Bookmark keybinds; the reasoning
-             is there. -->
+        <!-- THE precedence statement, and after round 5's C5 the only
+             one. Round 3's R4 finding 4 put the same rule in the same
+             words under Bookmarks as well, deliberately: each screen used
+             to state half of it and leave the reader to work out what
+             `takes` meant. That fixed the wording and left two cards
+             ~400px apart in one settings route each spending a paragraph
+             explaining the other.
+
+             It stays HERE rather than there because this is the set that
+             wins: these chords are global RegisterHotKey registrations,
+             the bookmark ones are AHK hotkeys scoped with #HotIf
+             WinActive, so where they collide the preview wins while EVE is
+             focused and the bookmark simply does not fire -- and Windows
+             reports nothing, because a scoped hotkey is not a registration
+             to collide with (Api._bookmark_chords). Bookmarks now carries
+             a pointer to this sentence plus the thing only that screen can
+             say: which of ITS binds lost (C6). -->
         <div class="row"><span class="lab"></span>
           <span class="hint">These work from any application, including a
             browser, and are released while previews are switched off.
             Bookmarks have a second set that fires only in EVE &mdash;
             Settings &rsaquo; Bookmarks. Where both use the same keys this
             set wins and the bookmark does not fire; those are marked
-            below.</span></div>
+            below, and on the Bookmarks list too.</span></div>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
              and written in by previews.js (walkthrough Settings 1). It
@@ -617,20 +682,6 @@
              state and not a gap. -->
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-off" hidden></span></div>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
-            Minimize a client's window while it is not the one you switched to
-          </label>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <!-- Static baseline text, same DEFAULT_HINT/say() pattern as
-               preview-show-labels-status: settings.js overwrites this with
-               a persistence failure or the previews-off dependence note,
-               then restores it. -->
-          <span class="hint" id="preview-minimize-inactive-status">Applies
-            the next time a client is switched away from, not this one.
-            A character marked "Never minimize" below is exempt.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to

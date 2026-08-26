@@ -1342,14 +1342,16 @@ button.btn:disabled,
    with a precondition the app can check for itself (two rows selected). */
 #lab-stitch.disabled { opacity: .45; cursor: default; }
 
-/* Same rationale as #lab-stitch.disabled above, but there is no single
-   static id to scope to: Never-minimize is one checkbox PER character row
-   (previews.js's makeNeverMinimizeCheck), built and torn down as the
-   roster changes. `.check.nm` is a class used nowhere else, so this stays
-   just as narrow as the id form -- it dims only the row-level Never-
-   minimize label previews.js adds `.disabled` to while minimize-inactive
-   is off, not every `.check` in the app. */
-.check.nm.disabled { opacity: .45; cursor: default; }
+/* No `.check.nm.disabled` rule any more, and the space is kept so the next
+   reader does not re-derive it. It dimmed the per-character Never-minimize
+   checkbox while the global minimize toggle was off -- the DEFAULT state,
+   so the ordinary Previews screen carried one dead, dimmed control per
+   character. Round 5's C3 measured ~13 of them; decision D6 answered that
+   the setting stays per-character but must not render at all in the state
+   where it can do nothing, so previews.js no longer builds the control
+   there and nothing is left to dim. #lab-stitch.disabled above is the
+   surviving instance of the same treatment, and the reasoning for scoping
+   it narrowly rather than putting an opacity on `.check` is there. */
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
@@ -1770,6 +1772,20 @@ button.btn:disabled,
      them. Change the number of per-row children and this number changes
      with it. */
   grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
+}
+/* Four, in the default state. Decision D6 (round 5, C3): the per-character
+   Never-minimize checkbox does not render while the global minimize toggle
+   is off, so previews.js appends four cells per row instead of five and
+   sets this class in the same render. Declaring five regardless would
+   leave a max-content track holding nothing -- harmless in itself, but it
+   still carries its 10px column-gap, so the row would end in a gap after
+   Lock with no control in it.
+
+   The count here is one less than the block above BY HAND, which is the
+   one thing in this pair that can drift; test_page_conventions.py asserts
+   the difference rather than either number. */
+#preview-binds.no-nm {
+  grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -2381,6 +2397,49 @@ button.btn:disabled,
 @media (max-width: 720px) {
   #eve-binds .row > .lab { grid-column: 1 / -1; }
 }
+
+/* Round 5's C8: the dense block a NAMED bind group renders into. Eighteen
+   binds were one flat list at 61.8px a row, ten of them opening with the
+   same five characters ("Finisher: "). That token is now the group heading
+   (.bind-group above, shared with #preview-binds), so what is left --
+   "C1", "e (end of life)" -- is uniformly short, and a subset that has
+   become uniformly short can take a different layout without touching the
+   row geometry B1 settled. This is .es-roster's technique (`columns:`), NOT
+   a modified bind row: the name still takes its own line above its control
+   line, which is the only thing that keeps the bind button at x=0 in both
+   lists. An inline label here would be B1 again.
+
+   THE COLUMN WIDTH IS THE CONTROL LINE, not the label. Measured at the 840
+   floor: .bindbtn's 150px min-width plus Clear at 42.0 and Edit… at 43.8
+   plus two 10px gaps = 255.8. 256 is that rounded UP so a column cannot
+   clip a control, and it MOVES when a control is renamed -- B6's
+   Type… -> Edit… took 6.4px off the same figure one block down.
+   Re-measure rather than nudging it. test_page_conventions.py asserts the
+   relationship it can read out of this file (the column is at least
+   .bindbtn's min-width); the rest of the sum is in two other rules.
+
+   Two columns at the 586px card interior, six at a comfortable width,
+   decided by the browser rather than by a media query -- which is the
+   whole reason to reach for multicol rather than a track count. */
+.bind-dense { grid-column: 1 / -1; columns: 256px; column-gap: 20px; }
+
+/* Inside the block the rows are boxes again rather than display:contents
+   cells: they are no longer children of #eve-binds' grid, they are content
+   inside one span of it, so there are no shared tracks left to align to and
+   the three controls line up per item instead. `break-inside: avoid` is
+   load-bearing -- without it a column break lands between a name and its
+   own bind button, which reads as a bind belonging to the row above.
+
+   The 10px/4px gaps and the .lab's 8px margin-top are restated from
+   #eve-binds above rather than inherited: this is a flex context and the
+   grid's own gaps do not reach it. Same two numbers, same reason they are
+   two numbers and not one. */
+#eve-binds .bind-dense .row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  column-gap: 10px; row-gap: 4px;
+  break-inside: avoid;
+}
+#eve-binds .bind-dense .row > .lab { flex: 0 0 100%; }
 
 /* Bind rows. .bindbtn shows the current combination and is the capture
    target; .linkbtn is the secondary Clear / Edit… affordance. Both follow

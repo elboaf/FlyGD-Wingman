@@ -161,6 +161,56 @@ BIND_LABELS = {
     "FinC": "c Tag (critical)",
 }
 
+# The three groups the eighteen binds already fall into, DERIVED from the
+# labels above rather than listed again here. Round 5's C8: the route
+# rendered one flat list of eighteen rows, ten of which opened with the same
+# five characters and differed in the last token, at 61.8px per row.
+#
+# Derived, and derived from the LABELS specifically, because PRODUCT.md
+# names BIND_LABELS as the one table a fork rewrites to carry its own house
+# style: a fork that renames "Finisher: C1" to its own scheme gets its own
+# grouping out of the same edit, and a second list here would be the thing
+# it forgot to change. The ids cannot do the job -- FinS ("f Tag") and FinN
+# ("Finisher: NS") share a prefix and land in different groups.
+#
+# The failure mode is deliberately the OLD screen, not a broken one: a fork
+# whose labels match neither marker puts every bind in the leading unnamed
+# group, which renders exactly as the flat list did.
+_GROUP_FINISHER_PREFIX = "Finisher: "
+_GROUP_TAG_MARKER = " Tag"
+
+
+def bind_groups() -> tuple[dict, ...]:
+    """BIND_IDS split into display groups, in BIND_IDS order.
+
+    Each group is ``{"name", "ids", "short"}``. ``name`` is "" for the
+    leading group, which heads nothing because its members share no token
+    to lift. ``short`` maps id -> the label with the group's shared token
+    removed, which is what makes the members short enough to render as a
+    multi-column block instead of one full-width row each.
+
+    Order within a group, and the order of the groups themselves, follow
+    BIND_IDS -- the route's display order, which matches the standalone
+    GUI's (see BIND_IDS above). Nothing here re-sorts anything.
+    """
+    buckets: dict[str, dict] = {}
+    order: list[str] = []
+    for bid in BIND_IDS:
+        label = BIND_LABELS[bid]
+        if label.startswith(_GROUP_FINISHER_PREFIX):
+            key, short = "Finishers", label[len(_GROUP_FINISHER_PREFIX) :]
+        elif _GROUP_TAG_MARKER in label:
+            key, short = "Tags", label.replace(_GROUP_TAG_MARKER, "", 1)
+        else:
+            key, short = "", label
+        if key not in buckets:
+            buckets[key] = {"name": key, "ids": [], "short": {}}
+            order.append(key)
+        buckets[key]["ids"].append(bid)
+        buckets[key]["short"][bid] = short
+    return tuple(buckets[key] for key in order)
+
+
 # Only ConvertScout ships bound, which is exactly what the standalone
 # script did: its compiled-in IniRead defaults (111unified.ahk:120-140) and
 # its own Reset Defaults handler (:655-676) leave every other bind blank.
