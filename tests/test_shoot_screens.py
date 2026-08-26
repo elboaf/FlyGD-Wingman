@@ -284,3 +284,36 @@ def test_manifest_counts_a_failed_shot_as_not_shot():
     )
     assert manifest["shot_count"] == 1
     assert manifest["failed"] == ["skills"]
+
+
+def test_restore_incumbent_keeps_a_spaced_install_path_intact(monkeypatch):
+    """Prevents the drift that broke every real restore: the old
+    `.split()` implementation tokenized the installed exe's own quoted
+    command line on its embedded space, producing two nonexistent paths
+    that cmd could not launch."""
+    calls = []
+    monkeypatch.setattr(
+        shoot.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw))
+    )
+    command_line = (
+        '"C:\\Users\\tng\\AppData\\Local\\Programs\\FlyGD Wingman\\Wingman.exe"'
+    )
+    shoot.restore_incumbent(command_line)
+    (args, kwargs) = calls[0]
+    called_with = args[0]
+    assert "FlyGD Wingman\\Wingman.exe" in called_with
+    assert kwargs.get("shell") is True
+
+
+def test_restore_incumbent_keeps_source_build_arguments_intact(monkeypatch):
+    """Prevents the drift where a source-build command line's trailing
+    `-m wingman` argument gets separated from its quoted interpreter path."""
+    calls = []
+    monkeypatch.setattr(
+        shoot.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw))
+    )
+    command_line = '"C:\\Python312\\python.exe" -m wingman'
+    shoot.restore_incumbent(command_line)
+    (args, _kwargs) = calls[0]
+    called_with = args[0]
+    assert "-m wingman" in called_with

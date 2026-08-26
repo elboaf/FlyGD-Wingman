@@ -259,8 +259,25 @@ def await_incumbent_exit(timeout_s: float = 120.0) -> None:
 
 
 def restore_incumbent(command_line: str) -> None:
-    """Relaunch exactly what was running before."""
-    subprocess.Popen(["cmd.exe", "/c", "start", "", *command_line.split()])
+    """Relaunch exactly what was running before.
+
+    `command_line` is Win32_Process.CommandLine, which comes back already
+    quoted -- for the installed build, verbatim
+    '"C:\\...\\Programs\\FlyGD Wingman\\Wingman.exe"'. That install path
+    contains a space, so tokenizing it with `.split()` (the previous
+    implementation) shredded it into two nonexistent paths and cmd launched
+    neither -- the user's own Wingman never came back. Hand the string to
+    cmd as ONE piece and let it parse quoting the same way it was produced,
+    instead of re-tokenizing something that is already a complete, correctly
+    quoted command line. This also has to survive the source-build form,
+    which legitimately carries trailing arguments, e.g.
+    '"C:\\...\\python.exe" -m wingman'.
+    """
+    # shell=True runs this through cmd.exe /c. The empty "" is start's own
+    # title argument and must stay -- without it, start treats a quoted
+    # first token as the window title and opens a bare console instead of
+    # the app.
+    subprocess.Popen(f'start "" {command_line}', shell=True)
 
 
 class TargetError(Exception):
