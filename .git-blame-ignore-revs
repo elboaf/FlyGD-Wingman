@@ -37,3 +37,6 @@
 
 # Adopt ruff format across the tree (136 Python files, no behaviour change)
 f20055e08ea4a74958702abe1a8329e3adc355fc
+
+# Rename the obs_youtube_uploader package to wingman (no behaviour change)
+e6d548a385854f8dc15b2e8f69fb4398b2ef812b
