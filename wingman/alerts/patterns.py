@@ -211,11 +211,23 @@ def _target_is_character(target: str, character: str) -> bool:
     lowered, wanted = text.lower(), name.lower()
     if lowered == wanted:
         return True
-    # Boundary-checked prefix, not a bare startswith: the target carries a
-    # corp ticker and hull after the name ("Bob Smith [BURN] Rifter"), but
-    # an unchecked prefix would also let "Bob Smith" answer for a
-    # different pilot named "Bob Smithson".
-    return lowered.startswith(wanted) and lowered[len(wanted)] in " ["
+    # A corp ticker ends the name exactly, so when one is present compare
+    # against just that much. EVE names are two OR three words, which
+    # makes a prefix test alone genuinely wrong rather than merely loose:
+    # "Bob Smith" is a word-boundary prefix of the equally valid name
+    # "Bob Smith Jones", so without this a pilot would alert for a
+    # fleet-mate whose name simply starts the same way.
+    ticker = lowered.find("[")
+    if ticker != -1:
+        return lowered[:ticker].strip() == wanted
+    # No ticker: EVE's own client renders a pilot it cannot resolve as a
+    # bare "Name Hull" with no bracket anywhere (the shape documented
+    # above _NPC_ADJECTIVES, confirmed against real fights). There is
+    # nothing to anchor on, so fall back to a boundary-checked prefix --
+    # loose in the "Bob Smith Jones" case above, but the alternative is
+    # going silent on a real tackle, which this module consistently
+    # treats as the worse error.
+    return lowered.startswith(wanted) and lowered[len(wanted)] == " "
 
 
 def _extract_source(line: str) -> str:

@@ -397,4 +397,19 @@ def test_a_corpus_warp_line_alerts_only_the_pilot_it_belongs_to():
     for _who, line in _corpus_lines():
         if "warp" not in line.lower():
             continue
-        assert patterns.match_line(line, "Nobody Atall") is None or "you!" in line
+        if line.rstrip().endswith("you!"):
+            # "you" is whoever is reading, so this shape cannot be
+            # third-party by construction and proves nothing here.
+            continue
+        assert patterns.match_line(line, "Nobody Atall") is None
+
+
+def test_a_three_word_name_is_not_answered_for_by_its_two_word_prefix():
+    """EVE names are two OR three words, so "Bob Smith" is a genuine
+    word-boundary prefix of the equally valid "Bob Smith Jones". The corp
+    ticker is what ends the name exactly, and comparing against just that
+    much is what keeps a pilot from alerting for a fleet-mate whose name
+    merely starts the same way."""
+    line = SELF_NAMED_SCRAMBLE.replace(CHARACTER, CHARACTER + " Jones")
+    assert patterns.match_line(line, CHARACTER) is None
+    assert patterns.match_line(line, CHARACTER + " Jones").event == "warp_scramble"
