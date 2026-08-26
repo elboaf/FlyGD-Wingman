@@ -10,6 +10,8 @@ decision is a pure function that the Linux test suite covers, and the
 Windows shell below them holds none.
 """
 
+import subprocess
+import time
 from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlparse
@@ -166,3 +168,88 @@ def build_manifest(
         "skipped": [s.key for s in skipped],
         "shots": shots,
     }
+
+
+APP_EXE = "Wingman.exe"
+
+# NOT a `CommandLine -like '*wingman*'` match. The checkout directory is
+# named flygd-wingman, so that pattern matches every process whose command
+# line contains the repo path -- this script included, and an editor with
+# the repo open -- and close_incumbent would taskkill them. Match on
+# process IDENTITY instead: the installed exe by name, or a python
+# running `-m wingman` as its module.
+_MATCH = (
+    f"$_.Name -eq '{APP_EXE}'"
+    " -or ($_.Name -like 'python*.exe'"
+    " -and $_.CommandLine -match '-m\\s+wingman(\\s|$)')"
+)
+
+
+class BusyError(Exception):
+    """The app would not close, most likely because it is uploading."""
+
+
+def _powershell(script: str) -> str:
+    out = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return out.stdout.strip()
+
+
+def find_incumbent() -> str | None:
+    """Return the running app's full command line, or None.
+
+    Read rather than assumed: the incumbent may be the installed exe or a
+    source checkout, and restoring the wrong one is worse than not
+    restoring at all.
+    """
+    script = (
+        "Get-CimInstance Win32_Process"
+        f" | Where-Object {{ {_MATCH} }}"
+        " | Select-Object -First 1 -ExpandProperty CommandLine"
+    )
+    return _powershell(script) or None
+
+
+def close_incumbent(timeout_s: float = 20.0) -> None:
+    """Ask the app to close, and accept no for an answer.
+
+    taskkill WITHOUT /F posts WM_CLOSE and lets the app take its own path.
+    There is deliberately no /F escalation:
+
+      - atomicio does NOT cover settings.json, seen.json or token.json
+        (settings.py:559 and watcher.py:47 are plain write_text;
+        uploader.py:340 opens with O_TRUNC), so a forced kill can truncate
+        live state; and
+      - _confirm_quit_if_busy (__main__.py:621) exists precisely so that
+        quitting cannot discard an upload in flight.
+
+    A refusal to exit is very often that guard doing its job. A screenshot
+    is never worth overriding it, so a timeout aborts the run.
+    """
+    script = (
+        "Get-CimInstance Win32_Process"
+        f" | Where-Object {{ {_MATCH} }}"
+        " | ForEach-Object { taskkill /PID $_.ProcessId }"
+    )
+    _powershell(script)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if find_incumbent() is None:
+            return
+        time.sleep(0.5)
+    raise BusyError(
+        "Wingman did not close within "
+        f"{timeout_s:.0f}s. It may be uploading -- _confirm_quit_if_busy "
+        "refuses to quit mid-upload on purpose.\n"
+        "Nothing was killed and nothing needs restoring. Quit it from the "
+        "tray menu when the upload finishes, then re-run."
+    )
+
+
+def restore_incumbent(command_line: str) -> None:
+    """Relaunch exactly what was running before."""
+    subprocess.Popen(["cmd.exe", "/c", "start", "", *command_line.split()])
