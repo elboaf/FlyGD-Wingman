@@ -2585,6 +2585,26 @@ class Api:
             self._preview_host.restyle()
         return result
 
+    def set_preview_lock_aspect(self, enabled) -> dict:
+        """Persist whether the drag handle holds the client's shape, then
+        push it live via PreviewHost.restyle().
+
+        Live-pushed for the same reason as snap: PreviewWindow reads the
+        flag when a drag begins, so a write that only touched settings
+        would leave the checkbox inert until the next launch.
+
+        Unchecked, the handle resizes freely and DWM stretches the picture
+        to whatever rectangle it is given -- it does NOT letterbox, which
+        is measured in docs/preview-sizing-design.md. That is the cost the
+        hint names, and it is the same cost a mismatched typed size in
+        Size... has always carried; this only makes that escape hatch
+        reachable from the handle.
+        """
+        result = self._write_preview_setting(("lock_aspect",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
     def set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.
 

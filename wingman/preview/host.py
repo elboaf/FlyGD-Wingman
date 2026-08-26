@@ -145,6 +145,7 @@ class PreviewHost:
         never_minimize=None,
         locked=None,
         snap=None,
+        lock_aspect=None,
         clear_layouts=None,
     ):
         self._on_layout_changed = on_layout_changed
@@ -188,6 +189,10 @@ class PreviewHost:
         # open. None means "the caller has not wired this yet" -- see
         # _snapping.
         self._snap = snap
+        # Same live-read contract as _snap: PreviewWindow samples it when a
+        # drag begins, so the Settings checkbox must reach an already-open
+        # preview without a restart.
+        self._lock_aspect = lock_aspect
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -624,6 +629,7 @@ class PreviewHost:
                 show_labels=self._labels_shown(),
                 opacity=self._current_opacity(),
                 snap=self._snapping(),
+                lock_aspect=self._locking_aspect(),
             )
             if win is not None:
                 self._windows[key] = win
@@ -1150,6 +1156,23 @@ class PreviewHost:
             logger.exception("Could not read preview.snap; leaving snapping on")
             return True
 
+    def _locking_aspect(self) -> bool:
+        """Whether the resize handle holds the client's shape, read live.
+
+        Same posture as _snapping(): runs on the preview thread inside the
+        pump, so a callable that raises must not kill it. Falls back to
+        locking -- the behaviour that predates the toggle.
+        """
+        if self._lock_aspect is None:
+            return True
+        try:
+            return bool(self._lock_aspect())
+        except Exception:
+            logger.exception(
+                "Could not read preview.lock_aspect; leaving the aspect locked"
+            )
+            return True
+
     def _labels_shown(self) -> bool:
         """Whether preview chrome draws a label band, read live.
 
@@ -1238,6 +1261,7 @@ class PreviewHost:
             win.opacity = opacity
             win.locked = self._is_locked(key)
             win.snap = self._snapping()
+            win.lock_aspect = self._locking_aspect()
             win.redraw()
             # Mirrors PreviewWindow.create/.move: opacity is a DWM
             # thumbnail property, not a chrome pixel, so it needs its own

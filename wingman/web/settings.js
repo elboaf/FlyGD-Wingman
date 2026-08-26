@@ -929,6 +929,59 @@
   }
 }());
 
+// ---- Keep previews the same shape as their client ----------------------
+// Same shape as preview-snap above, and live for the same reason: the
+// flag is sampled when a resize drag begins, so a write that did not
+// restyle would leave this inert until the next launch.
+(function () {
+  var box = WM.el('preview-lock-aspect');
+  var status = WM.el('preview-lock-aspect-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enabled = WM.el('preview-enabled');
+    return !!(enabled && enabled.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_lock_aspect', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        box.checked = !wanted;
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      say(wanted
+        ? 'Previews keep their client\u2019s shape.'
+        : 'The resize handle is freeform; the picture will stretch.');
+      sayDependence();
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    box.checked = !(s.preview && s.preview.lock_aspect === false);
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());
+
 // ---- Reset previews to defaults ----------------------------------------
 // A one-shot action, not a persistent field: there is nothing to revert
 // on refusal and nothing to read back from wm:settings. WM.confirm's

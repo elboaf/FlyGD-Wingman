@@ -652,6 +652,17 @@
           </label>
           <span class="hint" id="preview-snap-status">Off places a dragged
             preview exactly where you drop it.</span></div>
+        <div class="row"><label class="check">
+            <input type="checkbox" id="preview-lock-aspect"><span class="box"></span>
+            Keep previews the same shape as their client
+          </label>
+          <!-- "Stretches", not "letterboxes": DWM scales a thumbnail to
+               fill whatever rectangle it is given, measured in
+               docs/preview-sizing-design.md. An earlier draft of this
+               feature promised black bars that never appear. -->
+          <span class="hint" id="preview-lock-aspect-status">Off lets the
+            resize handle move each edge freely, stretching the
+            picture.</span></div>
         <div class="row">
           <button class="btn danger" id="preview-reset">Reset previews</button>
           <span class="hint" id="preview-reset-status">Puts every preview

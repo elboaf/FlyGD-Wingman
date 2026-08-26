@@ -86,6 +86,7 @@ def test_defaults_are_the_documented_values():
             "never_minimize": [],
             "locked": [],
             "snap": True,
+            "lock_aspect": True,
         },
         "eve_settings": {
             "root": None,
@@ -428,3 +429,23 @@ def test_update_releases_the_lock_when_the_body_raises(tmp_path):
         raise ValueError("nope")
 
     assert not settings._SAVE_LOCK.locked()
+
+
+def test_preview_lock_aspect_defaults_on_and_survives_a_round_trip(tmp_path):
+    """On by default because it is what shipped: the drag handle has always
+    held the client's shape. A new key whose default matches current
+    behaviour needs no defaults_version bump."""
+    path = tmp_path / "settings.json"
+    assert settings.load(path)["preview"]["lock_aspect"] is True
+
+    doc = settings.load(path)
+    with settings.update(doc, path) as live:
+        live["preview"]["lock_aspect"] = False
+    assert settings.load(path)["preview"]["lock_aspect"] is False
+
+
+def test_preview_lock_aspect_ignores_a_non_bool(tmp_path):
+    """Same guard every other preview bool gets: a junk value falls back to
+    the default rather than reaching PreviewWindow as a truthy string."""
+    section = settings.validated_preview({"lock_aspect": "yes"})
+    assert section["lock_aspect"] is True

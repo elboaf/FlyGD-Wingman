@@ -708,3 +708,39 @@ def test_set_bind_capture_without_a_host_says_so(monkeypatch, tmp_path):
     api._preview_host = None
 
     assert api.set_bind_capture(True) is False
+
+
+def test_set_preview_lock_aspect_persists_and_pushes_live(monkeypatch, tmp_path):
+    """Sampled by PreviewWindow when a drag BEGINS -- not per mouse-move,
+    which is snap -- so a write that does not restyle would leave the
+    checkbox inert on every already-open preview until restart."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    result = api.set_preview_lock_aspect(False)
+
+    assert result["applied"] is True
+    assert api._state.settings["preview"]["lock_aspect"] is False
+    assert api._preview_host.restyled == 1
+
+
+def test_set_preview_lock_aspect_coerces_to_a_bool(monkeypatch, tmp_path):
+    """The bridge hands over whatever JS sent. settings.validated_preview
+    drops a non-bool on the next load, so an uncoerced truthy string would
+    survive this session and vanish at the next launch."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    api.set_preview_lock_aspect("")
+
+    assert api._state.settings["preview"]["lock_aspect"] is False
+
+
+class _RestyleSpy:
+    """Just enough PreviewHost for the restyle assertion above."""
+
+    def __init__(self):
+        self.restyled = 0
+
+    def restyle(self):
+        self.restyled += 1
