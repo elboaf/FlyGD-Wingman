@@ -1193,6 +1193,29 @@
         <button class="btn" id="skills-add">Add character</button>
         <button class="btn" id="skills-refresh">Refresh characters</button>
       </div>
+      <!-- ABOVE the plans block, and that is load-bearing rather than
+           taste. `.rail-plans-block { flex: 1; min-height: 0 }` makes
+           Plans the block that absorbs all the squeeze, down to zero, so
+           a Groups block below it is pinned to the rail floor under a dead
+           gap. Above, the rail also reads in the direction the scoping
+           runs: pick who, then see which plans they can fly.
+
+           The key names MEMBERS because the number under it counts
+           characters IN the group, while the ratio in the identical list
+           below counts characters READY for a plan. Two lists that look
+           the same, two different nouns -- the same collision the plan
+           ratio's own key was added to prevent. -->
+      <div class="rail-block rail-groups-block">
+        <div class="rail-head-row">
+          <h3 class="rail-head">Groups</h3>
+          <span class="rail-head-key">Members</span>
+        </div>
+        <div class="rail-groups" id="skills-groups"></div>
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="skills-rename-group" disabled>Rename</button>
+          <button class="linkbtn" id="skills-delete-group" disabled>Delete</button>
+        </div>
+      </div>
       <!-- The plan-file actions were a third rail block BELOW this one,
            which left the plan list -- the only thing on this rail anyone
            comes here to change -- sandwiched between two blocks of setup.

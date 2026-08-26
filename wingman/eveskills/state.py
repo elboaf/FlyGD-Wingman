@@ -54,6 +54,12 @@ MAX_QUEUE_ENTRIES = 500
 # pointer to one stored here) that happen to agree today.
 MAX_SELECTED_PLAN_NAME_CHARS = 120
 
+# A group name is rendered in the rail's ~180px column, which is what
+# bounds it -- a different constraint from the 120 above, which bounds a
+# pointer to a plan FILE. Kept as its own constant rather than reusing
+# that one, so a change to either cannot silently move the other.
+MAX_GROUP_NAME_CHARS = 40
+
 
 @dataclass
 class Character:
@@ -76,6 +82,10 @@ class Character:
     # means "both halves were confirmed current at this time".
     skills_etag: str = ""
     queue_etag: str = ""
+    # Membership, not a display field. D1: it lives here so that remove()
+    # prunes it atomically and there is no second collection to keep in
+    # step with the roster.
+    group: str = ""
 
     @property
     def has_snapshot(self) -> bool:
@@ -92,6 +102,7 @@ class Character:
 class SkillsState:
     characters: list = field(default_factory=list)
     selected_plan_name: str = ""
+    selected_group: str = ""
 
     def find(self, character_id: int):
         for character in self.characters:
@@ -285,10 +296,32 @@ def _coerce_selected_plan_name(raw) -> str:
     return text
 
 
+def _coerce_group_name(raw) -> str:
+    """Cleared, not truncated, beyond the cap -- and the reason is stronger
+    here than in _coerce_selected_plan_name above.
+
+    That function refuses to truncate because a mangled name would point at
+    a DIFFERENT plan file. A plan name at least has a folder to fail to
+    match against, so a mangled one usually resolves to nothing. A group
+    name IS the identity: nothing checks it, and nothing can. Truncating
+    two distinct 45-character names to 40 does not fail to match -- it
+    merges two crews into one, silently, which is the exact outcome the
+    rename confirmation exists to stop happening without being asked.
+
+    Trimmed BEFORE the length check, for the reason given there: a value
+    over the cap only because of padding is kept, not needlessly cleared.
+    """
+    text = _coerce_text(raw).strip()
+    if len(text) > MAX_GROUP_NAME_CHARS:
+        return ""
+    return text
+
+
 def to_dict(state: SkillsState) -> dict:
     return {
         "version": STATE_VERSION,
         "selected_plan_name": state.selected_plan_name,
+        "selected_group": state.selected_group,
         "characters": [
             {
                 "character_id": character.character_id,
@@ -319,6 +352,7 @@ def to_dict(state: SkillsState) -> dict:
                 "refresh_token_blob": character.refresh_token_blob,
                 "skills_etag": character.skills_etag,
                 "queue_etag": character.queue_etag,
+                "group": character.group,
             }
             for character in state.characters
         ],
@@ -340,6 +374,7 @@ def from_dict(raw: object) -> SkillsState:
     result.selected_plan_name = _coerce_selected_plan_name(
         raw.get("selected_plan_name")
     )
+    result.selected_group = _coerce_group_name(raw.get("selected_group"))
 
     characters = raw.get("characters")
     if not isinstance(characters, list):
@@ -379,6 +414,7 @@ def from_dict(raw: object) -> SkillsState:
             refresh_token_blob=_coerce_text(item.get("refresh_token_blob")),
             skills_etag=_coerce_text(item.get("skills_etag")),
             queue_etag=_coerce_text(item.get("queue_etag")),
+            group=_coerce_group_name(item.get("group")),
         )
     result.characters = list(by_id.values())[:MAX_CHARACTERS]
     return result

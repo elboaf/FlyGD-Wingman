@@ -5,6 +5,7 @@ sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
 
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from wingman.eveskills import application
 from wingman.eveskills import esi as esi_mod
 from wingman.eveskills import jwt as jwt_mod
 from wingman.eveskills import loopback as loopback_mod
+from wingman.eveskills import skillids as skillids_mod
 from wingman.eveskills import sso as sso_mod
 from wingman.eveskills import state as state_mod
 from wingman.eveskills.controller import SkillsController
@@ -1711,3 +1713,405 @@ def test_plan_text_is_empty_for_a_plan_that_is_no_longer_there(tmp_path):
     assert controller.plan_text("Loki") == ""
     assert controller.plan_text("") == ""
     assert controller.plan_text(None) == ""
+
+
+NAVIGATION_ID = 3449
+PLAN_ONE_SKILL = "Navigation I\n"
+
+
+def _seed_cache(tmp_path, mapping):
+    """Write the skill-id cache the controller reads at construction.
+
+    Without this every requirement is unresolvable, so nobody scores Ready
+    and ready_count is 0 whoever is in which group -- the scoping assertion
+    would pass for the wrong reason today and start failing the moment the
+    scoping actually worked. Keys are folded, matching SkillIdCache's own
+    storage; version and category are read from the module, not retyped.
+    """
+    document = {
+        "version": skillids_mod.CACHE_VERSION,
+        "entries": [
+            {
+                "name": name,
+                "type_id": type_id,
+                "category_id": skillids_mod.SKILL_CATEGORY_ID,
+            }
+            for name, type_id in mapping.items()
+        ],
+    }
+    (tmp_path / "eve_skills_cache.json").write_text(
+        json.dumps(document), encoding="utf-8"
+    )
+
+
+def _ch(character_id, name, group="", ready=False):
+    """A character with a snapshot, so it scores rather than reading Unscored."""
+    levels = {NAVIGATION_ID: 5} if ready else {}
+    return state_mod.Character(
+        character_id=character_id,
+        character_name=name,
+        group=group,
+        fetched_utc=T0,
+        active_levels=dict(levels),
+        trained_levels=dict(levels),
+    )
+
+
+def test_the_group_list_is_derived_from_the_roster_and_sorted(tmp_path):
+    controller, _, _ = build(
+        tmp_path,
+        characters=[
+            _ch(1, "Aiga", "Wolfpack"),
+            _ch(2, "Zuelo", "Wolfpack"),
+            _ch(3, "Kaska", "Logi Wing"),
+            _ch(4, "Delen", ""),
+        ],
+    )
+
+    payload = controller.state_payload()
+
+    assert payload["groups"] == [
+        {"name": "Logi Wing", "member_count": 1},
+        {"name": "Wolfpack", "member_count": 2},
+    ]
+
+
+def test_two_spellings_of_one_group_are_one_row_keeping_the_first(tmp_path):
+    """The rail showing `Wolfpack` and `wolfpack` as two crews looks like a
+    bug, and _find_plan_locked already casefolds for the same reason."""
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "wolfpack")],
+    )
+
+    payload = controller.state_payload()
+
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 2}]
+
+
+def test_a_selected_group_nobody_holds_is_reported_as_no_selection(tmp_path):
+    """Same shape as a deleted plan file: reported as unselected so the
+    screen falls back to All, with the stored value left alone in case the
+    group comes back."""
+    seed = state_mod.SkillsState(
+        characters=[_ch(1, "Aiga", "Wolfpack")], selected_group="Mining"
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path)
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_the_ready_count_counts_only_the_selected_groups_members(tmp_path):
+    """The whole point of the feature: the rail answers `what can this crew
+    fly`, not `what can anyone fly`."""
+    _seed_cache(tmp_path, {"navigation": NAVIGATION_ID})
+    seed = state_mod.SkillsState(
+        characters=[
+            _ch(1, "Aiga", "Wolfpack", ready=True),
+            _ch(2, "Zuelo", "Mining", ready=True),
+        ],
+        selected_group="Wolfpack",
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path, plans={"Ishtar": PLAN_ONE_SKILL})
+
+    payload = controller.state_payload()
+
+    assert payload["selected_group"] == "Wolfpack"
+    assert payload["plans"][0]["ready_count"] == 1
+
+
+def test_every_character_row_carries_its_own_group(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.state_payload()["characters"][0]["group"] == "Wolfpack"
+
+
+def test_assigning_a_character_creates_the_group_implicitly(tmp_path):
+    controller, pushed, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+
+    assert controller.set_character_group(1, "Wolfpack") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert pushed[-1][0] == "onSkills"
+
+
+def test_joining_keeps_the_spelling_already_on_the_roster(tmp_path):
+    """`wolfpack` typed into a roster holding `Wolfpack` joins it. Without
+    this the rail grows a near-duplicate row that reads as a bug."""
+    controller, _, _ = build(
+        tmp_path, characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo")]
+    )
+
+    assert controller.set_character_group(2, "wolfpack") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 2}
+    ]
+
+
+def test_an_empty_group_name_clears_membership(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.set_character_group(1, "") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == []
+    assert payload["characters"][0]["group"] == ""
+
+
+def test_an_over_long_group_name_is_refused_not_shortened(tmp_path):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.set_character_group(1, long_name) is False
+
+    assert controller.state_payload()["characters"][0]["group"] == ""
+    # The page never reads set_character_group's return value and has no
+    # cap of its own to enforce client-side, so a refusal that only logged
+    # would be indistinguishable from nothing happening at all.
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
+
+
+def test_assigning_an_unknown_character_is_refused(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga")])
+
+    assert controller.set_character_group(99, "Wolfpack") is False
+
+
+def test_a_failed_save_rolls_the_assignment_back(tmp_path, monkeypatch):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga")])
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.set_character_group(1, "Wolfpack") is False
+
+    assert controller.state_payload()["characters"][0]["group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def test_selecting_a_group_scopes_the_payload(tmp_path):
+    controller, _, _ = build(
+        tmp_path, characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.select_group("Wolfpack") is True
+
+    assert controller.state_payload()["selected_group"] == "Wolfpack"
+
+
+def test_selecting_the_empty_string_returns_to_all(tmp_path):
+    seed = state_mod.SkillsState(
+        characters=[_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path)
+
+    assert controller.select_group("") is True
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_selecting_a_group_nobody_holds_is_refused(tmp_path):
+    """The page can hold a stale rail across a change that emptied the
+    group. Reported rather than coerced to All, which would silently
+    discard a click."""
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.select_group("Mining") is False
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_selecting_stores_the_rosters_spelling_not_the_callers(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.select_group("wolfpack") is True
+
+    assert controller.state_payload()["selected_group"] == "Wolfpack"
+
+
+def test_selecting_an_over_long_name_is_refused_with_an_alert(tmp_path):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.select_group(long_name) is False
+
+    assert controller.state_payload()["selected_group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
+
+
+def test_a_failed_save_rolls_the_selection_back(tmp_path, monkeypatch):
+    controller, _, alerts = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.select_group("Wolfpack") is False
+
+    assert controller.state_payload()["selected_group"] == ""
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def _seeded(tmp_path, characters, selected_group=""):
+    seed = state_mod.SkillsState(
+        characters=list(characters), selected_group=selected_group
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    return build(tmp_path)
+
+
+def test_renaming_moves_every_member(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")]
+    )
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Nightcrew", "member_count": 2}
+    ]
+
+
+def test_renaming_the_selected_group_carries_the_selection(tmp_path):
+    """Membership and selected_group are two representations of one name.
+    Rewriting only the members would leave the selection pointing at a name
+    nobody holds, and the screen would drop to All mid-rename."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is True
+
+    assert controller.state_payload()["selected_group"] == "Nightcrew"
+
+
+def test_renaming_onto_an_existing_group_merges_them(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.rename_group("Wolfpack", "Mining") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 2}
+    ]
+
+
+def test_a_case_only_rename_rewrites_the_spelling_for_everyone(tmp_path):
+    """Not a merge: one group, respelled. The page shows no merge confirm
+    for this, so the controller must not treat it as joining a second."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")]
+    )
+
+    assert controller.rename_group("Wolfpack", "WOLFPACK") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "WOLFPACK", "member_count": 2}
+    ]
+
+
+def test_a_merge_adopts_the_surviving_groups_spelling(tmp_path):
+    """Renaming onto `mining` when the roster holds `Mining` must not leave
+    two spellings behind. _groups_locked collapses them into one row and
+    keeps whichever it meets first, so without normalising here the rail's
+    label would depend on the order characters happen to sit in."""
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.rename_group("Wolfpack", "mining") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 2}
+    ]
+
+
+def test_renaming_a_group_nobody_holds_is_refused(tmp_path):
+    controller, _, _ = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.rename_group("Mining", "Nightcrew") is False
+
+
+def test_renaming_to_an_empty_name_is_refused(tmp_path):
+    """Delete is its own command with its own confirmation. A rename that
+    silently became one would bypass it."""
+    controller, _, _ = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.rename_group("Wolfpack", "   ") is False
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 1}
+    ]
+
+
+def test_renaming_onto_an_over_long_name_is_refused_with_an_alert(tmp_path):
+    controller, _, alerts = _seeded(tmp_path, [_ch(1, "Aiga", "Wolfpack")])
+    long_name = "W" * (state_mod.MAX_GROUP_NAME_CHARS + 1)
+
+    assert controller.rename_group("Wolfpack", long_name) is False
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Wolfpack", "member_count": 1}
+    ]
+    assert alerts and alerts[-1][0] == "warning"
+    assert str(state_mod.MAX_GROUP_NAME_CHARS) in alerts[-1][2]
+
+
+def test_deleting_clears_every_member_and_the_selection(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path,
+        [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Wolfpack")],
+        selected_group="Wolfpack",
+    )
+
+    assert controller.delete_group("Wolfpack") is True
+
+    payload = controller.state_payload()
+    assert payload["groups"] == []
+    assert payload["selected_group"] == ""
+    assert [c["group"] for c in payload["characters"]] == ["", ""]
+
+
+def test_deleting_leaves_other_groups_alone(tmp_path):
+    controller, _, _ = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "Mining")]
+    )
+
+    assert controller.delete_group("Wolfpack") is True
+
+    assert controller.state_payload()["groups"] == [
+        {"name": "Mining", "member_count": 1}
+    ]
+
+
+def test_a_failed_rename_restores_members_and_selection_together(tmp_path, monkeypatch):
+    """A partial rollback is the same dangling pointer arrived at from the
+    other direction, so both fields are asserted."""
+    controller, _, alerts = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.rename_group("Wolfpack", "Nightcrew") is False
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert payload["selected_group"] == "Wolfpack"
+    assert alerts and alerts[-1][0] == "warning"
+
+
+def test_a_failed_delete_restores_members_and_selection_together(tmp_path, monkeypatch):
+    controller, _, alerts = _seeded(
+        tmp_path, [_ch(1, "Aiga", "Wolfpack")], selected_group="Wolfpack"
+    )
+    monkeypatch.setattr(controller, "_save_locked", lambda: False)
+
+    assert controller.delete_group("Wolfpack") is False
+
+    payload = controller.state_payload()
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
+    assert payload["selected_group"] == "Wolfpack"
+    assert alerts and alerts[-1][0] == "warning"

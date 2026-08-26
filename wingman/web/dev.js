@@ -154,6 +154,63 @@
     return Promise.resolve(true);
   };
 
+  api.skills_select_group = function (name) {
+    console.log('DEV api.skills_select_group(', name, ')');
+    skills.selected_group = name || '';
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  api.skills_set_character_group = function (id, name) {
+    console.log('DEV api.skills_set_character_group(', id, name, ')');
+    skills.characters.forEach(function (ch) {
+      if (ch.character_id === id) ch.group = name || '';
+    });
+    devRecountGroups();
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  api.skills_rename_group = function (oldName, newName) {
+    console.log('DEV api.skills_rename_group(', oldName, newName, ')');
+    skills.characters.forEach(function (ch) {
+      if (ch.group.toLowerCase() === oldName.toLowerCase()) ch.group = newName;
+    });
+    if (skills.selected_group.toLowerCase() === oldName.toLowerCase()) {
+      skills.selected_group = newName;
+    }
+    devRecountGroups();
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  api.skills_delete_group = function (name) {
+    console.log('DEV api.skills_delete_group(', name, ')');
+    skills.characters.forEach(function (ch) {
+      if (ch.group.toLowerCase() === name.toLowerCase()) ch.group = '';
+    });
+    if (skills.selected_group.toLowerCase() === name.toLowerCase()) {
+      skills.selected_group = '';
+    }
+    devRecountGroups();
+    setTimeout(function () { window.onSkills(skills); }, 0);
+    return Promise.resolve(true);
+  };
+
+  // Python derives `groups` from the roster (controller._groups_locked).
+  // The fake must derive it the same way or the rail and the rows disagree
+  // the moment anything is reassigned here.
+  function devRecountGroups() {
+    var byKey = {};
+    skills.characters.forEach(function (ch) {
+      if (!ch.group) return;
+      var key = ch.group.toLowerCase();
+      if (byKey[key]) byKey[key].member_count += 1;
+      else byKey[key] = { name: ch.group, member_count: 1 };
+    });
+    skills.groups = Object.keys(byKey).sort().map(function (k) { return byKey[k]; });
+  }
+
   api.skills_forget_character = function (id) {
     console.log('DEV api.skills_forget_character(', id, ')');
     skills.characters = skills.characters.filter(function (ch) {
@@ -224,6 +281,14 @@
   var skills = {
     auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
+    selected_group: '',
+    // Left EMPTY on purpose and filled by devRecountGroups() at startup
+    // (below). Typing the counts here beside the per-character `group`
+    // fields would be two sources for one derived fact, and a fake payload
+    // that contradicts itself makes the harness lie about exactly what
+    // Tasks 8-9 use it to check. Python derives this list too
+    // (controller._groups_locked).
+    groups: [],
     plans: [
       { name: 'Ishtar', requirement_count: 14, ready_count: 1 },
       { name: 'Loki', requirement_count: 22, ready_count: 0 }
@@ -235,7 +300,7 @@
         needs_reauth: false, stale: false, readiness: 'Ready',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 14, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0 },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
       { character_id: 2, character_name: 'Zuelo Parvi',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
@@ -243,21 +308,21 @@
         estimated_finish_utc: '2026-08-26T12:00:00+00:00',
         queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 2,
-        missing_count: 0, unknown_count: 0 },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
       { character_id: 3, character_name: 'Kaska Rin',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
         estimated_finish_utc: '', queue_timing_unknown: true,
         active_count: 13, trained_inactive_count: 0, queued_count: 1,
-        missing_count: 0, unknown_count: 0 },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
       { character_id: 4, character_name: 'Delen Vok',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Locked',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 11, trained_inactive_count: 3, queued_count: 0,
-        missing_count: 0, unknown_count: 0 },
+        missing_count: 0, unknown_count: 0, group: 'Logi Wing' },
       { character_id: 5, character_name: 'Gustav Oswaldo',
         fetched_utc: '2026-08-23T20:00:00+00:00',
         fetched_label: 'Last fetched 17h ago',
@@ -265,35 +330,35 @@
         readiness: 'Missing', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 8, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 6, unknown_count: 0 },
+        missing_count: 6, unknown_count: 0, group: '' },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Missing',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 2, unknown_count: 0 },
+        missing_count: 2, unknown_count: 0, group: 'Wolfpack' },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Unknown',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 13, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 1 },
+        missing_count: 0, unknown_count: 1, group: 'Logi Wing' },
       { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: 'The refresh token was rejected', needs_reauth: true,
         stale: false, readiness: 'Unscored', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0 },
+        missing_count: 0, unknown_count: 0, group: '' },
       { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: '', needs_reauth: false, stale: false,
         readiness: 'Ascendant', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0 }
+        missing_count: 0, unknown_count: 0, group: '' }
     ],
     plan_issues: [
       { file_name: 'Broken.txt', message: 'The file was rejected.',
@@ -303,6 +368,8 @@
     warnings: [],
     plans_updated_utc: '2026-08-24T08:00:00+00:00'
   };
+
+  devRecountGroups();   // Fills skills.groups from the roster above.
 
   api.pick_folder = function (which) {
     console.log('DEV api.pick_folder(', which, ')');

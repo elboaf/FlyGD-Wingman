@@ -2643,6 +2643,40 @@ against a placeholder id; only these items are blocked on the registration.
       regression here and a release. A silent reorder or a resorted
       `Missing` group would not error or throw; it would just be wrong,
       and nothing else in this checklist or the suite would catch it.
+- [ ] **The Groups block sits above Plans and its list stays capped.**
+      With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
+      by every seeded group, top to bottom, each member count matching the
+      fake roster (`All` carries the whole roster's count) — above the
+      Plans block, not below it, where `.rail-plans-block`'s `flex: 1`
+      would pin Groups to the rail floor under a dead gap. Click a group:
+      the highlight moves and `Rename`/`Delete` enable; click `All` and
+      they disable again. This item only checks the rail's placement, the
+      selection control, and the cap — the roster's and Plans list's
+      response to the selection are covered by the Character groups items
+      below. Then, at the 840x625 floor with nine or more groups (fake
+      extra ones in devtools if the harness does not have that many),
+      confirm the Plans list still shows at least four rows:
+      `.rail-groups`'s `max-height` exists precisely so a long Groups list
+      cannot starve the screen's primary list down to one row behind a
+      scrollbar.
+- [ ] **Character groups: create, select, persist.** Expand a character, set
+      **Group → New group…**, name it, then add a second character to it
+      from its own row. The rail's Groups list shows it with the right
+      member count.
+- [ ] **Character groups: selection scopes the screen.** Select the group.
+      The roster narrows to its members, every plan ratio's denominator
+      becomes the group's size, and the count line reads `N of M
+      characters`.
+- [ ] **Character groups: survive a restart.** Restart Wingman. The group
+      and the selection are both still there.
+- [ ] **Character groups: rename, and rename-onto-merge.** Rename the
+      selected group. The selection follows the new name rather than
+      dropping to All. Rename one group onto another's name: a merge is
+      confirmed first, and confirming leaves one group holding both crews.
+- [ ] **Character groups: delete.** Delete a group. Its members stay on the
+      roster, ungrouped, and the screen falls back to All.
+- [ ] **Character groups: empties itself out.** Move the last member out of
+      a group. The rail loses the group and the screen falls back to All.
 
 ### Frozen build
 

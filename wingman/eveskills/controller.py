@@ -370,6 +370,256 @@ class SkillsController:
     def _selected_plan_locked(self):
         return self._find_plan_locked(self._state.selected_plan_name)
 
+    # ----- groups ---------------------------------------------------------
+
+    @staticmethod
+    def _in_group(ch, group_name: str) -> bool:
+        """True when no group is selected, or this character is in it.
+
+        Folded with `.casefold()`, which is NOT the same fold the page
+        applies with `.toLowerCase()` in `matching()` (wingman/web/skills.js)
+        -- they disagree on input like German sharp S, where
+        `'Straße'.casefold() == 'STRASSE'.casefold()` is True in Python but
+        `'Straße'.toLowerCase() === 'STRASSE'.toLowerCase()` is false in JS.
+        Python can therefore collapse two spellings into one group that the
+        page's own matching then treats as two, so a count and its visible
+        rows can disagree. Do not "fix" this by hand-rolling a Unicode fold
+        in ES5 on the page side to match Python -- that is new surface area
+        for a cosmetic mismatch on an edge case nobody has reported. Leave it
+        commented rather than papered over.
+        """
+        if not group_name:
+            return True
+        return ch.group.casefold() == group_name.casefold()
+
+    def _groups_locked(self) -> list:
+        """Every group that has members, sorted, with the count each holds.
+
+        Derived rather than stored: D1 puts membership on the character, so
+        this list IS the roster's groups by definition and cannot drift
+        from it. Keyed case-insensitively with the FIRST spelling kept,
+        matching _find_plan_locked's rule for plan names -- `Wolfpack` and
+        `wolfpack` are one crew, and two rail rows for it read as a bug.
+
+        This is the other half of the invariant documented on
+        `_selected_group_locked`: both iterate `self._state.characters` in
+        the same order under the same lock hold, so the spelling recorded
+        here for a given key is always the spelling that function returns
+        for the current selection. Keep that ordering agreement if either
+        function changes -- it is what keeps the page's `scopedTotal()`
+        zero-fallback (wingman/web/skills.js) unreachable.
+        """
+        counts: dict = {}
+        for ch in self._state.characters:
+            if not ch.group:
+                continue
+            row = counts.get(ch.group.casefold())
+            if row is None:
+                counts[ch.group.casefold()] = {"name": ch.group, "member_count": 1}
+            else:
+                row["member_count"] += 1
+        return sorted(counts.values(), key=lambda row: row["name"].casefold())
+
+    def _selected_group_locked(self) -> str:
+        """The stored selection, or "" when nobody holds that name.
+
+        The same posture _selected_plan_locked takes toward a deleted plan
+        file: a pointer that no longer resolves is REPORTED as no
+        selection, never rewritten. Rewriting would discard the name at the
+        moment its last member left, so re-adding that member would not
+        bring the selection back.
+
+        Returns the FIRST roster character's spelling for a casefold match,
+        same as `_groups_locked` below. Both run under the same lock hold in
+        `_state_payload_locked`, over the same `self._state.characters`
+        iteration order, so this always returns the exact string
+        `_groups_locked` recorded for that key -- which is what keeps the
+        page's `scopedTotal()` zero-fallback (wingman/web/skills.js)
+        unreachable: the selection it looks up in `groups()` is always
+        present there, by construction. Reordering either loop, or having
+        one of them prefer a different spelling, breaks that agreement
+        silently -- `scopedTotal()` would then return 0 for a group that
+        plainly has members, and nothing would flag it.
+        """
+        target = self._state.selected_group.casefold()
+        if not target:
+            return ""
+        for ch in self._state.characters:
+            if ch.group.casefold() == target:
+                return ch.group
+        return ""
+
+    @staticmethod
+    def _clean_group_name(raw) -> "str | None":
+        """Trim, then refuse anything over the cap. None means refused.
+
+        Refusing rather than truncating is the same rule state.py applies
+        on load, and for the same reason: a shortened name is not a shorter
+        pointer to the same group, it is a pointer to a DIFFERENT one that
+        may already have members.
+        """
+        text = str(raw or "").strip()
+        if len(text) > state_mod.MAX_GROUP_NAME_CHARS:
+            return None
+        return text
+
+    def _existing_spelling_locked(self, name: str) -> str:
+        """The roster's own spelling of *name*, or *name* when it is new."""
+        target = name.casefold()
+        for ch in self._state.characters:
+            if ch.group and ch.group.casefold() == target:
+                return ch.group
+        return name
+
+    def set_character_group(self, character_id, group_name) -> bool:
+        """Put one character in a group, or clear it with "".
+
+        There is no separate create step: D2 makes a group exist exactly as
+        long as someone is in it, so assigning IS creating. Joining takes
+        the spelling already on the roster rather than the caller's, which
+        is the rule _find_plan_locked applies to plan names.
+        """
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            # Arrives from JavaScript, where a missing dataset attribute is
+            # undefined -> None. Refused rather than coerced.
+            logger.warning("Refusing a non-numeric character id: %r", character_id)
+            return False
+        name = self._clean_group_name(group_name)
+        if name is None:
+            logger.warning("Refusing an over-long group name: %r", group_name)
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The character was not assigned.",
+            )
+            return False
+        with self._lock:
+            character = self._state.find(wanted)
+            if character is None:
+                return False
+            previous = character.group
+            character.group = self._existing_spelling_locked(name) if name else ""
+            saved = self._save_locked()
+            if not saved:
+                character.group = previous
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The character's group was not changed.",
+            )
+            return False
+        return True
+
+    def _rewrite_group_locked(self, target: str, replacement: str) -> "tuple | None":
+        """Point every member of *target* at *replacement*. None if unheld.
+
+        Returns the undo record -- the (character, previous group) pairs
+        plus the previous selection -- so the caller can restore ALL of it
+        on a save failure. Membership and selected_group are two
+        representations of one name; restoring one without the other
+        recreates the dangling pointer this function exists to avoid.
+        """
+        key = target.casefold()
+        touched = [ch for ch in self._state.characters if ch.group.casefold() == key]
+        if not touched:
+            return None
+        # Which spelling the members end up holding. A rename that differs
+        # from the current name only in case is a deliberate RESPELL, so it
+        # wins outright. Any other rename onto a name another group already
+        # holds is a MERGE, and must adopt that group's existing spelling --
+        # set_character_group already normalises this way, and without it a
+        # merge leaves two spellings on the roster and _groups_locked shows
+        # whichever character happens to come first, so the rail's label
+        # would depend on roster order.
+        if replacement.casefold() == key:
+            spelling = replacement
+        else:
+            spelling = self._existing_spelling_locked(replacement)
+        undo = [(ch, ch.group) for ch in touched]
+        for ch in touched:
+            ch.group = spelling
+        previous_selection = self._state.selected_group
+        if previous_selection.casefold() == key:
+            self._state.selected_group = spelling
+        return (undo, previous_selection)
+
+    def _undo_group_rewrite_locked(self, record) -> None:
+        undo, previous_selection = record
+        for ch, previous in undo:
+            ch.group = previous
+        self._state.selected_group = previous_selection
+
+    def rename_group(self, old_name, new_name) -> bool:
+        """Rename a group, moving its members and the selection together.
+
+        Renaming onto a name that already has members MERGES the two, which
+        is the honest reading of the operation -- the page confirms it
+        first. A rename differing only in case is not a merge: it is one
+        group respelled, and the page shows no confirmation for it.
+        """
+        target = self._clean_group_name(old_name)
+        replacement = self._clean_group_name(new_name)
+        if target is None or replacement is None:
+            logger.warning("Refusing an over-long group name")
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The group was not renamed.",
+            )
+            return False
+        if not target or not replacement:
+            # Delete is its own command with its own confirmation; a rename
+            # that silently became one would bypass it.
+            return False
+        with self._lock:
+            record = self._rewrite_group_locked(target, replacement)
+            if record is None:
+                return False
+            saved = self._save_locked()
+            if not saved:
+                self._undo_group_rewrite_locked(record)
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The group was not renamed.",
+            )
+            return False
+        return True
+
+    def delete_group(self, name) -> bool:
+        """Remove a group by clearing it from every member.
+
+        D2: a group exists exactly as long as someone is in it, so there is
+        nothing else to delete. The selection goes with it.
+        """
+        target = self._clean_group_name(name)
+        if target is None or not target:
+            return False
+        with self._lock:
+            record = self._rewrite_group_locked(target, "")
+            if record is None:
+                return False
+            saved = self._save_locked()
+            if not saved:
+                self._undo_group_rewrite_locked(record)
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the change",
+                "The group was not deleted.",
+            )
+            return False
+        return True
+
     # ----- persistence ------------------------------------------------
 
     def _save_locked(self) -> bool:
@@ -396,13 +646,16 @@ class SkillsController:
 
     def _state_payload_locked(self) -> dict:
         selected = self._selected_plan_locked()
+        group = self._selected_group_locked()
         ids = self._cache.type_ids()
         return {
             "auth_configured": application.is_configured(),
             "auth_in_progress": self._auth_in_progress,
             "refresh_in_flight": self._refresh_in_flight,
             "selected_plan_name": selected.name if selected else "",
-            "plans": [self._plan_row_locked(plan, ids) for plan in self._plans],
+            "selected_group": group,
+            "groups": self._groups_locked(),
+            "plans": [self._plan_row_locked(plan, ids, group) for plan in self._plans],
             "characters": [
                 self._character_row(ch, selected, ids) for ch in self._state.characters
             ],
@@ -428,7 +681,7 @@ class SkillsController:
             "plans_updated_utc": _iso(self._plans_updated),
         }
 
-    def _plan_row_locked(self, plan, ids) -> dict:
+    def _plan_row_locked(self, plan, ids, group) -> dict:
         """One left-rail row: the plan's size and how many can fly it.
 
         Every character is evaluated against every plan here, which is
@@ -436,9 +689,15 @@ class SkillsController:
         forty characters is under three hundred passes over a few dozen
         requirements, which is far cheaper than caching it would be to keep
         correct across a refresh that lands mid-render.
+
+        A group filter narrows this loop rather than adding a pass: the
+        skipped characters are skipped before their evaluation, so scoping
+        the count is strictly cheaper than not scoping it.
         """
         ready = 0
         for ch in self._state.characters:
+            if not self._in_group(ch, group):
+                continue
             if not ch.has_snapshot:
                 continue
             analysis = evaluator.evaluate(
@@ -481,6 +740,7 @@ class SkillsController:
         return {
             "character_id": ch.character_id,
             "character_name": ch.character_name,
+            "group": ch.group,
             "fetched_utc": _iso(ch.fetched_utc),
             "error": ch.error,
             "needs_reauth": bool(ch.needs_reauth),
@@ -573,6 +833,51 @@ class SkillsController:
             self._alert(
                 "warning",
                 "Could not save the selected plan",
+                "Your selection was not saved and has been reverted.",
+            )
+            return False
+        return True
+
+    def select_group(self, group_name) -> bool:
+        """Scope the screen to one group. "" is All and is always valid.
+
+        Modelled on select_plan, including its rollback: a selection held
+        in memory but never written would silently revert on the next
+        launch with nothing ever having been shown.
+        """
+        name = self._clean_group_name(group_name)
+        if name is None:
+            logger.warning("Refusing an over-long group name: %r", group_name)
+            self._alert(
+                "warning",
+                "Group name is too long",
+                f"Group names are capped at {state_mod.MAX_GROUP_NAME_CHARS} "
+                "characters. The selection was not changed.",
+            )
+            return False
+        with self._lock:
+            previous = self._state.selected_group
+            if name:
+                held = any(
+                    ch.group.casefold() == name.casefold()
+                    for ch in self._state.characters
+                )
+                if not held:
+                    # The page can hold a stale rail across a change that
+                    # emptied this group. Reported rather than coerced to
+                    # All, which would silently discard a click.
+                    return False
+                self._state.selected_group = self._existing_spelling_locked(name)
+            else:
+                self._state.selected_group = ""
+            saved = self._save_locked()
+            if not saved:
+                self._state.selected_group = previous
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Could not save the selected group",
                 "Your selection was not saved and has been reverted.",
             )
             return False

@@ -448,3 +448,56 @@ def test_the_plan_list_does_not_take_the_rails_slack():
         "without this the list cannot shrink past its content and a full "
         "plan folder pushes the disclosure off the bottom of the rail"
     )
+
+
+def test_the_groups_block_sits_above_the_plans_block():
+    """Not decoration. `.rail-plans-block { flex: 1 }` makes Plans absorb
+    every pixel of squeeze, so a Groups block BELOW it is pinned to the
+    rail floor with a dead gap. Above, the rail also reads in the direction
+    the scoping flows: who, then which plans they can fly."""
+    assert RAIL.index("skills-groups") < RAIL.index("rail-plans-block")
+
+
+def test_the_groups_list_is_scroll_capped():
+    """At nine groups an uncapped list collapses the Plans list to a single
+    row -- the screen's primary list, starved by a secondary one."""
+    block = re.search(r"\.rail-groups\s*\{([^}]*)\}", CSS)
+    assert block, "no .rail-groups rule in style.css"
+    assert "overflow-y" in block.group(1)
+    assert "max-height" in block.group(1)
+
+
+def test_the_group_count_says_what_it_counts():
+    """`4` above `1/4` counts MEMBERS above CHARACTERS READY. Every number
+    on this screen carries the noun it counts, so the column is keyed."""
+    assert "MEMBERS" in RAIL.upper()
+
+
+def test_the_ratio_denominator_follows_the_selected_group():
+    """The numerator is Python's group-scoped ready_count. A denominator
+    still counting the whole roster would read `4/9` for a four-character
+    crew -- two numbers about different populations in one ratio."""
+    body = re.search(r"function renderPlans\(\)\s*\{(.*?)\n  \}", CODE, re.DOTALL)
+    assert body, "renderPlans not found"
+    assert "characters().length" not in body.group(1)
+
+
+def test_the_group_control_uses_the_styled_select_vocabulary():
+    """A bare <select> is a white Win32 widget on a dark card. `.field` is
+    the app's existing styled vocabulary for one -- #f-privacy, #es-profile
+    and #es-source all use it."""
+    assert "'select', 'field'" in CODE or '"select", "field"' in CODE
+
+
+def test_no_two_functions_in_skills_js_share_a_name():
+    """A duplicate `function f()` in one scope silently replaces the first.
+
+    It happened: a new group-picker helper was called `groupNode`, which is
+    also the readiness-bucket renderer, and the roster broke with every test
+    still green -- nothing here executes this file, so a name collision is
+    invisible until someone opens the page.
+    """
+    names = re.findall(r"^\s*function (\w+)\s*\(", CODE, re.MULTILINE)
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+
+    assert not duplicates, f"duplicate function declarations: {duplicates}"

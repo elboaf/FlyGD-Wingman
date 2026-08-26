@@ -423,6 +423,14 @@ failure, so a confirmation whose push never reached the page would park its
 worker forever *holding the lock* — permanently refusing every later copy,
 backup, restore and delete.
 
+**Selection can be a bridge method, not just client state.** Selection that
+changes only what the page draws stays on the page. Selection that changes
+what Python computes crosses, because the computation is here — for
+example `skills_select_plan`, `skills_select_group`, and
+`eve_settings_select`, each rescoping what a later read returns, not a
+closed list. The rule itself lives in `CLAUDE.md`; this is the pointer, not
+a second copy of it.
+
 
 ## Saving
 

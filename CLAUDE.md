@@ -76,8 +76,14 @@ pump, required by `RegisterHotKey` and `SetWinEventHook`).
   `webview.Window` or `pystray.Icon` recurses into WinForms natives until
   `RecursionError` kills the process ~8s after launch. `test_api.py` asserts it.
 - Workers never touch the page directly; they go through `_push`.
-- Python pushes *semantic events*, never widget calls. Selection, sort order and
-  row focus are client state and never cross the bridge.
+- Python pushes *semantic events*, never widget calls. Sort order and row
+  focus are client state and never cross the bridge, and neither does
+  selection that changes only what the page draws. Selection that changes
+  what **Python computes** does cross, because the computation is here —
+  today that means `skills_select_plan`, `skills_select_group`, and
+  `eve_settings_select` (which persists a setting *and* rescopes the
+  profile tree the next `eve_settings_state` call returns), but the list is
+  whatever currently does this, not a closed set.
 
 **Subsystems** (each importable and unit-tested on Linux; Windows APIs are
 reached through injected seams or lazy `windll` binding):

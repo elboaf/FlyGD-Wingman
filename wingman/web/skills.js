@@ -74,6 +74,33 @@
 
   function characters() { return (STATE && STATE.characters) || []; }
   function plans() { return (STATE && STATE.plans) || []; }
+  function groups() { return (STATE && STATE.groups) || []; }
+  function selectedGroup() { return (STATE && STATE.selected_group) || ''; }
+
+  /* How many characters the current scope holds. This is the denominator
+   * of every rail ratio AND the population the roster shows, so it is
+   * derived once: two places deriving it separately is how `4/9` for a
+   * four-character crew happens.
+   *
+   * `found` stays 0 if `current` matches nothing in `groups()` -- which
+   * would render as an n/0 ratio. That is unreachable today only because
+   * controller.py's `_groups_locked` and `_selected_group_locked` are
+   * proven, by a shared iteration order under one lock hold, to always
+   * agree on which spelling represents the selection (see the comments on
+   * those two functions). Do not paper over this with a
+   * `|| characters().length` fallback if it ever fires -- that would show a
+   * confidently WRONG denominator instead of an obviously broken one. */
+  function scopedTotal() {
+    var current = selectedGroup();
+    if (!current) return characters().length;
+    var found = 0;
+    groups().forEach(function (group) {
+      if (group.name.toLowerCase() === current.toLowerCase()) {
+        found = group.member_count;
+      }
+    });
+    return found;
+  }
 
   function render(payload) {
     if (!payload) return;
@@ -164,13 +191,17 @@
    */
   function renderRail() {
     var chars = characters();
-    WM.el('skills-counts').textContent = chars.length
-      ? chars.length + (chars.length === 1 ? ' character added'
-                                           : ' characters added')
-      : 'No characters yet';
+    var scoped = scopedTotal();
+    WM.el('skills-counts').textContent = !chars.length
+      ? 'No characters yet'
+      : selectedGroup()
+        ? scoped + ' of ' + chars.length + ' characters'
+        : chars.length + (chars.length === 1 ? ' character added'
+                                             : ' characters added');
 
     renderRailButtons();
     renderPlans();
+    renderGroups();
   }
 
   function renderPlans() {
@@ -181,7 +212,7 @@
       host.appendChild(WM.make('p', 'hint', 'No plans found.'));
       return;
     }
-    var total = characters().length;
+    var total = scopedTotal();
     var selected = (STATE.selected_plan_name || '').toLowerCase();
     list.forEach(function (plan) {
       var row = WM.make('button', 'rail-plan');
@@ -228,6 +259,49 @@
     });
   }
 
+  /* `All` is a selection, not a group: it is how you stop scoping, and it
+   * carries the whole roster's count so the rail states the denominator
+   * the ratios below it are using. Rename and delete are disabled while it
+   * is current, per the control vocabulary's disabled-when-the-object-is-
+   * absent rule -- there is no object to rename. */
+  function renderGroups() {
+    var host = WM.el('skills-groups');
+    host.textContent = '';
+    var current = selectedGroup();
+
+    var all = WM.make('button', 'rail-plan');
+    if (!current) all.classList.add('active');
+    all.appendChild(WM.make('span', 'rail-plan-name', 'All'));
+    all.appendChild(WM.make('span', 'rail-ratio',
+                            String(characters().length)));
+    all.addEventListener('click', function () { selectGroup(''); });
+    host.appendChild(all);
+
+    groups().forEach(function (group) {
+      var row = WM.make('button', 'rail-plan');
+      if (group.name.toLowerCase() === current.toLowerCase()) {
+        row.classList.add('active');
+      }
+      row.appendChild(WM.make('span', 'rail-plan-name', group.name));
+      row.appendChild(WM.make('span', 'rail-ratio',
+                              String(group.member_count)));
+      row.addEventListener('click', function () { selectGroup(group.name); });
+      host.appendChild(row);
+    });
+
+    WM.el('skills-rename-group').disabled = !current;
+    WM.el('skills-delete-group').disabled = !current;
+  }
+
+  function selectGroup(name) {
+    if (name.toLowerCase() === selectedGroup().toLowerCase()) return;
+    // The page only sends and waits; Python's push is the sole cause of
+    // what renders. Unlike selectPlan, this deliberately does NOT drop the
+    // detail/pendingDetail caches -- those are scored against the PLAN, and
+    // a group change does not invalidate them the way a plan change does.
+    WM.send('skills_select_group', name);
+  }
+
   function renderRailButtons() {
     var add = WM.el('skills-add');
     var refresh = WM.el('skills-refresh');
@@ -271,6 +345,56 @@
   // Every one is a mutation, and a mutation pushes onSkills on both its
   // success and failure paths -- the push is the answer, and acting on
   // the return as well would render the same state twice.
+
+  WM.el('skills-rename-group').addEventListener('click', function () {
+    var current = selectedGroup();
+    if (!current) return;
+    // Third argument is the PREFILLED VALUE, not a callback: the current
+    // name, so a rename starts from what is being renamed. WM.prompt
+    // resolves with the typed text or null on cancel.
+    WM.prompt('Rename group', 'A new name for this group.', current)
+      .then(function (text) {
+        if (text === null) return;
+        var wanted = text.trim();
+        if (!wanted || wanted === current) return;
+        // A rename ONTO a name that already has members merges two crews.
+        // That is the honest reading of the operation, not an error -- but
+        // it is not what someone correcting a typo expects, so it is asked
+        // first. A case-only change is NOT a merge (it is one group
+        // respelled), which is why the collision test excludes a name that
+        // differs from the current one only in case.
+        var collides = false;
+        groups().forEach(function (group) {
+          if (group.name.toLowerCase() === wanted.toLowerCase()
+              && group.name.toLowerCase() !== current.toLowerCase()) {
+            collides = true;
+          }
+        });
+        if (!collides) {
+          WM.send('skills_rename_group', current, wanted);
+          return;
+        }
+        WM.confirm('Merge groups',
+                   '“' + wanted + '” already exists. Renaming “'
+                   + current + '” will merge the two into one group.')
+          .then(function (ok) {
+            if (ok) WM.send('skills_rename_group', current, wanted);
+          });
+      });
+  });
+
+  WM.el('skills-delete-group').addEventListener('click', function () {
+    var current = selectedGroup();
+    if (!current) return;
+    var total = scopedTotal();
+    WM.confirm('Delete group',
+               'Delete “' + current + '”? Its ' + total
+               + (total === 1 ? ' character' : ' characters')
+               + ' stay on the roster and become ungrouped.')
+      .then(function (ok) {
+        if (ok) WM.send('skills_delete_group', current);
+      });
+  });
 
   // ---- main pane header ------------------------------------------------
   function renderHead() {
@@ -517,10 +641,19 @@
     return mins + 'm';
   }
 
+  /* The two filters intersect. This DOES hide rows, and an expanded row is
+   * the only surface in the app for forgetting or re-authenticating a
+   * character -- but that is already true of the text filter beside it,
+   * and `All` is one click away. The LOCKOUT GUARD above buildRoster is
+   * not weakened: it forbids ENUMERATING known readiness groups, so that a
+   * character in an unrecognised state still gets a row. It says nothing
+   * about a filter the user chose. */
   function matching() {
     var needle = filterText.trim().toLowerCase();
-    if (!needle) return characters();
+    var group = selectedGroup().toLowerCase();
     return characters().filter(function (ch) {
+      if (group && (ch.group || '').toLowerCase() !== group) return false;
+      if (!needle) return true;
       return (ch.character_name || '').toLowerCase().indexOf(needle) !== -1;
     });
   }
@@ -556,6 +689,8 @@
     if (!plans().length) {
       hint = 'No local plans yet. Drop a .txt plan in the plans folder, '
         + 'then reload.';
+    } else if (!rows.length && selectedGroup() && !filterText.trim()) {
+      hint = 'No characters in “' + selectedGroup() + '”.';
     } else if (!rows.length) {
       // The clear action is already visible (it is shown whenever a filter
       // is active), so this line does not repeat it as a button.
@@ -750,6 +885,79 @@
     return note;
   }
 
+  /* A discrete control, so it commits on change -- the rule Settings
+   * states for its own fields. Creating a group happens HERE rather than
+   * on the rail because a group exists exactly as long as someone is in
+   * it: there is nothing to create until a character joins one. */
+  function groupPickerNode(ch) {
+    var row = WM.make('div', 'skills-detail-row');
+    var label = WM.make('label', '', 'Group');
+    var select = WM.make('select', 'field');
+    label.setAttribute('for', 'skills-group-' + ch.character_id);
+    select.id = 'skills-group-' + ch.character_id;
+
+    var none = WM.make('option', '', 'None');
+    none.value = '';
+    select.appendChild(none);
+
+    var known = false;
+    groups().forEach(function (group) {
+      var option = WM.make('option', '', group.name);
+      option.value = group.name;
+      if (group.name.toLowerCase() === (ch.group || '').toLowerCase()) {
+        option.selected = true;
+        known = true;
+      }
+      select.appendChild(option);
+    });
+    // A character whose group is not in the derived list cannot happen
+    // from Python -- the list IS the roster's groups. It can happen from a
+    // stale page held across a change, and silently showing `None` would
+    // invite a click that clears a membership the user still has.
+    if (ch.group && !known) {
+      var stale = WM.make('option', '', ch.group);
+      stale.value = ch.group;
+      stale.selected = true;
+      select.appendChild(stale);
+    }
+
+    // No sentinel VALUE: any magic string is a group name someone
+    // could legitimately type. The option marks itself instead, so
+    // `New group` and a real group called "New group" stay distinct.
+    var newOption = WM.make('option', '', 'New group…');
+    newOption.value = '';
+    newOption.dataset.newGroup = '1';
+    select.appendChild(newOption);
+
+    select.addEventListener('change', function () {
+      var chosen = select.options[select.selectedIndex];
+      if (!chosen || !chosen.dataset.newGroup) {
+        WM.send('skills_set_character_group', ch.character_id,
+                select.value);
+        return;
+      }
+      // Reset first: if the prompt is cancelled the control must not sit
+      // showing `New group…` as though it were a membership.
+      select.value = ch.group || '';
+      // WM.prompt(title, body, initialValue) resolves with the typed text
+      // or null -- the same contract window.prompt had. It is NOT
+      // callback-taking; bookmarks.js:288 and previews.js:153 are the two
+      // existing call sites and both read the result through .then.
+      WM.prompt('New group',
+                'A name for the characters who fly together.', '')
+        .then(function (text) {
+          if (text === null) return;
+          var wanted = text.trim();
+          if (!wanted) return;
+          WM.send('skills_set_character_group', ch.character_id, wanted);
+        });
+    });
+
+    row.appendChild(label);
+    row.appendChild(select);
+    return row;
+  }
+
   function detailNode(ch) {
     var box = WM.make('div', 'skills-detail');
 
@@ -787,6 +995,7 @@
       box.appendChild(requirementsNode(detail));
     }
 
+    box.appendChild(groupPickerNode(ch));
     box.appendChild(forgetNode(ch));
     return box;
   }

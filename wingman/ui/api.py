@@ -174,6 +174,8 @@ def _empty_skills_state() -> dict:
         "auth_in_progress": False,
         "refresh_in_flight": False,
         "selected_plan_name": "",
+        "selected_group": "",
+        "groups": [],
         "plans": [],
         "characters": [],
         "plan_issues": [],
@@ -3944,6 +3946,26 @@ class Api:
         if self._skills is None:
             return True
         return self._skills.select_plan(plan_name)
+
+    def skills_set_character_group(self, character_id, group_name) -> bool:
+        if self._skills is None:
+            return True
+        return self._skills.set_character_group(character_id, group_name)
+
+    def skills_select_group(self, group_name) -> bool:
+        if self._skills is None:
+            return True
+        return self._skills.select_group(group_name)
+
+    def skills_rename_group(self, old_name, new_name) -> bool:
+        if self._skills is None:
+            return True
+        return self._skills.rename_group(old_name, new_name)
+
+    def skills_delete_group(self, name) -> bool:
+        if self._skills is None:
+            return True
+        return self._skills.delete_group(name)
 
     def shutdown_skills(self) -> None:
         """Tear the subsystem down on the way out. main() only.

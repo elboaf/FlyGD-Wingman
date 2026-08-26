@@ -16,6 +16,7 @@ class FakeSkills:
         self.calls = []
         self.forget_result = True
         self.plan_text_result = "Navigation IV\n"
+        self.group_result = True
 
     def state_payload(self):
         self.calls.append(("state_payload",))
@@ -52,6 +53,22 @@ class FakeSkills:
         self.calls.append(("select_plan", plan_name))
         return True
 
+    def set_character_group(self, character_id, group_name):
+        self.calls.append(("set_character_group", character_id, group_name))
+        return self.group_result
+
+    def select_group(self, group_name):
+        self.calls.append(("select_group", group_name))
+        return True
+
+    def rename_group(self, old_name, new_name):
+        self.calls.append(("rename_group", old_name, new_name))
+        return True
+
+    def delete_group(self, name):
+        self.calls.append(("delete_group", name))
+        return True
+
     def shutdown(self):
         self.calls.append(("shutdown",))
 
@@ -85,6 +102,35 @@ def test_every_mutation_returns_truthy(tmp_path):
     assert api.skills_reload_plans() is True
     assert api.skills_open_plans_folder() is True
     assert api.skills_select_plan("Interceptor") is True
+    assert api.skills_set_character_group(95, "Wolfpack") is True
+    assert api.skills_select_group("Wolfpack") is True
+    assert api.skills_rename_group("Wolfpack", "Nightcrew") is True
+    assert api.skills_delete_group("Wolfpack") is True
+
+
+def test_the_group_methods_delegate_to_the_controller(tmp_path):
+    api, skills = make(tmp_path, FakeSkills())
+
+    api.skills_set_character_group(7, "Wolfpack")
+    api.skills_select_group("Wolfpack")
+    api.skills_rename_group("Wolfpack", "Nightcrew")
+    api.skills_delete_group("Wolfpack")
+
+    assert skills.calls == [
+        ("set_character_group", 7, "Wolfpack"),
+        ("select_group", "Wolfpack"),
+        ("rename_group", "Wolfpack", "Nightcrew"),
+        ("delete_group", "Wolfpack"),
+    ]
+
+
+def test_a_refused_assignment_reports_the_controllers_answer(tmp_path):
+    """A façade that swallowed False would tell the page a refused change
+    succeeded -- an over-long name would look like it had been applied."""
+    api, skills = make(tmp_path, FakeSkills())
+    skills.group_result = False
+
+    assert api.skills_set_character_group(7, "W" * 200) is False
 
 
 def test_forget_reports_the_controllers_answer(tmp_path):
@@ -111,6 +157,10 @@ def test_every_method_tolerates_no_controller(tmp_path):
     assert api.skills_reload_plans() is True
     assert api.skills_open_plans_folder() is True
     assert api.skills_select_plan("x") is True
+    assert api.skills_set_character_group(95, "Wolfpack") is True
+    assert api.skills_select_group("Wolfpack") is True
+    assert api.skills_rename_group("Wolfpack", "Nightcrew") is True
+    assert api.skills_delete_group("Wolfpack") is True
     assert api.skills_plan_text("x") == ""
     api.shutdown_skills()
 
@@ -128,6 +178,8 @@ def test_the_empty_state_has_the_same_shape_as_a_real_one(tmp_path):
         "auth_in_progress",
         "refresh_in_flight",
         "selected_plan_name",
+        "selected_group",
+        "groups",
         "plans",
         "characters",
         "plan_issues",
