@@ -2850,8 +2850,20 @@ class Api:
             "settings": section,
             "labels": bookmarks.BIND_LABELS,
             "order": list(bookmarks.BIND_IDS),
+            # Round 5, C8. Derived in bookmarks.bind_groups() from
+            # BIND_LABELS, never listed in the page: PRODUCT.md makes that
+            # table the one place a fork rewrites, and a second copy in JS
+            # is the copy a fork would not know to change. `order` above
+            # stays the flat list -- it is still the identity of the route's
+            # display order, and the page falls back to it if this is
+            # missing (an older payload, a fork that stripped it).
+            "groups": list(bookmarks.bind_groups()),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
+            # Round 5, C6: the mirror of _bookmark_chords. Previews warned
+            # about this collision on the screen that WINS it; the screen
+            # whose bind is the one silently overridden showed nothing.
+            "preview_chords": self._preview_chords(),
             # Human labels for the bound keys. Computed here rather than in
             # the page, which is the entire reason to_ahk returns a display
             # string: the page holds no mapping table and cannot drift from
@@ -2877,6 +2889,65 @@ class Api:
                     else []
                 ),
             },
+        }
+
+    def _preview_chords(self) -> dict:
+        """Preview chords, split by whether they are registered right now.
+
+        The counterpart of _bookmark_chords() -- read that docstring for why
+        the collision exists at all and why the split is not a filter. This
+        is the same fact told from the other end: there, a bookmark chord
+        that a preview will take; here, the preview chords that take one.
+
+        NOT a straight mirror, and the asymmetry is the point rather than an
+        oversight. _bookmark_chords() has to infer from configuration --
+        AHK's `#HotIf WinActive` hotkey is not a RegisterHotKey
+        registration, so Windows can report nothing about it and "enabled,
+        with a window ticked" is the closest it can get. A preview chord IS
+        a RegisterHotKey, so the host can say whether Windows actually
+        granted it, and inferring from `preview.enabled` here would claim a
+        bookmark had lost its key to a chord Windows refused.
+
+        Three outcomes, not two, which is the same three previews.js's
+        clashes() already distinguishes and for the same reason:
+
+        - registered right now -> "active". The bookmark cannot fire while
+          EVE is focused.
+        - the host is not holding chords at all (previews off, or stopped)
+          -> "latent". Nothing is taken yet and turning previews on would
+          take it, which is exactly what the page says.
+        - the host IS running and this chord is refused, or has not been
+          reported on yet -> NEITHER. We cannot say a preview takes the key,
+          and we cannot say turning previews on would, because they are on.
+          An unmarked bind is the honest answer; previews.js surfaces the
+          refusal on its own screen, where the user can act on it.
+
+        Compared in display form, the common ground the two notations meet
+        on: preview gestures are STORED in display form -- settings.py runs
+        every one through preview.gestures.display() on load -- which is why
+        nothing is rendered here.
+        """
+        preview = self._state.settings.get("preview") or {}
+        hotkeys = preview.get("hotkeys") or {}
+        chords = {
+            chord
+            for chord in [
+                *(hotkeys.get("characters") or {}).values(),
+                hotkeys.get("cycle_next"),
+                hotkeys.get("cycle_prev"),
+            ]
+            if chord
+        }
+        host = self._preview_host
+        # is_running, not `host is not None` -- the same window between
+        # stop() and _teardown that get_preview_hotkey_state() gates on.
+        live = host is not None and host.is_running
+        if not live:
+            return {"active": [], "latent": sorted(chords)}
+        status = host.hotkey_status()
+        return {
+            "active": sorted(c for c in chords if status.get(c) is True),
+            "latent": [],
         }
 
     def save_bookmarks(self, section) -> dict:

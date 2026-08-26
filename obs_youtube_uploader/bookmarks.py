@@ -161,6 +161,61 @@ BIND_LABELS = {
     "FinC": "c Tag (critical)",
 }
 
+# The three groups the eighteen binds already fall into, DERIVED from the
+# labels above rather than listed again here. Round 5's C8: the route
+# rendered one flat list of eighteen rows, ten of which opened with the same
+# five characters and differed in the last token, at 61.8px per row.
+#
+# Derived, and derived from the LABELS specifically, because PRODUCT.md
+# names BIND_LABELS as the one table a fork rewrites to carry its own house
+# style: a fork that renames "Finisher: C1" to its own scheme gets its own
+# grouping out of the same edit, and a second list here would be the thing
+# it forgot to change. The ids cannot do the job -- FinS ("f Tag") and FinN
+# ("Finisher: NS") share a prefix and land in different groups.
+#
+# The failure mode is deliberately the OLD screen, not a broken one: a fork
+# whose labels match neither marker puts every bind in the leading unnamed
+# group, which renders exactly as the flat list did.
+_GROUP_FINISHER_PREFIX = "Finisher: "
+_GROUP_TAG_MARKER = " Tag"
+
+
+def bind_groups() -> tuple[dict, ...]:
+    """BIND_IDS split into display groups, in BIND_IDS order.
+
+    Each group is ``{"name", "ids", "short"}``. ``name`` is "" for a group
+    whose members share no token to lift into a heading. ``short`` maps
+    id -> the label with the group's shared token removed, which is what
+    makes the members short enough to render as a multi-column block
+    instead of one full-width row each.
+
+    CONTIGUOUS SEGMENTS, not one bucket per name, and that is the whole
+    reason this is a loop over BIND_IDS rather than a dict keyed by group.
+    BIND_IDS is the route's display order, and bucketing silently reorders
+    it the moment the markers stop being contiguous: a fork that renames
+    only its LAST tag so it matches neither marker drops that id into the
+    unnamed bucket, which was opened by the first action -- and it then
+    renders fourth, ahead of every finisher. Segmenting cannot do that; the
+    output is BIND_IDS with dividers inserted, and nothing else. A fork
+    that interleaves gets two groups with the same heading, which is odd
+    but true, rather than a silently reordered list.
+    """
+    groups: list[dict] = []
+    for bid in BIND_IDS:
+        label = BIND_LABELS[bid]
+        if label.startswith(_GROUP_FINISHER_PREFIX):
+            name, short = "Finishers", label[len(_GROUP_FINISHER_PREFIX) :]
+        elif _GROUP_TAG_MARKER in label:
+            name, short = "Tags", label.replace(_GROUP_TAG_MARKER, "", 1)
+        else:
+            name, short = "", label
+        if not groups or groups[-1]["name"] != name:
+            groups.append({"name": name, "ids": [], "short": {}})
+        groups[-1]["ids"].append(bid)
+        groups[-1]["short"][bid] = short
+    return tuple(groups)
+
+
 # Only ConvertScout ships bound, which is exactly what the standalone
 # script did: its compiled-in IniRead defaults (111unified.ahk:120-140) and
 # its own Reset Defaults handler (:655-676) leave every other bind blank.

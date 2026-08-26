@@ -432,6 +432,28 @@
     FinS: 'f Tag (frig hole)', FinC: 'c Tag (critical)'
   };
 
+  // The groups Api.get_bookmarks derives from BIND_LABELS via
+  // bookmarks.bind_groups(). A literal here for the same reason the two
+  // fixtures above are literals -- dev.js must not re-implement a rule it
+  // is meant to be a fixture for -- and asserted against the real
+  // derivation by tests/test_dev_harness.py, so it cannot drift.
+  var bookmarkGroups = [
+    { name: '', ids: ['GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout'],
+      short: { GrabSig: 'Grab Sig ID', SetRoot: 'Set Root',
+               FormatEnf: 'Format Enforcer',
+               ConvertScout: 'Convert EvE-Scout Bookmarks' } },
+    { name: 'Finishers',
+      ids: ['FinH', 'FinL', 'FinN', 'Fin13',
+            'Fin1', 'Fin2', 'Fin3', 'Fin4', 'Fin5', 'Fin6'],
+      short: { FinH: 'HS (highsec)', FinL: 'LS (lowsec)',
+               FinN: 'NS (nullsec)', Fin13: 'C13 (shattered)',
+               Fin1: 'C1', Fin2: 'C2', Fin3: 'C3',
+               Fin4: 'C4', Fin5: 'C5', Fin6: 'C6' } },
+    { name: 'Tags', ids: ['FinETag', 'FinSlash', 'FinS', 'FinC'],
+      short: { FinETag: 'e (end of life)', FinSlash: '/ (half mass)',
+               FinS: 'f (frig hole)', FinC: 'c (critical)' } }
+  ];
+
   api.get_bookmarks = function () {
     console.log('DEV api.get_bookmarks()');
     var keybinds = {};
@@ -447,6 +469,12 @@
     // empty list nobody has seen rendered.
     keybinds.Fin1 = '^+1';
     keybinds.Fin2 = '^+1';
+    // C6: the same chord a preview character is bound to in the Previews
+    // fixture below, so the harness renders the "a Previews keybind takes
+    // this one" mark rather than leaving that branch unseen. FormatEnf is
+    // in the leading flat group, so the mark is visible without opening a
+    // dense block.
+    keybinds.FormatEnf = '^!1';
     return Promise.resolve({
       // settings is the `eve_bookmarks` section verbatim:
       // {enabled, keybinds, windows}. `windows` is a per-title enabled
@@ -461,6 +489,27 @@
       },
       labels: bookmarkLabels,
       order: bookmarkBinds,
+      groups: bookmarkGroups,
+      // C6's counterpart of `bookmark_chords` on the Previews payload
+      // below, and deliberately the SAME chord: 'Ctrl+Alt+1' is bound to a
+      // character there, so the harness shows the collision on both
+      // screens at once rather than only on the one whose lane happened to
+      // be looking.
+      //
+      // ACTIVE, because that is what Api._preview_chords would return for
+      // the fixture below: it ships `enabled: true` with 'Ctrl+Alt+1' in
+      // its `registration` map as `true`, so Windows is holding the chord
+      // and the bookmark bind genuinely cannot fire. The first draft said
+      // latent under a comment claiming previews shipped off, which was
+      // simply wrong about the fixture two hundred lines down -- and a
+      // harness whose payload contradicts its own neighbouring payload is
+      // the failure this file's tests exist to prevent, just spread across
+      // two calls where no test could see it.
+      //
+      // The dim/latent branch is therefore NOT covered here. It was
+      // verified in the real window instead, by binding Ctrl+Alt+F9 on
+      // both sides with previews off.
+      preview_chords: { active: ['Ctrl+Alt+1'], latent: [] },
       windows: ['EVE - Aiga Otsolen', 'EVE - Zuelo Parvi'],
       // Keyed by the parsed AHK string, valued with every bind id claiming
       // it -- bookmarks.collisions() only returns entries of length > 1.
@@ -468,7 +517,7 @@
       displays: {
         ConvertScout: 'Ctrl+Shift+S', SetRoot: 'Ctrl+Shift+R',
         GrabSig: 'Ctrl+Shift+G', Fin1: 'Ctrl+Shift+1',
-        Fin2: 'Ctrl+Shift+1'
+        Fin2: 'Ctrl+Shift+1', FormatEnf: 'Ctrl+Alt+1'
       },
       engine: { state: 'on', last_error: null, blockers: [] }
     });
@@ -555,9 +604,13 @@
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
       never_minimize: ['Tanuki Solette'],
-      // Latent rather than active, for the same consistency: bookmarks
-      // register nothing while this chord could still be taken later.
-      bookmark_chords: { active: [], latent: ['Ctrl+Alt+1'] }
+      // ACTIVE, matching what Api._bookmark_chords would return for the
+      // get_bookmarks fixture above: it ships `enabled: true` with
+      // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
+      // bookmark chord registered. This said `latent` under a comment
+      // reasoning that "bookmarks register nothing" -- true of no fixture
+      // in this file. Caught by review while C6 was adding the other half.
+      bookmark_chords: { active: ['Ctrl+Alt+1'], latent: [] }
     });
   };
 

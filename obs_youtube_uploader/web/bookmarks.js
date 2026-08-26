@@ -182,17 +182,148 @@
       label.title = title;
       label.prepend(WM.make('span', 'box'));
       label.prepend(box);
-      // Round 3, R4's finding 5: only the negative was annotated, so
-      // "running" had to be inferred from silence -- on a screen the
-      // maintainer sets once and never revisits, where every visit is a
-      // first visit and there is no muscle memory to infer it from. Both
-      // states now say which they are, in the same dim treatment.
-      label.appendChild(WM.make(
-        'span', 'hint',
-        live.indexOf(title) === -1 ? ' (not running)' : ' (running)'));
+      // Round 5, C9, which walks back HALF of round 3's R4 finding 5 and
+      // keeps the half that mattered. R4 was right that annotating only
+      // the negative left "running" to be inferred from silence, on a
+      // screen the maintainer sets once and never revisits -- so it
+      // annotated both, and thirteen clients then printed "(running)"
+      // thirteen times to say the unremarkable thing.
+      //
+      // What silence means is now DEFINED, once, by the card's own hint
+      // ("All of these are running unless marked otherwise") instead of
+      // being re-asserted per row. Nothing is inferred: the rule is
+      // stated, and only the exception is marked. Same shape as the
+      // Previews roster's "dimmed = not logged in" legend, in words rather
+      // than a dim treatment because these labels are checkboxes and
+      // dimming an enabled .check reads as a disabled one (see
+      // makeNeverMinimizeCheck in previews.js for where that treatment IS
+      // used, and what it means there).
+      if (live.indexOf(title) === -1) {
+        label.appendChild(WM.make('span', 'hint', ' (not running)'));
+      }
       row.appendChild(label);
       host.appendChild(row);
     });
+  }
+
+  // Round 5, C6. previews.js's bookmarkClash() told this story from the
+  // winning end only: a preview chord is a global RegisterHotKey and a
+  // bookmark chord is an AHK hotkey scoped with #HotIf WinActive, so where
+  // they collide the preview wins while EVE is focused and the bookmark
+  // simply does not fire. Previews marked it; here -- on the binds that are
+  // the ones actually overridden -- an overridden bind looked exactly like
+  // a working one.
+  //
+  // Same vocabulary as previews.js on purpose, because it is the same fact:
+  // `active` warns in the clash colour because the key is being taken right
+  // now, `latent` only dims because previews are off and nothing is taken
+  // yet. The two files build the same row and must not disagree about what
+  // a mark means.
+  function previewShadow(display) {
+    var chords = (state && state.preview_chords) || {};
+    if (!display) { return null; }
+    if ((chords.active || []).indexOf(display) !== -1) { return 'active'; }
+    if ((chords.latent || []).indexOf(display) !== -1) { return 'latent'; }
+    return null;
+  }
+
+  function makeBindRow(id, label, clashing) {
+    var row = WM.make('div', 'row');
+    row.appendChild(WM.make('span', 'lab', label));
+
+    var display = state.displays[id] || '';
+    var button = WM.make('button', 'bindbtn', display || 'Not set');
+    var shadow = previewShadow(display);
+    if (clashing[id] || shadow === 'active') { button.classList.add('clash'); }
+    else if (shadow === 'latent') { button.classList.add('dim'); }
+    if (shadow === 'active') {
+      button.title = 'A Previews keybind uses this. It takes the key while '
+                   + 'an EVE client is focused, so this bookmark does not '
+                   + 'fire.';
+    } else if (shadow === 'latent') {
+      button.title = 'A Previews keybind is configured with this. Turning '
+                   + 'previews on would take the key from this bookmark.';
+    }
+    button.addEventListener('click', function () { beginCapture(id, button); });
+    row.appendChild(button);
+
+    var clear = WM.make('button', 'linkbtn', 'Clear');
+    clear.addEventListener('click', function () { setBind(id, ''); });
+    // Round 3, B2 and L5's disabled rule: the app already knows there is
+    // nothing to clear from a bind reading `Not set`, which is exactly
+    // when a control is disabled. The way back out of the state stays
+    // open -- the bind button and Edit... both set a value -- so this
+    // does not close off its own precondition (WM.setEnabled's rule).
+    WM.setEnabled(clear, !!display);
+    row.appendChild(clear);
+
+    // Manual entry: the escape hatch for non-US layouts, where the
+    // event.code table maps a physical key to the wrong character. The
+    // typed string is validated by the same Python rules as capture, so
+    // the two cannot disagree.
+    //
+    // Named for what it does, not for what the user must do. `Type…`
+    // was the one control in the app whose label was an instruction
+    // (round 3, B6) while every other one is a verb for its effect --
+    // Clear, Restore, Detect, Refresh. The ellipsis is the app's own
+    // "this opens something" mark, shared with Browse…, Change… and
+    // Choose folder…, which is exactly what this does.
+    var typed = WM.make('button', 'linkbtn', 'Edit…');
+    typed.addEventListener('click', function () {
+      // Disarm first, as previews.js already did. This did not matter
+      // while the prompt was window.prompt: a native OS dialog takes
+      // input outside the page entirely. WM.prompt is an in-page field,
+      // and an armed capture's document-level keydown handler
+      // preventDefault()s EVERY key -- so arming a capture on one bind
+      // and pressing Edit… on another opened a prompt that could not be
+      // typed into.
+      endCapture();
+      // The app's own dialog, not window.prompt: WebView2 captions that
+      // with the page origin, so entering a keybind in a frameless dark
+      // app raised a grey box mentioning localhost.
+      //
+      // The FULL label, not the group-relative short one: "C1" is enough
+      // to read in a block headed Finishers and is not enough in a dialog
+      // that has left the block behind.
+      WM.prompt('Keybind for "' + state.labels[id] + '"',
+                '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
+                state.settings.keybinds[id] || '')
+        .then(function (text) {
+          if (text === null) return;
+          WM.send('parse_bind', text).then(function (result) {
+            if (!result) return;
+            if (result.error) {
+              WM.send('alert_bookmarks',
+                      'That is not a keybind AutoHotkey can register.');
+              return;
+            }
+            setBind(id, result.ahk);
+          });
+        });
+    });
+    row.appendChild(typed);
+    return row;
+  }
+
+  // Round 5, C8. Eighteen binds rendered as one flat list, ten of them
+  // opening with the same five characters, at 61.8px a row. The groups and
+  // the shortened labels are DERIVED in bookmarks.bind_groups() and arrive
+  // on the payload -- see its docstring for why the derivation reads
+  // BIND_LABELS and why it is not a list in this file.
+  //
+  // A NAMED group renders dense (a multi-column block, .es-roster's
+  // technique) and the unnamed leading group does not. That is not a second
+  // decision: a group has a name exactly when its members shared a token
+  // that could be lifted into the heading, which is exactly what makes the
+  // labels left over short enough for a column. So one derivation decides
+  // both, and a fork whose labels share nothing gets one unnamed group --
+  // which renders as the flat list this replaced.
+  function bindGroups() {
+    var groups = (state && state.groups) || [];
+    if (groups.length) { return groups; }
+    // No `groups` on the payload: an older bridge, or a fork that stripped
+    // it. The flat list is the honest fallback, not an empty screen.
+    return [{name: '', ids: state.order, short: state.labels}];
   }
 
   function renderBinds() {
@@ -221,69 +352,23 @@
         '. Only one of each pair will work.';
     }
 
-    state.order.forEach(function (id) {
-      var row = WM.make('div', 'row');
-      row.appendChild(WM.make('span', 'lab', state.labels[id]));
-
-      var button = WM.make('button', 'bindbtn',
-                           state.displays[id] || 'Not set');
-      if (clashing[id]) button.classList.add('clash');
-      button.addEventListener('click', function () { beginCapture(id, button); });
-      row.appendChild(button);
-
-      var clear = WM.make('button', 'linkbtn', 'Clear');
-      clear.addEventListener('click', function () { setBind(id, ''); });
-      // Round 3, B2 and L5's disabled rule: the app already knows there is
-      // nothing to clear from a bind reading `Not set`, which is exactly
-      // when a control is disabled. The way back out of the state stays
-      // open -- the bind button and Edit... both set a value -- so this
-      // does not close off its own precondition (WM.setEnabled's rule).
-      WM.setEnabled(clear, !!state.displays[id]);
-      row.appendChild(clear);
-
-      // Manual entry: the escape hatch for non-US layouts, where the
-      // event.code table maps a physical key to the wrong character. The
-      // typed string is validated by the same Python rules as capture, so
-      // the two cannot disagree.
-      //
-      // Named for what it does, not for what the user must do. `Type…`
-      // was the one control in the app whose label was an instruction
-      // (round 3, B6) while every other one is a verb for its effect --
-      // Clear, Restore, Detect, Refresh. The ellipsis is the app's own
-      // "this opens something" mark, shared with Browse…, Change… and
-      // Choose folder…, which is exactly what this does.
-      var typed = WM.make('button', 'linkbtn', 'Edit…');
-      typed.addEventListener('click', function () {
-        // Disarm first, as previews.js already did. This did not matter
-        // while the prompt was window.prompt: a native OS dialog takes
-        // input outside the page entirely. WM.prompt is an in-page field,
-        // and an armed capture's document-level keydown handler
-        // preventDefault()s EVERY key -- so arming a capture on one bind
-        // and pressing Edit… on another opened a prompt that could not be
-        // typed into.
-        endCapture();
-        // The app's own dialog, not window.prompt: WebView2 captions that
-        // with the page origin, so entering a keybind in a frameless dark
-        // app raised a grey box mentioning localhost.
-        WM.prompt('Keybind for "' + state.labels[id] + '"',
-                  '^ = Ctrl, ! = Alt, + = Shift, # = Win. Example: ^+s',
-                  state.settings.keybinds[id] || '')
-          .then(function (text) {
-        if (text === null) return;
-        WM.send('parse_bind', text).then(function (result) {
-          if (!result) return;
-          if (result.error) {
-            WM.send('alert_bookmarks',
-                    'That is not a keybind AutoHotkey can register.');
-            return;
-          }
-          setBind(id, result.ahk);
-        });
-          });
+    bindGroups().forEach(function (group) {
+      var target = host;
+      if (group.name) {
+        // Same .bind-group heading previews.js uses to separate the two
+        // cycle commands from the character rows -- one divider treatment
+        // inside a card, not a second card heading.
+        var head = WM.make('div', 'bind-group');
+        head.appendChild(WM.make('span', 'bind-group-name', group.name));
+        host.appendChild(head);
+        target = WM.make('div', 'bind-dense');
+        host.appendChild(target);
+      }
+      var short = group.short || {};
+      group.ids.forEach(function (id) {
+        target.appendChild(
+          makeBindRow(id, short[id] || state.labels[id], clashing));
       });
-      row.appendChild(typed);
-
-      host.appendChild(row);
     });
   }
 

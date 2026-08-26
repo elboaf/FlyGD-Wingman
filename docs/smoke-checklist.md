@@ -326,6 +326,15 @@ somewhere stale and nothing on that screen is worth reviewing.
       no longer conditional: it used to live in a `max-width: 720px` block
       that the window can never reach (the floor is 840), so on the two
       lists that most needed it the collapse never fired at all.
+      Round 5's C8 added a SECOND shape to the Bookmarks list and did not
+      change this rule: the ten finishers and the four tags now render in a
+      two-column block under a group heading, so their bind buttons sit at
+      two x-positions rather than one. Check that both are content-
+      INDEPENDENT — column one starts at the card's left edge, exactly
+      where Previews' does, and column two is offset by a fixed 256px track
+      that no label can move. The four rows above `FINISHERS` are still the
+      original one-per-line shape and are the ones to compare against
+      Previews directly.
       tests/test_page_conventions.py now requires the two grids to declare
       the same columns and both names to take their own line, so a drift
       fails the suite rather than waiting for a screenshot.
@@ -1344,6 +1353,66 @@ only ever checked by hand.
 - [ ] **The gear returns you to where you were.** From Skills, open the
       gear, then press it again. Expected: back on Skills, not the
       Uploader.
+- [ ] **Bookmarks is two cards, and the eighteen binds read as three
+      groups.** Open Settings > Bookmarks. Expected: `EVE-FOCUSED KEYBINDS`
+      first, holding `Register keybinds in EVE` and every bind; `EVE
+      WINDOWS` second. There is no `BOOKMARK KEYBINDS` card any more
+      (round 5's C7 — it was a titled card around one checkbox, and the
+      third name for one idea in a single viewport).
+      Then read the binds: four full-width rows, then `FINISHERS` over a
+      two-column block of ten reading `HS (highsec)` … `C6`, then `TAGS`
+      over four reading `e (end of life)` … `c (critical)`. The shared
+      token belongs to the heading now, so no row should still say
+      "Finisher:" or "Tag". If the whole list renders flat and unheaded,
+      the payload lost its `groups` key — which is the designed fallback,
+      not a crash, so nothing will be in the console.
+- [ ] **A bookmark overridden by a Previews keybind says so.** Bind a
+      Previews chord (Settings > Previews) and the same chord to a bookmark
+      action. Expected on Bookmarks: that bind button is marked — red while
+      previews are ON, dim while they are off — with a tooltip naming which
+      set wins. Round 5's C6: this warning existed only on Previews, the
+      screen that WINS the collision, so on the screen whose bind silently
+      stops firing an overridden bind looked identical to a working one.
+      Check the wording is stated ONCE too (C5): the full precedence rule
+      belongs under Previews > Global keybinds, and Bookmarks carries only
+      a pointer to it.
+- [ ] **The EVE window list marks only what is not running.** Settings >
+      Bookmarks > EVE WINDOWS with at least one client open. Expected:
+      running clients carry no annotation at all and the card's own hint
+      says "All of these are running unless marked otherwise"; a title that
+      is enabled but whose client is closed reads `(not running)`.
+      Round 3's R4 finding 5 annotated BOTH states, so thirteen clients
+      printed "(running)" thirteen times; round 5's C9 keeps what R4 was
+      protecting — silence has to be defined, not inferred — and defines it
+      once in the hint instead.
+- [ ] **Opacity is a percentage, and it still reaches the floor.**
+      Settings > Previews. Expected: the readout reads `100%`, not `255`,
+      and dragging the slider fully left reads `8%` rather than `20`.
+      Round 5's C2: the control was showing a raw Win32 alpha byte, so its
+      floor read "20" and every reader takes that for 20% when it is 7.8%.
+      The stored value is still the 0-255 byte — at 40% the settings file
+      must hold 102. If the readout is EMPTY, the module threw before its
+      listeners registered; that is exactly the inert-screen failure this
+      file's preamble describes, and it happened once while this lane was
+      being written.
+- [ ] **No dead Never-minimize checkboxes in the default state.** Settings >
+      Previews with `Minimize a client's window while it is not the one you
+      switched to` UNTICKED — the shipped default. Expected: each character
+      row carries `Lock` and nothing else, and the row ends there with no
+      trailing gap. Tick the toggle: a `Never minimize` checkbox appears on
+      every character row, live, without a reload. Untick it: they all go.
+      Round 5's C3 counted ~13 permanently disabled ones in the default
+      state; D6 answered that the setting stays per-character but must not
+      render where it can do nothing.
+      **Watch the alignment when you toggle.** `#preview-binds` is a grid
+      whose rows are `display: contents`, so the CSS track count and the
+      number of cells previews.js appends have to move together — if they
+      disagree by one, every row after the first is pulled into the
+      previous row's leftover columns.
+- [ ] **The minimize toggle is filed with the other window behaviour.** It
+      is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
+      put them` — not under `GLOBAL KEYBINDS`, where it was the one control
+      that is not a keybind (round 5's C4).
 
 ## EVE bookmark hotkeys
 

@@ -746,6 +746,28 @@
   var DEPENDS = 'Previews are off, so this changes nothing yet — it '
               + 'applies when you turn them back on.';
 
+  // Round 5, C2. The control is a PERCENTAGE and the stored setting is the
+  // DWM thumbnail's 0-255 alpha byte; these two are the whole conversion
+  // and they are the only places either unit is crossed.
+  //
+  // The slider used to be min="20" max="255" with the raw value printed
+  // beside it, so its floor read "20" -- which every reader takes for 20%
+  // and which is 7.8%. Round 5 found the same shape three more times in
+  // this app, which is why the fix is a unit change rather than a suffix.
+  //
+  // Not clamped here: index.html's min="8" is settings.validated_preview's
+  // own 20-alpha floor expressed in percent (round(8 * 2.55) == 20), and
+  // the range input enforces it. api.set_preview_opacity deliberately does
+  // not clamp either -- validated_preview owns that range, in one place.
+  var ALPHA_MAX = 255;
+  function toAlpha(percent) {
+    return Math.round(percent * ALPHA_MAX / 100);
+  }
+  function toPercent(alpha) {
+    return Math.round(alpha * 100 / ALPHA_MAX);
+  }
+  function show() { readout.textContent = box.value + '%'; }
+
   function previewsOn() {
     var enable = WM.el('preview-enabled');
     return !!(enable && enable.checked);
@@ -757,20 +779,18 @@
   // `change` (DESIGN.md: discrete controls commit on change, and a range
   // fires `input` per pixel dragged -- a write per pixel is the bug this
   // rule exists to prevent).
-  box.addEventListener('input', function () {
-    readout.textContent = box.value;
-  });
+  box.addEventListener('input', show);
 
   box.addEventListener('change', function () {
     var wanted = parseInt(box.value, 10);
-    WM.send('set_preview_opacity', wanted).then(function (res) {
+    WM.send('set_preview_opacity', toAlpha(wanted)).then(function (res) {
       // Same fallback-message gap as show_labels above: WM.send resolves
       // to null on a bridge failure, and a refusal may carry no error
       // text, so `say(res && res.error)` could clear the status line to
       // blank instead of telling the user anything.
       if (!res) {
         box.value = lastGood;
-        readout.textContent = box.value;
+        show();
         say('Could not reach the app. Nothing was changed.');
         return;
       }
@@ -778,13 +798,13 @@
         // Refused: put the slider back where it was rather than show a
         // value the app never actually took.
         box.value = lastGood;
-        readout.textContent = box.value;
+        show();
         say(res.error || 'That value was not accepted.');
         return;
       }
       lastGood = box.value;
       if (!res.persisted) {
-        say('Opacity ' + wanted + ' is set for this session, but could '
+        say('Opacity ' + wanted + '% is set for this session, but could '
           + 'not be written to settings — it will not survive a restart.');
       } else {
         say('');
@@ -796,9 +816,9 @@
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
     var value = (s.preview && s.preview.opacity) || 255;
-    box.value = value;
+    box.value = toPercent(value);
     lastGood = box.value;
-    readout.textContent = box.value;
+    show();
     refreshDependence();
   });
 

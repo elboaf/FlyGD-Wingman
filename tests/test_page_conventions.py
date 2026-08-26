@@ -944,3 +944,94 @@ def test_every_default_alert_colour_is_offered_by_the_swatches():
         f"settings defaults {sorted(missing)} are not in the swatch palette "
         f"{sorted(palette)}, so a fresh install shows an extra swatch"
     )
+
+
+def test_the_dense_bind_column_can_hold_a_whole_control_line():
+    """Round 5, C8. A named bind group renders as a multi-column block
+    (`.bind-dense`), and its column width is set by the CONTROL line, not
+    by the label -- .bindbtn's min-width plus Clear and Edit... and two
+    gaps. A column narrower than .bindbtn alone would clip the one control
+    in the row that has a floor of its own, at every window width, with no
+    media query to look for.
+
+    Only the relationship is asserted, because it is the only half of the
+    sum that can be read out of the stylesheet: the two .linkbtn widths are
+    text, and B6's Type... -> Edit... rename already moved that figure once
+    (see the comment on the block, which carries the measurement).
+    """
+    dense = re.search(r"\.bind-dense \{([^}]*)\}", CSS)
+    assert dense, ".bind-dense has no rule block"
+    column = re.search(r"columns:\s*(\d+(?:\.\d+)?)px", dense.group(1))
+    assert column, ".bind-dense no longer declares a px column width"
+
+    btn = re.search(r"\.bindbtn \{([^}]*)\}", CSS)
+    assert btn, ".bindbtn has no rule block"
+    floor = re.search(r"min-width:\s*(\d+(?:\.\d+)?)px", btn.group(1))
+    assert floor, ".bindbtn no longer declares a min-width"
+
+    assert float(column.group(1)) >= float(floor.group(1)), (
+        f".bind-dense's column ({column.group(1)}px) is narrower than "
+        f".bindbtn's min-width ({floor.group(1)}px), so every finisher's "
+        f"bind button is clipped by its own column"
+    )
+
+
+def test_the_previews_grid_drops_exactly_one_track_with_never_minimize():
+    """Decision D6 (round 5, C3): the per-character Never-minimize checkbox
+    does not render while the global minimize toggle is off, so
+    previews.js appends one fewer cell per row and sets `.no-nm`.
+
+    `.row` is display:contents, so the grid sees one flat stream of cells
+    and cannot tell one row from the next: if the template and the cell
+    count disagree by even one, every row after the first is pulled into
+    the previous row's leftover columns. The two track counts are written
+    by hand in two rules, which is the drift this asserts against -- the
+    difference, not either number.
+    """
+    counts = []
+    for selector in ("#preview-binds", r"#preview-binds\.no-nm"):
+        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{selector} has no rule block"
+        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
+        counts.append(int(tracks.group(1)))
+
+    full, without = counts
+    assert full - without == 1, (
+        f"the two #preview-binds templates differ by {full - without} tracks, "
+        f"not 1 -- makeRow adds or drops exactly one cell (Never minimize) "
+        f"between the two states"
+    )
+
+
+def test_the_opacity_slider_can_still_reach_the_stored_floor():
+    """Round 5, C2. `#preview-opacity` is a PERCENTAGE now; the setting it
+    writes is still the DWM thumbnail's 0-255 alpha byte, and
+    settings.validated_preview owns the range.
+
+    The slider's `min` is therefore that floor expressed in the control's
+    own units, and 8 is not a rounded-off 10: it is the largest percentage
+    that still converts down to the stored floor. A min that converted to
+    anything higher would make the lowest value the backend keeps
+    unreachable, and would render a stored floor back as a number the
+    slider cannot show.
+
+    Derived from settings.py on both ends rather than restated here, since
+    a change to either range is exactly what this is watching for.
+    """
+    from obs_youtube_uploader.settings import validated_preview
+
+    floor = validated_preview({"opacity": -1})["opacity"]
+    ceiling = validated_preview({"opacity": 10**6})["opacity"]
+
+    slider = re.search(r'<input type="range" id="preview-opacity"([^>]*)>', HTML)
+    assert slider, "#preview-opacity is no longer a range input"
+    attrs = dict(re.findall(r'(\w+)="([^"]*)"', slider.group(1)))
+    assert attrs.get("max") == "100", (
+        f"#preview-opacity's max is {attrs.get('max')!r}, not a percentage"
+    )
+    low = int(attrs["min"])
+    assert round(low * ceiling / 100) == floor, (
+        f"#preview-opacity's min ({low}%) converts to "
+        f"{round(low * ceiling / 100)}, not settings' floor of {floor}"
+    )
