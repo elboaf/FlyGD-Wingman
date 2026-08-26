@@ -480,3 +480,10 @@ def test_the_ratio_denominator_follows_the_selected_group():
     body = re.search(r"function renderPlans\(\)\s*\{(.*?)\n  \}", CODE, re.DOTALL)
     assert body, "renderPlans not found"
     assert "characters().length" not in body.group(1)
+
+
+def test_the_group_control_uses_the_styled_select_vocabulary():
+    """A bare <select> is a white Win32 widget on a dark card. `.field` is
+    the app's existing styled vocabulary for one -- #f-privacy, #es-profile
+    and #es-source all use it."""
+    assert "'select', 'field'" in CODE or '"select", "field"' in CODE

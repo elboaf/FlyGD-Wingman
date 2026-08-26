@@ -824,6 +824,79 @@
     return note;
   }
 
+  /* A discrete control, so it commits on change -- the rule Settings
+   * states for its own fields. Creating a group happens HERE rather than
+   * on the rail because a group exists exactly as long as someone is in
+   * it: there is nothing to create until a character joins one. */
+  function groupPickerNode(ch) {
+    var row = WM.make('div', 'detail-row');
+    var label = WM.make('label', '', 'Group');
+    var select = WM.make('select', 'field');
+    label.setAttribute('for', 'skills-group-' + ch.character_id);
+    select.id = 'skills-group-' + ch.character_id;
+
+    var none = WM.make('option', '', 'None');
+    none.value = '';
+    select.appendChild(none);
+
+    var known = false;
+    groups().forEach(function (group) {
+      var option = WM.make('option', '', group.name);
+      option.value = group.name;
+      if (group.name.toLowerCase() === (ch.group || '').toLowerCase()) {
+        option.selected = true;
+        known = true;
+      }
+      select.appendChild(option);
+    });
+    // A character whose group is not in the derived list cannot happen
+    // from Python -- the list IS the roster's groups. It can happen from a
+    // stale page held across a change, and silently showing `None` would
+    // invite a click that clears a membership the user still has.
+    if (ch.group && !known) {
+      var stale = WM.make('option', '', ch.group);
+      stale.value = ch.group;
+      stale.selected = true;
+      select.appendChild(stale);
+    }
+
+    // No sentinel VALUE: any magic string is a group name someone
+    // could legitimately type. The option marks itself instead, so
+    // `New group` and a real group called "New group" stay distinct.
+    var newOption = WM.make('option', '', 'New group…');
+    newOption.value = '';
+    newOption.dataset.newGroup = '1';
+    select.appendChild(newOption);
+
+    select.addEventListener('change', function () {
+      var chosen = select.options[select.selectedIndex];
+      if (!chosen || !chosen.dataset.newGroup) {
+        WM.send('skills_set_character_group', ch.character_id,
+                select.value);
+        return;
+      }
+      // Reset first: if the prompt is cancelled the control must not sit
+      // showing `New group…` as though it were a membership.
+      select.value = ch.group || '';
+      // WM.prompt(title, body, initialValue) resolves with the typed text
+      // or null -- the same contract window.prompt had. It is NOT
+      // callback-taking; bookmarks.js:288 and previews.js:153 are the two
+      // existing call sites and both read the result through .then.
+      WM.prompt('New group',
+                'A name for the characters who fly together.', '')
+        .then(function (text) {
+          if (text === null) return;
+          var wanted = text.trim();
+          if (!wanted) return;
+          WM.send('skills_set_character_group', ch.character_id, wanted);
+        });
+    });
+
+    row.appendChild(label);
+    row.appendChild(select);
+    return row;
+  }
+
   function detailNode(ch) {
     var box = WM.make('div', 'skills-detail');
 
@@ -861,6 +934,7 @@
       box.appendChild(requirementsNode(detail));
     }
 
+    box.appendChild(groupPickerNode(ch));
     box.appendChild(forgetNode(ch));
     return box;
   }
