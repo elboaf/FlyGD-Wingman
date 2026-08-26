@@ -2498,21 +2498,28 @@ button.btn:disabled,
    NO. The exemption works -- injected as
    `#section-bookmarks { max-width: none }` with the cards restored to 620
    and the non-grid children held at 586, exactly D1's shape, the interior
-   becomes `window - 248` and the block reflows:
+   becomes `viewport - 248` and the block reflows:
 
-     window   840    1040    1080    1280    1920
+     viewport 840    1040    1080    1280    1920
      capped   2 col  2 col   2 col   2 col   2 col   (586px interior)
      exempt   2 col  2 col   3 col   3 col   5 col   (592/792/832/1032/1672)
+
+   Widths are CSS VIEWPORT widths, from the ?dev=1 harness under
+   Emulation.setDeviceMetricsOverride -- not window sizes; see the 1015
+   below for why the two are not the same number.
 
    Column counts are columns that HOLD A ROW: ten items balanced across a
    1672px block occupy five of the six the browser opens.
 
-   Three columns need 3x256 + 2x20 = 808px of interior, i.e. a 1056px
-   window. THE WINDOW OPENS AT 1040 (ui/window.py) AND NO GEOMETRY IS
-   PERSISTED, so out of the box the exemption changes nothing, on every
-   launch, and it changes nothing at the 840 floor either -- 586 -> 592.
-   It pays only if the user widens or maximizes, and then has to do it
-   again next launch.
+   Three columns need 3x256 + 2x20 = 808px of interior, i.e. a 1056px CSS
+   viewport. THE APP OPENS AT 1015, measured in its own WebView2 at the
+   default 1040x680 window (ui/window.py; the difference is the frameless
+   window's own inset, so 1040 logical is not 1040 CSS), AND NO GEOMETRY IS
+   PERSISTED -- nothing saves or restores a window size, so this is what
+   every launch gets. Out of the box the exemption therefore changes
+   nothing, every time, and it changes nothing at the 840 floor either --
+   586 -> 592. It pays only if the user widens or maximizes, and then has
+   to do it again next launch.
 
    What it costs is paid at EVERY width: a widened card cannot stay
    centred with the other four sections, so `#section-bookmarks` left-
