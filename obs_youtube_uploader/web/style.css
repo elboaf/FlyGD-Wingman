@@ -1918,6 +1918,40 @@ button.btn:disabled,
   .alert-head { display: none; }
 }
 
+/* Round 5, A4. The PvE filter and Keep-pulsing render below the event
+   table now instead of above it, because both modify that table: the
+   filter governs two of its three rows, Keep pulsing changes how all
+   three behave. Above it they read as two more peers of the master
+   switch, which is what index.html:759 records already costing a user a
+   wrong belief about the filter's scope.
+
+   Two rules, and neither is a new token or a new colour:
+
+   1. margin-top 10px, matching .row's own bottom margin, so this group
+      hangs off the table as the next thing in the same block. Explicitly
+      NOT .alert-events' 16px + 14px + border-top: that separation exists
+      to say "different rhythm, unrelated to the checkboxes above", and
+      repeating it here would separate these two from the very thing they
+      are about.
+
+   2. 24px of left padding. Not a new number: `.settings .check + .hint,
+      .settings .row:has(> .check) + .row > .hint` (:2417) already indents
+      a hint by 24px to say "this explains the checkbox above", so the
+      sheet has a step for subordinate-to-a-checkbox and this is it. It is
+      also .check's own box (15px) plus its gap (9px), which is why it
+      lands where it does: measured at the floor, a modifier's box starts
+      at x=236 and an event row's LABEL TEXT starts at x=236. One checkbox
+      in, so the indent is a measurement of the control it is subordinate
+      to rather than a number someone liked.
+
+   Measured at the 840x625 floor, where the rail leaves this card 588px of
+   content (211 to 799): the filter's label is the longest string in the
+   group and runs on ONE line either way, ending at x=679.86 without the
+   indent and x=703.86 with it. 95px of headroom, so the indent costs no
+   wrap here and there is room for the label to grow by a third before it
+   does. document.documentElement.scrollWidth stays 840 -- no overflow. */
+.alert-mods { margin-top: 10px; padding-left: 24px; }
+
 /* The pill sits inside .card > h2, which is already an align-items:center
    flex row -- only the heading's own treatment has to be undone, or the
    status reads as EVE RUNNING in letter-spaced small caps. margin-left:auto
