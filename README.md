@@ -160,7 +160,7 @@ sign in again on every launch — are written to a JSON file in your Windows
 user profile:
 
 ```
-%LOCALAPPDATA%\OBSYouTubeUploader\token.json
+%LOCALAPPDATA%\FlyGD Wingman\token.json
 ```
 
 To be precise about what that does and does not give you: the file is stored
@@ -180,7 +180,7 @@ You can revoke Wingman's access at any time from your Google Account:
 services**, or directly at
 [myaccount.google.com/connections](https://myaccount.google.com/connections).
 Removing access there immediately invalidates the stored token. You can also
-simply delete `%LOCALAPPDATA%\OBSYouTubeUploader\token.json` to sign out
+simply delete `%LOCALAPPDATA%\FlyGD Wingman\token.json` to sign out
 locally.
 
 ### YouTube Terms of Service
@@ -265,14 +265,14 @@ is never acted on.
 | Client previews | off | Enabling starts a discovery sweep and a foreground hook. |
 | Reopen previews in place | on | Off opens each preview in a default stack instead. Positions are remembered either way. |
 
-Settings are stored at `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json`.
+Settings are stored at `%LOCALAPPDATA%\FlyGD Wingman\settings.json`.
 
 ## Privacy
 
 Wingman is local-first. It has no backend, no account system, no analytics,
 and no telemetry. Everything it stores — your settings, your Google OAuth
 token, its log file, and temporary stitched video files — lives under
-`%LOCALAPPDATA%\OBSYouTubeUploader\` on your own machine.
+`%LOCALAPPDATA%\FlyGD Wingman\` on your own machine.
 
 The application makes network connections to exactly two places, both of which
 you initiate:
@@ -357,11 +357,17 @@ put its client ID and secret into `CLIENT_CONFIG` in
 Account** works without this. Do not commit real credentials back to the
 repository.
 
-The Python package directory, the executable name, and the
-`%LOCALAPPDATA%` state folder are all still named `wingman` /
-`OBSYouTubeUploader`. These are internal identifiers kept unchanged so that
-existing installations keep their settings and stay upgradeable; only the
-product name has changed.
+As of 4.0.0, the Python package directory, the executable name, and the
+`%LOCALAPPDATA%` state folder are all named `wingman` / `FlyGD Wingman`,
+matching the product name. Earlier releases kept the old
+`OBSYouTubeUploader` identifiers unchanged after the product was first
+renamed, so that existing installs would stay upgradeable without extra
+migration code. 4.0.0 retires that constraint instead of carrying it
+forward: the installer uninstalls a 3.x install by its old identity before
+installing the new one, and the app migrates
+`%LOCALAPPDATA%\OBSYouTubeUploader\` to `%LOCALAPPDATA%\FlyGD Wingman\` on
+first launch, so upgrading from 3.x keeps your settings and sign-in
+automatically.
 
 Packaging lives in [`packaging/`](packaging/) (PyInstaller spec and Inno Setup
 script). Manual pre-release verification steps are in

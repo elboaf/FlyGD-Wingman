@@ -20,14 +20,26 @@ Run on Windows against a real install before each release.
 - [ ] Start Menu shortcut launches the app
 - [ ] With "start at login" checked, the app appears after a reboot
 - [ ] Uninstall removes the app and leaves `%LOCALAPPDATA%` state intact
-- [ ] **The rename upgrades in place rather than installing a second copy.**
-      Install a pre-rename build (product name "OBS YouTube Uploader"), sign
-      in and change a setting, then run the new installer over it. Expected:
-      Add/Remove Programs lists exactly ONE entry, now named FlyGD Wingman;
-      `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` and `token.json`
-      survive, so the app is still signed in with the same preferences. This
-      is what `AppId=OBS YouTube Uploader` in installer.iss buys — if two
-      entries appear, that pin is wrong or missing.
+- [ ] **Upgrading from a pre-4.0 build replaces it rather than leaving two
+      copies.** Install a pre-rename build (product name "OBS YouTube
+      Uploader"), sign in and change a setting, then run the 4.0 installer
+      over it. Expected: Add/Remove Programs lists exactly ONE entry, now
+      named FlyGD Wingman; `%LOCALAPPDATA%\FlyGD Wingman\settings.json` and
+      `token.json` exist with the same preferences, and
+      `%LOCALAPPDATA%\OBSYouTubeUploader\` is gone. This is no longer a
+      same-AppId upgrade the way the 2024 rebrand was: `AppId` itself
+      changed to `FlyGD Wingman` in 4.0, so `RemovePredecessor()` in
+      installer.iss uninstalls the old install by its old
+      `AppId=OBS YouTube Uploader` first, and `paths.migrate_state_dir()`
+      renames the state directory on first launch. If two entries appear,
+      or the old state directory is still there afterward, one of those two
+      steps is broken.
+- [ ] **Upgrade from 3.x with the old build running.** Install 3.5.1, launch
+      it, and leave it in the tray. Install 4.0.0 and launch it. Expected: it
+      exits immediately without a window. Close the 3.x tray icon, launch
+      again. Expected: it starts, `%LOCALAPPDATA%\FlyGD Wingman\` exists,
+      `%LOCALAPPDATA%\OBSYouTubeUploader\` is gone, and you are still signed
+      in to YouTube.
 - [ ] Window title bar and tray-icon tooltip both read **FlyGD Wingman**
 - [ ] A "new recording(s) ready to upload" notification is titled
       **FlyGD Wingman**
@@ -686,7 +698,7 @@ automated reaches them; the bridge tests can only assert the call was made.
       A rebind here would re-baseline `seen` and swallow anything recorded
       since launch that has not yet been polled.
 - [ ] **LOAD-BEARING: the first-run folder screen.** Delete
-      `%LOCALAPPDATA%\OBSYouTubeUploader\settings.json` and launch with OBS
+      `%LOCALAPPDATA%\FlyGD Wingman\settings.json` and launch with OBS
       absent. Expected: the window opens and shows an in-app "choose your
       recording folder" screen, from which Browse opens the native picker
       and choosing proceeds to the normal list. This is a deliberate
@@ -762,7 +774,7 @@ behavior that only shows up at size.
 
 - [ ] **The window opens immediately on a large folder.** Launch with 30+
       recordings and no `durations.json` (delete it from
-      `%LOCALAPPDATA%\OBSYouTubeUploader\` first). Expected: the list
+      `%LOCALAPPDATA%\FlyGD Wingman\` first). Expected: the list
       appears at once with every row present, Length reading "…", and
       the values filling in over the next few seconds. The window must be
       draggable and scrollable the whole time — never a frozen white
@@ -1023,7 +1035,7 @@ behavior that only shows up at size.
       numbered 1-10)". Tick **Stitch selected videos**: "Title (one stitched
       video)". Untick and confirm it reverts.
 - [ ] **First upload triggers Google sign-in automatically, without
-      Settings.** Delete `%LOCALAPPDATA%\OBSYouTubeUploader\token.json`
+      Settings.** Delete `%LOCALAPPDATA%\FlyGD Wingman\token.json`
       first, so no token is stored. Select a recording and click **Upload
       Selected** directly — do not open Settings. Expected: the browser
       opens for Google sign-in, and once you consent, the upload proceeds
@@ -1046,7 +1058,7 @@ behavior that only shows up at size.
       used to live only in `RowSnapshot._links`, so the column was empty on
       every launch and the question it exists to answer — *did I already
       upload this fight?* — was unanswerable in the normal case.
-      `%LOCALAPPDATA%\OBSYouTubeUploader\links.json` is the store; deleting
+      `%LOCALAPPDATA%\FlyGD Wingman\links.json` is the store; deleting
       it must cost the links and nothing else, so try that too and confirm
       the list still renders with an empty Link column.
 - [ ] **A re-recording at the same filename shows NO link — in the same
@@ -1554,7 +1566,7 @@ pytest — the engine is AutoHotkey.
 - [ ] **There is no Bookmark naming card in the section** — home holes, the
       return-bookmark toggle and the preface field are all gone
 - [ ] **The generated INI has no `[Settings]` section at all.** Open
-      `%LOCALAPPDATA%\OBSYouTubeUploader\eve_bookmark_helper.ini`: it should
+      `%LOCALAPPDATA%\FlyGD Wingman\eve_bookmark_helper.ini`: it should
       contain `[Keybinds]` and `[Enabled]` and nothing else. The engine has
       no naming settings left to read, so writing them would be config that
       nothing consumes.
@@ -2305,7 +2317,7 @@ against a placeholder id; only these items are blocked on the registration.
       `dpapi.py` is the one module CI never executes, because it is
       `CryptProtectData` and CI is Linux.
 - [ ] **A token another user cannot read costs one character, not the
-      file.** Open `%LOCALAPPDATA%\OBSYouTubeUploader\eve_skills.json`,
+      file.** Open `%LOCALAPPDATA%\FlyGD Wingman\eve_skills.json`,
       corrupt one character's `refresh_token_blob` (change a few base64
       characters), and relaunch. Expected: that character shows
       `needs_reauth` with a re-authenticate banner; **every other character

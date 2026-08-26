@@ -14,9 +14,14 @@ framework, no build step, no bundler.
 screen is built*. Read both before adding or reshaping a screen — they are
 short, and most non-obvious rules in the UI live there rather than in comments.
 
-The package/import name, executable name, and `%LOCALAPPDATA%\OBSYouTubeUploader`
-state directory all keep the old `wingman` name on purpose so
-existing installs stay upgradeable. Do not rename them.
+The package, executable, install directory and state directory are all
+named `wingman` / `FlyGD Wingman` as of 4.0.0. Installs from 3.x are
+handled explicitly rather than by keeping the old names: the installer
+uninstalls the predecessor by its old `AppId`, and `paths.migrate_state_dir()`
+renames `%LOCALAPPDATA%\OBSYouTubeUploader` on first launch. Two references
+to the old identity are load-bearing and must not be tidied away — the
+legacy `AppId` lookup in `packaging/installer.iss`, and `LEGACY_MUTEX_NAME`
+in `__main__.py`, which is what stops 3.x and 4.0 running at once.
 
 ## Commands
 
