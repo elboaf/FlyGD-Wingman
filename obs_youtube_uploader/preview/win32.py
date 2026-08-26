@@ -71,6 +71,8 @@ WM_APP_SWEEP_NOW = WM_APP + 2
 WM_APP_REBIND = WM_APP + 3
 WM_APP_ALERT = WM_APP + 4
 WM_APP_RESTYLE = WM_APP + 5
+WM_APP_RESET_LAYOUTS = WM_APP + 6
+WM_APP_RESIZE_ONE = WM_APP + 7
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02

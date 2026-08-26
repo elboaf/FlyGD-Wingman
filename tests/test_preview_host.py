@@ -416,6 +416,12 @@ class _FakeUser32:
     def GetForegroundWindow(self):
         return self._foreground
 
+    def GetClientRect(self, hwnd, rect_ptr):
+        # Falsy: these tests are about selection and hotkeys, not sizing,
+        # so declining to sample is the least assumption -- _sweep's own
+        # placement tests exercise a real rect through _record_client_sizes.
+        return 0
+
 
 class _FakeLibs:
     def __init__(self, user32):
@@ -1704,3 +1710,35 @@ def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     assert order == [("foreground", 0xDEAD), ("activate", 0x2222)]
+
+
+# --- resize_preview()/reset_layouts(): on-demand sizing ---------------------
+
+
+def test_resize_preview_stashes_the_payload_and_posts_only_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so the size travels in a field
+    under the lock -- set_hotkeys' shape."""
+    h = _placement_host(monkeypatch)
+    h.resize_preview("Alice", (640, 392))
+    assert h._pending_resize == {"Alice": (640, 392)}
+
+
+def test_reset_layouts_clears_saved_and_calls_the_injected_clear(monkeypatch):
+    cleared = []
+    h = _placement_host(monkeypatch, clear_layouts=lambda: cleared.append(True))
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+    h._saved["Alice"] = layout.Entry(geometry.Rect(1, 2, 3, 4))
+    h._reset_layouts()
+    assert cleared == [True]
+    assert h._saved == {}
+
+
+def test_reset_does_not_record_the_defaults_it_just_placed(monkeypatch):
+    """Writing them back would repopulate the table the reset just
+    emptied -- a reset leaving the file exactly as full as it found it."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    monkeypatch.setattr(h, "_screen", lambda: VIRTUAL)
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+    h._reset_layouts()
+    assert recorded == []
