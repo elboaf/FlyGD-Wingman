@@ -268,6 +268,7 @@ procedure RemovePredecessor();
 var
   Command: String;
   ResultCode: Integer;
+  I: Integer;
 begin
   if not RegQueryStringValue(HKCU, LEGACY_UNINSTALL_KEY, 'UninstallString', Command) then
   begin
@@ -281,12 +282,37 @@ begin
   { A failed uninstall must NOT abort the install. The worst case is a
     stale Add/Remove entry pointing at a directory we are about to leave
     alone; blocking the upgrade over that is strictly worse. User state is
-    untouched either way -- [UninstallDelete] removes only {app}. }
-  if not Exec(Command, '/SILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE,
+    untouched either way -- [UninstallDelete] removes only {app}.
+
+    /VERYSILENT rather than /SILENT: /SILENT still shows the uninstaller's
+    own progress window, which would appear as a stray dialog on top of our
+    wizard. }
+  if not Exec(Command, '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE,
               ewWaitUntilTerminated, ResultCode) then
-    Log('Predecessor: uninstaller could not be started; continuing.')
-  else
-    Log(Format('Predecessor: uninstaller exited with %d', [ResultCode]));
+  begin
+    Log('Predecessor: uninstaller could not be started; continuing.');
+    Exit;
+  end;
+  Log(Format('Predecessor: uninstaller exited with %d', [ResultCode]));
+
+  { Exec + ewWaitUntilTerminated is NOT enough on its own: unins000.exe
+    copies itself to %TEMP%, relaunches, and the original exits within a
+    second, so Exec returns while the real uninstall is still running.
+    That matters because the 3.x uninstaller carries uninsdeletevalue on
+    an HKCU Run value whose name is byte-identical to the one this
+    installer writes -- if it finishes AFTER our [Registry] section, it
+    deletes OUR login entry and start-at-login silently breaks.
+    Poll for the key instead of trusting the exit. }
+  for I := 1 to 60 do
+  begin
+    if not RegKeyExists(HKCU, LEGACY_UNINSTALL_KEY) then
+    begin
+      Log('Predecessor: uninstall finished.');
+      Exit;
+    end;
+    Sleep(500);
+  end;
+  Log('Predecessor: still registered after 30s; continuing without it.');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
