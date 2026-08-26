@@ -10,6 +10,7 @@ decision is a pure function that the Linux test suite covers, and the
 Windows shell below them holds none.
 """
 
+from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlparse
 
@@ -81,3 +82,37 @@ def page_candidates(targets: list[dict]) -> list[dict]:
             continue
         keep.append(target)
     return keep
+
+
+class InterpreterError(Exception):
+    """No Windows interpreter that can actually run the app was found."""
+
+
+def resolve_interpreter(
+    explicit: str | None,
+    env: str | None,
+    search: Callable[[], list[str]],
+    probe: Callable[[str], bool],
+) -> str:
+    """Pick the Windows interpreter that will launch the app.
+
+    Verified by IMPORT, never by path. `where.exe python` surfaces only the
+    Microsoft Store stub, and concluding "no Windows Python" from it is
+    wrong -- that mistake once cost a lane its real-window verification.
+    A path that exists proves nothing; one that imports webview does.
+
+    Ordered explicit > env > search so a machine that has moved its Python
+    can be fixed without editing the script.
+    """
+    tried = []
+    for candidate in [explicit, env, *search()]:
+        if not candidate:
+            continue
+        tried.append(candidate)
+        if probe(candidate):
+            return candidate
+    raise InterpreterError(
+        "No Windows interpreter able to import webview and pystray was found.\n"
+        f"Tried: {tried or 'nothing -- no candidates at all'}\n"
+        "Pass one with --python, or set WINGMAN_PY."
+    )

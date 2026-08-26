@@ -10,6 +10,8 @@ import importlib.util
 import pathlib
 import re
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
 
@@ -166,3 +168,52 @@ def test_page_candidates_rejects_any_non_dev_query_string_too():
     """
     targets = [{"type": "page", "url": "http://127.0.0.1:52913/index.html?foo=1"}]
     assert shoot.page_candidates(targets) == []
+
+
+def test_resolve_interpreter_prefers_explicit_over_env():
+    got = shoot.resolve_interpreter(
+        "C:/explicit/python.exe",
+        "C:/env/python.exe",
+        search=lambda: ["C:/found/python.exe"],
+        probe=lambda path: True,
+    )
+    assert got == "C:/explicit/python.exe"
+
+
+def test_resolve_interpreter_falls_back_to_search():
+    got = shoot.resolve_interpreter(
+        None, None, search=lambda: ["C:/found/python.exe"], probe=lambda path: True
+    )
+    assert got == "C:/found/python.exe"
+
+
+def test_resolve_interpreter_rejects_a_python_without_the_app_deps():
+    """A found Python that cannot import webview is worse than none.
+
+    It launches, fails, and by then the user's Wingman is already closed.
+    So the probe runs BEFORE anything is closed, and a failure is fatal.
+    """
+    with pytest.raises(shoot.InterpreterError) as excinfo:
+        shoot.resolve_interpreter(
+            "C:/store/stub/python.exe",
+            None,
+            search=list,
+            probe=lambda path: False,
+        )
+    assert "webview" in str(excinfo.value)
+
+
+def test_resolve_interpreter_skips_unusable_candidates_and_keeps_looking():
+    got = shoot.resolve_interpreter(
+        None,
+        None,
+        search=lambda: ["C:/stub/python.exe", "C:/real/python.exe"],
+        probe=lambda path: path == "C:/real/python.exe",
+    )
+    assert got == "C:/real/python.exe"
+
+
+def test_resolve_interpreter_reports_every_place_it_looked():
+    with pytest.raises(shoot.InterpreterError) as excinfo:
+        shoot.resolve_interpreter(None, None, search=list, probe=lambda path: True)
+    assert "--python" in str(excinfo.value)
