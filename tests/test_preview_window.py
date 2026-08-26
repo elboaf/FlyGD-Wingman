@@ -48,6 +48,32 @@ def test_resize_grows_from_the_top_left_anchor():
     assert (out.w, out.h) == (R.w + 50, R.h + 30)
 
 
+def test_resize_result_without_an_aspect_is_unchanged():
+    """The existing signature must keep working: this is the fallback for
+    a client at character select or one that quit mid-drag."""
+    out = window.resize_result((100, 100), (150, 130), R, min_size=(80, 60))
+    assert out.w == R.w + 50 and out.h == R.h + 30
+
+
+def test_resize_result_with_an_aspect_locks_the_picture():
+    out = window.resize_result(
+        (0, 0), (200, 0), R, min_size=(80, 60), aspect=16 / 9, chrome=(4, 34)
+    )
+    assert abs((out.w - 4) / (out.h - 34) - 16 / 9) < 0.01
+
+
+def test_resize_result_respects_the_label_band_being_off():
+    """Same drag, labels off: the window is 30px shorter for the same
+    picture. window.py reads _label_h() live at every other call site."""
+    on = window.resize_result(
+        (0, 0), (200, 0), R, min_size=(80, 60), aspect=16 / 9, chrome=(4, 34)
+    )
+    off = window.resize_result(
+        (0, 0), (200, 0), R, min_size=(80, 60), aspect=16 / 9, chrome=(4, 4)
+    )
+    assert on.h - off.h == 30
+
+
 def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     """__main__.py:64 sets the root logger to INFO. A DEBUG line about a
     failed activation is therefore invisible in the only log a user will
@@ -374,6 +400,14 @@ class _FakeLibs:
 
             def PeekMessageW(self, *a):
                 return False  # nothing queued behind this event
+
+            def GetClientRect(self, hwnd, ptr):
+                # Called on every button-down now (Task 3), not only during
+                # a resize -- these gesture tests need it to succeed even
+                # though none of them exercise the aspect lock itself.
+                ptr._obj.left, ptr._obj.top = 0, 0
+                ptr._obj.right, ptr._obj.bottom = 320, 210
+                return True
 
         self.user32 = User32()
 

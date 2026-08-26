@@ -46,17 +46,20 @@ def drag_result(start, current, rect, locked: bool, drag_min: int = DRAG_MIN):
     return "move", rect._replace(x=rect.x + dx, y=rect.y + dy)
 
 
-def resize_result(start, current, rect, min_size=MIN_SIZE):
+def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(0, 0)):
     """New rect for a resize drag. Top-left is the anchor and never moves.
 
-    Floored at *min_size*: a rect dragged through zero would invert, and
-    DwmUpdateThumbnailProperties rejects an inverted destination -- the
-    preview just goes blank, with nothing logged.
+    With *aspect* set, the PICTURE keeps that shape and *chrome* says how
+    many pixels of the window are not picture. With aspect None the result
+    is what it has always been -- which is also the fallback when the
+    client's rect cannot be read.
     """
     dx, dy = current[0] - start[0], current[1] - start[1]
-    return rect._replace(
-        w=max(min_size[0], rect.w + dx), h=max(min_size[1], rect.h + dy)
-    )
+    w, h = rect.w + dx, rect.h + dy
+    if aspect:
+        w, h = geometry.lock_to_aspect(w, h, aspect, chrome, min_size)
+        return rect._replace(w=w, h=h)
+    return rect._replace(w=max(min_size[0], w), h=max(min_size[1], h))
 
 
 def activate(libs, hwnd) -> bool:
@@ -300,6 +303,8 @@ class PreviewWindow:
         self._mode = None
         self._start = None
         self._start_rect = None
+        self._start_aspect = None
+        self._start_chrome = (0, 0)
 
     @classmethod
     def create(
@@ -368,6 +373,23 @@ class PreviewWindow:
         bandless tile with no text falls out of the existing render path.
         """
         return LABEL_H if self.show_labels else 0
+
+    def _source_aspect(self):
+        """The client area's width/height, or None if it cannot be read.
+
+        None is routine rather than exceptional: a client sitting at character
+        select, or one that quit mid-drag, has a degenerate rect. The handle
+        falls back to a freeform resize rather than freezing.
+        """
+        import ctypes
+
+        rect = win32.RECT()
+        if not self._libs.user32.GetClientRect(self.client.hwnd, ctypes.byref(rect)):
+            return None
+        w, h = rect.right - rect.left, rect.bottom - rect.top
+        if w <= 0 or h <= 0:
+            return None
+        return w / h
 
     def _chrome_key(self):
         # opacity deliberately does NOT belong here. It is a DWM thumbnail
@@ -636,6 +658,12 @@ class PreviewWindow:
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
             self._start = _cursor_pos(self._libs)
+            # Sampled once per drag, never per WM_MOUSEMOVE: that handler
+            # has a documented stutter history and a WINGMAN_PREVIEW_PERF
+            # harness built to measure it, and a syscall per mouse move is
+            # the cost that harness exists to catch.
+            self._start_aspect = self._source_aspect()
+            self._start_chrome = (BORDER * 2, BORDER * 2 + self._label_h())
             if msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
             ):
@@ -676,7 +704,15 @@ class PreviewWindow:
             # oscillate. Absolute coordinates cannot feed back.
             cur = _cursor_pos(self._libs)
             if self._mode == "resize":
-                self.move(resize_result(self._start, cur, self._start_rect))
+                self.move(
+                    resize_result(
+                        self._start,
+                        cur,
+                        self._start_rect,
+                        aspect=self._start_aspect,
+                        chrome=self._start_chrome,
+                    )
+                )
             else:
                 moved = drag_target(self._start, cur, self._start_rect)
                 self.move(geometry.snap(moved, self._neighbours(), self._screen()))
