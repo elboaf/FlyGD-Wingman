@@ -471,3 +471,12 @@ def test_the_group_count_says_what_it_counts():
     """`4` above `1/4` counts MEMBERS above CHARACTERS READY. Every number
     on this screen carries the noun it counts, so the column is keyed."""
     assert "MEMBERS" in RAIL.upper()
+
+
+def test_the_ratio_denominator_follows_the_selected_group():
+    """The numerator is Python's group-scoped ready_count. A denominator
+    still counting the whole roster would read `4/9` for a four-character
+    crew -- two numbers about different populations in one ratio."""
+    body = re.search(r"function renderPlans\(\)\s*\{(.*?)\n  \}", CODE, re.DOTALL)
+    assert body, "renderPlans not found"
+    assert "characters().length" not in body.group(1)

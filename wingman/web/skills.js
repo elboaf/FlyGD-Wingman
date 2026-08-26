@@ -77,6 +77,22 @@
   function groups() { return (STATE && STATE.groups) || []; }
   function selectedGroup() { return (STATE && STATE.selected_group) || ''; }
 
+  /* How many characters the current scope holds. This is the denominator
+   * of every rail ratio AND the population the roster shows, so it is
+   * derived once: two places deriving it separately is how `4/9` for a
+   * four-character crew happens. */
+  function scopedTotal() {
+    var current = selectedGroup();
+    if (!current) return characters().length;
+    var found = 0;
+    groups().forEach(function (group) {
+      if (group.name.toLowerCase() === current.toLowerCase()) {
+        found = group.member_count;
+      }
+    });
+    return found;
+  }
+
   function render(payload) {
     if (!payload) return;
     STATE = payload;
@@ -166,10 +182,13 @@
    */
   function renderRail() {
     var chars = characters();
-    WM.el('skills-counts').textContent = chars.length
-      ? chars.length + (chars.length === 1 ? ' character added'
-                                           : ' characters added')
-      : 'No characters yet';
+    var scoped = scopedTotal();
+    WM.el('skills-counts').textContent = !chars.length
+      ? 'No characters yet'
+      : selectedGroup()
+        ? scoped + ' of ' + chars.length + ' characters'
+        : chars.length + (chars.length === 1 ? ' character added'
+                                             : ' characters added');
 
     renderRailButtons();
     renderPlans();
@@ -184,7 +203,7 @@
       host.appendChild(WM.make('p', 'hint', 'No plans found.'));
       return;
     }
-    var total = characters().length;
+    var total = scopedTotal();
     var selected = (STATE.selected_plan_name || '').toLowerCase();
     list.forEach(function (plan) {
       var row = WM.make('button', 'rail-plan');
@@ -561,10 +580,19 @@
     return mins + 'm';
   }
 
+  /* The two filters intersect. This DOES hide rows, and an expanded row is
+   * the only surface in the app for forgetting or re-authenticating a
+   * character -- but that is already true of the text filter beside it,
+   * and `All` is one click away. The LOCKOUT GUARD above buildRoster is
+   * not weakened: it forbids ENUMERATING known readiness groups, so that a
+   * character in an unrecognised state still gets a row. It says nothing
+   * about a filter the user chose. */
   function matching() {
     var needle = filterText.trim().toLowerCase();
-    if (!needle) return characters();
+    var group = selectedGroup().toLowerCase();
     return characters().filter(function (ch) {
+      if (group && (ch.group || '').toLowerCase() !== group) return false;
+      if (!needle) return true;
       return (ch.character_name || '').toLowerCase().indexOf(needle) !== -1;
     });
   }
@@ -600,6 +628,8 @@
     if (!plans().length) {
       hint = 'No local plans yet. Drop a .txt plan in the plans folder, '
         + 'then reload.';
+    } else if (!rows.length && selectedGroup() && !filterText.trim()) {
+      hint = 'No characters in “' + selectedGroup() + '”.';
     } else if (!rows.length) {
       // The clear action is already visible (it is shown whenever a filter
       // is active), so this line does not repeat it as a button.
