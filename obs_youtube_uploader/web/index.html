@@ -618,10 +618,17 @@
       <section class="card">
         <h2>Alerts</h2>
         <div class="row"><span class="lab"></span>
+          <!-- Round 5, A3. This used to end "when combat starts, your warp
+               is scrambled, or you decloak" -- the three rows of the event
+               table, restated ~400px above the table. The enumeration was
+               the only part a reader could get from the table itself, and
+               it is the part that has to be re-edited every time the table
+               changes. What is left is the mechanism, which the table does
+               NOT state: that the trigger is the gamelog and that the
+               preview pulsed is the client the event happened in. -->
           <span class="hint">Gamelog-driven alerts pulse a client's preview
-            when combat starts, your warp is scrambled, or you decloak
-            &mdash; useful for a client that is not the one you are
-            looking at.</span></div>
+            when one of the events below fires in it &mdash; useful for a
+            client that is not the one you are looking at.</span></div>
         <div class="row"><span class="lab"></span>
           <!-- Round 3, R4's finding 3. Opened "Previews are off, so"
                like the two sentences above it, in a view where the
@@ -658,26 +665,6 @@
              nothing saying so. -->
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-depends" hidden></span></div>
-        <div class="row">
-                    <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
-               is {combat, warp_scramble}; decloak is excluded there
-               because it carries no attacker source for the heuristic to
-               test. Saying only "combat" while the control sits above
-               three events, card-level, taught the model that all three
-               were filtered -- so a user assumed their decloak alerts
-               were NPC-filtered when nothing had ever filtered them. -->
-          <label class="check">
-            <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
-            Ignore combat and warp scrambles that look like NPC fire, not
-            a player's
-          </label>
-        </div>
-        <div class="row">
-                    <label class="check">
-            <input type="checkbox" id="alert-persist"><span class="box"></span>
-            Keep pulsing until you select the preview
-          </label>
-        </div>
         <!-- One grid over all three rows, with the rows themselves
              display:contents -- the same technique #preview-binds uses,
              and for the same reason. Three independent flex rows put each
@@ -750,6 +737,50 @@
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
+        </div>
+        </div>
+        <!-- Round 5, A4. These two were the third and fourth checkboxes on
+             the card, directly under the master switch and rendered at its
+             indent and weight -- so the card offered five peer switches, of
+             which two were modifiers of the other three. The PvE filter
+             governs two of the three rows above; Keep pulsing changes how
+             every one of them behaves. Neither is a peer of "Watch
+             gamelogs and raise alerts", and neither is a peer of an event.
+             They are below the table now and one checkbox in, so their
+             subject is the thing immediately above them.
+             role="group" + aria-labelledby, because indentation is not
+             available to a screen reader and the lead-in line is the only
+             thing that says what "these" are. -->
+        <div class="alert-mods" role="group" aria-labelledby="alert-mods-lead">
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alert-mods-lead">These change how the
+            events above behave.</span></div>
+        <div class="row">
+          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
+               is {combat, warp_scramble}; decloak is excluded there
+               because it carries no attacker source for the heuristic to
+               test. Saying only "combat" taught the model that all three
+               were filtered -- so a user assumed their decloak alerts were
+               NPC-filtered when nothing had ever filtered them.
+
+               That note used to name the CAUSE as this control sitting
+               "above three events, card-level". A4 has since moved it
+               below them, so the position no longer teaches the wrong
+               scope -- but the widened label stays regardless: it is the
+               only thing on the card that states the scope at all, and
+               "below the table" is not the same claim as "two of the three
+               rows in it". -->
+          <label class="check">
+            <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
+            Ignore combat and warp scrambles that look like NPC fire, not
+            a player's
+          </label>
+        </div>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="alert-persist"><span class="box"></span>
+            Keep pulsing until you select the preview
+          </label>
         </div>
         </div>
       </section>

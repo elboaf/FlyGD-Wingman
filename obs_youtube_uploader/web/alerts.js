@@ -30,10 +30,17 @@
   // preference for later is an action that can be carried out."
   //
   // What was wrong here was not the controls being live. It was that
-  // twelve of them sit under a switch that turns them all off, rendered
-  // as its peers, with the only contradicting line -- "Not watching
-  // gamelogs." -- ABOVE them in the faintest text on the card. So the row
-  // says so instead, and only while it is true.
+  // twelve of them sit under a switch that turns them all off, with the
+  // only contradicting line -- "Not watching gamelogs." -- ABOVE them in
+  // the faintest text on the card. So the row says so instead, and only
+  // while it is true.
+  //
+  // That sentence used to add "rendered as its peers", which round 5's A4
+  // has since made only half true: the PvE filter and Keep-pulsing moved
+  // below the event table into .alert-mods, because they modify that table
+  // rather than sit beside the switch. They are still under the switch, so
+  // this line still has to cover them -- "below" is what it says, and
+  // .alert-mods is below.
   var DEPENDS = 'Alerts are off, so nothing below is watching yet — these '
               + 'apply when you turn them on.';
 
@@ -344,11 +351,55 @@
   // is the only thing left that is useful.
   var HEALTH_NAMES_MAX = 6;
 
+  // Round 5, A1. `running` is only two thirds of the answer, and the line
+  // shipped four rounds saying it was all of it.
+  //
+  // service.py's _resolved_folder gates the THREAD on three things --
+  // previews on, master switch on, a folder that still resolves -- so
+  // `running: true` proves all three. It proves nothing at all about the
+  // event table, which service.py's _handle consults separately and which
+  // drops every event whose spec is not `enabled`. Untick all three rows
+  // and the tailer genuinely is reading gamelogs, genuinely has thirteen
+  // characters, and cannot raise an alert for any of them: the card
+  // rendered "Watching gamelogs — Aiga Otsolen, ... and 7 more" over a
+  // feature that was switched off. That is the exact shape PRODUCT.md
+  // names as this line's reason to exist ("an alert you configured and
+  // cannot tell is running is the failure mode, not a missed pulse"), and
+  // the sibling instance at the Test-while-off note below is why the
+  // class is worth naming rather than patching.
+  //
+  // Counted off the payload's OWN events dict, not the EVENTS list above:
+  // this is the same table _handle reads, so the answer stays true for
+  // whatever settings.json holds rather than for the three ids this file
+  // happens to render.
+  //
+  // Deliberately NOT extended to the PvE filter. It suppresses only
+  // likely-NPC sources on two of the three events (patterns.py's
+  // FILTERED_EVENTS), so there is no setting of it that makes alerting
+  // impossible -- a clause claiming otherwise would be this same bug with
+  // the sign flipped.
+  function anyEventEnabled(alerts) {
+    var events = (alerts && alerts.events) || {};
+    for (var id in events) {
+      if (Object.prototype.hasOwnProperty.call(events, id)
+          && events[id] && events[id].enabled) { return true; }
+    }
+    return false;
+  }
+
   function healthText(state) {
     if (!state.running) {
       return state.last_error
         ? 'Not watching gamelogs — ' + state.last_error
         : 'Not watching gamelogs.';
+    }
+    if (!anyEventEnabled(state.alerts)) {
+      // Ahead of the character list on purpose, and instead of it: with no
+      // event enabled it does not matter which clients are online, and
+      // naming thirteen of them beside "nothing can alert" would be the
+      // healthy-looking card again in a different sentence.
+      return 'Watching gamelogs, but no events are switched on below — '
+        + 'nothing can alert yet.';
     }
     var characters = (state.characters || []).slice().sort();
     if (!characters.length) {
