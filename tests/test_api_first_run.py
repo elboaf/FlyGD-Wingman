@@ -12,8 +12,8 @@ the page-side skip affordance lives in web/firstrun.js.
 
 from pathlib import Path
 
-from obs_youtube_uploader import settings as settings_mod
 from tests import fakes
+from wingman import settings as settings_mod
 
 
 class FakeTimer:

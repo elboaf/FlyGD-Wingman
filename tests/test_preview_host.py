@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import alertframes, geometry, gestures, host, layout
+from wingman.preview import alertframes, geometry, gestures, host, layout
 
 
 def test_reconcile_reports_additions_and_removals():
@@ -123,7 +123,7 @@ def test_a_layout_change_updates_the_in_session_cache():
     to the next sweep. If _saved still held only what was loaded at
     startup, the preview would be re-placed by default_stack and the
     user's dragged position would not return until a full restart."""
-    from obs_youtube_uploader.preview.geometry import Rect
+    from wingman.preview.geometry import Rect
 
     sent = []
     h = host.PreviewHost(on_layout_changed=lambda *a: sent.append(a))
@@ -140,8 +140,8 @@ def test_a_saved_layout_entry_keeps_its_lock_flag():
     test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry
     pins it. This is only that the entry round-trips the field, which it
     must keep doing while existing settings files still carry it."""
-    from obs_youtube_uploader.preview.geometry import Rect
-    from obs_youtube_uploader.preview.layout import Entry
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
 
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None,
@@ -164,7 +164,7 @@ def test_stop_from_another_thread_really_exits_the_pump(monkeypatch):
     Discovery is stubbed to find nothing so the test creates only the
     host's message-only window, not a preview per running EVE client.
     """
-    from obs_youtube_uploader.preview import discovery
+    from wingman.preview import discovery
 
     monkeypatch.setattr(discovery, "list_clients", lambda **kw: [])
 

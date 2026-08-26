@@ -45,23 +45,23 @@ HTML/CSS/ES5 with no build step, pytest, ruff.
 - None. Every change lands in an existing module.
 
 **Modified:**
-- `obs_youtube_uploader/preview/geometry.py` — gains `parse_size` and
+- `wingman/preview/geometry.py` — gains `parse_size` and
   `lock_to_aspect`. Both pure; this is where the testable arithmetic lives.
-- `obs_youtube_uploader/preview/window.py` — `resize_result` gains an
+- `wingman/preview/window.py` — `resize_result` gains an
   aspect; `PreviewWindow` gains `_source_aspect()`, a `snap` attribute, and
   captures aspect + chrome at drag start.
-- `obs_youtube_uploader/preview/store.py` — gains `clear()`, the one
+- `wingman/preview/store.py` — gains `clear()`, the one
   wholesale write this class allows.
-- `obs_youtube_uploader/preview/host.py` — gains `resize_preview()`,
+- `wingman/preview/host.py` — gains `resize_preview()`,
   `reset_layouts()`, `client_sizes()`, two message handlers, and a snap
   push in `_restyle`.
-- `obs_youtube_uploader/preview/win32.py` — two new `WM_APP_*` constants.
-- `obs_youtube_uploader/settings.py` — the `preview.snap` key and its
+- `wingman/preview/win32.py` — two new `WM_APP_*` constants.
+- `wingman/settings.py` — the `preview.snap` key and its
   validation.
-- `obs_youtube_uploader/__main__.py` — passes the `snap` callable and
+- `wingman/__main__.py` — passes the `snap` callable and
   `clear_layouts=store.clear` into `PreviewHost`.
-- `obs_youtube_uploader/ui/api.py` — four endpoints and a widened payload.
-- `obs_youtube_uploader/web/{index.html,style.css,previews.js,settings.js,dev.js}`
+- `wingman/ui/api.py` — four endpoints and a widened payload.
+- `wingman/web/{index.html,style.css,previews.js,settings.js,dev.js}`
 - `docs/smoke-checklist.md`, `docs/preview-roadmap.md`
 
 **Tests:**
@@ -74,7 +74,7 @@ HTML/CSS/ES5 with no build step, pytest, ruff.
 ### Task 1: `geometry.parse_size`
 
 **Files:**
-- Modify: `obs_youtube_uploader/preview/geometry.py`
+- Modify: `wingman/preview/geometry.py`
 - Test: `tests/test_preview_geometry.py`
 
 **Interfaces:**
@@ -153,7 +153,7 @@ Expected: PASS (5 tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add obs_youtube_uploader/preview/geometry.py tests/test_preview_geometry.py
+git add wingman/preview/geometry.py tests/test_preview_geometry.py
 git commit -m "Parse a typed preview size"
 ```
 
@@ -165,7 +165,7 @@ The spec's central arithmetic, and the piece an earlier draft got wrong by
 treating the chrome as a constant.
 
 **Files:**
-- Modify: `obs_youtube_uploader/preview/geometry.py`
+- Modify: `wingman/preview/geometry.py`
 - Test: `tests/test_preview_geometry.py`
 
 **Interfaces:**
@@ -272,7 +272,7 @@ Expected: PASS (all, including the pre-existing geometry tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add obs_youtube_uploader/preview/geometry.py tests/test_preview_geometry.py
+git add wingman/preview/geometry.py tests/test_preview_geometry.py
 git commit -m "Lock a window size to its picture's aspect ratio"
 ```
 
@@ -281,7 +281,7 @@ git commit -m "Lock a window size to its picture's aspect ratio"
 ### Task 3: The drag handle keeps the client's shape
 
 **Files:**
-- Modify: `obs_youtube_uploader/preview/window.py`
+- Modify: `wingman/preview/window.py`
 - Test: `tests/test_preview_window.py`
 
 **Interfaces:**
@@ -418,7 +418,7 @@ Expected: PASS, clean
 - [ ] **Step 9: Commit**
 
 ```bash
-git add obs_youtube_uploader/preview/window.py tests/test_preview_window.py
+git add wingman/preview/window.py tests/test_preview_window.py
 git commit -m "The resize handle keeps a preview at its client's shape"
 ```
 
@@ -427,8 +427,8 @@ git commit -m "The resize handle keeps a preview at its client's shape"
 ### Task 4: The snap toggle
 
 **Files:**
-- Modify: `obs_youtube_uploader/settings.py`, `obs_youtube_uploader/preview/window.py`,
-  `obs_youtube_uploader/preview/host.py`, `obs_youtube_uploader/__main__.py`
+- Modify: `wingman/settings.py`, `wingman/preview/window.py`,
+  `wingman/preview/host.py`, `wingman/__main__.py`
 - Test: `tests/test_settings_preview.py`, `tests/test_preview_window.py`
 
 **Interfaces:**
@@ -573,7 +573,7 @@ Expected: PASS, clean
 - [ ] **Step 8: Commit**
 
 ```bash
-git add obs_youtube_uploader/ tests/
+git add wingman/ tests/
 git commit -m "preview.snap: a dragged preview can stop snapping"
 ```
 
@@ -582,7 +582,7 @@ git commit -m "preview.snap: a dragged preview can stop snapping"
 ### Task 5: `LayoutStore.clear()`
 
 **Files:**
-- Modify: `obs_youtube_uploader/preview/store.py`
+- Modify: `wingman/preview/store.py`
 - Test: `tests/test_preview_store.py`
 
 **Interfaces:**
@@ -676,7 +676,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add obs_youtube_uploader/preview/store.py tests/test_preview_store.py
+git add wingman/preview/store.py tests/test_preview_store.py
 git commit -m "LayoutStore.clear: forget every saved position, keep pending names"
 ```
 
@@ -685,8 +685,8 @@ git commit -m "LayoutStore.clear: forget every saved position, keep pending name
 ### Task 6: The host resizes one preview and resets them all
 
 **Files:**
-- Modify: `obs_youtube_uploader/preview/win32.py`,
-  `obs_youtube_uploader/preview/host.py`, `obs_youtube_uploader/__main__.py`
+- Modify: `wingman/preview/win32.py`,
+  `wingman/preview/host.py`, `wingman/__main__.py`
 - Test: `tests/test_preview_host.py`
 
 **Interfaces:**
@@ -856,7 +856,7 @@ Expected: PASS, clean
 - [ ] **Step 8: Commit**
 
 ```bash
-git add obs_youtube_uploader/ tests/
+git add wingman/ tests/
 git commit -m "The preview host can resize one preview and reset them all"
 ```
 
@@ -865,7 +865,7 @@ git commit -m "The preview host can resize one preview and reset them all"
 ### Task 7: The four bridge endpoints
 
 **Files:**
-- Modify: `obs_youtube_uploader/ui/api.py`
+- Modify: `wingman/ui/api.py`
 - Test: `tests/test_api_settings_fields.py`
 
 **Interfaces:**
@@ -1040,7 +1040,7 @@ live on the host, not on `Api`.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add obs_youtube_uploader/ui/api.py tests/
+git add wingman/ui/api.py tests/
 git commit -m "Bridge endpoints for preview size, snap and reset"
 ```
 
@@ -1049,8 +1049,8 @@ git commit -m "Bridge endpoints for preview size, snap and reset"
 ### Task 8: The `Size…` row control
 
 **Files:**
-- Modify: `obs_youtube_uploader/web/previews.js`,
-  `obs_youtube_uploader/web/style.css`, `obs_youtube_uploader/web/dev.js`
+- Modify: `wingman/web/previews.js`,
+  `wingman/web/style.css`, `wingman/web/dev.js`
 - Test: `tests/test_page_conventions.py` (existing rules; no new test file)
 
 **Interfaces:**
@@ -1177,13 +1177,13 @@ kind and trailing `minmax(0, 1fr)` are unchanged.
 
 Then measure the width in the `?dev=1` harness at **840x625** — six
 `max-content` tracks on the tightest screen in the app is the real risk here,
-and it cannot be reasoned about. Serve `obs_youtube_uploader/web/` and load
+and it cannot be reasoned about. Serve `wingman/web/` and load
 `index.html?dev=1`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add obs_youtube_uploader/web/
+git add wingman/web/
 git commit -m "Size…: type a preview's dimensions"
 ```
 
@@ -1192,8 +1192,8 @@ git commit -m "Size…: type a preview's dimensions"
 ### Task 9: The Previews card gains snapping and reset
 
 **Files:**
-- Modify: `obs_youtube_uploader/web/index.html`,
-  `obs_youtube_uploader/web/settings.js`, `obs_youtube_uploader/web/dev.js`
+- Modify: `wingman/web/index.html`,
+  `wingman/web/settings.js`, `wingman/web/dev.js`
 
 **Interfaces:**
 - Consumes: Task 7's `set_preview_snap` / `reset_preview_layouts`.
@@ -1319,7 +1319,7 @@ render and neither overflows.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add obs_youtube_uploader/web/
+git add wingman/web/
 git commit -m "Previews card: snapping toggle and reset"
 ```
 

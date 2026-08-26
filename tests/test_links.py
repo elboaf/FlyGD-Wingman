@@ -9,7 +9,7 @@ recording.
 import json
 from pathlib import Path
 
-from obs_youtube_uploader import links
+from wingman import links
 
 URL = "https://www.youtube.com/watch?v=abc123"
 

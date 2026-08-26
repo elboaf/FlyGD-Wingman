@@ -15,8 +15,8 @@ groups that do not share a file region at all — CSS primitives, Settings
 row machinery, Python, and documentation — so they can run at the same
 time. The serialization is between *waves*, not inside them.
 
-**Paths.** Everything below uses real paths: `obs_youtube_uploader/web/*`
-and `obs_youtube_uploader/ui/*`.
+**Paths.** Everything below uses real paths: `wingman/web/*`
+and `wingman/ui/*`.
 
 **Line numbers** are against `main` at `be43305` and will drift. Treat them
 as "the region beginning at this banner comment", not as absolute.

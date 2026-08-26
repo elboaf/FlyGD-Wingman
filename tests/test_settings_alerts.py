@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import settings
+from wingman import settings
 
 
 @pytest.mark.parametrize("raw", [None, [], "nope", 3])
@@ -33,7 +33,7 @@ def test_every_parser_event_has_a_config_entry():
     """The schema is built from patterns.EVENTS. If the two drift, the
     section grows an event the renderer cannot draw, or loses one the
     tailer will emit."""
-    from obs_youtube_uploader.alerts import patterns
+    from wingman.alerts import patterns
 
     assert set(settings._alerts_defaults()["events"]) == set(patterns.EVENTS)
 

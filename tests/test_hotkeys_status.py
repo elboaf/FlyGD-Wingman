@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
+from wingman import hotkeys
 
 VALUES = {
     "sig": "-ABC",

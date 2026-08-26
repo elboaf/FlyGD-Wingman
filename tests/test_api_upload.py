@@ -8,10 +8,10 @@ only thing asserting them was a widget.
 import datetime
 import threading
 
-from obs_youtube_uploader import combatlog, discord, library, uploader
-from obs_youtube_uploader import links as links_mod
-from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
+from wingman import combatlog, discord, library, uploader
+from wingman import links as links_mod
+from wingman.ui import api as api_mod
 
 
 def api_with(tmp_path, ids=("r1", "r2"), **kw):
@@ -225,7 +225,7 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
     # _remember_channel now writes through settings_mod.update(), which
     # calls _save_locked internally rather than save() directly.
     monkeypatch.setattr(
-        "obs_youtube_uploader.ui.api.settings_mod._save_locked",
+        "wingman.ui.api.settings_mod._save_locked",
         lambda data, path=None: saved.update(data),
     )
 
@@ -292,7 +292,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -367,7 +367,7 @@ def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_p
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -1055,7 +1055,7 @@ def test_a_stitch_is_busy_so_a_route_change_cannot_blank_it(monkeypatch, tmp_pat
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -1120,7 +1120,7 @@ def test_a_stitched_batch_is_one_video_and_takes_the_title_form(monkeypatch, tmp
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("obs_youtube_uploader.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)

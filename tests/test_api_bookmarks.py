@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import bookmarks, hotkeys, settings
 from tests.fakes import FakeWindow
+from wingman import bookmarks, hotkeys, settings
 
 
 class FakeEngine:
@@ -50,7 +50,7 @@ class FakeEngine:
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod.paths, "settings_file", lambda: tmp_path / "s.json")
     state = api_mod.AppState(
@@ -79,7 +79,7 @@ def test_get_returns_human_labels_for_bound_keys(api):
 
 
 def test_get_lists_live_eve_windows(api, monkeypatch):
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod.evewindows, "list_eve_windows", lambda: ["EVE - Pilot"])
     assert api.get_bookmarks()["windows"] == ["EVE - Pilot"]
@@ -123,8 +123,8 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(
 ):
     """Same contract as save_settings: bail before touching in-memory state
     so state and disk never diverge, and tell the user why."""
-    from obs_youtube_uploader.ui import api as api_mod
     from tests import fakes
+    from wingman.ui import api as api_mod
 
     api._alert = fakes.Alerts()
     before = api.get_bookmarks()["settings"]
@@ -152,7 +152,7 @@ def test_capture_and_parse_delegate_to_bookmarks(api):
 
 
 def test_import_applies_and_reports(api, tmp_path, monkeypatch):
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
@@ -175,7 +175,7 @@ def test_import_reads_the_utf16_a_real_helper_ini_is_written_in(
     what the file in the wild actually is. Read as UTF-8 it parsed as
     nothing, and that nothing was then saved over the user's settings while
     the dialog said "Import complete"."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
@@ -196,7 +196,7 @@ def test_an_unparseable_file_does_not_wipe_the_existing_settings(
 ):
     """The failure mode the encoding bug actually caused: nothing parsed,
     and the empty result was saved over real settings."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     api.save_bookmarks({**api.get_bookmarks()["settings"], "keybinds": {"FinH": "^h"}})
@@ -220,7 +220,7 @@ def test_reset_binds_overwrites_every_bind(api):
 
 
 def test_import_cancelled_changes_nothing(api, monkeypatch):
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     api._window.dialog_result = None
@@ -249,7 +249,7 @@ def test_import_does_not_claim_success_when_the_save_fails(api, tmp_path, monkey
     """save_bookmarks returns the same shape whether it wrote or refused, so
     import used to report "Import complete" beside the error dialog naming
     the failure. The `saved` flag is what lets it tell the two apart."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
     legacy = tmp_path / "eve_bookmark_helper.ini"
@@ -269,7 +269,7 @@ def test_import_does_not_claim_success_when_the_save_fails(api, tmp_path, monkey
 
 
 def test_save_bookmarks_reports_whether_it_actually_wrote(api, monkeypatch):
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     section = api.get_bookmarks()["settings"]
     assert api.save_bookmarks(section)["saved"] is True

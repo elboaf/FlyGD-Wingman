@@ -19,8 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from obs_youtube_uploader import __main__ as main_mod
 from tests import fakes
+from wingman import __main__ as main_mod
 
 
 class FakeIcon:
@@ -146,7 +146,7 @@ def test_the_auth_check_is_handed_to_the_gui_loop_to_run(startup):
 def test_a_normal_launch_shows_its_window(startup, monkeypatch):
     """Everything except the login entry raises a window. A Start menu
     shortcut that silently did nothing visible would read as a crash."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader"])
+    monkeypatch.setattr(sys, "argv", ["wingman"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False
 
@@ -157,7 +157,7 @@ def test_the_hidden_flag_reaches_the_window(startup, monkeypatch):
     the flag describes how THIS process was started, which no stored value
     can know: the same binary opened from the Start menu a minute later
     must show its window."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--hidden"])
+    monkeypatch.setattr(sys, "argv", ["wingman", "--hidden"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is True
 
@@ -166,6 +166,98 @@ def test_an_unrecognised_argument_does_not_kill_a_windowed_launch(startup, monke
     """Deliberately not argparse. It exits(2) with a usage message on any
     unknown argument, and in a windowed build with no console that is a
     launch which dies with nothing on screen and nothing in the log."""
-    monkeypatch.setattr(sys, "argv", ["obs_youtube_uploader", "--what-is-this"])
+    monkeypatch.setattr(sys, "argv", ["wingman", "--what-is-this"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False
+
+
+def test_the_two_mutex_names_differ():
+    """Collapsing these makes the app refuse to start, always.
+
+    acquire_single_instance() creates both names in ONE process. If they
+    are equal, the second CreateMutexW reports ERROR_ALREADY_EXISTS
+    against our own handle, every launch returns None, and the app never
+    opens -- on every machine, not just upgrades.
+    """
+    assert main_mod.MUTEX_NAME != main_mod.LEGACY_MUTEX_NAME
+
+
+def test_a_running_3x_instance_blocks_startup(monkeypatch):
+    """An upgrade can leave 3.x resident in the tray; Inno cannot close it.
+
+    Two builds running at once both write settings.json, and save()
+    projects the whole document from DEFAULTS -- so interleaved writers
+    silently revert each other's keys (settings.py:543-548).
+    """
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    tried = []
+
+    def fake_create(name):
+        tried.append(name)
+        return 1, name == main_mod.LEGACY_MUTEX_NAME
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() is None
+    assert tried == [main_mod.LEGACY_MUTEX_NAME], (
+        "the legacy name must be tested FIRST and short-circuit"
+    )
+
+
+def test_both_names_are_held_when_nothing_else_is_running(monkeypatch):
+    """Holding the legacy name is what stops a 3.x launched LATER."""
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    tried = []
+
+    def fake_create(name):
+        tried.append(name)
+        return 7, False
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() == 7
+    assert tried == [main_mod.LEGACY_MUTEX_NAME, main_mod.MUTEX_NAME]
+
+
+def test_a_second_4x_instance_blocks_startup(monkeypatch):
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+
+    def fake_create(name):
+        return 1, name == main_mod.MUTEX_NAME
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() is None
+
+
+def test_state_migration_runs_before_ensure_dirs(monkeypatch, tmp_path):
+    """Ordering is the whole feature, and it is invisible to unit tests
+    of migrate_state_dir() itself.
+
+    ensure_dirs() creates state_dir(). If it runs first, migration finds an
+    empty new directory, decides there is nothing to do, and strands the
+    user's real state permanently. A green test_paths.py proves nothing
+    about this.
+    """
+    order = []
+
+    monkeypatch.setattr(main_mod, "set_dpi_awareness", lambda: None)
+    monkeypatch.setattr(main_mod, "acquire_single_instance", lambda: object())
+    monkeypatch.setattr(
+        main_mod.paths, "migrate_state_dir", lambda: order.append("migrate") or "ok"
+    )
+    monkeypatch.setattr(
+        main_mod.paths, "ensure_dirs", lambda: order.append("ensure_dirs")
+    )
+    monkeypatch.setattr(
+        main_mod, "configure_logging", lambda: order.append("configure_logging")
+    )
+    monkeypatch.setattr(
+        main_mod.stitch, "sweep_orphans", lambda d: (_ for _ in ()).throw(SystemExit)
+    )
+    monkeypatch.setattr(main_mod.paths, "tmp_dir", lambda: tmp_path)
+
+    with pytest.raises(SystemExit):
+        main_mod.main()
+
+    assert order == ["migrate", "ensure_dirs", "configure_logging"]

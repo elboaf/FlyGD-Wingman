@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader.alerts import patterns
+from wingman.alerts import patterns
 
 DAMAGE = (
     "[ 2026.08.24 20:42:50 ] (combat) <color=0xffcc0000><b>142</b> "

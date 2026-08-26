@@ -1,7 +1,7 @@
 """Gesture parsing. Pure, so this is where the real coverage lives -- the
 Win32 half cannot be exercised in CI at all."""
 
-from obs_youtube_uploader.preview import gestures
+from wingman.preview import gestures
 
 
 def test_parses_a_modified_function_key():

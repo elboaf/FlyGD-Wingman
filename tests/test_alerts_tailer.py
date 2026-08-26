@@ -7,7 +7,7 @@ the reader.
 
 import datetime
 
-from obs_youtube_uploader.alerts import tailer
+from wingman.alerts import tailer
 
 UTC = datetime.UTC
 NOW = datetime.datetime(2026, 8, 25, 12, 0, 0, tzinfo=UTC)

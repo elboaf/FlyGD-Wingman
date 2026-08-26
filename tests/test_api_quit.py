@@ -13,8 +13,8 @@ import threading
 
 import pytest
 
-from obs_youtube_uploader.ui import api as api_mod
 from tests.test_api import FakeWindow, make_api
+from wingman.ui import api as api_mod
 
 # Released by the autouse fixture below. The stand-in upload thread only has
 # to be alive, not to do anything, and a thread that outlived its test would

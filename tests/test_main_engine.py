@@ -1,7 +1,7 @@
 """A surviving engine holds a global keyboard hook with no UI to disable it,
 so shutdown must stop it on every exit path."""
 
-from obs_youtube_uploader import __main__ as main_mod
+from wingman import __main__ as main_mod
 
 
 class Recorder:

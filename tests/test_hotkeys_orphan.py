@@ -4,8 +4,8 @@ process, so identity has to be right."""
 
 import json
 
-from obs_youtube_uploader import hotkeys
 from tests.test_hotkeys_lifecycle import FakeSpawner, engine, section
+from wingman import hotkeys
 
 
 def write_record(tmp_path, pid=999, token="TOKEN123"):

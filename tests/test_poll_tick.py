@@ -8,7 +8,7 @@ the one-shot failure notification -- have tests.
 
 from pathlib import Path
 
-from obs_youtube_uploader.__main__ import (
+from wingman.__main__ import (
     FAILURE_NOTIFY_THRESHOLD,
     PollState,
     poll_tick,
@@ -209,7 +209,7 @@ def test_a_first_run_with_no_folder_no_longer_asks(monkeypatch):
     """The ask fallback is GONE: create_file_dialog is a method on a window
     and no window exists this early. None means "render the first-run
     route", not "give up"."""
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.obsconfig, "find_recording_dir", lambda: None)
     assert main_mod.resolve_recording_dir({}) is None

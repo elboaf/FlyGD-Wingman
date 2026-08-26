@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import durations, library
+from wingman import durations, library
 
 
 def _info(path, size=10, mtime=100.0):

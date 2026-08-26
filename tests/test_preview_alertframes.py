@@ -10,8 +10,8 @@ cache actually holds.
 
 import pytest
 
-from obs_youtube_uploader.alerts import state
-from obs_youtube_uploader.preview import alertframes
+from wingman.alerts import state
+from wingman.preview import alertframes
 
 
 def test_a_small_preview_gets_the_full_pulse():

@@ -1,4 +1,4 @@
-# obs_youtube_uploader/credentials.py
+# wingman/credentials.py
 """Embedded OAuth client configuration.
 
 The values below are placeholders in the source tree. The release workflow

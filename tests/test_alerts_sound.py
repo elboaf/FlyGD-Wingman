@@ -4,8 +4,8 @@ The frozen build is where this breaks and nowhere else, so the tests
 assert on paths and the spec file rather than on playback.
 """
 
-from obs_youtube_uploader import settings
-from obs_youtube_uploader.alerts import service
+from wingman import settings
+from wingman.alerts import service
 
 
 def test_every_valid_sound_has_a_file():
@@ -37,7 +37,7 @@ def test_sound_path_prefers_the_frozen_bundle(tmp_path, monkeypatch):
 
 def test_the_spec_collects_the_sounds_folder():
     """chrome.py's font is collected to a destination that does not match
-    where it looks (assets/fonts vs obs_youtube_uploader/assets/fonts), so
+    where it looks (assets/fonts vs wingman/assets/fonts), so
     it is not the precedent to copy. These go through paths.bundle_dir()."""
     import pathlib
 

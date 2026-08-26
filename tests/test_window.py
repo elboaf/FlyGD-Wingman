@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from obs_youtube_uploader.ui import window as window_mod
-from obs_youtube_uploader.ui.api import Api
+from wingman.ui import window as window_mod
+from wingman.ui.api import Api
 
 
 class _FakeEvent:

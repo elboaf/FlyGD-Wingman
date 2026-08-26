@@ -3,7 +3,7 @@ every failure path is reachable without a real filesystem fault."""
 
 import pytest
 
-from obs_youtube_uploader.evesettings import ops
+from wingman.evesettings import ops
 
 
 def make(tmp_path, name, body=b"payload"):

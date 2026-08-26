@@ -8,8 +8,8 @@ the same lines.
 Nothing here is implemented. This is a routing document.
 
 **Paths.** The critique uses shorthand (`index.html`, `panel.js`,
-`ui/api.py`). The real paths are `obs_youtube_uploader/web/*` and
-`obs_youtube_uploader/ui/*`, and every ownership list below uses them.
+`ui/api.py`). The real paths are `wingman/web/*` and
+`wingman/ui/*`, and every ownership list below uses them.
 
 ## The rule that decides the split
 
@@ -71,12 +71,12 @@ First run 1. Settings 5 is deferred — see Deferred.
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      1-276, 496-606, 725-819, 1009-1025
-obs_youtube_uploader/web/app.js         all
-obs_youtube_uploader/web/panel.js       66-226 (status strip + dialog layer)
-obs_youtube_uploader/ui/api.py          all
-obs_youtube_uploader/ui/copy.py         all
-obs_youtube_uploader/web/index.html     titlebar, #statusbar-slot, #dialog-slot,
+wingman/web/style.css      1-276, 496-606, 725-819, 1009-1025
+wingman/web/app.js         all
+wingman/web/panel.js       66-226 (status strip + dialog layer)
+wingman/ui/api.py          all
+wingman/ui/copy.py         all
+wingman/web/index.html     titlebar, #statusbar-slot, #dialog-slot,
                                         the `active` classes on the Settings rail
                                         and its panes (index.html:120, :132)
 tests/                                  wherever copy.py or api.py behaviour is asserted
@@ -164,10 +164,10 @@ primitives) — but both halves still merge before any screen lane starts.
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      277-495
-obs_youtube_uploader/web/list.js        all
-obs_youtube_uploader/web/panel.js       1-65 ONLY (above the status-strip banner)
-obs_youtube_uploader/web/index.html     #route-main block (list, footer, #panel-slot)
+wingman/web/style.css      277-495
+wingman/web/list.js        all
+wingman/web/panel.js       1-65 ONLY (above the status-strip banner)
+wingman/web/index.html     #route-main block (list, footer, #panel-slot)
 docs/smoke-checklist.md                 :241-245 if lane 0 did not already fix the width
 ```
 
@@ -213,11 +213,11 @@ half is lane 0's.
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      607-668, 691-724
-obs_youtube_uploader/web/settings.js    all
-obs_youtube_uploader/web/bookmarks.js   all
-obs_youtube_uploader/web/previews.js    all
-obs_youtube_uploader/web/index.html     #route-settings block, rail item ORDER
+wingman/web/style.css      607-668, 691-724
+wingman/web/settings.js    all
+wingman/web/bookmarks.js   all
+wingman/web/previews.js    all
+wingman/web/index.html     #route-settings block, rail item ORDER
                                         (not the `active` classes — lane 0)
 ```
 
@@ -252,9 +252,9 @@ whole section.
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      669-690 ONLY
-obs_youtube_uploader/web/evesettings.js all
-obs_youtube_uploader/web/index.html     #route-evesettings block
+wingman/web/style.css      669-690 ONLY
+wingman/web/evesettings.js all
+wingman/web/index.html     #route-evesettings block
 ```
 
 **Must not touch:** `style.css:691-819` — **this is the trap.** The 118px
@@ -298,9 +298,9 @@ EVE-running copy refusal at `:1236-1238` (finding 3's pill, lane 0's dialog).
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      837-1008
-obs_youtube_uploader/web/skills.js      all
-obs_youtube_uploader/web/index.html     #route-skills block
+wingman/web/style.css      837-1008
+wingman/web/skills.js      all
+wingman/web/index.html     #route-skills block
 docs/smoke-checklist.md                 :1383-1385 (measures 840 logical, not 560 CSS)
 ```
 
@@ -334,9 +334,9 @@ structure changes.
 **Owns:**
 
 ```
-obs_youtube_uploader/web/style.css      820-836
-obs_youtube_uploader/web/firstrun.js    all
-obs_youtube_uploader/web/index.html     #route-firstrun block
+wingman/web/style.css      820-836
+wingman/web/firstrun.js    all
+wingman/web/index.html     #route-firstrun block
 ```
 
 **Must not touch:** `app.js:110-111` (the route's nav gating — lane 0),

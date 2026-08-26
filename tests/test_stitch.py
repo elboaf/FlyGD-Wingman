@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import library, stitch
+from wingman import library, stitch
 
 
 def _info(path: Path, mtime: float) -> library.VideoInfo:

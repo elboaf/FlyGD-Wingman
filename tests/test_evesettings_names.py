@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader.evesettings import names
+from wingman.evesettings import names
 
 
 def test_classify_reads_a_successful_body():

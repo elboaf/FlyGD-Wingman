@@ -7,7 +7,7 @@ and main() both constructs it and tears it down.
 
 import inspect
 
-from obs_youtube_uploader import __main__ as main_mod
+from wingman import __main__ as main_mod
 
 
 def test_build_skills_controller_is_not_windows_gated(monkeypatch, tmp_path):

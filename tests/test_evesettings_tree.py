@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader.evesettings import tree
+from wingman.evesettings import tree
 
 
 def build(

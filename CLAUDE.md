@@ -14,9 +14,19 @@ framework, no build step, no bundler.
 screen is built*. Read both before adding or reshaping a screen — they are
 short, and most non-obvious rules in the UI live there rather than in comments.
 
-The package/import name, executable name, and `%LOCALAPPDATA%\OBSYouTubeUploader`
-state directory all keep the old `obs_youtube_uploader` name on purpose so
-existing installs stay upgradeable. Do not rename them.
+The package, executable, install directory and state directory are all
+named `wingman` / `FlyGD Wingman` as of 4.0.0. Installs from 3.x are
+handled explicitly rather than by keeping the old names: the installer
+uninstalls the predecessor by its old `AppId`, and `paths.migrate_state_dir()`
+renames `%LOCALAPPDATA%\OBSYouTubeUploader` on first launch. Several
+references to the old identity are load-bearing and must not be tidied
+away: `LEGACY_MUTEX_NAME` in `wingman/__main__.py` (stops 3.x and 4.0
+running at once), `LEGACY_APP_NAME` in `wingman/paths.py` (the migration
+source directory), the legacy `AppId` uninstall key in
+`packaging/installer.iss` (`RemovePredecessor()`), the legacy `.lnk` name in
+`installer.iss`'s `[InstallDelete]` and in `autostart.py`'s
+`_LEGACY_SHORTCUT_NAMES`, and the legacy name in `installer.iss`'s
+`AppMutex`.
 
 ## Commands
 
@@ -25,7 +35,7 @@ uv sync --locked --extra dev              # what CI installs
 uv run --no-sync python -m pytest tests/  # full suite
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .  # CI gates on this; run it locally
-python -m obs_youtube_uploader            # run the app (Windows only)
+python -m wingman            # run the app (Windows only)
 ```
 
 Single test / single file:
@@ -37,7 +47,7 @@ uv run python -m pytest tests/test_api_upload.py::test_name -v
 
 CI (`.github/workflows/ci.yml`) gates on: pytest on **both** ubuntu-latest and
 windows-latest, `ruff check`, `ruff format --check`, plus text checks that the
-version agrees across `pyproject.toml` / `obs_youtube_uploader/__init__.py` /
+version agrees across `pyproject.toml` / `wingman/__init__.py` /
 `packaging/installer.iss`, and that the WebView2 detection predicate agrees
 between `packaging/installer.iss` and `ui/preflight.py`.
 
@@ -92,7 +102,7 @@ reached through injected seams or lazy `windll` binding):
   key for two different reasons — a stale duration is cosmetic, a stale link
   opens the wrong video — which is why only the first one prunes.
 
-**Web layer** (`obs_youtube_uploader/web/`): `app.js` is the shell and bridge
+**Web layer** (`wingman/web/`): `app.js` is the shell and bridge
 client with a strict `WM.HANDLERS` allowlist; one route/screen per JS file.
 `WM.route` switches destinations, `WM.section` switches Settings groups; both
 have enter/leave contracts, and leaving is load-bearing (keybind capture

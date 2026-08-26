@@ -21,7 +21,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from obs_youtube_uploader.eveskills import jwt as evejwt
+from wingman.eveskills import jwt as evejwt
 
 CLIENT_ID = "9a1f7d2c4b6e48f0a3d5c7e9b1f3a5d7"
 

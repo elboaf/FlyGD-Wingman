@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader import credentials, uploader
+from wingman import credentials, uploader
 
 
 class FakeResp:
@@ -475,7 +475,7 @@ def test_upload_failure_is_logged_with_the_underlying_error(caplog):
             raise err
 
     with (
-        caplog.at_level("WARNING", logger="obs_youtube_uploader.uploader"),
+        caplog.at_level("WARNING", logger="wingman.uploader"),
         pytest.raises(uploader.UploadFailed),
     ):
         uploader.upload(Request(), sleep=lambda s: None)

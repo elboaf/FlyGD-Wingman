@@ -1197,7 +1197,7 @@ critique finding; all three are about the app describing itself.
 
 ### M1. The tray menu says "Open uploader" — `sure`, `shared`
 
-`obs_youtube_uploader/__main__.py:200`:
+`wingman/__main__.py:200`:
 
 ```python
 pystray.MenuItem("Open uploader", lambda *_: on_open(), default=True),
@@ -1218,7 +1218,7 @@ destinations, and the item opens the window.
 
 ### M2. The version is not shown anywhere — `sure`, `shared`
 
-`obs_youtube_uploader/__init__.py:1` already defines
+`wingman/__init__.py:1` already defines
 `__version__ = "3.2.1"`, and `discord.py:20`, `evesettings/names.py:18`
 and `eveskills/application.py:18` all import it. The value is plumbed; the
 UI is the only consumer that never reads it.

@@ -8,7 +8,7 @@ wrong everywhere else, so it is exactly the bug that ships.
 
 from PIL import Image
 
-from obs_youtube_uploader.preview import layered
+from wingman.preview import layered
 
 
 def test_opaque_pixel_is_bgra_ordered():

@@ -4,11 +4,11 @@ import os
 
 import pytest
 
-from obs_youtube_uploader import paths, settings
-from obs_youtube_uploader.evesettings import tree
-from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.fakes import FakeWindow
+from wingman import paths, settings
+from wingman.evesettings import tree
+from wingman.ui import api as api_mod
 
 
 class ImmediateThread:
@@ -223,7 +223,7 @@ def test_select_persists_through_the_merging_writer(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api.eve_settings_select(str(profile.parent), str(profile))
-    stored = settings.load(tmp_path / "OBSYouTubeUploader" / "settings.json")
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
     assert stored["eve_settings"]["profile"] == str(profile)
 
 

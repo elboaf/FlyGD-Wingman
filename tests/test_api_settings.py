@@ -11,10 +11,10 @@ import types
 
 import pytest
 
-from obs_youtube_uploader import uploader
-from obs_youtube_uploader.ui import api as api_mod
-from obs_youtube_uploader.ui import copy as copy_mod
 from tests import fakes
+from wingman import uploader
+from wingman.ui import api as api_mod
+from wingman.ui import copy as copy_mod
 
 
 def test_connected_offers_to_switch_rather_than_to_connect():
@@ -148,7 +148,7 @@ def test_the_settings_payload_carries_the_version_from_dunder_version(
     """M2: the version was plumbed everywhere except the one place a user
     could read it, so a bug report could not say which build it was against.
 
-    Asserted against obs_youtube_uploader.__version__ rather than against a
+    Asserted against wingman.__version__ rather than against a
     literal, on purpose. A literal here is a fourth hand-typed copy of the
     thing this finding exists to stop being hand-typed -- it would pass
     while disagreeing with the app, which is the exact failure mode.
@@ -156,7 +156,7 @@ def test_the_settings_payload_carries_the_version_from_dunder_version(
     Top level, beside the other derived values: it is not a setting and the
     page must never write it back.
     """
-    from obs_youtube_uploader import __version__
+    from wingman import __version__
 
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
 

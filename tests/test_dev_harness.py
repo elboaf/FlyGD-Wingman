@@ -16,9 +16,9 @@ zero keybind rows, and five sessions verified through it.
 import re
 from pathlib import Path
 
-from obs_youtube_uploader import bookmarks
+from wingman import bookmarks
 
-WEB = Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
 
 # Every page module, so a WM.send anywhere is covered rather than only the
@@ -191,7 +191,7 @@ def test_the_preview_fixture_uses_real_gesture_strings():
     compared to a literal, so a change to the format fails here instead of
     being invisibly re-fabricated.
     """
-    from obs_youtube_uploader.preview import gestures as preview_gestures
+    from wingman.preview import gestures as preview_gestures
 
     block = _fixture_body("api.get_preview_hotkey_state")
     gestures = {g for g in re.findall(r"'([^']+)'", block) if "+" in g}

@@ -14,7 +14,7 @@ assertions timing-dependent, which is the one property they must not have.
 
 import threading
 
-from obs_youtube_uploader.ui.scheduler import Scheduler
+from wingman.ui.scheduler import Scheduler
 
 
 class FakeTimer:

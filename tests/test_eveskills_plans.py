@@ -8,7 +8,7 @@ because a plan that silently dropped a line would score a character
 
 import pytest
 
-from obs_youtube_uploader.eveskills import plans
+from wingman.eveskills import plans
 
 
 def parse_one(text):

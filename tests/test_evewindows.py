@@ -2,7 +2,7 @@
 (docs/history/window-resize-plan.md:130-140). The enumerator is injected so
 the matching and de-duplication logic is testable off-platform."""
 
-from obs_youtube_uploader import bookmarks, evewindows
+from wingman import bookmarks, evewindows
 
 
 def test_returns_empty_off_windows(monkeypatch):

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from obs_youtube_uploader.evesettings import backup
+from wingman.evesettings import backup
 
 
 def at(second=0):

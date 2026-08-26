@@ -14,10 +14,10 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import discord, paths
-from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
 from tests.test_api_settings import settings_api
+from wingman import discord, paths
+from wingman.ui import api as api_mod
 
 # ---- shape ------------------------------------------------------------
 
