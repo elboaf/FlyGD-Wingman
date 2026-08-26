@@ -1181,8 +1181,6 @@ class PreviewHost:
         distort it, and calling GetClientRect from the bridge thread is the
         thread-affinity violation this module is organised to avoid.
         """
-        import ctypes
-
         sizes = {}
         rect = win32.RECT()
         for key, client in clients.items():

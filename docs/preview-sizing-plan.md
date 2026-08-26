@@ -697,12 +697,19 @@ git commit -m "LayoutStore.clear: forget every saved position, keep pending name
 
 - [ ] **Step 1: Add the message constants**
 
-In `win32.py`, beside `WM_APP_ALERT`:
+In `win32.py`, beside `WM_APP_RESTYLE`:
 
 ```python
-WM_APP_RESET_LAYOUTS = WM_APP + 5
-WM_APP_RESIZE_ONE = WM_APP + 6
+WM_APP_RESET_LAYOUTS = WM_APP + 6
+WM_APP_RESIZE_ONE = WM_APP + 7
 ```
+
+`+6` and `+7`, not `+5` and `+6`: this plan originally said the latter and
+it was wrong. `WM_APP_RESTYLE` already occupies `WM_APP + 5`, so a posted
+reset would have been delivered to the restyle handler — silently, since
+both are valid messages and nothing would have raised. Corrected here
+rather than left to mislead, because `docs/` is live; only `docs/history/`
+is a record that stays as written.
 
 - [ ] **Step 2: Write the failing tests**
 
