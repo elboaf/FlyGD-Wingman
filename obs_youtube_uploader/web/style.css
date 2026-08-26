@@ -281,10 +281,10 @@
      here rather than left to be re-derived off the values:
 
        --fs-head   17px   1.31 over body    h1 x2, .dialog h3
-       --fs-body   13px   --                everything that IS the content
+       --fs-body   13px   --                the content, and card/rail headings
        --fs-mono   12px   0.92 of body      monospace and tabular cells
        --fs-muted  12px   1.08 under body   column headers, counts, hints
-       --fs-label  11px   1.09 under muted  uppercase tracked section labels
+       --fs-label  11px   1.09 under muted  uppercase tracked SUB-labels
 
      (tests/test_page_conventions.py parses those five values and asserts
      the four ratios, so the table above cannot drift off the tokens the
@@ -310,12 +310,24 @@
      count is three. The muted/mono/label steps are NOT touched — widening
      those is what would make a compact desktop tool feel like a web page.
 
-     Round 5, G3, is the exception that sentence did not anticipate, and it
-     is --fs-muted only. The rules that set --fs-muted in --text-faint
-     carry nearly all of the explanatory copy PRODUCT.md asks the app to
-     write -- .hint, .inline-hint, .bind-group-note, .notice -- and the
-     bundled detector counted 22 rendered instances of it. That copy was
-     the SMALLEST text in the app, one rung above the uppercase labels. Two things were wrong with 11.5px and neither is
+     Round 5, G3, is the exception that sentence did not anticipate. It
+     came in two parts and NO TOKEN VALUE moved for the second one. Part
+     one is --fs-muted, argued below. Part two (the card-titles lane) left
+     every token alone and moved two CONSUMERS instead: .card > h2 and
+     .rail-head, the app's two uppercase tracked headings, from --fs-label
+     up to --fs-body, because headings below body size gave no screen a
+     skimmable skeleton and part one had just widened that gap. So
+     --fs-label is now the size of the SUBORDINATE uppercase labels only --
+     the in-card divider and the column headers -- and its 11px floor at
+     .evelabel below is unaffected. See .card > h2 for the full argument
+     and for why --fs-head was the wrong token to reach for.
+
+     Part one is --fs-muted only. The rules that set --fs-muted in
+     --text-faint carry nearly all of the explanatory copy PRODUCT.md asks
+     the app to write -- .hint, .inline-hint, .bind-group-note, .notice --
+     and the bundled detector counted 22 rendered instances of it. That
+     copy was the SMALLEST text in the app, one rung above the uppercase
+     labels. Two things were wrong with 11.5px and neither is
      about wanting bigger type:
 
        - it was the only FRACTIONAL size in the scale, and a fractional
@@ -530,8 +542,37 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
   border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 14px 16px;
 }
+/* --fs-body, NOT --fs-label, and this is the second half of round 5's G3.
+   A card heading was 11px against 13px body and 12px hint copy, so every
+   screen's headings were its SMALLEST text and no screen had a skimmable
+   skeleton -- on Previews the paragraph under GLOBAL KEYBINDS outsized the
+   heading above it. type-scale (PR #93) raised --fs-muted 11.5 -> 12 and
+   left this rule alone, which widened the inversion rather than closing it.
+
+   Why --fs-body and not --fs-head. --fs-head's own note in :root keeps a
+   deliberately narrow blast radius -- three users, all of them real
+   headings -- and there are SIXTEEN .card > h2 in this page. 17px uppercase
+   at .14em on all of them is a different app. The rank here is carried by
+   four signals size is only one of: caps, .14em tracking, weight 600 and
+   --text-label. At 13px uppercase the cap height (~9.4px) clears the 13px
+   body's x-height (~6.8px) outright, so the heading reads ABOVE the prose
+   it heads while staying inside the scale.
+
+   This is why .card > h2 no longer matches all three other .14em rules on
+   size, and that is rank rather than drift. The sheet already sorts the
+   four: --text-label's own note above calls .card > h2 and .rail-head
+   "the two uppercase tracked section labels ... above --text-faint
+   BECAUSE THEY ARE HEADINGS", and both carry weight 600. Those two move
+   together. The remaining two are subordinate and stay at --fs-label --
+   .bind-group-name is a divider INSIDE a card (--text-dim, and its own
+   comment asks to be one step quieter than a card heading) and
+   .alert-head > span is a column header (--text-faint, which the :root
+   note defends at length as below the data it labels). The four still
+   agree on the TREATMENT -- uppercase, .14em -- and now differ on size
+   along the split the colour tokens were already making. Do not
+   "restore" them to one size. */
 .card > h2 {
-  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); margin-bottom: 12px; font-weight: 600;
   display: flex; align-items: center; gap: 9px;
 }
@@ -1742,8 +1783,11 @@ button.btn:disabled,
    whose .row children are display:contents, so a non-spanning child here
    would be pulled into the next row's first cell.
 
-   Set like .card > h2 (--fs-label, caps, tracked) one step quieter, so it
-   reads as a divider inside a card rather than a second card heading. */
+   Set like .card > h2 (caps, tracked) but one step quieter, so it reads as
+   a divider inside a card rather than a second card heading. It was one
+   step quieter in COLOUR only -- both were --fs-label -- until round 5's
+   G3 raised .card > h2 to --fs-body and left this at --fs-label, which is
+   the same claim now made in two dimensions instead of one. */
 .bind-group {
   grid-column: 1 / -1;
   display: flex; align-items: baseline; gap: 9px;
@@ -2916,8 +2960,16 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   padding: 0 8px 0 10px;
   margin-bottom: 2px;
 }
+/* A rail TITLE, not a column header, and used twice: "Settings" over the
+   section list (index.html:274) and "Plans" over the plan list. Both head
+   a list of 13px names, so at --fs-label each was the smallest text in the
+   column it headed -- the same inversion G3 names on the cards. It tracks
+   .card > h2 for that reason, and because --text-label's note in :root
+   already names these two together as the app's two headings. Keep the two
+   font-size declarations in step; .rail-head-key below is the real column
+   header and deliberately does not follow. */
 .rail-head {
-  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); font-weight: 600;
 }
 /* A column header for .rail-ratio, so it sits over the numbers it names.
