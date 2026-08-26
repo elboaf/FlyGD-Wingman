@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.preview import geometry, gestures, host, layout
+from obs_youtube_uploader.preview import alertframes, geometry, gestures, host, layout
 
 
 def test_reconcile_reports_additions_and_removals():
@@ -1366,12 +1366,15 @@ class _RestyleWindow:
     redraw(), and a thumbnail. Not a real PreviewWindow -- that needs an
     HWND, which is out of reach here."""
 
-    def __init__(self, rect, show_labels=True, opacity=255, locked=False):
+    def __init__(self, rect, show_labels=True, opacity=255, locked=False, inset=None):
         self.rect = rect
         self.show_labels = show_labels
         self.opacity = opacity
         self.locked = locked
         self.redraws = 0
+        # The real PreviewWindow widens this to ALERT_BORDER for the
+        # duration of an alert, so _restyle cannot assume BORDER.
+        self._inset = host.window_mod.BORDER if inset is None else inset
         self._thumb = _FakeRestyleThumb()
 
     def redraw(self, force=False):
@@ -1459,6 +1462,33 @@ def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
     )
     h._sweep(_FakeLibs(_FakeUser32()))
     return captured["on_activate"], calls
+
+
+def test_restyle_keeps_a_widened_alert_inset():
+    """An alert widens the thumbnail's inset to ALERT_BORDER so the 6px
+    ring is not overpainted (PreviewWindow._set_inset). _restyle re-pushes
+    the thumbnail rect, so it has to use the window's CURRENT inset:
+    hardcoding BORDER here means changing any live setting -- opacity,
+    labels, a lock -- while a client is under fire snaps the video back
+    over the ring, leaving it showing as corner brackets until the alert
+    clears and nothing to explain why.
+    """
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, show_labels=lambda: True, opacity=lambda: 255
+    )
+    win = _RestyleWindow(geometry.Rect(0, 0, 320, 210), inset=alertframes.ALERT_BORDER)
+    h._windows = {"Alice": win}
+
+    h._restyle()
+
+    assert win._thumb.calls == [
+        (
+            geometry.thumbnail_rect(
+                win.rect, alertframes.ALERT_BORDER, host.window_mod.LABEL_H
+            ),
+            255,
+        )
+    ]
 
 
 def test_the_host_performs_the_switch_a_clicked_preview_asks_for(monkeypatch):

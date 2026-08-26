@@ -1053,7 +1053,15 @@ class PreviewHost:
             # push whether or not redraw() decided the bitmap changed.
             if win._thumb is not None:
                 win._thumb.update(
-                    geometry.thumbnail_rect(win.rect, window_mod.BORDER, label_h),
+                    # The window's CURRENT inset, not the BORDER constant.
+                    # An armed alert has widened it to ALERT_BORDER so the
+                    # 6px ring is not overpainted, and re-pushing BORDER
+                    # here would snap the video back over the ring the
+                    # moment any live setting changed under fire -- the
+                    # ring left showing as corner brackets until the alert
+                    # cleared, with nothing to explain it. Same reasoning
+                    # as label_h just above: read the live value.
+                    geometry.thumbnail_rect(win.rect, win._inset, label_h),
                     win.opacity,
                 )
 
