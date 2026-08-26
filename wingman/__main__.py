@@ -18,7 +18,19 @@ from .ui.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
-MUTEX_NAME = "Global\\OBSYouTubeUploader"
+MUTEX_NAME = "Global\\FlyGDWingman"
+
+# 3.x owns this name. 4.0 contends with it deliberately: Inno cannot close
+# a resident tray app, so an upgrade can leave 3.5.1 running while the user
+# launches 4.0. Both would then write the same state -- and settings.save()
+# projects the COMPLETE document from DEFAULTS, so two writers lose each
+# other's keys entirely (settings.py:543-548 documents the same hazard for
+# two threads sharing one lock; two processes share nothing).
+#
+# Removable once no 3.x installs remain in the wild. Not before 5.0, and
+# not without checking download stats -- an undated "remove later" never
+# gets removed.
+LEGACY_MUTEX_NAME = "Global\\OBSYouTubeUploader"
 POLL_SECONDS = 3.0
 FAILURE_NOTIFY_THRESHOLD = 5  # ~15s of consecutive poll failures at POLL_SECONDS
 
@@ -105,6 +117,22 @@ def configure_logging() -> None:
         pass  # Logging is best-effort; must never block startup.
 
 
+def _create_mutex(name: str) -> tuple[int, bool]:
+    """Create a named mutex; return (handle, it_already_existed).
+
+    Split out purely as the single Windows seam, so the two-name logic in
+    acquire_single_instance() is testable off-platform. There is no other
+    reason for this to be a separate function.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateMutexW(None, wintypes.BOOL(True), name)
+    ERROR_ALREADY_EXISTS = 183
+    return handle, kernel32.GetLastError() == ERROR_ALREADY_EXISTS
+
+
 def acquire_single_instance():
     """Return a handle if this is the only instance, else None.
 
@@ -121,16 +149,18 @@ def acquire_single_instance():
     """
     if sys.platform != "win32":
         return object()  # No enforcement off-Windows; development only.
-    import ctypes
-    from ctypes import wintypes
 
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.CreateMutexW(None, wintypes.BOOL(True), MUTEX_NAME)
-    ERROR_ALREADY_EXISTS = 183
-    if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+    # Legacy FIRST and short-circuiting: if 3.x is up, stop before creating
+    # anything, so this process never appears to be the owner of either name.
+    _, legacy_running = _create_mutex(LEGACY_MUTEX_NAME)
+    if legacy_running:
         return None
-    # Intentionally never closed: the mutex must be held for the app's
-    # entire lifetime to enforce single-instance. The OS reclaims it on
+
+    handle, already_running = _create_mutex(MUTEX_NAME)
+    if already_running:
+        return None
+    # Intentionally never closed: both mutexes must be held for the app's
+    # entire lifetime to enforce single-instance. The OS reclaims them on
     # process exit — do not "fix" this by adding a CloseHandle call, that
     # would release the mutex early and silently disable the protection.
     return handle

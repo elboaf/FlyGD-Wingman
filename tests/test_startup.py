@@ -169,3 +169,62 @@ def test_an_unrecognised_argument_does_not_kill_a_windowed_launch(startup, monke
     monkeypatch.setattr(sys, "argv", ["wingman", "--what-is-this"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False
+
+
+def test_the_two_mutex_names_differ():
+    """Collapsing these makes the app refuse to start, always.
+
+    acquire_single_instance() creates both names in ONE process. If they
+    are equal, the second CreateMutexW reports ERROR_ALREADY_EXISTS
+    against our own handle, every launch returns None, and the app never
+    opens -- on every machine, not just upgrades.
+    """
+    assert main_mod.MUTEX_NAME != main_mod.LEGACY_MUTEX_NAME
+
+
+def test_a_running_3x_instance_blocks_startup(monkeypatch):
+    """An upgrade can leave 3.x resident in the tray; Inno cannot close it.
+
+    Two builds running at once both write settings.json, and save()
+    projects the whole document from DEFAULTS -- so interleaved writers
+    silently revert each other's keys (settings.py:543-548).
+    """
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    tried = []
+
+    def fake_create(name):
+        tried.append(name)
+        return 1, name == main_mod.LEGACY_MUTEX_NAME
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() is None
+    assert tried == [main_mod.LEGACY_MUTEX_NAME], (
+        "the legacy name must be tested FIRST and short-circuit"
+    )
+
+
+def test_both_names_are_held_when_nothing_else_is_running(monkeypatch):
+    """Holding the legacy name is what stops a 3.x launched LATER."""
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    tried = []
+
+    def fake_create(name):
+        tried.append(name)
+        return 7, False
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() == 7
+    assert tried == [main_mod.LEGACY_MUTEX_NAME, main_mod.MUTEX_NAME]
+
+
+def test_a_second_4x_instance_blocks_startup(monkeypatch):
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+
+    def fake_create(name):
+        return 1, name == main_mod.MUTEX_NAME
+
+    monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
+
+    assert main_mod.acquire_single_instance() is None
