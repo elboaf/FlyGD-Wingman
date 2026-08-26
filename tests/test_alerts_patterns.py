@@ -45,7 +45,7 @@ SCRAMBLE = (
 # gamelog, naming the real source and target -- neither of whom need be
 # the log's own pilot. Confirmed against a live install: one disruption
 # line appeared verbatim in four different characters' logs, none of them
-# either party. Without an ownership gate this is ~80% of all warp lines
+# either party. Without an ownership gate this is 4674 of 5839 warp lines
 # and every preview on the screen flashes for a fight none of them is in.
 THIRD_PARTY_SCRAMBLE = (
     "[ 2026.08.24 20:43:05 ] (combat) <color=0xffffffff>"
@@ -263,8 +263,8 @@ def test_events_and_severity_agree():
 def test_a_third_party_scramble_does_not_alert():
     """The reported bug. EVE broadcasts a warp-attempt line to every
     fleet member's log, so without this gate one tackle lights up every
-    preview on the screen -- measured at ~80% of all warp lines in a live
-    Gamelogs folder."""
+    preview on the screen -- 4674 of 5839 warp lines in a live Gamelogs
+    folder."""
     assert patterns.match_line(THIRD_PARTY_SCRAMBLE, CHARACTER) is None
 
 

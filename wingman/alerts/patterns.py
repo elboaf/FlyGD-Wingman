@@ -49,7 +49,7 @@ _SOURCE_FALLBACK_RE = re.compile(
 # live install, where one disruption line appeared verbatim in four
 # different characters' logs, none of them either party -- so without
 # reading the target, one tackle arms every preview on the screen. In a
-# real Gamelogs folder that is 4670 of 5825 warp lines.
+# real Gamelogs folder that is 4674 of 5839 warp lines.
 #
 # The terminator problem _SOURCE_RE documents does not arise here: the
 # target runs to end of line in every real shape, so this captures the
@@ -192,10 +192,11 @@ def _target_is_character(target: str, character: str) -> bool:
 
     A target that could not be extracted returns False -- i.e. no alert.
     That is the uncomfortable direction for this module, which elsewhere
-    prefers noise to silence, but the ratio decides it: four in five real
-    warp lines belong to someone else, so treating an unreadable target
-    as "probably mine" restores the every-preview-flashes bug wholesale
-    rather than risking one missed alert. The corpus test below asserts
+    prefers noise to silence, but the ratio decides it: 5238 of 5839 real
+    warp lines (90%) are not the pilot reading them, so treating an
+    unreadable target as "probably mine" restores the
+    every-preview-flashes bug wholesale rather than risking one missed
+    alert. The corpus test below asserts
     extraction actually works on every real shape, which is what keeps
     this branch from being reached in practice.
     """
