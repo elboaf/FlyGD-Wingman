@@ -230,7 +230,10 @@ def lock_to_aspect(w, h, aspect, chrome, min_size, drive="w"):
 
     *drive* names the axis to believe, "w" or "h"; the other is derived.
     It is the caller's job to decide, because only the caller knows which
-    way the pointer actually moved.
+    way the pointer actually moved. Anything that is not "h" is treated as
+    "w" -- the two live callers pass one of the two literals, and a
+    freeform resize is a better failure than a raise on the preview
+    thread, where an exception kills the message pump.
 
     This used to take `pw = max(pw, ph * aspect)` instead -- believe
     whichever axis implies the LARGER picture -- to stop a mostly-vertical

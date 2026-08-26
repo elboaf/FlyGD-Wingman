@@ -942,7 +942,7 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  var DEPENDS = 'Previews are off, so this changes nothing yet \u2014 it '
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
     + 'applies once you turn them on.';
 
   function previewsOn() {
