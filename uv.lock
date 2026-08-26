@@ -469,7 +469,7 @@ wheels = [
 ]
 
 [[package]]
-name = "obs-youtube-uploader"
+name = "wingman"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

@@ -2,7 +2,7 @@
 
 import pytest
 
-from obs_youtube_uploader.preview.switching import should_minimize
+from wingman.preview.switching import should_minimize
 
 BASE = dict(
     enabled=True,

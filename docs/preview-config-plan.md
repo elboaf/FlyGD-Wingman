@@ -12,7 +12,7 @@ Baseline on branch `worktree-preview-config-options`: 2205 passed, 6 skipped.
 
 ## Task 1 — Settings keys
 
-`obs_youtube_uploader/settings.py`
+`wingman/settings.py`
 
 Add to `_preview_defaults()`:
 
@@ -48,7 +48,7 @@ could not.
 
 ## Task 2 — `show_labels` through the render path
 
-`obs_youtube_uploader/preview/window.py`
+`wingman/preview/window.py`
 
 `chrome.py` is not edited — `label_h=0` already yields a bandless tile
 (`chrome.py:107-108`).
@@ -71,7 +71,7 @@ inset in a band that is no longer drawn.
 
 ## Task 3 — `opacity` through the thumbnail
 
-`obs_youtube_uploader/preview/window.py`
+`wingman/preview/window.py`
 
 - `PreviewWindow` gains `opacity: int = 255`.
 - Pass it at `:321` and `:382`: `self._thumb.update(rect, self.opacity)`.
@@ -83,8 +83,8 @@ inset in a band that is no longer drawn.
 
 ## Task 4 — Host: live-read seams and the restyle message
 
-`obs_youtube_uploader/preview/host.py`, `preview/win32.py`,
-`obs_youtube_uploader/__main__.py`
+`wingman/preview/host.py`, `preview/win32.py`,
+`wingman/__main__.py`
 
 - `PreviewHost.__init__` takes `show_labels`, `opacity`,
   `minimize_inactive_clients`, `never_minimize` and `locked` callables
@@ -119,7 +119,7 @@ records what a lazily-resolved lambda cost last time (`__main__.py:383-386`).
 
 ## Task 5 — Bridge: three global endpoints
 
-`obs_youtube_uploader/ui/api.py`
+`wingman/ui/api.py`
 
 Generalise `_write_alert_setting` (`:2024-2070`) to `_write_preview_setting`,
 rooted at `preview` rather than `preview.alerts` — same nested-path descent
@@ -168,7 +168,7 @@ at 840×625 with no horizontal scroll.
 
 ## Task 7 — Minimize decision as a pure function
 
-`obs_youtube_uploader/preview/switching.py` (new)
+`wingman/preview/switching.py` (new)
 
 ```python
 def should_minimize(*, enabled, activated, previous_key, next_key, never):
@@ -190,7 +190,7 @@ rule is worth re-reading before assuming (`CLAUDE.md`).
 
 ## Task 8 — Win32 surface
 
-`obs_youtube_uploader/preview/win32.py`
+`wingman/preview/win32.py`
 
 Declare `WM_SYSCOMMAND = 0x0112`, `SC_MINIMIZE = 0xF020`, and
 `SMTO_ABORTIFHUNG = 0x0002`, and bind `SendMessageTimeoutW`. Per decision 3:
@@ -211,7 +211,7 @@ choice would silently erode.
 
 ## Task 9 — Activation moves into the host
 
-`obs_youtube_uploader/preview/window.py`, `preview/host.py`
+`wingman/preview/window.py`, `preview/host.py`
 
 **This is the structural change and it must land before Task 10.** Today
 `PreviewWindow` activates and then fires a callback the host has stubbed:
@@ -238,7 +238,7 @@ a later change cannot quietly restore two owners.
 
 ## Task 10 — Host: the switch sequence
 
-`obs_youtube_uploader/preview/host.py`
+`wingman/preview/host.py`
 
 One helper, used by both paths now that Task 9 has unified them:
 

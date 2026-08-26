@@ -7,7 +7,7 @@ the same reason preview/geometry.py exists.
 
 import pytest
 
-from obs_youtube_uploader.alerts import state
+from wingman.alerts import state
 
 ARM = dict(duration_ms=1200, pulses=3, persist=False, target_is_selected=False)
 

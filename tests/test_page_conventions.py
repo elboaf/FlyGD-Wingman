@@ -29,7 +29,7 @@ they cannot see is recorded in DESIGN.md.
 import pathlib
 import re
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 # Comments are stripped before any rule parsing below: style.css leads
 # almost every rule with a block comment, and a naive selector capture
@@ -996,7 +996,7 @@ def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
     set. A fourth sound, or a renamed one, shipped a card that could
     silently select an id the backend drops.
     """
-    from obs_youtube_uploader.settings import VALID_SOUNDS
+    from wingman.settings import VALID_SOUNDS
 
     for event in _ALERT_EVENT_IDS:
         select = re.search(
@@ -1022,7 +1022,7 @@ def test_the_alert_rows_name_the_events_settings_actually_has():
     silence. alerts.js carries the same three ids for the same reason and
     is checked here too, so the three copies cannot drift apart.
     """
-    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+    from wingman.settings import _ALERT_EVENT_DEFAULTS
 
     expected = set(_ALERT_EVENT_DEFAULTS)
     assert set(_ALERT_EVENT_IDS) == expected, (
@@ -1047,7 +1047,7 @@ def test_every_default_alert_colour_is_offered_by_the_swatches():
     is not silently rewritten, and that escape hatch would quietly become
     the normal case for a shipped default.
     """
-    from obs_youtube_uploader.settings import _ALERT_EVENT_DEFAULTS
+    from wingman.settings import _ALERT_EVENT_DEFAULTS
 
     js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
     listed = re.search(r"var COLOURS = \[(.*?)\]", js, re.DOTALL)
@@ -1135,7 +1135,7 @@ def test_the_opacity_slider_can_still_reach_the_stored_floor():
     Derived from settings.py on both ends rather than restated here, since
     a change to either range is exactly what this is watching for.
     """
-    from obs_youtube_uploader.settings import validated_preview
+    from wingman.settings import validated_preview
 
     floor = validated_preview({"opacity": -1})["opacity"]
     ceiling = validated_preview({"opacity": 10**6})["opacity"]

@@ -1,6 +1,6 @@
 tmp/
 docs/superpowers/
-obs_youtube_uploader/credentials_real.py
+wingman/credentials_real.py
 build/
 dist/
 packaging/bin/

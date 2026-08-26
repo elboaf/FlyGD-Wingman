@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from obs_youtube_uploader.eveskills import state
-from obs_youtube_uploader.eveskills.evaluator import QueueEntry
+from wingman.eveskills import state
+from wingman.eveskills.evaluator import QueueEntry
 
 
 def test_a_new_character_has_no_snapshot_and_is_not_stale():

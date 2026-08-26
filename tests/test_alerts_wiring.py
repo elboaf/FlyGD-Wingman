@@ -9,8 +9,8 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import re
 
-from obs_youtube_uploader.alerts import service as alert_service
 from tests.test_api import make_api
+from wingman.alerts import service as alert_service
 
 
 class FakeAlerts:
@@ -188,7 +188,7 @@ def test_set_preview_enabled_true_actually_starts_the_tailer(tmp_path):
     called too early, is_running would still read False, folder() would
     return None, and the gate would stay permanently closed.
     """
-    from obs_youtube_uploader.__main__ import build_alert_service
+    from wingman.__main__ import build_alert_service
 
     host = FakePreviewHost()
     api = make_api(tmp_path, preview_host=host)
@@ -214,7 +214,7 @@ def test_start_previews_if_enabled_actually_starts_the_tailer(tmp_path):
     silent, with the settings all reading correct. Same real AlertService,
     same live-is_running FakePreviewHost as the sibling test.
     """
-    from obs_youtube_uploader.__main__ import build_alert_service
+    from wingman.__main__ import build_alert_service
 
     host = FakePreviewHost()
     api = make_api(tmp_path, preview_host=host)
@@ -243,7 +243,7 @@ def test_alert_config_tolerates_a_settings_document_with_no_preview_key(tmp_path
     or {}` and settings._normalize's setdefault -- absence is an empty
     section, not an error.
     """
-    from obs_youtube_uploader.__main__ import build_alert_service
+    from wingman.__main__ import build_alert_service
 
     host = FakePreviewHost()
     api = make_api(tmp_path, preview_host=host)
@@ -467,7 +467,7 @@ def _web(name):
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    return (root / "obs_youtube_uploader" / "web" / name).read_text(encoding="utf-8")
+    return (root / "wingman" / "web" / name).read_text(encoding="utf-8")
 
 
 def test_the_alerts_card_has_its_own_section_and_polls_on_it():
@@ -639,7 +639,7 @@ def test_the_pve_filter_names_every_event_it_actually_filters():
     their decloak alerts were NPC-filtered when nothing had ever filtered
     them.
     """
-    from obs_youtube_uploader.alerts import patterns
+    from wingman.alerts import patterns
 
     sentence = re.search(
         r'id="alert-pve-filter".*?</label>', _web("index.html"), re.DOTALL

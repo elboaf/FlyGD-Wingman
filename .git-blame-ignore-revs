@@ -27,7 +27,7 @@
 # created by splitting a signature):
 #
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
-#   git blame -L 134,134 obs_youtube_uploader/uploader.py
+#   git blame -L 134,134 wingman/uploader.py
 #
 # It should name the author who wrote the line, NOT the reformat. If it
 # names the reformat, the hash below is stale: delete the line rather
@@ -37,3 +37,6 @@
 
 # Adopt ruff format across the tree (136 Python files, no behaviour change)
 f20055e08ea4a74958702abe1a8329e3adc355fc
+
+# Rename the obs_youtube_uploader package to wingman (no behaviour change)
+e6d548a385854f8dc15b2e8f69fb4398b2ef812b

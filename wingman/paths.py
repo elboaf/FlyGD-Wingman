@@ -9,16 +9,64 @@ import shutil
 import sys
 from pathlib import Path
 
-APP_NAME = "OBSYouTubeUploader"
+APP_NAME = "FlyGD Wingman"
+
+# Where 3.x kept everything. Read only by migrate_state_dir() and by the
+# fallback below; nothing else may reach for it.
+LEGACY_APP_NAME = "OBSYouTubeUploader"
+
+# Set only by migrate_state_dir(), and only when the rename was refused.
+# A flag rather than a cached path on purpose: tests/conftest.py redirects
+# LOCALAPPDATA per test and every path derives from that live read, so
+# caching the resolved directory here would break the suite wholesale.
+_use_legacy = False
 
 
 def state_dir() -> Path:
     """Per-user writable directory for settings, token, logs, and temp files."""
+    name = LEGACY_APP_NAME if _use_legacy else APP_NAME
     base = os.environ.get("LOCALAPPDATA")
     if base:
-        return Path(base) / APP_NAME
+        return Path(base) / name
     # Non-Windows fallback so tests and development work off-platform.
-    return Path.home() / ".local" / "share" / APP_NAME
+    return Path.home() / ".local" / "share" / name
+
+
+def _legacy_state_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / LEGACY_APP_NAME
+    return Path.home() / ".local" / "share" / LEGACY_APP_NAME
+
+
+def migrate_state_dir() -> str:
+    """Move 3.x state to the 4.0 directory. Returns a status for logging.
+
+    MUST be called before ensure_dirs(). ensure_dirs() creates state_dir()
+    unconditionally, so running after it means this function finds a
+    freshly created empty target, takes the "already migrated" branch, and
+    strands the user's real settings and YouTube token forever.
+
+    Both directories live under %LOCALAPPDATA%, so the rename is
+    same-volume and atomic: there is no partial-migration state to recover
+    from. A refusal leaves everything where it was and is retried next
+    launch.
+
+    Returns rather than logs because logging is not configured this early.
+    """
+    global _use_legacy
+    legacy = _legacy_state_dir()
+    current = state_dir()
+    if current.exists():
+        return "state directory already current"
+    if not legacy.exists():
+        return "no legacy state directory to migrate"
+    try:
+        legacy.rename(current)
+    except OSError as exc:
+        _use_legacy = True
+        return f"state migration deferred, still using {LEGACY_APP_NAME}: {exc}"
+    return f"state migrated from {LEGACY_APP_NAME} to {APP_NAME}"
 
 
 def settings_file() -> Path:

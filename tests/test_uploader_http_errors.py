@@ -20,7 +20,7 @@ pytest.importorskip("googleapiclient")
 import httplib2
 from googleapiclient.errors import HttpError
 
-from obs_youtube_uploader import uploader
+from wingman import uploader
 
 
 def _http_error(status: int, body: bytes = b"") -> HttpError:

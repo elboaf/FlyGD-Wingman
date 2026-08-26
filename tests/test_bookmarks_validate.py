@@ -1,6 +1,6 @@
 import pytest
 
-from obs_youtube_uploader import bookmarks
+from wingman import bookmarks
 
 
 def test_there_are_eighteen_binds():

@@ -23,7 +23,7 @@ jobs:
       # The version-consistency check that stood here is gone, and its
       # absence is deliberate. It compared three hand-typed copies of the
       # version; there are now none. pyproject.toml derives from
-      # obs_youtube_uploader/__init__.py through setuptools' dynamic
+      # wingman/__init__.py through setuptools' dynamic
       # metadata, uv.lock stopped recording one as a consequence, and
       # packaging/installer.iss #includes a version.iss generated from the
       # same source immediately before iscc runs.
@@ -48,7 +48,7 @@ jobs:
           import pathlib, sys
 
           iss = pathlib.Path("packaging/installer.iss").read_text()
-          py = pathlib.Path("obs_youtube_uploader/ui/preflight.py").read_text()
+          py = pathlib.Path("wingman/ui/preflight.py").read_text()
 
           tokens = {
               "EdgeUpdate client GUID": "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
@@ -61,7 +61,7 @@ jobs:
               if token not in iss:
                   missing.append(f"{label} ({token!r}) missing from packaging/installer.iss")
               if token not in py:
-                  missing.append(f"{label} ({token!r}) missing from obs_youtube_uploader/ui/preflight.py")
+                  missing.append(f"{label} ({token!r}) missing from wingman/ui/preflight.py")
 
           if missing:
               for line in missing:

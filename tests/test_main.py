@@ -2,9 +2,9 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from obs_youtube_uploader import __main__ as main_mod
-from obs_youtube_uploader import paths, settings
-from obs_youtube_uploader.__main__ import (
+from wingman import __main__ as main_mod
+from wingman import paths, settings
+from wingman.__main__ import (
     configure_logging,
     resolve_recording_dir,
     set_dpi_awareness,
@@ -22,7 +22,7 @@ def test_stored_value_wins_over_detection(tmp_path):
     cfg = {"recording_dir": str(stored_dir)}
 
     with patch(
-        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        "wingman.__main__.obsconfig.find_recording_dir",
         return_value=detected_dir,
     ) as mock_detect:
         result = resolve_recording_dir(cfg)
@@ -40,7 +40,7 @@ def test_stale_stored_value_falls_through_to_detection(tmp_path):
     cfg = {"recording_dir": str(tmp_path / "does-not-exist")}
 
     with patch(
-        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        "wingman.__main__.obsconfig.find_recording_dir",
         return_value=detected_dir,
     ):
         result = resolve_recording_dir(cfg)
@@ -54,7 +54,7 @@ def test_no_stored_value_falls_through_to_detection(tmp_path):
     cfg = {}
 
     with patch(
-        "obs_youtube_uploader.__main__.obsconfig.find_recording_dir",
+        "wingman.__main__.obsconfig.find_recording_dir",
         return_value=detected_dir,
     ):
         result = resolve_recording_dir(cfg)

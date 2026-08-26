@@ -7,8 +7,8 @@ is how the whole suite redirects state into tmp_path, and a constant
 computed at import time would defeat it.
 """
 
-from obs_youtube_uploader import paths
-from obs_youtube_uploader.eveskills import application
+from wingman import paths
+from wingman.eveskills import application
 
 
 def test_skill_state_files_live_together(monkeypatch, tmp_path):
@@ -77,7 +77,7 @@ def test_the_scopes_are_read_only_and_exactly_two():
 def test_the_user_agent_carries_the_app_version_and_a_contact_url():
     """CCP asks third-party clients to identify themselves; an anonymous
     agent is what gets an application rate-limited without warning."""
-    from obs_youtube_uploader import __version__
+    from wingman import __version__
 
     assert application.USER_AGENT.startswith(f"FlyGD-Wingman/{__version__} ")
     assert "github.com/elboaf/FlyGD-Wingman" in application.USER_AGENT

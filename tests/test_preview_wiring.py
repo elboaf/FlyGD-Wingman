@@ -103,7 +103,7 @@ def test_shutdown_without_a_host_is_a_no_op(tmp_path):
 
 
 def test_build_preview_host_returns_none_off_windows(monkeypatch):
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "linux")
     assert main_mod.build_preview_host(object(), {}) is None
@@ -124,7 +124,7 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     """
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(
@@ -140,7 +140,7 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
 def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
     """Previews are secondary to the upload workflow; failing to build
     them must not stop Wingman launching."""
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     assert main_mod.build_preview_host(object(), {}) is None
@@ -165,7 +165,7 @@ def test_main_actually_calls_start_previews_if_enabled():
     """
     import inspect
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     src = inspect.getsource(main_mod.main)
     assert "start_previews_if_enabled()" in src
@@ -174,7 +174,7 @@ def test_main_actually_calls_start_previews_if_enabled():
 def test_main_tears_previews_down():
     import inspect
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     src = inspect.getsource(main_mod.main)
     assert "shutdown_previews()" in src
@@ -195,7 +195,7 @@ def test_the_preview_card_lives_in_its_own_section():
 
     root = pathlib.Path(__file__).resolve().parents[1]
     lines = (
-        (root / "obs_youtube_uploader" / "web" / "index.html")
+        (root / "wingman" / "web" / "index.html")
         .read_text(encoding="utf-8")
         .splitlines()
     )
@@ -222,7 +222,7 @@ def test_the_previews_section_is_registered_and_reachable():
     """
     import pathlib
 
-    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    web = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
 
     assert 'id="section-previews"' in html
@@ -241,7 +241,7 @@ def test_previews_disarms_its_capture_on_a_section_change():
     armed capture escape and swallow a path or a webhook being typed."""
     import pathlib
 
-    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    web = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
     js = (web / "previews.js").read_text(encoding="utf-8")
     app = (web / "app.js").read_text(encoding="utf-8")
 
@@ -269,7 +269,7 @@ def _no_disk(monkeypatch):
     """set_restore_preview_positions persists through settings.update, and
     the real save()/update() write to paths.settings_file() -- the user's
     actual file. Stub both so no test can reach it."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     writes = []
     monkeypatch.setattr(api_mod.settings_mod, "save", writes.append)
@@ -336,7 +336,7 @@ def test_a_failed_position_write_is_reported_rather_than_claimed(tmp_path, monke
     """#29's contract, carried across the rename: a dict, not a bool, so
     a write that did not land can be said out loud instead of leaving the
     checkbox lying about what survives a restart."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     def boom(_data, path=None):
         raise OSError("read-only")
@@ -355,7 +355,7 @@ def test_a_failed_position_write_lets_the_next_toggle_retry(tmp_path, monkeypatc
     the stored value still reads as the OLD one and the next call sees a
     real change. Stubs _save_locked, not update(): the point is to
     exercise the REAL update() and fake only the disk write."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     calls = []
     real_save_locked = api_mod.settings_mod._save_locked
@@ -564,7 +564,7 @@ def test_a_failed_preview_setting_write_is_refused_not_claimed(tmp_path, monkeyp
     OSError, so the value did NOT take effect either -- this must report
     `applied: False`, not the `applied: True, persisted: False` shape
     set_restore_preview_positions uses for its own, different, contract."""
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     def boom(_data, path=None):
         raise OSError("read-only")
@@ -602,7 +602,7 @@ def test_the_host_reads_the_position_setting_live(monkeypatch):
     section on every write."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(
@@ -629,7 +629,7 @@ def test_the_host_restores_positions_when_the_key_is_absent(monkeypatch):
     or their existing layouts are silently discarded on first launch."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {}})
@@ -643,7 +643,7 @@ def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
     captured at app start."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(
@@ -681,7 +681,7 @@ def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
     build_preview_host's live read."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {}})
@@ -695,7 +695,7 @@ def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
     while previews are already running."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(
@@ -733,7 +733,7 @@ def test_the_host_defaults_to_no_minimizing_and_empty_rosters_when_absent(monkey
     upgrading install. The rosters default to empty for the same reason."""
     from types import SimpleNamespace
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {}})
@@ -750,14 +750,14 @@ def test_the_client_window_machinery_is_gone():
     """
     import importlib
 
-    from obs_youtube_uploader.ui import api as api_mod
+    from wingman.ui import api as api_mod
 
     for name in ("placement", "clientwin32", "clientlayout"):
         try:
-            importlib.import_module("obs_youtube_uploader.preview." + name)
+            importlib.import_module("wingman.preview." + name)
         except ImportError:
             continue
-        raise AssertionError(f"obs_youtube_uploader.preview.{name} still exists")
+        raise AssertionError(f"wingman.preview.{name} still exists")
     for name in (
         "save_client_layout",
         "restore_client_layout",
@@ -772,7 +772,7 @@ def test_main_never_places_a_client_window():
     """The one permitted interaction with an EVE window is raising it."""
     import inspect
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     src = inspect.getsource(main_mod)
     assert "client_layout" not in src
@@ -797,9 +797,7 @@ def test_the_client_placement_win32_surface_is_not_declared():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
-        encoding="utf-8"
-    )
+    src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
     for gone in (
         "SetWindowPlacement",
         "GetWindowPlacement",
@@ -823,9 +821,7 @@ def test_sc_minimize_is_present_and_documented():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
-        encoding="utf-8"
-    )
+    src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
     assert "SC_MINIMIZE = 0xF020" in src
     assert "show state" in src.lower()
 
@@ -845,7 +841,7 @@ def test_the_preview_window_no_longer_owns_the_switch():
     import inspect
     import re
 
-    from obs_youtube_uploader.preview import window as window_mod
+    from wingman.preview import window as window_mod
 
     src = inspect.getsource(window_mod.PreviewWindow._on_message)
     # Comments stripped first: the handler's remaining comment explains
@@ -874,9 +870,7 @@ def test_sendmessagew_is_not_declared():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    src = (root / "obs_youtube_uploader" / "preview" / "win32.py").read_text(
-        encoding="utf-8"
-    )
+    src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
     assert "SendMessageTimeoutW" in src
     assert '"SendMessageW"' not in src
     assert "user32.SendMessageW" not in src
@@ -886,7 +880,7 @@ def _web(name):
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    return (root / "obs_youtube_uploader" / "web" / name).read_text(encoding="utf-8")
+    return (root / "wingman" / "web" / name).read_text(encoding="utf-8")
 
 
 def test_the_client_window_card_is_gone():

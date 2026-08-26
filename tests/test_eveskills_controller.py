@@ -12,14 +12,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from obs_youtube_uploader.eveskills import application
-from obs_youtube_uploader.eveskills import esi as esi_mod
-from obs_youtube_uploader.eveskills import jwt as jwt_mod
-from obs_youtube_uploader.eveskills import loopback as loopback_mod
-from obs_youtube_uploader.eveskills import skillids as skillids_mod
-from obs_youtube_uploader.eveskills import sso as sso_mod
-from obs_youtube_uploader.eveskills import state as state_mod
-from obs_youtube_uploader.eveskills.controller import SkillsController
+from wingman.eveskills import application
+from wingman.eveskills import esi as esi_mod
+from wingman.eveskills import jwt as jwt_mod
+from wingman.eveskills import loopback as loopback_mod
+from wingman.eveskills import skillids as skillids_mod
+from wingman.eveskills import sso as sso_mod
+from wingman.eveskills import state as state_mod
+from wingman.eveskills.controller import SkillsController
 
 T0 = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
 
@@ -421,7 +421,7 @@ def plaintext_tokens(monkeypatch):
     Here the token is a value the controller carries, and encrypting it
     would only make the assertions unreadable.
     """
-    from obs_youtube_uploader.eveskills import tokens as tokens_mod
+    from wingman.eveskills import tokens as tokens_mod
 
     monkeypatch.setattr(tokens_mod, "wrap", lambda token, **kw: token)
     monkeypatch.setattr(tokens_mod, "unwrap", lambda blob, **kw: blob or None)

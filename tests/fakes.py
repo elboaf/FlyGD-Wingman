@@ -10,9 +10,9 @@ import sys
 import types
 from pathlib import Path
 
-from obs_youtube_uploader import library, uploader
-from obs_youtube_uploader import settings as settings_mod
-from obs_youtube_uploader.ui import api as api_mod
+from wingman import library, uploader
+from wingman import settings as settings_mod
+from wingman.ui import api as api_mod
 
 
 class FakeWindow:

@@ -27,3 +27,15 @@ def _isolate_state_dir(tmp_path, monkeypatch):
     ask for isolation is a test that will forget.
     """
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_legacy_state_flag():
+    """paths._use_legacy is process-global; a fallback in one test would
+    silently redirect every test after it. Reset both sides of the yield so
+    an exception mid-test cannot leave it set."""
+    from wingman import paths
+
+    paths._use_legacy = False
+    yield
+    paths._use_legacy = False

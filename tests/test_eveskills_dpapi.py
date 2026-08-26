@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.eveskills import dpapi
+from wingman.eveskills import dpapi
 
 
 def test_the_module_imports_off_windows():

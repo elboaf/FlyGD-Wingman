@@ -2,7 +2,7 @@
 
 Run after the "Inject OAuth credentials" step in
 .github/actions/build-installer/action.yml has rewritten
-obs_youtube_uploader/credentials.py. The importability check earlier in
+wingman/credentials.py. The importability check earlier in
 that action runs BEFORE injection, so nothing else validates
 credentials.py after it is rewritten. A secret carrying a trailing space
 still produces a syntactically valid file that builds green and is then
@@ -12,13 +12,13 @@ rejected by Google at sign-in as "the provided client secret is invalid"
 Prints only shapes and lengths, never the values.
 
 Must run via `uv run python packaging/verify_credentials.py` so it
-imports obs_youtube_uploader from the synced .venv, not the runner's
+imports wingman from the synced .venv, not the runner's
 bare interpreter.
 """
 
 import sys
 
-from obs_youtube_uploader import credentials as c
+from wingman import credentials as c
 
 cfg = c.CLIENT_CONFIG["installed"]
 cid, sec = cfg["client_id"], cfg["client_secret"]

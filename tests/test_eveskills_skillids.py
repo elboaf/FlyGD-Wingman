@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from obs_youtube_uploader.eveskills import esi, skillids
+from wingman.eveskills import esi, skillids
 
 
 def test_lookup_is_case_insensitive():

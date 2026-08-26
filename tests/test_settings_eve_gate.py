@@ -6,8 +6,8 @@ must never be able to hide a feature that is still running, because that
 would conceal the only control that stops it.
 """
 
-from obs_youtube_uploader import settings as settings_mod
 from tests.test_api_settings import settings_api
+from wingman import settings as settings_mod
 
 
 def test_it_defaults_to_shown(tmp_path, monkeypatch):
@@ -127,7 +127,7 @@ def test_startup_still_reads_only_the_feature_flags():
     enabled install would stop starting its own engine."""
     import inspect
 
-    from obs_youtube_uploader import __main__ as main_mod
+    from wingman import __main__ as main_mod
 
     src = inspect.getsource(main_mod.start_engine_if_enabled)
     assert "show_eve_tools" not in src
@@ -153,7 +153,7 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     import pathlib
     import re
 
-    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    web = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
     app = (web / "app.js").read_text(encoding="utf-8")
     html = (web / "index.html").read_text(encoding="utf-8")
 
@@ -199,7 +199,7 @@ def test_the_toggle_repaints_the_chrome_itself():
     """
     import pathlib
 
-    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    web = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
     js = (web / "settings.js").read_text(encoding="utf-8")
 
     handler = js.split("set_show_eve_tools")[1].split("});")[0]
@@ -222,7 +222,7 @@ def test_hiding_cuts_every_route_into_a_hidden_screen():
     """
     import pathlib
 
-    web = pathlib.Path(__file__).resolve().parents[1] / "obs_youtube_uploader" / "web"
+    web = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
     app = (web / "app.js").read_text(encoding="utf-8")
 
     block = app.split("WM.apply_eve_gate")[1].split("document.addEventListener")[0]

@@ -4,7 +4,7 @@ on Linux, the same way ui/chrome.py is
 
 import subprocess
 
-from obs_youtube_uploader import bookmarks, hotkeys
+from wingman import bookmarks, hotkeys
 
 
 class FakeProc:

@@ -1,7 +1,7 @@
 """The roster of characters seen. Exists so a binding can be made for an
 alt that is not logged in right now."""
 
-from obs_youtube_uploader.preview import roster
+from wingman.preview import roster
 
 
 def test_a_new_name_goes_to_the_front():

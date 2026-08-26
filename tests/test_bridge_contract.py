@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-WEB = Path(__file__).resolve().parent.parent / "obs_youtube_uploader" / "web"
-API = Path(__file__).resolve().parent.parent / "obs_youtube_uploader" / "ui" / "api.py"
+WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
+API = Path(__file__).resolve().parent.parent / "wingman" / "ui" / "api.py"
 
 
 def allowlist() -> list:
@@ -134,7 +134,7 @@ def test_the_watch_url_is_written_exactly_once():
     by naming the sites it replaced, and a guard that fails on its own
     explanation is a guard people delete.
     """
-    package = Path(__file__).resolve().parent.parent / "obs_youtube_uploader"
+    package = Path(__file__).resolve().parent.parent / "wingman"
     sources = sorted(package.rglob("*.py")) + sorted(WEB.glob("*.js"))
     assert len(sources) > 20, "the sweep found almost nothing -- check the globs"
 
@@ -151,6 +151,6 @@ def test_the_watch_url_is_written_exactly_once():
             # -- over the separator, with the finding itself correct.
             found[path.relative_to(package.parent).as_posix()] = hits
 
-    assert found == {"obs_youtube_uploader/uploader.py": 1}, (
+    assert found == {"wingman/uploader.py": 1}, (
         f"the watch URL must be written once, in uploader.watch_url. Found: {found}"
     )

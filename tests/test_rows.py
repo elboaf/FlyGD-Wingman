@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import library, uploader
-from obs_youtube_uploader.ui import rows as rows_mod
+from wingman import library, uploader
+from wingman.ui import rows as rows_mod
 
 # set_link takes a finished URL, not a video id -- uploader.watch_url is the
 # one place that builds one (test_bridge_contract.py guards that). Derived

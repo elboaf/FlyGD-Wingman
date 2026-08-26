@@ -71,10 +71,11 @@ VALUE_NAME = "FlyGD Wingman"
 # writes the value and clears the shortcut, so the first toggle migrates
 # them onto one mechanism.
 #
-# Two names because the product was renamed and AppId was pinned across it,
-# so pre-rename installs upgrade in place and can still be carrying the old
-# spelling. installer.iss deletes both as well -- belt and braces, because
-# the installer only runs on upgrade and this runs whenever Settings opens.
+# Two names because the shortcut can exist on any machine that ever ticked
+# the box, regardless of whether that install was upgraded in place or
+# replaced by 4.0's uninstall-and-reinstall of the 3.x predecessor.
+# installer.iss deletes both as well -- belt and braces, because the
+# installer only runs on upgrade and this runs whenever Settings opens.
 _LEGACY_SHORTCUT_NAMES = ("FlyGD Wingman.lnk", "OBS YouTube Uploader.lnk")
 
 

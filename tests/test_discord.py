@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import discord
+from wingman import discord
 
 GOOD = "https://discord.com/api/webhooks/1234567890/abcDEF-token_xyz"
 

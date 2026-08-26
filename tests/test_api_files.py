@@ -9,8 +9,8 @@ They moved to test_api_upload.py when that button merged into Upload:
 posting logs is now the second half of an upload, not an action of its own.
 """
 
-from obs_youtube_uploader.ui import api as api_mod
 from tests import fakes
+from wingman.ui import api as api_mod
 
 
 def api_with(tmp_path, names=("a.mkv", "b.mkv"), watcher=None, **kw):

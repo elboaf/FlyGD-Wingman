@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from obs_youtube_uploader import bookmarks, settings
+from wingman import bookmarks, settings
 
 
 def test_defaults_are_the_documented_values():

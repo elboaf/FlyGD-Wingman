@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import combatlog
+from wingman import combatlog
 
 UTC = datetime.UTC
 

@@ -5,8 +5,8 @@ Click-versus-drag is where this goes subtly wrong: a click that moves one
 pixel must still focus the client, and a locked preview must never move
 but must still activate on release."""
 
-from obs_youtube_uploader.preview import window
-from obs_youtube_uploader.preview.geometry import Rect
+from wingman.preview import window
+from wingman.preview.geometry import Rect
 
 R = Rect(100, 100, 320, 210)
 
