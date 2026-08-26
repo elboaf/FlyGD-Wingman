@@ -5,6 +5,7 @@ sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
 
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from obs_youtube_uploader.eveskills import application
 from obs_youtube_uploader.eveskills import esi as esi_mod
 from obs_youtube_uploader.eveskills import jwt as jwt_mod
 from obs_youtube_uploader.eveskills import loopback as loopback_mod
+from obs_youtube_uploader.eveskills import skillids as skillids_mod
 from obs_youtube_uploader.eveskills import sso as sso_mod
 from obs_youtube_uploader.eveskills import state as state_mod
 from obs_youtube_uploader.eveskills.controller import SkillsController
@@ -1711,3 +1713,116 @@ def test_plan_text_is_empty_for_a_plan_that_is_no_longer_there(tmp_path):
     assert controller.plan_text("Loki") == ""
     assert controller.plan_text("") == ""
     assert controller.plan_text(None) == ""
+
+
+NAVIGATION_ID = 3449
+PLAN_ONE_SKILL = "Navigation I\n"
+
+
+def _seed_cache(tmp_path, mapping):
+    """Write the skill-id cache the controller reads at construction.
+
+    Without this every requirement is unresolvable, so nobody scores Ready
+    and ready_count is 0 whoever is in which group -- the scoping assertion
+    would pass for the wrong reason today and start failing the moment the
+    scoping actually worked. Keys are folded, matching SkillIdCache's own
+    storage; version and category are read from the module, not retyped.
+    """
+    document = {
+        "version": skillids_mod.CACHE_VERSION,
+        "entries": [
+            {
+                "name": name,
+                "type_id": type_id,
+                "category_id": skillids_mod.SKILL_CATEGORY_ID,
+            }
+            for name, type_id in mapping.items()
+        ],
+    }
+    (tmp_path / "eve_skills_cache.json").write_text(
+        json.dumps(document), encoding="utf-8"
+    )
+
+
+def _ch(character_id, name, group="", ready=False):
+    """A character with a snapshot, so it scores rather than reading Unscored."""
+    levels = {NAVIGATION_ID: 5} if ready else {}
+    return state_mod.Character(
+        character_id=character_id,
+        character_name=name,
+        group=group,
+        fetched_utc=T0,
+        active_levels=dict(levels),
+        trained_levels=dict(levels),
+    )
+
+
+def test_the_group_list_is_derived_from_the_roster_and_sorted(tmp_path):
+    controller, _, _ = build(
+        tmp_path,
+        characters=[
+            _ch(1, "Aiga", "Wolfpack"),
+            _ch(2, "Zuelo", "Wolfpack"),
+            _ch(3, "Kaska", "Logi Wing"),
+            _ch(4, "Delen", ""),
+        ],
+    )
+
+    payload = controller.state_payload()
+
+    assert payload["groups"] == [
+        {"name": "Logi Wing", "member_count": 1},
+        {"name": "Wolfpack", "member_count": 2},
+    ]
+
+
+def test_two_spellings_of_one_group_are_one_row_keeping_the_first(tmp_path):
+    """The rail showing `Wolfpack` and `wolfpack` as two crews looks like a
+    bug, and _find_plan_locked already casefolds for the same reason."""
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_ch(1, "Aiga", "Wolfpack"), _ch(2, "Zuelo", "wolfpack")],
+    )
+
+    payload = controller.state_payload()
+
+    assert payload["groups"] == [{"name": "Wolfpack", "member_count": 2}]
+
+
+def test_a_selected_group_nobody_holds_is_reported_as_no_selection(tmp_path):
+    """Same shape as a deleted plan file: reported as unselected so the
+    screen falls back to All, with the stored value left alone in case the
+    group comes back."""
+    seed = state_mod.SkillsState(
+        characters=[_ch(1, "Aiga", "Wolfpack")], selected_group="Mining"
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path)
+
+    assert controller.state_payload()["selected_group"] == ""
+
+
+def test_the_ready_count_counts_only_the_selected_groups_members(tmp_path):
+    """The whole point of the feature: the rail answers `what can this crew
+    fly`, not `what can anyone fly`."""
+    _seed_cache(tmp_path, {"navigation": NAVIGATION_ID})
+    seed = state_mod.SkillsState(
+        characters=[
+            _ch(1, "Aiga", "Wolfpack", ready=True),
+            _ch(2, "Zuelo", "Mining", ready=True),
+        ],
+        selected_group="Wolfpack",
+    )
+    state_mod.save(seed, tmp_path / "eve_skills.json")
+    controller, _, _ = build(tmp_path, plans={"Ishtar": PLAN_ONE_SKILL})
+
+    payload = controller.state_payload()
+
+    assert payload["selected_group"] == "Wolfpack"
+    assert payload["plans"][0]["ready_count"] == 1
+
+
+def test_every_character_row_carries_its_own_group(tmp_path):
+    controller, _, _ = build(tmp_path, characters=[_ch(1, "Aiga", "Wolfpack")])
+
+    assert controller.state_payload()["characters"][0]["group"] == "Wolfpack"

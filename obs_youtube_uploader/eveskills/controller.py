@@ -370,6 +370,52 @@ class SkillsController:
     def _selected_plan_locked(self):
         return self._find_plan_locked(self._state.selected_plan_name)
 
+    # ----- groups ---------------------------------------------------------
+
+    @staticmethod
+    def _in_group(ch, group_name: str) -> bool:
+        """True when no group is selected, or this character is in it."""
+        if not group_name:
+            return True
+        return ch.group.casefold() == group_name.casefold()
+
+    def _groups_locked(self) -> list:
+        """Every group that has members, sorted, with the count each holds.
+
+        Derived rather than stored: D1 puts membership on the character, so
+        this list IS the roster's groups by definition and cannot drift
+        from it. Keyed case-insensitively with the FIRST spelling kept,
+        matching _find_plan_locked's rule for plan names -- `Wolfpack` and
+        `wolfpack` are one crew, and two rail rows for it read as a bug.
+        """
+        counts: dict = {}
+        for ch in self._state.characters:
+            if not ch.group:
+                continue
+            row = counts.get(ch.group.casefold())
+            if row is None:
+                counts[ch.group.casefold()] = {"name": ch.group, "member_count": 1}
+            else:
+                row["member_count"] += 1
+        return sorted(counts.values(), key=lambda row: row["name"].casefold())
+
+    def _selected_group_locked(self) -> str:
+        """The stored selection, or "" when nobody holds that name.
+
+        The same posture _selected_plan_locked takes toward a deleted plan
+        file: a pointer that no longer resolves is REPORTED as no
+        selection, never rewritten. Rewriting would discard the name at the
+        moment its last member left, so re-adding that member would not
+        bring the selection back.
+        """
+        target = self._state.selected_group.casefold()
+        if not target:
+            return ""
+        for ch in self._state.characters:
+            if ch.group.casefold() == target:
+                return ch.group
+        return ""
+
     # ----- persistence ------------------------------------------------
 
     def _save_locked(self) -> bool:
@@ -396,13 +442,16 @@ class SkillsController:
 
     def _state_payload_locked(self) -> dict:
         selected = self._selected_plan_locked()
+        group = self._selected_group_locked()
         ids = self._cache.type_ids()
         return {
             "auth_configured": application.is_configured(),
             "auth_in_progress": self._auth_in_progress,
             "refresh_in_flight": self._refresh_in_flight,
             "selected_plan_name": selected.name if selected else "",
-            "plans": [self._plan_row_locked(plan, ids) for plan in self._plans],
+            "selected_group": group,
+            "groups": self._groups_locked(),
+            "plans": [self._plan_row_locked(plan, ids, group) for plan in self._plans],
             "characters": [
                 self._character_row(ch, selected, ids) for ch in self._state.characters
             ],
@@ -428,7 +477,7 @@ class SkillsController:
             "plans_updated_utc": _iso(self._plans_updated),
         }
 
-    def _plan_row_locked(self, plan, ids) -> dict:
+    def _plan_row_locked(self, plan, ids, group) -> dict:
         """One left-rail row: the plan's size and how many can fly it.
 
         Every character is evaluated against every plan here, which is
@@ -436,9 +485,15 @@ class SkillsController:
         forty characters is under three hundred passes over a few dozen
         requirements, which is far cheaper than caching it would be to keep
         correct across a refresh that lands mid-render.
+
+        A group filter narrows this loop rather than adding a pass: the
+        skipped characters are skipped before their evaluation, so scoping
+        the count is strictly cheaper than not scoping it.
         """
         ready = 0
         for ch in self._state.characters:
+            if not self._in_group(ch, group):
+                continue
             if not ch.has_snapshot:
                 continue
             analysis = evaluator.evaluate(
@@ -481,6 +536,7 @@ class SkillsController:
         return {
             "character_id": ch.character_id,
             "character_name": ch.character_name,
+            "group": ch.group,
             "fetched_utc": _iso(ch.fetched_utc),
             "error": ch.error,
             "needs_reauth": bool(ch.needs_reauth),
