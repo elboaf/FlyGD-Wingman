@@ -174,6 +174,8 @@ def _empty_skills_state() -> dict:
         "auth_in_progress": False,
         "refresh_in_flight": False,
         "selected_plan_name": "",
+        "selected_group": "",
+        "groups": [],
         "plans": [],
         "characters": [],
         "plan_issues": [],

@@ -128,6 +128,8 @@ def test_the_empty_state_has_the_same_shape_as_a_real_one(tmp_path):
         "auth_in_progress",
         "refresh_in_flight",
         "selected_plan_name",
+        "selected_group",
+        "groups",
         "plans",
         "characters",
         "plan_issues",
