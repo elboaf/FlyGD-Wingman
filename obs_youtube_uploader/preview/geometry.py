@@ -197,7 +197,7 @@ def clamp_to_monitors(rect: Rect, monitors: list) -> Rect:
     return Rect(x, y, rect.w, rect.h)
 
 
-_SIZE_RE = re.compile(r"^\s*(\d{1,5})\s*[xX×]\s*(\d{1,5})\s*$")
+_SIZE_RE = re.compile(r"^\s*(\d{1,5})\s*[xX×]\s*(\d{1,5})\s*$")  # noqa: RUF001
 
 
 def parse_size(text):
@@ -245,4 +245,4 @@ def lock_to_aspect(w, h, aspect, chrome, min_size):
     floor_h = max(1, min_size[1] - dh)
     if pw / aspect < floor_h:
         pw = floor_h * aspect
-    return int(round(pw + dw)), int(round(pw / aspect + dh))
+    return int(round(pw + dw)), int(round(pw / aspect + dh))  # noqa: RUF046

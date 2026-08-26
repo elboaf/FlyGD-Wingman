@@ -242,7 +242,7 @@ def test_parse_size_accepts_the_obvious_spelling():
 
 def test_parse_size_tolerates_spacing_and_capital_x():
     assert g.parse_size("  640 X 360 ") == (640, 360)
-    assert g.parse_size("640×360") == (640, 360)
+    assert g.parse_size("640×360") == (640, 360)  # noqa: RUF001
 
 
 def test_parse_size_rejects_junk_rather_than_raising():
