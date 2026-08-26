@@ -257,8 +257,11 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **Display scaling at 100%, 125%, 150% and 200%.** Restart at each.
       Expected: text sharp AND the right apparent size next to Notepad;
       neither route opens larger than the screen; Title, Description,
-      Stitch, the no-webhook note, the summary and Upload all fully
-      visible with nothing clipped. (Retry is absent until a failure —
+      Stitch, the no-webhook note, the summary (select a row first — it is
+      hidden while nothing is selected) and Upload all fully visible with
+      nothing clipped. Title and Description must both fill the card's
+      full width and match each other; they were 198px and 177px of a
+      286px box until round 5's U3. (Retry is absent until a failure —
       see The list and Upload. The combat-log CHECKBOX is gone — logs are
       unconditional now and a configured webhook is what decides the post;
       what remains is the sentence.) The upload panel is deliberately
@@ -332,6 +335,11 @@ somewhere stale and nothing on that screen is worth reviewing.
       Rows accumulate — clicking a second must not clear the first.
 - [ ] **Select all and Select none repaint every checkbox,** not just the
       summary. The two must never disagree.
+- [ ] **The recording count sits beside `Select all` / `Select none`** in
+      the list footer, with `Open folder` and `Delete selected` grouped at
+      the right. At the 840x625 floor the footer wraps and `Delete
+      selected` takes a second line, right-aligned — check it is reachable
+      and does not overlap the row above.
 - [ ] **Click-to-sort works on every column and shows direction,** on the
       active column only. Sorting is pure client state; a sort that
       round-trips to Python or clears the selection is a defect.
@@ -353,13 +361,14 @@ somewhere stale and nothing on that screen is worth reviewing.
       widened the parser in the same change; this is what notices if they
       ever come apart again.
 
-      **Run this on a folder that has been opened before**, i.e. with
-      `durations.json` already holding these recordings — the opposite of
-      the item above. It is not a convenience: a cell filled in by a
-      probe completing during this run does not carry the format at all
-      (`onDuration` pushes a raw float, so the cell reads `3789`), and
-      that is a separate open defect. On a cold folder this item would
-      pass or fail on cache warmth rather than on what it means to check.
+      **Run this on a COLD folder**, i.e. with `durations.json` deleted, and
+      then again on a warm one. The two used to be different products and
+      that is exactly what the item is now for: until round 5 `onDuration`
+      pushed a raw float, so a cell filled in by a probe completing during
+      the run read `3789` while the same recording read `1:03:09` after a
+      restart — and the sort, which parses the cell, did nothing at all on
+      a cold folder. Warm-only runs are what hid it for four rounds, so a
+      cold run is the load-bearing half now.
 - [ ] **LOAD-BEARING: arrow keys move focus and Space toggles.** Tab in,
       move with ↑/↓, press Space. Focus is visibly distinct from "checked",
       Space toggles exactly the focused row, and Space does NOT scroll. Then
@@ -921,7 +930,8 @@ behavior that only shows up at size.
       background — this item exists to catch that regressing.
 - [ ] **There is no combat-log checkbox, and the fact is on the panel.**
       With a webhook configured, the panel's card holds Title, Description,
-      Stitch, the selection summary and Upload — and nothing about logs.
+      Stitch, Upload — and, once something is selected, the selection
+      summary above it — and nothing about logs.
       Clear the webhook in Settings › Discord: a note appears under Stitch
       reading "No Discord webhook is configured, so combat logs are not
       posted. Set one in Settings › Discord." Put the webhook back and the
@@ -1086,8 +1096,10 @@ behavior that only shows up at size.
       nothing for the minutes a join takes would be worse than none.
 - [ ] **A finished upload stops looking like an armed one.** Upload a
       single recording and watch the PANEL, not the strip. Expected: the
-      selection clears, the summary returns to `Nothing selected`, and
-      **Upload goes inert**. Before round 3 the post-success screen was
+      selection clears, the summary **disappears** (round 5's U4: with
+      nothing selected it said "Nothing selected" directly above a greyed
+      Upload, stating one fact twice in two treatments), and **Upload goes
+      inert**. Before round 3 the post-success screen was
       near-identical to the pre-upload one — same `1 selected · … · …`
       above a live, saturated button — and the only evidence of success
       was a 14px grey arrow in the narrowest column. A stopped job must

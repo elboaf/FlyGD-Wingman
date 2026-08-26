@@ -900,11 +900,7 @@ class Api:
                 durations.remember(
                     self._cache, info.path, info.size, info.mtime, duration
                 )
-            self._rows.set_duration(row_id, duration, definitive)
-            self._push(
-                "onDuration",
-                {"id": row_id, "duration": duration, "definitive": definitive},
-            )
+            self._push_duration(row_id, duration, definitive)
             applied += 1
         # Per tick rather than once at the end: a cold scan of a large folder
         # takes a while, and a user who opens the window from the tray and
@@ -919,6 +915,32 @@ class Api:
         drain, self._drain = self._drain, None
         if drain is not None:
             drain.stop()
+
+    def _push_duration(self, row_id, duration, definitive: bool) -> None:
+        """Record one probe result and tell the page what the cell says.
+
+        One helper for both probe paths -- the background drain and the
+        synchronous pre-upload sweep -- because they pushed the same
+        message and only one of them would ever have been fixed. What goes
+        over the bridge is RowSnapshot's rendered string, never the float
+        that was passed in: U1 found the float reaching the Length column
+        on a cold duration cache, where it rendered as `3789.0` and broke
+        the column's sort (list.js parses the cell back out, and its regex
+        is written for `5:30`). A warm cache hid it, because the initial
+        row payload has always carried the string.
+
+        A declined update pushes nothing: set_duration returns None when
+        the row is gone or already answered definitively, and pushing over
+        that would put a superseded answer on screen while Python holds
+        the good one.
+        """
+        rendered = self._rows.set_duration(row_id, duration, definitive)
+        if rendered is None:
+            return
+        self._push(
+            "onDuration",
+            {"id": row_id, "duration": rendered, "definitive": definitive},
+        )
 
     # ----- upload -----------------------------------------------------------
 
@@ -1581,11 +1603,7 @@ class Api:
                     self._cache, info.path, info.size, info.mtime, duration
                 )
                 measured += 1
-            self._rows.set_duration(row_id, duration, definitive)
-            self._push(
-                "onDuration",
-                {"id": row_id, "duration": duration, "definitive": definitive},
-            )
+            self._push_duration(row_id, duration, definitive)
         if measured:
             durations.save(self._durations_file, self._cache)
 

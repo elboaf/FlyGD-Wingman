@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from obs_youtube_uploader import durations
+from obs_youtube_uploader import durations, library
 from obs_youtube_uploader.ui.api import Api, AppState
 from obs_youtube_uploader.ui.rows import RowSnapshot
 from tests.test_scheduler import FakeClock
@@ -304,7 +304,10 @@ def test_list_rows_pushes_every_row_then_streams_durations(recordings, tmp_path)
 
     streamed = [p for name, p in pushes(window) if name == "onDuration"]
     assert len(streamed) == 2
-    assert {p["duration"] for p in streamed} == {12.5}
+    # The RENDERED cell, not the float that was probed (U1). list.js writes
+    # this straight into the Length column and parses it back out to sort,
+    # so a number here is a column that shows `12.5` and stops sorting.
+    assert {p["duration"] for p in streamed} == {library.format_duration(12.5)}
     assert all(p["definitive"] for p in streamed)
     # KEY IS `id`, matching the row objects onRows delivered.
     assert {p["id"] for p in streamed} == {r["id"] for r in payload["rows"]}
@@ -465,6 +468,35 @@ def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
     assert durations.load(tmp_path / "durations.json") == {}
     streamed = [p for name, p in pushes(window) if name == "onDuration"]
     assert [p["definitive"] for p in streamed] == [False, False]
+
+
+def test_a_superseded_answer_is_not_pushed_over_a_definitive_one(recordings, tmp_path):
+    """The supersede rule reaches the PAGE, not just RowSnapshot.
+
+    _probe_now sweeps the selection before a combat-log upload and can
+    re-probe a row the drain already answered definitively. RowSnapshot
+    declines that update; pushing anyway -- which the two call sites did
+    when they pushed their own argument rather than what was rendered --
+    left Python holding "0:12" and the column showing the timeout.
+    """
+    window = FakeWindow()
+    clock = FakeClock()
+    api = rows_api(
+        recordings,
+        tmp_path,
+        clock,
+        probe=lambda path, binary: (12.5, True),
+        window=window,
+    )
+    api.list_rows()
+    clock.fire()
+    window.evaluated.clear()
+
+    row_id = api._rows.rows()[0]["id"]
+    api._push_duration(row_id, None, False)
+
+    assert [p for name, p in pushes(window) if name == "onDuration"] == []
+    assert api._rows.rows()[0]["duration"] == library.format_duration(12.5)
 
 
 def test_the_drain_loop_stops_once_the_worker_is_done(recordings, tmp_path):

@@ -151,8 +151,24 @@ class RowSnapshot:
 
     def set_duration(
         self, row_id: str, duration: float | None, definitive: bool
-    ) -> None:
-        """Record one probe result. Unknown id: no-op.
+    ) -> str | None:
+        """Record one probe result. Returns the CELL TEXT, or None if the
+        update was declined (unknown id, or a row already answered
+        definitively).
+
+        The return value is the whole point of the signature: U1 shipped
+        for four rounds because api.py pushed the raw float it had passed
+        IN rather than the string this method renders, so a cold duration
+        cache filled the Length column with `3789.0` while a warm one --
+        which fills the column from rebuild()'s initial payload -- read
+        `1:03:09`. list.js parses that column back out to sort it, so the
+        float also broke the sort. Handing back the rendered string leaves
+        exactly one place that decides what the cell says.
+
+        Returning None on a declined update is the other half: the
+        supersede rule below is defeated if the caller pushes anyway, and
+        it used to be -- a late no-verdict probe left Python holding
+        "5:30" and the page showing "?".
 
         *definitive* is library.probe's verdict flag, and it decides whether
         this answer can be superseded. A probe that never got a verdict --
@@ -170,7 +186,7 @@ class RowSnapshot:
         """
         info = self._infos.get(row_id)
         if info is None or row_id in self._definitive:
-            return
+            return None
         info.duration = duration
         info.probed = True
         # The flag reaches the CELL, not just this class's supersede rule.
@@ -182,6 +198,7 @@ class RowSnapshot:
         if definitive:
             self._definitive.add(row_id)
         self._replace(row_id, duration=info.duration_str)
+        return info.duration_str
 
     def _replace(self, row_id: str, **changes) -> None:
         for index, row in enumerate(self._rows):

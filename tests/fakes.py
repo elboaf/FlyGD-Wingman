@@ -48,11 +48,19 @@ class FakeRows:
         self.links[row_id] = video_id
 
     def set_duration(self, row_id, duration, definitive):
+        """Returns the rendered cell text, like the real one.
+
+        The return value is the bridge payload now (U1), so a double that
+        returned None would suppress every onDuration push and the tests
+        that assert on them would pass by asserting nothing.
+        """
         info = self.infos.get(row_id)
         if info is None:
-            return
+            return None
         info.duration = duration
         info.probed = True
+        info.answered = definitive
+        return info.duration_str
 
     def rows(self):
         return [{"id": rid} for rid in self.infos]

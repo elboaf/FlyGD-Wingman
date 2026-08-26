@@ -849,15 +849,35 @@ button.btn:disabled,
 /* scrollbar-gutter, and why the header pays for it too (R1 finding 1).
    The scrollbar is drawn INSIDE this box, so an overflowing list has a
    content box 10px narrower than .list-head, which sits outside it. That
-   difference does not land at the right edge as slack: .grid-row's name
-   track is minmax(212px, 52ch), 52ch is a MAXIMUM the column never reaches
-   at any width this window can be, so the track is elastic at every width
-   and absorbs the whole 10px -- carrying Modified, Size and Length 10px
-   left of their own headers. Measured on merged main with 40 rows at 1027,
-   900 and 836 CSS: +10.00 on all three, 0.00 with the scrollbar
-   suppressed and the same rows in place. Filename is immune because its
-   left edge is pinned by the 34px check column; its residual 2px is
-   .list-row's transparent left border, not an inset.
+   difference does not land at the right edge as slack WHILE THE NAME TRACK
+   IS ELASTIC: .grid-row's name track is minmax(212px, 52ch), and below
+   that cap the track absorbs the whole 10px -- carrying Modified, Size
+   and Length 10px left of their own headers. Measured on merged main with
+   40 rows at 1027, 900 and 836 CSS: +10.00 on all three, 0.00 with the
+   scrollbar suppressed and the same rows in place. Filename is immune
+   because its left edge is pinned by the 34px check column; its residual
+   2px is .list-row's transparent left border, not an inset.
+
+   CORRECTED, round 5 (handed over by the type-scale lane). This used to
+   say 52ch was "a MAXIMUM the column never reaches at any width this
+   window can be", and that is false. Measured in the real window: the
+   track grows to 426.46px and stops there at a 1056 CSS px viewport, and
+   stays capped at every width above -- 1060, 1200, 1920, 2560 and 3840 all
+   read 426.461. Above 1056 the track is FIXED, so a narrower content box
+   does leave its slack at the right edge and the paragraph above does not
+   describe it. The three round-3 figures were all measured below 1056,
+   which is why they agreed with the old wording. The FIX is unaffected
+   either way: `stable` reserves the gutter unconditionally and .list-head
+   matches it with padding, so the header and its data agree either side of
+   the cap.
+
+   The handover predicted the cap had MOVED, --fs-muted 11.5 -> 12px having
+   grown `ch` by ~4.3%. It did not move, by 0.00, and the premise is wrong:
+   `ch` resolves against each grid container's OWN font, and both
+   containers are --fs-body. .list-head's font-size sits on its spans
+   precisely so that stays true -- see the note there, which is the other
+   half of this one. The sweep above reads identically on merged main and
+   on this branch.
 
    `stable` reserves the gutter whether or not the list overflows, and
    .list-head reserves the same width as padding. Two consequences, both
@@ -964,9 +984,12 @@ button.btn:disabled,
    the gutter "cannot move anything anyway, because .grid-row has no 1fr,
    so the tracks are left-packed and a narrower body only eats slack at
    the right edge". No 1fr is not the same as no elasticity: the name
-   track is minmax(212px, 52ch) and never reaches its 52ch maximum at any
-   width this window can be, so it is elastic at every width and absorbs
-   the gutter. Round 3 re-measured with the list actually overflowing --
+   track is minmax(212px, 52ch), and below its cap it is elastic and
+   absorbs the gutter. (This used to read "never reaches its 52ch maximum
+   at any width this window can be". Round 5 measured the cap being reached
+   at a 1056 CSS px viewport, above which the denied claim is the true one
+   -- which is why it needed measuring rather than reasoning about. See
+   .list-scroll.) Round 3 re-measured with the list actually overflowing --
    the earlier 30-row check did not produce a scrollbar -- and found
    Modified, Size and Length +10.00 at 1027, 900 and 836 CSS, going to
    0.00 with the scrollbar suppressed and the same rows in place. The fix
@@ -1098,9 +1121,29 @@ button.btn:disabled,
   padding: 8px 10px; border-top: 1px solid var(--panel-border);
   background: var(--sunken);
 }
+/* U6. The count reads as a caption on `Select all` / `Select none`, which
+   are the controls that change it, so it sits with them and the auto
+   margin moves to the file actions instead. It used to carry that margin
+   itself, which put the number at the far right edge -- the furthest the
+   footer could place it from the pair it describes.
+
+   The margin is on the FIRST of the two file buttons, so the group travels
+   together. Under .list-foot's flex-wrap (which fires wherever the content
+   stops fitting, by construction rather than at a breakpoint) an auto
+   margin on a wrapped line still pushes right, so the pair right-aligns on
+   its own line instead of splitting.
+
+   The cost, measured at the 840x625 floor, so it can be reversed knowingly:
+   the footer's five items total 480px against 462px of content box there,
+   so ONE of them wraps either way. It used to be the count (footer 70px
+   tall); it is now `Delete selected`, alone and right-aligned on the second
+   line (86px) -- 16px of list pane given up at the floor, and none at 900
+   or above, where the footer is 48px in both arrangements. The button does
+   not move HORIZONTALLY when it wraps: it keeps the pane's right edge. */
 .list-foot .count {
-  margin-left: auto; color: var(--text-faint); font-size: var(--fs-muted);
+  color: var(--text-faint); font-size: var(--fs-muted);
 }
+.list-foot #btn-open-folder { margin-left: auto; }
 /* Uploader 14. The message was centred horizontally and top-aligned
    vertically, leaving ~750px of empty pane under it with the column
    headers still up labelling nothing -- neither deliberate placement nor
@@ -1205,6 +1248,21 @@ button.btn:disabled,
    nothing else. */
 #panel-empty-note { margin-bottom: 1.5em; }
 
+/* U3. Title and Description filled 198 and 177 of a 286 CSS px content
+   box, and were unequal to each other, because neither was sized by
+   anything: `input.field` carries `flex: 1; min-width: 0`, and .card is a
+   plain block, so the declaration does nothing here and both controls fell
+   back to their HTML intrinsics -- `size=20` for the input and `cols=20`
+   for the textarea, which are different widths in the same font.
+
+   Scoped to .panel rather than fixed on .field itself, because the flex
+   rule is not wrong -- it works everywhere .field sits in a `.row`, and
+   `width: 100%` alongside `flex: 1 1 0%` is inert there but would still be
+   a second sizing story in the one declaration every screen shares.
+   box-sizing: border-box is global (top of this file), so 100% is the
+   border box and the padding does not push it out of the card. */
+.panel input.field, .panel textarea.field { width: 100%; }
+
 /* A sensible fixed height. NOT flex:1 — today the Description box consumes
    all remaining vertical space and reads as an empty void. */
 #f-desc { height: 96px; }
@@ -1260,7 +1318,15 @@ button.btn:disabled,
   color: var(--text-faint); font-size: var(--fs-muted);
   margin-top: 10px; line-height: 1.4;
 }
-.actions { display: flex; flex-direction: column; gap: 8px; }
+/* U4. `Nothing selected` sat flush on top of the Upload button: .actions
+   had no margin, so the only gap between the two was the summary's own
+   line box. The margin goes HERE rather than on the summary, because the
+   summary is hidden in the empty state (panel.js) and spacing that lives
+   on a hidden element is spacing that disappears with it -- the Stitch
+   checkbox would then sit flush against Upload instead. 12px matches the
+   summary's own margin above it, so the run reads at one rhythm whether
+   or not the summary is showing. */
+.actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .actions button.btn { width: 100%; text-align: center; padding: 9px 12px; }
 /* Retry is enabled only after an upload has failed IN THIS SESSION, which
    for most users is never -- so its resting state was a dead control given
