@@ -600,6 +600,85 @@ def _bare_window(**kw):
     )
 
 
+class _ShowRecorder:
+    """Records ShowWindow calls; set_hidden touches nothing else."""
+
+    def __init__(self):
+        self.shown = []
+        outer = self
+
+        class User32:
+            def ShowWindow(self, hwnd, cmd):
+                outer.shown.append((hwnd, cmd))
+                return True
+
+        self.user32 = User32()
+
+
+def _hidable_window():
+    libs = _ShowRecorder()
+    client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
+    w = window.PreviewWindow(
+        libs, client, R, lambda c: None, lambda *a: None, list, lambda: R
+    )
+    w.hwnd = 77
+    return w, libs
+
+
+def test_a_preview_starts_visible():
+    w, _ = _hidable_window()
+    assert w.hidden is False
+
+
+def test_hiding_calls_show_window_with_sw_hide():
+    w, libs = _hidable_window()
+
+    w.set_hidden(True)
+
+    assert w.hidden is True
+    assert libs.shown == [(77, window.win32.SW_HIDE)]
+
+
+def test_showing_again_does_not_activate_the_preview():
+    """SW_SHOWNOACTIVATE, never SW_SHOW: these windows are WS_EX_NOACTIVATE
+    and must never take the foreground away from the client the user is
+    flying. SW_SHOW on a re-show would undo that on every alt-tab back."""
+    w, libs = _hidable_window()
+    w.set_hidden(True)
+    libs.shown.clear()
+
+    w.set_hidden(False)
+
+    assert w.hidden is False
+    assert libs.shown == [(77, window.win32.SW_SHOWNOACTIVATE)]
+
+
+def test_set_hidden_is_idempotent():
+    """_apply_visibility runs every sweep and every foreground change, so
+    an unchanged flag must cost one attribute compare -- not a ShowWindow
+    call several times a second."""
+    w, libs = _hidable_window()
+
+    w.set_hidden(True)
+    w.set_hidden(True)
+    w.set_hidden(True)
+
+    assert libs.shown == [(77, window.win32.SW_HIDE)]
+
+
+def test_hiding_a_window_that_was_never_created_does_nothing():
+    """Creation can fail (window.py's create returns None on a failed
+    CreateWindowExW), and a sweep that hides everything must not pass a
+    null hwnd to ShowWindow."""
+    w, libs = _hidable_window()
+    w.hwnd = None
+
+    w.set_hidden(True)
+
+    assert w.hidden is True
+    assert libs.shown == []
+
+
 def test_the_ring_alone_does_not_acknowledge_an_alert(monkeypatch):
     """Ringing a preview is now just "this is the client you last used" and
     says nothing about whether anyone looked at it."""

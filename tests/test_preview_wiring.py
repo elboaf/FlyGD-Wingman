@@ -480,6 +480,33 @@ def test_set_minimize_inactive_clients_persists_and_restyles(tmp_path, monkeypat
     assert host.restyles == 1
 
 
+def test_set_preview_hide_on_lost_focus_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"hide_on_lost_focus": False}
+    assert api.set_preview_hide_on_lost_focus(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["hide_on_lost_focus"] is True
+    assert len(writes) == 1
+    # Restyled, not merely written: unticking has to put the previews back
+    # now rather than up to a sweep later, and _apply_visibility runs off
+    # the restyle path.
+    assert host.restyles == 1
+
+
+def test_set_preview_hide_on_lost_focus_survives_no_host(tmp_path, monkeypatch):
+    """Settings are reachable with previews off, so every preview endpoint
+    has to tolerate a None host."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=None)
+    api._state.settings["preview"] = {}
+    assert api.set_preview_hide_on_lost_focus(True)["persisted"] is True
+
+
 def test_set_preview_locked_adds_an_offline_character_and_restyles(
     tmp_path, monkeypatch
 ):
@@ -773,6 +800,37 @@ def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
     assert host._minimizing_inactive() is False
     assert host._is_never_minimize("Alice") is False
     assert host._is_locked("Bravo") is False
+
+
+def test_the_host_reads_hide_on_lost_focus_live(monkeypatch):
+    """Ticking the box has to reach previews that are already running, and
+    _normalize hands back a whole new section object rather than mutating
+    the old one -- so the host must read through to state.settings, not
+    capture the dict it was built with."""
+    from types import SimpleNamespace
+
+    from wingman import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {"hide_on_lost_focus": True}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._hiding_on_lost_focus() is True
+
+    state.settings["preview"] = {"hide_on_lost_focus": False}
+    assert host._hiding_on_lost_focus() is False
+
+
+def test_the_host_defaults_to_leaving_previews_visible_when_absent(monkeypatch):
+    """Absent means off, for the same class of reason minimize_inactive
+    does: taking previews off a user's screen is a change they have to ask
+    for, and an upgrading install has no such key."""
+    from types import SimpleNamespace
+
+    from wingman import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    assert main_mod.build_preview_host(state, {})._hiding_on_lost_focus() is False
 
 
 def test_the_host_defaults_to_no_minimizing_and_empty_rosters_when_absent(monkeypatch):

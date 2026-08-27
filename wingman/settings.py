@@ -131,6 +131,18 @@ def _preview_defaults() -> dict:
         # Off by default: it changes what happens to a real game window
         # (minimizing it), which must be asked for rather than assumed.
         "minimize_inactive_clients": False,
+        # Whether every preview hides while the foreground window belongs
+        # to neither an EVE client nor Wingman itself. TriffView's
+        # HideOnLostFocus, which is EVE-O Preview's
+        # HideThumbnailsOnLostFocus; preview/visibility.py owns the
+        # predicate.
+        #
+        # Off by default, and no defaults_version bump: a new key whose
+        # default matches current behaviour has no previous value to
+        # protect, which is the same reasoning `snap` and `lock_default`
+        # carry. On top of that, this one takes previews OFF the screen,
+        # which is exactly the class of change that has to be asked for.
+        "hide_on_lost_focus": False,
         # Character names exempt from minimize_inactive_clients. A plain
         # roster list like `seen`, not a per-preview flag.
         "never_minimize": [],
@@ -369,6 +381,8 @@ def validated_preview(raw) -> dict:
         section["show_labels"] = raw["show_labels"]
     if isinstance(raw.get("minimize_inactive_clients"), bool):
         section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
+    if isinstance(raw.get("hide_on_lost_focus"), bool):
+        section["hide_on_lost_focus"] = raw["hide_on_lost_focus"]
     # All three lists have exactly the roster's constraints, including the
     # hwnd: rejection: a client at character-select has no stable name to
     # exempt from minimizing, lock in place, or opt out of previews.

@@ -83,6 +83,9 @@ def test_defaults_are_the_documented_values():
             },
             "show_labels": True,
             "minimize_inactive_clients": False,
+            # Off: previews leaving the screen is opt-in, and an upgrading
+            # install has no such key.
+            "hide_on_lost_focus": False,
             "never_minimize": [],
             "excluded": [],
             "locked": [],

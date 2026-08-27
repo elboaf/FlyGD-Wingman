@@ -1991,3 +1991,65 @@ def test_a_column_dropped_at_a_narrow_width_takes_its_heading_with_it():
         "these rules hide a list column without qualifying through "
         f"`.grid-row >`, so the heading survives the cell: {offenders}"
     )
+
+
+def test_every_element_id_in_the_page_is_unique():
+    """Duplicate ids are the failure mode a rebase produces and no other
+    guard here can see.
+
+    This branch shipped one: resolving a conflict re-added a line that was
+    shared context ABOVE the `<<<<<<<` marker, so
+    `preview-minimize-inactive-status` existed twice. The suite stayed
+    green, and the visible symptom was a hint reading "Applies Applies the
+    next time...", an unclosed `<span>`, and `WM.el()` resolving to the
+    outer of the two -- so the first `say()` deleted the inner one.
+
+    Every screen is one document here, so this is a whole-page invariant
+    rather than anything to do with previews: `WM.el` is
+    `getElementById`, and with two matches it silently picks the first.
+    """
+    index = (WEB / "index.html").read_text(encoding="utf-8")
+    ids = re.findall(r'\bid="([^"]+)"', index)
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    assert not dupes, f"these ids appear more than once in index.html: {dupes}"
+
+
+def test_hide_on_lost_focus_is_wired_end_to_end():
+    """The three ends of one checkbox have to agree by NAME, and nothing
+    else here checks that.
+
+    Nothing in this suite renders the page, so a settings.js that sends a
+    method api.py does not define fails the way every bridge typo fails:
+    the box ticks, the promise resolves to undefined, `!res.applied` sends
+    it straight back, and the only symptom is a checkbox that will not
+    stay ticked. Same for an id that does not match the markup -- the
+    IIFE returns at its `if (!box || !status)` guard and the control is
+    simply inert.
+
+    This is deliberately per-feature rather than a sweep over every
+    WM.send target in the web sources. That general guard would be worth
+    having and does not exist; it is not this change's to add.
+    """
+    index = (WEB / "index.html").read_text(encoding="utf-8")
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    api = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
+
+    assert 'id="preview-hide-on-lost-focus"' in index
+    assert 'id="preview-hide-on-lost-focus-status"' in index
+    assert "WM.el('preview-hide-on-lost-focus')" in js
+    assert "WM.el('preview-hide-on-lost-focus-status')" in js
+    assert "WM.send('set_preview_hide_on_lost_focus'" in js
+    assert "def set_preview_hide_on_lost_focus(self" in api
+
+    # Absent must read as OFF. `!== false` -- the read show_labels, snap
+    # and lock_aspect use, because their defaults are on -- would tick this
+    # one for every install whose settings file predates the key, and the
+    # symptom is every preview vanishing on upgrade with a ticked box to
+    # explain it only after the fact. The off-by-default checkboxes
+    # (preview-enabled, lock_default, minimize_inactive_clients) all read
+    # truthy like this one does.
+    body = js.split("WM.el('preview-hide-on-lost-focus')", 1)[1].split("}());", 1)[0]
+    assert "hide_on_lost_focus === true" in body, (
+        "the wm:settings read must treat an absent key as off; "
+        "`!== false` would hide previews on every upgrading install"
+    )

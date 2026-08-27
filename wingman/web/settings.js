@@ -876,6 +876,66 @@
   }
 }());
 
+// ---- Hide previews while you are not in EVE ----------------------------
+// Same shape as preview-snap below: a per-field endpoint reporting
+// {applied, persisted, error}, a box that goes back if the write is
+// refused, and the previews-off note when the setting is inert.
+//
+// Unlike snap, the confirmation line names WHERE the previews went. A
+// setting whose whole effect is "things disappear" is the one most likely
+// to be read as a bug, so ticking it says so in the same breath.
+(function () {
+  var box = WM.el('preview-hide-on-lost-focus');
+  var status = WM.el('preview-hide-on-lost-focus-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
+              + 'applies when you turn them back on.';
+
+  function previewsOn() {
+    var enable = WM.el('preview-enabled');
+    return !!(enable && enable.checked);
+  }
+
+  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_hide_on_lost_focus', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        box.checked = !wanted;
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      say(wanted
+        ? 'Previews now hide whenever you leave EVE.'
+        : 'Previews now stay on screen.');
+      sayDependence();
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    // Absent means OFF here, the opposite of snap's `!== false` read: the
+    // key is new and every existing install lacks it, so the wrong
+    // default would blank the screen on upgrade.
+    box.checked = !!(s.preview && s.preview.hide_on_lost_focus === true);
+    refreshDependence();
+  });
+
+  var enableBox = WM.el('preview-enabled');
+  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
+
+  function refreshDependence() {
+    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
+    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
+  }
+}());
+
 // ---- Snap to neighbours and screen edges -------------------------------
 // Same shape as preview-show-labels above: a per-field endpoint that
 // reports {applied, persisted, error}, a box that goes back if the write

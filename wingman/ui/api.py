@@ -2666,6 +2666,34 @@ class Api:
             self._preview_host.restyle()
         return result
 
+    def set_preview_hide_on_lost_focus(self, enabled) -> dict:
+        """Persist whether every preview leaves the screen while the
+        foreground belongs to neither an EVE client nor Wingman, then push
+        it live via PreviewHost.restyle().
+
+        TriffView's HideOnLostFocus, which is EVE-O Preview's
+        HideThumbnailsOnLostFocus. PreviewHost._apply_visibility applies it
+        and preview/visibility.py owns the predicate; nothing about the
+        decision lives here.
+
+        Two consequences worth knowing before reading a bug report about
+        this. Alerts are hidden along with everything else -- an alert
+        raised while you are in a browser is not seen until you come back,
+        and only survives that long because preview.alerts
+        persist_until_selected defaults on. And Wingman's own window does
+        NOT count as lost focus, deliberately: the previews would otherwise
+        vanish the moment you opened the screen that arranges them.
+
+        Restyle for the same reason as snap and lock_aspect, though by a
+        different route -- restyle re-runs the visibility pass, so
+        unticking puts the previews back immediately instead of up to one
+        700ms sweep later.
+        """
+        result = self._write_preview_setting(("hide_on_lost_focus",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
     def set_preview_lock_default(self, enabled) -> dict:
         """Persist whether a character not named in `preview.locked` is
         locked anyway, then push it live via PreviewHost.restyle().

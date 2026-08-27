@@ -16,7 +16,16 @@ import logging
 import threading
 import time
 
-from . import cycle, discovery, geometry, gestures, layout, switching, win32
+from . import (
+    cycle,
+    discovery,
+    geometry,
+    gestures,
+    layout,
+    switching,
+    visibility,
+    win32,
+)
 from . import window as window_mod
 from .window import PreviewWindow
 
@@ -149,6 +158,7 @@ class PreviewHost:
         snap=None,
         lock_aspect=None,
         clear_layouts=None,
+        hide_on_lost_focus=None,
     ):
         self._on_layout_changed = on_layout_changed
         # Called during teardown, before any window is destroyed. Layout
@@ -179,6 +189,18 @@ class PreviewHost:
         self._show_labels = show_labels
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
+        # preview.hide_on_lost_focus: whether every preview leaves the
+        # screen while the foreground belongs to neither an EVE client nor
+        # us. Read live like the rest, and read once per _apply_visibility
+        # rather than per window -- it is a fact about the foreground, not
+        # about any one character.
+        self._hide_on_lost_focus = hide_on_lost_focus
+        # What _apply_visibility last applied to every preview. Host level,
+        # not per window, because the answer is the same for all of them --
+        # and it is what lets the off path (the default) return without
+        # reading the foreground's process. Touched only on the preview
+        # thread.
+        self._previews_hidden = False
         # All three of these are character-name LISTS (preview.never_minimize,
         # preview.locked, preview.excluded), not per-character booleans: a
         # per-character callable would need the character key at construction
@@ -567,7 +589,7 @@ class PreviewHost:
             self._apply_alerts(libs, self._drain_alerts())
             return 0
         if msg == win32.WM_APP_RESTYLE:
-            self._restyle()
+            self._restyle(libs)
             return 0
         if msg == win32.WM_APP_RESIZE_ONE:
             self._apply_resizes()
@@ -741,6 +763,61 @@ class PreviewHost:
         for key, win in self._windows.items():
             win.set_focused(key == focus)
             win.set_selected(key == self._selected_key)
+
+        self._apply_visibility(libs, foreground)
+
+    def _apply_visibility(self, libs, foreground) -> None:
+        """Hide or show every preview according to hide-on-lost-focus.
+
+        Runs off _apply_selection's already-resolved foreground rather than
+        on a poll of its own: that call site is reached from both the 700ms
+        sweep and the foreground hook, which is exactly the set of moments
+        this can change. A timer here would be a third clock measuring the
+        same thing.
+
+        The decision itself is visibility.should_hide, kept pure so the
+        truth table is testable on Linux -- the same split switching.py
+        draws for minimize.
+
+        Nothing here is per character: the flag is a fact about the
+        foreground, so the settings read and the ownership probe happen
+        once and every window gets the same answer. set_hidden early-returns
+        on an unchanged flag, so the steady-state cost is one attribute
+        compare per preview.
+
+        `_previews_hidden` is what makes the off path free. It records what
+        was last applied, so a host with the feature off -- the default,
+        and so most installs -- returns before reading the foreground's
+        process at all. It cannot be replaced by "skip when nothing
+        changed": while previews ARE hidden, a client appearing mid-hide
+        creates a window born visible, and only re-applying every sweep
+        catches it.
+        """
+        enabled = self._hiding_on_lost_focus()
+        if not enabled and not self._previews_hidden:
+            return
+        # The same fallback _apply_selection makes, and for the same
+        # reason: `self._foreground` is 0 until the win-event hook first
+        # fires, goes back to 0 whenever the hook reports no foreground,
+        # and stays 0 all session if SetWinEventHook failed -- which is
+        # logged and carried on from, not fatal.
+        #
+        # _apply_selection reaches here having already resolved it, so
+        # this only bites on the _restyle path, which hands over the raw
+        # value. Without it a 0 is simply "not one of the clients" and
+        # every preview hides the moment any unrelated setting changes,
+        # reappearing a sweep later with nothing to explain the flash.
+        if not foreground and libs is not None:
+            foreground = libs.user32.GetForegroundWindow()
+        hide = visibility.should_hide(
+            enabled=enabled,
+            foreground=foreground,
+            client_hwnds=[c.hwnd for c in self._clients.values()],
+            foreground_is_ours=self._foreground_is_ours(libs, foreground),
+        )
+        for win in self._windows.values():
+            win.set_hidden(hide)
+        self._previews_hidden = hide
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -1382,6 +1459,51 @@ class PreviewHost:
             )
             return False
 
+    def _hiding_on_lost_focus(self) -> bool:
+        """Whether previews leave the screen while the foreground belongs
+        to neither an EVE client nor us, read live. Same guard as
+        _labels_shown; see _minimizing_inactive.
+
+        The fallback matters more here than for the other seams: guessing
+        wrong in the "on" direction leaves a user with an empty screen and
+        nothing on it to explain why, so a raise means previews stay.
+        """
+        if self._hide_on_lost_focus is None:
+            return False
+        try:
+            return bool(self._hide_on_lost_focus())
+        except Exception:
+            logger.exception(
+                "Could not read hide_on_lost_focus; leaving previews visible"
+            )
+            return False
+
+    def _foreground_is_ours(self, libs, foreground) -> bool:
+        """Whether *foreground* is a window of this process.
+
+        By PROCESS rather than by handle on purpose: PreviewHost is built
+        in __main__.py before webview.start(), so the main window's HWND
+        does not exist yet and could never be passed in. One pid compare
+        covers the main window, a WM.confirm dialog, the tray menu and the
+        previews themselves, and it cannot go stale when any of those are
+        recreated.
+
+        False when there are no libs -- several tests drive _sweep with
+        libs=None -- and false for a foreground of 0, which is what
+        GetForegroundWindow returns on a secure desktop.
+        """
+        if libs is None or not foreground:
+            return False
+        from ctypes import byref, wintypes
+
+        try:
+            pid = wintypes.DWORD()
+            libs.user32.GetWindowThreadProcessId(foreground, byref(pid))
+            return bool(pid.value) and pid.value == libs.kernel32.GetCurrentProcessId()
+        except Exception:
+            logger.exception("Could not resolve the foreground window's process")
+            return False
+
     def _is_never_minimize(self, stable_key) -> bool:
         """Whether *stable_key* is exempt from minimize_inactive_clients,
         read live. Same guard as _labels_shown; see _minimizing_inactive.
@@ -1462,12 +1584,27 @@ class PreviewHost:
         """
         return [key for key in self.characters() if not self._is_excluded(key)]
 
-    def _restyle(self) -> None:
-        """Push live show_labels/opacity/locked onto every open preview.
+    def _restyle(self, libs=None) -> None:
+        """Push live show_labels/opacity/locked onto every open preview,
+        and re-run the visibility pass.
 
         minimize_inactive_clients and never_minimize are read per switch
         (Task 7), not walked here -- there is no per-window state for
         them to update.
+
+        hide_on_lost_focus IS walked here, unlike those two, because there
+        is per-window state: unticking the box has to put the previews back
+        immediately. Waiting for the next sweep would be worse than a
+        700ms delay -- the user who unticks it is by definition looking at
+        Wingman rather than at EVE, so on the parity reading the sweep
+        would go on hiding them and the box would look inert.
+
+        `libs` defaults to None for the TESTS, which drive this directly
+        and mostly do not care about visibility. The one production caller
+        -- the WM_APP_RESTYLE handler -- was changed by this branch to pass
+        them, and must keep doing so: without libs `_foreground_is_ours`
+        cannot claim ownership, so a restyle while Wingman itself holds the
+        foreground would hide every preview.
         """
         show_labels = self._labels_shown()
         opacity = self._current_opacity()
@@ -1495,6 +1632,10 @@ class PreviewHost:
                     geometry.thumbnail_rect(win.rect, win._inset, label_h),
                     win.opacity,
                 )
+
+        # Last, after every window has been restyled: hiding one that is
+        # about to be repainted anyway would push a bitmap nobody can see.
+        self._apply_visibility(libs, self._foreground)
 
     def _apply_resizes(self) -> None:
         """Apply every pending typed size to its still-open window.

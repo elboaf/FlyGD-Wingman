@@ -419,6 +419,10 @@ def bind() -> Libs:
         # --- kernel32
         (kernel32, "GetModuleHandleW", wintypes.HMODULE, [wintypes.LPCWSTR]),
         (kernel32, "GetCurrentThreadId", DWORD, []),
+        # Read by PreviewHost._foreground_is_ours, which resolves "is the
+        # foreground one of our own windows" by process rather than by
+        # handle -- the main window does not exist when the host is built.
+        (kernel32, "GetCurrentProcessId", DWORD, []),
     ]
     for lib, name, restype, argtypes in d:
         fn = getattr(lib, name)

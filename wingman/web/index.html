@@ -631,6 +631,42 @@
           <div class="pv-exc-list" id="preview-nm-exceptions-list"
                role="group" aria-labelledby="preview-nm-exceptions-summary"></div>
         </details>
+        <!-- AFTER the never-minimize disclosure, not between it and the
+             toggle that creates it: those two are one unit, and splitting
+             them would put an unrelated checkbox inside a control and its
+             own exception list.
+
+             Still in this card rather than with the appearance controls
+             below, though: both this and Minimize are facts about what
+             happens to WINDOWS when you switch away, not about how a
+             preview is drawn. TriffView calls this
+             HideThumbnailsOnLostFocus, inherited from EVE-O Preview, so a
+             user arriving from either will look for it here first. -->
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="preview-hide-on-lost-focus">
+            <span class="box"></span>
+            Hide every preview while you are not in EVE
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Both sentences are required reading, not decoration. The
+               first pre-empts "the previews vanished when I opened
+               Wingman", which strict parity with TriffView would have
+               caused. The second is the real cost of the feature.
+
+               It says "if it is set to persist" rather than promising the
+               alert will be there: that is only true while
+               preview.alerts.persist_until_selected is on. It defaults on,
+               but it is a toggle the user can turn off in Alerts, and with
+               it off an alert raised while you are away expires unseen.
+               An unqualified promise here would be the one place in the
+               feature that lies. -->
+          <span class="hint" id="preview-hide-on-lost-focus-status">Wingman's
+            own window does not count, so previews stay up while you
+            arrange them. Alerts are hidden too &mdash; one raised while
+            you are away is still waiting when you come back, if it is set
+            to persist.</span></div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>

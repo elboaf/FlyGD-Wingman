@@ -307,6 +307,12 @@ class PreviewWindow:
         # gesture already in flight under the user's hand.
         self.lock_aspect = lock_aspect
         self.selected = False
+        # Whether hide-on-lost-focus currently has this window off screen.
+        # Not a saved setting and not per character: the host recomputes it
+        # for every preview on every sweep, and a new window is always
+        # created visible -- _apply_visibility hides it on the same sweep
+        # if the foreground says so.
+        self.hidden = False
         # Whether the client owns the foreground right now, as opposed to
         # `selected` above, which is the sticky ring. Only the alerts read
         # it; see set_focused.
@@ -469,6 +475,45 @@ class PreviewWindow:
         )
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
         self._chrome_cache_key = key
+
+    def set_hidden(self, hidden: bool) -> None:
+        """Take this preview off the screen, or put it back.
+
+        ShowWindow rather than a destroy: hide-on-lost-focus fires on every
+        alt-tab, and closing the window would re-run rect resolution and
+        DwmRegisterThumbnail several times a minute. The window keeps its
+        position, its thumbnail and its layered bitmap while hidden, so
+        coming back is one ShowWindow.
+
+        SW_SHOWNOACTIVATE on the way back, matching create(): these windows
+        are WS_EX_NOACTIVATE precisely so they never take the foreground
+        from the client being flown, and a plain SW_SHOW would hand it to
+        them on every return.
+
+        TriffView parks its overlay at Opacity 0 instead
+        (TriffViewSubsystem.cs:4222). That is not available here: it has
+        one overlay window and we have one per client, and
+        SetLayeredWindowAttributes is unusable on these windows -- it dims
+        the chrome and the thumbnail together and then fails every
+        subsequent UpdateLayeredWindow (alertframes.py:14-18).
+
+        Idempotent, like set_selected/set_focused and for the same reason:
+        the host applies this to every window on every sweep.
+        """
+        if hidden == self.hidden:
+            return
+        self.hidden = hidden
+        # NOT for a failed CreateWindowExW: create() returns None there
+        # (window.py's `if not self.hwnd`) and the host only stores a
+        # window that is not None, so that one never reaches this method.
+        # This guards the other direction -- close() nulls hwnd after
+        # DestroyWindow -- and the tests, which construct windows directly
+        # without ever creating a real one.
+        if self.hwnd is None:
+            return
+        self._libs.user32.ShowWindow(
+            self.hwnd, win32.SW_HIDE if hidden else win32.SW_SHOWNOACTIVATE
+        )
 
     def set_selected(self, selected: bool) -> None:
         """Draw or drop the ring. Cosmetic only -- see set_focused for the
