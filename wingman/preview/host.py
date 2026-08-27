@@ -144,6 +144,7 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
+        excluded=None,
         snap=None,
         lock_aspect=None,
         clear_layouts=None,
@@ -177,13 +178,19 @@ class PreviewHost:
         self._show_labels = show_labels
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
-        # Both of these are character-name LISTS (preview.never_minimize,
-        # preview.locked), not per-character booleans: a per-character
-        # callable would need the character key at construction time, and
-        # build_preview_host does not have it. _is_never_minimize/
-        # _is_locked below do the per-window membership test.
+        # All three of these are character-name LISTS (preview.never_minimize,
+        # preview.locked, preview.excluded), not per-character booleans: a
+        # per-character callable would need the character key at construction
+        # time, and build_preview_host does not have it. _is_never_minimize/
+        # _is_locked/_is_excluded below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
+        # preview.excluded: characters opted out of previews entirely. Read
+        # live like the rest, and read in THREE places rather than one --
+        # _sweep (no window), _registerable (no hotkey registration) and
+        # _cycle_keys (not a stop on the walk) -- because the opt-out is a
+        # statement about the character, not about one window.
+        self._excluded = excluded
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
         # open. None means "the caller has not wired this yet" -- see
@@ -365,6 +372,21 @@ class PreviewHost:
             self._desired_hotkeys = dict(table or {})
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
+
+    def request_rebind(self) -> None:
+        """Re-apply the table already held, without supplying one.
+
+        For a caller that changed something the REGISTRATION depends on
+        rather than the table itself -- today only preview.excluded, which
+        _registerable filters on. set_hotkeys would work, but only by
+        having the caller read the table back out of settings and push it,
+        which loses a race it has no need to enter: pywebview serves each
+        call on its own thread, so a set_preview_binds landing between that
+        read and that push would be silently reverted inside the host.
+        WM_APP_REBIND re-reads _desired_hotkeys under this object's own
+        lock, so a payload-free signal has nothing to revert.
+        """
+        self._post(win32.WM_APP_REBIND)
 
     def set_capture(self, armed: bool) -> None:
         """Arm or disarm bind capture. Safe from any thread.
@@ -591,7 +613,16 @@ class PreviewHost:
         # "kept" -- keeping the old record would leave it pointing at a dead
         # window. Keys survive; handles are re-read.
         self._clients = clients
-        added, removed, _kept = reconcile(set(self._windows), set(clients))
+        # The DESIRED window set, not the discovered one. A character opted
+        # out of previews is still discovered, still reported to the page
+        # and still in _clients -- they simply get no window, which is what
+        # makes ticking the box mid-session close the one already open
+        # (reconcile puts them in `removed`) and unticking it open a new one.
+        #
+        # Filtering `clients` itself instead would take the character off
+        # the page's row list, leaving no row to untick.
+        desired = {key for key in clients if not self._is_excluded(key)}
+        added, removed, _kept = reconcile(set(self._windows), desired)
 
         for key in removed:
             self._windows.pop(key).close()
@@ -707,6 +738,29 @@ class PreviewHost:
         """
         return sorted(key for key in self._clients if not key.startswith("hwnd:"))
 
+    def _registerable(self, table) -> dict:
+        """*table* with opted-out characters dropped.
+
+        Applied here rather than in plan_registrations, which is pure and
+        stays that way -- and applied on every rebind rather than once,
+        because the excluded list changes independently of the binding
+        table: ticking the box does not edit a single chord, so api.py
+        re-pushes the SAME table to force this filter to run again.
+
+        The two cycle chords are untouched: they are app commands, not
+        characters, and there is nothing to opt out of them.
+        """
+        table = dict(table or {})
+        characters = table.get("characters")
+        if not isinstance(characters, dict):
+            return table
+        table["characters"] = {
+            name: chord
+            for name, chord in characters.items()
+            if not self._is_excluded(name)
+        }
+        return table
+
     def _apply_hotkeys(self, libs, table) -> None:
         """Unregister everything, then register the new table."""
         for ident in list(self._registered):
@@ -715,7 +769,7 @@ class PreviewHost:
         self._registered_text.clear()
 
         status = {}
-        for ident, text, action in plan_registrations(table):
+        for ident, text, action in plan_registrations(self._registerable(table)):
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
@@ -785,7 +839,18 @@ class PreviewHost:
             )
             # Fall back to the last chord's target when focus is not on a
             # client at all -- a browser, or Wingman itself.
-            target = cycle.step(self.characters(), anchor or self._last_cycled, value)
+            keys = self._cycle_keys()
+            if not keys:
+                # Distinct from the "not running" no-op below, and it has
+                # to be: every candidate here IS running, and was left out
+                # on purpose. Borrowing that message would send a reader
+                # looking for a client that is on screen in front of them.
+                logger.debug(
+                    "Cycle keybind had nothing to visit: every running "
+                    "character is opted out of previews"
+                )
+                return
+            target = cycle.step(keys, anchor or self._last_cycled, value)
             self._last_cycled = target
         logger.debug("Preview hotkey fired: %s -> %s", action, target)
         client = self._clients.get(target)
@@ -957,6 +1022,16 @@ class PreviewHost:
         logged rather than dropped silently, because "the sound played and
         nothing flashed" is otherwise indistinguishable from a broken
         render path.
+
+        preview.excluded made that state reachable ON PURPOSE rather than
+        only transiently, so the choice is now worth stating: an excluded
+        character still PLAYS its alert sound, with nothing on screen to
+        flash. That is deliberate. The alert is what tells a multiboxer
+        something is happening to a character they are not watching, and
+        the character they have chosen not to mirror is exactly the one
+        they are not watching -- silencing it would remove the last signal
+        rather than an unwanted one. Alerts have their own per-event
+        enable in Settings for anyone who wants the opposite.
         """
         now = time.monotonic()
         for character, event, spec in pending:
@@ -1245,6 +1320,43 @@ class PreviewHost:
         except Exception:
             logger.exception("Could not read locked; defaulting to unlocked")
             return False
+
+    def _is_excluded(self, stable_key) -> bool:
+        """Whether *stable_key* is opted out of previews entirely, read
+        live. Same guard as _labels_shown.
+
+        Defaults to NOT excluded on a read failure, which is the same
+        posture the other two rosters take: a settings file that cannot be
+        read must leave previews working, not silently blank the screen
+        with nothing on the page to explain it.
+        """
+        if self._excluded is None:
+            return False
+        try:
+            return stable_key in (self._excluded() or [])
+        except Exception:
+            logger.exception("Could not read excluded; defaulting to included")
+            return False
+
+    def _cycle_keys(self) -> list:
+        """The characters the cycle keybinds walk.
+
+        characters() minus the opted-out, and deliberately NOT a change to
+        characters() itself: that one feeds the page's row list, which has
+        to keep showing an excluded character or there would be no row left
+        to re-enable them from.
+
+        Note what this does NOT filter: the ANCHOR in _on_hotkey is still
+        resolved against _clients, so cycling while an excluded character's
+        own client holds the foreground finds an anchor that is not in this
+        list. cycle.step then takes its documented "anchor has gone"
+        branch and restarts at the first name rather than continuing from
+        the neighbour. Left as it is: it is the same fallback as cycling
+        from a browser, it self-corrects on the next press, and filtering
+        the anchor too would mean inventing a position in a walk this
+        character is deliberately not part of.
+        """
+        return [key for key in self.characters() if not self._is_excluded(key)]
 
     def _restyle(self) -> None:
         """Push live show_labels/opacity/locked onto every open preview.

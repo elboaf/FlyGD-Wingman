@@ -1486,6 +1486,46 @@ only ever checked by hand.
       is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
       put them` — not under `GLOBAL KEYBINDS`, where it was the one control
       that is not a keybind (round 5's C4).
+- [ ] **`Off` turns one character's preview off, and only that one.** Two
+      clients running, previews on, both mirrored. Tick `Off` on the first
+      character's row. Expected, with no reload: that preview disappears
+      within a sweep (~700ms), the other one is untouched, and the rest of
+      that row — the bind button, `Clear`, `Edit…`, `Size…` and `Lock` —
+      goes dim and stops responding to clicks. The row's saved keybind
+      stays legible on the inert button; it is not cleared.
+      **`Never minimize` must STAY LIVE**, alone among them. Opting out
+      stops the preview, not `minimize_inactive_clients` — switching away
+      from that character's real EVE window still minimizes it — so
+      greying its only control would leave a setting in force with no way
+      to change it.
+      Then press that character's own focus keybind: nothing happens, and
+      the chord reaches EVE instead. Press cycle forward repeatedly: the
+      walk visits every other running character and never stops on this
+      one. (Starting that walk *from* the off character's own client is
+      the one exception: it restarts at the first name rather than
+      continuing from where you are, the same as cycling from a browser.)
+      Its alert sounds still play, with nothing on screen to flash — that
+      is deliberate, and Settings › Alerts is where to turn them off.
+      Untick `Off`: the preview comes back at the position and size it had
+      before, the row's controls go live, and the focus keybind works
+      again. Nothing about the row should need re-entering — the settings
+      were kept, not cleared.
+- [ ] **An `Off` character stops competing for chords on OTHER rows.** Give
+      a character the same chord as `Cycle forward`. Expected first: the
+      cycle row goes red and says the cycle keybind is the one that loses.
+      Now tick `Off` on that character. Expected: that warning clears,
+      because Python has dropped the character and the cycle keybind now
+      genuinely wins the chord — press it and it cycles. The cycle row is
+      live and undimmed throughout, so a stale warning there is fully
+      readable and states the opposite of what happens.
+- [ ] **The seventh column still fits at the window's floor.** Settings >
+      Previews with the minimize toggle ON, so every character row carries
+      all seven controls, at the smallest the window will go. Expected: the
+      row ends inside the card with a gap after `Never minimize`, and
+      nothing is clipped. Grid tracks do not wrap, so an overflow here is a
+      cut-off control at every width, not a reflow — it was measured at
+      608.41px against a 586px card interior on the first draft of this
+      feature, which is why the label is `Off` and not a phrase.
 
 ## EVE bookmark hotkeys
 

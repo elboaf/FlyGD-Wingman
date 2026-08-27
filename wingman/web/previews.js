@@ -10,7 +10,8 @@
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
-               locked: [], never_minimize: [], sizes: {}, client_sizes: {}};
+               locked: [], never_minimize: [], excluded: [],
+               sizes: {}, client_sizes: {}};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -74,10 +75,19 @@
     // up". host.plan_registrations merges them onto one registration and
     // picks between the running ones, so this is information, not a
     // warning -- see makeRow.
+    //
+    // Opted-out characters are excluded, because Python has already
+    // stopped both claims this function feeds from being true of them:
+    // PreviewHost._registerable drops them before plan_registrations, so
+    // they neither win a chord nor share one. Without this the CYCLE row
+    // -- which is live and undimmed -- painted a `duplicate` clash saying
+    // the cycle keybind loses a chord it had in fact just won, and a
+    // sharing character's row offered "Pressing it goes to whichever of
+    // them is logged in" for a character it would never reach.
     if (!gesture) { return []; }
     var binds = state.hotkeys.characters || {};
     return Object.keys(binds).filter(function (n) {
-      return binds[n] === gesture;
+      return binds[n] === gesture && !isExcluded(n);
     }).sort();
   }
 
@@ -119,6 +129,31 @@
     if (online === false) { lab.classList.add('dim'); }
     row.appendChild(lab);
 
+    // Whether this character is opted out of previews entirely. The
+    // controls that can no longer DO anything go inert with it: there is
+    // no window to lock or resize, no registration to rebind and no place
+    // in the cycle, so a live control there would be one that saves a
+    // setting nothing reads.
+    //
+    // `Never minimize` is the exception and stays live -- see the comment
+    // on its append below. It governs the real EVE window, not the
+    // preview, and opting out does not stop it.
+    //
+    // The NAME is deliberately not dimmed either. `.dim` on a .lab already
+    // means "not logged in" -- the group note above the list says so in
+    // those words -- and borrowing it for a second meaning would make that
+    // legend false for every opted-out character who is in fact online.
+    // The inert controls and the ticked box carry the state instead.
+    var off = !!(character && isExcluded(character));
+
+    // Track 1 of every row. A cycle row gets a filler rather than a box:
+    // cycle forward/back are app commands, not characters, and there is
+    // nothing to opt them out of. One appendChild rather than an if/else
+    // pair so this row contributes the same cell count either way -- see
+    // the note on the filler branch at the bottom of this function.
+    row.appendChild(character ? makeExcludedCheck(character)
+                              : document.createElement('span'));
+
     var button = WM.make('button', 'bindbtn', gesture || 'Not set');
     var clash = clashes(gesture);
     var shadow = bookmarkClash(gesture);
@@ -139,12 +174,25 @@
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
                      'Windows has not reported on this keybind yet.';
-    } else if (shadow === 'active') {
-      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
+    } else if (shadow === 'active') {      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
                      'it while an EVE client is focused.';
     } else if (shadow === 'latent') {
       button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';
+    }
+    // Overwrites whatever the chain above chose, and has to. An excluded
+    // character's chord is dropped by PreviewHost._registerable, so -- if
+    // no other character shares it -- it never reaches hotkey_status() and
+    // clashes() returns `unknown`. That branch's sentence then offers two
+    // causes ("previews are off, or Windows has not reported on this
+    // keybind yet") which are both FALSE here: the real cause is the
+    // ticked box on this very row, and the user put it there. Left alone
+    // it reads as an unexplained warning rather than as the consequence of
+    // their own click.
+    if (off) {
+      button.title = 'Previews are off for this character, so this keybind '
+                   + 'is not registered. It is still saved, and comes back '
+                   + 'when you untick Off.';
     }
     // Appended, not another branch in the chain above: a shared chord is
     // not a warning and does not compete with one. As its own `else if`
@@ -168,6 +216,7 @@
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
     });
+    WM.setEnabled(button, !off);
     row.appendChild(button);
 
     var clear = WM.make('button', 'linkbtn', 'Clear');
@@ -176,7 +225,7 @@
     // was live beside a bind reading `Not set`. Same reasoning as the
     // matching control in bookmarks.js -- the two lists build the same
     // row and cannot disagree about when a control is live.
-    WM.setEnabled(clear, !!gesture);
+    WM.setEnabled(clear, !off && !!gesture);
     row.appendChild(clear);
 
     // `Edit…`, not `Type…` -- round 3's B6; the reasoning is on the
@@ -203,9 +252,10 @@
         });
       });
     });
+    WM.setEnabled(typed, !off);
     row.appendChild(typed);
 
-    if (character) { row.appendChild(makeSizeButton(character)); }
+    if (character) { row.appendChild(makeSizeButton(character, off)); }
 
     // Cycle forward/back have no `character` -- they are chords, not
     // characters, and neither Lock nor Never-minimize means anything for
@@ -228,8 +278,22 @@
     // the invariant #preview-binds' grid actually needs; it is the track
     // COUNT that varies, and render() tells the stylesheet which it is.
     if (character) {
-      row.appendChild(makeLockCheck(character));
-      if (minimizeInactive) { row.appendChild(makeNeverMinimizeCheck(character)); }
+      row.appendChild(makeLockCheck(character, off));
+      // NOT passed `off`, unlike every other control on the row. Opting a
+      // character out stops their PREVIEW; it does not stop
+      // minimize_inactive_clients, because _activate_client resolves
+      // `previous_key` from PreviewHost._clients -- which deliberately
+      // still holds opted-out characters -- and so still consults
+      // _is_never_minimize when switching away from that character's real
+      // EVE window. Greying this box would leave a setting in force with
+      // no control to change it, which is the same shape as the roster
+      // eviction LayoutStore._protected exists to prevent.
+      //
+      // Lock above IS gated, and the asymmetry is the point: with no
+      // window there is nothing to lock, so that control really is inert.
+      if (minimizeInactive) {
+        row.appendChild(makeNeverMinimizeCheck(character));
+      }
     } else {
       // Three fillers with never-minimize on, two with it off. One stands
       // in for Size…, one for Lock, and the third mirrors the conditional
@@ -237,6 +301,10 @@
       // of being stated twice. A constant here would be right in exactly
       // one of the two states and silently pull every row after this one
       // into the previous row's leftover columns in the other.
+      //
+      // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
+      // the ternary at the top of this function, which runs for both kinds
+      // of row.
       row.appendChild(document.createElement('span'));
       row.appendChild(document.createElement('span'));
       if (minimizeInactive) { row.appendChild(document.createElement('span')); }
@@ -251,8 +319,9 @@
   // Edit…, an empty submission here is a no-op identical to Cancel, not a
   // clear -- there is no "unset size" to clear to, only the fallback this
   // dialog already shows as its default.
-  function makeSizeButton(name) {
+  function makeSizeButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Size…');
+    WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
@@ -319,8 +388,11 @@
   function isNeverMinimize(name) {
     return (state.never_minimize || []).indexOf(name) !== -1;
   }
+  function isExcluded(name) {
+    return (state.excluded || []).indexOf(name) !== -1;
+  }
 
-  // Both checkboxes follow the same shape: read the live membership list
+  // All three checkboxes follow the same shape: read the live membership list
   // for their initial state, write back through the matching endpoint on
   // `change` (DESIGN.md: discrete controls commit on change, never blur),
   // and on a refusal put the box back rather than show a state the app
@@ -331,7 +403,7 @@
   // shortcut for the common case; a push that lands in between (an EVE
   // client opening or closing) still wins because it replaces `state`
   // wholesale and this file always re-renders from it.
-  function makeLockCheck(name) {
+  function makeLockCheck(name, off) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isLocked(name);
@@ -347,6 +419,66 @@
     var label = WM.make('label', 'check', ' Lock');
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
+    return inert(label, box, off);
+  }
+
+  // The row's own master switch: preview.excluded, the character-name list
+  // PreviewHost reads in three places (no window, no hotkey registration,
+  // no place in the cycle). Same shape as the two above, with one
+  // difference that matters -- it is never passed an `off`, because it is
+  // the control that turns `off` back on. Gating it with the rest would
+  // opt a character out permanently, the only way back being a
+  // hand-edited settings file.
+  //
+  // Unlike Lock and Never minimize, this one cannot patch `state` and stop
+  // there: the whole row's controls are drawn from it, so a re-render is
+  // what actually greys them. requestRender rather than render, so it
+  // cannot detach a bind button armed by beginCapture.
+  function makeExcludedCheck(name) {
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = isExcluded(name);
+    var label = WM.make('label', 'check optout', ' Off');
+    // The full sentence lives in the tooltip because the WORD cannot be
+    // longer than this. Measured at the 840px floor: the card interior is
+    // 586px and the six existing controls already spend 504.75px of it, so
+    // a seventh track has 81.25px minus a 10px column-gap to live in.
+    // " No preview" measured 93.66, which put the control line at
+    // 608.41 -- 22.41px past the card's content edge (504.75 + 10 + 93.66
+    // against 586). #preview-binds' own scrollWidth was 32px over its
+    // clientWidth at the same moment; the two figures measure different
+    // boxes and are not a contradiction. Grid tracks do not wrap, so
+    // either way that is a clipped control at every window width, not a
+    // reflow. " Off" measures 43.06, for 557.81 inside 586.
+    label.title = 'No preview window for this character. Its own keybind '
+                + 'and the cycle keybinds skip it too. Its keybind, size '
+                + 'and position are kept for when you turn it back on.';
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
+    box.addEventListener('change', function () {
+      var wanted = box.checked;
+      WM.send('set_preview_excluded', name, wanted).then(function (res) {
+        if (!res || !res.applied) { box.checked = !wanted; return; }
+        state.excluded = wanted
+          ? (state.excluded || []).concat(name)
+          : (state.excluded || []).filter(function (n) { return n !== name; });
+        requestRender();
+      });
+    });
+    return label;
+  }
+
+  // A control that is present but cannot do anything, for the .check
+  // wrapper. WM.setEnabled sets `disabled` on the node it is given, which
+  // for a checkbox is the INPUT -- and that alone would dim nothing, since
+  // the input is taken out of the layout and the .box span is what shows.
+  // A `.check input:disabled + .box` rule COULD dim the box (style.css
+  // already reaches it that way for :checked), but not the word beside it;
+  // the class dims the whole label. Both halves are set here together so
+  // the look and the behaviour cannot disagree.
+  function inert(label, box, off) {
+    WM.setEnabled(box, !off);
+    label.classList.toggle('inert', !!off);
     return label;
   }
 
@@ -452,10 +584,13 @@
 
   function render() {
     host.textContent = '';
-    // D6: which grid template #preview-binds takes. makeRow appends four
-    // cells per row instead of five while this is off, and a grid whose
-    // template still declared five would leave a max-content track holding
-    // nothing plus its 10px column-gap after the last live control.
+    // D6: which grid template #preview-binds takes. makeRow appends six
+    // cells per row instead of seven while this is off, and a grid whose
+    // template still declared seven would leave a max-content track
+    // holding nothing plus its 10px column-gap after the last live
+    // control. (These two numbers were four and five, and had been stale
+    // since Size... landed; test_page_conventions.py now derives the count
+    // from makeRow's own appends rather than trusting a comment.)
     host.classList.toggle('no-nm', !minimizeInactive);
 
     var off = WM.el('preview-binds-off');
@@ -594,6 +729,7 @@
                                         cycle_prev: ''};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
+      state.excluded = state.excluded || [];
       requestRender();
     });
   }
@@ -650,6 +786,7 @@
                                       cycle_prev: ''};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
+    state.excluded = state.excluded || [];
     requestRender();
   });
 

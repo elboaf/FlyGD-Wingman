@@ -16,6 +16,7 @@ class FakeHost:
         self.started = self.stopped = 0
         self.flushed = 0
         self.sweeps = 0
+        self.rebinds = 0
         self.hotkeys = None
         self.restyles = 0
 
@@ -27,6 +28,9 @@ class FakeHost:
 
     def request_sweep(self):
         self.sweeps += 1
+
+    def request_rebind(self):
+        self.rebinds += 1
 
     def set_hotkeys(self, table):
         self.hotkeys = table
@@ -1054,3 +1058,114 @@ def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
     # the bug this test exists for. Deleting the requestRender() call left
     # the assertion above green.
     assert "requestRender" in listener
+
+
+def test_build_preview_host_wires_the_disabled_roster(monkeypatch):
+    """Read live off the section, like the other two rosters: ticking the
+    box writes settings and the host must see it on the very next sweep,
+    without a restart."""
+    from types import SimpleNamespace
+
+    from wingman import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {"excluded": ["Alice"]}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._is_excluded("Alice") is True
+    assert host._is_excluded("Bravo") is False
+
+    # A whole new section object, as _normalize produces.
+    state.settings["preview"] = {"excluded": []}
+    assert host._is_excluded("Alice") is False
+
+
+def test_the_host_defaults_to_no_disabled_characters_when_absent(monkeypatch):
+    """Absent means every character keeps its preview: an upgrading
+    install must not lose windows to a key its settings file predates."""
+    from types import SimpleNamespace
+
+    from wingman import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {}})
+    host = main_mod.build_preview_host(state, {})
+    assert host._is_excluded("Alice") is False
+
+
+def test_set_preview_excluded_adds_and_removes_by_name(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path, preview_host=FakeHost())
+    api._state.settings["preview"] = {}
+
+    assert api.set_preview_excluded("Zuelo Parvi", True)["applied"] is True
+    assert api._state.settings["preview"]["excluded"] == ["Zuelo Parvi"]
+    assert api.set_preview_excluded("Zuelo Parvi", False)["applied"] is True
+    assert api._state.settings["preview"]["excluded"] == []
+    assert writes[-1]["preview"]["excluded"] == []
+
+
+def test_set_preview_excluded_sweeps_and_rebinds_rather_than_restyling(
+    tmp_path, monkeypatch
+):
+    """restyle() only re-reads style on windows that already exist, so it
+    cannot create or destroy one -- the window comes and goes on a sweep.
+    The focus keybind is filtered at rebind, and ticking the box edits no
+    chord, so a rebind has to be asked for even though no chord changed.
+    """
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
+
+    api.set_preview_excluded("Alice", True)
+
+    assert host.sweeps == 1
+    assert host.rebinds == 1
+    assert host.restyles == 0
+
+
+def test_set_preview_excluded_never_re_sources_the_hotkey_table(tmp_path, monkeypatch):
+    """It must ask the host to re-apply what it ALREADY holds, not read the
+    table back out of settings and push it.
+
+    pywebview serves each JS->Python call on its own thread. A
+    set_preview_binds landing between this method's read and its push would
+    have its table silently reverted inside the host: the page and the
+    settings file would both hold the new table while the host stayed
+    registered against the old one, until some unrelated rebind. Nothing
+    logs it -- _apply_hotkeys' INFO line reports counts, not contents.
+
+    request_rebind carries no payload, so the race has nothing to lose:
+    WM_APP_REBIND re-reads _desired_hotkeys under the host's own lock.
+    """
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
+
+    api.set_preview_excluded("Alice", True)
+
+    assert host.hotkeys is None, (
+        "set_preview_excluded pushed a hotkey table it re-read from "
+        "settings; it must post a payload-free rebind instead"
+    )
+
+
+def test_set_preview_excluded_is_a_no_op_without_a_host(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {}
+
+    assert api.set_preview_excluded("Aiga Otsolen", True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+
+
+def test_get_preview_hotkey_state_reports_disabled(tmp_path):
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"excluded": ["Aiga Otsolen"]}
+    assert api.get_preview_hotkey_state()["excluded"] == ["Aiga Otsolen"]
+    api._state.settings["preview"] = {}
+    assert api.get_preview_hotkey_state()["excluded"] == []

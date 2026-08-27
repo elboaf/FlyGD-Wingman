@@ -154,3 +154,48 @@ def test_the_watch_url_is_written_exactly_once():
     assert found == {"wingman/uploader.py": 1}, (
         f"the watch URL must be written once, in uploader.watch_url. Found: {found}"
     )
+
+
+def test_every_bridge_method_the_page_calls_exists_on_the_api():
+    """The other direction of the same silence.
+
+    The push half above is guarded because a bad handler name makes a route
+    inert. The CALL half fails differently and just as quietly: `WM.send`
+    reaches `pywebview.api.<method>` and, for a name Api does not carry,
+    rejects to the console -- which nobody reads while looking at a screen.
+    The control simply does nothing when clicked, in a codebase where
+    nothing renders the page in a test.
+
+    Checked against the real class rather than a lexical `def` scan, so a
+    method that exists only as a name in a comment or a docstring does not
+    count, and one inherited or assigned at class level does.
+
+    Not a subset check with a known-gaps list, unlike the ?dev=1 double
+    guard in test_dev_harness.py: a missing DOUBLE degrades the harness,
+    while a missing METHOD is a control that is dead in the shipped app.
+    There is no acceptable gap.
+    """
+    from wingman.ui.api import Api
+
+    called = {}
+    for path_js in sorted(WEB.glob("*.js")):
+        if path_js.name == "dev.js":
+            continue
+        source = path_js.read_text(encoding="utf-8")
+        for method in set(re.findall(r"WM\.send\(\s*\'([a-z_][\w]*)\'", source)):
+            called.setdefault(method, set()).add(path_js.name)
+
+    # A regex that matched nothing would make the assertion below pass while
+    # checking air -- the trap this suite records falling into elsewhere.
+    assert len(called) >= 40, f"the WM.send scan found only {sorted(called)}"
+
+    missing = {
+        method: sorted(files)
+        for method, files in called.items()
+        if not callable(getattr(Api, method, None))
+    }
+    assert not missing, (
+        "the page calls bridge methods that do not exist on Api, so those "
+        "controls are dead in the shipped app and say nothing when "
+        f"clicked: {missing}"
+    )

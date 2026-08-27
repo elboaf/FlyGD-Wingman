@@ -209,6 +209,30 @@ def test_a_bound_character_is_protected_from_eviction():
     assert "C63" in live["preview"]["seen"]
 
 
+def test_an_opted_out_character_is_protected_from_eviction():
+    """Exactly the hazard the bound-character protection above exists for,
+    on the other per-character setting that has no layouts entry.
+
+    A character in preview.excluded with no keybind is the one who most
+    needs their row: the row is the only place to turn their preview back
+    on. Evicting them from `seen` while they are logged off leaves the
+    opt-out in force with nothing on the page to reverse it -- the setting
+    outlives the row that owns it, which is the same shape as a chord the
+    bind list cannot show.
+    """
+    live = {
+        "preview": {
+            "seen": [f"C{i}" for i in range(64)],
+            "hotkeys": {"characters": {}},
+            "excluded": ["C63"],
+        }
+    }
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("New")
+    store.flush()
+    assert "C63" in live["preview"]["seen"]
+
+
 def test_layout_and_roster_writes_share_one_transaction():
     """A drag and a discovery landing together must not open the settings
     document twice.

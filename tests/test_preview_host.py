@@ -1534,6 +1534,115 @@ def test_the_sweep_locks_a_new_window_when_the_locked_list_says_so(monkeypatch):
     assert seen == [True]
 
 
+def test_the_sweep_creates_no_window_for_a_disabled_character(monkeypatch):
+    """The character is opted out of previews, so no mirror window is
+    built -- but the client registry still holds them. A disabled
+    character is still running, still listed on the Previews page, and
+    still has to be re-enableable, so filtering the DESIRED WINDOW SET is
+    not the same as filtering discovery."""
+    created = []
+
+    def fake_create(cls, libs, client, rect, **kw):
+        created.append(client.stable_key)
+        return
+
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+
+    h._sweep(libs=None)
+
+    assert created == []
+    assert sorted(h._clients) == ["Alice"]
+    assert h.characters() == ["Alice"]
+
+
+def test_the_sweep_closes_an_open_window_when_a_character_is_excluded(monkeypatch):
+    """Ticking the box mid-session has to take the picture off the screen,
+    not merely stop the next one being built."""
+    closed = []
+
+    class _Win:
+        rect = geometry.Rect(0, 0, 0, 0)
+
+        def set_selected(self, selected):
+            pass
+
+        def set_focused(self, focused):
+            pass
+
+        def close(self):
+            closed.append(True)
+
+    off = []
+    h = _config_sweep_host(monkeypatch, excluded=lambda: list(off))
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: _Win())
+    )
+
+    h._sweep(libs=None)
+    assert sorted(h._windows) == ["Alice"]
+
+    off.append("Alice")
+    h._sweep(libs=None)
+
+    assert closed == [True]
+    assert h._windows == {}
+
+
+def test_a_disabled_character_gets_no_hotkey_registration(monkeypatch):
+    """Chosen behaviour: opting a character out turns off their own focus
+    keybind too. Filtered here rather than in plan_registrations, which
+    stays pure -- and the disabled list changes independently of the
+    binding table, so the filter has to be applied at every rebind."""
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
+    libs = _FakeLibs(_FakeUser32())
+    h._hwnd = 0x1234
+
+    h._apply_hotkeys(libs, {"characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"}})
+
+    assert sorted(h._registered_text.values()) == ["Ctrl+F2"]
+
+
+def test_a_disabled_character_is_skipped_by_the_cycle_keybinds(monkeypatch):
+    """Cycle walks the running clients; a character with no preview on
+    screen must not be a stop on that walk."""
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Bravo"])
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [_FakeClient("Alice"), _FakeClient("Bravo"), _FakeClient("Charlie")],
+    )
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
+    h._sweep(libs=None)
+
+    assert h._cycle_keys() == ["Alice", "Charlie"]
+
+
+def test_a_cycle_with_every_character_opted_out_says_why(monkeypatch, caplog):
+    """The honest-logging rule this file already applies to its two sibling
+    no-ops. With every discovered character opted out, cycle.step returns
+    None and the switch is a correct no-op -- but it used to fall through
+    to the "target is not running" branch, which is the one thing that is
+    NOT true here: every target is running and was deliberately excluded.
+    """
+    import logging
+
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
+    monkeypatch.setattr(
+        host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
+    )
+    h._sweep(libs=None)
+    h._registered[1] = ("cycle", 1)
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkey(_FakeLibs(_FakeUser32(foreground=0)), 1)
+
+    assert "not running" not in caplog.text
+    assert "opted out" in caplog.text
+
+
 def test_the_sweep_passes_show_labels_and_opacity_at_creation(monkeypatch):
     """A preview appearing mid-session must be born with the current
     settings, not the shipped defaults -- otherwise a client that starts

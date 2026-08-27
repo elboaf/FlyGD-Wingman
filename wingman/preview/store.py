@@ -73,6 +73,21 @@ class LayoutStore:
                 self._timer = None
         self._write()
 
+    def _protected(self, section) -> set:
+        """Names `seen` must not evict, whatever the cap.
+
+        Two kinds, for one reason: a per-character setting whose subject
+        has dropped off the roster is a setting with no row to change it
+        from. A bound character would leave a chord the bind list cannot
+        show; an opted-out one would leave a preview turned off with
+        nothing on the page to turn it back on -- and that one cannot even
+        be reversed by logging in, because the whole point is that the
+        client no longer produces a preview.
+        """
+        return set(section.get("hotkeys", {}).get("characters", {})) | set(
+            section.get("excluded", []) or []
+        )
+
     def clear(self) -> None:
         """Discard every saved layout. The one wholesale write this class allows.
 
@@ -97,9 +112,10 @@ class LayoutStore:
                 section = live.setdefault("preview", {})
                 section["layouts"] = {}
                 for name in names:
-                    bound = set(section.get("hotkeys", {}).get("characters", {}))
                     section["seen"] = roster.touch(
-                        section.get("seen", []), name, protected=bound
+                        section.get("seen", []),
+                        name,
+                        protected=self._protected(section),
                     )
         except OSError:
             logger.exception("Could not clear preview layouts")
@@ -119,11 +135,13 @@ class LayoutStore:
                     layouts.update(layout.serialize(pending))  # per-key merge
                     section["layouts"] = layouts
                 for name in names:
-                    # Bound characters are protected: evicting one would
-                    # leave a chord the bind list has no row to show.
-                    bound = set(section.get("hotkeys", {}).get("characters", {}))
+                    # Bound and opted-out characters are protected: see
+                    # _protected above for why each would otherwise leave a
+                    # setting with no row to change it from.
                     section["seen"] = roster.touch(
-                        section.get("seen", []), name, protected=bound
+                        section.get("seen", []),
+                        name,
+                        protected=self._protected(section),
                     )
         except OSError:
             # A settings file that cannot be written must not take the

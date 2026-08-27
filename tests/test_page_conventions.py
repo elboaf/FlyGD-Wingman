@@ -1120,6 +1120,131 @@ def test_the_previews_grid_drops_exactly_one_track_with_never_minimize():
     )
 
 
+def _makerow_body() -> str:
+    """previews.js's makeRow, comments stripped, up to its `return row`.
+
+    Comments first: the prose around this function names the very controls
+    the counts below are derived from, and a naive scan would count the
+    sentences describing an append as appends.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    return src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+
+
+def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
+    """The invariant the delta test above cannot see.
+
+    `.row` is display:contents, so the grid reads one flat stream of cells.
+    Adding a control means editing a track count in style.css AND an append
+    in previews.js -- two files -- and the delta test passes happily when
+    BOTH templates are wrong by the same amount. This derives the cell
+    count from makeRow itself rather than restating it.
+
+    The label is excluded: `#preview-binds .row > .lab` is
+    `grid-column: 1 / -1`, so it spans the row rather than sitting in one
+    of the tracks the controls occupy. The `else` branch is excluded
+    because its fillers stand in for the character branch's controls one
+    for one -- counting both would double every cell.
+    """
+    body = _makerow_body()
+    halves = body.split("} else {", 1)
+    assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
+    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(") - 1
+
+    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert m, "#preview-binds has no rule block"
+    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+
+    assert cells == int(tracks.group(1)), (
+        f"makeRow appends {cells} cells per character row but #preview-binds "
+        f"declares {tracks.group(1)} tracks -- every row after the first is "
+        f"pulled into the previous row's leftover columns"
+    )
+
+
+def test_an_opted_out_character_row_disables_its_own_controls():
+    """The chosen shape for a character opted out of previews: the row
+    stays visible -- there has to be somewhere to turn it back on -- but
+    the controls that can no longer do anything are inert.
+
+    What this pins is that they go through WM.setEnabled against the row's
+    own opted-out state, rather than merely being dimmed in CSS: a control
+    that only LOOKS dead still fires on click.
+    """
+    body = _makerow_body()
+    for control in ("button", "clear", "typed"):
+        assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
+            f"makeRow does not gate `{control}` on the row's opted-out state"
+        )
+    # The three above are gated INLINE; these receive the state as an
+    # argument instead, and were unguarded until a review pointed out that
+    # dropping the second argument at either call site leaves the control
+    # live and undimmed with the whole suite green -- which is the exact
+    # failure this test's docstring claims to prevent.
+    for builder in ("makeSizeButton", "makeLockCheck"):
+        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
+            f"makeRow does not pass the row's opted-out state to {builder}"
+        )
+
+
+def test_never_minimize_stays_live_on_an_opted_out_row():
+    """The one control on the row that must NOT go inert with the rest.
+
+    Opting a character out stops their PREVIEW. It does not stop
+    minimize_inactive_clients: `_activate_client` resolves `previous_key`
+    from `_clients`, which deliberately still holds opted-out characters,
+    so switching away from that character's real EVE window still consults
+    `_is_never_minimize`. Greying the checkbox would leave a setting in
+    force with no way to change it -- the same shape as the roster
+    eviction hazard `LayoutStore._protected` exists for.
+
+    Asserted on the CALL rather than inside the builder, because the
+    builder is shared and it is the call site that decides.
+    """
+    body = _makerow_body()
+    assert re.search(r"makeNeverMinimizeCheck\(character\)", body), (
+        "makeNeverMinimizeCheck is being passed the row's opted-out state, "
+        "which would grey a checkbox whose setting is still enforced"
+    )
+    assert re.search(r"makeLockCheck\(character,[^)]*\boff\b", body), (
+        "Lock SHOULD be gated -- with no window there is nothing to lock"
+    )
+
+
+def test_a_shared_chord_ignores_opted_out_characters():
+    """`sharers()` decides two user-visible claims, and Python has already
+    stopped both being true for an opted-out character.
+
+    `_registerable` drops them before `plan_registrations`, so they neither
+    win a chord nor share one. Without this filter the page paints a
+    `duplicate` clash on the CYCLE row -- which is live and undimmed --
+    saying the cycle keybind loses a chord it has in fact just won, and
+    offers "Shared with <name>. Pressing it goes to whichever of them is
+    logged in" for a character it will never reach.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    halves = src.split("function sharers(", 1)
+    assert len(halves) == 2, "previews.js has no sharers()"
+    body = halves[1].split("\n  }", 1)[0]
+    assert "isExcluded" in body, (
+        "sharers() does not exclude opted-out characters, so the page "
+        "reports conflicts and sharing that Python has already filtered away"
+    )
+
+
+def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
+    """The one control that has to stay live on an opted-out row. Gating
+    it with the rest would opt a character out permanently, the only way
+    back being a hand-edited settings file."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    halves = src.split("function makeExcludedCheck(", 1)
+    assert len(halves) == 2, "previews.js has no makeExcludedCheck"
+    body = halves[1].split("return label;", 1)[0]
+    assert "WM.setEnabled" not in body, "the opt-out box gates itself"
+    assert "set_preview_excluded" in body
+
+
 def test_the_opacity_slider_can_still_reach_the_stored_floor():
     """Round 5, C2. `#preview-opacity` is a PERCENTAGE now; the setting it
     writes is still the DWM thumbnail's 0-255 alpha byte, and

@@ -1436,6 +1436,27 @@ button.btn:disabled,
    surviving instance of the same treatment, and the reasoning for scoping
    it narrowly rather than putting an opacity on `.check` is there. */
 
+/* The same treatment, scoped the same narrow way, for the one state that
+   really does need a dimmed-but-present checkbox: a character opted out of
+   previews. D6's objection does not apply here, because this is not the
+   default -- an ordinary Previews screen carries none of these, and a row
+   only takes it once the user has ticked "Off" on that row
+   themselves, which is exactly the moment the rest of the row stops being
+   able to do anything.
+
+   The class is set by previews.js rather than derived from `:disabled`,
+   and NOT because the selector cannot reach the control -- it can:
+   `.check input:disabled + .box` works exactly like the
+   `.check input:checked + .box` rule forty lines above, because the real
+   input is the box span's previous sibling. What the combinator cannot
+   reach is the label TEXT beside the box, and the label's own `cursor`,
+   which is set on `.check` itself. Dimming the box while its word stayed
+   at full strength would read as a rendering fault rather than as a
+   disabled control, so the class carries the whole label. previews.js's
+   `inert()` sets the class and the input's `disabled` together so the
+   look and the behaviour cannot disagree. */
+#preview-binds .check.inert { opacity: .45; cursor: default; }
+
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
@@ -1883,13 +1904,18 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Six fixed tracks, then one flexible one. The character name takes a
+  /* Seven fixed tracks, then one flexible one. The character name takes a
      line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
-     size the CONTROLS on the line beneath it: bind button, Clear, Edit…,
-     Size…, Lock, Never minimize -- exactly the six children previews.js's
-     makeRow appends after the label. The trailing minmax(0, 1fr) absorbs
-     the leftover width so the six stay packed at the start instead of
-     spreading.
+     size the CONTROLS on the line beneath it: Off, bind button,
+     Clear, Edit…, Size…, Lock, Never minimize -- exactly the seven
+     children previews.js's makeRow appends after the label. The trailing
+     minmax(0, 1fr) absorbs the leftover width so the seven stay packed at
+     the start instead of spreading.
+
+     "Off" leads rather than joining the other two checkboxes at the
+     end because it governs every control after it: with it ticked the rest
+     of the row is inert, and a master switch reads better before the
+     things it switches off than stranded past them.
 
      The count is load-bearing rather than cosmetic. `.row` is
      display:contents, so the grid sees one flat stream of cells and cannot
@@ -1899,13 +1925,14 @@ button.btn:disabled,
      {three filler spans} -- cycle forward/back have no character, and
      without the fillers those two rows would misalign every row after
      them. Change the number of per-row children and this number changes
-     with it. */
-  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
+     with it -- test_page_conventions.py now DERIVES the expected count
+     from makeRow's own appends rather than trusting this comment. */
+  grid-template-columns: repeat(7, max-content) minmax(0, 1fr);
 }
-/* Five, in the default state. Decision D6 (round 5, C3): the per-character
+/* Six, in the default state. Decision D6 (round 5, C3): the per-character
    Never-minimize checkbox does not render while the global minimize toggle
-   is off, so previews.js appends five cells per row instead of six and
-   sets this class in the same render. Declaring six regardless would
+   is off, so previews.js appends six cells per row instead of seven and
+   sets this class in the same render. Declaring seven regardless would
    leave a max-content track holding nothing -- harmless in itself, but it
    still carries its 10px column-gap, so the row would end in a gap after
    Lock with no control in it.
@@ -1918,7 +1945,7 @@ button.btn:disabled,
    shown as every row after the first sliding into the previous row's
    leftover columns. The asserted difference is what catches that. */
 #preview-binds.no-nm {
-  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
