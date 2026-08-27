@@ -624,7 +624,6 @@
                table for the "Never minimize" box this toggle creates, and
                that box no longer lives there. -->
           <span class="hint" id="preview-minimize-inactive-status">Applies
-          <span class="hint" id="preview-minimize-inactive-status">Applies
             the next time a client is switched away from, not this
             one.</span></div>
         <details class="pv-exc" id="preview-nm-exceptions">
@@ -654,14 +653,20 @@
           <!-- Both sentences are required reading, not decoration. The
                first pre-empts "the previews vanished when I opened
                Wingman", which strict parity with TriffView would have
-               caused. The second is the real cost of the feature: an
-               alert raised while you are away is not visible until you
-               come back, and only survives that long because
-               persist_until_selected defaults on. -->
+               caused. The second is the real cost of the feature.
+
+               It says "if it is set to persist" rather than promising the
+               alert will be there: that is only true while
+               preview.alerts.persist_until_selected is on. It defaults on,
+               but it is a toggle the user can turn off in Alerts, and with
+               it off an alert raised while you are away expires unseen.
+               An unqualified promise here would be the one place in the
+               feature that lies. -->
           <span class="hint" id="preview-hide-on-lost-focus-status">Wingman's
             own window does not count, so previews stay up while you
             arrange them. Alerts are hidden too &mdash; one raised while
-            you are away waits for you to come back.</span></div>
+            you are away is still waiting when you come back, if it is set
+            to persist.</span></div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>

@@ -1599,9 +1599,12 @@ class PreviewHost:
         Wingman rather than at EVE, so on the parity reading the sweep
         would go on hiding them and the box would look inert.
 
-        `libs` is optional only so the existing WM_APP_RESTYLE call site
-        and the tests that drive this directly can stay as they are;
-        _foreground_is_ours declines to claim ownership without it.
+        `libs` defaults to None for the TESTS, which drive this directly
+        and mostly do not care about visibility. The one production caller
+        -- the WM_APP_RESTYLE handler -- was changed by this branch to pass
+        them, and must keep doing so: without libs `_foreground_is_ours`
+        cannot claim ownership, so a restyle while Wingman itself holds the
+        foreground would hide every preview.
         """
         show_labels = self._labels_shown()
         opacity = self._current_opacity()

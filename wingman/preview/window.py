@@ -495,7 +495,7 @@ class PreviewWindow:
         one overlay window and we have one per client, and
         SetLayeredWindowAttributes is unusable on these windows -- it dims
         the chrome and the thumbnail together and then fails every
-        subsequent UpdateLayeredWindow (alertframes.py:15-19).
+        subsequent UpdateLayeredWindow (alertframes.py:14-18).
 
         Idempotent, like set_selected/set_focused and for the same reason:
         the host applies this to every window on every sweep.
@@ -503,9 +503,12 @@ class PreviewWindow:
         if hidden == self.hidden:
             return
         self.hidden = hidden
-        # create() returns None on a failed CreateWindowExW, but a window
-        # whose creation failed part-way can still be sitting in the host's
-        # map on the sweep that hides it.
+        # NOT for a failed CreateWindowExW: create() returns None there
+        # (window.py's `if not self.hwnd`) and the host only stores a
+        # window that is not None, so that one never reaches this method.
+        # This guards the other direction -- close() nulls hwnd after
+        # DestroyWindow -- and the tests, which construct windows directly
+        # without ever creating a real one.
         if self.hwnd is None:
             return
         self._libs.user32.ShowWindow(

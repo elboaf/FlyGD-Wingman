@@ -2916,9 +2916,10 @@ place a preview is hidden, and no test in the suite creates a real window
 - [ ] **The default is unchanged.** Fresh install, or a settings file
       predating the key. Expected: `Hide every preview while you are not
       in EVE` is UNTICKED and previews behave exactly as before. Absent
-      must read as off; `!== false` — the read every other preview
-      checkbox uses — would blank the screen of every upgrading install,
-      which is why the wm:settings listener uses `=== true` here.
+      must read as off; `!== false` — the read the on-by-default boxes
+      (Show labels, Snap, Keep the same shape) use — would blank the
+      screen of every upgrading install, which is why the wm:settings
+      listener uses `=== true` here.
 - [ ] **It hides, and it comes back.** Tick it, then click a browser or
       Discord. Expected: every preview leaves the screen at once. Click an
       EVE client: they all come back, in the same positions, without a

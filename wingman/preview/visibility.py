@@ -6,9 +6,11 @@ where it can be tested on Linux.
 
 Ported from TriffView's HideOnLostFocus (TriffViewSubsystem.cs:3516), which
 inherited it from EVE-O Preview's HideThumbnailsOnLostFocus. TriffView's
-condition is `clients.All(client => client.Handle != foreground)`; ours adds
-the ownership clause below, which TriffView has a dead parameter for
-(`suppressLostFocusHide`, never passed true) and never uses.
+condition is `clients.All(client => client.Handle != foreground)`; the
+ownership clause below is ours and has no counterpart there. TriffView does
+carry a `suppressLostFocusHide` parameter (:3456) that is never passed true,
+but that is a blanket override of the whole hide rather than a test of who
+owns the foreground -- a different thing that happens to be dead.
 """
 
 
