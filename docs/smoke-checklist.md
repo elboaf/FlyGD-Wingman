@@ -1491,13 +1491,18 @@ only ever checked by hand.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
       `Preview`, `Keybind`, `Size`, `Lock`, `Never minimize` — sentence
-      case, a step smaller and dimmer than the names below it — and NO
-      repeated words on the rows themselves; each checkbox is a bare box
-      under its heading. `Clear` and `Edit…` have no heading on purpose:
-      they act on the bind button beside them and are verbs, not columns.
-      Check each heading sits at the left edge of the column it names.
-      They were 82 label instances before this, and the longest of them
-      set a track width every row paid for.
+      case, a step smaller and dimmer than the names below it — and the
+      three CHECKBOXES are bare boxes under their headings with no word
+      beside them. `Clear`, `Edit…` and `Size…` still carry their own
+      words on every row, and should: they are verbs on a control, not the
+      name of a column. `Clear` and `Edit…` have no heading for the same
+      reason. Check each heading sits at the left edge of the column it
+      names.
+      This retired 39 label instances on a thirteen-character roster with
+      the minimize toggle on — 26 in the shipped default state, where the
+      Never-minimize column is not rendered — and each column is one
+      shared `max-content` track, so the longest word in it sized the
+      header and all thirteen rows together.
 - [ ] **The minimize toggle is filed with the other window behaviour.** It
       is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
       put them` — not under `GLOBAL KEYBINDS`, where it was the one control
@@ -1547,8 +1552,12 @@ only ever checked by hand.
       never had its preview moved or resized. Expected: that row shows no
       `Size…` at all, and its `Lock` and `Never minimize` boxes are still
       in the same columns as every other row — the cell is a filler, not a
-      missing cell, and a missing one would pull every row below it a
-      track over. Now drag that character's preview once and reopen the
+      missing cell, and a missing one would slide that row's later
+      controls one heading to the left (Lock under `Size`, Never minimize
+      under `Lock`). It would not disturb the rows below: every row leads
+      with a full-width name, so each one starts a fresh grid row.
+      Hover the empty cell: it says how to make a size settable.
+      Now drag that character's preview once and reopen the
       section: `Size…` is there. Running clients always have it.
       The point is that `set_preview_size` REFUSES for a character with no
       layouts entry ("Start this client once, or drag its preview"), and a
@@ -1587,13 +1596,22 @@ only ever checked by hand.
         own `Lock` box you have not changed. Tick it with one character
         already explicitly unlocked: that character stays draggable and
         every other preview stops moving on a left drag (right drag still
-        moves them, as always). Untick it: the arrangement that preceded
-        the tick comes back exactly. Nothing is migrated and the roster is
-        not rewritten — `preview.locked` keeps meaning "these differ from
-        the default", which is why unticking is lossless.
-        Check the per-character boxes repaint to the effective state when
-        you toggle it, and that already-open previews change behaviour
-        without a restart.
+        moves them, as always). Untick it without touching anything else:
+        the arrangement that preceded the tick comes back. Nothing is
+        migrated and the roster is not rewritten — `preview.locked` keeps
+        meaning "these differ from the default".
+        **Then check the case where that is NOT an undo**, because the
+        obvious reading of a default says it should be. Start with the
+        default off and an empty roster, tick it, unlock one character
+        while it is on, then untick it: that character is now the only
+        LOCKED one. The roster was not rewritten — the box you changed
+        meant the opposite thing on each side of the flip. This is the
+        semantics, not a bug; the item exists so nobody "fixes" it.
+        Check the per-character boxes repaint to the effective state the
+        moment you toggle the default — they are in the same section, a
+        few hundred pixels below it, and a stale copy shows the exact
+        inverse of every row rather than merely lagging. Check
+        already-open previews change behaviour without a restart.
 
 ## EVE bookmark hotkeys
 
