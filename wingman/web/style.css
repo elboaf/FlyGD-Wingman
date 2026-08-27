@@ -2063,15 +2063,15 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Six fixed tracks, then one flexible one. The character name takes a
+  /* Five fixed tracks, then one flexible one. The character name takes a
      line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
-     size the CONTROLS on the line beneath it: Off, bind button,
-     Clear, Edit…, Size…, Never minimize -- exactly the six children
-     previews.js's makeRow appends after the label. Lock used to be a
-     seventh; it now renders once, in its own disclosure under the global
-     Lock toggle, rather than as a track on every row. The trailing
-     minmax(0, 1fr) absorbs the leftover width so the six stay packed at
-     the start instead of spreading.
+     size the CONTROLS on the line beneath it: Off, bind button, Clear,
+     Edit…, Size… -- exactly the five children previews.js's makeRow
+     appends after the label. Lock and Never minimize used to sit here
+     too, as a sixth and a conditional seventh; both now render once, in
+     their own disclosures under their global toggles, rather than as a
+     track on every row. The trailing minmax(0, 1fr) absorbs the leftover
+     width so the five stay packed at the start instead of spreading.
 
      "Off" leads rather than joining the other checkbox at the
      end because it governs every control after it: with it ticked the rest
@@ -2083,30 +2083,12 @@ button.btn:disabled,
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
      That is why makeRow always appends exactly one of {the opt-out
-     checkbox}, {the Size control or its filler}, and {the Never-minimize
-     checkbox or its filler} -- cycle forward/back have no character, and
-     without the fillers those two rows would misalign every row after
-     them. Change the number of per-row children and this number changes
-     with it -- test_page_conventions.py now DERIVES the expected count
-     from makeRow's own appends rather than trusting this comment. */
-  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
-}
-/* Five, in the default state. Decision D6 (round 5, C3): the per-character
-   Never-minimize checkbox does not render while the global minimize toggle
-   is off, so previews.js appends five cells per row instead of six and
-   sets this class in the same render. Declaring six regardless would
-   leave a max-content track holding nothing -- harmless in itself, but it
-   still carries its 10px column-gap, so the row would end in a gap after
-   Size… with no control in it.
-
-   The count here is one less than the block above BY HAND, which is the
-   one thing in this pair that can drift; test_page_conventions.py asserts
-   the difference rather than either number. Both numbers rose by one when
-   Size… landed, and git merged that change without conflict while leaving
-   this one at four -- a difference of two, which the layout would have
-   shown as every row after the first sliding into the previous row's
-   leftover columns. The asserted difference is what catches that. */
-#preview-binds.no-nm {
+     checkbox} and {the Size control or its filler} -- cycle forward/back
+     have no character, and without the filler those two rows would
+     misalign every row after them. Change the number of per-row children
+     and this number changes with it -- test_page_conventions.py now
+     DERIVES the expected count from makeRow's own appends rather than
+     trusting this comment. */
   grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }

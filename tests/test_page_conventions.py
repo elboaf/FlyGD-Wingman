@@ -1279,31 +1279,25 @@ def test_the_dense_bind_column_can_hold_a_whole_control_line():
     )
 
 
-def test_the_previews_grid_drops_exactly_one_track_with_never_minimize():
-    """Decision D6 (round 5, C3): the per-character Never-minimize checkbox
-    does not render while the global minimize toggle is off, so
-    previews.js appends one fewer cell per row and sets `.no-nm`.
+def test_the_previews_grid_declares_exactly_one_template():
+    """`.no-nm` existed because the Never-minimize cell rendered only while
+    the global minimize toggle was on, so makeRow appended a different
+    number of cells in each state and the stylesheet needed two templates
+    whose difference was maintained by hand.
 
-    `.row` is display:contents, so the grid sees one flat stream of cells
-    and cannot tell one row from the next: if the template and the cell
-    count disagree by even one, every row after the first is pulled into
-    the previous row's leftover columns. The two track counts are written
-    by hand in two rules, which is the drift this asserts against -- the
-    difference, not either number.
+    That control now lives in its own disclosure under the toggle, so the
+    row's cell count no longer varies and the second template is gone. A
+    reintroduced conditional cell must bring back a guard for its own
+    difference rather than reusing this one.
     """
-    counts = []
-    for selector in ("#preview-binds", r"#preview-binds\.no-nm"):
-        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{selector} has no rule block"
-        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
-        counts.append(int(tracks.group(1)))
-
-    full, without = counts
-    assert full - without == 1, (
-        f"the two #preview-binds templates differ by {full - without} tracks, "
-        f"not 1 -- makeRow adds or drops exactly one cell (Never minimize) "
-        f"between the two states"
+    assert ".no-nm" not in CSS, (
+        "#preview-binds.no-nm is back -- a conditional cell needs a guard "
+        "on the difference between the two templates, not just a template"
+    )
+    body = _makerow_body()
+    assert "minimizeInactive" not in body, (
+        "makeRow appends a conditional cell again, so its cell count "
+        "varies with a setting and one template cannot describe both"
     )
 
 
@@ -1382,11 +1376,6 @@ def test_the_previews_header_row_names_one_column_per_track():
     seven runs, because every row leads with `.lab { grid-column: 1 / -1 }`
     and a definite column-start resets auto-placement to a fresh row.
 
-    Both states are checked, because the header carries the same
-    conditional cell makeRow does: the Never-minimize column exists only
-    while the global minimize toggle is on (D6), so the header must lose
-    its heading in step or the remaining headings sit over the wrong data.
-
     Counted from the array literal rather than from `row.appendChild(`:
     makeHeadRow appends inside a forEach, so the literal-substring trick
     the makeRow guard uses would count one cell however many it emits.
@@ -1398,22 +1387,21 @@ def test_the_previews_header_row_names_one_column_per_track():
     literal = re.search(r"var cells = \[(.*?)\];", body, re.DOTALL)
     assert literal, "makeHeadRow no longer builds its cells from an array literal"
     base = len([part for part in literal.group(1).split(",") if part.strip()])
-    conditional = body.count("cells.push(")
+    assert "cells.push(" not in body, (
+        "makeHeadRow names a conditional column again, so the header's cell "
+        "count varies with a setting and one template cannot describe both"
+    )
 
-    for selector, expected in (
-        ("#preview-binds", base + conditional),
-        (r"#preview-binds\.no-nm", base),
-    ):
-        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{selector} has no rule block"
-        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
-        assert expected == int(tracks.group(1)), (
-            f"makeHeadRow names {expected} columns but {selector} declares "
-            f"{tracks.group(1)} tracks -- the headings sit over the wrong "
-            f"controls, and a heading falling into a narrower shared track "
-            f"widens it for every row below"
-        )
+    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert m, "#preview-binds has no rule block"
+    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+    assert base == int(tracks.group(1)), (
+        f"makeHeadRow names {base} columns but #preview-binds declares "
+        f"{tracks.group(1)} tracks -- the headings sit over the wrong "
+        f"controls, and a heading falling into a narrower shared track "
+        f"widens it for every row below"
+    )
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():
@@ -1437,7 +1425,6 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
         ("Size", "makeSizeButton"),
-        ("Never minimize", "makeNeverMinimizeCheck"),
     )
 
     for heading, token in owners:
@@ -1542,7 +1529,8 @@ def test_an_opted_out_character_row_disables_its_own_controls():
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():
-    """The one control on the row that must NOT go inert with the rest.
+    """The one control that must NOT go inert with the rest of an
+    opted-out character's row.
 
     Opting a character out stops their PREVIEW. It does not stop
     minimize_inactive_clients: `_activate_client` resolves `previous_key`
@@ -1552,17 +1540,16 @@ def test_never_minimize_stays_live_on_an_opted_out_row():
     force with no way to change it -- the same shape as the roster
     eviction hazard `LayoutStore._protected` exists for.
 
-    Asserted on the CALL rather than inside the builder, because the
-    builder is shared and it is the call site that decides.
+    The invariant used to be asserted against makeRow's call, but that call
+    is gone -- Never minimize now renders once, in its own disclosure, the
+    same as Lock's. Asserted on the block's own call site rather than
+    inside the builder, because the builder is shared and it is the call
+    site that decides.
     """
-    body = _makerow_body()
-    assert re.search(r"makeNeverMinimizeCheck\(character\)", body), (
-        "makeNeverMinimizeCheck is being passed the row's opted-out state, "
-        "which would grey a checkbox whose setting is still enforced"
-    )
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
-        "Lock SHOULD be gated -- with no window there is nothing to lock"
+    assert re.search(r"makeNeverMinimizeCheck\(name\)", src), (
+        "makeNeverMinimizeCheck is being passed an opted-out state, which "
+        "would grey a checkbox whose setting is still enforced"
     )
 
 

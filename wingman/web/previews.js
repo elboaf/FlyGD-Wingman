@@ -325,27 +325,25 @@
       // no control to change it, which is the same shape as the roster
       // eviction LayoutStore._protected exists to prevent.
       //
-      // Lock used to sit here too, gated on `off` -- the asymmetry with
-      // Never minimize was the point: with no window there is nothing to
-      // lock. It has since left the row for its own disclosure under the
-      // global Lock toggle (renderLockBlock), which passes each
-      // character's opted-out state the same way.
-      if (minimizeInactive) {
-        row.appendChild(makeNeverMinimizeCheck(character));
-      }
+      // Lock and Never minimize used to sit here too, both gated on `off`
+      // for Lock's part -- the asymmetry was the point: with no window
+      // there is nothing to lock, but minimize_inactive_clients still
+      // applies to an opted-out character's real EVE window. Both have
+      // since left the row for their own disclosures under their global
+      // toggles (renderLockBlock, renderNeverMinimizeBlock); Lock's still
+      // passes each character's opted-out state, Never minimize's does
+      // not, for the same reason this comment used to give.
     } else {
-      // Two fillers with never-minimize on, one with it off. One stands
-      // in for Size…, and the other mirrors the conditional checkbox
-      // above -- so the count tracks the character branch instead of
-      // being stated twice. A constant here would be right in exactly one
-      // of the two states and silently pull every row after this one into
-      // the previous row's leftover columns in the other.
+      // One filler, standing in for Size… on the cycle-forward/back rows,
+      // which have no character and so no Size control either. A constant
+      // absence here would be wrong the moment a future cell joins Size…
+      // in the character branch; matching it one for one is what keeps
+      // the two branches' counts equal without restating the number.
       //
       // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
       // the ternary at the top of this function, which runs for both kinds
       // of row.
       row.appendChild(document.createElement('span'));
-      if (minimizeInactive) { row.appendChild(document.createElement('span')); }
     }
     return row;
   }
@@ -639,22 +637,19 @@
     return label;
   }
 
-  // Only ever called with the global minimize toggle ON -- see makeRow.
-  // Until round 5 it was called unconditionally and disabled itself when
-  // the global was off, which is what D6 removed; the `.check.nm.disabled`
-  // rule that dimmed it went with it, and style.css records that where the
-  // rule used to be.
+  // Called only from renderNeverMinimizeBlock, which is itself hidden
+  // while the global minimize toggle is off (D6) -- so this box, unlike
+  // makeLockCheck, is never built into a row at all; `.check.nm.disabled`
+  // went with the row it used to dim, and style.css records that where
+  // the rule used to be.
   function makeNeverMinimizeCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isNeverMinimize(name);
-    // `.nm` is kept as the control's name in the DOM even with no rule
-    // hanging off it: it is how the smoke pass and the layout probes tell
-    // this checkbox from Lock, which are otherwise two identical .check
-    // labels in the same row.
-    box.setAttribute('aria-label',
-                     'Never minimize ' + name + "'s EVE window");
-    var label = WM.make('label', 'check nm', '');
+    // Visible text, not an aria-label -- see makeLockCheck for the full
+    // reasoning. `.nm` stays in the class list: it is how the smoke pass
+    // and the layout probes tell this checkbox from Lock.
+    var label = WM.make('label', 'check nm', name);
     label.title = 'Leaves this character\u2019s real EVE window alone when '
                 + 'you switch away from it.';
     label.prepend(WM.make('span', 'box'));
@@ -671,6 +666,7 @@
           return n !== name;
         });
         state.never_minimize = wanted ? without.concat(name) : without;
+        renderNeverMinimizeBlock();
       });
     });
     return label;
@@ -768,22 +764,19 @@
   }
 
   // The column headers, built ONCE above the character rows -- which is
-  // the whole point of them. Three controls per character row used to
-  // spell their own names: `Off`, `Lock` and `Never minimize`, so 39
-  // label instances on a thirteen-character roster with the minimize
-  // toggle on, and 26 in the shipped default state where the
-  // Never-minimize cell is not rendered at all. `Clear`, `Edit...` and
-  // `Size...` keep their words -- they are verbs on a control, not the
-  // name of a column -- so they are not in that count.
+  // the whole point of them. `Off`, `Lock` and `Never minimize` used to
+  // spell their own names on every row instead of living in a header;
+  // all three have since moved out -- Off's word into the `Preview`
+  // heading below, Lock and Never minimize into their own per-toggle
+  // disclosures (renderLockBlock, renderNeverMinimizeBlock) -- so this
+  // header now names a fixed five tracks, not a conditional six or
+  // seven. `Clear`, `Edit...` and `Size...` keep their words -- they are
+  // verbs on a control, not the name of a column -- so they were never in
+  // that count.
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
-  // header and all thirteen rows together. Measured in the harness:
-  // `<label class="check nm"> Never minimize` sized that track at
-  // 118.78px, and the bare heading sizes it at 87.48px. (Both figures
-  // include the 15px `.box`; an earlier draft of this comment measured
-  // the text alone and was ~15px light on each.) " Lock" was 53.72px
-  // against a `Lock` heading's 27.42px.
+  // header and all thirteen rows together.
   //
   // Sentence case at --fs-muted with no tracking, matching the recording
   // list's headers (index.html's .list-head) rather than .bind-group-name
@@ -795,48 +788,28 @@
   // guard derives the per-row track count from makeRow's own appends, so
   // a header appended there would be counted as extra controls on every
   // row. It contributes the same number of TRACK cells a character row
-  // does -- six, or seven with the minimize toggle on. (A character row
-  // appends one more child than that: its `.lab` spans the whole row
-  // rather than sitting in a track, which is why the guard subtracts it.)
+  // does -- five. (A character row appends one more child than that: its
+  // `.lab` spans the whole row rather than sitting in a track, which is
+  // why the guard subtracts it.)
   //
   // Clear and Edit... get empty cells rather than headings. They are
   // subordinate to the bind button they act on -- naming them in the
   // header would claim they are columns of data, and they are verbs.
   //
-  // What a wrong cell count here costs, measured -- and measured for
-  // EVERY cell, because measuring one is how this comment was wrong
-  // twice. Delete each heading in turn in the ?dev=1 harness at 840x625
-  // and read the first character row's control positions:
+  // A wrong cell count here reaches the rows below, not just the header,
+  // because the columns are shared `max-content` tracks: measured in the
+  // ?dev=1 harness at 840x625 by deleting a heading in turn, every later
+  // column's controls shifted right by the width the deleted heading no
+  // longer claimed. Only the LAST cell was ever free to delete without
+  // moving anything after it.
   //
-  //   delete Preview        -> 209/265/425/477/531/587/685
-  //   delete Keybind        -> 209/264/424/476/530/586/684
-  //   delete either blank   -> 209/264/424/476/530/586/684
-  //   delete Size           -> 209/264/424/476/530/586/684
-  //   delete Lock           -> 209/264/424/476/530/586/684
-  //   delete Never minimize -> 209/264/424/476/530/586/624  (unchanged)
-  //   intact                -> 209/264/424/476/530/586/624
-  //
-  // So it DOES reach the rows -- six of the seven deletions push every
-  // character row's last column 60px right -- and the route is the shared
-  // track sizing described above, not placement: the `Never minimize`
-  // heading falls into Lock's narrower track and grows it from 27.42 to
-  // 87.48. Only deleting the LAST cell is free, which is the one case an
-  // earlier version of this comment tested before concluding the
-  // consequence was local.
-  //
-  // Vertical placement genuinely does not cascade, and that part is worth
-  // keeping: y was identical in all seven runs, because every row leads
-  // with `.lab { grid-column: 1 / -1 }` and a definite column-start of 1
-  // resets the auto-placement cursor to a fresh row. A short row leaves
-  // its hole beside itself rather than pulling the next row up.
+  // Vertical placement genuinely does not cascade: every row leads with
+  // `.lab { grid-column: 1 / -1 }`, and a definite column-start of 1
+  // resets the auto-placement cursor to a fresh row rather than pulling
+  // the next row up into a short one's gap.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
     var cells = ['Preview', 'Keybind', '', '', 'Size'];
-    // Tracks the conditional cell in makeRow rather than restating it: the
-    // Never-minimize column exists only while the global minimize toggle
-    // is on (D6), and a header for a column that is not rendered would
-    // pull every row after it into the wrong track.
-    if (minimizeInactive) { cells.push('Never minimize'); }
     cells.forEach(function (text) {
       row.appendChild(WM.make('span', '', text));
     });
@@ -892,16 +865,41 @@
     box.hidden = !all.length;
   }
 
+  // never_minimize has no default toggle of its own to resolve against --
+  // it is a plain membership list, unlike locked/lock_default -- so this
+  // summary has two states where lockSummary has four.
+  function nmSummary(names) {
+    return names.length ? 'Never minimized: ' + nameList(names)
+                        : 'Exempt individual characters';
+  }
+
+  // The character-list half of the Never-minimize disclosure, mirroring
+  // renderLockBlock. Called from render() and from makeNeverMinimizeCheck's
+  // own change handler, so the summary never lags one click behind the box
+  // the user just ticked.
+  function renderNeverMinimizeBlock() {
+    var box = WM.el('preview-nm-exceptions');
+    var summary = WM.el('preview-nm-exceptions-summary');
+    var list = WM.el('preview-nm-exceptions-list');
+    if (!box || !summary || !list) { return; }
+    var all = rows().map(function (entry) { return entry.name; });
+    // D6: the whole block is absent while the global toggle is off, not
+    // present and dead -- nothing here can do anything in that state.
+    box.hidden = !minimizeInactive || !all.length;
+    if (box.hidden) { return; }
+    summary.textContent = nmSummary(all.filter(isNeverMinimize));
+    list.textContent = '';
+    all.forEach(function (name) {
+      // NOT gated on isExcluded, unlike the Lock block above. Opting a
+      // character out stops their preview; _activate_client still
+      // consults this for the real EVE window, so a dimmed box here would
+      // leave a setting in force with no control to change it.
+      list.appendChild(makeNeverMinimizeCheck(name));
+    });
+  }
+
   function render() {
     host.textContent = '';
-    // D6: which grid template #preview-binds takes. makeRow appends six
-    // cells per row instead of seven while this is off, and a grid whose
-    // template still declared seven would leave a max-content track
-    // holding nothing plus its 10px column-gap after the last live
-    // control. (These two numbers were four and five, and had been stale
-    // since Size... landed; test_page_conventions.py now derives the count
-    // from makeRow's own appends rather than trusting a comment.)
-    host.classList.toggle('no-nm', !minimizeInactive);
 
     var off = WM.el('preview-binds-off');
     if (off) {
@@ -980,6 +978,7 @@
     var empty = WM.el('preview-binds-empty');
     if (empty) { empty.hidden = list.length > 0; }
     renderLockBlock();
+    renderNeverMinimizeBlock();
   }
 
   function send(next) {
