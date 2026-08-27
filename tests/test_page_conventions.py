@@ -1084,6 +1084,40 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     )
 
 
+def test_every_offered_alert_colour_has_a_name():
+    """Round 6, P2-5. The swatches carried their hex as the accessible name.
+
+    `#4dd2ff` does not read aloud as anything, does not tell a sighted
+    user what they are picking, and -- the reason it mattered -- left the
+    collision note above with nothing to call the colour it is about.
+
+    COLOUR_NAMES is indexed against COLOURS, so the pair has to stay the
+    same length or a colour silently falls back to its hex. That is the
+    designed behaviour for the SIXTH swatch (an out-of-palette colour from
+    a hand-edited settings.json, which has no name) and a bug for the
+    five, so nothing in the code can tell the two cases apart. This can.
+    """
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+
+    colours = re.search(r"var COLOURS = \[(.*?)\];", alerts, re.DOTALL)
+    names = re.search(r"var COLOUR_NAMES = \[(.*?)\];", alerts, re.DOTALL)
+    assert colours and names, "the palette or its names are gone"
+
+    n_colours = len(re.findall(r"'#[0-9a-fA-F]{6}'", colours.group(1)))
+    n_names = len(re.findall(r"'[^']+'", names.group(1)))
+    assert n_colours == 5, f"the palette is no longer five colours ({n_colours})"
+    assert n_names == n_colours, (
+        f"{n_colours} colours but {n_names} names: COLOUR_NAMES is indexed "
+        "against COLOURS, so the extra colour would fall back to its hex "
+        "and look like the out-of-palette case"
+    )
+
+    # The name is what the control announces; the hex may accompany it.
+    assert "input.setAttribute('aria-label', name)" in alerts, (
+        "the swatch must announce its NAME, not its hex"
+    )
+
+
 def test_two_enabled_alerts_on_one_colour_are_flagged():
     """Round 6, P1-1. Two alerts the same colour are one alert with two
     meanings, and nothing said so.

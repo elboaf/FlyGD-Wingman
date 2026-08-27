@@ -79,6 +79,24 @@
   // two can be told apart.
   var COLOURS = ['#ff4d4d', '#ffd24d', '#4dff7a', '#4dd2ff', '#ff4db8'];
 
+  // Round 6, P2-5. The five swatches carried their HEX as title and
+  // aria-label, under a comment conceding "the hex is not a name, but it
+  // is honest". Honest and unusable: "#4dd2ff" does not tell a sighted
+  // user what they are picking, does not read aloud as anything, and --
+  // the reason it mattered -- gives the collision note nothing to say. A
+  // fixed palette of five can afford five words.
+  //
+  // Indexed against COLOURS above rather than keyed by hex, so the two
+  // cannot drift apart silently: a colour changed there with no name
+  // added here falls back to the hex, which is what the sixth (out-of-
+  // palette, hand-edited settings.json) swatch gets by design.
+  var COLOUR_NAMES = ['Red', 'Amber', 'Green', 'Cyan', 'Magenta'];
+
+  function colourName(hex) {
+    var i = COLOURS.indexOf(hex);
+    return i === -1 ? hex : COLOUR_NAMES[i];
+  }
+
   // Last-known-good color/sound per event, so a refused or bridge-
   // failed change has something to revert the control to -- by the
   // time 'change' fires the browser has already committed the new
@@ -210,7 +228,8 @@
       var alsoSound = peers.some(function (other) {
         return (lastGood[other] || {}).sound === good.sound;
       });
-      var text = 'Same colour as ' + names.join(' and ')
+      var text = colourName(good.color) + ', the same as '
+        + names.join(' and ')
         + (alsoSound
            ? ', and the same sound. Nothing tells them apart.'
            : '. The pulse cannot tell them apart.');
@@ -262,10 +281,14 @@
         var dot = document.createElement('span');
         dot.className = 'dot';
         dot.style.setProperty('--swatch', hex);
-        // The only text a screen reader gets for a colour: the hex is not
-        // a name, but it is honest and it distinguishes the five.
-        label.title = hex;
-        input.setAttribute('aria-label', hex);
+        // The name, with the hex kept in the tooltip: the name is what
+        // identifies the choice, the hex is what identifies the pixel, and
+        // someone comparing this against a hand-edited settings.json
+        // still wants the second. An out-of-palette colour has no name and
+        // gets the hex for both, unchanged.
+        var name = colourName(hex);
+        label.title = name === hex ? hex : name + ' (' + hex + ')';
+        input.setAttribute('aria-label', name);
         label.appendChild(input);
         label.appendChild(dot);
         row.colors.appendChild(label);
