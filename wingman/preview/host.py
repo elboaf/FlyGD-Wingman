@@ -187,7 +187,7 @@ class PreviewHost:
         self._locked = locked
         # preview.disabled: characters opted out of previews entirely. Read
         # live like the rest, and read in THREE places rather than one --
-        # _sweep (no window), _apply_hotkeys (no registration) and
+        # _sweep (no window), _registerable (no hotkey registration) and
         # _cycle_keys (not a stop on the walk) -- because the opt-out is a
         # statement about the character, not about one window.
         self._disabled = disabled

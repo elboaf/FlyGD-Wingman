@@ -682,7 +682,7 @@
                                         cycle_prev: ''};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
-    state.disabled = state.disabled || [];
+      state.disabled = state.disabled || [];
       requestRender();
     });
   }
