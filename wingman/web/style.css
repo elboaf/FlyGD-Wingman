@@ -2157,11 +2157,12 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-dim);
 }
-/* No producer since the offline legend moved onto the rows as `.off-tag`
-   (previews.js). Kept rather than deleted: the type-scale note at the top
-   of this file lists it by name as one of the four muted-prose classes,
-   and .bind-group is still built beside a name that a second note could
-   qualify. Delete both together if that stops being true. */
+/* No producer. The offline legend it once qualified became a per-row
+   `.off-tag`, and round 6 made it a sticky group heading instead. Kept
+   rather than deleted: the type-scale note at the top of this file lists
+   it by name as one of the four muted-prose classes, and .bind-group is
+   still built beside a name that a second note could qualify. Delete both
+   together if that stops being true. */
 .bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
 
 /* The column headers above the character rows. Built once by previews.js's
@@ -2186,6 +2187,30 @@ button.btn:disabled,
   font-size: var(--fs-muted); color: var(--text-dim);
   white-space: nowrap; padding-bottom: 2px;
 }
+/* The rule that opens the table is drawn by an EMPTY `.bind-group` before
+   the header row (previews.js), not by the header cells themselves.
+
+   Putting `border-top` on `.bind-head > span` is the obvious move and it
+   is wrong: `.row` is display:contents here, so there is no row box, and a
+   per-cell border is broken by every one of the grid's 10px column gaps.
+   It renders as four dashes with holes where the gutters are. A
+   `.bind-group` is a single item spanning `1 / -1`, so its border is one
+   continuous line.
+
+   Unnamed, because the word is the thing that was removed: it read
+   `Characters` one line above a column header reading `Character` (round
+   6). The separation it drew is worth keeping -- the cycle rows above are
+   app commands, not characters, and ran into the list without it. */
+/* The `Preview` header is 45px of word over a 15px box, and the box was
+   pinned to the left of it -- measured 15px left of its own heading's
+   centre, on the one column whose control is narrower than its label.
+   Keybind and Size sat dead centre (0.0 both), so this was the only
+   column that read as mis-set, which is exactly how it was reported.
+
+   `justify-self` on the CELL, not `justify-content` on the label: the
+   label is the grid item, and centring its contents would leave the item
+   itself stretched across the track with the box still at its left. */
+#preview-binds .row > .check.optout { justify-self: center; }
 /* Sits with the name it qualifies, inside `.lab`, so it scrolls with its
    own row rather than depending on a legend at the top of the list. Text
    is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
@@ -2197,9 +2222,41 @@ button.btn:disabled,
    #preview-binds, which is what keeps this word from being ellipsized
    away with the name. The margin-left below is why that block declares no
    `gap`. */
-.off-tag {
-  margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
+/* The offline heading, and the whole encoding of the offline state now
+   that `.off-tag` is gone from the rows (previews.js). One word for the
+   block instead of one per row: eleven of thirteen rows are offline on a
+   typical fleet, so the word was on the MAJORITY and the two rows that
+   mattered were the ones without it.
+
+   STICKY, and that is the load-bearing part rather than a flourish. The
+   legend this replaces was rejected in round 5 because it sat above the
+   first row of a list ~780px tall and had scrolled off for most of the
+   rows it explained; a heading that can leave its own block is the same
+   defect wearing a different word. Sticky against `.settings-pane`, which
+   is the scroller (`overflow-y: auto`), so it cannot leave while a single
+   row it heads is still on screen.
+
+   It needs a background: sticky only stops it MOVING, and the rows would
+   otherwise scroll through the text. `--panel` matches the card's own
+   gradient closely enough at this y-position that the bar does not read
+   as a second surface; the card's gradient has already resolved to
+   --panel by 78%, which is above where this list starts.
+
+   `top: 0` and not the header row's height: the column headers are not
+   sticky, so there is nothing above this to clear. Make them sticky and
+   this number becomes their height.
+
+   `:not(:empty)` because the rule that opens the table is an EMPTY
+   .bind-group of the same class, and pinning a bare hairline to the top
+   of the pane would leave a stray line floating over the rows. Named
+   groups stick; rules do not. */
+#preview-binds .bind-group:not(:empty) {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel);
 }
+/* The opening rule wants less air than a named group: there is no word
+   under it to separate from, only the header row. */
+#preview-binds .bind-group:empty { margin-top: 12px; padding-top: 8px; }
 
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
@@ -2313,34 +2370,34 @@ button.btn:disabled,
    separate once every row is one line. #eve-binds still stacks and still
    carries both.
 
-   A FLEX ROW, and the ellipsis is on the name span rather than here. The
-   cell holds two things -- the name and, for an offline character, the
-   `.off-tag` word -- and only the name can truncate gracefully: a
-   character is identifiable from a prefix and the whole string is in the
-   cell's `title`. The tag is the ENCODING of the offline state, with
-   `.lab.dim`'s colour only reinforcing it, so clipping it leaves
-   colour-only state (WCAG 1.4.1), which is the failure the word was added
-   to prevent. Ellipsizing `.lab` itself clips the pair: measured at the
-   840x625 floor, a 14-character name left the tag 19.6px of headroom and
-   a 37-character one pushed its right edge to 500.41 against a track
-   ending at 359. Splitting the cell costs offline rows about 44px of name
-   width and online rows nothing, since the tag only exists when the
-   character is offline. Scoped to this list: `.lab` is shared with
-   Settings and Profiles, which have no tag and must not become flex.
+   A FLEX ROW, and the ellipsis is on the name span rather than here.
 
-   No `gap` -- `.off-tag` carries its own 8px margin-left, and a gap here
-   would double it. */
+   It held two things until round 6 -- the name and, for an offline
+   character, an `.off-tag` word -- and only the name could truncate
+   gracefully, so the cell was split to stop a long name taking the tag
+   with it. Measured at the 840x625 floor before that split: a
+   14-character name left the tag 19.6px of headroom and a 37-character
+   one pushed its right edge to 500.41 against a track ending at 359.
+
+   THE TAG IS GONE and the split stays. The offline state is a sticky
+   group heading now (previews.js), so there is no second thing in this
+   cell to protect -- but flex plus `min-width: 0` is also what lets
+   `.lab-name` ellipsize inside a fixed track at all, which is the half
+   that was never about the tag. Collapsing this back to a plain block
+   would take the ellipsis with it and clip names with no marker.
+
+   Scoped to this list: `.lab` is shared with Settings and Profiles, which
+   must not become flex. */
 #preview-binds .row > .lab {
   display: flex; align-items: baseline;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 /* `min-width: 0` because a flex item's default `min-width: auto` refuses
-   to shrink below its content, which would push the tag out of the cell
-   instead of ellipsizing the name -- the whole point of the split. */
+   to shrink below its content, so the name would overflow the track
+   instead of ellipsizing inside it. */
 #preview-binds .row > .lab > .lab-name {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-#preview-binds .row > .lab > .off-tag { flex: none; }
 /* Each row contributes fewer cells than the grid has tracks, because the
    trailing flexible one holds no control. Without a definite start, grid
    auto-placement puts the NEXT row's first cell there and every row after

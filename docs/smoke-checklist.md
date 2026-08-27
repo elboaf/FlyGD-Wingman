@@ -3026,6 +3026,40 @@ behaviour a lexical guard cannot reach.
       size, `document.documentElement.scrollWidth` must equal
       `clientWidth`. The roster card is `width: max-content` with
       `max-width: 100%`; the cap is what keeps the floor honest.
+- [ ] **The word `offline` appears ONCE, over its own block.** Settings >
+      Previews at the character list, with some clients running and some
+      not. Expected: running characters first, then a single `OFFLINE`
+      rule-and-heading, then the rest — every row under it dim, and NO
+      per-row `offline` tag anywhere. On a fleet with nobody logged in the
+      heading sits directly under the column headers and every row is
+      below it. The dimming reinforces the heading; it is not the encoding
+      on its own, which is the WCAG 1.4.1 failure this arrangement is the
+      third attempt at.
+- [ ] **The heading cannot leave its own block.** Same screen, a roster
+      long enough that the offline block exceeds the pane — about 16
+      characters at the 840x625 floor, fewer if the window is shorter.
+      Scroll to the bottom of the list. Expected: `OFFLINE` is still on
+      screen, pinned at the top of the pane, with the rows it heads under
+      it. Verified over CDP at 30 characters: the heading's top and the
+      pane's top both read 56. This is the whole reason it is sticky — the
+      legend it replaces was rejected in round 5 for scrolling off the
+      rows it explained.
+- [ ] **The rule above the column headers is one line, not four dashes.**
+      `.row` is `display: contents` in this grid, so a border on the
+      header CELLS is cut by every 10px column gap. It is drawn by an
+      empty `.bind-group` spanning `1 / -1` instead. If you see gaps in
+      that line at the gutters, the border has been moved back onto the
+      cells.
+- [ ] **`Preview` is centred over its checkbox.** The header word is 45px
+      and the box is 15px; every other column's control is dead centre
+      under its label, and this one was 15px left of it. Nothing else on
+      the row moves.
+- [ ] **The list says how to set a bind.** Above `Cycle forward`:
+      "Click a keybind and press the keys you want. Edit… lets you type
+      one instead." Both halves are load-bearing — nothing else says the
+      chord itself is clickable, and `Edit…` sits under a blank column
+      header. The label is deliberately not renamed to explain itself
+      (round 3's B6); the sentence is the fix.
 
 ### Frozen build
 

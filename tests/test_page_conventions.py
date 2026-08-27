@@ -1590,27 +1590,24 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
 
 
 def test_only_the_previews_name_is_allowed_to_ellipsize():
-    """The name and the `offline` tag share one 150px cell, and only one of
-    them can truncate gracefully.
+    """The name yields inside its track; nothing else in the cell may.
 
     A character is identifiable from a prefix and the whole string is in
-    the cell's `title`, so clipping the NAME costs nothing. The tag is not
-    the same kind of thing: it is the encoding of the offline state, and
-    `.lab.dim`'s colour only reinforces it. Lose the word and what is left
-    is colour-only state, WCAG 1.4.1 -- the failure the tag was added to
-    prevent.
+    the cell's `title`, so clipping the NAME costs nothing.
 
-    Putting the ellipsis on `.lab` itself clips the PAIR, so a long enough
-    name takes the tag with it. Measured in the harness at the 840x625
-    floor before this split: a 14-character name left the tag 19.6px of
-    headroom, a 37-character one pushed its right edge to 500.41 against a
-    track ending at 359 -- the word gone entirely, with no width at which
-    the reader is told.
+    THE CELL HELD TWO THINGS UNTIL ROUND 6. The second was an `offline`
+    tag, and the split below existed to stop a long name taking it with
+    it: putting the ellipsis on `.lab` itself clips the pair. Measured in
+    the harness at the 840x625 floor before the split, a 14-character name
+    left the tag 19.6px of headroom and a 37-character one pushed its
+    right edge to 500.41 against a track ending at 359 -- the word gone
+    entirely, with no width at which the reader is told.
 
-    So the cell is a flex row: the name yields (`min-width: 0` plus the
-    ellipsis) and the tag reserves its width (`flex: none`). Offline rows
-    pay about 44px of name width for it and online rows pay nothing, since
-    the tag only exists when `online === false`.
+    The tag is gone (see the offline-heading test below) and the split
+    STAYS, which is the part worth asserting. `display: flex` plus
+    `min-width: 0` on the name is also what lets it ellipsize inside a
+    fixed track at all, and that half was never about the tag. Collapse
+    the cell back to a plain block and long names clip with no marker.
 
     Reads the non-media `.lab` block, not the first one in the file, for
     the reason test_each_keybind_list_declares_a_deliberate_first_track
@@ -1626,12 +1623,13 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     assert labs, "#preview-binds no longer overrides the shared label column"
     lab = "\n".join(b.group(1) for b in labs)
     assert re.search(r"display:\s*flex", lab), (
-        "#preview-binds's label cell is no longer a flex row, so the tag "
-        "cannot reserve its width against the name"
+        "#preview-binds's label cell is no longer a flex row, so `min-width: "
+        "0` on the name has nothing to act inside and the ellipsis stops "
+        "working"
     )
     assert "text-overflow" not in lab, (
         "#preview-binds's label cell ellipsizes as a whole again, which "
-        "clips the `offline` tag along with the name it qualifies"
+        "truncates the cell rather than the name inside it"
     )
 
     name = re.search(
@@ -1639,8 +1637,8 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     )
     assert name, "the previews name span has no rule of its own to ellipsize in"
     # `overflow: hidden` is in this list because `text-overflow` is INERT
-    # without it -- the name would spill over the tag instead of
-    # truncating, which is the same lost word by a different route.
+    # without it -- the name would spill out of the cell instead of
+    # truncating, which is the same clipped name by a different route.
     for prop in (
         "min-width: 0",
         "overflow: hidden",
@@ -1649,17 +1647,9 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     ):
         assert prop in name.group(1), (
             f".lab-name must declare `{prop}` -- without all four the name "
-            f"either refuses to shrink inside the flex row, spills over the "
-            f"tag, or wraps instead of ellipsizing"
+            f"either refuses to shrink inside the flex row, spills out of "
+            f"the cell, or wraps instead of ellipsizing"
         )
-
-    tag = re.search(
-        r"#preview-binds \.row > \.lab > \.off-tag \{(.*?)\}", CSS, re.DOTALL
-    )
-    assert tag and "flex: none" in tag.group(1), (
-        "the `offline` tag no longer reserves its width, so the flex row "
-        "shrinks it away and the state goes back to being colour-only"
-    )
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
@@ -1667,14 +1657,69 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
         "makeRow no longer builds a .lab-name span, so the CSS above has "
         "nothing to apply to and the name is a bare text node again"
     )
-    # The tag is appended to the LAB, not the row. Appending it to the row
-    # would give offline rows one cell more than online ones, which the
-    # cell-count guard cannot see because it counts appends lexically
-    # rather than per render.
-    assert "lab.appendChild(WM.make('span', 'off-tag'" in body, (
-        "the offline tag is no longer appended to the label cell -- in the "
-        "row it would be an extra grid cell on offline rows only"
+
+
+def test_the_offline_state_is_a_heading_over_its_block_not_a_colour():
+    """Offline is TEXT, and the text may not be able to leave the rows it
+    describes. Both halves have been got wrong here before, differently.
+
+    Round 5 wrote it as a legend above the first row. That failed for two
+    reasons: dimness alone carried the state for any row the legend had
+    scrolled past (WCAG 1.4.1), over a list ~780px tall where that was
+    most of them.
+
+    The fix was a word per row, which cured the encoding and created a
+    third problem nobody had measured: on a typical fleet ELEVEN OF
+    THIRTEEN rows are offline, so the word sat on the majority and the two
+    rows that mattered were the ones without it.
+
+    Round 6 is a heading over the offline block, which `rows()` already
+    returns contiguously. That is the legend again in every respect but
+    the one that broke it -- so `position: sticky` is not a flourish here,
+    it is the whole difference. A heading that can scroll off its own
+    block is round 5's defect wearing a different word.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    assert "off-tag" not in src, (
+        "the per-row `offline` tag is back alongside the heading, so the "
+        "word is stated twice for every row in the block"
     )
+    assert "'bind-group-name', 'Offline'" in src, (
+        "previews.js no longer builds an `Offline` heading -- with the "
+        "per-row tag gone that leaves `.lab.dim`'s colour as the only "
+        "encoding of the state, which is WCAG 1.4.1"
+    )
+    # Guarded because the split is what makes the heading contiguous. Sort
+    # the list some other way and the heading would sit above a block that
+    # is no longer all-offline.
+    assert "filter(function (e) { return !e.online; })" in src, (
+        "the offline rows are no longer selected as their own block, so "
+        "the heading no longer describes everything under it"
+    )
+
+    # Matches the selector loosely on purpose. The rule is written against
+    # `.bind-group:not(:empty)` -- an EMPTY .bind-group of the same class
+    # draws the rule that opens the table, and pinning a bare hairline to
+    # the top of the pane would leave a stray line over the rows. An
+    # anchored `\.bind-group \{` would answer "no sticky rule at all" for
+    # a sheet that has a perfectly good one, which is a false alarm rather
+    # than a caught defect.
+    rule = re.search(
+        r"#preview-binds \.bind-group(?::[a-z-]+(?:\([^)]*\))?)* \{(.*?)\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert rule, (
+        "#preview-binds's group heading has no rule of its own, so it is "
+        "not sticky and can scroll off the block it explains"
+    )
+    for prop in ("position: sticky", "top: 0", "background:"):
+        assert prop in rule.group(1), (
+            f"the offline heading must declare `{prop}`: without sticky and "
+            f"a top it leaves its own block, and without a background the "
+            f"rows scroll through the word"
+        )
 
 
 def test_every_previews_row_starts_a_fresh_grid_line():

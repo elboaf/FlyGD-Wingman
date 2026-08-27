@@ -147,15 +147,20 @@
     // Offline is information, not an error: the binding is still saved and
     // still works the moment that character logs in.
     //
-    // The WORD is the encoding and the dimming reinforces it, not the
-    // other way round. `.dim` alone was colour-only state (WCAG 1.4.1),
-    // explained by a legend above the first row of a list far taller than
-    // the card -- so the explanation was off-screen for most of the rows
-    // that needed it. A word in the name cell travels with its own row.
-    if (online === false) {
-      lab.classList.add('dim');
-      lab.appendChild(WM.make('span', 'off-tag', 'offline'));
-    }
+    // The word used to be here, once per row, and round 6 moved it to a
+    // STICKY GROUP HEADING over the offline block (render). The encoding is
+    // still text -- `.dim` alone is colour-only state, WCAG 1.4.1, and that
+    // is not what this is. What changed is how many times the reader is
+    // told: eleven of thirteen rows are offline on a typical fleet, so the
+    // word was on the majority of rows and the two that mattered were the
+    // ones without it.
+    //
+    // The heading answers the objection that killed the ORIGINAL legend
+    // too. That one sat above the first row of a list ~780px tall and had
+    // scrolled off for most of the rows it explained; this one is
+    // `position: sticky` and cannot leave while its own block is on
+    // screen. See the note on `#preview-binds .bind-group` in style.css.
+    if (online === false) { lab.classList.add('dim'); }
     row.appendChild(lab);
 
     // Whether this character is opted out of previews entirely. The
@@ -1053,38 +1058,42 @@
                              function (g) { setBind('cycle_prev', g); }));
 
     var list = rows();
-    // A subhead, because the two rows above are not the same KIND of thing
-    // as the ones below: cycle_next/cycle_prev are app commands with no
-    // character attached, and everything after this is one row per known
-    // character. They were one flat list, so "Cycle forward" read as a
-    // twelfth character on an install with eleven.
+    // An UNNAMED rule, then the column headers. The rule used to be a
+    // `.bind-group` reading `Characters`, which sat one line above a
+    // column header reading `Character` -- the same word twice, naming the
+    // same thing, in two type treatments. The word went; the separation
+    // stayed, because the two cycle rows above are app commands with no
+    // character attached and ran into the list without it.
+    //
+    // It is a spanning element rather than a border on the header cells
+    // because `.row` is display:contents here: a per-cell border is cut by
+    // every column gap and renders as dashes. See the note on
+    // `#preview-binds .bind-group:empty` in style.css.
     //
     // Rendered only when there are characters to head. With none, the
-    // #preview-binds-empty hint below is the whole story and a heading over
-    // nothing is worse than no heading.
+    // #preview-binds-empty hint below is the whole story and a rule over
+    // nothing is worse than no rule.
     if (list.length) {
-      var head = WM.make('div', 'bind-group');
-      head.appendChild(WM.make('span', 'bind-group-name', 'Characters'));
-      // The legend that used to stand here -- "dimmed = not logged in" --
-      // is gone, and so is the state it explained being colour-only.
-      //
-      // Three things were wrong with it and only one was the wording. It
-      // was rendered once, above the first row, over a list ~780px tall,
-      // so it had scrolled off for most of the rows it explained. Dimness
-      // alone carried the state, which is WCAG 1.4.1. And on a typical
-      // fleet the dim rows are the MAJORITY -- eleven of thirteen in the
-      // capture this came from -- so the exception treatment was the
-      // ordinary one and the two undimmed rows read as the anomaly.
-      //
-      // makeRow now writes the word `offline` into the name cell instead.
-      // That travels with the row it describes, needs no legend, and stops
-      // being a conditional element that appears and vanishes depending on
-      // who happens to be logged in. The dimming stays as reinforcement --
-      // it was never wrong, only alone.
-      host.appendChild(head);
+      host.appendChild(WM.make('div', 'bind-group'));
       host.appendChild(makeHeadRow());
     }
-    list.forEach(function (entry) {
+
+    // Online first, then a heading, then the rest. `rows()` already returns
+    // them in that order, so this splits rather than sorts.
+    //
+    // ONLY while previews are on. With the host stopped Python sends
+    // characters: [] and every row would fall into the offline half, which
+    // is a claim we cannot make -- the same reason makeRow is passed null
+    // rather than false below. The banner above says "off" instead, and
+    // one undivided list is the honest shape for "we do not know".
+    var running = list;
+    var offline = [];
+    if (state.enabled) {
+      running = list.filter(function (e) { return e.online; });
+      offline = list.filter(function (e) { return !e.online; });
+    }
+
+    function paint(entry) {
       host.appendChild(makeRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],
         // null, not false, while previews are off. makeRow dims only on
@@ -1097,7 +1106,19 @@
         state.enabled ? entry.online : null,
         function (g) { setCharacterBind(entry.name, g); },
         entry.name));
-    });
+    }
+
+    running.forEach(paint);
+    if (offline.length) {
+      // The whole encoding of the offline state, and the only place it is
+      // written. Every row below it is dim; the dimming reinforces the
+      // word rather than replacing it, which is what keeps this out of
+      // WCAG 1.4.1.
+      var off = WM.make('div', 'bind-group');
+      off.appendChild(WM.make('span', 'bind-group-name', 'Offline'));
+      host.appendChild(off);
+      offline.forEach(paint);
+    }
 
     var empty = WM.el('preview-binds-empty');
     if (empty) { empty.hidden = list.length > 0; }
