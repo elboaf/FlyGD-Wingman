@@ -1681,6 +1681,34 @@ def test_unticking_the_setting_restores_previews_on_the_restyle(monkeypatch):
     assert not any(w.hidden for w in made.values())
 
 
+def test_a_restyle_before_any_foreground_event_does_not_hide_everything(monkeypatch):
+    """`self._foreground` is 0 until the win-event hook first fires, and it
+    goes back to 0 whenever the hook reports no foreground at all -- and it
+    stays 0 for the whole session if SetWinEventHook failed, which host.py
+    logs and carries on from.
+
+    _apply_selection has always coped by falling back to
+    GetForegroundWindow. _apply_visibility is reached from _restyle as well,
+    which hands it that raw 0, and a foreground of 0 is not in
+    client_hwnds -- so every preview would hide the instant any unrelated
+    setting was changed, then reappear on the next sweep. A flash of the
+    whole wall vanishing, with nothing to explain it.
+    """
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0x1000, pids={0x1000: 9999}
+    )
+    assert not any(w.hidden for w in made.values())
+
+    # The hook never fired: an EVE client really is foreground, and the
+    # host simply has not been told which one.
+    h._foreground = 0
+    h._restyle(
+        _OwnershipLibs(_OwnershipUser32({0x1000: 9999}, foreground=0x1000), 4242)
+    )
+
+    assert not any(w.hidden for w in made.values())
+
+
 def test_a_client_launched_while_previews_are_hidden_is_born_hidden(monkeypatch):
     """A window is always created visible, so the hide has to be
     re-applied every sweep rather than only when the answer changes. Miss

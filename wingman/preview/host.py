@@ -796,6 +796,19 @@ class PreviewHost:
         enabled = self._hiding_on_lost_focus()
         if not enabled and not self._previews_hidden:
             return
+        # The same fallback _apply_selection makes, and for the same
+        # reason: `self._foreground` is 0 until the win-event hook first
+        # fires, goes back to 0 whenever the hook reports no foreground,
+        # and stays 0 all session if SetWinEventHook failed -- which is
+        # logged and carried on from, not fatal.
+        #
+        # _apply_selection reaches here having already resolved it, so
+        # this only bites on the _restyle path, which hands over the raw
+        # value. Without it a 0 is simply "not one of the clients" and
+        # every preview hides the moment any unrelated setting changes,
+        # reappearing a sweep later with nothing to explain the flash.
+        if not foreground and libs is not None:
+            foreground = libs.user32.GetForegroundWindow()
         hide = visibility.should_hide(
             enabled=enabled,
             foreground=foreground,
