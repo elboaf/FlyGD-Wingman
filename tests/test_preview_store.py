@@ -213,7 +213,7 @@ def test_an_opted_out_character_is_protected_from_eviction():
     """Exactly the hazard the bound-character protection above exists for,
     on the other per-character setting that has no layouts entry.
 
-    A character in preview.disabled with no keybind is the one who most
+    A character in preview.excluded with no keybind is the one who most
     needs their row: the row is the only place to turn their preview back
     on. Evicting them from `seen` while they are logged off leaves the
     opt-out in force with nothing on the page to reverse it -- the setting
@@ -224,7 +224,7 @@ def test_an_opted_out_character_is_protected_from_eviction():
         "preview": {
             "seen": [f"C{i}" for i in range(64)],
             "hotkeys": {"characters": {}},
-            "disabled": ["C63"],
+            "excluded": ["C63"],
         }
     }
     store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)

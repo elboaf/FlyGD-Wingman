@@ -1445,10 +1445,16 @@ button.btn:disabled,
    able to do anything.
 
    The class is set by previews.js rather than derived from `:disabled`,
-   because a `.check` renders as a `.box` span with the real input taken
-   out of the layout -- there is nothing about the visible control for a
-   `:disabled` selector to reach without `:has()`. previews.js's `inert()`
-   sets both halves together so they cannot disagree. */
+   and NOT because the selector cannot reach the control -- it can:
+   `.check input:disabled + .box` works exactly like the
+   `.check input:checked + .box` rule forty lines above, because the real
+   input is the box span's previous sibling. What the combinator cannot
+   reach is the label TEXT beside the box, and the label's own `cursor`,
+   which is set on `.check` itself. Dimming the box while its word stayed
+   at full strength would read as a rendering fault rather than as a
+   disabled control, so the class carries the whole label. previews.js's
+   `inert()` sets the class and the input's `disabled` together so the
+   look and the behaviour cannot disagree. */
 #preview-binds .check.inert { opacity: .45; cursor: default; }
 
 .summary {

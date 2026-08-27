@@ -145,7 +145,7 @@ def _preview_defaults() -> dict:
         # no defaults_version bump. The keybind and size a character had
         # before being opted out are deliberately left in place, so
         # re-enabling restores them untouched.
-        "disabled": [],
+        "excluded": [],
         # Character names whose preview position is locked against drag.
         # Deliberately a top-level list, NOT a flag inside a layouts entry:
         # layout.deserialize drops any entry missing a full rect
@@ -352,7 +352,7 @@ def validated_preview(raw) -> dict:
     # hwnd: rejection: a client at character-select has no stable name to
     # exempt from minimizing, lock in place, or opt out of previews.
     section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
-    section["disabled"] = preview_roster.deserialize(raw.get("disabled"))
+    section["excluded"] = preview_roster.deserialize(raw.get("excluded"))
     raw_locked = raw.get("locked")
     combined_locked = list(raw_locked) if isinstance(raw_locked, list) else []
     if stored_version < _PREVIEW_DEFAULTS_VERSION:

@@ -10,7 +10,7 @@
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
-               locked: [], never_minimize: [], disabled: [],
+               locked: [], never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
@@ -87,7 +87,7 @@
     if (!gesture) { return []; }
     var binds = state.hotkeys.characters || {};
     return Object.keys(binds).filter(function (n) {
-      return binds[n] === gesture && !isDisabled(n);
+      return binds[n] === gesture && !isExcluded(n);
     }).sort();
   }
 
@@ -144,14 +144,14 @@
     // those words -- and borrowing it for a second meaning would make that
     // legend false for every opted-out character who is in fact online.
     // The inert controls and the ticked box carry the state instead.
-    var off = !!(character && isDisabled(character));
+    var off = !!(character && isExcluded(character));
 
     // Track 1 of every row. A cycle row gets a filler rather than a box:
     // cycle forward/back are app commands, not characters, and there is
     // nothing to opt them out of. One appendChild rather than an if/else
     // pair so this row contributes the same cell count either way -- see
     // the note on the filler branch at the bottom of this function.
-    row.appendChild(character ? makeDisabledCheck(character)
+    row.appendChild(character ? makeExcludedCheck(character)
                               : document.createElement('span'));
 
     var button = WM.make('button', 'bindbtn', gesture || 'Not set');
@@ -174,12 +174,25 @@
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
                      'Windows has not reported on this keybind yet.';
-    } else if (shadow === 'active') {
-      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
+    } else if (shadow === 'active') {      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
                      'it while an EVE client is focused.';
     } else if (shadow === 'latent') {
       button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';
+    }
+    // Overwrites whatever the chain above chose, and has to. An excluded
+    // character's chord is dropped by PreviewHost._registerable, so -- if
+    // no other character shares it -- it never reaches hotkey_status() and
+    // clashes() returns `unknown`. That branch's sentence then offers two
+    // causes ("previews are off, or Windows has not reported on this
+    // keybind yet") which are both FALSE here: the real cause is the
+    // ticked box on this very row, and the user put it there. Left alone
+    // it reads as an unexplained warning rather than as the consequence of
+    // their own click.
+    if (off) {
+      button.title = 'Previews are off for this character, so this keybind '
+                   + 'is not registered. It is still saved, and comes back '
+                   + 'when you untick Off.';
     }
     // Appended, not another branch in the chain above: a shared chord is
     // not a warning and does not compete with one. As its own `else if`
@@ -375,8 +388,8 @@
   function isNeverMinimize(name) {
     return (state.never_minimize || []).indexOf(name) !== -1;
   }
-  function isDisabled(name) {
-    return (state.disabled || []).indexOf(name) !== -1;
+  function isExcluded(name) {
+    return (state.excluded || []).indexOf(name) !== -1;
   }
 
   // All three checkboxes follow the same shape: read the live membership list
@@ -409,7 +422,7 @@
     return inert(label, box, off);
   }
 
-  // The row's own master switch: preview.disabled, the character-name list
+  // The row's own master switch: preview.excluded, the character-name list
   // PreviewHost reads in three places (no window, no hotkey registration,
   // no place in the cycle). Same shape as the two above, with one
   // difference that matters -- it is never passed an `off`, because it is
@@ -421,19 +434,22 @@
   // there: the whole row's controls are drawn from it, so a re-render is
   // what actually greys them. requestRender rather than render, so it
   // cannot detach a bind button armed by beginCapture.
-  function makeDisabledCheck(name) {
+  function makeExcludedCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
-    box.checked = isDisabled(name);
-    var label = WM.make('label', 'check off', ' Off');
+    box.checked = isExcluded(name);
+    var label = WM.make('label', 'check optout', ' Off');
     // The full sentence lives in the tooltip because the WORD cannot be
     // longer than this. Measured at the 840px floor: the card interior is
     // 586px and the six existing controls already spend 504.75px of it, so
     // a seventh track has 81.25px minus a 10px column-gap to live in.
-    // " No preview" measured 93.66 and pushed the row 22.41px past the
-    // card edge, with the grid reporting +32 of overflow -- grid tracks do
-    // not wrap, so that is a clipped control at every window width, not a
-    // reflow. " Off" measures inside the budget.
+    // " No preview" measured 93.66, which put the control line at
+    // 608.41 -- 22.41px past the card's content edge (504.75 + 10 + 93.66
+    // against 586). #preview-binds' own scrollWidth was 32px over its
+    // clientWidth at the same moment; the two figures measure different
+    // boxes and are not a contradiction. Grid tracks do not wrap, so
+    // either way that is a clipped control at every window width, not a
+    // reflow. " Off" measures 43.06, for 557.81 inside 586.
     label.title = 'No preview window for this character. Its own keybind '
                 + 'and the cycle keybinds skip it too. Its keybind, size '
                 + 'and position are kept for when you turn it back on.';
@@ -441,11 +457,11 @@
     label.prepend(box);
     box.addEventListener('change', function () {
       var wanted = box.checked;
-      WM.send('set_preview_disabled', name, wanted).then(function (res) {
+      WM.send('set_preview_excluded', name, wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
-        state.disabled = wanted
-          ? (state.disabled || []).concat(name)
-          : (state.disabled || []).filter(function (n) { return n !== name; });
+        state.excluded = wanted
+          ? (state.excluded || []).concat(name)
+          : (state.excluded || []).filter(function (n) { return n !== name; });
         requestRender();
       });
     });
@@ -454,10 +470,12 @@
 
   // A control that is present but cannot do anything, for the .check
   // wrapper. WM.setEnabled sets `disabled` on the node it is given, which
-  // for a checkbox is the INPUT -- but the thing on screen is the .box
-  // span drawn in its place plus the label text, and neither inherits a
-  // disabled input's styling. The class is what style.css hangs the dim
-  // on; the input is what actually stops the click.
+  // for a checkbox is the INPUT -- and that alone would dim nothing, since
+  // the input is taken out of the layout and the .box span is what shows.
+  // A `.check input:disabled + .box` rule COULD dim the box (style.css
+  // already reaches it that way for :checked), but not the word beside it;
+  // the class dims the whole label. Both halves are set here together so
+  // the look and the behaviour cannot disagree.
   function inert(label, box, off) {
     WM.setEnabled(box, !off);
     label.classList.toggle('inert', !!off);
@@ -711,7 +729,7 @@
                                         cycle_prev: ''};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
-      state.disabled = state.disabled || [];
+      state.excluded = state.excluded || [];
       requestRender();
     });
   }
@@ -768,7 +786,7 @@
                                       cycle_prev: ''};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
-    state.disabled = state.disabled || [];
+    state.excluded = state.excluded || [];
     requestRender();
   });
 

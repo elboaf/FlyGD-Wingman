@@ -144,7 +144,7 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
-        disabled=None,
+        excluded=None,
         snap=None,
         lock_aspect=None,
         clear_layouts=None,
@@ -179,18 +179,18 @@ class PreviewHost:
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
         # All three of these are character-name LISTS (preview.never_minimize,
-        # preview.locked, preview.disabled), not per-character booleans: a
+        # preview.locked, preview.excluded), not per-character booleans: a
         # per-character callable would need the character key at construction
         # time, and build_preview_host does not have it. _is_never_minimize/
-        # _is_locked/_is_disabled below do the per-window membership test.
+        # _is_locked/_is_excluded below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
-        # preview.disabled: characters opted out of previews entirely. Read
+        # preview.excluded: characters opted out of previews entirely. Read
         # live like the rest, and read in THREE places rather than one --
         # _sweep (no window), _registerable (no hotkey registration) and
         # _cycle_keys (not a stop on the walk) -- because the opt-out is a
         # statement about the character, not about one window.
-        self._disabled = disabled
+        self._excluded = excluded
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
         # open. None means "the caller has not wired this yet" -- see
@@ -377,7 +377,7 @@ class PreviewHost:
         """Re-apply the table already held, without supplying one.
 
         For a caller that changed something the REGISTRATION depends on
-        rather than the table itself -- today only preview.disabled, which
+        rather than the table itself -- today only preview.excluded, which
         _registerable filters on. set_hotkeys would work, but only by
         having the caller read the table back out of settings and push it,
         which loses a race it has no need to enter: pywebview serves each
@@ -621,7 +621,7 @@ class PreviewHost:
         #
         # Filtering `clients` itself instead would take the character off
         # the page's row list, leaving no row to untick.
-        desired = {key for key in clients if not self._is_disabled(key)}
+        desired = {key for key in clients if not self._is_excluded(key)}
         added, removed, _kept = reconcile(set(self._windows), desired)
 
         for key in removed:
@@ -743,7 +743,7 @@ class PreviewHost:
 
         Applied here rather than in plan_registrations, which is pure and
         stays that way -- and applied on every rebind rather than once,
-        because the disabled list changes independently of the binding
+        because the excluded list changes independently of the binding
         table: ticking the box does not edit a single chord, so api.py
         re-pushes the SAME table to force this filter to run again.
 
@@ -757,7 +757,7 @@ class PreviewHost:
         table["characters"] = {
             name: chord
             for name, chord in characters.items()
-            if not self._is_disabled(name)
+            if not self._is_excluded(name)
         }
         return table
 
@@ -1022,6 +1022,16 @@ class PreviewHost:
         logged rather than dropped silently, because "the sound played and
         nothing flashed" is otherwise indistinguishable from a broken
         render path.
+
+        preview.excluded made that state reachable ON PURPOSE rather than
+        only transiently, so the choice is now worth stating: an excluded
+        character still PLAYS its alert sound, with nothing on screen to
+        flash. That is deliberate. The alert is what tells a multiboxer
+        something is happening to a character they are not watching, and
+        the character they have chosen not to mirror is exactly the one
+        they are not watching -- silencing it would remove the last signal
+        rather than an unwanted one. Alerts have their own per-event
+        enable in Settings for anyone who wants the opposite.
         """
         now = time.monotonic()
         for character, event, spec in pending:
@@ -1311,21 +1321,21 @@ class PreviewHost:
             logger.exception("Could not read locked; defaulting to unlocked")
             return False
 
-    def _is_disabled(self, stable_key) -> bool:
+    def _is_excluded(self, stable_key) -> bool:
         """Whether *stable_key* is opted out of previews entirely, read
         live. Same guard as _labels_shown.
 
-        Defaults to NOT disabled on a read failure, which is the same
+        Defaults to NOT excluded on a read failure, which is the same
         posture the other two rosters take: a settings file that cannot be
         read must leave previews working, not silently blank the screen
         with nothing on the page to explain it.
         """
-        if self._disabled is None:
+        if self._excluded is None:
             return False
         try:
-            return stable_key in (self._disabled() or [])
+            return stable_key in (self._excluded() or [])
         except Exception:
-            logger.exception("Could not read disabled; defaulting to enabled")
+            logger.exception("Could not read excluded; defaulting to included")
             return False
 
     def _cycle_keys(self) -> list:
@@ -1333,10 +1343,20 @@ class PreviewHost:
 
         characters() minus the opted-out, and deliberately NOT a change to
         characters() itself: that one feeds the page's row list, which has
-        to keep showing a disabled character or there would be no row left
+        to keep showing an excluded character or there would be no row left
         to re-enable them from.
+
+        Note what this does NOT filter: the ANCHOR in _on_hotkey is still
+        resolved against _clients, so cycling while an excluded character's
+        own client holds the foreground finds an anchor that is not in this
+        list. cycle.step then takes its documented "anchor has gone"
+        branch and restarts at the first name rather than continuing from
+        the neighbour. Left as it is: it is the same fallback as cycling
+        from a browser, it self-corrects on the next press, and filtering
+        the anchor too would mean inventing a position in a walk this
+        character is deliberately not part of.
         """
-        return [key for key in self.characters() if not self._is_disabled(key)]
+        return [key for key in self.characters() if not self._is_excluded(key)]
 
     def _restyle(self) -> None:
         """Push live show_labels/opacity/locked onto every open preview.

@@ -1069,14 +1069,14 @@ def test_build_preview_host_wires_the_disabled_roster(monkeypatch):
     from wingman import __main__ as main_mod
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    state = SimpleNamespace(settings={"preview": {"disabled": ["Alice"]}})
+    state = SimpleNamespace(settings={"preview": {"excluded": ["Alice"]}})
     host = main_mod.build_preview_host(state, {})
-    assert host._is_disabled("Alice") is True
-    assert host._is_disabled("Bravo") is False
+    assert host._is_excluded("Alice") is True
+    assert host._is_excluded("Bravo") is False
 
     # A whole new section object, as _normalize produces.
-    state.settings["preview"] = {"disabled": []}
-    assert host._is_disabled("Alice") is False
+    state.settings["preview"] = {"excluded": []}
+    assert host._is_excluded("Alice") is False
 
 
 def test_the_host_defaults_to_no_disabled_characters_when_absent(monkeypatch):
@@ -1089,22 +1089,22 @@ def test_the_host_defaults_to_no_disabled_characters_when_absent(monkeypatch):
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     state = SimpleNamespace(settings={"preview": {}})
     host = main_mod.build_preview_host(state, {})
-    assert host._is_disabled("Alice") is False
+    assert host._is_excluded("Alice") is False
 
 
-def test_set_preview_disabled_adds_and_removes_by_name(tmp_path, monkeypatch):
+def test_set_preview_excluded_adds_and_removes_by_name(tmp_path, monkeypatch):
     writes = _no_disk(monkeypatch)
     api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
 
-    assert api.set_preview_disabled("Zuelo Parvi", True)["applied"] is True
-    assert api._state.settings["preview"]["disabled"] == ["Zuelo Parvi"]
-    assert api.set_preview_disabled("Zuelo Parvi", False)["applied"] is True
-    assert api._state.settings["preview"]["disabled"] == []
-    assert writes[-1]["preview"]["disabled"] == []
+    assert api.set_preview_excluded("Zuelo Parvi", True)["applied"] is True
+    assert api._state.settings["preview"]["excluded"] == ["Zuelo Parvi"]
+    assert api.set_preview_excluded("Zuelo Parvi", False)["applied"] is True
+    assert api._state.settings["preview"]["excluded"] == []
+    assert writes[-1]["preview"]["excluded"] == []
 
 
-def test_set_preview_disabled_sweeps_and_rebinds_rather_than_restyling(
+def test_set_preview_excluded_sweeps_and_rebinds_rather_than_restyling(
     tmp_path, monkeypatch
 ):
     """restyle() only re-reads style on windows that already exist, so it
@@ -1117,14 +1117,14 @@ def test_set_preview_disabled_sweeps_and_rebinds_rather_than_restyling(
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
 
-    api.set_preview_disabled("Alice", True)
+    api.set_preview_excluded("Alice", True)
 
     assert host.sweeps == 1
     assert host.rebinds == 1
     assert host.restyles == 0
 
 
-def test_set_preview_disabled_never_re_sources_the_hotkey_table(tmp_path, monkeypatch):
+def test_set_preview_excluded_never_re_sources_the_hotkey_table(tmp_path, monkeypatch):
     """It must ask the host to re-apply what it ALREADY holds, not read the
     table back out of settings and push it.
 
@@ -1143,20 +1143,20 @@ def test_set_preview_disabled_never_re_sources_the_hotkey_table(tmp_path, monkey
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
 
-    api.set_preview_disabled("Alice", True)
+    api.set_preview_excluded("Alice", True)
 
     assert host.hotkeys is None, (
-        "set_preview_disabled pushed a hotkey table it re-read from "
+        "set_preview_excluded pushed a hotkey table it re-read from "
         "settings; it must post a payload-free rebind instead"
     )
 
 
-def test_set_preview_disabled_is_a_no_op_without_a_host(tmp_path, monkeypatch):
+def test_set_preview_excluded_is_a_no_op_without_a_host(tmp_path, monkeypatch):
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
     api._state.settings["preview"] = {}
 
-    assert api.set_preview_disabled("Aiga Otsolen", True) == {
+    assert api.set_preview_excluded("Aiga Otsolen", True) == {
         "applied": True,
         "persisted": True,
         "error": None,
@@ -1165,7 +1165,7 @@ def test_set_preview_disabled_is_a_no_op_without_a_host(tmp_path, monkeypatch):
 
 def test_get_preview_hotkey_state_reports_disabled(tmp_path):
     api = make_api(tmp_path)
-    api._state.settings["preview"] = {"disabled": ["Aiga Otsolen"]}
-    assert api.get_preview_hotkey_state()["disabled"] == ["Aiga Otsolen"]
+    api._state.settings["preview"] = {"excluded": ["Aiga Otsolen"]}
+    assert api.get_preview_hotkey_state()["excluded"] == ["Aiga Otsolen"]
     api._state.settings["preview"] = {}
-    assert api.get_preview_hotkey_state()["disabled"] == []
+    assert api.get_preview_hotkey_state()["excluded"] == []

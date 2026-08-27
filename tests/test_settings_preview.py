@@ -248,14 +248,14 @@ def test_snap_falls_back_when_it_is_not_a_bool():
 
 
 def test_disabled_defaults_empty():
-    assert settings._preview_defaults()["disabled"] == []
+    assert settings._preview_defaults()["excluded"] == []
 
 
 def test_disabled_runs_through_roster_deserialize():
     """Same constraints as `never_minimize` and `locked`: a client at
     character-select has no stable name to opt out of previews."""
-    out = settings.validated_preview({"disabled": ["Alice", "hwnd:123", 5, "Alice"]})
-    assert out["disabled"] == ["Alice"]
+    out = settings.validated_preview({"excluded": ["Alice", "hwnd:123", 5, "Alice"]})
+    assert out["excluded"] == ["Alice"]
 
 
 def test_disabled_survives_a_round_trip_with_no_layout_rect(tmp_path):
@@ -264,9 +264,9 @@ def test_disabled_survives_a_round_trip_with_no_layout_rect(tmp_path):
     is stored top level rather than on layout.Entry."""
     path = tmp_path / "settings.json"
     data = settings.load(path)
-    data["preview"]["disabled"] = ["NeverPreviewed"]
+    data["preview"]["excluded"] = ["NeverPreviewed"]
     settings.save(data, path)
-    assert settings.load(path)["preview"]["disabled"] == ["NeverPreviewed"]
+    assert settings.load(path)["preview"]["excluded"] == ["NeverPreviewed"]
 
 
 def test_the_preview_defaults_are_a_fixed_point_of_their_own_validator():

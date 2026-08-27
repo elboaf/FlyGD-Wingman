@@ -1177,6 +1177,15 @@ def test_an_opted_out_character_row_disables_its_own_controls():
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
+    # The three above are gated INLINE; these receive the state as an
+    # argument instead, and were unguarded until a review pointed out that
+    # dropping the second argument at either call site leaves the control
+    # live and undimmed with the whole suite green -- which is the exact
+    # failure this test's docstring claims to prevent.
+    for builder in ("makeSizeButton", "makeLockCheck"):
+        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
+            f"makeRow does not pass the row's opted-out state to {builder}"
+        )
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():
@@ -1218,7 +1227,7 @@ def test_a_shared_chord_ignores_opted_out_characters():
     halves = src.split("function sharers(", 1)
     assert len(halves) == 2, "previews.js has no sharers()"
     body = halves[1].split("\n  }", 1)[0]
-    assert "isDisabled" in body, (
+    assert "isExcluded" in body, (
         "sharers() does not exclude opted-out characters, so the page "
         "reports conflicts and sharing that Python has already filtered away"
     )
@@ -1229,11 +1238,11 @@ def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
     it with the rest would opt a character out permanently, the only way
     back being a hand-edited settings file."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    halves = src.split("function makeDisabledCheck(", 1)
-    assert len(halves) == 2, "previews.js has no makeDisabledCheck"
+    halves = src.split("function makeExcludedCheck(", 1)
+    assert len(halves) == 2, "previews.js has no makeExcludedCheck"
     body = halves[1].split("return label;", 1)[0]
     assert "WM.setEnabled" not in body, "the opt-out box gates itself"
-    assert "set_preview_disabled" in body
+    assert "set_preview_excluded" in body
 
 
 def test_the_opacity_slider_can_still_reach_the_stored_floor():

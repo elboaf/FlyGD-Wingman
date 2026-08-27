@@ -1546,7 +1546,7 @@ def test_the_sweep_creates_no_window_for_a_disabled_character(monkeypatch):
         created.append(client.stable_key)
         return
 
-    h = _config_sweep_host(monkeypatch, disabled=lambda: ["Alice"])
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
     monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
 
     h._sweep(libs=None)
@@ -1556,7 +1556,7 @@ def test_the_sweep_creates_no_window_for_a_disabled_character(monkeypatch):
     assert h.characters() == ["Alice"]
 
 
-def test_the_sweep_closes_an_open_window_when_a_character_is_disabled(monkeypatch):
+def test_the_sweep_closes_an_open_window_when_a_character_is_excluded(monkeypatch):
     """Ticking the box mid-session has to take the picture off the screen,
     not merely stop the next one being built."""
     closed = []
@@ -1574,7 +1574,7 @@ def test_the_sweep_closes_an_open_window_when_a_character_is_disabled(monkeypatc
             closed.append(True)
 
     off = []
-    h = _config_sweep_host(monkeypatch, disabled=lambda: list(off))
+    h = _config_sweep_host(monkeypatch, excluded=lambda: list(off))
     monkeypatch.setattr(
         host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: _Win())
     )
@@ -1594,7 +1594,7 @@ def test_a_disabled_character_gets_no_hotkey_registration(monkeypatch):
     keybind too. Filtered here rather than in plan_registrations, which
     stays pure -- and the disabled list changes independently of the
     binding table, so the filter has to be applied at every rebind."""
-    h = _config_sweep_host(monkeypatch, disabled=lambda: ["Alice"])
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
     libs = _FakeLibs(_FakeUser32())
     h._hwnd = 0x1234
 
@@ -1606,7 +1606,7 @@ def test_a_disabled_character_gets_no_hotkey_registration(monkeypatch):
 def test_a_disabled_character_is_skipped_by_the_cycle_keybinds(monkeypatch):
     """Cycle walks the running clients; a character with no preview on
     screen must not be a stop on that walk."""
-    h = _config_sweep_host(monkeypatch, disabled=lambda: ["Bravo"])
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Bravo"])
     monkeypatch.setattr(
         host.discovery,
         "list_clients",
@@ -1629,7 +1629,7 @@ def test_a_cycle_with_every_character_opted_out_says_why(monkeypatch, caplog):
     """
     import logging
 
-    h = _config_sweep_host(monkeypatch, disabled=lambda: ["Alice"])
+    h = _config_sweep_host(monkeypatch, excluded=lambda: ["Alice"])
     monkeypatch.setattr(
         host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
     )

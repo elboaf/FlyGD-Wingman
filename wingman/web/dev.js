@@ -114,8 +114,8 @@
   // {applied, persisted, error} shape previews.js reverts the box on, and
   // the re-render it drives off a successful reply, which is how an
   // opted-out row's other controls go grey in the browser.
-  api.set_preview_disabled = function (name, disabled) {
-    console.log('DEV api.set_preview_disabled(', name, disabled, ')');
+  api.set_preview_excluded = function (name, excluded) {
+    console.log('DEV api.set_preview_excluded(', name, excluded, ')');
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
@@ -722,7 +722,7 @@
       // saved chord is still showing on an inert button. An offline
       // opted-out row would look almost the same as an ordinary offline
       // one and would prove nothing.
-      disabled: ['Zuelo Parvi'],
+      excluded: ['Zuelo Parvi'],
       // Task 8: one character with both a saved size and a live client
       // size ('Aiga Otsolen' -- exercises sizeHint's computed-height
       // branch), one with a client size but no saved one yet (defaults to

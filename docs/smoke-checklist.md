@@ -1501,7 +1501,11 @@ only ever checked by hand.
       Then press that character's own focus keybind: nothing happens, and
       the chord reaches EVE instead. Press cycle forward repeatedly: the
       walk visits every other running character and never stops on this
-      one.
+      one. (Starting that walk *from* the off character's own client is
+      the one exception: it restarts at the first name rather than
+      continuing from where you are, the same as cycling from a browser.)
+      Its alert sounds still play, with nothing on screen to flash — that
+      is deliberate, and Settings › Alerts is where to turn them off.
       Untick `Off`: the preview comes back at the position and size it had
       before, the row's controls go live, and the focus keybind works
       again. Nothing about the row should need re-entering — the settings

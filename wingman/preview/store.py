@@ -85,7 +85,7 @@ class LayoutStore:
         client no longer produces a preview.
         """
         return set(section.get("hotkeys", {}).get("characters", {})) | set(
-            section.get("disabled", []) or []
+            section.get("excluded", []) or []
         )
 
     def clear(self) -> None:

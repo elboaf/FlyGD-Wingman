@@ -2459,7 +2459,7 @@ class Api:
             # entirely. Rides this payload rather than a second round trip
             # for the same reason the other two do -- row state belongs in
             # the one place previews.js already reads it from.
-            "disabled": list(section.get("disabled") or []),
+            "excluded": list(section.get("excluded") or []),
             # Sizes for the Size... dialog: what the preview is now, and
             # what its client's shape is, so the page can name the size
             # that would not distort it. client_sizes is sampled on the
@@ -2749,7 +2749,7 @@ class Api:
 
     def _toggle_preview_roster(self, key: str, name: str, member: bool) -> dict:
         """Add or remove *name* from the character-name list at
-        preview.<key> (locked or never_minimize), then persist through
+        preview.<key> (locked, never_minimize or excluded), then persist through
         _write_preview_setting.
 
         A list, not a per-character flag: Task 1 moved lock storage out of
@@ -2760,9 +2760,12 @@ class Api:
         both are read by PreviewHost as membership tests
         (_is_locked/_is_never_minimize), never by key lookup.
 
-        Shared by set_preview_locked and set_never_minimize below rather
-        than duplicated: the add/remove-by-name logic is identical, only
-        the settings key differs.
+        Shared by set_preview_locked, set_never_minimize and
+        set_preview_excluded below rather than duplicated: the
+        add/remove-by-name logic is identical, only the settings key
+        differs -- and what each caller does AFTERWARDS does not, which is
+        why the live-update call stays with the caller rather than moving
+        in here (two restyle, one sweeps and rebinds).
         """
         current = list(self._state.settings.get("preview", {}).get(key) or [])
         if member:
@@ -2791,7 +2794,7 @@ class Api:
             self._preview_host.restyle()
         return result
 
-    def set_preview_disabled(self, name, disabled) -> dict:
+    def set_preview_excluded(self, name, excluded) -> dict:
         """Persist whether *name* is opted out of previews entirely.
 
         Not restyle(), unlike the two above: restyle only re-reads style on
@@ -2814,7 +2817,7 @@ class Api:
         host stayed registered against the old one, with nothing logged.
         A payload-free rebind has nothing to revert.
         """
-        result = self._toggle_preview_roster("disabled", name, bool(disabled))
+        result = self._toggle_preview_roster("excluded", name, bool(excluded))
         if self._preview_host is not None:
             self._preview_host.request_sweep()
             self._preview_host.request_rebind()

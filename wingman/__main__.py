@@ -450,12 +450,12 @@ def build_preview_host(state, api_box):
             # construction time, which this function does not have.
             return list(state.settings.get("preview", {}).get("locked", []))
 
-        def disabled():
+        def excluded():
             # Same shape and same live read as the two rosters above. The
             # default is an EMPTY list rather than anything cleverer: a
             # settings file predating this key must leave every character's
             # preview working, not blank the screen on upgrade.
-            return list(state.settings.get("preview", {}).get("disabled", []))
+            return list(state.settings.get("preview", {}).get("excluded", []))
 
         def snap():
             # Read live for the same reason as restore_positions: the
@@ -489,7 +489,7 @@ def build_preview_host(state, api_box):
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,
             locked=locked,
-            disabled=disabled,
+            excluded=excluded,
             snap=snap,
             lock_aspect=lock_aspect,
         )

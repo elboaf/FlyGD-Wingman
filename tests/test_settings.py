@@ -84,7 +84,7 @@ def test_defaults_are_the_documented_values():
             "show_labels": True,
             "minimize_inactive_clients": False,
             "never_minimize": [],
-            "disabled": [],
+            "excluded": [],
             "locked": [],
             "snap": True,
             "lock_aspect": True,
