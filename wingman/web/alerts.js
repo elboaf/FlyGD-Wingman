@@ -133,6 +133,92 @@
     row.msg.hidden = !text;
   }
 
+  // The event's visible name, read off its own checkbox rather than kept
+  // as a fourth copy of the three event names (EVENTS has the ids,
+  // index.html has the labels, settings.py has the defaults). A label
+  // renamed in the markup renames itself here.
+  function eventLabel(id) {
+    var box = WM.el('alert-event-' + id + '-enabled');
+    var label = box && box.parentNode;
+    return label ? (label.textContent || '').trim() : id;
+  }
+
+  /* Two enabled events set to the same colour are one alert with two
+     meanings, and until round 6 nothing said so.
+
+     This card already narrowed 16.7 million colours to five for exactly
+     this reason -- see COLOURS above: "Two similar purples silently
+     destroy the one thing that makes three alerts distinguishable, and
+     nothing ever told you." Narrowing made a near-miss unreachable and
+     left an EXACT match five clicks away, still silent. The round-6
+     captures caught a live install with Combat and Decloak both on
+     #4dd2ff and both on Notify: a cyan pulse that could mean "you are
+     being shot" or "you just decloaked", which are opposite responses.
+
+     Colour is the channel, not sound. The ring is what you read in
+     peripheral vision on a small tile over moving game content, which is
+     COLOURS' own argument; the sound is secondary and may be off, muted,
+     or lost under comms. So a shared colour warns on its own, and a
+     shared sound is named only when it compounds -- when both match there
+     is no channel left to tell the two apart.
+
+     Keyed `dataset.collision` so it can be cleared without touching a
+     row's own errors, the same convention clearWhileOffNotes uses for
+     `whileOff`. A refused write outranks this: a row already showing
+     something that is not a collision note is left alone, because "the
+     colour could not be set" is about what just happened and this is
+     about a standing configuration.
+
+     The app does this for keybinds already (.bindbtn.clash). Keybinds are
+     configuration you check twice ever; alerts are the only thing in the
+     product that interrupts you mid-fight. */
+  function flagCollisions() {
+    var byColour = {};
+    EVENTS.forEach(function (id) {
+      var row = eventRow(id);
+      if (!row.enabled || !row.enabled.checked) { return; }
+      var good = lastGood[id] || {};
+      if (!good.color) { return; }
+      var key = String(good.color).toLowerCase();
+      if (!byColour[key]) { byColour[key] = []; }
+      byColour[key].push(id);
+    });
+
+    EVENTS.forEach(function (id) {
+      var row = eventRow(id);
+      if (!row.msg) { return; }
+      // Leave a row's own message alone unless it is one of ours.
+      if (row.msg.hidden === false && !row.msg.dataset.collision) { return; }
+      var good = lastGood[id] || {};
+      // A DISABLED row never collides, and the `other !== id` filter alone
+      // does not say so: a disabled Combat is absent from byColour, but an
+      // enabled Decloak on the same colour still puts that colour in the
+      // map, so Combat found a peer and warned about an alert it cannot
+      // raise. Caught in the harness by disabling one of a colliding pair
+      // and watching the wrong half keep the note.
+      var live = row.enabled && row.enabled.checked;
+      var peers = !live ? [] : (byColour[String(good.color).toLowerCase()] || [])
+        .filter(function (other) { return other !== id; });
+      if (!peers.length) {
+        if (row.msg.dataset.collision) {
+          delete row.msg.dataset.collision;
+          sayRow(row, '');
+        }
+        return;
+      }
+      var names = peers.map(eventLabel);
+      var alsoSound = peers.some(function (other) {
+        return (lastGood[other] || {}).sound === good.sound;
+      });
+      var text = 'Same colour as ' + names.join(' and ')
+        + (alsoSound
+           ? ', and the same sound. Nothing tells them apart.'
+           : '. The pulse cannot tell them apart.');
+      row.msg.dataset.collision = '1';
+      sayRow(row, text, 'warn');
+    });
+  }
+
   // Drops every note that was only true while alerts were off. Keyed on
   // the tag rather than the text, so rewording the sentence cannot quietly
   // strand it again, and it leaves a row's OWN errors alone -- a refused
@@ -208,6 +294,10 @@
       row.sound.value = sound;
       lastGood[id] = {color: color, sound: sound};
     });
+    // After the loop, not inside it: a collision is a fact about the
+    // whole card, and checking mid-loop would read lastGood entries the
+    // rows below have not refreshed yet.
+    flagCollisions();
   }
 
   // Shared by all three top-level checkboxes. WM.send resolves to null
@@ -265,6 +355,10 @@
           return;
         }
         sayRow(row, '');
+        // A disabled event cannot collide, and re-enabling one can revive
+        // a collision that was true all along. flagCollisions reads the
+        // checkbox, so it has to run after the box has settled.
+        flagCollisions();
       });
     });
     // Delegated: the swatches are rebuilt whenever a stored colour falls
@@ -288,6 +382,10 @@
         } else {
           sayRow(row, '');
         }
+        // The colour IS the collision key, so this is the change most
+        // likely to make or clear one. After the sayRow above, which owns
+        // this row's own outcome and outranks a collision note.
+        flagCollisions();
       });
     });
     row.sound.addEventListener('change', function () {
@@ -307,6 +405,10 @@
         } else {
           sayRow(row, '');
         }
+        // A sound cannot create a collision on its own -- the key is the
+        // colour -- but it decides whether an existing one is "nothing
+        // tells them apart" or only the pulse.
+        flagCollisions();
       });
     });
     row.test.addEventListener('click', function () {

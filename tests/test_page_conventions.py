@@ -1084,6 +1084,59 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     )
 
 
+def test_two_enabled_alerts_on_one_colour_are_flagged():
+    """Round 6, P1-1. Two alerts the same colour are one alert with two
+    meanings, and nothing said so.
+
+    The card already narrowed 16.7M colours to five for this exact reason
+    -- COLOURS' own comment ends "and nothing ever told you" -- which made
+    a near-miss unreachable and left an EXACT match five clicks away,
+    still silent. The round-6 captures caught a live install with Combat
+    and Decloak both on #4dd2ff and both on Notify.
+
+    Lexical, like everything else in this file, so it checks the wiring a
+    regression would break rather than the rendering (which was verified
+    by hand in the ?dev=1 harness over CDP, for all four states: both on,
+    colour-only, one disabled, all distinct).
+    """
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+
+    assert "function flagCollisions()" in alerts, (
+        "the collision check is gone; two alerts can share a colour again"
+    )
+
+    # It must run on every path that can make or clear a collision. Missing
+    # any one of these leaves a stale note or a silent collision.
+    body = alerts[alerts.index("function flagCollisions()") :]
+    del body
+    calls = alerts.count("flagCollisions();")
+    assert calls >= 4, (
+        "flagCollisions must run after a repaint, a colour change, a sound "
+        f"change and an enable toggle -- found {calls} call sites"
+    )
+
+    # THE BUG THIS TEST EXISTS FOR, found in the harness rather than here:
+    # a disabled Combat is absent from the colour map, but an enabled
+    # Decloak on the same colour still puts that colour IN the map, so
+    # Combat found a peer and warned about an alert it cannot raise. The
+    # `other !== id` filter does not cover it; an enabled check does.
+    assert re.search(r"row\.enabled && row\.enabled\.checked", alerts), (
+        "flagCollisions must skip disabled rows when DISPLAYING, not only "
+        "when grouping: a disabled event cannot collide with anything"
+    )
+
+    # The note is a warning, not an error: the config is legal, just
+    # ambiguous. And it must be tagged so it can be cleared without
+    # stamping on a row's own refused-write message.
+    assert "dataset.collision" in alerts, (
+        "collision notes must be tagged the way clearWhileOffNotes tags "
+        "its own, or clearing one will clear a real error instead"
+    )
+    assert re.search(r"sayRow\(row, text, 'warn'\)", alerts), (
+        "a colour collision is a warning, not an error"
+    )
+
+
 def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
     """index.html hand-writes nine <option>s for three events, and
     settings.py owns the list they must match.
