@@ -16,6 +16,7 @@ class FakeHost:
         self.started = self.stopped = 0
         self.flushed = 0
         self.sweeps = 0
+        self.rebinds = 0
         self.hotkeys = None
         self.restyles = 0
 
@@ -27,6 +28,9 @@ class FakeHost:
 
     def request_sweep(self):
         self.sweeps += 1
+
+    def request_rebind(self):
+        self.rebinds += 1
 
     def set_hotkeys(self, table):
         self.hotkeys = table
@@ -1106,7 +1110,7 @@ def test_set_preview_disabled_sweeps_and_rebinds_rather_than_restyling(
     """restyle() only re-reads style on windows that already exist, so it
     cannot create or destroy one -- the window comes and goes on a sweep.
     The focus keybind is filtered at rebind, and ticking the box edits no
-    chord, so the SAME table has to be re-pushed to make that filter run.
+    chord, so a rebind has to be asked for even though no chord changed.
     """
     _no_disk(monkeypatch)
     host = FakeHost()
@@ -1116,8 +1120,35 @@ def test_set_preview_disabled_sweeps_and_rebinds_rather_than_restyling(
     api.set_preview_disabled("Alice", True)
 
     assert host.sweeps == 1
-    assert host.hotkeys == {"characters": {"Alice": "Ctrl+F1"}}
+    assert host.rebinds == 1
     assert host.restyles == 0
+
+
+def test_set_preview_disabled_never_re_sources_the_hotkey_table(tmp_path, monkeypatch):
+    """It must ask the host to re-apply what it ALREADY holds, not read the
+    table back out of settings and push it.
+
+    pywebview serves each JS->Python call on its own thread. A
+    set_preview_binds landing between this method's read and its push would
+    have its table silently reverted inside the host: the page and the
+    settings file would both hold the new table while the host stayed
+    registered against the old one, until some unrelated rebind. Nothing
+    logs it -- _apply_hotkeys' INFO line reports counts, not contents.
+
+    request_rebind carries no payload, so the race has nothing to lose:
+    WM_APP_REBIND re-reads _desired_hotkeys under the host's own lock.
+    """
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
+
+    api.set_preview_disabled("Alice", True)
+
+    assert host.hotkeys is None, (
+        "set_preview_disabled pushed a hotkey table it re-read from "
+        "settings; it must post a payload-free rebind instead"
+    )
 
 
 def test_set_preview_disabled_is_a_no_op_without_a_host(tmp_path, monkeypatch):

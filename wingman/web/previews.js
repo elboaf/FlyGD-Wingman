@@ -75,10 +75,19 @@
     // up". host.plan_registrations merges them onto one registration and
     // picks between the running ones, so this is information, not a
     // warning -- see makeRow.
+    //
+    // Opted-out characters are excluded, because Python has already
+    // stopped both claims this function feeds from being true of them:
+    // PreviewHost._registerable drops them before plan_registrations, so
+    // they neither win a chord nor share one. Without this the CYCLE row
+    // -- which is live and undimmed -- painted a `duplicate` clash saying
+    // the cycle keybind loses a chord it had in fact just won, and a
+    // sharing character's row offered "Pressing it goes to whichever of
+    // them is logged in" for a character it would never reach.
     if (!gesture) { return []; }
     var binds = state.hotkeys.characters || {};
     return Object.keys(binds).filter(function (n) {
-      return binds[n] === gesture;
+      return binds[n] === gesture && !isDisabled(n);
     }).sort();
   }
 
@@ -120,12 +129,17 @@
     if (online === false) { lab.classList.add('dim'); }
     row.appendChild(lab);
 
-    // Whether this character is opted out of previews entirely. Everything
-    // else on the row is inert while it is: there is no window to lock, no
-    // registration to rebind and no place in the cycle, so a live control
-    // here would be one that saves a setting nothing reads.
+    // Whether this character is opted out of previews entirely. The
+    // controls that can no longer DO anything go inert with it: there is
+    // no window to lock or resize, no registration to rebind and no place
+    // in the cycle, so a live control there would be one that saves a
+    // setting nothing reads.
     //
-    // The NAME is deliberately not dimmed with it. `.dim` on a .lab already
+    // `Never minimize` is the exception and stays live -- see the comment
+    // on its append below. It governs the real EVE window, not the
+    // preview, and opting out does not stop it.
+    //
+    // The NAME is deliberately not dimmed either. `.dim` on a .lab already
     // means "not logged in" -- the group note above the list says so in
     // those words -- and borrowing it for a second meaning would make that
     // legend false for every opted-out character who is in fact online.
@@ -252,8 +266,20 @@
     // COUNT that varies, and render() tells the stylesheet which it is.
     if (character) {
       row.appendChild(makeLockCheck(character, off));
+      // NOT passed `off`, unlike every other control on the row. Opting a
+      // character out stops their PREVIEW; it does not stop
+      // minimize_inactive_clients, because _activate_client resolves
+      // `previous_key` from PreviewHost._clients -- which deliberately
+      // still holds opted-out characters -- and so still consults
+      // _is_never_minimize when switching away from that character's real
+      // EVE window. Greying this box would leave a setting in force with
+      // no control to change it, which is the same shape as the roster
+      // eviction LayoutStore._protected exists to prevent.
+      //
+      // Lock above IS gated, and the asymmetry is the point: with no
+      // window there is nothing to lock, so that control really is inert.
       if (minimizeInactive) {
-        row.appendChild(makeNeverMinimizeCheck(character, off));
+        row.appendChild(makeNeverMinimizeCheck(character));
       }
     } else {
       // Three fillers with never-minimize on, two with it off. One stands
@@ -443,7 +469,7 @@
   // the global was off, which is what D6 removed; the `.check.nm.disabled`
   // rule that dimmed it went with it, and style.css records that where the
   // rule used to be.
-  function makeNeverMinimizeCheck(name, off) {
+  function makeNeverMinimizeCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isNeverMinimize(name);
@@ -464,7 +490,7 @@
               .filter(function (n) { return n !== name; });
       });
     });
-    return inert(label, box, off);
+    return label;
   }
 
   function beginCapture(button, onSet) {
@@ -540,10 +566,13 @@
 
   function render() {
     host.textContent = '';
-    // D6: which grid template #preview-binds takes. makeRow appends four
-    // cells per row instead of five while this is off, and a grid whose
-    // template still declared five would leave a max-content track holding
-    // nothing plus its 10px column-gap after the last live control.
+    // D6: which grid template #preview-binds takes. makeRow appends six
+    // cells per row instead of seven while this is off, and a grid whose
+    // template still declared seven would leave a max-content track
+    // holding nothing plus its 10px column-gap after the last live
+    // control. (These two numbers were four and five, and had been stale
+    // since Size... landed; test_page_conventions.py now derives the count
+    // from makeRow's own appends rather than trusting a comment.)
     host.classList.toggle('no-nm', !minimizeInactive);
 
     var off = WM.el('preview-binds-off');

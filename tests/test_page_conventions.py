@@ -1166,19 +1166,62 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
 def test_an_opted_out_character_row_disables_its_own_controls():
     """The chosen shape for a character opted out of previews: the row
     stays visible -- there has to be somewhere to turn it back on -- but
-    everything else it offers is inert, because none of it can do anything
-    while that character has no window, no registration and no place in
-    the cycle.
+    the controls that can no longer do anything are inert.
 
-    What this pins is that the controls go through WM.setEnabled against
-    the row's own opted-out state, rather than merely being dimmed in CSS:
-    a control that only LOOKS dead still fires on click.
+    What this pins is that they go through WM.setEnabled against the row's
+    own opted-out state, rather than merely being dimmed in CSS: a control
+    that only LOOKS dead still fires on click.
     """
     body = _makerow_body()
     for control in ("button", "clear", "typed"):
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
+
+
+def test_never_minimize_stays_live_on_an_opted_out_row():
+    """The one control on the row that must NOT go inert with the rest.
+
+    Opting a character out stops their PREVIEW. It does not stop
+    minimize_inactive_clients: `_activate_client` resolves `previous_key`
+    from `_clients`, which deliberately still holds opted-out characters,
+    so switching away from that character's real EVE window still consults
+    `_is_never_minimize`. Greying the checkbox would leave a setting in
+    force with no way to change it -- the same shape as the roster
+    eviction hazard `LayoutStore._protected` exists for.
+
+    Asserted on the CALL rather than inside the builder, because the
+    builder is shared and it is the call site that decides.
+    """
+    body = _makerow_body()
+    assert re.search(r"makeNeverMinimizeCheck\(character\)", body), (
+        "makeNeverMinimizeCheck is being passed the row's opted-out state, "
+        "which would grey a checkbox whose setting is still enforced"
+    )
+    assert re.search(r"makeLockCheck\(character,[^)]*\boff\b", body), (
+        "Lock SHOULD be gated -- with no window there is nothing to lock"
+    )
+
+
+def test_a_shared_chord_ignores_opted_out_characters():
+    """`sharers()` decides two user-visible claims, and Python has already
+    stopped both being true for an opted-out character.
+
+    `_registerable` drops them before `plan_registrations`, so they neither
+    win a chord nor share one. Without this filter the page paints a
+    `duplicate` clash on the CYCLE row -- which is live and undimmed --
+    saying the cycle keybind loses a chord it has in fact just won, and
+    offers "Shared with <name>. Pressing it goes to whichever of them is
+    logged in" for a character it will never reach.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    halves = src.split("function sharers(", 1)
+    assert len(halves) == 2, "previews.js has no sharers()"
+    body = halves[1].split("\n  }", 1)[0]
+    assert "isDisabled" in body, (
+        "sharers() does not exclude opted-out characters, so the page "
+        "reports conflicts and sharing that Python has already filtered away"
+    )
 
 
 def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():

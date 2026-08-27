@@ -373,6 +373,21 @@ class PreviewHost:
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
 
+    def request_rebind(self) -> None:
+        """Re-apply the table already held, without supplying one.
+
+        For a caller that changed something the REGISTRATION depends on
+        rather than the table itself -- today only preview.disabled, which
+        _registerable filters on. set_hotkeys would work, but only by
+        having the caller read the table back out of settings and push it,
+        which loses a race it has no need to enter: pywebview serves each
+        call on its own thread, so a set_preview_binds landing between that
+        read and that push would be silently reverted inside the host.
+        WM_APP_REBIND re-reads _desired_hotkeys under this object's own
+        lock, so a payload-free signal has nothing to revert.
+        """
+        self._post(win32.WM_APP_REBIND)
+
     def set_capture(self, armed: bool) -> None:
         """Arm or disarm bind capture. Safe from any thread.
 
@@ -824,7 +839,18 @@ class PreviewHost:
             )
             # Fall back to the last chord's target when focus is not on a
             # client at all -- a browser, or Wingman itself.
-            target = cycle.step(self._cycle_keys(), anchor or self._last_cycled, value)
+            keys = self._cycle_keys()
+            if not keys:
+                # Distinct from the "not running" no-op below, and it has
+                # to be: every candidate here IS running, and was left out
+                # on purpose. Borrowing that message would send a reader
+                # looking for a client that is on screen in front of them.
+                logger.debug(
+                    "Cycle keybind had nothing to visit: every running "
+                    "character is opted out of previews"
+                )
+                return
+            target = cycle.step(keys, anchor or self._last_cycled, value)
             self._last_cycled = target
         logger.debug("Preview hotkey fired: %s -> %s", action, target)
         client = self._clients.get(target)

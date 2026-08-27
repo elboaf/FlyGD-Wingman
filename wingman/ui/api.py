@@ -2804,12 +2804,20 @@ class Api:
         registration time (PreviewHost._registerable), and ticking this box
         edits no chord, so without a rebind the opted-out character would
         keep its registration until the next unrelated bind edit.
+
+        request_rebind() rather than set_hotkeys() for that, though, and
+        the difference is not cosmetic: set_hotkeys would mean reading the
+        table back out of settings here and pushing it, and pywebview
+        serves each JS call on its own thread. A set_preview_binds landing
+        between that read and that push would be silently reverted inside
+        the host -- page and settings file holding the new table while the
+        host stayed registered against the old one, with nothing logged.
+        A payload-free rebind has nothing to revert.
         """
         result = self._toggle_preview_roster("disabled", name, bool(disabled))
         if self._preview_host is not None:
             self._preview_host.request_sweep()
-            section = self._state.settings.get("preview", {})
-            self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+            self._preview_host.request_rebind()
         return result
 
     # ---- Gamelog alerts --------------------------------------------------
