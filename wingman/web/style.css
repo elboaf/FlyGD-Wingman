@@ -1469,23 +1469,33 @@ button.btn:disabled,
    `inert()` sets the class and the input's `disabled` together so the
    look and the behaviour cannot disagree.
 
-   THAT ARGUMENT IS SPENT, and the rule is kept for what is left of it.
-   The character rows' checkboxes have no word beside the box any more --
-   the column header carries it once -- so "the whole label" is now the
-   15px box and nothing else, and opacity alone on a square that small is
-   close to invisible. The class still covers the label because `cursor`
-   still lives there and a future labelled `.check` in this grid would
-   need it; the box itself now takes a flatter, borderless fill as well,
-   so an inert control reads as inert at the size it actually is.
+   THAT ARGUMENT IS SPENT for the row it was written about. While Lock sat
+   in #preview-binds, its label read '' -- the column header carried the
+   word once -- so "the whole label" was a bare 15px box, and opacity alone
+   on a square that small was close to invisible. The class still covers
+   the label because `cursor` still lives there; the box itself also takes
+   a flatter, borderless fill, so an inert control reads as inert at the
+   size it actually is.
 
-   No longer scoped to `#preview-binds`: `makeLockCheck` now also renders
-   inside the Lock disclosure below the global toggle, and an opted-out
-   character's box has to read as inert there too. Scoping this to the
-   row grid would silently drop the treatment in the second place a check
-   built by `inert()` can appear. */
+   Lock has since left that row for its own disclosure, and `inert()` now
+   has exactly one caller: `makeLockCheck`, whose label there carries the
+   character's name as visible text (Step 8 of the disclosure work put it
+   back). So the labelled case the old paragraph called a hypothetical
+   future is the one real case today, and the class dims that text along
+   with the box -- which is what lets a locked-and-excluded character read
+   as "locked, but nothing to lock" instead of "not locked" (see the
+   border note below for the box half of that same state).
+
+   No longer scoped to `#preview-binds`: `makeLockCheck` renders only
+   inside the Lock disclosure under the global toggle now, not in the row
+   grid at all. Scoping this rule to the row grid -- where it started --
+   would leave that one caller unstyled. */
 .check.inert { opacity: .45; cursor: default; }
-/* Carried by the BOX, not the label, so it survives the label having no
-   text to dim. Both tokens are already in the palette.
+/* Carried by the BOX, not the label -- kept there from when it had to
+   survive the label having no text to dim (see above: that is no longer
+   true of the one caller left, but the box is still the right place for
+   it, since the label's opacity already dims whatever text it has).
+   Both tokens are already in the palette.
 
    `input:not(:checked)` is load-bearing, not tidiness. This selector is
    (1,3,0) against `.check input:checked + .box`'s (0,3,1), so an
@@ -1499,11 +1509,15 @@ button.btn:disabled,
 
    THE BORDER IS DELIBERATELY NOT TOUCHED. A first version also set it to
    --panel-border, which is the card's own hairline token: composited at
-   .45 that is about 1.05:1 against the card, so the 15px square had no
-   perceptible edge and an opted-out row's Lock column read as an empty
-   gap -- the exact misreading makeSizeFiller was added to prevent one
-   column to the left. --control-edge is about 1.23:1 there. Neither meets
-   the 3:1 DESIGN.md sets for a state border, and that miss predates this
+   .45 that is about 1.05:1 against the card -- measured back when Lock was
+   still a row cell, where the 15px square then had no perceptible edge and
+   an opted-out row's Lock column read as an empty gap (the exact
+   misreading makeSizeFiller was added to prevent, one column to the left).
+   That measurement is what set --control-edge instead; the relationship
+   between the two tokens has not changed now that the same box sits in
+   the disclosure rather than the row, so the finding still applies without
+   remeasuring. --control-edge is about 1.23:1 there. Neither meets the
+   3:1 DESIGN.md sets for a state border, and that miss predates this
    rule, but the box has to stay FINDABLE before it can be dimmed. */
 .check.inert input:not(:checked) + .box {
   background: var(--sunken);
