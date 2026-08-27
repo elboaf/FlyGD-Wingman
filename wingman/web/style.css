@@ -2755,9 +2755,35 @@ button.btn:disabled,
 }
 .linkbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
+/* margin: 0, not `0 auto` (round 6, P1-2).
+
+   The 620px measure stays: it is right for a label-over-field column and
+   D1 already settled that it is deliberate for prose and form rows.
+   What was wrong is only where the slack went. Centring split it in two
+   -- measured on the round-6 captures at 1015 CSS, the rail's card ended
+   at 180 and the content card began at 287.5, so 107.5px sat between two
+   things that belong together while an equal strip sat on the outside.
+   A gap that size beside the rail reads as a missing column, not as
+   margin.
+
+   Left-aligned, the rail and the section it labels are 12px apart -- the
+   route's own grid gap -- and all the slack collects on one outer edge
+   where it reads as margin, which is what S8 was after on Skills.
+
+   Profiles reached the same conclusion one round earlier and by the same
+   route: see `margin-inline: 0, not auto` below, where a 620px folder
+   card kept centring after its wrapper was lifted and sat in the middle
+   of the page above a full-width roster. Same fix, same reason.
+
+   The watermark's note at the top of this sheet cites "228px of gutter
+   beside it" as part of why Settings qualifies. That figure is now one
+   margin rather than two gutters and the total is unchanged, so the
+   watermark's justification survives -- but it is now resting on the
+   outer margin alone. If that margin ever closes, re-read that rule
+   rather than assuming it still holds. */
 .settings {
   display: flex; flex-direction: column; gap: 12px;
-  width: 100%; max-width: 620px; margin: 0 auto;
+  width: 100%; max-width: 620px; margin: 0;
 }
 
 /* Labels sit ABOVE their control, full width, on every row and at every
