@@ -559,6 +559,8 @@ Then guard the new column in `test_the_previews_headings_are_in_the_order_makeRo
     )
 ```
 
+While you are in that test, its docstring opens by illustrating the hazard with "moving `makeLockCheck` ahead of the Size cell is an entirely plausible edit". `makeLockCheck` left `makeRow` in Task 1, so the example names an edit nobody can make. Keep the point and change the example to one that is now plausible: moving `makeExcludedCheck` ahead of the name cell.
+
 Then add the guard for the hazard this change creates:
 
 ```python
