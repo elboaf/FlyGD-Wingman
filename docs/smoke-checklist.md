@@ -1468,41 +1468,75 @@ only ever checked by hand.
       listeners registered; that is exactly the inert-screen failure this
       file's preamble describes, and it happened once while this lane was
       being written.
-- [ ] **No dead Never-minimize checkboxes in the default state.** Settings >
-      Previews with `Minimize a client's window while it is not the one you
-      switched to` UNTICKED — the shipped default. Expected: each character
-      row carries `Lock` and nothing else, and the row ends there with no
-      trailing gap. Tick the toggle: a `Never minimize` checkbox appears on
-      every character row, live, without a reload. Untick it: they all go.
-      Round 5's C3 counted ~13 permanently disabled ones in the default
-      state; D6 answered that the setting stays per-character but must not
-      render where it can do nothing.
-      **Watch the alignment when you toggle.** `#preview-binds` is a grid
-      whose rows are `display: contents`, so the CSS track count and the
-      number of cells previews.js appends have to move together — if they
-      disagree by one, every row after the first is pulled into the
-      previous row's leftover columns.
-      **The header row moves with them.** `Never minimize` must appear in
-      and disappear from the column headings in the same toggle, or the
-      remaining headings sit over the wrong data. Its cell count is
-      derived from its own array literal by
-      test_page_conventions.py, but only the eye catches a heading that
-      is present and one column out.
+- [ ] **The Never-minimize disclosure exists only while its toggle is on.**
+      Settings > Previews with `Minimize a client's window while it is not
+      the one you switched to` UNTICKED — the shipped default. Expected:
+      no `Never minimize` block renders under it at all — not a `<details>`
+      full of disabled checkboxes, no block, full stop. Tick the toggle: a
+      collapsed disclosure appears directly beneath it, live, without a
+      reload; untick it and the whole thing is gone again, live. Round 5's
+      C3 counted ~13 permanently disabled Never-minimize checkboxes in the
+      old default state; D6's rule — the setting stays per-character but
+      must not render where it can do nothing — now governs the block's
+      own existence rather than one cell in every row.
+      Open the disclosure and tick a name in its roster: the summary above
+      it changes immediately, without a reload, the same as the Lock block
+      below it.
+      **An opted-out character stays live here, unlike in the Lock
+      block.** Untick `Preview` on a character — their preview stops and
+      the rest of their `#preview-binds` row goes dim — then open this
+      disclosure: their box is still tickable there and still takes
+      effect, because Never minimize still governs a client with no
+      preview (see "`Preview` turns one character's preview off" below).
+      **The alignment hazard this used to test still exists, just not on
+      this toggle.** `#preview-binds` is still a grid whose rows are
+      `display: contents`, so the CSS track count and the number of cells
+      previews.js appends for each row still have to move together — if
+      they disagree by one, every row after the first is pulled into the
+      previous row's leftover columns. Nothing in this table toggles that
+      cell count any more; watch for it whenever a row's own cells vary
+      instead — an unset bind, an absent `Clear`, an absent `Size…`.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
-      `Preview`, `Keybind`, `Size`, `Lock`, `Never minimize` — sentence
-      case, a step smaller and dimmer than the names below it — and the
-      three CHECKBOXES are bare boxes under their headings with no word
-      beside them. `Clear`, `Edit…` and `Size…` still carry their own
-      words on every row, and should: they are verbs on a control, not the
-      name of a column. `Clear` and `Edit…` have no heading for the same
-      reason. Check each heading sits at the left edge of the column it
-      names.
-      This retired 39 label instances on a thirteen-character roster with
-      the minimize toggle on — 26 in the shipped default state, where the
-      Never-minimize column is not rendered — and each column is one
-      shared `max-content` track, so the longest word in it sized the
-      header and all thirteen rows together.
+      `Character`, `Preview`, `Keybind`, `Size` — sentence case, a step
+      smaller and dimmer than the names below it — with one blank heading
+      over the cell `Clear` and `Edit…` share. `Lock` and `Never minimize`
+      name nothing here any more: both left the row for their own
+      disclosures under the toggles they except, so the three CHECKBOX
+      columns this heading row used to carry are down to one, `Preview`,
+      still a bare box with no word beside it. `Clear`, `Edit…` and
+      `Size…` still carry their own words on every row, and should: they
+      are verbs on a control, not the name of a column. `Clear` and
+      `Edit…` have no heading for the same reason, and `Clear` is now
+      ABSENT — not present and disabled — on a row with no chord to
+      clear, sharing its cell with `Edit…`, right-aligned so `Edit…` sits
+      at one edge of the cell whether or not `Clear` is beside it. Check
+      each heading sits at the left edge of the column it names.
+      Lock and Never minimize's own per-row labels were retired from this
+      table once already (round 5: 39 label instances on a
+      thirteen-character roster, 26 of them in the shipped default state
+      where the Never-minimize column did not render). This lane retired
+      the columns those labels lived in outright, so there is no longer a
+      `Lock` or `Never minimize` word anywhere in this row at all.
+- [ ] **The Lock summary resolves all four states of the polarity table.**
+      Settings > Previews, the Lock block beneath `Lock previews in place
+      by default`. Reach each state by flipping the default toggle and
+      ticking names in the disclosure's roster, and check the summary
+      reads exactly:
+      - default OFF, no exceptions ticked — a door, `Lock individual
+        characters`.
+      - default OFF, some ticked — `Locked: ` and their names.
+      - default ON, none ticked — `Locked: every character`.
+      - default ON, some ticked — `Locked: every character except ` and
+        their names.
+      The door is the one state that must NOT reappear once the default
+      is on with no exceptions: it is keyed on the RESOLVED state being
+      nobody locked, not on the exception list being empty, and with the
+      default on and nothing ticked every character is already locked —
+      a door offering to lock one there would offer something already
+      done. Past halfway, the summary names the UNLOCKED minority instead
+      of the locked majority ("every character except…"), so also check
+      that crossover with seven or more characters in the roster.
 - [ ] **The minimize toggle is filed with the other window behaviour.** It
       is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
       put them` — not under `GLOBAL KEYBINDS`, where it was the one control
@@ -1513,14 +1547,17 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…`, `Size…` and `Lock` — goes dim and stops responding
-      to clicks. The row's saved keybind stays legible on the inert
-      button; it is not cleared.
-      **`Never minimize` must STAY LIVE**, alone among them. Opting out
-      stops the preview, not `minimize_inactive_clients` — switching away
-      from that character's real EVE window still minimizes it — so
-      greying its only control would leave a setting in force with no way
-      to change it.
+      `Clear`, `Edit…` and `Size…` — goes dim and stops responding to
+      clicks. The row's saved keybind stays legible on the inert button;
+      it is not cleared. `Lock` and `Never minimize` are not in this row
+      any more; check them in their own disclosures instead:
+      **the character's box in the Lock block must read inert**, since
+      with no window there is nothing to lock, while **their box in the
+      Never-minimize block must STAY LIVE**. Opting out of previews stops
+      the preview, not `minimize_inactive_clients` — switching away from
+      that character's real EVE window still minimizes it — so greying
+      its only control would leave a setting in force with no way to
+      change it.
       Then press that character's own focus keybind: nothing happens, and
       the chord reaches EVE instead. Press cycle forward repeatedly: the
       walk visits every other running character and never stops on this
@@ -1550,12 +1587,17 @@ only ever checked by hand.
 - [ ] **`Size…` is absent for a character that has never been dragged.**
       Settings > Previews with at least one character offline that has
       never had its preview moved or resized. Expected: that row shows no
-      `Size…` at all, and its `Lock` and `Never minimize` boxes are still
-      in the same columns as every other row — the cell is a filler, not a
-      missing cell, and a missing one would slide that row's later
-      controls one heading to the left (Lock under `Size`, Never minimize
-      under `Lock`). It would not disturb the rows below: every row leads
-      with a full-width name, so each one starts a fresh grid row.
+      `Size…` at all — the cell is a filler, not a missing cell. `Size…`
+      is now the last real column before the trailing flexible track, so
+      a missing cell here has nothing after it in the same row to shift;
+      the hazard a filler cell guards against is `#preview-binds`'s row
+      count matching its track count at all, not a leftward slide of
+      later controls (that was true when Lock and Never minimize still
+      followed Size in the row; both have since left it). It would not
+      disturb the rows below either: every row's first cell carries an
+      explicit `grid-column-start: 1` (`style.css`), which resets the
+      auto-placement cursor to a fresh row regardless of how many cells
+      the row before it contributed.
       Hover the empty cell: it says how to make a size settable.
       Now drag that character's preview once and reopen the
       section: `Size…` is there. Running clients always have it.
@@ -1564,20 +1606,19 @@ only ever checked by hand.
       layouts entry is written on a drag or a resize, not when the client
       starts — so on a fresh install this was a guaranteed refusal for
       most of the roster.
-- [ ] **The seventh column still fits at the window's floor.** Settings >
-      Previews with the minimize toggle ON, so every character row carries
-      all seven controls, at the smallest the window will go. Expected: the
-      row ends inside the card with a gap after `Never minimize`, and
-      nothing is clipped. Grid tracks do not wrap, so an overflow here is a
-      cut-off control at every width, not a reflow — it was measured at
-      608.41px against a 586px card interior on the first draft of this
-      feature, which is why the opt-out label was once the word `Off`
-      rather than a phrase. **That constraint is retired, not satisfied:**
-      the per-row labels moved into the header, so the checkbox cells hold
-      no text at all and the honest phrase lives in a heading rendered
-      once. Measured after the change, the seven tracks and their gaps
-      spend 512.16px of the same 586px. Re-measure here rather than
-      trusting that figure if you add a column.
+- [ ] **The row still fits at the window's floor.** Settings > Previews at
+      the smallest the window will go (840x625). Expected: every row ends
+      inside the card with a gap after `Size…` (or the trailing `Edit…`
+      on a row with none), and nothing is clipped. Grid tracks do not
+      wrap, so an overflow here is a cut-off control at every width, not a
+      reflow — a seven-track version of this row once measured 608.41px
+      against the same 586px card interior, which is why the opt-out
+      label was the single word `Off` rather than a phrase on the first
+      draft. **That constraint stayed retired, and shrank further:** Lock
+      and Never minimize have since left the row for their own
+      disclosures, taking their per-row labels and cells with them.
+      Measured after that move: 519.25px of the same 586px. Re-measure
+      here rather than trusting that figure if you add a column.
 - [ ] **The two global defaults are reachable and take effect.** Settings >
       Previews, below `Keep previews the same shape as their client`.
       - `Default preview size` shows the current pair and commits on
@@ -1593,13 +1634,14 @@ only ever checked by hand.
         change, so a restart-to-apply bug here would look exactly like
         the field working.
       - `Lock previews in place by default` locks every character whose
-        own `Lock` box you have not changed. Tick it with one character
-        already explicitly unlocked: that character stays draggable and
-        every other preview stops moving on a left drag (right drag still
-        moves them, as always). Untick it without touching anything else:
-        the arrangement that preceded the tick comes back. Nothing is
-        migrated and the roster is not rewritten — `preview.locked` keeps
-        meaning "these differ from the default".
+        own box in the Lock disclosure directly beneath it you have not
+        changed. Tick it with one character already explicitly unlocked:
+        that character stays draggable and every other preview stops
+        moving on a left drag (right drag still moves them, as always).
+        Untick it without touching anything else: the arrangement that
+        preceded the tick comes back. Nothing is migrated and the roster
+        is not rewritten — `preview.locked` keeps meaning "these differ
+        from the default".
         **Then check the case where that is NOT an undo**, because the
         obvious reading of a default says it should be. Start with the
         default off and an empty roster, tick it, unlock one character
@@ -1607,10 +1649,9 @@ only ever checked by hand.
         LOCKED one. The roster was not rewritten — the box you changed
         meant the opposite thing on each side of the flip. This is the
         semantics, not a bug; the item exists so nobody "fixes" it.
-        Check the per-character boxes repaint to the effective state the
-        moment you toggle the default — they are in the same section, a
-        few hundred pixels below it, and a stale copy shows the exact
-        inverse of every row rather than merely lagging. Check
+        Check the disclosure's own checkboxes repaint to the effective
+        state the moment you toggle the default — a stale copy shows the
+        exact inverse of every row rather than merely lagging. Check
         already-open previews change behaviour without a restart.
 
 ## EVE bookmark hotkeys

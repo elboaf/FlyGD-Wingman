@@ -395,12 +395,30 @@ and not the ceiling.
 8. A hand pass against `docs/smoke-checklist.md`, which needs updating for
    the moved controls.
 
-## Open items
+## Open items, measured and closed
 
-- **The disclosure's vertical grouping is eyeballed, not measured.** The
-  collapsed door sits close to the next toggle below it and could read as
-  belonging to that toggle instead. The rule is that the gap above must be
-  visibly smaller than the gap below; the mockup uses 2px and 10px, and
-  whether 10 is enough has not been checked in the harness.
-- **Truncation width for the summary.** Long rosters need
-  `alerts.js`'s treatment; the cut-off count is not yet chosen.
+- **The disclosure's vertical grouping.** Measured collapsed (the state a
+  reader normally sees) in the CDP harness at the 840x625 floor, on both
+  blocks: the gap above and the gap below each render at **10.00px**, not
+  the intended 2px above / 10px below. `.pv-exc`'s own
+  `margin: 2px 0 10px 24px` does carry that asymmetry on paper, but it
+  never reaches the page. Its neighbour on both sides is a `.row`, and
+  `.row { margin-bottom: 10px }` (`style.css:597`) sits directly above and
+  below every `.pv-exc` in the DOM; adjacent block margins collapse to
+  their larger value rather than summing, so the row's own 10px wins over
+  `.pv-exc`'s 2px top margin every time, and its 10px bottom margin simply
+  matches the row's 10px on the way out. The two gaps are not merely
+  close — they are the same rendered value on both `preview-nm-exceptions`
+  and `preview-lock-exceptions` — so the "closer to the toggle above"
+  relationship this design specified does not exist in the rendered page.
+  Recorded here rather than fixed: changing `.pv-exc` or `.row` margins is
+  a style change outside this task, left for the controller to rule on.
+- **Truncation width for the summary.** `previews.js`'s `EXC_NAMES_MAX = 3`
+  (`:895`) was chosen against the maintainer's own roster — thirteen
+  characters, the size the rest of this document and
+  `docs/smoke-checklist.md` already measure the table against — for the
+  same reason `alerts.js` records against `HEALTH_NAMES_MAX`: a list of
+  names is what the reader can act on, and a bare count is not, so the
+  cap exists to keep the sentence readable rather than to fit a
+  measurement. At 3 of 13, a summary naming exceptions spells out fewer
+  than a quarter of the roster before falling back to "and N more".
