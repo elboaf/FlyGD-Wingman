@@ -1151,3 +1151,133 @@ def test_the_opacity_slider_can_still_reach_the_stored_floor():
         f"#preview-opacity's min ({low}%) converts to "
         f"{round(low * ceiling / 100)}, not settings' floor of {floor}"
     )
+
+
+# ---- the uploader's columns -------------------------------------------
+#
+# The list is the one place on the page where three files have to agree
+# about the same ordered set of columns: index.html names them, list.js
+# builds a cell per row, and style.css sizes them with a single template
+# shared by the header and the body. Nothing checked that agreement until
+# the Age column was restored, and the failure mode is quiet -- a header
+# with no cell under it draws a heading over the NEXT column's values,
+# which reads as the data being wrong rather than the markup.
+
+
+def _grid_row_columns() -> list[str]:
+    """The `c-*` classes named by the list header, in document order."""
+    head = re.search(
+        r'<div class="grid-row list-head".*?>(.*?)</div>', HTML, flags=re.DOTALL
+    )
+    assert head, "the list header block moved; this guard cannot find it"
+    return re.findall(r'class="(c-[a-z]+)"', head.group(1))
+
+
+def _row_node_cells() -> list[str]:
+    """The `c-*` classes list.js builds per row, in the order it appends
+    them. Read from the source rather than listed here, because a hand-kept
+    copy is the drift this test exists to catch."""
+    js = _strip_js_comments((WEB / "list.js").read_text(encoding="utf-8"))
+    body = re.search(r"function rowNode\(row\)\s*\{(.*?)\n  \}", js, flags=re.DOTALL)
+    assert body, "rowNode() moved or changed shape; this guard cannot find it"
+    return re.findall(r"WM\.make\(\s*'span',\s*'(c-[a-z]+)'", body.group(1))
+
+
+def _tracks(template: str) -> list[str]:
+    """Split a grid-template-columns value into tracks, respecting the
+    commas inside minmax()."""
+    tracks, depth, current = [], 0, ""
+    for char in template:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char.isspace() and depth == 0:
+            if current:
+                tracks.append(current)
+                current = ""
+            continue
+        current += char
+    if current:
+        tracks.append(current)
+    return tracks
+
+
+def _base_template() -> list[str]:
+    """The tracks in .grid-row's own rule -- the base layout, not a tier."""
+    rule = re.search(r"\.grid-row\s*\{([^}]*)\}", CSS)
+    assert rule, "the .grid-row rule moved; this guard cannot find it"
+    template = re.search(r"grid-template-columns:\s*([^;]+);", rule.group(1))
+    assert template, ".grid-row no longer sets grid-template-columns"
+    return _tracks(template.group(1))
+
+
+def test_the_list_says_how_old_each_recording_is():
+    """A recording's age is a column, not a fact the reader derives from
+    the filename.
+
+    It was dropped in round 3 as "Modified", on the argument that OBS names
+    every recording after its own timestamp so the column printed the same
+    fact twice. That argument was overturned: reading a timestamp and
+    knowing whether something is recent are different acts, and the cell
+    answers the second one. Python has carried the value throughout --
+    RowSnapshot has never stopped sending `date` -- so what shipped for two
+    rounds was a payload field no one rendered, which is precisely the kind
+    of thing that gets deleted as dead on the next pass.
+    """
+    assert "c-date" in _grid_row_columns(), "the list header names no age column"
+    assert "c-date" in _row_node_cells(), "rowNode() builds no age cell"
+    head = re.search(
+        r'<div class="grid-row list-head".*?>(.*?)</div>', HTML, flags=re.DOTALL
+    )
+    assert ">Age<" in head.group(1), (
+        "the age heading should read 'Age' -- 'Modified' was the absolute "
+        "column this replaced, and library.format_date renders a relative "
+        "string, so the old heading would mislabel the values under it"
+    )
+
+
+def test_the_header_the_rows_and_the_grid_template_name_the_same_columns():
+    """One template sizes the header and every row, so a column that exists
+    in only two of the three files is a silent misalignment rather than an
+    error: the header draws its heading over the next column's values.
+
+    Derived from all three sources rather than compared against a list
+    typed here, per the repo's rule that anything derived is derived or
+    asserted, never retyped.
+    """
+    header = _grid_row_columns()
+    cells = _row_node_cells()
+    assert header == cells, (
+        f"the list header names {header} but rowNode() builds {cells}; "
+        "the shared grid template makes any disagreement a misalignment"
+    )
+    tracks = _base_template()
+    assert len(tracks) == len(header), (
+        f"{len(header)} columns ({header}) but {len(tracks)} tracks in "
+        f".grid-row's template ({tracks}); a short template silently packs "
+        "the trailing columns into the last track"
+    )
+
+
+def test_a_column_dropped_at_a_narrow_width_takes_its_heading_with_it():
+    """Hiding a cell must be qualified with `.grid-row >`.
+
+    `.c-date` on its own is (0,1,0) and loses to `.list-head > span`, which
+    is (0,1,1) -- so an unqualified rule hides the body cell and KEEPS the
+    heading, which is the exact header/row disagreement the shared template
+    exists to make impossible. style.css warns about this in prose; this is
+    the same rule as a test.
+    """
+    offenders = []
+    for selector, block in re.findall(r"([^{}]+)\{([^}]*)\}", CSS):
+        if not re.search(r"display:\s*none", block):
+            continue
+        for part in selector.split(","):
+            part = part.strip()
+            if re.search(r"\.c-[a-z]+", part) and ".grid-row >" not in part:
+                offenders.append(part)
+    assert not offenders, (
+        "these rules hide a list column without qualifying through "
+        f"`.grid-row >`, so the heading survives the cell: {offenders}"
+    )

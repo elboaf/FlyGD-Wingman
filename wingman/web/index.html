@@ -43,22 +43,38 @@
              select-all checkbox this column does not offer. -->
         <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
         <span class="c-name"   data-sort="filename">Filename</span>
-        <!-- No "Modified" column (round 3, finding 8; round 2's Uploader 6
-             deferred). It printed the same fact Filename already carries:
-             every recording OBS names embeds its own timestamp, and the
-             maintainer's account of the loop names Filename and Length as
-             the two columns it runs on. The window floor has dropped this
-             column since round 2 and kept Size, and nothing was reported
-             lost -- that A/B is what settled it for every width.
+        <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
+             it is back by request, and the heading is deliberately not the
+             one that left).
 
-             What goes with it, stated because it is a real cost and not an
-             oversight: the mtime itself, which legitimately differs from
-             the filename for a recording that was copied or remuxed, and
-             the `date` sort control. That control only ever restored the
-             list's DEFAULT order (list.js sorts `date` by delivery index,
-             and Python delivers newest-first), so what is lost is a way
-             back to an order the list already opens in -- and the floor
-             layout has shipped that same loss since round 2. -->
+             What finding 8 argued, kept because it is still half right:
+             OBS names a recording after its own timestamp ("Fight
+             2026-08-21 06-49-29.mkv" -- confirmed with the maintainer as
+             the default template), so an ABSOLUTE time here printed the
+             filename's fact twice, and did it in a column wide enough to
+             be worth the name track's width instead.
+
+             What it got wrong is that the reader's question was never
+             "when was this recorded". It is "is this the one I just
+             finished", and a timestamp answers that only after arithmetic
+             against the current time -- per row. library.format_date has
+             rendered a RELATIVE string since before the column was
+             dropped -- "just now", "5m ago", "3h ago", "yesterday",
+             "6d ago", then a calendar date ("Aug 21", or "2025 Nov 02"
+             outside the current year) -- which is why the cell is worth
+             a track again, and why it cannot be labelled "Modified": the
+             values under that heading would not be modification times.
+
+             The mtime genuinely differs from the name for a recording that
+             was copied or remuxed, so this is a second fact rather than a
+             restatement -- that was true when finding 8 wrote it off, too.
+
+             The `date` sort control comes back with it. It orders by
+             delivery index rather than by this cell's text (Python delivers
+             newest-first); format_date's docstring is explicit that a text
+             sort would put "Aug" before "Dec" and "2 days ago" before
+             "3h ago". -->
+        <span class="c-date"   data-sort="date">Age</span>
         <span class="c-size"   data-sort="size">Size</span>
         <span class="c-len"    data-sort="duration">Length</span>
         <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>

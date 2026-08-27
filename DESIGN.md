@@ -140,6 +140,17 @@ that the tier rendering **at** the floor needs exactly `MIN_WIDTH` —
 `tests/test_uploader_page.py` asserts it, and it used to be the six-column
 tier that held that position.
 
+**A six-column layout exists again, and the distinction is the whole
+reason it is allowed to.** The `Age` column was restored above the floor,
+so five columns is now the *floor* layout rather than the widest one. The
+old six-column tier sat ON the floor with a 120px name track, which is why
+it truncated the filename; this one needs 924 and sheds at 923, so the
+layout that renders at 840 is still the five-column one that fits there
+exactly. "The tier at the floor needs exactly `MIN_WIDTH`" is unchanged —
+what changed is that the tier at the floor is no longer also the base, and
+the test was updated to assert that separation rather than their
+equality.
+
 A rule the window cannot currently reach is not thereby wrong, and
 unreachable is not the same as removable. Some of these blocks are
 **required by a test**, and this file has already undercounted them once,
@@ -614,6 +625,12 @@ not reproduce and is not a rule here.** Measured, the header's ink begins
 at x=477 and the data's at x=479; `justify-content` computes to the flex
 default and the cell's `text-align` is `start`. Both left, since the
 replatform. Recorded so it is not re-derived from the walkthrough.
+
+That column's successor, `Age`, *is* right-aligned — in the cell and in
+the header together, sharing `.c-size`'s rule and its `order: -1` arrow
+treatment. That is the finding's actual rule being followed (a header is
+anchored like its column), not the finding reproducing: what Uploader 4
+alleged was a header anchored *opposite* its data.
 
 **Treat that file's pixel figures as unverified until re-measured in CSS
 px.** Some are physical pixels read off 200% captures and halve cleanly;

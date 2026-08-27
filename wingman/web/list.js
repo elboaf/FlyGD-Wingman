@@ -83,10 +83,17 @@
       return an < bn ? -1 : an > bn ? 1 : 0;
     }
     if (key === 'date') {
-      // The date CELL is a rendered string ("Aug 21  19:04") and cannot be
-      // ordered as text — format_date's docstring warns a text sort would
-      // put Aug before Dec. Python delivers rows newest-first, so delivery
-      // INDEX is the date order, and it stays correct across years.
+      // The date CELL is a rendered string ("3h ago", "yesterday",
+      // "2025 Nov 02") and cannot be ordered as text -- format_date's
+      // docstring warns a text sort would put Aug before Dec, and the
+      // relative forms are worse still ("2d ago" before "3h ago").
+      // Python delivers rows newest-first, so delivery INDEX is the date
+      // order, and it stays correct across years.
+      //
+      // The example above read "Aug 21  19:04" until the Age column came
+      // back: that was the ABSOLUTE format this column had before it was
+      // dropped, and the comment outlived it by two rounds because no
+      // header reached this branch to contradict it.
       return b._index - a._index;
     }
     if (key === 'size') return parseSize(a.size) - parseSize(b.size);
@@ -130,6 +137,21 @@
     var name = WM.make('span', 'c-name', row.name);
     name.title = row.name;   // the elastic column ellipsises at narrow widths
     node.appendChild(name);
+
+    // Pre-rendered by library.format_date, like every other cell here.
+    // Deliberately not computed in JS from a timestamp: rows.py's Row
+    // docstring makes the rule explicit -- a second implementation of a
+    // format drifts from Python's, and the drift is invisible because
+    // both sides keep working.
+    //
+    // The cost of a relative string, stated because it is real: the list
+    // rebuilds on a new recording, a delete, a folder change or an
+    // explicit refresh, and NOT on a timer (poll_tick refuses to rebuild
+    // mid-upload -- it re-mints row ids and would drop links and
+    // selection). So a window left open with no new recordings keeps the
+    // ages it opened with. Accepted: the case where the ages go stale is
+    // the case where nothing has happened.
+    node.appendChild(WM.make('span', 'c-date', row.date));
 
     node.appendChild(WM.make('span', 'c-size', row.size));
 

@@ -444,18 +444,25 @@ somewhere stale and nothing on that screen is worth reviewing.
       appears over an empty Link cell, a filename, a header, or empty space.
 - [ ] **The list at the minimum window width.** Drag the window to its
       floor. Expected: **five** columns — check, Filename, Size, Length,
-      Link — with **Modified absent**, and the filename shown WHOLE, with
-      no ellipsis. Widen the window past ~932 CSS px and Modified comes
-      back.
-      **Modified giving way at the floor is the point, not a defect.** At
+      Link — with **Age absent**, and the filename shown WHOLE, with
+      no ellipsis. Widen the window past **923 CSS px** and Age comes
+      back, making six. (923 is derived, not eyeballed:
+      test_uploader_page.py computes it from the declared tracks and fails
+      if the two disagree.)
+      **Age giving way at the floor is the point, not a defect.** At
       840 the six-column layout put the Filename track on a 120px floor
       while an OBS filename measures 205px, so the column carrying the
       row's identity was truncated to "Fight 2026-08-24 17-57-…" — losing
       the seconds, the only characters that tell one row from another —
       while Modified sat intact beside it carrying the same timestamp in a
-      friendlier form. The name floor is 212px now and Modified is what
+      friendlier form. The name floor is 212px now and Age is what
       yields. If you see six columns at the floor, or an ellipsis in a
       filename, that is the regression.
+      Age is the restored form of that column and it sheds for the same
+      reason its predecessor did — it is the metadata whose fact the
+      filename most nearly carries already, so it costs the least. What
+      round 3 got wrong was concluding it therefore cost nothing at every
+      width; above 923 it has a track of its own and earns it.
       **This item used to demand three checks at three viewports (840 at
       100%, 672 at 125%, 560 at 150%) and two of them do not exist.** The
       floor is 840 CSS px at every scaling, so there is one width to
@@ -470,25 +477,31 @@ somewhere stale and nothing on that screen is worth reviewing.
       has kept a cell its rows have dropped is the specific failure the
       shared grid template exists to prevent.
       Widen the window back up and confirm the columns come back.
-- [ ] **The Modified column reads as relative time, not a timestamp.**
-      Widen the window past ~932 CSS px first — Modified is not rendered at
-      the floor any more (see the item above). It
+- [ ] **The Age column reads as relative time, not a timestamp.**
+      Widen the window past 923 CSS px first — Age is not rendered at
+      the floor (see the item above). It
       must say "just now" / "23h ago" / "yesterday" / "4d ago" for the last
       week, and a bare date ("Aug 13", or "2025 Nov 02" outside this year)
       beyond it. It shows the file's MTIME, which is why it must not look
       like the recording timestamp already in the filename: for a copied or
       remuxed recording the two legitimately differ by minutes or hours,
       and printing both as clock times made the app look like it was
-      contradicting itself. The header must read **Modified**, not "Date".
-- [ ] **Sorting by Modified still orders newest-first.** Widen the window
-      until Modified is showing, then click it.
+      contradicting itself. The header must read **Age**, not "Modified"
+      or "Date" — "Modified" was the absolute column this replaced, and
+      the values under it are not modification times.
+      The widest string it can render is the out-of-year form
+      "2025 Nov 02", and the track is sized to exactly that (84px). If a
+      year-prefixed row shows an ellipsis, the track has been narrowed or
+      the bundled Inter failed to load and a wider fallback is in use.
+- [ ] **Sorting by Age still orders newest-first.** Widen the window
+      until Age is showing, then click it.
       The order must follow the underlying mtime, NOT the rendered text — a
       text sort would put "2d ago" before "3h ago" and "Aug" before "Dec".
       Check with a folder holding both a recording from today and one over
       a week old.
 - [ ] **The filename column does not swallow the window.** Widen the window
       well past the default. Filename must stop growing once it fits its
-      text, keeping Modified/Size/Length/Link near it, rather than
+      text, keeping Age/Size/Length/Link near it, rather than
       stretching and pushing them to the far edge with a gap in the middle.
 - [ ] **The empty state names the folder it watched.** Point the app at a
       folder with no recordings in it. Expected: "No recordings in
@@ -750,12 +763,18 @@ behavior that only shows up at size.
       resolves per font, so a header set in a smaller face computed a
       different maximum and parted company with its data only once the
       column got wide enough to reach that cap.
-- [ ] **There is no `Modified` column at any width.** Expected: five
-      columns — the tick, `Filename`, `Size`, `Length`, `Link` — at every
-      window size, wide or at the floor. The recording's timestamp is in
-      its filename; the column printed it twice. Note what goes with it:
-      there is no longer a way to sort by file mtime, and the list's
-      default order (newest first) is what that control used to restore.
+- [ ] **The Age heading and its cells appear and disappear together.**
+      Sweep the window slowly across 923 CSS px in both directions.
+      Expected: at 924 and above, an `Age` heading with a value under it
+      in every row; at 923 and below, neither. A heading with no cells
+      under it — or values under the `Size` heading — is the specific
+      failure the shared grid template exists to prevent, and it has a
+      standing cause: `.c-date` alone is (0,1,0) and loses to
+      `.list-head > span` at (0,1,1), so a rule that hides the cell
+      without qualifying through `.grid-row >` keeps the heading.
+      This item replaces round 3's "there is no `Modified` column at any
+      width", which the restored column makes false — and which had been
+      contradicting the width item above it in the meantime.
 - [ ] **Hovering an unreadable Length explains it.** Find a row showing `?`
       in the Length column and rest the pointer on that cell. Expected: a
       tooltip appears after a short delay saying ffprobe could not open the
