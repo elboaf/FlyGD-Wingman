@@ -1614,6 +1614,7 @@ def _visibility_host(monkeypatch, *, enabled, foreground, pids, our_pid=4242):
     h._sweep(libs)
     return h, made, libs, live
 
+
 def test_previews_stay_up_while_a_client_holds_the_foreground(monkeypatch):
     _h, made, _libs, _live = _visibility_host(
         monkeypatch, enabled=True, foreground=0x1000, pids={0x1000: 9999}

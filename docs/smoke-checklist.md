@@ -2907,6 +2907,58 @@ against a placeholder id; only these items are blocked on the registration.
 - [ ] **Character groups: empties itself out.** Move the last member out of
       a group. The rail loses the group and the screen falls back to All.
 
+### Hide previews while you are not in EVE
+
+Nothing automated covers any of this. `_apply_visibility` is the only
+place a preview is hidden, and no test in the suite creates a real window
+— the host tests drive fakes that record a flag.
+
+- [ ] **The default is unchanged.** Fresh install, or a settings file
+      predating the key. Expected: `Hide every preview while you are not
+      in EVE` is UNTICKED and previews behave exactly as before. Absent
+      must read as off; `!== false` — the read every other preview
+      checkbox uses — would blank the screen of every upgrading install,
+      which is why the wm:settings listener uses `=== true` here.
+- [ ] **It hides, and it comes back.** Tick it, then click a browser or
+      Discord. Expected: every preview leaves the screen at once. Click an
+      EVE client: they all come back, in the same positions, without a
+      flicker of re-placement — they were hidden, not destroyed, so
+      nothing is re-registered with DWM on the way back.
+- [ ] **Coming back does not steal the foreground.** With the previews
+      hidden, click an EVE client and immediately start typing. Expected:
+      the keystrokes reach the client. `set_hidden` re-shows with
+      `SW_SHOWNOACTIVATE`; a plain `SW_SHOW` would hand the foreground to
+      a preview on every return, and these windows are `WS_EX_NOACTIVATE`
+      precisely so that never happens.
+- [ ] **All clients minimized.** The literal request. Minimize every EVE
+      client. Expected: the previews go with them. This needs no separate
+      code path — a minimized window cannot hold the foreground — but it
+      is the case the feature was asked for and deserves its own look.
+- [ ] **Wingman itself does not count as away.** With the box ticked, open
+      Wingman and go to Settings > Previews. Expected: the previews stay
+      on screen and can still be dragged and resized. Strict parity with
+      TriffView would hide them here; that would make the screen that
+      arranges previews the one screen you cannot arrange them from.
+      Check the tray menu and a confirm dialog too — ownership is resolved
+      by process, so all three should behave the same.
+- [ ] **Unticking is immediate.** With the previews hidden and Wingman
+      focused, untick the box. Expected: the previews return on the spot,
+      not up to 700ms later and not only after you click an EVE client.
+      `restyle()` re-runs the visibility pass for exactly this: the person
+      unticking it is by definition looking at Wingman, so a sweep-only
+      path would keep hiding them and the box would look inert.
+- [ ] **A client that logs in while previews are hidden stays hidden.**
+      Tick the box, click a browser, then launch or log in another
+      character. Expected: no lone preview appears. Windows are created
+      visible, so the hide is re-applied every sweep rather than only when
+      the answer changes.
+- [ ] **An alert raised while hidden survives until you return.** Tick the
+      box with alerts on and `persist_until_selected` at its default.
+      Trigger an alert on a client while you are in a browser. Expected:
+      nothing is visible while away, and the ring is there — still
+      pulsing — when you click back into EVE. This is the feature's real
+      cost, and the hint under the checkbox says so.
+
 ### Frozen build
 
 - [ ] **LOAD-BEARING: the installed build serves `skills.js`.** Install the

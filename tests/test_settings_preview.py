@@ -295,8 +295,6 @@ def test_hide_on_lost_focus_falls_back_when_it_is_not_a_bool():
     """Same shape as snap: a non-bool in the file is not a reason to
     start hiding a user's previews."""
     assert (
-        settings.validated_preview({"hide_on_lost_focus": "yes"})[
-            "hide_on_lost_focus"
-        ]
+        settings.validated_preview({"hide_on_lost_focus": "yes"})["hide_on_lost_focus"]
         is False
     )

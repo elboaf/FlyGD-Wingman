@@ -57,7 +57,11 @@
    'set_preview_lock_aspect',
    // Same shape once more: a discrete checkbox settings.js reverts on
    // anything that is not `applied`.
-   'set_preview_lock_default'
+   'set_preview_lock_default',
+   // And again. The harness cannot show what this one DOES -- hiding
+   // happens in the preview host, which ?dev=1 has none of -- only that
+   // the checkbox renders, commits and reports.
+   'set_preview_hide_on_lost_focus'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -463,6 +467,11 @@
             // absent while this is off, so the shipped-default value would
             // leave half the exception UI unreachable in the harness.
             minimize_inactive_clients: true,
+            // TRUE, against a shipped default of false: the harness is
+            // where the checkbox is eyeballed, and a fixture matching the
+            // default cannot show that settings.js reads the payload
+            // rather than leaving the box at its markup state.
+            hide_on_lost_focus: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
               events: {
