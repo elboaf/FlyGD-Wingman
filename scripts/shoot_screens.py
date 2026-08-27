@@ -55,6 +55,30 @@ SCREENS = (
     Screen("dialog", "Dialog", "main", None, False),
 )
 
+# The dialog screen stages a confirm by hand -- an empty recording folder
+# has nothing to delete, so the real path cannot be driven -- and what it
+# staged did not resemble what the app raises.
+#
+# Api._delete_worker composes the real body as a heading, one bulleted
+# filename per line, and the cost; it passes destructive=True, so panel.js
+# renders Confirm as .btn.danger and marks the dialog destructive. The
+# harness passed neither the flag nor that shape, so every set ever shot
+# showed a one-line body under a brand-purple Confirm -- the exact colour
+# inversion the comment at panel.js:370 records as ALREADY FIXED, staged
+# by the tool that is supposed to prove it is fixed. Two reviewers filed
+# it as a live regression before the cause was found.
+#
+# Two names, not one: the list is what gives the body its shape, and a
+# single line hides that the dialog enumerates what it is about to
+# destroy. Keep this in step with _delete_worker if that copy changes.
+DIALOG_TITLE = "Confirm Delete"
+DIALOG_NAMES = ("2026-08-27 21-14-03.mkv", "2026-08-27 21-31-58.mkv")
+DIALOG_BODY = (
+    "Permanently delete these files from disk?\n\n"
+    + "\n".join(f"  • {name}" for name in DIALOG_NAMES)
+    + "\n\nThis cannot be undone."
+)
+
 
 def screens_for_gate(eve_shown: bool) -> tuple[list[Screen], list[Screen]]:
     """Split SCREENS into what to shoot and what the EVE gate hides.
@@ -154,6 +178,7 @@ def build_manifest(
     python: str,
     viewport: dict,
     eve_shown: bool,
+    engine_present: bool,
     shots: list[dict],
     skipped: list[Screen],
 ) -> dict:
@@ -162,6 +187,12 @@ def build_manifest(
     A run that shot four screens because the EVE gate was off is correct; a
     run that shot four and looks truncated is not. The difference is only
     visible if the gate state and the skip list are recorded.
+
+    `engine_present` is the same kind of claim about a screen rather than
+    the set: false means Settings > Bookmarks shot its engine-missing
+    error, which is a property of this tool (see ensure_engine) and not of
+    the app. Required, not defaulted -- a provenance field that can be
+    silently omitted is the bug this field exists to prevent.
     """
     return {
         "branch": branch,
@@ -170,6 +201,7 @@ def build_manifest(
         "python": python,
         "viewport": viewport,
         "eve_shown": eve_shown,
+        "engine_present": engine_present,
         "screens_total": len(SCREENS),
         "shot_count": sum(1 for s in shots if not s.get("error")),
         "failed": [s["key"] for s in shots if s.get("error")],
@@ -405,9 +437,16 @@ def walk(
         try:
             if screen.key == "dialog":
                 cdp.evaluate("WM.route('main')")
+                # Concatenated rather than an f-string: the third argument
+                # is a JS object literal, and doubling its braces to escape
+                # them reads as a typo in the one line whose point is that
+                # the flag is passed.
                 cdp.evaluate(
-                    "WM.confirm('Delete recording?',"
-                    " 'This removes the local file. It cannot be undone.')"
+                    "WM.confirm("
+                    + json.dumps(DIALOG_TITLE)
+                    + ", "
+                    + json.dumps(DIALOG_BODY)
+                    + ", {destructive: true})"
                 )
             else:
                 cdp.evaluate(f"WM.route({screen.route!r})")
@@ -445,6 +484,59 @@ def _probe_interpreter(path: str) -> bool:
         [path, "-c", "import webview, pystray"], capture_output=True, check=False
     )
     return out.returncode == 0
+
+
+def ensure_engine(checkout: str, python: str) -> bool:
+    """Fetch the AutoHotkey engine into the checkout. Returns whether it is
+    there afterwards.
+
+    Without this the Bookmarks shot is not merely incomplete, it is WRONG.
+    AutoHotkeyU64.exe is downloaded at build time by
+    packaging/fetch_autohotkey.py and never committed, so a source checkout
+    -- which is exactly what this tool launches -- always reports "The
+    bookmark engine is missing from this installation. Reinstall FlyGD
+    Wingman to restore it.", and the status strip always reads
+    SIG - ROOT - NEXT with no values (bookmarks.js gates them on
+    state === 'running', deliberately: a stale root gets acted on).
+
+    So every set ever shot showed a primary feature reporting itself
+    broken, in a way indistinguishable from a real regression, and the
+    screen behind the error -- the actual bind list -- has never been
+    reviewed by anyone.
+
+    paths.engine_exe() already falls back to packaging/bin in a non-frozen
+    run, which is where the fetcher writes, so this needs no cooperation
+    from the app. The fetcher is idempotent and self-skips when the pinned
+    sha256 already matches.
+
+    Non-fatal on purpose, and called BEFORE the incumbent is asked to quit
+    for the same reason the interpreter is resolved there: a network
+    failure must not leave the user with no app and no screenshots.
+    Offline, the old behaviour is still eight good screens, and the
+    manifest records which kind of set this was.
+    """
+    exe = pathlib.Path(checkout) / "packaging" / "bin" / "AutoHotkeyU64.exe"
+    if exe.exists():
+        return True
+    script = pathlib.Path(checkout) / "packaging" / "fetch_autohotkey.py"
+    if not script.exists():
+        print(f"No {script}; Bookmarks will shoot its engine-missing state.")
+        return False
+    print("Fetching the AutoHotkey engine so Bookmarks shoots its real state...")
+    out = subprocess.run(
+        [python, str(script)], capture_output=True, text=True, check=False
+    )
+    if out.returncode != 0 or not exe.exists():
+        detail = (out.stderr or out.stdout).strip().splitlines()
+        print(
+            "Could not fetch the engine, so Settings > Bookmarks will show "
+            '"the bookmark engine is missing" -- that error is this tool, '
+            "not the app."
+        )
+        if detail:
+            print(f"  {detail[-1]}")
+        return False
+    return True
 
 
 def _search_interpreters() -> list[str]:
@@ -491,6 +583,9 @@ def main(argv: list[str] | None = None) -> int:
     default_out = pathlib.Path(args.checkout) / "tmp" / "screens" / stamp
     out_dir = pathlib.Path(args.out) if args.out else default_out
 
+    # Before the incumbent goes down, for the reason stated above it.
+    engine_present = ensure_engine(args.checkout, python)
+
     incumbent = find_incumbent()
     if incumbent:
         print(f"Found running: {incumbent}")
@@ -525,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
             python=python,
             viewport=viewport,
             eve_shown=eve_shown,
+            engine_present=engine_present,
             shots=shots,
             skipped=skipped,
         )
