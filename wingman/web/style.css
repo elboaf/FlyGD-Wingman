@@ -1535,10 +1535,16 @@ button.btn:disabled,
    .check wrapper's 15px box plus its 9px gap), so the exception reads as
    belonging to the rule above it rather than to the control below.
 
-   The gap above is deliberately smaller than the gap below: the collapsed
-   summary is one line, and equal gaps let it read as a heading for the
-   NEXT toggle. */
-.pv-exc { margin: 2px 0 10px 24px; font-size: var(--fs-muted); }
+   The gap above comes from the preceding .row's own `margin-bottom: 10px`,
+   not from any margin declared here: adjacent block margins collapse to
+   their larger value, so a smaller top margin on this element is discarded
+   rather than added. Top margin is 0 for that reason -- declaring a small
+   positive number here would only misdescribe what already happens. The
+   20px below is what actually creates the asymmetry: the collapsed summary
+   is one line, and a 10px/10px gap either side lets it read as a heading
+   for the NEXT toggle rather than a note on the one above. Measured
+   10px above / 20px below at the 840x625 floor. */
+.pv-exc { margin: 0 0 20px 24px; font-size: var(--fs-muted); }
 .pv-exc summary { cursor: pointer; color: var(--text-dim); }
 .pv-exc summary:hover { color: var(--text); }
 /* Same column treatment .es-roster uses on Profiles, and for the same

@@ -397,22 +397,30 @@ and not the ceiling.
 
 ## Open items, measured and closed
 
-- **The disclosure's vertical grouping.** Measured collapsed (the state a
-  reader normally sees) in the CDP harness at the 840x625 floor, on both
-  blocks: the gap above and the gap below each render at **10.00px**, not
-  the intended 2px above / 10px below. `.pv-exc`'s own
-  `margin: 2px 0 10px 24px` does carry that asymmetry on paper, but it
-  never reaches the page. Its neighbour on both sides is a `.row`, and
+- **The disclosure's vertical grouping.** First measured collapsed (the
+  state a reader normally sees) at the 840x625 floor with the original
+  `margin: 2px 0 10px 24px`: both gaps rendered at **10.00px**, not the
+  intended 2px above / 10px below. `.pv-exc`'s own top margin never
+  reaches the page — its neighbour on both sides is a `.row`, and
   `.row { margin-bottom: 10px }` (`style.css:597`) sits directly above and
   below every `.pv-exc` in the DOM; adjacent block margins collapse to
-  their larger value rather than summing, so the row's own 10px wins over
-  `.pv-exc`'s 2px top margin every time, and its 10px bottom margin simply
-  matches the row's 10px on the way out. The two gaps are not merely
-  close — they are the same rendered value on both `preview-nm-exceptions`
-  and `preview-lock-exceptions` — so the "closer to the toggle above"
-  relationship this design specified does not exist in the rendered page.
-  Recorded here rather than fixed: changing `.pv-exc` or `.row` margins is
-  a style change outside this task, left for the controller to rule on.
+  their larger value rather than summing, so the row's own 10px always won
+  over `.pv-exc`'s 2px top margin, while its 10px bottom margin simply
+  matched the row's 10px on the way out. The two gaps were identical on
+  both `preview-nm-exceptions` and `preview-lock-exceptions`, so the
+  "closer to the toggle above" relationship this design specified did not
+  exist in the rendered page.
+
+  Ruling: fight the effect rather than the cause. The gap above cannot be
+  reduced by declaring a smaller margin here — that number is discarded by
+  collapsing no matter what it is — so `.pv-exc` now declares `margin: 0 0
+  20px 24px`. Top is `0` because the real gap above is the preceding row's
+  10px and a small positive number here would misdescribe that. Bottom
+  widens to 20px, giving a 2:1 ratio against the fixed 10px floor above —
+  grouping without fighting the collapse. Re-measured after the change, on
+  both blocks: **10.00px above, 20.00px below.** The style-css comment
+  above `.pv-exc` now names this mechanism directly, rather than asserting
+  a ratio the box model discarded.
 - **Truncation width for the summary.** `previews.js`'s `EXC_NAMES_MAX = 3`
   (`:895`) was chosen against the maintainer's own roster — thirteen
   characters, the size the rest of this document and
