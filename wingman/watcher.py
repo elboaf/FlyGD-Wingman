@@ -11,10 +11,13 @@ size alone is not evidence of anything, because OBS's muxer does not grow
 the file smoothly. See file_is_closed below.
 """
 
+import ctypes
 import json
 import logging
 import sys
+from ctypes import wintypes
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from . import library
@@ -26,16 +29,27 @@ logger = logging.getLogger(__name__)
 _WRITER_STILL_HOLDS_IT = frozenset({32, 33})
 
 
-def _create_file_exclusive(path: str) -> tuple[bool, int]:
-    """Open *path* denying all sharing. Returns (opened, last_error).
+@lru_cache(maxsize=1)
+def _kernel32():
+    """The CreateFileW binding, built once.
 
-    windll is bound here rather than at import so this module still imports
-    on Linux, where the whole test suite runs.
+    Cached for the reason dpapi.py:63-66 and preview/win32.py record: the
+    DLL handle and its argtypes/restype are process-global mutations, so
+    redoing them on every probe -- once per settled recording per poll,
+    forever -- is wasted work rather than just noise.
+
+    ctypes and ctypes.wintypes import fine on Linux; ctypes.WinDLL is what
+    does not exist there, so the binding is built lazily in here and this
+    module still imports for the suite. The layout preview/win32.py:1-9
+    establishes.
     """
-    import ctypes
-    from ctypes import wintypes
-
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # HANDLE CreateFileW(LPCWSTR, DWORD, DWORD, LPVOID, DWORD, DWORD, HANDLE)
+    # Declared in full for the reason win32.py:10-16 records: undeclared,
+    # ctypes marshals the returned HANDLE as a 32-bit int, so the
+    # INVALID_HANDLE_VALUE comparison below misses on a 64-bit build -- a
+    # locked file would read as opened, and this bug would come straight
+    # back with nothing in the diff to explain it.
     kernel32.CreateFileW.restype = wintypes.HANDLE
     kernel32.CreateFileW.argtypes = [
         wintypes.LPCWSTR,
@@ -46,6 +60,14 @@ def _create_file_exclusive(path: str) -> tuple[bool, int]:
         wintypes.DWORD,
         wintypes.HANDLE,
     ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
+def _create_file_exclusive(path) -> tuple[bool, int]:
+    """Open *path* denying all sharing. Returns (opened, last_error)."""
+    kernel32 = _kernel32()
     handle = kernel32.CreateFileW(
         str(path),
         0x80000000,  # GENERIC_READ
@@ -55,7 +77,7 @@ def _create_file_exclusive(path: str) -> tuple[bool, int]:
         0x80,  # FILE_ATTRIBUTE_NORMAL
         None,
     )
-    if handle == wintypes.HANDLE(-1).value:
+    if handle == wintypes.HANDLE(-1).value:  # INVALID_HANDLE_VALUE
         return False, ctypes.get_last_error()
     kernel32.CloseHandle(handle)
     return True, 0
