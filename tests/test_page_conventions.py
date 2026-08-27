@@ -683,6 +683,93 @@ def test_the_type_scale_comment_still_describes_the_type_scale():
     )
 
 
+def test_every_comment_in_the_stylesheet_opens_and_closes_exactly_once():
+    """A stray `*/` silently deletes the rule that follows it.
+
+    This sheet is mostly comment by volume, and its comments are edited
+    far more often than its declarations. Replace a comment's tail and
+    leave the old `*/` behind and you get two closers: the comment ends at
+    the first, the prose after it becomes a qualified-rule PRELUDE, CSS
+    error recovery reads that prelude up to the next `{` — which is the
+    real selector — and drops the whole block as invalid.
+
+    That happened on this branch to `.pv-master`. The symptom was not a
+    parse error anywhere: `.pv-master > .row` on the following line still
+    applied, so the block kept exactly enough styling to look deliberate
+    while its display, gap, padding and border were all gone.
+
+    NOTHING ELSE HERE CAN SEE IT. Every other guard in this file reads the
+    sheet lexically — they match selectors and declarations as text, and
+    text is exactly what a dropped rule still is. Only the browser knows,
+    and no test starts one.
+
+    Checks the property directly rather than counting: `/*` and `*/` in
+    equal numbers is true of the broken file too (the stray closer came
+    with a real opener elsewhere). What has to hold is that a closer never
+    appears while the scanner is outside a comment, and that the file does
+    not end inside one. CSS comments do not nest, so a `/*` seen while
+    already inside one is content, not a second opener.
+
+    The second assertion catches the OTHER half, which the first cannot
+    see: DELETE a closer instead of adding one and the tokens still
+    balance, because the comment simply runs on to the next comment's
+    closer and eats every rule in between. The tell is a rule opening at
+    column 0 inside a comment body. Every comment in this sheet is
+    indented, including the many that quote CSS at themselves, so a
+    selector starting hard against the left margin is never comment text.
+    """
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+
+    i, line, in_comment, opened_at = 0, 1, False, None
+    swallowed = []
+    at_line_start = True
+    while i < len(css):
+        if css[i] == "\n":
+            line += 1
+            i += 1
+            at_line_start = True
+            continue
+        pair = css[i : i + 2]
+        if not in_comment and pair == "/*":
+            in_comment, opened_at = True, line
+            i += 2
+            at_line_start = False
+            continue
+        if in_comment and pair == "*/":
+            in_comment = False
+            i += 2
+            at_line_start = False
+            continue
+        assert not (not in_comment and pair == "*/"), (
+            f"style.css:{line} closes a comment that was never opened. The "
+            f"CSS after it is read as a selector prelude and the next rule "
+            f"is dropped whole — silently, because every guard in this file "
+            f"reads the sheet as text"
+        )
+        # A rule opening hard against the left margin, inside a comment.
+        if in_comment and at_line_start and not css[i].isspace():
+            eol = css.find("\n", i)
+            text = css[i : eol if eol != -1 else len(css)]
+            if text.rstrip().endswith("{"):
+                swallowed.append((line, text.strip()[:60], opened_at))
+        at_line_start = False
+        i += 1
+
+    assert not in_comment, (
+        f"style.css: the comment opened at line {opened_at} is never closed, "
+        f"so everything after it is swallowed"
+    )
+    assert not swallowed, (
+        "these rules open at column 0 INSIDE a comment, which means a "
+        "comment's closer was deleted and the comment now runs on and eats "
+        "them: "
+        + "; ".join(
+            f"style.css:{ln} {sel!r} (swallowed by the comment opened at line {opened})"
+            for ln, sel, opened in swallowed
+        )
+    )
+
+
 def test_the_uppercase_tracked_labels_split_headings_from_sub_labels():
     """Four rules carry the `.14em` uppercase treatment. Two ranks, not one.
 

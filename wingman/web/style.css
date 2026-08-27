@@ -1587,7 +1587,7 @@ button.btn:disabled,
    the hint INSIDE the third row that carries `hidden`, so the row stayed
    a 0-height item and still took its gap. Measured before the row-collapse
    rule below existed: 93px with previews on, and a 10px gap spent on
-   nothing. The two rules are one mechanism and neither works alone. */
+   nothing. The two rules are one mechanism and neither works alone.
 
    No type change on the label. The switch stays --fs-body like every
    other checkbox on the card, because what is being said is "these belong
@@ -1602,6 +1602,20 @@ button.btn:disabled,
   border-bottom: 1px solid var(--field-border);
 }
 .pv-master > .row { margin-bottom: 0; }
+/* Both hints in this block explain the same checkbox, so both take the
+   24px step that says so. The shared rule cannot reach this one:
+   `.settings .row:has(> .check) + .row > .hint` indents a hint whose
+   PREVIOUS ROW holds the checkbox, and #preview-depends is two rows down
+   -- the "Click a preview…" row sits between them and has no `.check` of
+   its own. Left alone the two sentences stacked 24px apart inside one
+   bordered block, which reads as a mis-indent precisely because they are
+   adjacent and identical in kind.
+
+   By id, because the id is what makes it the exception: the selector has
+   to out-specify (0,5,0), and `.pv-master .hint` at (0,2,0) would lose
+   while looking like it had won -- the failure this branch already made
+   once with `.pv-master + .bind-group`. */
+#preview-depends { margin-left: 24px; }
 
 /* A continuation row whose hint contributes nothing must cost no line.
    Such a row holds an empty `.lab` and one `.hint`, and `.lab:empty`

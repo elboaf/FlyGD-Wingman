@@ -915,8 +915,9 @@
 
 // ---- Snap to neighbours and screen edges -------------------------------
 // Same shape as preview-show-labels above: a per-field endpoint that
-// reports {applied, persisted, error}, a box that goes back if the write
-// is refused, and the previews-off note when the setting is inert.
+// reports {applied, persisted, error}, and a box that goes back if the
+// write is refused. The previews-off note is NOT here any more --
+// #preview-depends states it once for the whole card.
 // set_preview_snap's writer is _write_preview_setting, same as show_labels,
 // so a persistence failure always comes back as `applied: false` -- there
 // is no separate "saved for this session only" case to report here.
@@ -937,7 +938,21 @@
         say((res && res.error) || 'Could not save this.');
         return;
       }
-      say('Snapping is ' + (wanted ? 'on' : 'off') + '.');
+      // The checkbox itself is the success feedback, which is the rule the
+      // show-labels block above states and the one this block did not
+      // follow: it confirmed with "Snapping is on.", a sentence the label
+      // beside the box already says.
+      //
+      // That was survivable while this slot held a default hint of about
+      // the same height -- the confirmation replaced it and the card did
+      // not move. Round 6 deleted that hint (it inverted the label and
+      // said nothing else), so the slot is empty, its row is collapsed by
+      // the empty-row rule in style.css, and an unconditional confirmation
+      // here would ADD a line on first toggle and never take it back.
+      // Clearing restores the collapsed row instead. Errors are unaffected
+      // -- the branch above still speaks, and for this endpoint a failed
+      // write arrives as `applied: false` rather than as a silent success.
+      say('');
     });
   });
 
