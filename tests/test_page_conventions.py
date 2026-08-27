@@ -1120,6 +1120,79 @@ def test_the_previews_grid_drops_exactly_one_track_with_never_minimize():
     )
 
 
+def _makerow_body() -> str:
+    """previews.js's makeRow, comments stripped, up to its `return row`.
+
+    Comments first: the prose around this function names the very controls
+    the counts below are derived from, and a naive scan would count the
+    sentences describing an append as appends.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    return src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+
+
+def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
+    """The invariant the delta test above cannot see.
+
+    `.row` is display:contents, so the grid reads one flat stream of cells.
+    Adding a control means editing a track count in style.css AND an append
+    in previews.js -- two files -- and the delta test passes happily when
+    BOTH templates are wrong by the same amount. This derives the cell
+    count from makeRow itself rather than restating it.
+
+    The label is excluded: `#preview-binds .row > .lab` is
+    `grid-column: 1 / -1`, so it spans the row rather than sitting in one
+    of the tracks the controls occupy. The `else` branch is excluded
+    because its fillers stand in for the character branch's controls one
+    for one -- counting both would double every cell.
+    """
+    body = _makerow_body()
+    halves = body.split("} else {", 1)
+    assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
+    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(") - 1
+
+    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert m, "#preview-binds has no rule block"
+    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+
+    assert cells == int(tracks.group(1)), (
+        f"makeRow appends {cells} cells per character row but #preview-binds "
+        f"declares {tracks.group(1)} tracks -- every row after the first is "
+        f"pulled into the previous row's leftover columns"
+    )
+
+
+def test_an_opted_out_character_row_disables_its_own_controls():
+    """The chosen shape for a character opted out of previews: the row
+    stays visible -- there has to be somewhere to turn it back on -- but
+    everything else it offers is inert, because none of it can do anything
+    while that character has no window, no registration and no place in
+    the cycle.
+
+    What this pins is that the controls go through WM.setEnabled against
+    the row's own opted-out state, rather than merely being dimmed in CSS:
+    a control that only LOOKS dead still fires on click.
+    """
+    body = _makerow_body()
+    for control in ("button", "clear", "typed"):
+        assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
+            f"makeRow does not gate `{control}` on the row's opted-out state"
+        )
+
+
+def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
+    """The one control that has to stay live on an opted-out row. Gating
+    it with the rest would opt a character out permanently, the only way
+    back being a hand-edited settings file."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    halves = src.split("function makeDisabledCheck(", 1)
+    assert len(halves) == 2, "previews.js has no makeDisabledCheck"
+    body = halves[1].split("return label;", 1)[0]
+    assert "WM.setEnabled" not in body, "the opt-out box gates itself"
+    assert "set_preview_disabled" in body
+
+
 def test_the_opacity_slider_can_still_reach_the_stored_floor():
     """Round 5, C2. `#preview-opacity` is a PERCENTAGE now; the setting it
     writes is still the DWM thumbnail's 0-255 alpha byte, and

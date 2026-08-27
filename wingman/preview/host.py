@@ -144,6 +144,7 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
+        disabled=None,
         snap=None,
         lock_aspect=None,
         clear_layouts=None,
@@ -177,13 +178,19 @@ class PreviewHost:
         self._show_labels = show_labels
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
-        # Both of these are character-name LISTS (preview.never_minimize,
-        # preview.locked), not per-character booleans: a per-character
-        # callable would need the character key at construction time, and
-        # build_preview_host does not have it. _is_never_minimize/
-        # _is_locked below do the per-window membership test.
+        # All three of these are character-name LISTS (preview.never_minimize,
+        # preview.locked, preview.disabled), not per-character booleans: a
+        # per-character callable would need the character key at construction
+        # time, and build_preview_host does not have it. _is_never_minimize/
+        # _is_locked/_is_disabled below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
+        # preview.disabled: characters opted out of previews entirely. Read
+        # live like the rest, and read in THREE places rather than one --
+        # _sweep (no window), _apply_hotkeys (no registration) and
+        # _cycle_keys (not a stop on the walk) -- because the opt-out is a
+        # statement about the character, not about one window.
+        self._disabled = disabled
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
         # open. None means "the caller has not wired this yet" -- see
@@ -591,7 +598,16 @@ class PreviewHost:
         # "kept" -- keeping the old record would leave it pointing at a dead
         # window. Keys survive; handles are re-read.
         self._clients = clients
-        added, removed, _kept = reconcile(set(self._windows), set(clients))
+        # The DESIRED window set, not the discovered one. A character opted
+        # out of previews is still discovered, still reported to the page
+        # and still in _clients -- they simply get no window, which is what
+        # makes ticking the box mid-session close the one already open
+        # (reconcile puts them in `removed`) and unticking it open a new one.
+        #
+        # Filtering `clients` itself instead would take the character off
+        # the page's row list, leaving no row to untick.
+        desired = {key for key in clients if not self._is_disabled(key)}
+        added, removed, _kept = reconcile(set(self._windows), desired)
 
         for key in removed:
             self._windows.pop(key).close()
@@ -707,6 +723,29 @@ class PreviewHost:
         """
         return sorted(key for key in self._clients if not key.startswith("hwnd:"))
 
+    def _registerable(self, table) -> dict:
+        """*table* with opted-out characters dropped.
+
+        Applied here rather than in plan_registrations, which is pure and
+        stays that way -- and applied on every rebind rather than once,
+        because the disabled list changes independently of the binding
+        table: ticking the box does not edit a single chord, so api.py
+        re-pushes the SAME table to force this filter to run again.
+
+        The two cycle chords are untouched: they are app commands, not
+        characters, and there is nothing to opt out of them.
+        """
+        table = dict(table or {})
+        characters = table.get("characters")
+        if not isinstance(characters, dict):
+            return table
+        table["characters"] = {
+            name: chord
+            for name, chord in characters.items()
+            if not self._is_disabled(name)
+        }
+        return table
+
     def _apply_hotkeys(self, libs, table) -> None:
         """Unregister everything, then register the new table."""
         for ident in list(self._registered):
@@ -715,7 +754,7 @@ class PreviewHost:
         self._registered_text.clear()
 
         status = {}
-        for ident, text, action in plan_registrations(table):
+        for ident, text, action in plan_registrations(self._registerable(table)):
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
@@ -785,7 +824,7 @@ class PreviewHost:
             )
             # Fall back to the last chord's target when focus is not on a
             # client at all -- a browser, or Wingman itself.
-            target = cycle.step(self.characters(), anchor or self._last_cycled, value)
+            target = cycle.step(self._cycle_keys(), anchor or self._last_cycled, value)
             self._last_cycled = target
         logger.debug("Preview hotkey fired: %s -> %s", action, target)
         client = self._clients.get(target)
@@ -1245,6 +1284,33 @@ class PreviewHost:
         except Exception:
             logger.exception("Could not read locked; defaulting to unlocked")
             return False
+
+    def _is_disabled(self, stable_key) -> bool:
+        """Whether *stable_key* is opted out of previews entirely, read
+        live. Same guard as _labels_shown.
+
+        Defaults to NOT disabled on a read failure, which is the same
+        posture the other two rosters take: a settings file that cannot be
+        read must leave previews working, not silently blank the screen
+        with nothing on the page to explain it.
+        """
+        if self._disabled is None:
+            return False
+        try:
+            return stable_key in (self._disabled() or [])
+        except Exception:
+            logger.exception("Could not read disabled; defaulting to enabled")
+            return False
+
+    def _cycle_keys(self) -> list:
+        """The characters the cycle keybinds walk.
+
+        characters() minus the opted-out, and deliberately NOT a change to
+        characters() itself: that one feeds the page's row list, which has
+        to keep showing a disabled character or there would be no row left
+        to re-enable them from.
+        """
+        return [key for key in self.characters() if not self._is_disabled(key)]
 
     def _restyle(self) -> None:
         """Push live show_labels/opacity/locked onto every open preview.

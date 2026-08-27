@@ -134,6 +134,18 @@ def _preview_defaults() -> dict:
         # Character names exempt from minimize_inactive_clients. A plain
         # roster list like `seen`, not a per-preview flag.
         "never_minimize": [],
+        # Character names opted out of previews entirely: no mirror window,
+        # skipped by the cycle keybinds, and their own focus keybind is not
+        # registered. Stored as a roster list for the same reason `locked`
+        # is (see below) -- a character can be opted out before ever having
+        # had a preview, so there is no layouts entry to hang it off.
+        #
+        # An opt-out list rather than an opt-in one: absent means shown,
+        # which is what every existing install expects, so a new key needs
+        # no defaults_version bump. The keybind and size a character had
+        # before being opted out are deliberately left in place, so
+        # re-enabling restores them untouched.
+        "disabled": [],
         # Character names whose preview position is locked against drag.
         # Deliberately a top-level list, NOT a flag inside a layouts entry:
         # layout.deserialize drops any entry missing a full rect
@@ -336,10 +348,11 @@ def validated_preview(raw) -> dict:
         section["show_labels"] = raw["show_labels"]
     if isinstance(raw.get("minimize_inactive_clients"), bool):
         section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
-    # Both lists have exactly the roster's constraints, including the
+    # All three lists have exactly the roster's constraints, including the
     # hwnd: rejection: a client at character-select has no stable name to
-    # exempt from minimizing or lock in place.
+    # exempt from minimizing, lock in place, or opt out of previews.
     section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
+    section["disabled"] = preview_roster.deserialize(raw.get("disabled"))
     raw_locked = raw.get("locked")
     combined_locked = list(raw_locked) if isinstance(raw_locked, list) else []
     if stored_version < _PREVIEW_DEFAULTS_VERSION:

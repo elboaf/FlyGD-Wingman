@@ -2455,6 +2455,11 @@ class Api:
             # the one place previews.js already reads it from.
             "locked": list(section.get("locked") or []),
             "never_minimize": list(section.get("never_minimize") or []),
+            # The third of the same kind: characters opted out of previews
+            # entirely. Rides this payload rather than a second round trip
+            # for the same reason the other two do -- row state belongs in
+            # the one place previews.js already reads it from.
+            "disabled": list(section.get("disabled") or []),
             # Sizes for the Size... dialog: what the preview is now, and
             # what its client's shape is, so the page can name the size
             # that would not distort it. client_sizes is sampled on the
@@ -2784,6 +2789,27 @@ class Api:
         result = self._toggle_preview_roster("never_minimize", name, bool(enabled))
         if self._preview_host is not None:
             self._preview_host.restyle()
+        return result
+
+    def set_preview_disabled(self, name, disabled) -> dict:
+        """Persist whether *name* is opted out of previews entirely.
+
+        Not restyle(), unlike the two above: restyle only re-reads style on
+        windows that already exist, and this setting decides whether the
+        window exists at all. request_sweep() is what creates or destroys
+        it -- _sweep filters its desired set on the same list.
+
+        set_hotkeys re-pushes the CURRENT table unchanged. That looks like
+        a no-op and is not: the focus keybind is filtered out at
+        registration time (PreviewHost._registerable), and ticking this box
+        edits no chord, so without a rebind the opted-out character would
+        keep its registration until the next unrelated bind edit.
+        """
+        result = self._toggle_preview_roster("disabled", name, bool(disabled))
+        if self._preview_host is not None:
+            self._preview_host.request_sweep()
+            section = self._state.settings.get("preview", {})
+            self._preview_host.set_hotkeys(section.get("hotkeys") or {})
         return result
 
     # ---- Gamelog alerts --------------------------------------------------

@@ -247,6 +247,28 @@ def test_snap_falls_back_when_it_is_not_a_bool():
     assert settings.validated_preview({"snap": "yes"})["snap"] is True
 
 
+def test_disabled_defaults_empty():
+    assert settings._preview_defaults()["disabled"] == []
+
+
+def test_disabled_runs_through_roster_deserialize():
+    """Same constraints as `never_minimize` and `locked`: a client at
+    character-select has no stable name to opt out of previews."""
+    out = settings.validated_preview({"disabled": ["Alice", "hwnd:123", 5, "Alice"]})
+    assert out["disabled"] == ["Alice"]
+
+
+def test_disabled_survives_a_round_trip_with_no_layout_rect(tmp_path):
+    """A character can be opted out before ever having had a preview, so
+    the list must not hang off a layouts entry -- the same reason `locked`
+    is stored top level rather than on layout.Entry."""
+    path = tmp_path / "settings.json"
+    data = settings.load(path)
+    data["preview"]["disabled"] = ["NeverPreviewed"]
+    settings.save(data, path)
+    assert settings.load(path)["preview"]["disabled"] == ["NeverPreviewed"]
+
+
 def test_the_preview_defaults_are_a_fixed_point_of_their_own_validator():
     """Normalising runs on every save, so a default its own validator
     rewrites would drift the file on the first write. Named as unguarded

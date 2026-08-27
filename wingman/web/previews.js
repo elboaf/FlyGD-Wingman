@@ -10,7 +10,8 @@
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
-               locked: [], never_minimize: [], sizes: {}, client_sizes: {}};
+               locked: [], never_minimize: [], disabled: [],
+               sizes: {}, client_sizes: {}};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -119,6 +120,26 @@
     if (online === false) { lab.classList.add('dim'); }
     row.appendChild(lab);
 
+    // Whether this character is opted out of previews entirely. Everything
+    // else on the row is inert while it is: there is no window to lock, no
+    // registration to rebind and no place in the cycle, so a live control
+    // here would be one that saves a setting nothing reads.
+    //
+    // The NAME is deliberately not dimmed with it. `.dim` on a .lab already
+    // means "not logged in" -- the group note above the list says so in
+    // those words -- and borrowing it for a second meaning would make that
+    // legend false for every opted-out character who is in fact online.
+    // The inert controls and the ticked box carry the state instead.
+    var off = !!(character && isDisabled(character));
+
+    // Track 1 of every row. A cycle row gets a filler rather than a box:
+    // cycle forward/back are app commands, not characters, and there is
+    // nothing to opt them out of. One appendChild rather than an if/else
+    // pair so this row contributes the same cell count either way -- see
+    // the note on the filler branch at the bottom of this function.
+    row.appendChild(character ? makeDisabledCheck(character)
+                              : document.createElement('span'));
+
     var button = WM.make('button', 'bindbtn', gesture || 'Not set');
     var clash = clashes(gesture);
     var shadow = bookmarkClash(gesture);
@@ -168,6 +189,7 @@
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
     });
+    WM.setEnabled(button, !off);
     row.appendChild(button);
 
     var clear = WM.make('button', 'linkbtn', 'Clear');
@@ -176,7 +198,7 @@
     // was live beside a bind reading `Not set`. Same reasoning as the
     // matching control in bookmarks.js -- the two lists build the same
     // row and cannot disagree about when a control is live.
-    WM.setEnabled(clear, !!gesture);
+    WM.setEnabled(clear, !off && !!gesture);
     row.appendChild(clear);
 
     // `Edit…`, not `Type…` -- round 3's B6; the reasoning is on the
@@ -203,9 +225,10 @@
         });
       });
     });
+    WM.setEnabled(typed, !off);
     row.appendChild(typed);
 
-    if (character) { row.appendChild(makeSizeButton(character)); }
+    if (character) { row.appendChild(makeSizeButton(character, off)); }
 
     // Cycle forward/back have no `character` -- they are chords, not
     // characters, and neither Lock nor Never-minimize means anything for
@@ -228,8 +251,10 @@
     // the invariant #preview-binds' grid actually needs; it is the track
     // COUNT that varies, and render() tells the stylesheet which it is.
     if (character) {
-      row.appendChild(makeLockCheck(character));
-      if (minimizeInactive) { row.appendChild(makeNeverMinimizeCheck(character)); }
+      row.appendChild(makeLockCheck(character, off));
+      if (minimizeInactive) {
+        row.appendChild(makeNeverMinimizeCheck(character, off));
+      }
     } else {
       // Three fillers with never-minimize on, two with it off. One stands
       // in for Size…, one for Lock, and the third mirrors the conditional
@@ -237,6 +262,10 @@
       // of being stated twice. A constant here would be right in exactly
       // one of the two states and silently pull every row after this one
       // into the previous row's leftover columns in the other.
+      //
+      // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
+      // the ternary at the top of this function, which runs for both kinds
+      // of row.
       row.appendChild(document.createElement('span'));
       row.appendChild(document.createElement('span'));
       if (minimizeInactive) { row.appendChild(document.createElement('span')); }
@@ -251,8 +280,9 @@
   // Edit…, an empty submission here is a no-op identical to Cancel, not a
   // clear -- there is no "unset size" to clear to, only the fallback this
   // dialog already shows as its default.
-  function makeSizeButton(name) {
+  function makeSizeButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Size…');
+    WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
@@ -319,8 +349,11 @@
   function isNeverMinimize(name) {
     return (state.never_minimize || []).indexOf(name) !== -1;
   }
+  function isDisabled(name) {
+    return (state.disabled || []).indexOf(name) !== -1;
+  }
 
-  // Both checkboxes follow the same shape: read the live membership list
+  // All three checkboxes follow the same shape: read the live membership list
   // for their initial state, write back through the matching endpoint on
   // `change` (DESIGN.md: discrete controls commit on change, never blur),
   // and on a refusal put the box back rather than show a state the app
@@ -331,7 +364,7 @@
   // shortcut for the common case; a push that lands in between (an EVE
   // client opening or closing) still wins because it replaces `state`
   // wholesale and this file always re-renders from it.
-  function makeLockCheck(name) {
+  function makeLockCheck(name, off) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isLocked(name);
@@ -347,6 +380,61 @@
     var label = WM.make('label', 'check', ' Lock');
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
+    return inert(label, box, off);
+  }
+
+  // The row's own master switch: preview.disabled, the character-name list
+  // PreviewHost reads in three places (no window, no hotkey registration,
+  // no place in the cycle). Same shape as the two above, with one
+  // difference that matters -- it is never passed an `off`, because it is
+  // the control that turns `off` back on. Gating it with the rest would
+  // opt a character out permanently, the only way back being a
+  // hand-edited settings file.
+  //
+  // Unlike Lock and Never minimize, this one cannot patch `state` and stop
+  // there: the whole row's controls are drawn from it, so a re-render is
+  // what actually greys them. requestRender rather than render, so it
+  // cannot detach a bind button armed by beginCapture.
+  function makeDisabledCheck(name) {
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = isDisabled(name);
+    var label = WM.make('label', 'check off', ' Off');
+    // The full sentence lives in the tooltip because the WORD cannot be
+    // longer than this. Measured at the 840px floor: the card interior is
+    // 586px and the six existing controls already spend 504.75px of it, so
+    // a seventh track has 81.25px minus a 10px column-gap to live in.
+    // " No preview" measured 93.66 and pushed the row 22.41px past the
+    // card edge, with the grid reporting +32 of overflow -- grid tracks do
+    // not wrap, so that is a clipped control at every window width, not a
+    // reflow. " Off" measures inside the budget.
+    label.title = 'No preview window for this character. Its own keybind '
+                + 'and the cycle keybinds skip it too. Its keybind, size '
+                + 'and position are kept for when you turn it back on.';
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
+    box.addEventListener('change', function () {
+      var wanted = box.checked;
+      WM.send('set_preview_disabled', name, wanted).then(function (res) {
+        if (!res || !res.applied) { box.checked = !wanted; return; }
+        state.disabled = wanted
+          ? (state.disabled || []).concat(name)
+          : (state.disabled || []).filter(function (n) { return n !== name; });
+        requestRender();
+      });
+    });
+    return label;
+  }
+
+  // A control that is present but cannot do anything, for the .check
+  // wrapper. WM.setEnabled sets `disabled` on the node it is given, which
+  // for a checkbox is the INPUT -- but the thing on screen is the .box
+  // span drawn in its place plus the label text, and neither inherits a
+  // disabled input's styling. The class is what style.css hangs the dim
+  // on; the input is what actually stops the click.
+  function inert(label, box, off) {
+    WM.setEnabled(box, !off);
+    label.classList.toggle('inert', !!off);
     return label;
   }
 
@@ -355,7 +443,7 @@
   // the global was off, which is what D6 removed; the `.check.nm.disabled`
   // rule that dimmed it went with it, and style.css records that where the
   // rule used to be.
-  function makeNeverMinimizeCheck(name) {
+  function makeNeverMinimizeCheck(name, off) {
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isNeverMinimize(name);
@@ -376,7 +464,7 @@
               .filter(function (n) { return n !== name; });
       });
     });
-    return label;
+    return inert(label, box, off);
   }
 
   function beginCapture(button, onSet) {
@@ -594,6 +682,7 @@
                                         cycle_prev: ''};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
+    state.disabled = state.disabled || [];
       requestRender();
     });
   }
@@ -650,6 +739,7 @@
                                       cycle_prev: ''};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
+    state.disabled = state.disabled || [];
     requestRender();
   });
 

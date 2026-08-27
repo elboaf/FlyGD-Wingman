@@ -109,6 +109,16 @@
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
+  // Same tier again. The real endpoint also sweeps and rebinds, neither of
+  // which exists under ?dev=1 -- what the harness has to double is the
+  // {applied, persisted, error} shape previews.js reverts the box on, and
+  // the re-render it drives off a successful reply, which is how an
+  // opted-out row's other controls go grey in the browser.
+  api.set_preview_disabled = function (name, disabled) {
+    console.log('DEV api.set_preview_disabled(', name, disabled, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
   // Task 8: a read that validates rather than a plain double -- the page
   // sends whatever was typed and expects {w, h, error} back, mirroring
   // Api.parse_preview_size (geometry.py owns the one definition of what a
@@ -706,6 +716,13 @@
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
       never_minimize: ['Tanuki Solette'],
+      // One opted-out character, and deliberately one that is ONLINE and
+      // holds a keybind ('Zuelo Parvi'): that is the row where the state
+      // is visible -- a live client whose controls are all grey and whose
+      // saved chord is still showing on an inert button. An offline
+      // opted-out row would look almost the same as an ordinary offline
+      // one and would prove nothing.
+      disabled: ['Zuelo Parvi'],
       // Task 8: one character with both a saved size and a live client
       // size ('Aiga Otsolen' -- exercises sizeHint's computed-height
       // branch), one with a client size but no saved one yet (defaults to

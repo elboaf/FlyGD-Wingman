@@ -1486,6 +1486,30 @@ only ever checked by hand.
       is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
       put them` — not under `GLOBAL KEYBINDS`, where it was the one control
       that is not a keybind (round 5's C4).
+- [ ] **`Off` turns one character's preview off, and only that one.** Two
+      clients running, previews on, both mirrored. Tick `Off` on the first
+      character's row. Expected, with no reload: that preview disappears
+      within a sweep (~700ms), the other one is untouched, and the rest of
+      that row — the bind button, `Clear`, `Edit…`, `Size…`, `Lock` and
+      `Never minimize` — goes dim and stops responding to clicks. The
+      row's saved keybind stays legible on the inert button; it is not
+      cleared.
+      Then press that character's own focus keybind: nothing happens, and
+      the chord reaches EVE instead. Press cycle forward repeatedly: the
+      walk visits every other running character and never stops on this
+      one.
+      Untick `Off`: the preview comes back at the position and size it had
+      before, the row's controls go live, and the focus keybind works
+      again. Nothing about the row should need re-entering — the settings
+      were kept, not cleared.
+- [ ] **The seventh column still fits at the window's floor.** Settings >
+      Previews with the minimize toggle ON, so every character row carries
+      all seven controls, at the smallest the window will go. Expected: the
+      row ends inside the card with a gap after `Never minimize`, and
+      nothing is clipped. Grid tracks do not wrap, so an overflow here is a
+      cut-off control at every width, not a reflow — it was measured at
+      608.41px against a 586px card interior on the first draft of this
+      feature, which is why the label is `Off` and not a phrase.
 
 ## EVE bookmark hotkeys
 
