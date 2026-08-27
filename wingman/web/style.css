@@ -1948,6 +1948,37 @@ button.btn:disabled,
 /* Only rendered while something is actually dimmed -- see previews.js. */
 .bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
 
+/* The column headers above the character rows. Built once by previews.js's
+   makeHeadRow, one span per track, riding `.row { display: contents }` so
+   they land in the same grid tracks as the controls they label.
+
+   --fs-muted and sentence case, the same treatment as the recording list's
+   headers: DESIGN.md's rule is that a header sits BELOW body size because
+   it labels the data and is not the data. Deliberately NOT the uppercase
+   .14em treatment .bind-group-name carries -- that rank is for the subhead
+   above, and a second tracked-uppercase run here would compete with it.
+
+   No separate inset. DESIGN.md: "A header row is laid out by the same
+   padding as the rows beneath it, with no separate inset. A header that
+   does not share its column's inset is not labelling that column." The
+   grid gives both the same track, so there is nothing to add.
+
+   There is no sort indicator here and there must not be: these columns do
+   not sort, and the rule about ordering an arrow before a right-aligned
+   label exists for the lists that do. */
+.bind-head > span {
+  font-size: var(--fs-muted); color: var(--text-dim);
+  white-space: nowrap; padding-bottom: 2px;
+}
+/* Sits with the name it qualifies, inside `.lab`, so it scrolls with its
+   own row rather than depending on a legend at the top of the list. Text
+   is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
+   --fs-muted so it reads as an annotation on the name rather than as a
+   second name. */
+.off-tag {
+  margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
+}
+
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;

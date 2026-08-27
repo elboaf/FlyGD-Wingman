@@ -1350,6 +1350,51 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     )
 
 
+def test_the_previews_header_row_names_one_column_per_track():
+    """The header row is a grid row like any other, and gets the same trap.
+
+    makeHeadRow is deliberately NOT part of makeRow -- the count above
+    derives from makeRow's own appends, so a header built there would
+    inflate it by a whole row's worth. That keeps the two counts honest but
+    leaves the header itself unguarded, which is what this closes: the
+    header rides the same `.row { display: contents }` mechanism, so a
+    header that names six columns over a seven-track grid slides every
+    character row below it into the previous row's leftover columns --
+    exactly the failure the makeRow guard exists to catch, one row higher.
+
+    Both states are checked, because the header carries the same
+    conditional cell makeRow does: the Never-minimize column exists only
+    while the global minimize toggle is on (D6), so the header must lose
+    its heading in step or the remaining headings sit over the wrong data.
+
+    Counted from the array literal rather than from `row.appendChild(`:
+    makeHeadRow appends inside a forEach, so the literal-substring trick
+    the makeRow guard uses would count one cell however many it emits.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeHeadRow(" in src, "previews.js has no makeHeadRow"
+    body = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+
+    literal = re.search(r"var cells = \[(.*?)\];", body, re.DOTALL)
+    assert literal, "makeHeadRow no longer builds its cells from an array literal"
+    base = len([part for part in literal.group(1).split(",") if part.strip()])
+    conditional = body.count("cells.push(")
+
+    for selector, expected in (
+        ("#preview-binds", base + conditional),
+        (r"#preview-binds\.no-nm", base),
+    ):
+        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
+        assert m, f"{selector} has no rule block"
+        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
+        assert expected == int(tracks.group(1)), (
+            f"makeHeadRow names {expected} columns but {selector} declares "
+            f"{tracks.group(1)} tracks -- the headings sit over the wrong "
+            f"data, and every row below the header is pulled one track over"
+        )
+
+
 def test_an_opted_out_character_row_disables_its_own_controls():
     """The chosen shape for a character opted out of previews: the row
     stays visible -- there has to be somewhere to turn it back on -- but

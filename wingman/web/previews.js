@@ -126,7 +126,16 @@
     var lab = WM.make('span', 'lab', label);
     // Offline is information, not an error: the binding is still saved and
     // still works the moment that character logs in.
-    if (online === false) { lab.classList.add('dim'); }
+    //
+    // The WORD is the encoding and the dimming reinforces it, not the
+    // other way round. `.dim` alone was colour-only state (WCAG 1.4.1),
+    // explained by a legend above the first row of a list far taller than
+    // the card -- so the explanation was off-screen for most of the rows
+    // that needed it. A word in the name cell travels with its own row.
+    if (online === false) {
+      lab.classList.add('dim');
+      lab.appendChild(WM.make('span', 'off-tag', 'offline'));
+    }
     row.appendChild(lab);
 
     // Whether this character is opted out of previews entirely. The
@@ -407,6 +416,25 @@
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isLocked(name);
+    // No word beside the box: the column header says "Lock" once. The
+    // accessible name moves onto the INPUT rather than being dropped --
+    // the label element is what a screen reader would have read, and an
+    // empty one leaves thirteen unnamed checkboxes. `.check input` is
+    // position:absolute, so it is not a flex item and the wrapper's 9px
+    // gap reserves no space beside a box with no text.
+    //
+    // The wrapper is built HERE, before the listener, and that ordering is
+    // load-bearing: test_page_conventions.py looks for `'box'` within 600
+    // characters of `.type = 'checkbox'`, and the listener below is long
+    // enough to push it out of that window. The rule it guards is real --
+    // a bare input is a white Win32 widget on a dark card -- so the fix is
+    // to keep the wrapper next to the input, not to widen the window.
+    box.setAttribute('aria-label', 'Lock ' + name + "'s preview in place");
+    var label = WM.make('label', 'check', '');
+    label.title = 'Stops this preview being moved by a left drag. A right '
+                + 'drag still moves it.';
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
     box.addEventListener('change', function () {
       var wanted = box.checked;
       WM.send('set_preview_locked', name, wanted).then(function (res) {
@@ -416,9 +444,6 @@
           : (state.locked || []).filter(function (n) { return n !== name; });
       });
     });
-    var label = WM.make('label', 'check', ' Lock');
-    label.prepend(WM.make('span', 'box'));
-    label.prepend(box);
     return inert(label, box, off);
   }
 
@@ -437,31 +462,49 @@
   function makeExcludedCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
-    box.checked = isExcluded(name);
-    var label = WM.make('label', 'check optout', ' Off');
-    // The full sentence lives in the tooltip because the WORD cannot be
-    // longer than this. Measured at the 840px floor: the card interior is
-    // 586px and the six existing controls already spend 504.75px of it, so
-    // a seventh track has 81.25px minus a 10px column-gap to live in.
-    // " No preview" measured 93.66, which put the control line at
-    // 608.41 -- 22.41px past the card's content edge (504.75 + 10 + 93.66
-    // against 586). #preview-binds' own scrollWidth was 32px over its
-    // clientWidth at the same moment; the two figures measure different
-    // boxes and are not a contradiction. Grid tracks do not wrap, so
-    // either way that is a clipped control at every window width, not a
-    // reflow. " Off" measures 43.06, for 557.81 inside 586.
-    label.title = 'No preview window for this character. Its own keybind '
-                + 'and the cycle keybinds skip it too. Its keybind, size '
-                + 'and position are kept for when you turn it back on.';
+    // Ticked means THIS CHARACTER GETS A PREVIEW, the inverse of what is
+    // stored. `preview.excluded` stays an opt-out roster -- absent means
+    // shown, which is what every existing install expects, so nothing
+    // migrates (settings.py says so where the key is declared). Only the
+    // control is inverted, because ticking a box named `Off` to turn
+    // something off is a negation the reader unwinds on every row. Every
+    // other checkbox in the app is ticked-means-on; this was the one that
+    // was not.
+    //
+    // It also reads correctly at rest for the first time. Unticked-means-
+    // shown made the ordinary state of this screen thirteen empty boxes
+    // beside thirteen working previews -- the opposite of the truth.
+    box.checked = !isExcluded(name);
+    // No word beside the box: the column header carries it once. That
+    // RETIRES the width problem this control was named for, rather than
+    // working around it. Measured at the 840px floor: the card interior is
+    // 586px and the six other controls already spend 504.75px of it, so a
+    // seventh track had 81.25px minus a 10px column-gap to live in.
+    // " No preview" measured 93.66, which put the control line at 608.41
+    // -- 22.41px past the card's content edge. Grid tracks do not wrap, so
+    // that is a clipped control at every window width, not a reflow, which
+    // is why the honest phrase was once cut down to " Off". A cell with no
+    // text wants the box's 15px, so the word moved into the header instead
+    // of being cut to fit a track.
+    box.setAttribute('aria-label', 'Show a preview for ' + name);
+    var label = WM.make('label', 'check optout', '');
+    label.title = 'Untick to give this character no preview window. Its own '
+                + 'keybind and the cycle keybinds skip it too. Its keybind, '
+                + 'size and position are kept for when you tick it again.';
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
+      // `wanted` is what the BOX now says (this character is previewed);
+      // `excluded` is what the roster stores, and they are opposites. The
+      // endpoint keeps the roster's sense, so the inversion happens here,
+      // once, at the boundary -- not in api.py, which would change a
+      // persisted key's meaning for the sake of a label.
       var wanted = box.checked;
-      WM.send('set_preview_excluded', name, wanted).then(function (res) {
+      WM.send('set_preview_excluded', name, !wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
         state.excluded = wanted
-          ? (state.excluded || []).concat(name)
-          : (state.excluded || []).filter(function (n) { return n !== name; });
+          ? (state.excluded || []).filter(function (n) { return n !== name; })
+          : (state.excluded || []).concat(name);
         requestRender();
       });
     });
@@ -495,7 +538,11 @@
     // hanging off it: it is how the smoke pass and the layout probes tell
     // this checkbox from Lock, which are otherwise two identical .check
     // labels in the same row.
-    var label = WM.make('label', 'check nm', ' Never minimize');
+    box.setAttribute('aria-label',
+                     'Never minimize ' + name + "'s EVE window");
+    var label = WM.make('label', 'check nm', '');
+    label.title = 'Leaves this character\u2019s real EVE window alone when '
+                + 'you switch away from it.';
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
@@ -582,6 +629,43 @@
     render();
   }
 
+  // The column headers, built ONCE above the character rows -- which is
+  // the whole point of them. Every per-row control used to spell its own
+  // name: with thirteen characters and the two cycle rows that is 82 label
+  // instances where six words would do, and because the grid's tracks are
+  // max-content, the longest of those words SET the column width that all
+  // thirteen rows paid for. " Never minimize" wanted 104px of every row;
+  // the header wants 73px of one.
+  //
+  // Sentence case at --fs-muted with no tracking, matching the recording
+  // list's headers (index.html's .list-head) rather than .bind-group-name
+  // -- these label data, and DESIGN.md's rule is that a header sits below
+  // body size for exactly that reason. It also keeps this out of the four
+  // uppercase .14em rules test_page_conventions.py pins by name.
+  //
+  // NOT built inside makeRow, and not merely for tidiness: the cell-count
+  // guard derives the per-row track count from makeRow's own appends, so a
+  // header appended there would inflate it by seven. It contributes the
+  // same cell count as a character row through the same `.row` +
+  // display:contents mechanism, and its own count is asserted separately.
+  //
+  // Clear and Edit... get empty cells rather than headings. They are
+  // subordinate to the bind button they act on -- naming them in the
+  // header would claim they are columns of data, and they are verbs.
+  function makeHeadRow() {
+    var row = WM.make('div', 'row bind-head');
+    var cells = ['Preview', 'Keybind', '', '', 'Size', 'Lock'];
+    // Tracks the conditional cell in makeRow rather than restating it: the
+    // Never-minimize column exists only while the global minimize toggle
+    // is on (D6), and a header for a column that is not rendered would
+    // pull every row after it into the wrong track.
+    if (minimizeInactive) { cells.push('Never minimize'); }
+    cells.forEach(function (text) {
+      row.appendChild(WM.make('span', '', text));
+    });
+    return row;
+  }
+
   function render() {
     host.textContent = '';
     // D6: which grid template #preview-binds takes. makeRow appends six
@@ -633,18 +717,24 @@
     if (list.length) {
       var head = WM.make('div', 'bind-group');
       head.appendChild(WM.make('span', 'bind-group-name', 'Characters'));
-      // The legend earns its place only while a row is actually dimmed.
-      // makeRow dims on a strict false, and `state.enabled ? ... : null`
-      // below means nothing is dim while previews are off -- so this asks
-      // the same question the rows do rather than a second, looser one.
-      var anyOffline = state.enabled && list.some(function (e) {
-        return e.online === false;
-      });
-      if (anyOffline) {
-        head.appendChild(WM.make('span', 'bind-group-note',
-                                 'dimmed = not logged in'));
-      }
+      // The legend that used to stand here -- "dimmed = not logged in" --
+      // is gone, and so is the state it explained being colour-only.
+      //
+      // Three things were wrong with it and only one was the wording. It
+      // was rendered once, above the first row, over a list ~780px tall,
+      // so it had scrolled off for most of the rows it explained. Dimness
+      // alone carried the state, which is WCAG 1.4.1. And on a typical
+      // fleet the dim rows are the MAJORITY -- eleven of thirteen in the
+      // capture this came from -- so the exception treatment was the
+      // ordinary one and the two undimmed rows read as the anomaly.
+      //
+      // makeRow now writes the word `offline` into the name cell instead.
+      // That travels with the row it describes, needs no legend, and stops
+      // being a conditional element that appears and vanishes depending on
+      // who happens to be logged in. The dimming stays as reinforcement --
+      // it was never wrong, only alone.
       host.appendChild(head);
+      host.appendChild(makeHeadRow());
     }
     list.forEach(function (entry) {
       host.appendChild(makeRow(
