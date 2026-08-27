@@ -101,7 +101,11 @@ reached through injected seams or lazy `windll` binding):
   **only writer** of the skills state document; every read-modify-write happens
   under its lock with the save in the same critical section.
 - `watcher.py` — polls the recording folder (not FS events); a file is announced
-  only after its size holds steady across consecutive polls.
+  only after its size holds steady across consecutive polls **and** a
+  share-mode-0 open proves no one still holds it. The second condition is not
+  redundant: OBS's muxer flushes in bursts (measured 17-20s apart on a quiet
+  scene, against a 9s settle), so a steady size alone re-announced the same
+  in-progress recording once per flush for the length of the recording.
 - `uploader.py`, `stitch.py` (bundled FFmpeg), `combatlog.py` + `discord.py`,
   `library.py`, `durations.py`, `links.py`, `settings.py`, `paths.py`,
   `atomicio.py`. `durations.py` and `links.py` are the same `(size, mtime)`
