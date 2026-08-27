@@ -191,6 +191,23 @@ bare input is a white Win32 widget on a dark card. This applies to controls
 built in JavaScript too, which is where the worst instance shipped: one per
 character, forty of them.
 
+**A checkbox in a table column carries no word, and still carries a name.**
+Under a column header the word beside the box is the header repeated once
+per row — on the Previews character list that was three words × thirteen
+rows, and because the tracks are `max-content` the longest of them set a
+width every row paid for. The `.check` wrapper stays (it is what makes the
+box dark), the label's text goes, and the accessible name moves onto the
+input as an `aria-label` naming the row: an empty `<label>` is what a
+screen reader would otherwise read. `.check input` is `position: absolute`,
+so it is not a flex item and the wrapper's 9px gap reserves nothing beside
+a box with no text.
+
+Build the wrapper **immediately after** `input.type = 'checkbox'`, before
+any listener. `test_page_conventions.py` looks for `'box'` within 600
+characters of that assignment, and a commit handler in between is easily
+long enough to push it out — the guard is right and the fix is the
+ordering, not a wider window.
+
 **Field labels go through `.lab`, and `.lab` sits above its control.**
 `.settings .row > .lab` is full-width, left-aligned and `--text-dim`
 across Settings *and* Profiles — both render `class="settings"`. The row

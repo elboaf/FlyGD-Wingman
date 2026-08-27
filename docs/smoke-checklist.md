@@ -1482,17 +1482,35 @@ only ever checked by hand.
       number of cells previews.js appends have to move together — if they
       disagree by one, every row after the first is pulled into the
       previous row's leftover columns.
+      **The header row moves with them.** `Never minimize` must appear in
+      and disappear from the column headings in the same toggle, or the
+      remaining headings sit over the wrong data. Its cell count is
+      derived from its own array literal by
+      test_page_conventions.py, but only the eye catches a heading that
+      is present and one column out.
+- [ ] **The columns are named once, above the rows.** Settings > Previews,
+      at the character list. Expected: a single heading row reading
+      `Preview`, `Keybind`, `Size`, `Lock`, `Never minimize` — sentence
+      case, a step smaller and dimmer than the names below it — and NO
+      repeated words on the rows themselves; each checkbox is a bare box
+      under its heading. `Clear` and `Edit…` have no heading on purpose:
+      they act on the bind button beside them and are verbs, not columns.
+      Check each heading sits at the left edge of the column it names.
+      They were 82 label instances before this, and the longest of them
+      set a track width every row paid for.
 - [ ] **The minimize toggle is filed with the other window behaviour.** It
       is in `EVE CLIENT PREVIEWS`, next to `Reopen previews where you last
       put them` — not under `GLOBAL KEYBINDS`, where it was the one control
       that is not a keybind (round 5's C4).
-- [ ] **`Off` turns one character's preview off, and only that one.** Two
-      clients running, previews on, both mirrored. Tick `Off` on the first
-      character's row. Expected, with no reload: that preview disappears
-      within a sweep (~700ms), the other one is untouched, and the rest of
-      that row — the bind button, `Clear`, `Edit…`, `Size…` and `Lock` —
-      goes dim and stops responding to clicks. The row's saved keybind
-      stays legible on the inert button; it is not cleared.
+- [ ] **`Preview` turns one character's preview off, and only that one.**
+      Two clients running, previews on, both mirrored. UNtick `Preview` on
+      the first character's row — the box is ticked at rest now, and
+      ticked means this character gets a preview. Expected, with no
+      reload: that preview disappears within a sweep (~700ms), the other
+      one is untouched, and the rest of that row — the bind button,
+      `Clear`, `Edit…`, `Size…` and `Lock` — goes dim and stops responding
+      to clicks. The row's saved keybind stays legible on the inert
+      button; it is not cleared.
       **`Never minimize` must STAY LIVE**, alone among them. Opting out
       stops the preview, not `minimize_inactive_clients` — switching away
       from that character's real EVE window still minimizes it — so
@@ -1506,18 +1524,37 @@ only ever checked by hand.
       continuing from where you are, the same as cycling from a browser.)
       Its alert sounds still play, with nothing on screen to flash — that
       is deliberate, and Settings › Alerts is where to turn them off.
-      Untick `Off`: the preview comes back at the position and size it had
-      before, the row's controls go live, and the focus keybind works
-      again. Nothing about the row should need re-entering — the settings
-      were kept, not cleared.
-- [ ] **An `Off` character stops competing for chords on OTHER rows.** Give
-      a character the same chord as `Cycle forward`. Expected first: the
-      cycle row goes red and says the cycle keybind is the one that loses.
-      Now tick `Off` on that character. Expected: that warning clears,
-      because Python has dropped the character and the cycle keybind now
-      genuinely wins the chord — press it and it cycles. The cycle row is
-      live and undimmed throughout, so a stale warning there is fully
-      readable and states the opposite of what happens.
+      Re-tick `Preview`: the preview comes back at the position and size
+      it had before, the row's controls go live, and the focus keybind
+      works again. Nothing about the row should need re-entering — the
+      settings were kept, not cleared.
+      **The stored key is still `preview.excluded`, an opt-out roster.**
+      Only the control was inverted. Check settings.json after unticking:
+      the character's name is ADDED to `excluded`. If the inversion ever
+      reaches Python, a file written by this build and read by an older
+      one silently shows every preview the wrong way round.
+- [ ] **An unticked `Preview` character stops competing for chords on
+      OTHER rows.** Give a character the same chord as `Cycle forward`.
+      Expected first: the cycle row goes red and says the cycle keybind is
+      the one that loses. Now untick `Preview` on that character. Expected:
+      that warning clears, because Python has dropped the character and
+      the cycle keybind now genuinely wins the chord — press it and it
+      cycles. The cycle row is live and undimmed throughout, so a stale
+      warning there is fully readable and states the opposite of what
+      happens.
+- [ ] **`Size…` is absent for a character that has never been dragged.**
+      Settings > Previews with at least one character offline that has
+      never had its preview moved or resized. Expected: that row shows no
+      `Size…` at all, and its `Lock` and `Never minimize` boxes are still
+      in the same columns as every other row — the cell is a filler, not a
+      missing cell, and a missing one would pull every row below it a
+      track over. Now drag that character's preview once and reopen the
+      section: `Size…` is there. Running clients always have it.
+      The point is that `set_preview_size` REFUSES for a character with no
+      layouts entry ("Start this client once, or drag its preview"), and a
+      layouts entry is written on a drag or a resize, not when the client
+      starts — so on a fresh install this was a guaranteed refusal for
+      most of the roster.
 - [ ] **The seventh column still fits at the window's floor.** Settings >
       Previews with the minimize toggle ON, so every character row carries
       all seven controls, at the smallest the window will go. Expected: the
@@ -1525,7 +1562,38 @@ only ever checked by hand.
       nothing is clipped. Grid tracks do not wrap, so an overflow here is a
       cut-off control at every width, not a reflow — it was measured at
       608.41px against a 586px card interior on the first draft of this
-      feature, which is why the label is `Off` and not a phrase.
+      feature, which is why the opt-out label was once the word `Off`
+      rather than a phrase. **That constraint is retired, not satisfied:**
+      the per-row labels moved into the header, so the checkbox cells hold
+      no text at all and the honest phrase lives in a heading rendered
+      once. Measured after the change, the seven tracks and their gaps
+      spend 512.16px of the same 586px. Re-measure here rather than
+      trusting that figure if you add a column.
+- [ ] **The two global defaults are reachable and take effect.** Settings >
+      Previews, below `Keep previews the same shape as their client`.
+      - `Default preview size` shows the current pair and commits on
+        **Enter, never on blur**. Type a size, click elsewhere without
+        pressing Enter: nothing is saved and the field snaps back. Half a
+        typed `1280x720` is `1280x72`, which is a real size a blur commit
+        would have stored. Type something that is not a size: the hint
+        says so and nothing is written. Type `10x10`: refused with the
+        same floor sentence `Size…` uses.
+        Then set a size and start a client that has never been previewed:
+        its preview opens at that size, **without restarting Wingman**.
+        These two keys were read once at host construction until this
+        change, so a restart-to-apply bug here would look exactly like
+        the field working.
+      - `Lock previews in place by default` locks every character whose
+        own `Lock` box you have not changed. Tick it with one character
+        already explicitly unlocked: that character stays draggable and
+        every other preview stops moving on a left drag (right drag still
+        moves them, as always). Untick it: the arrangement that preceded
+        the tick comes back exactly. Nothing is migrated and the roster is
+        not rewritten — `preview.locked` keeps meaning "these differ from
+        the default", which is why unticking is lossless.
+        Check the per-character boxes repaint to the effective state when
+        you toggle it, and that already-open previews change behaviour
+        without a restart.
 
 ## EVE bookmark hotkeys
 
@@ -1831,8 +1899,10 @@ appears, so an item that only restarts the app tests half of it.
 
 ### Preview configuration options
 
-Four settings on the Previews card: Labels, per-character Lock, Opacity, and
-Minimize inactive clients. None of this is covered by pytest — it needs a
+Six settings on the Previews card: Labels, per-character Lock, Opacity,
+Minimize inactive clients, and the two global defaults added with the
+character table — Lock previews in place by default, and Default preview
+size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
@@ -2054,6 +2124,14 @@ pytest.
   all, so dimming every row made the tab indistinguishable from one where
   everybody really had logged out. That was reported as "I don't see
   anything that indicates they are online".
+
+  **And no row should carry the word `offline` here either**, for the same
+  reason: that word is now the encoding and the dimming only reinforces
+  it, so a row wearing it while previews are off makes the same false
+  claim in text. With previews on and one client logged out, that row
+  reads `<name> offline` and dims; the legend that used to sit above the
+  first row is gone, because it had scrolled off for most of the rows it
+  explained and on a typical fleet the dim rows are the majority anyway.
 
   Confirm independently rather than trusting the tab: from a separate
   probe process, `RegisterHotKey` must succeed for each of those chords.
