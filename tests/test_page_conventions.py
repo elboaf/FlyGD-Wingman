@@ -26,6 +26,7 @@ well designed; they only stop a convention being dropped silently. What
 they cannot see is recorded in DESIGN.md.
 """
 
+import ast
 import pathlib
 import re
 
@@ -981,6 +982,192 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_a_destructive_confirm_does_not_take_the_accent_button():
+    """The affirming button of a destructive confirm is .btn.danger.
+
+    Round 6, P0-1. `panel.js` hard-coded `btnOk.className = isConfirm ?
+    'btn acc' : 'btn'` under a comment reading "Upload is the app's only
+    irreversible action". Delete and the EVE settings copy had both
+    falsified that premise by the time anyone re-read it, so the dialog
+    that overwrites 34 characters' settings rendered its Confirm in the
+    same encouraging purple as `Upload` -- auto-focused, so it carried the
+    focus ring too -- while the .btn.danger trigger that opened it sat
+    behind the overlay in red.
+
+    Three things are asserted, because the bug can come back three ways.
+    """
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+
+    # 1. The class is chosen from item.destructive, not from isConfirm alone.
+    assert "item.destructive" in panel, (
+        "panel.js must read item.destructive when picking the affirming "
+        "button's class; without it every confirm is .btn.acc again"
+    )
+    assert re.search(r"'btn danger'", panel), (
+        "panel.js must be able to render the affirming button as "
+        "'btn danger' -- .btn.danger is the app's one destructive treatment"
+    )
+
+    # 2. Python must be ABLE to say so, or the four workers that destroy
+    #    something have no way to ask for it.
+    api = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
+    assert '"destructive": destructive' in api, (
+        "_ask must put `destructive` in the onDialog payload; the page "
+        "cannot read a flag that never crosses the bridge"
+    )
+
+    # 3. Every Python confirm whose body says the action is final must
+    #    pass the flag. Walked with ast, NOT matched with a regex: the
+    #    first version of this guard used one, matched 3 of the 4 call
+    #    sites, and passed while `Confirm Copy` -- the dialog that
+    #    overwrites 34 characters' settings, and the whole reason for this
+    #    test -- was silently outside it. A call site is a call node.
+    tree = ast.parse(api)
+    seen = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (
+            isinstance(fn, ast.Attribute) and fn.attr in ("_confirm", "_eve_confirm")
+        ):
+            continue
+        if not (isinstance(fn.value, ast.Name) and fn.value.id == "self"):
+            continue
+        title = (
+            node.args[0].value
+            if node.args and isinstance(node.args[0], ast.Constant)
+            else "<computed>"
+        )
+        source = ast.get_source_segment(api, node) or ""
+        final = (
+            "cannot be undone" in source
+            or "Permanently delete" in source
+            or "format_eve_copy_confirm" in source
+        )
+        flagged = any(
+            kw.arg == "destructive"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in node.keywords
+        )
+        seen[(title, node.lineno)] = (final, flagged)
+
+    # The count is asserted so this cannot go quiet the way the regex did.
+    assert len(seen) >= 4, (
+        f"expected at least 4 self._confirm/_eve_confirm call sites, "
+        f"walked {len(seen)}: {sorted(seen)}"
+    )
+    unflagged = sorted(
+        f"{title} (api.py:{line})"
+        for (title, line), (final, flagged) in seen.items()
+        if final and not flagged
+    )
+    assert not unflagged, (
+        "these confirms say the action is final but do not pass "
+        f"destructive=True, so their Confirm renders as .btn.acc: {unflagged}"
+    )
+    # And the converse, so the treatment keeps meaning something: Upload
+    # is irreversible in that a video becomes public, but it destroys
+    # nothing and it is the one action the Uploader exists to perform.
+    upload = [
+        flagged
+        for (title, _), (_, flagged) in seen.items()
+        if title == "Confirm Upload"
+    ]
+    assert upload == [False], (
+        "Confirm Upload must keep .btn.acc -- a destructive treatment on "
+        f"every confirm says nothing (found {upload})"
+    )
+
+
+def test_every_offered_alert_colour_has_a_name():
+    """Round 6, P2-5. The swatches carried their hex as the accessible name.
+
+    `#4dd2ff` does not read aloud as anything, does not tell a sighted
+    user what they are picking, and -- the reason it mattered -- left the
+    collision note above with nothing to call the colour it is about.
+
+    COLOUR_NAMES is indexed against COLOURS, so the pair has to stay the
+    same length or a colour silently falls back to its hex. That is the
+    designed behaviour for the SIXTH swatch (an out-of-palette colour from
+    a hand-edited settings.json, which has no name) and a bug for the
+    five, so nothing in the code can tell the two cases apart. This can.
+    """
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+
+    colours = re.search(r"var COLOURS = \[(.*?)\];", alerts, re.DOTALL)
+    names = re.search(r"var COLOUR_NAMES = \[(.*?)\];", alerts, re.DOTALL)
+    assert colours and names, "the palette or its names are gone"
+
+    n_colours = len(re.findall(r"'#[0-9a-fA-F]{6}'", colours.group(1)))
+    n_names = len(re.findall(r"'[^']+'", names.group(1)))
+    assert n_colours == 5, f"the palette is no longer five colours ({n_colours})"
+    assert n_names == n_colours, (
+        f"{n_colours} colours but {n_names} names: COLOUR_NAMES is indexed "
+        "against COLOURS, so the extra colour would fall back to its hex "
+        "and look like the out-of-palette case"
+    )
+
+    # The name is what the control announces; the hex may accompany it.
+    assert "input.setAttribute('aria-label', name)" in alerts, (
+        "the swatch must announce its NAME, not its hex"
+    )
+
+
+def test_two_enabled_alerts_on_one_colour_are_flagged():
+    """Round 6, P1-1. Two alerts the same colour are one alert with two
+    meanings, and nothing said so.
+
+    The card already narrowed 16.7M colours to five for this exact reason
+    -- COLOURS' own comment ends "and nothing ever told you" -- which made
+    a near-miss unreachable and left an EXACT match five clicks away,
+    still silent. The round-6 captures caught a live install with Combat
+    and Decloak both on #4dd2ff and both on Notify.
+
+    Lexical, like everything else in this file, so it checks the wiring a
+    regression would break rather than the rendering (which was verified
+    by hand in the ?dev=1 harness over CDP, for all four states: both on,
+    colour-only, one disabled, all distinct).
+    """
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+
+    assert "function flagCollisions()" in alerts, (
+        "the collision check is gone; two alerts can share a colour again"
+    )
+
+    # It must run on every path that can make or clear a collision. Missing
+    # any one of these leaves a stale note or a silent collision.
+    body = alerts[alerts.index("function flagCollisions()") :]
+    del body
+    calls = alerts.count("flagCollisions();")
+    assert calls >= 4, (
+        "flagCollisions must run after a repaint, a colour change, a sound "
+        f"change and an enable toggle -- found {calls} call sites"
+    )
+
+    # THE BUG THIS TEST EXISTS FOR, found in the harness rather than here:
+    # a disabled Combat is absent from the colour map, but an enabled
+    # Decloak on the same colour still puts that colour IN the map, so
+    # Combat found a peer and warned about an alert it cannot raise. The
+    # `other !== id` filter does not cover it; an enabled check does.
+    assert re.search(r"row\.enabled && row\.enabled\.checked", alerts), (
+        "flagCollisions must skip disabled rows when DISPLAYING, not only "
+        "when grouping: a disabled event cannot collide with anything"
+    )
+
+    # The note is a warning, not an error: the config is legal, just
+    # ambiguous. And it must be tagged so it can be cleared without
+    # stamping on a row's own refused-write message.
+    assert "dataset.collision" in alerts, (
+        "collision notes must be tagged the way clearWhileOffNotes tags "
+        "its own, or clearing one will clear a real error instead"
+    )
+    assert re.search(r"sayRow\(row, text, 'warn'\)", alerts), (
+        "a colour collision is a warning, not an error"
     )
 
 

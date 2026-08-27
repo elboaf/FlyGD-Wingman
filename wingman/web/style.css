@@ -1126,11 +1126,24 @@ button.btn:disabled,
    changing under the pointer, which is how it read as "every column, every
    visit". Reserving the width unconditionally costs the label 12px it was
    never entitled to keep and makes the header stop moving. */
+/* Round 6, P2-2. `visibility: hidden` until a column carried .sorted, and
+   the list opens in delivery order with nothing sorted -- so on first
+   open all four headers had ZERO affordance and read as static labels.
+   Sixteen recordings differing only in a timestamp make Size and Length
+   the fast route to "which one was the good fight", and the whole
+   mechanism was built and then hidden behind knowing it was there.
+
+   opacity, not visibility, so the glyph is present-but-quiet rather than
+   absent: .28 is legible as a mark without competing with the label, and
+   the width was already reserved unconditionally by the rule above (see
+   its note -- reserving it is what stopped the header moving on click),
+   so nothing reflows at any of the three levels. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; visibility: hidden;
+  width: 8px; opacity: .28;
 }
-.list-head > span.sorted::after { visibility: visible; }
+.list-head > span:hover::after { opacity: .7; }
+.list-head > span.sorted::after { opacity: 1; }
 .list-head > span.sorted.desc::after { content: "\25BC"; }
 /* Each header is anchored like its column — headers centred over
    right-aligned data read as misalignment, not as a choice. */
@@ -1712,7 +1725,31 @@ button.btn:disabled,
 .evelabel { color: var(--text-dim); font-size: 11px; letter-spacing: .08em; }
 /* Same token #status.WARNING uses, so the two severities read alike. */
 .evewarn { color: var(--warn); }
-.evestat.degraded { opacity: .5; }
+/* Round 6, P2-3. This was `opacity: .5`, and it put the strip's own
+   labels at 2.73:1 -- measured off the round-6 capture, on the brightest
+   antialiased pixel, so the effective figure is worse. DESIGN.md's floor
+   is 4.5:1.
+
+   The arithmetic is unavoidable, not a tuning question: --text-dim over
+   the strip is about 7:1, and halving a colour's contrast against its
+   background always lands roughly a third of the way to it. Any token
+   that passes 4.5:1 fails it at 50% opacity, so `opacity` cannot express
+   "dimmed" for text and stay legible.
+
+   A token step does. --text-faint is the sheet's existing next-quietest
+   text and it is a real colour, so it is measurable rather than derived
+   from whatever it happens to sit on -- and the strip is degraded exactly
+   when it has something to report (bookmarks.js toggles it when the
+   engine is not live), which is the worst possible moment to be the least
+   readable thing on screen.
+
+   The LED keeps a true opacity: it is a 7px dot carrying no text, so
+   1.4.3 does not apply to it and dimming is the point. */
+.evestat.degraded .evelabel,
+.evestat.degraded #eve-sig,
+.evestat.degraded #eve-root,
+.evestat.degraded #eve-next { color: var(--text-faint); }
+.evestat.degraded .led { opacity: .5; }
 /* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
    specificity, so the display:flex above would keep this visible for every
    user who never turns the feature on. Same fix as .routenav[hidden]. */
@@ -1763,6 +1800,16 @@ button.btn:disabled,
 .dialog.confirm h3::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
   box-shadow: 0 0 9px rgb(var(--brand-rgb) / .5);
+}
+/* A destructive confirm takes --danger, the token minted at :root for
+   "this control destroys something", so the heading agrees with the
+   .btn.danger the affirming button now carries. Later than
+   .dialog.confirm and equal specificity (0,2,0), which is what lets a
+   dialog carry both classes -- panel.js sets `dialog confirm destructive`
+   so a page that never passes the flag is unchanged. */
+.dialog.confirm.destructive h3::before {
+  background: var(--danger);
+  box-shadow: 0 0 9px var(--danger);
 }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
@@ -2772,9 +2819,35 @@ button.btn:disabled,
 }
 .linkbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
+/* margin: 0, not `0 auto` (round 6, P1-2).
+
+   The 620px measure stays: it is right for a label-over-field column and
+   D1 already settled that it is deliberate for prose and form rows.
+   What was wrong is only where the slack went. Centring split it in two
+   -- measured on the round-6 captures at 1015 CSS, the rail's card ended
+   at 180 and the content card began at 287.5, so 107.5px sat between two
+   things that belong together while an equal strip sat on the outside.
+   A gap that size beside the rail reads as a missing column, not as
+   margin.
+
+   Left-aligned, the rail and the section it labels are 12px apart -- the
+   route's own grid gap -- and all the slack collects on one outer edge
+   where it reads as margin, which is what S8 was after on Skills.
+
+   Profiles reached the same conclusion one round earlier and by the same
+   route: see `margin-inline: 0, not auto` below, where a 620px folder
+   card kept centring after its wrapper was lifted and sat in the middle
+   of the page above a full-width roster. Same fix, same reason.
+
+   The watermark's note at the top of this sheet cites "228px of gutter
+   beside it" as part of why Settings qualifies. That figure is now one
+   margin rather than two gutters and the total is unchanged, so the
+   watermark's justification survives -- but it is now resting on the
+   outer margin alone. If that margin ever closes, re-read that rule
+   rather than assuming it still holds. */
 .settings {
   display: flex; flex-direction: column; gap: 12px;
-  width: 100%; max-width: 620px; margin: 0 auto;
+  width: 100%; max-width: 620px; margin: 0;
 }
 
 /* Labels sit ABOVE their control, full width, on every row and at every
@@ -3300,35 +3373,43 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
 .skills-filterbar .field { flex: 1; }
 
-/* S8 -- the pane is elastic and its content is not, so every extra pixel of
-   window used to become RULED emptiness.
+/* S8's premise held until round 6, and round 6 falsified it. Both halves
+   are kept because the reasoning is the load-bearing part.
 
-   Measured on main: window 833 -> 976 CSS moved the pane's right edge +276
+   WHAT S8 SAW, and it was right: the pane is elastic and its content was
+   not, so every extra pixel of window became RULED emptiness. Measured on
+   main at the time, window 833 -> 976 CSS moved the pane's right edge +276
    physical while `Not trained`'s right edge moved +12, leaving 239 -> 371
-   CSS px of empty pane to the right of every answer. The separators below
-   ruled all of it, so the emptiness read as an unfinished table rather than
-   as margin -- which is the walkthrough's own diagnosis and names the fix.
+   CSS px of empty pane to the right of every answer, with the separators
+   ruling all of it -- an unfinished table rather than a margin.
 
-   NOT by widening the name column. --name-col is 240 because that is the
-   width the longest EVE skill and character names need and no more; the
-   block below records that 320 was tried and reserved 80px nothing could
-   fill. The status column is right where it belongs. What was wrong is
-   only that the rule under each row kept going.
+   WHAT S8 CHOSE: `width: max-content`, so the figure was DERIVED from the
+   row rather than chosen, and the rules stopped where the answers did.
+   Its closing argument was that "Profiles wasted width OUTSIDE a fixed
+   card and had a roster that could use it; Skills wastes it INSIDE an
+   elastic pane and has CONTENT THAT CANNOT."
 
-   width: max-content, so the figure is DERIVED from the row rather than
-   chosen: the list is as wide as a chevron, the 240px name cap, a gap and
-   the widest status, and the separators stop there. max-width: 100% keeps
-   the 840 floor unaffected -- below the content width the list shrinks as
-   it always did, and the names ellipsise rather than overflow.
+   WHAT CHANGED: the content can. Round 6's roster row carries the missing
+   requirement NAMES (.skills-missing below, controller._ROSTER_NAME_CAP),
+   which is real content of variable length and exactly what the width was
+   missing. The critique also measured the cost of leaving it: at 1015 CSS
+   the roster's rightmost pixel was 593, while the filter field and `Copy
+   plan` above it ran to the pane edge -- so the screen had TWO right
+   edges and the honest margin read as a truncated table anyway, which is
+   the symptom S8 set out to remove.
 
-   This is NOT P10's fix and must not be merged with it. Profiles wasted
-   width OUTSIDE a fixed card and had a roster that could use it; Skills
-   wastes it INSIDE an elastic pane and has content that cannot. So
-   Profiles turns the width into columns and Skills turns it into honest
-   margin. Same symptom, opposite mechanisms. */
+   So: `width: 100%`, one edge, and the margin is now inside the row where
+   .skills-missing can use it. --name-col is untouched at 240 for the
+   reason the block below still gives, and the status column has not
+   moved; what fills the recovered width is the second line, not a wider
+   first one. The 840 floor is unaffected either way -- at or below the
+   content width this shrinks as it always did, and the names ellipsise.
+
+   Do not restore `max-content` without also removing .skills-missing;
+   the two are one decision. */
 .skills-roster {
   flex: 1; min-height: 0; overflow-y: auto;
-  width: max-content; max-width: 100%;
+  width: 100%;
 }
 .skills-group { margin-bottom: 12px; }
 .skills-group-head {
@@ -3400,6 +3481,30 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   cursor: pointer; text-align: left;
 }
 .skills-row-top:hover { background: var(--row-hover); }
+/* The missing requirement names, a second line under the row's name.
+
+   Indented to the name column, not to the chevron: it continues the
+   sentence the row's name and count started, so it hangs off the name
+   rather than off the row's left edge. 10px row padding + 10px chevron +
+   9px gap = 29, which is where .skills-name begins.
+
+   --text-faint and --fs-muted, one step below the count it elaborates:
+   this labels the number, it is not the number. Same rule the card hints
+   follow.
+
+   NOT clipped with ellipsis. The row states its own remainder ("and 6
+   more", skills.js), so there is nothing for a truncation to hide; if the
+   three names are wider than the pane at the floor they wrap, which costs
+   a line on a row that is already two.
+
+   pointer-events: none so the line does not eat clicks aimed at the row's
+   own toggle -- it is a sibling of the <button>, not inside it. */
+.skills-missing {
+  display: block; padding: 0 10px 7px 29px;
+  margin-top: -3px;
+  color: var(--text-faint); font-size: var(--fs-muted); line-height: 1.45;
+  pointer-events: none;
+}
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
 /* max-width is what closes the ~1000px gap between a row's subject and
    its answer. `flex: 1` alone let the name box eat every spare pixel and

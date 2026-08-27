@@ -340,14 +340,21 @@
         readiness: 'Missing', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 8, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 6, unknown_count: 0, group: '' },
+        missing_count: 6, unknown_count: 0, group: '',
+        // Round 6: three names and a stated remainder, the capped case
+        // (controller._ROSTER_NAME_CAP).
+        missing_names: ['Heavy Assault Cruisers V',
+                        'Tactical Shield Manipulation V',
+                        'Gunnery V'] },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Missing',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 2, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 2, unknown_count: 0, group: 'Wolfpack',
+        // Under the cap, so no remainder clause.
+        missing_names: ['Motion Prediction V', 'Sharpshooter IV'] },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',

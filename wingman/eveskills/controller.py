@@ -82,6 +82,20 @@ MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared.
 TOKEN_EXPIRY_MARGIN_S = 30
 
 
+# How many missing requirement names a roster row carries (round 6, P1-2).
+#
+# THREE, not six. ui/copy.py's _COPY_NAME_CAP is six and reasons that past
+# a handful a list stops being read as a list -- but that is a modal the
+# reader has stopped to check, one list, once. This is a line inside a row
+# in a list of thirty-seven, read by scanning, and the row states its own
+# remainder from missing_count beside it. Three fits the width the roster
+# actually has at the 840 CSS floor without ellipsising the first name.
+#
+# A precedent for the SIZE of the word, not a derived value; the two are
+# free to move apart. tests/test_skills_page.py asserts what this one is.
+_ROSTER_NAME_CAP = 3
+
+
 def _skills_path(character_id: int) -> str:
     return f"/v4/characters/{character_id}/skills/"
 
@@ -758,6 +772,20 @@ class SkillsController:
             ),
             "queued_count": analysis.queued_count if analysis else 0,
             "missing_count": analysis.missing_count if analysis else 0,
+            # Round 6, P1-2. The roster's status column said "9
+            # requirements" and the pane beside it was empty to the window
+            # edge, so the one screen whose job is "which of my characters
+            # can fly this" made you open a row to learn WHICH nine.
+            #
+            # Free: `analysis` is already built here to produce the counts
+            # above, and these names come off the same tuple
+            # `missing_count` counts (evaluator.missing_names). No extra
+            # ESI call, no extra evaluation, and nothing to do with
+            # requestDetail's per-row fetch, whose cost note in skills.js
+            # is about a round trip this does not make.
+            "missing_names": list(evaluator.missing_names(analysis, _ROSTER_NAME_CAP))
+            if analysis
+            else [],
             "unknown_count": analysis.unknown_count if analysis else 0,
         }
 

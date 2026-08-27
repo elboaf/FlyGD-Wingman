@@ -122,6 +122,45 @@ class PlanAnalysis:
         return self._count(UNKNOWN)
 
 
+# EVE writes skill levels in roman, and so do the plan files the user
+# authored, so a name shown back to them is written the same way.
+# plans.py has its own copy for format_lines, which renders plan-file text
+# from a DIFFERENT requirement type (plans.Requirement.level, not
+# RequirementAnalysis.required_level). The two are the same five strings
+# for the same reason and are free to move apart; neither is derived from
+# the other, and tests/test_skills_page.py asserts they agree.
+_LEVEL_ROMAN = ("", "I", "II", "III", "IV", "V")
+
+
+def missing_names(analysis, limit: int) -> tuple[str, ...]:
+    """The first *limit* missing requirements, as "Skill V".
+
+    Derived from the SAME `requirements` tuple that `missing_count`
+    counts, so a roster row cannot show a count and a list that disagree.
+    That is the whole reason this lives here rather than in the
+    controller: the count and the names have one source.
+
+    This costs nothing to produce. The analysis is already built for every
+    character on every push in order to compute the counts the roster
+    already shows -- `skills.js`'s fetch-cost argument is about
+    requestDetail's per-row round trip, which this does not touch.
+
+    `limit` is a payload bound, not a display decision: a forty-character
+    roster times thirty-six requirements is a payload nobody reads, and
+    the page states the remainder from `missing_count` anyway.
+    """
+    out = []
+    for req in analysis.requirements:
+        if req.state != MISSING:
+            continue
+        level = req.required_level or 0
+        roman = _LEVEL_ROMAN[level] if 0 <= level < len(_LEVEL_ROMAN) else str(level)
+        out.append(f"{req.skill_name} {roman}".strip())
+        if len(out) >= limit:
+            break
+    return tuple(out)
+
+
 def compact_status(analyses) -> str:
     """The worst readiness any requirement contributes.
 

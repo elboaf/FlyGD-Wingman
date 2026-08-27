@@ -98,14 +98,22 @@ class FakeYouTube:
 
 
 class Answers:
-    """Stands in for _confirm, which normally blocks on the page."""
+    """Stands in for _confirm, which normally blocks on the page.
+
+    `asked` stays a list of (title, body) pairs, because that is what a
+    dozen call sites unpack. The round-6 `destructive` keyword is recorded
+    separately in `destructive`, indexed the same way, so a test can assert
+    the flag without every existing unpack having to grow a third element.
+    """
 
     def __init__(self, answer=True):
         self.answer = answer
         self.asked = []
+        self.destructive = []
 
-    def __call__(self, title, body):
+    def __call__(self, title, body, *, destructive=False):
         self.asked.append((title, body))
+        self.destructive.append(destructive)
         return self.answer
 
 
