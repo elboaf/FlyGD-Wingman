@@ -584,12 +584,19 @@ Two rules follow from that, and both are load-bearing:
   restate what the unticked box already shows.
 
 **An empty hint costs no line.** A continuation row that exists only to
-carry a `.hint` collapses while that hint is empty — `.settings .row:has(>
-.lab:empty):has(> .hint:empty)`. Two of these sit in Previews permanently,
-because their status slots carry no default text and are blank until a
-write fails. `:empty` re-evaluates when a message lands, so the row returns
-on its own; this is a display rule and not a `hidden` attribute somebody
-has to remember to clear.
+carry a `.hint` collapses while that hint contributes nothing — either
+`:empty` (a status slot with no default text, blank until a write fails)
+or `[hidden]` (a note the page raises only while its condition holds).
+Both states matter: with `[hidden]` uncovered, the row stayed a 0-height
+flex item and still spent its parent's gap, so a block's height moved with
+the state of a switch inside it. Eleven rows across Bookmarks, Previews and
+Alerts are governed by this.
+
+**A live region is the exception.** `#alerts-health` and `#alerts-status`
+are `role="status"` and keep their line, because a live region that is
+`display: none` when its text lands may never be announced. The exclusion
+is keyed on the role, not on the two ids, so a third live region is covered
+without anyone remembering the rule exists.
 
 
 ## Routes and sections

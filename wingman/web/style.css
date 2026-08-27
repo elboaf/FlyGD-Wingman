@@ -1578,11 +1578,16 @@ button.btn:disabled,
    checkbox would have cut the master block in half rather than closed it.
 
    flex column with a gap, NOT the 10px bottom margin .row carries by
-   default. #preview-depends is `hidden` whenever previews are on, and a
-   display:none child is not a flex item, so the gap simply is not drawn
-   -- where the margin would have left 10px of the hidden row's spacing
-   behind and made the block's bottom edge move by 10px depending on the
-   state of the switch above it.
+   default. #preview-depends is raised only while previews are off, and a
+   margin would leave its row's spacing behind when it goes -- the block's
+   bottom edge moving by 10px with the state of the switch inside it.
+
+   The gap alone does NOT achieve that, which is worth stating because it
+   looks as though it should: the flex items here are the ROWS, and it is
+   the hint INSIDE the third row that carries `hidden`, so the row stayed
+   a 0-height item and still took its gap. Measured before the row-collapse
+   rule below existed: 93px with previews on, and a 10px gap spent on
+   nothing. The two rules are one mechanism and neither works alone. */
 
    No type change on the label. The switch stays --fs-body like every
    other checkbox on the card, because what is being said is "these belong
@@ -1598,23 +1603,38 @@ button.btn:disabled,
 }
 .pv-master > .row { margin-bottom: 0; }
 
-/* A continuation row whose hint is EMPTY reserves nothing and must not
-   cost a line. Two of these sit in the Previews card permanently --
-   #preview-show-labels-status and #preview-opacity-status carry no
-   default text at all, so they are blank until a write fails, which for
-   most installs is never. Measured at the 840 floor they were 18px each.
+/* A continuation row whose hint contributes nothing must cost no line.
+   Such a row holds an empty `.lab` and one `.hint`, and `.lab:empty`
+   already hides the lab -- so with the hint blank the row was rendering
+   as pure margin with both its children invisible.
 
-   `.lab:empty` already collapses the other half of the same row, so the
-   row was rendering as pure margin with both its children hidden.
+   BLANK IS TWO STATES, and the first draft of this rule only caught one.
+   `:empty` covers a status slot with no default text
+   (#preview-show-labels-status, #preview-opacity-status: 18px each at the
+   840 floor, blank until a write fails, which for most installs is
+   never). `[hidden]` covers a note the page raises only while its
+   condition holds -- #preview-depends, #preview-binds-off,
+   #alerts-previews-off. Measured: with `hidden` alone the .pv-master
+   block held a 0-height row that still took one 10px flex gap, so the
+   block's height moved with the state of the switch above it, which is
+   exactly what the gap was chosen to prevent.
 
-   Both `:empty` checks are load-bearing. A row holding a checkbox keeps
-   its height whatever its hint says (the Snap row is exactly that), and
-   `:has(> .lab:empty)` is what limits this to the continuation rows that
-   exist only to carry a hint. `:empty` re-evaluates when settings.js
-   writes a message in, so the row comes back the moment it has something
-   to say -- which is why this is a display rule and not a `hidden`
-   attribute anything has to remember to clear. */
-.settings .row:has(> .lab:empty):has(> .hint:empty) { display: none; }
+   NOT applied to a live region. `#alerts-health` and `#alerts-status` are
+   `role="status"`, and a live region that is `display: none` when its
+   text lands may never be announced -- it would become visible in the
+   same tick, and some screen readers do not announce a region that was
+   not already rendered. They keep their line. `:not(:has(> .hint[role]))`
+   is that exclusion, and it is deliberately keyed on the ROLE rather than
+   on the two ids, so a third live region added later is covered without
+   anyone remembering this rule exists.
+
+   `:empty` and `[hidden]` both re-evaluate when settings.js writes a
+   message in, so the row returns on its own. That is why this is a
+   display rule and not a `hidden` attribute somebody has to clear. */
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty),
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]) {
+  display: none;
+}
 
 /* .bind-group inside a flex card, not a grid.
    Its `grid-column: 1 / -1` is inert here and stays as written: the class

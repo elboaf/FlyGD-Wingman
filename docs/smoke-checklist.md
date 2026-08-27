@@ -2994,6 +2994,21 @@ behaviour a lexical guard cannot reach.
       message into one (a failed write): the row must appear, and vanish
       again when the message clears. `:empty` drives it, so nothing has to
       remember to clear a `hidden` attribute.
+- [ ] **A raised-only note costs no line either, and this reaches three
+      sections.** The same rule collapses a row whose hint is `[hidden]`
+      rather than empty, so it also governs `#preview-binds-off`,
+      `#alerts-previews-off`, `#alerts-no-folder`, `#alerts-depends` and
+      Bookmarks' `#eve-blockers`. Walk Bookmarks, Previews and Alerts with
+      each of those notes both raised and clear. Expected: no row ever
+      shows blank, and no note ever fails to appear. The `hidden` case is
+      the one the first draft of this rule missed — the row stayed a
+      0-height flex item and still spent its 10px gap.
+- [ ] **A live region keeps its line.** Settings > Alerts. `#alerts-health`
+      and `#alerts-status` are `role="status"` and are deliberately NOT
+      collapsed: a live region that is `display: none` when its text lands
+      may never be announced. Expected: the `Watching gamelogs — …` line
+      renders in place, and with a screen reader on, a change to it is
+      spoken.
 - [ ] **The roster card is as wide as its table and no wider.** Settings >
       Previews at the character list, window at its default size.
       Expected: the keybinds card is wider than the card above it but not
