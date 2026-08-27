@@ -1896,6 +1896,26 @@ def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
     assert seen == [0x1234]
 
 
+class _RingWindow:
+    """A preview that records only what the user can see: the ring going on
+    or off. set_focused is invisible by design (window.py:482), so it is
+    accepted and not logged."""
+
+    def __init__(self, key, order):
+        self.key = key
+        self._order = order
+        self.selected = False
+        self.focused = False
+
+    def set_selected(self, selected):
+        if selected != self.selected:
+            self.selected = selected
+            self._order.append(("ring", self.key, selected))
+
+    def set_focused(self, focused):
+        self.focused = focused
+
+
 class _SwitchUser32(_FakeUser32):
     """Records the foreground reads and the minimize sends into a shared
     order log, so a test can assert the SEQUENCE and not just the calls --
@@ -1943,6 +1963,10 @@ def _switching_host(
         "Alice": _FakeClient("Alice", hwnd=0x1111),
         "Bravo": _FakeClient("Bravo", hwnd=0x2222),
     }
+    # Real previews, not just a client registry: the ring is what the user
+    # watches for, so its move has to be observable in the same order log
+    # as the activation and the minimize.
+    h._windows = {key: _RingWindow(key, order) for key in h._clients}
     return h, _FakeLibs(user32), order
 
 
@@ -1960,6 +1984,9 @@ def test_the_switch_reads_the_foreground_activates_settles_minimizes_reactivates
     assert order == [
         ("foreground", 0x1111),
         ("activate", 0x2222),
+        # Ahead of the settle, not after it -- see
+        # test_the_ring_moves_before_the_settle_and_the_minimize.
+        ("ring", "Bravo", True),
         ("sleep", host.SWITCH_SETTLE_MS / 1000.0),
         (
             "send",
@@ -1972,6 +1999,68 @@ def test_the_switch_reads_the_foreground_activates_settles_minimizes_reactivates
         ),
         ("activate", 0x2222),
     ]
+
+
+def test_the_ring_moves_before_the_settle_and_the_minimize(monkeypatch):
+    """The ring is applied inline, the instant activate() reports the
+    foreground moved -- not on the sweep the foreground hook will ask for.
+
+    Measured on a live install: the minimize send times out for its full
+    MINIMIZE_TIMEOUT_MS on every switch (166 consecutive timeouts in one
+    session's log, every client, no successes), and it blocks the preview
+    thread. Everything queued behind it waits -- including the
+    EVENT_SYSTEM_FOREGROUND event and the WM_APP_SWEEP_NOW it posts, which
+    is what used to move the ring. So the client came forward and its
+    preview stayed unhighlighted for SWITCH_SETTLE_MS + MINIMIZE_TIMEOUT_MS
+    on a good run, and until the 700ms sweep on a run where the queued
+    WinEvent was dropped.
+
+    TriffView marks the highlight in the same place, ahead of its own
+    settle and minimize (TriffViewSubsystem.cs, TryActivateClient).
+    """
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    kinds = [entry[0] for entry in order]
+    assert kinds.index("ring") < kinds.index("sleep")
+    assert kinds.index("ring") < kinds.index("send")
+    assert ("ring", "Bravo", True) in order
+    assert ("ring", "Alice", False) in order
+
+
+def test_the_inline_ring_needs_no_second_foreground_read(monkeypatch):
+    """activate() already read GetForegroundWindow to reach its verdict, and
+    the host records the destination it just switched to -- so moving the
+    ring here must not cost another syscall, and must not consult a
+    _foreground the hook has not caught up on yet."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._foreground = 0x1111  # stale: the hook has not run yet
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert h._foreground == 0x2222
+    assert h._selected_key == "Bravo"
+    assert h._focused_key == "Bravo"
+    # One read, at the top, to identify the OUTGOING client.
+    assert [e for e in order if e[0] == "foreground"] == [("foreground", 0x1111)]
+
+
+def test_a_refused_switch_leaves_the_ring_where_it_was(monkeypatch):
+    """Windows refuses a foreground change from a process without recent
+    input, and window.py logs exactly that as the likeliest field
+    complaint. The client never came forward, so highlighting its preview
+    would point at a window the user is not looking at."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is False
+
+    assert [e for e in order if e[0] == "ring"] == []
+    assert h._selected_key == "Alice"
 
 
 def test_a_refused_switch_minimizes_nothing(monkeypatch):
@@ -1995,7 +2084,26 @@ def test_a_timed_out_minimize_does_not_reactivate(monkeypatch):
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     kinds = [entry[0] for entry in order]
-    assert kinds == ["foreground", "activate", "sleep", "send"]
+    assert kinds == ["foreground", "activate", "ring", "sleep", "send"]
+
+
+def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog):
+    """A zero return has three causes the API does not separate, and the
+    elapsed time is the only one of them that survives into a user's log:
+    a send that spent the whole budget timed out, one that came back
+    instantly was refused. The line used to read identically either way,
+    which is how a live install logged 166 of them in one session and left
+    the cause open."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+    monkeypatch.setattr(host.time, "sleep", lambda s: None)
+
+    with caplog.at_level("INFO", logger="wingman.preview.host"):
+        assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    line = "".join(r.message for r in caplog.records if "Minimize of" in r.message)
+    assert line, "the failed minimize logged nothing"
+    assert f"of a {host.MINIMIZE_TIMEOUT_MS}ms budget" in line
+    assert "did not complete" in line
 
 
 def test_a_never_minimize_character_is_left_alone(monkeypatch):
@@ -2005,7 +2113,11 @@ def test_a_never_minimize_character_is_left_alone(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+    assert order == [
+        ("foreground", 0x1111),
+        ("activate", 0x2222),
+        ("ring", "Bravo", True),
+    ]
 
 
 def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
@@ -2013,7 +2125,11 @@ def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+    assert order == [
+        ("foreground", 0x1111),
+        ("activate", 0x2222),
+        ("ring", "Bravo", True),
+    ]
 
 
 def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
@@ -2027,7 +2143,11 @@ def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [("foreground", 0x2222), ("activate", 0x2222)]
+    assert order == [
+        ("foreground", 0x2222),
+        ("activate", 0x2222),
+        ("ring", "Bravo", True),
+    ]
 
 
 def test_the_switch_reports_the_activation_verdict_even_when_it_minimizes(monkeypatch):
@@ -2050,7 +2170,11 @@ def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [("foreground", 0xDEAD), ("activate", 0x2222)]
+    assert order == [
+        ("foreground", 0xDEAD),
+        ("activate", 0x2222),
+        ("ring", "Bravo", True),
+    ]
 
 
 # --- resize_preview()/reset_layouts(): on-demand sizing ---------------------
