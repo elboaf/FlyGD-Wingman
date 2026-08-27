@@ -549,11 +549,32 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
     of the column and pushes the label off it, measured at 14px the moment
     that column is sorted. Reserving the width unconditionally is the fix,
     so the header stops moving when the sort changes."""
-    assert re.search(r"\.list-head > span::after\s*\{[^}]*visibility:\s*hidden", CSS), (
-        "every header needs the slot, not just the sorted one"
+    base = re.search(r"\.list-head > span::after\s*\{([^}]*)\}", CSS)
+    assert base, "the sort arrow's slot is gone"
+    # THE SLOT, which is what this test has always been about: a fixed
+    # width on every header, sorted or not, so the label does not shift by
+    # 14px the moment a column is sorted.
+    assert re.search(r"width:\s*8px", base.group(1)), (
+        "every header needs the slot, not just the sorted one: " + base.group(1)
     )
-    assert re.search(
-        r"\.list-head > span\.sorted::after\s*\{[^}]*visibility:\s*visible", CSS
+    assert not re.search(r"display:\s*none", base.group(1)), (
+        "display:none takes the slot back out of the flow, which is the "
+        "header-shift this test exists to prevent"
+    )
+
+    # Round 6, P2-2. The arrow used to be `visibility: hidden` until a
+    # column carried .sorted -- and the list opens in delivery order with
+    # nothing sorted, so on first open all four headers had zero
+    # affordance and read as static labels. It is now present-but-quiet at
+    # rest and rises through hover to sorted, so the mechanism is
+    # discoverable without having been discovered.
+    rest = re.search(r"opacity:\s*(\.\d+|0?\.\d+|1)", base.group(1))
+    assert rest, (
+        "the arrow must be visible at rest, not hidden until sorted: " + base.group(1)
+    )
+    assert float(rest.group(1)) > 0, "an arrow at opacity 0 is still hidden"
+    assert re.search(r"\.list-head > span\.sorted::after\s*\{[^}]*opacity:\s*1", CSS), (
+        "the sorted column's arrow must be the strongest of the three states"
     )
     # The two centred headers need it mirrored or reserving it decentres
     # them by half its own box.

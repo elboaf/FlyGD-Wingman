@@ -1126,11 +1126,24 @@ button.btn:disabled,
    changing under the pointer, which is how it read as "every column, every
    visit". Reserving the width unconditionally costs the label 12px it was
    never entitled to keep and makes the header stop moving. */
+/* Round 6, P2-2. `visibility: hidden` until a column carried .sorted, and
+   the list opens in delivery order with nothing sorted -- so on first
+   open all four headers had ZERO affordance and read as static labels.
+   Sixteen recordings differing only in a timestamp make Size and Length
+   the fast route to "which one was the good fight", and the whole
+   mechanism was built and then hidden behind knowing it was there.
+
+   opacity, not visibility, so the glyph is present-but-quiet rather than
+   absent: .28 is legible as a mark without competing with the label, and
+   the width was already reserved unconditionally by the rule above (see
+   its note -- reserving it is what stopped the header moving on click),
+   so nothing reflows at any of the three levels. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; visibility: hidden;
+  width: 8px; opacity: .28;
 }
-.list-head > span.sorted::after { visibility: visible; }
+.list-head > span:hover::after { opacity: .7; }
+.list-head > span.sorted::after { opacity: 1; }
 .list-head > span.sorted.desc::after { content: "\25BC"; }
 /* Each header is anchored like its column — headers centred over
    right-aligned data read as misalignment, not as a choice. */
@@ -1691,7 +1704,31 @@ button.btn:disabled,
 .evelabel { color: var(--text-dim); font-size: 11px; letter-spacing: .08em; }
 /* Same token #status.WARNING uses, so the two severities read alike. */
 .evewarn { color: var(--warn); }
-.evestat.degraded { opacity: .5; }
+/* Round 6, P2-3. This was `opacity: .5`, and it put the strip's own
+   labels at 2.73:1 -- measured off the round-6 capture, on the brightest
+   antialiased pixel, so the effective figure is worse. DESIGN.md's floor
+   is 4.5:1.
+
+   The arithmetic is unavoidable, not a tuning question: --text-dim over
+   the strip is about 7:1, and halving a colour's contrast against its
+   background always lands roughly a third of the way to it. Any token
+   that passes 4.5:1 fails it at 50% opacity, so `opacity` cannot express
+   "dimmed" for text and stay legible.
+
+   A token step does. --text-faint is the sheet's existing next-quietest
+   text and it is a real colour, so it is measurable rather than derived
+   from whatever it happens to sit on -- and the strip is degraded exactly
+   when it has something to report (bookmarks.js toggles it when the
+   engine is not live), which is the worst possible moment to be the least
+   readable thing on screen.
+
+   The LED keeps a true opacity: it is a 7px dot carrying no text, so
+   1.4.3 does not apply to it and dimming is the point. */
+.evestat.degraded .evelabel,
+.evestat.degraded #eve-sig,
+.evestat.degraded #eve-root,
+.evestat.degraded #eve-next { color: var(--text-faint); }
+.evestat.degraded .led { opacity: .5; }
 /* Author rules beat the UA stylesheet's [hidden]{display:none} regardless of
    specificity, so the display:flex above would keep this visible for every
    user who never turns the feature on. Same fix as .routenav[hidden]. */
