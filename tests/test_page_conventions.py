@@ -1613,6 +1613,28 @@ def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
     )
 
 
+def test_clear_is_not_drawn_where_it_could_only_refuse():
+    """Same rule as the Size test above, applied to the control that broke
+    it worst. `Clear` was rendered on every row and disabled wherever there
+    was no chord to clear -- which, on a fresh install, is every row. It is
+    a .linkbtn, so :disabled is opacity .45 over --text-faint: 1.94:1
+    against the card, a control nobody can read holding a grid track on
+    thirteen rows.
+
+    Its function is not lost. Edit... with an empty submission clears, and
+    that path predates this change.
+    """
+    body = _makerow_body()
+    assert "if (gesture) {" in body, (
+        "makeRow no longer chooses whether to build Clear -- it is back to "
+        "rendering a control that can only refuse on every unbound row"
+    )
+    assert "WM.setEnabled(clear" not in body, (
+        "Clear is disabled rather than absent again: at opacity .45 over "
+        "--text-faint that is 1.94:1, unreadable, and still holding a track"
+    )
+
+
 def test_an_opted_out_character_row_disables_its_own_controls():
     """The chosen shape for a character opted out of previews: the row
     stays visible -- there has to be somewhere to turn it back on -- but
@@ -1621,9 +1643,18 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     What this pins is that they go through WM.setEnabled against the row's
     own opted-out state, rather than merely being dimmed in CSS: a control
     that only LOOKS dead still fires on click.
+
+    `clear` dropped out of the loop below when it stopped being drawn
+    unconditionally (test_clear_is_not_drawn_where_it_could_only_refuse):
+    it is built only when there is a gesture to clear, and once built it
+    is never a refusal the way capture and Edit... can be -- removing a
+    saved chord for an opted-out character is a legitimate action on data,
+    not an attempt to touch a window or registration that opting out took
+    away. Gating it on `off` too would grey out the one control an
+    opted-out row still needs to undo a stale bind.
     """
     body = _makerow_body()
-    for control in ("button", "clear", "typed"):
+    for control in ("button", "typed"):
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )

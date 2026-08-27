@@ -187,6 +187,13 @@
                               : document.createElement('span'));
 
     var button = WM.make('button', 'bindbtn', gesture || 'Not set');
+    // Quiets an unbound row without a border or a fill -- see the CSS rule
+    // this class adds for the measurements behind that choice. Cannot
+    // collide with the three classes the chain below adds: clashes()
+    // returns null for an empty gesture and no bookmark chord list
+    // contains '', so an unset button is never also .clash, .unknown or
+    // .dim.
+    if (!gesture) { button.classList.add('unset'); }
     var clash = clashes(gesture);
     var shadow = bookmarkClash(gesture);
     // An active bookmark collision warns like any other clash; a latent one
@@ -224,7 +231,7 @@
     if (off) {
       button.title = 'Previews are off for this character, so this keybind '
                    + 'is not registered. It is still saved, and comes back '
-                   + 'when you untick Off.';
+                   + 'when you tick Preview again.';
     }
     // Appended, not another branch in the chain above: a shared chord is
     // not a warning and does not compete with one. As its own `else if`
@@ -251,14 +258,27 @@
     WM.setEnabled(button, !off);
     row.appendChild(button);
 
-    var clear = WM.make('button', 'linkbtn', 'Clear');
-    clear.addEventListener('click', function () { endCapture(); onSet(''); });
-    // Round 3, B2. The site the walkthrough actually measured: `Clear`
-    // was live beside a bind reading `Not set`. Same reasoning as the
-    // matching control in bookmarks.js -- the two lists build the same
-    // row and cannot disagree about when a control is live.
-    WM.setEnabled(clear, !off && !!gesture);
-    row.appendChild(clear);
+    // One cell, not two tracks. Two adjacent link buttons in their own
+    // tracks forced two blank header cells, which is the ragged gap
+    // between "Keybind" and "Size" the table used to have.
+    var acts = WM.make('span', 'rowacts');
+
+    // Built only where there is something to act on. D6's rule (do not
+    // draw a control in the state where it can only refuse), applied to
+    // the control that broke it worst: `Clear` used to render on every
+    // row and sit disabled on every unbound one, which on a fresh install
+    // was all of them.
+    //
+    // Not gated on `off` the way capture and Edit… are, on purpose: an
+    // opted-out character's preview and registration are gone, but the
+    // saved chord is still data, and removing it is not an attempt to
+    // touch either. Gating it on `off` too would grey out the one control
+    // an opted-out row still needs to undo a stale bind.
+    if (gesture) {
+      var clear = WM.make('button', 'linkbtn', 'Clear');
+      clear.addEventListener('click', function () { endCapture(); onSet(''); });
+      acts.appendChild(clear);
+    }
 
     // `Edit…`, not `Type…` -- round 3's B6; the reasoning is on the
     // matching control in bookmarks.js. The two lists build the same row
@@ -285,7 +305,8 @@
       });
     });
     WM.setEnabled(typed, !off);
-    row.appendChild(typed);
+    acts.appendChild(typed);
+    row.appendChild(acts);
 
     // Size... only where it can succeed, and a filler where it cannot.
     //
@@ -806,10 +827,11 @@
   // disclosures (renderLockBlock, renderNeverMinimizeBlock). The
   // character name came the other way, out of a full-width line of its
   // own and into a fixed track, which is what `Character` names. So this
-  // header now names a fixed six tracks, not a conditional six or seven.
-  // `Clear`, `Edit...` and `Size...` keep their words -- they are verbs
-  // on a control, not the name of a column -- so they were never in that
-  // count.
+  // header now names a fixed five tracks, not a conditional six or seven.
+  // `Clear` and `Edit...` share one cell now (`.rowacts`, built in
+  // makeRow) rather than a track each, and `Size...` keeps its own word --
+  // they are verbs on a control, not the name of a column, so none of
+  // them were ever in that count.
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
@@ -825,12 +847,13 @@
   // guard derives the per-row track count from makeRow's own appends, so
   // a header appended there would be counted as extra controls on every
   // row. It contributes the same number of TRACK cells a character row
-  // does -- six. (It used to contribute one FEWER than a character row
+  // does -- five. (It used to contribute one FEWER than a character row
   // appends, because the `.lab` spanned the whole row rather than sitting
   // in a track and the guard subtracted it. The name is a track now, so
   // the two counts are simply equal.)
   //
-  // Clear and Edit... get empty cells rather than headings. They are
+  // The one blank cell is `.rowacts`'s track: Clear and Edit... share it
+  // rather than each claiming a heading of their own. They are
   // subordinate to the bind button they act on -- naming them in the
   // header would claim they are columns of data, and they are verbs.
   //
@@ -853,7 +876,7 @@
   // hazard arrived with the inline name rather than with the grid.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Character', 'Preview', 'Keybind', '', '', 'Size'];
+    var cells = ['Character', 'Preview', 'Keybind', '', 'Size'];
     cells.forEach(function (text) {
       row.appendChild(WM.make('span', '', text));
     });

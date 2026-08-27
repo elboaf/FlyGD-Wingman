@@ -2069,16 +2069,19 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* A fixed name column, five content-sized control tracks, then one
+  /* A fixed name column, four content-sized control tracks, then one
      flexible one. The character name sits in track 1 rather than taking a
      line of its own -- the `.lab` override below no longer spans -- and
-     the five that follow size the CONTROLS beside it: Off, bind button,
-     Clear, Edit…, Size… -- exactly the five children previews.js's
-     makeRow appends after the label. Lock and Never minimize used to sit
-     here too, as a sixth and a conditional seventh; both now render once,
-     in their own disclosures under their global toggles, rather than as a
-     track on every row. The trailing minmax(0, 1fr) absorbs the leftover
-     width so the six stay packed at the start instead of spreading.
+     the four that follow size the CONTROLS beside it: Off, bind button,
+     the actions cell (Clear/Edit… together, `.rowacts`), Size… --
+     exactly the four children previews.js's makeRow appends after the
+     label. Clear and Edit… used to be two of those children, one track
+     each; they now share the one `.rowacts` span, which is what dropped
+     the count from five. Lock and Never minimize used to sit here too, as
+     a sixth and a conditional seventh; both now render once, in their own
+     disclosures under their global toggles, rather than as a track on
+     every row. The trailing minmax(0, 1fr) absorbs the leftover width so
+     the four stay packed at the start instead of spreading.
 
      THE NAME TRACK IS FIXED, NOT max-content, and that is the whole
      reason this list may have an inline name at all. `max-content` over
@@ -2107,7 +2110,7 @@ button.btn:disabled,
      and this number changes with it -- test_page_conventions.py now
      DERIVES the expected count from makeRow's own appends rather than
      trusting this comment. */
-  grid-template-columns: 150px repeat(5, max-content) minmax(0, 1fr);
+  grid-template-columns: 150px repeat(4, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -2188,6 +2191,26 @@ button.btn:disabled,
    Keeping the normal text colour is deliberate -- the binding is real
    and saved; only its registration is unknown. */
 .bindbtn.unknown { border-style: dashed; border-color: var(--panel-border); }
+
+/* An unbound chord. Measured against the card, --control (this button's
+   fill) is 1.09:1 and --control-border 1.32:1, so the box is very nearly
+   invisible and what carried "Not set" thirteen times was --text at
+   13.71:1 -- the loudest thing on a screen whose subject is the roster.
+   --text-dim is 6.43:1 on --control, well over AA, and leaves a BOUND
+   chord as the thing that stands out.
+
+   Cannot collide with the three states above: clashes() returns null for
+   an empty gesture and no bookmark chord list contains "", so an unset
+   button is never also .clash, .unknown or .dim. */
+.bindbtn.unset { color: var(--text-dim); }
+
+/* The shared cell Clear and Edit… render into, previews.js's makeRow.
+   Right-aligned inside its own cell so Edit… holds one x whether or not
+   Clear is beside it. The track is max-content over the rows that have
+   both, so a row without Clear reads as an empty slot rather than as a
+   shifted control. */
+.rowacts { display: flex; gap: 2px; justify-content: flex-end; }
+
 /* ====================== EVE Settings route ==========================
    Same card markup as the settings and bookmarks routes, so it needs the
    same column direction and scroll safeguard: three cards, two of them
