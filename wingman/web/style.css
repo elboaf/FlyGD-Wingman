@@ -1489,9 +1489,18 @@ button.btn:disabled,
    is exactly the one worth seeing: a character who is BOTH locked and
    opted out of previews. Qualified this way the checked gradient stands
    and the label's .45 opacity dims it, which reads as "locked, and
-   currently inert" instead of "not locked". */
+   currently inert" instead of "not locked".
+
+   THE BORDER IS DELIBERATELY NOT TOUCHED. A first version also set it to
+   --panel-border, which is the card's own hairline token: composited at
+   .45 that is about 1.05:1 against the card, so the 15px square had no
+   perceptible edge and an opted-out row's Lock column read as an empty
+   gap -- the exact misreading makeSizeFiller was added to prevent one
+   column to the left. --control-edge is about 1.23:1 there. Neither meets
+   the 3:1 DESIGN.md sets for a state border, and that miss predates this
+   rule, but the box has to stay FINDABLE before it can be dimmed. */
 #preview-binds .check.inert input:not(:checked) + .box {
-  background: var(--sunken); border-color: var(--panel-border);
+  background: var(--sunken);
 }
 /* The Size column's cell for a character that cannot be sized yet.
    Carries a title explaining how to make one settable, and therefore has

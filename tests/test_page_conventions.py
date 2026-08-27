@@ -1359,18 +1359,28 @@ def test_the_previews_header_row_names_one_column_per_track():
     honest but leaves the header itself unguarded, which is what this
     closes.
 
-    WHAT A MISMATCH ACTUALLY COSTS, measured rather than assumed: the
-    header's own captions land over the wrong controls, and nothing else.
-    It does not cascade. Every row makeRow builds leads with
-    `.lab { grid-column: 1 / -1 }`, and a full-width item cannot be placed
-    into a partly-filled row, so each name starts a fresh grid row at
-    track 1. Verified in the ?dev=1 harness at 840x625 by deleting a
-    header cell: every character row's seven cells stayed at
-    209/264/424/476/530/586/624. Headings one column out are a silent lie
-    about the data, which is reason enough for this guard -- but the
-    earlier claim that a short row drags the rows below it into the wrong
-    tracks is false, and it is repeated in style.css and in the makeRow
-    guard above.
+    WHAT A MISMATCH ACTUALLY COSTS, measured for every cell rather than
+    for one: the header's captions land over the wrong controls, AND the
+    rows below shift. Deleting each heading in turn in the ?dev=1 harness
+    at 840x625 moves the first character row's controls to
+
+        Preview        209/265/425/477/531/587/685
+        Keybind        209/264/424/476/530/586/684
+        either blank   209/264/424/476/530/586/684
+        Size           209/264/424/476/530/586/684
+        Lock           209/264/424/476/530/586/684
+        Never minimize 209/264/424/476/530/586/624   (unchanged)
+        intact         209/264/424/476/530/586/624
+
+    -- six of seven push every row's last column 60px right, because the
+    columns are shared `max-content` tracks and a displaced heading falls
+    into a narrower one and grows it. Only the last cell is free, and an
+    earlier version of this docstring tested exactly that one and
+    concluded the damage was local.
+
+    Vertical placement really does not cascade: y was identical in all
+    seven runs, because every row leads with `.lab { grid-column: 1 / -1 }`
+    and a definite column-start resets auto-placement to a fresh row.
 
     Both states are checked, because the header carries the same
     conditional cell makeRow does: the Never-minimize column exists only
@@ -1401,7 +1411,8 @@ def test_the_previews_header_row_names_one_column_per_track():
         assert expected == int(tracks.group(1)), (
             f"makeHeadRow names {expected} columns but {selector} declares "
             f"{tracks.group(1)} tracks -- the headings sit over the wrong "
-            f"controls"
+            f"controls, and a heading falling into a narrower shared track "
+            f"widens it for every row below"
         )
 
 

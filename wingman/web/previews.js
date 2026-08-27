@@ -570,10 +570,14 @@
     // once cut down to " Off".
     //
     // Those are PRE-CHANGE figures and no longer describe this screen.
-    // With the words gone the seven tracks and their gaps measure 512.16px
-    // of the same 586px (?dev=1, 840x625). A cell with no text wants the
-    // box's 15px, so the phrase moved into a heading rendered once instead
-    // of being cut to fit a track.
+    // With the words gone the seven tracks and their six intervening gaps
+    // measure 502.16px of the same 586px -- counted the same way 504.75
+    // was, which excludes the gap before the trailing 1fr. (Counting that
+    // gap gives 512.16, and an earlier draft printed it beside 504.75, so
+    // the two numbers put side by side to be compared were counted
+    // differently.) A cell with no text wants the box's 15px, so the
+    // phrase moved into a heading rendered once instead of being cut to
+    // fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
     var label = WM.make('label', 'check optout', '');
     label.title = 'Untick to give this character no preview window. Its own '
@@ -588,11 +592,20 @@
       // once, at the boundary -- not in api.py, which would change a
       // persisted key's meaning for the sake of a label.
       var wanted = box.checked;
+      // Same generation guard the Lock and Size handlers carry, and for
+      // the same reason: onPreviewHotkeys replaces `state` wholesale when
+      // an EVE client opens or closes, so a save resolving after that
+      // would write a pre-write roster over the newer payload. Filter
+      // first and concatenate onto the filtered list, so a name the newer
+      // payload already carries cannot be added twice.
+      var before = pushes;
       WM.send('set_preview_excluded', name, !wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
-        state.excluded = wanted
-          ? (state.excluded || []).filter(function (n) { return n !== name; })
-          : (state.excluded || []).concat(name);
+        if (pushes !== before) { return; }
+        var without = (state.excluded || []).filter(function (n) {
+          return n !== name;
+        });
+        state.excluded = wanted ? without : without.concat(name);
         requestRender();
       });
     });
@@ -603,10 +616,16 @@
   // wrapper. WM.setEnabled sets `disabled` on the node it is given, which
   // for a checkbox is the INPUT -- and that alone would dim nothing, since
   // the input is taken out of the layout and the .box span is what shows.
-  // A `.check input:disabled + .box` rule COULD dim the box (style.css
-  // already reaches it that way for :checked), but not the word beside it;
-  // the class dims the whole label. Both halves are set here together so
-  // the look and the behaviour cannot disagree.
+  // The class dims the label; style.css also reaches the box directly.
+  // Both halves are set here together so the look and the behaviour
+  // cannot disagree.
+  //
+  // The class USED to be justified as "a rule could dim the box but not
+  // the word beside it, so dim the whole label". These labels have no
+  // word any more -- the column header carries it -- so that argument is
+  // spent and style.css says so where the rule lives. The class stays
+  // because it carries `cursor`, which sits on `.check` and nothing else
+  // can reach.
   function inert(label, box, off) {
     WM.setEnabled(box, !off);
     label.classList.toggle('inert', !!off);
@@ -635,12 +654,16 @@
     label.prepend(box);
     box.addEventListener('change', function () {
       var wanted = box.checked;
+      // The fourth handler of this shape, and the last to get the guard.
+      // Same reasoning as the other three.
+      var before = pushes;
       WM.send('set_never_minimize', name, wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
-        state.never_minimize = wanted
-          ? (state.never_minimize || []).concat(name)
-          : (state.never_minimize || [])
-              .filter(function (n) { return n !== name; });
+        if (pushes !== before) { return; }
+        var without = (state.never_minimize || []).filter(function (n) {
+          return n !== name;
+        });
+        state.never_minimize = wanted ? without.concat(name) : without;
       });
     });
     return label;
@@ -717,6 +740,26 @@
     render();
   }
 
+  function makeSizeFiller() {
+    // Holds the Size column open for a character that cannot be sized,
+    // and says why on hover rather than being a blank cell the reader has
+    // no account of. Before the gate, clicking Size... here produced the
+    // refusal sentence that NAMED the way out; withdrawing the control
+    // without the sentence would take that away too.
+    //
+    // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
+    // grid and elementFromPoint at its centre returned null, so the title
+    // below had no hover target and the explanation was unreachable. It
+    // also says "nothing here, and that is expected" to someone who never
+    // hovers -- an unexplained gap in one column of one row otherwise
+    // reads as a rendering fault. `—` is this page's established no-value
+    // glyph (bookmarks.js, list.js).
+    var cell = WM.make('span', 'size-none', '—');
+    cell.title = 'A size can only be set once this preview exists. Start '
+               + 'the client, or move or resize its preview once.';
+    return cell;
+  }
+
   // The column headers, built ONCE above the character rows -- which is
   // the whole point of them. Three controls per character row used to
   // spell their own names: `Off`, `Lock` and `Never minimize`, so 39
@@ -728,8 +771,12 @@
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
-  // header and all thirteen rows together: " Never minimize" set that
-  // track to ~104px, and the heading sets it to ~73px.
+  // header and all thirteen rows together. Measured in the harness:
+  // `<label class="check nm"> Never minimize` sized that track at
+  // 118.78px, and the bare heading sizes it at 87.48px. (Both figures
+  // include the 15px `.box`; an earlier draft of this comment measured
+  // the text alone and was ~15px light on each.) " Lock" was 53.72px
+  // against a `Lock` heading's 27.42px.
   //
   // Sentence case at --fs-muted with no tracking, matching the recording
   // list's headers (index.html's .list-head) rather than .bind-group-name
@@ -749,36 +796,32 @@
   // subordinate to the bind button they act on -- naming them in the
   // header would claim they are columns of data, and they are verbs.
   //
-  // What a wrong cell count here costs, measured rather than assumed:
-  // the header's own captions land over the wrong controls. It does NOT
-  // cascade into the rows below. Every row makeRow builds leads with
-  // `.lab { grid-column: 1 / -1 }` (style.css), and a full-width item
-  // cannot be placed into a partly-filled row, so each name starts a
-  // fresh grid row at track 1 and a short row leaves its hole inside
-  // itself. Verified in the ?dev=1 harness at 840x625 by deleting a
-  // header cell: every character row's seven cells stayed at
-  // 209/264/424/476/530/586/624. That is worth having a guard for
-  // anyway -- headings one column out are a silent lie about the data --
-  // but the consequence is local.
-  function makeSizeFiller() {
-    // Holds the Size column open for a character that cannot be sized,
-    // and says why on hover rather than being a blank cell the reader has
-    // no account of. Before the gate, clicking Size... here produced the
-    // refusal sentence that NAMED the way out; withdrawing the control
-    // without the sentence would take that away too.
-    //
-    // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
-    // grid and elementFromPoint at its centre returned null, so the title
-    // below had no hover target and the explanation was unreachable. It
-    // also says "nothing here, and that is expected" to someone who never
-    // hovers -- an unexplained gap in one column of one row otherwise
-    // reads as a rendering fault.
-    var cell = WM.make('span', 'size-none', '—');
-    cell.title = 'A size can only be set once this preview exists. Start '
-               + 'the client, or move or resize its preview once.';
-    return cell;
-  }
-
+  // What a wrong cell count here costs, measured -- and measured for
+  // EVERY cell, because measuring one is how this comment was wrong
+  // twice. Delete each heading in turn in the ?dev=1 harness at 840x625
+  // and read the first character row's control positions:
+  //
+  //   delete Preview        -> 209/265/425/477/531/587/685
+  //   delete Keybind        -> 209/264/424/476/530/586/684
+  //   delete either blank   -> 209/264/424/476/530/586/684
+  //   delete Size           -> 209/264/424/476/530/586/684
+  //   delete Lock           -> 209/264/424/476/530/586/684
+  //   delete Never minimize -> 209/264/424/476/530/586/624  (unchanged)
+  //   intact                -> 209/264/424/476/530/586/624
+  //
+  // So it DOES reach the rows -- six of the seven deletions push every
+  // character row's last column 60px right -- and the route is the shared
+  // track sizing described above, not placement: the `Never minimize`
+  // heading falls into Lock's narrower track and grows it from 27.42 to
+  // 87.48. Only deleting the LAST cell is free, which is the one case an
+  // earlier version of this comment tested before concluding the
+  // consequence was local.
+  //
+  // Vertical placement genuinely does not cascade, and that part is worth
+  // keeping: y was identical in all seven runs, because every row leads
+  // with `.lab { grid-column: 1 / -1 }` and a definite column-start of 1
+  // resets the auto-placement cursor to a fresh row. A short row leaves
+  // its hole beside itself rather than pulling the next row up.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
     var cells = ['Preview', 'Keybind', '', '', 'Size', 'Lock'];
