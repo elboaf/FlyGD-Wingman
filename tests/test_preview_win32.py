@@ -76,7 +76,7 @@ REQUIRED = {
         "DwmUpdateThumbnailProperties",
         "DwmIsCompositionEnabled",
     ],
-    "kernel32": ["GetModuleHandleW", "GetCurrentThreadId"],
+    "kernel32": ["GetModuleHandleW", "GetCurrentThreadId", "GetCurrentProcessId"],
 }
 
 

@@ -437,6 +437,15 @@ def build_preview_host(state, api_box):
                 )
             )
 
+        def hide_on_lost_focus():
+            # Absent means off, and for a related reason to
+            # minimize_inactive_clients above: taking every preview off
+            # the screen is a change a user has to ask for, not one an
+            # upgrading install is given.
+            return bool(
+                state.settings.get("preview", {}).get("hide_on_lost_focus", False)
+            )
+
         def never_minimize():
             # A character-name list, not a per-character flag -- see
             # PreviewHost._is_never_minimize. Read live for the same
@@ -508,6 +517,7 @@ def build_preview_host(state, api_box):
             opacity=opacity,
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,
+            hide_on_lost_focus=hide_on_lost_focus,
             size=default_size,
             locked=locked,
             lock_default=lock_default,

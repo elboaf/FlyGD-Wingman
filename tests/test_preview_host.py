@@ -1470,6 +1470,240 @@ def test_a_raising_locked_callable_falls_back_to_unlocked():
     assert h._is_locked("Alice") is False
 
 
+# --- hide-on-lost-focus -----------------------------------------------------
+
+
+def test_hide_on_lost_focus_defaults_off_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._hiding_on_lost_focus() is False
+
+
+def test_hide_on_lost_focus_reads_the_callable():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, hide_on_lost_focus=lambda: True
+    )
+    assert h._hiding_on_lost_focus() is True
+
+
+def test_a_raising_hide_on_lost_focus_callable_leaves_previews_up():
+    """Same guard as every other live-read seam, and the fallback matters
+    more here than most: the failure mode of guessing wrong is a screen
+    with no previews on it and no way to tell why."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, hide_on_lost_focus=boom)
+    assert h._hiding_on_lost_focus() is False
+
+
+class _OwnershipUser32(_FakeUser32):
+    """_FakeUser32 plus the pid lookup _foreground_is_ours needs."""
+
+    def __init__(self, pids, **kw):
+        super().__init__(**kw)
+        # hwnd -> owning pid.
+        self._pids = pids
+
+    def GetWindowThreadProcessId(self, hwnd, pid_ptr):
+        pid_ptr._obj.value = self._pids.get(int(hwnd), 0)
+        return 1  # a thread id; _foreground_is_ours ignores it
+
+
+class _OwnershipLibs(_FakeLibs):
+    def __init__(self, user32, our_pid):
+        super().__init__(user32)
+
+        class Kernel32:
+            def GetCurrentProcessId(self):
+                return our_pid
+
+        self.kernel32 = Kernel32()
+
+
+def test_a_window_of_our_own_process_is_ours():
+    """Resolved by PROCESS, not by handle: PreviewHost is built before the
+    webview window exists (__main__.py), so it can never be handed that
+    HWND. By process, the main window, a WM.confirm dialog, the tray menu
+    and the previews themselves all answer yes with one call."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    libs = _OwnershipLibs(_OwnershipUser32({0x40: 4242}), our_pid=4242)
+    assert h._foreground_is_ours(libs, 0x40) is True
+
+
+def test_another_process_window_is_not_ours():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    libs = _OwnershipLibs(_OwnershipUser32({0x40: 9999}), our_pid=4242)
+    assert h._foreground_is_ours(libs, 0x40) is False
+
+
+def test_no_foreground_window_is_not_ours():
+    """GetForegroundWindow returns 0 on a secure desktop. Claiming it
+    would keep every preview on screen over a lock screen."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    libs = _OwnershipLibs(_OwnershipUser32({}), our_pid=4242)
+    assert h._foreground_is_ours(libs, 0) is False
+
+
+def test_ownership_without_libs_is_not_claimed():
+    """Several tests drive _sweep with libs=None, and _apply_visibility
+    runs on that path too."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._foreground_is_ours(None, 0x40) is False
+
+
+class _VisibilityWindow:
+    """A fake preview that answers every flag _apply_selection pushes,
+    plus the handful _restyle writes through."""
+
+    def __init__(self):
+        self.rect = geometry.Rect(0, 0, 320, 210)
+        self.hidden = False
+        self.show_labels = True
+        self.opacity = 255
+        self.locked = False
+        self.snap = True
+        self.lock_aspect = True
+        self._thumb = None
+        self._inset = 2
+
+    def redraw(self, force=False):
+        pass
+
+    def set_selected(self, selected):
+        pass
+
+    def set_focused(self, focused):
+        pass
+
+    def set_hidden(self, hidden):
+        self.hidden = hidden
+
+    def close(self):
+        pass
+
+
+def _visibility_host(monkeypatch, *, enabled, foreground, pids, our_pid=4242):
+    made = {}
+    live = {"enabled": enabled}
+
+    def fake_create(cls, libs, client, rect, **kw):
+        win = _VisibilityWindow()
+        made[client.stable_key] = win
+        return win
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        hide_on_lost_focus=lambda: live["enabled"],
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [
+            _FakeClient(key, hwnd=0x1000 * (i + 1))
+            for i, key in enumerate(["Alice", "Bravo"])
+        ],
+    )
+    libs = _OwnershipLibs(
+        _OwnershipUser32(pids, foreground=foreground), our_pid=our_pid
+    )
+    h._sweep(libs)
+    return h, made, libs, live
+
+def test_previews_stay_up_while_a_client_holds_the_foreground(monkeypatch):
+    _h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0x1000, pids={0x1000: 9999}
+    )
+    assert [w.hidden for w in made.values()] == [False, False]
+
+
+def test_every_preview_hides_when_the_foreground_leaves_eve(monkeypatch):
+    """The feature. Alt-tabbing to a browser takes the whole wall off the
+    screen -- and because a minimized window cannot hold the foreground,
+    this is also what covers "all clients minimized"."""
+    _h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    assert [w.hidden for w in made.values()] == [True, True]
+
+
+def test_previews_stay_up_when_wingman_itself_has_the_foreground(monkeypatch):
+    """Otherwise opening Wingman to arrange previews would hide the very
+    previews being arranged. The previews are WS_EX_NOACTIVATE so a drag
+    never takes the foreground, but the app window does."""
+    _h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xBEEF, pids={0xBEEF: 4242}
+    )
+    assert [w.hidden for w in made.values()] == [False, False]
+
+
+def test_nothing_hides_while_the_setting_is_off(monkeypatch):
+    _h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=False, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    assert [w.hidden for w in made.values()] == [False, False]
+
+
+def test_previews_come_back_when_a_client_takes_the_foreground_again(monkeypatch):
+    """The other direction, on the same sweep path -- a hide that never
+    lifts is the worst version of this feature."""
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    assert all(w.hidden for w in made.values())
+
+    h._foreground = 0x1000
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0x1000: 9999}), our_pid=4242))
+
+    assert not any(w.hidden for w in made.values())
+
+
+def test_unticking_the_setting_restores_previews_on_the_restyle(monkeypatch):
+    """api.py's set_preview_hide_on_lost_focus writes the key and calls
+    restyle(). If restyle did not re-run the visibility pass, a user who
+    unticked the box while their previews were hidden would stare at an
+    empty screen until the next 700ms sweep happened to agree -- and if
+    they unticked it while still in the browser, the sweep would keep
+    hiding them, so it would look like the box did nothing at all."""
+    h, made, libs, live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    assert all(w.hidden for w in made.values())
+
+    live["enabled"] = False
+    h._restyle(libs)
+
+    assert not any(w.hidden for w in made.values())
+
+
+def test_a_client_launched_while_previews_are_hidden_is_born_hidden(monkeypatch):
+    """A window is always created visible, so the hide has to be
+    re-applied every sweep rather than only when the answer changes. Miss
+    this and one preview hangs alone on the screen the moment a character
+    logs in while the user is in a browser."""
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    assert set(made) == {"Alice", "Bravo"}
+
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [
+            _FakeClient("Alice", hwnd=0x1000),
+            _FakeClient("Bravo", hwnd=0x2000),
+            _FakeClient("Charlie", hwnd=0x3000),
+        ],
+    )
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0xDEAD: 9999}, foreground=0xDEAD), 4242))
+
+    assert made["Charlie"].hidden is True
+
+
 # --- _sweep applies the live settings to a newly created window ------------
 
 
@@ -1690,7 +1924,9 @@ def test_the_restyle_message_dispatches_to_the_handler(monkeypatch):
     created with, forever."""
     calls = []
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(h, "_restyle", lambda: calls.append(1))
+    # Takes libs now: _restyle re-runs the visibility pass, which needs
+    # them to resolve whether the foreground window is one of ours.
+    monkeypatch.setattr(h, "_restyle", lambda libs: calls.append(1))
     monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_FakeUser32()))
 
     h._host_proc(0x1, host.win32.WM_APP_RESTYLE, 0, 0)

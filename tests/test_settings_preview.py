@@ -275,3 +275,28 @@ def test_the_preview_defaults_are_a_fixed_point_of_their_own_validator():
     in docs/preview-roadmap.md; this slice makes it cheap to add."""
     defaults = settings._preview_defaults()
     assert settings.validated_preview(defaults) == defaults
+
+
+def test_hide_on_lost_focus_defaults_to_off():
+    """A new key whose default matches what shipped needs no
+    defaults_version bump -- the migration exists for defaults that
+    CHANGE. Off is also what makes previews leave the screen opt-in
+    rather than given."""
+    assert settings._preview_defaults()["hide_on_lost_focus"] is False
+
+
+def test_hide_on_lost_focus_survives_a_round_trip():
+    assert settings.validated_preview({"hide_on_lost_focus": True})[
+        "hide_on_lost_focus"
+    ]
+
+
+def test_hide_on_lost_focus_falls_back_when_it_is_not_a_bool():
+    """Same shape as snap: a non-bool in the file is not a reason to
+    start hiding a user's previews."""
+    assert (
+        settings.validated_preview({"hide_on_lost_focus": "yes"})[
+            "hide_on_lost_focus"
+        ]
+        is False
+    )
