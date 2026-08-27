@@ -488,14 +488,37 @@
       // `state.lock_default` off the NEW state while `wanted` came from
       // the old render.
       var before = pushes;
+      // The DEFAULT this click was made under, captured as a value rather
+      // than as a revision counter. Membership is `wanted !== default`, so
+      // pairing a `wanted` the user chose under one default with the other
+      // one stores the exact opposite -- silently, and Python would have
+      // stored the right thing, so the page and the file then disagree.
+      //
+      // Deliberately NOT solved by bumping `pushes` in the lock-default
+      // listener, which was the first attempt. `pushes` is read by send()
+      // for a different question -- "did a newer HOTKEYS TABLE land?" --
+      // and a lock-default toggle replaces no such table, so bumping it
+      // there made send() drop a keybind save that Python had accepted and
+      // leave the page showing the old chord.
+      var defaultAtSend = !!state.lock_default;
       WM.send('set_preview_locked', name, wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
         if (pushes !== before) { return; }
+        if (!!state.lock_default !== defaultAtSend) {
+          // The write landed against whatever Python read at the time, so
+          // the file is right and only this page is behind. Re-read rather
+          // than returning quietly the way the pushes guard does: there is
+          // no newer payload here to be repainted from, so a bare return
+          // would leave every Lock box drawn from a roster this click just
+          // changed.
+          refresh();
+          return;
+        }
         // `wanted` is the effective lock; the roster stores who DIFFERS
         // from lock_default. Python computes the same membership in
         // set_preview_locked -- this patch only has to reach the same
         // answer, or the next render would repaint from a stale list.
-        var member = wanted !== !!state.lock_default;
+        var member = wanted !== defaultAtSend;
         var without = (state.locked || []).filter(function (n) {
           return n !== name;
         });
@@ -743,7 +766,14 @@
     // no account of. Before the gate, clicking Size... here produced the
     // refusal sentence that NAMED the way out; withdrawing the control
     // without the sentence would take that away too.
-    var cell = WM.make('span', 'size-none', '');
+    //
+    // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
+    // grid and elementFromPoint at its centre returned null, so the title
+    // below had no hover target and the explanation was unreachable. It
+    // also says "nothing here, and that is expected" to someone who never
+    // hovers -- an unexplained gap in one column of one row otherwise
+    // reads as a rendering fault.
+    var cell = WM.make('span', 'size-none', '—');
     cell.title = 'A size can only be set once this preview exists. Start '
                + 'the client, or move or resize its preview once.';
     return cell;
@@ -1041,15 +1071,6 @@
   // beside the thing that caused it.
   document.addEventListener('wm:preview-lock-default', function (event) {
     state.lock_default = !!(event.detail && event.detail.enabled);
-    // Bumped like a push, because for the row handlers this IS one. A
-    // Lock toggle in flight sampled `pushes` before its bridge call and
-    // computes membership as `wanted !== state.lock_default` when it
-    // resolves -- so without this it would pair a `wanted` read under the
-    // OLD default with the NEW one and store the exact opposite
-    // membership, silently. `pushes` already means "state changed under
-    // you, drop your optimistic patch", which is precisely the condition
-    // here; a second counter would be the same guard under another name.
-    pushes += 1;
     requestRender();
   });
 
