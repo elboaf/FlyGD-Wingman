@@ -98,10 +98,11 @@ def windows_file_is_closed(path, *, _create_file=_create_file_exclusive) -> bool
     which is a repeated notification: annoying, and visible. That is the
     trade _save() makes with its swallowed OSError too.
 
-    One consequence worth knowing: ffprobe, run over these same files by
-    library.probe on every list refresh, holds a brief handle of its own.
-    Overlapping with it reads as "still being written" and defers the
-    announcement to the next poll, three seconds later.
+    One consequence worth knowing: library.probe runs ffprobe over any
+    recording whose duration is not already in the durations cache, and
+    that holds a brief handle of its own. Overlapping with it reads as
+    "still being written" and defers the announcement to the next poll,
+    three seconds later.
     """
     opened, err = _create_file(path)
     if opened:
