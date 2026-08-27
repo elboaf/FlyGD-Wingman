@@ -11,7 +11,7 @@
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
                locked: [], never_minimize: [], excluded: [],
-               sizes: {}, client_sizes: {}};
+               sizes: {}, client_sizes: {}, sizable: []};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -264,7 +264,28 @@
     WM.setEnabled(typed, !off);
     row.appendChild(typed);
 
-    if (character) { row.appendChild(makeSizeButton(character, off)); }
+    // Size... only where it can succeed, and a filler where it cannot.
+    //
+    // set_preview_size refuses for a character that is neither running nor
+    // already in `layouts`: there is no x/y to write, and an entry without
+    // a full rect is dropped at the next load. A layouts entry appears
+    // when a preview is DRAGGED or RESIZED, not when its client starts --
+    // so on a fresh install this control was a guaranteed refusal for
+    // every offline character, which on a normal roster is most of the
+    // list. That is D6's rule (do not draw a control in the state where it
+    // can do nothing) applied to the column that broke it worst.
+    //
+    // A filler and not a missing cell. `.row` is display:contents, so the
+    // grid reads one flat stream and a short row pulls the next row's
+    // children into its empty columns -- the cell count has to be uniform
+    // ACROSS rows within one render, whatever varies between renders. One
+    // appendChild with a ternary, for the same reason the opt-out box at
+    // the top of this function uses one.
+    if (character) {
+      row.appendChild(isSizable(character)
+                      ? makeSizeButton(character, off)
+                      : document.createElement('span'));
+    }
 
     // Cycle forward/back have no `character` -- they are chords, not
     // characters, and neither Lock nor Never-minimize means anything for
@@ -399,6 +420,13 @@
   }
   function isExcluded(name) {
     return (state.excluded || []).indexOf(name) !== -1;
+  }
+  // Whether set_preview_size can succeed for this character at all. Python
+  // decides it (api.py's `sizable`) and the page only reads the answer --
+  // the rule is layout.deserialize's, and restating "running, or already in
+  // layouts" here would put it in two places.
+  function isSizable(name) {
+    return (state.sizable || []).indexOf(name) !== -1;
   }
 
   // All three checkboxes follow the same shape: read the live membership list

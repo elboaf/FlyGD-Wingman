@@ -2493,6 +2493,28 @@ class Api:
             # bridge thread never touches an HWND.
             "sizes": self._preview_sizes(),
             "client_sizes": host.client_sizes() if live else {},
+            # Which characters set_preview_size can actually succeed for.
+            #
+            # It refuses outright for a character that is neither running
+            # nor already in `layouts` -- there is no x/y to write, and
+            # layout.deserialize drops an entry without a full rect, so a
+            # w/h saved alone would vanish at the next load after the page
+            # had already reported it accepted. That refusal is correct and
+            # stays; what was wrong was offering the control anyway.
+            #
+            # A layouts entry is written when a preview is DRAGGED or
+            # RESIZED (window.py's WM_LBUTTONUP -> host._layout_changed),
+            # not merely when a client runs. So on a fresh install every
+            # offline character fails this, which on a typical roster is
+            # most of the list -- eleven of thirteen in the report this
+            # came from. previews.js renders Size... only for names in
+            # here, which is D6's rule (do not draw a control in the state
+            # where it can do nothing) applied to the column that needed
+            # it most.
+            "sizable": sorted(
+                set(host.characters() if live else [])
+                | set((section.get("layouts") or {}).keys())
+            ),
         }
 
     def _bookmark_chords(self) -> dict:

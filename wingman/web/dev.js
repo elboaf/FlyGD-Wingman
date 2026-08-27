@@ -738,6 +738,14 @@
       // the Size… control cannot be exercised at all under ?dev=1.
       sizes: { 'Aiga Otsolen': [1280, 720] },
       client_sizes: { 'Aiga Otsolen': [1920, 1080], 'Zuelo Parvi': [1600, 900] },
+      // Which characters set_preview_size can succeed for -- Api computes
+      // it as (running | in layouts), and the page renders Size... only
+      // for these. Deliberately NOT every name above: the two online
+      // characters plus 'Tanuki Solette', who is offline but has been
+      // dragged once, so the harness shows both states of the column. If
+      // this listed everyone the fixture would hide the whole point of the
+      // gate, which is that most of a real roster cannot be sized.
+      sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
       // ACTIVE, matching what Api._bookmark_chords would return for the
       // get_bookmarks fixture above: it ships `enabled: true` with
       // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a

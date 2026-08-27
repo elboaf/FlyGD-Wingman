@@ -1395,6 +1395,45 @@ def test_the_previews_header_row_names_one_column_per_track():
         )
 
 
+def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
+    """Size... renders only for a character set_preview_size can succeed
+    for, and a filler cell holds the column open where it cannot.
+
+    Two halves, and both matter. The GATE is the D6 rule -- a character
+    that is neither running nor already in `layouts` gets a refusal from
+    the endpoint ("Start this client once, or drag its preview"), and a
+    layouts entry is written on a drag or a resize, not when the client
+    starts, so on a fresh install that was every offline character.
+
+    The FILLER is the grid invariant. `.row` is display:contents, so the
+    grid reads one flat stream of cells; a row that skipped this cell
+    entirely would pull every row after it one track over. The cell count
+    has to be uniform across rows within a render whatever varies between
+    renders, which is why this is a ternary inside one appendChild rather
+    than an `if` around it -- the same shape the opt-out box uses, and the
+    same reason.
+    """
+    body = _makerow_body()
+    assert re.search(r"isSizable\(character\)", body), (
+        "makeRow no longer gates Size... on whether the character can be "
+        "sized, so it is drawn for rows where it can only refuse"
+    )
+    gate = body.split("isSizable(character)", 1)[1].split(";", 1)[0]
+    assert "makeSizeButton" in gate and "createElement" in gate, (
+        "the Size... gate no longer chooses between the button and a "
+        "filler cell -- a missing cell pulls every row below it one track "
+        "over, because .row is display:contents"
+    )
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    helper = src.split("function isSizable(", 1)
+    assert len(helper) == 2, "previews.js has no isSizable"
+    assert "state.sizable" in helper[1].split("}", 1)[0], (
+        "isSizable no longer reads the payload's own answer, so the page "
+        "has its own copy of a rule that belongs to layout.deserialize"
+    )
+
+
 def test_an_opted_out_character_row_disables_its_own_controls():
     """The chosen shape for a character opted out of previews: the row
     stays visible -- there has to be somewhere to turn it back on -- but
