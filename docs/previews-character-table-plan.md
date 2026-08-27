@@ -25,18 +25,17 @@
 
 ## The CDP verification harness
 
-Every task's verification step uses the same probe. It already exists at `/mnt/c/dev/wingman-testrun/mockup-shot.py`; point its `URL` at the real page instead of the mockup:
+Every task's verification step uses a real-app CDP probe: headless Brave over the debugging port, driven by the **Windows** interpreter at `/mnt/c/Users/tng/AppData/Local/Programs/Python/Python312/python.exe` so the port stays on `127.0.0.1`.
 
-```
-URL = ("file:///C:/dev/flygd-wingman/.claude/worktrees/"
-       "previews-character-table/wingman/web/index.html?dev=1")
-```
+Task 1 built one at `/mnt/c/dev/wingman-testrun/lock-disclosure-probe.py`. Copy it and adapt its assertions per task. It already carries the parts that are easy to get wrong: the stdlib WebSocket client, `--force-device-scale-factor=1`, `Network.setCacheDisabled` plus a hard reload (the profile persists between runs, so a stale `style.css` out of the disk cache is the kind of "verified" that verifies nothing), and `Emulation.setDeviceMetricsOverride` at the 840x625 floor.
 
-Run it with the Windows interpreter, never the WSL one, so the debugging port stays on `127.0.0.1`:
+**Do not use `/mnt/c/dev/wingman-testrun/mockup-shot.py`.** It targets the design mockup, whose element ids (`#pv-new`) do not exist in the app. Repointing its `URL` is not enough; its measurement function is mockup-shaped.
+
+Run from that directory, not from the worktree:
 
 ```bash
 cd /mnt/c/dev/wingman-testrun && \
-  "/mnt/c/Users/tng/AppData/Local/Programs/Python/Python312/python.exe" mockup-shot.py
+  "/mnt/c/Users/tng/AppData/Local/Programs/Python/Python312/python.exe" <probe>.py
 ```
 
 **Measure both minimize-toggle states, every time.** The last overflow bug on this row only appeared with `minimize_inactive_clients` ON, which is not the default; a single-state measurement passed and shipped it (`previews.js:561-570`).
@@ -678,11 +677,24 @@ In `makeRow`, after `var lab = WM.make('span', 'lab', label);`, add the title so
 Run: `uv run --no-sync python -m pytest tests/ -q`
 Expected: PASS.
 
-- [ ] **Step 7: Verify in the browser, and measure**
+- [ ] **Step 7: Correct the measurement that this task's mechanism supersedes**
+
+The same seven-column experiment is recorded twice: as a comment above `makeHeadRow` (`previews.js:800-831`) and in `test_the_previews_header_row_names_one_column_per_track`'s docstring. Both close on the same sentence, and it is the one this task falsifies:
+
+> every row leads with `.lab { grid-column: 1 / -1 }` and a definite column-start of 1 resets the auto-placement cursor to a fresh row
+
+The label stops spanning in this task, so the reset now comes from the explicit `:first-child` rule instead. Left alone, the only prose in the repo that explains the auto-placement hazard would credit the wrong mechanism — directly above the rule that took over the job.
+
+**Keep the measurement tables.** They are a record of an experiment that was run, and this repo leaves those as taken (`DESIGN.md`: "the measurement that decided this and is left as it was taken"). Do not delete or renumber them. In both places:
+
+- Add one line above each table saying it was measured against the seven-column layout, before Lock and Never minimize moved to their own disclosures.
+- Rewrite the closing paragraph so the fresh-row reset is credited to `#preview-binds .row > :first-child { grid-column-start: 1 }`, and say that the spanning label used to do this for free — which is why the hazard arrived with the inline name rather than with the grid.
+
+- [ ] **Step 8: Verify in the browser, and measure**
 
 Both toggle states. Confirm `used` is about 526 of the 586 interior, `overflows` is false, nothing is clipped, and every header's delta from its column is 0.00. Confirm no row's controls sit under the wrong heading, which is the failure mode Step 1's new guard describes.
 
-- [ ] **Step 8: Re-argue the three `DESIGN.md` passages**
+- [ ] **Step 9: Re-argue the three `DESIGN.md` passages**
 
 Do not append. Rewrite in place:
 
@@ -690,7 +702,7 @@ Do not append. Rewrite in place:
 - `:194` ("A checkbox in a table column carries no word, and still carries a name") uses "three words × thirteen rows" on this list as its evidence. Two of those three columns have left the table. Keep the rule, and mark the evidence as the state that produced it.
 - Add a short passage recording that B1's shared shape is retired and why, so nobody restores it from the old reasoning. Name the replacement guard by its new test name.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add wingman/web/previews.js wingman/web/style.css tests/test_page_conventions.py DESIGN.md
