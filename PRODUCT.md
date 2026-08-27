@@ -161,6 +161,10 @@ is watching and which characters it can see, in one sentence, on purpose.
   minimize-inactive setting. Maximize is NOT exempt — `SW_SHOWMAXIMIZED`
   fills the window to the work area, the same geometry hazard in
   show-state clothing. This is a hard line, not a preference.
+  The count is of calls aimed at a CLIENT window. Wingman shows and hides
+  its own preview windows freely — `PreviewWindow.set_hidden` does exactly
+  that for hide-on-lost-focus — and those calls are not on this list
+  because they touch nothing belonging to EVE.
 - **It must not upload anything the user did not select.** Nothing leaves
   the machine without an explicit action.
 - **It must not automate gameplay.** It sends keystrokes the user pressed,
