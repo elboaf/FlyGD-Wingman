@@ -153,6 +153,25 @@ def _preview_defaults() -> dict:
         # never dragged their preview -- and so has no layouts entry --
         # would be silently discarded on the very next save.
         "locked": [],
+        # Whether a character NOT named in `locked` is locked anyway, which
+        # makes `locked` a list of EXCEPTIONS to this rather than a list of
+        # locked characters. Effective lock is `lock_default != (name in
+        # locked)` -- see PreviewHost._is_locked, which owns that one line.
+        #
+        # False by default, so with the key absent the expression collapses
+        # to `name in locked` and every existing install behaves exactly as
+        # before. That is why this needs no defaults_version bump: the
+        # migration exists for defaults that CHANGE, and this one has no
+        # previous value to protect.
+        #
+        # An exceptions list rather than a second roster of unlocked names.
+        # Two lists would have to agree about a character in neither, and
+        # the answer would then depend on which was consulted first; one
+        # list plus a default cannot disagree with itself. The cost is
+        # real and worth naming: flipping the default flips every
+        # character not in the list, which is what "default" means here
+        # and is what the field's own hint says on the page.
+        "lock_default": False,
         # On by default -- it is what shipped, and turning it off would
         # silently change how every existing install's previews drag.
         # A new key whose default matches current behaviour needs no
@@ -276,6 +295,8 @@ def validated_preview(raw) -> dict:
         section["snap"] = raw["snap"]
     if isinstance(raw.get("lock_aspect"), bool):
         section["lock_aspect"] = raw["lock_aspect"]
+    if isinstance(raw.get("lock_default"), bool):
+        section["lock_default"] = raw["lock_default"]
     for key, floor in (("width", 120), ("height", 90)):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):

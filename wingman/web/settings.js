@@ -983,6 +983,106 @@
   }
 }());
 
+// ---- Lock previews by default ------------------------------------------
+// A discrete control, so it commits on change (DESIGN.md). What it says is
+// not "lock everything": preview.locked holds the characters that DIFFER
+// from this, so ticking locks every character whose own box has not been
+// changed, and unticking restores exactly the arrangement that preceded
+// it. PreviewHost._is_locked resolves the pair; nothing here does.
+(function () {
+  var box = WM.el('preview-lock-default');
+  var status = WM.el('preview-lock-default-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_lock_default', wanted).then(function (res) {
+      if (!res || !res.applied) {
+        box.checked = !wanted;
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      say(wanted
+        ? 'New previews open locked. A right drag still moves one.'
+        : 'New previews can be dragged freely.');
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    box.checked = !!(s.preview && s.preview.lock_default);
+  });
+}());
+
+// ---- Default preview size ----------------------------------------------
+// FREE TEXT, so it commits on Enter and never on blur -- DESIGN.md's rule,
+// and it bites here specifically: half a typed "1280x720" is "1280x72",
+// which is a real size this would otherwise have saved on the way past.
+//
+// The page does not parse it. parse_preview_size is Python's, the same
+// endpoint the per-character Size... dialog uses, so the one definition of
+// what a size looks like stays in a module the suite can execute.
+(function () {
+  var field = WM.el('preview-default-size');
+  var status = WM.el('preview-default-size-status');
+  if (!field || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  // Set from the payload, and compared against on commit so re-entering
+  // the same value is a no-op rather than a write. Also what a refusal
+  // reverts to: there is no Cancel on this page and no pre-edit snapshot
+  // anywhere else, so the field has to carry its own way back.
+  var applied = '';
+
+  function commit() {
+    var text = field.value.trim();
+    if (text === applied) { return; }
+    if (text === '') { field.value = applied; say(''); return; }
+    WM.send('parse_preview_size', text).then(function (parsed) {
+      if (!parsed) { return; }
+      if (parsed.error) { say(parsed.error); return; }
+      WM.send('set_preview_default_size', parsed.w, parsed.h)
+        .then(function (res) {
+          if (!res || !res.applied) {
+            field.value = applied;
+            say((res && res.error) || 'Could not save this.');
+            return;
+          }
+          applied = parsed.w + 'x' + parsed.h;
+          field.value = applied;
+          // Three outcomes, not two (DESIGN.md): applied-but-not-persisted
+          // leaves the control alone and warns that it will not survive a
+          // restart, rather than reverting a change that really did take.
+          say(res.persisted
+              ? 'New previews open at ' + applied + '.'
+              : 'Saved for this session only — settings could not be '
+                + 'written.');
+        });
+    });
+  }
+
+  field.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    var p = s.preview || {};
+    if (p.width && p.height) {
+      applied = p.width + 'x' + p.height;
+      // Never while the user is mid-type: this fires on every per-field
+      // write anywhere in Settings, and rewriting a focused field is what
+      // the whole-document push used to do.
+      if (document.activeElement !== field) { field.value = applied; }
+    }
+  });
+}());
+
 // ---- Reset previews to defaults ----------------------------------------
 // A one-shot action, not a persistent field: there is nothing to revert
 // on refusal and nothing to read back from wm:settings. WM.confirm's

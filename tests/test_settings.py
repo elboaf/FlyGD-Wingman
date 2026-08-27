@@ -86,6 +86,7 @@ def test_defaults_are_the_documented_values():
             "never_minimize": [],
             "excluded": [],
             "locked": [],
+            "lock_default": False,
             "snap": True,
             "lock_aspect": True,
         },
@@ -450,3 +451,27 @@ def test_preview_lock_aspect_ignores_a_non_bool(tmp_path):
     the default rather than reaching PreviewWindow as a truthy string."""
     section = settings.validated_preview({"lock_aspect": "yes"})
     assert section["lock_aspect"] is True
+
+
+def test_preview_lock_default_is_off_and_needs_no_migration(tmp_path):
+    """Off by default, and that is the whole reason this key could be added
+    without a defaults_version bump.
+
+    `preview.locked` keeps meaning "these differ from the default". With
+    lock_default False the effective lock collapses to plain membership,
+    which is exactly what every install that predates this key already
+    does -- so a file written before it, and a file written after it,
+    describe the same behaviour.
+    """
+    path = tmp_path / "settings.json"
+    assert settings.load(path)["preview"]["lock_default"] is False
+
+    doc = settings.load(path)
+    with settings.update(doc, path) as live:
+        live["preview"]["lock_default"] = True
+    assert settings.load(path)["preview"]["lock_default"] is True
+
+
+def test_preview_lock_default_ignores_a_non_bool(tmp_path):
+    section = settings.validated_preview({"lock_default": "yes"})
+    assert section["lock_default"] is False

@@ -2480,6 +2480,12 @@ class Api:
             # payload (rather than a second round trip) keeps row state in
             # the one place previews.js already reads it from.
             "locked": list(section.get("locked") or []),
+            # What a character NOT in `locked` is. The page needs it to
+            # paint the row's box, because with this on the list holds the
+            # characters that are UNlocked -- reading membership alone
+            # would show every box inverted. previews.js resolves the pair
+            # the same way PreviewHost._is_locked does.
+            "lock_default": bool(section.get("lock_default")),
             "never_minimize": list(section.get("never_minimize") or []),
             # The third of the same kind: characters opted out of previews
             # entirely. Rides this payload rather than a second round trip
@@ -2660,6 +2666,59 @@ class Api:
             self._preview_host.restyle()
         return result
 
+    def set_preview_lock_default(self, enabled) -> dict:
+        """Persist whether a character not named in `preview.locked` is
+        locked anyway, then push it live via PreviewHost.restyle().
+
+        This makes `locked` a list of EXCEPTIONS rather than a list of
+        locked characters; PreviewHost._is_locked resolves the pair, and
+        that one line is the only place the two are combined.
+
+        Restyle for the same reason as snap and lock_aspect: a live
+        PreviewWindow holds a resolved `locked` flag, so a write that only
+        touched settings would leave every open preview at its old lock
+        until the next launch.
+
+        Flipping this flips every character NOT in the list, which is what
+        a default means and is what the field's hint says. It is not a
+        migration and does not rewrite the roster: the list keeps meaning
+        "these differ from the default", so unticking restores exactly the
+        arrangement that preceded the tick.
+        """
+        result = self._write_preview_setting(("lock_default",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_default_size(self, w, h) -> dict:
+        """Persist the size an unsaved preview opens at.
+
+        `preview.width`/`height` are not new -- they have fed
+        geometry.default_stack since previews shipped -- but they had no
+        user interface, so the only way to change them was to edit
+        settings.json by hand. This is that interface.
+
+        Validated exactly like set_preview_size, against the same
+        preview_window.MIN_SIZE floor, because they are the same kind of
+        value and a default the per-character control would refuse is a
+        default that cannot be honoured.
+
+        No restyle: this does not change any window that is already open.
+        It decides where the NEXT unsaved preview is placed, and
+        build_preview_host now reads it live, so nothing has to be pushed.
+        """
+        try:
+            width, height = int(w), int(h)
+        except (TypeError, ValueError):
+            return self._field_refused("Sizes look like 1280x720.")
+        floor_w, floor_h = preview_window.MIN_SIZE
+        if width < floor_w or height < floor_h:
+            return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
+        result = self._write_preview_setting(("width",), width)
+        if not result.get("applied"):
+            return result
+        return self._write_preview_setting(("height",), height)
+
     def set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.
 
@@ -2827,8 +2886,19 @@ class Api:
         """Persist whether *name*'s preview is locked against drag, then
         push it live via PreviewHost.restyle() -- lock is read per drag
         (preview/window.py), so the live PreviewWindow.locked has to be
-        refreshed or the checkbox would do nothing until restart."""
-        result = self._toggle_preview_roster("locked", name, bool(locked))
+        refreshed or the checkbox would do nothing until restart.
+
+        `locked` is the EFFECTIVE state the caller wants, not membership of
+        the roster. Since `preview.lock_default` landed the list holds
+        characters that DIFFER from the default, so membership is the
+        exclusive-or -- and computing it here rather than on the page keeps
+        the rule beside PreviewHost._is_locked, which has to agree with it.
+        With lock_default off (the shipped default) the expression is
+        `bool(locked)` and this method behaves exactly as it always has.
+        """
+        section = self._state.settings.get("preview", {})
+        member = bool(locked) != bool(section.get("lock_default"))
+        result = self._toggle_preview_roster("locked", name, member)
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result

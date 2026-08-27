@@ -2165,6 +2165,79 @@ def test_lock_aspect_defaults_on_without_a_callable():
     assert h._locking_aspect() is True
 
 
+def test_the_lock_roster_is_read_as_plain_membership_without_a_default():
+    """The behaviour that predates preview.lock_default, and the reason it
+    needed no migration: with no default callable the effective lock is
+    exactly "is this character in the list"."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        locked=lambda: ["Aiga Otsolen"],
+    )
+    assert h._is_locked("Aiga Otsolen") is True
+    assert h._is_locked("Zuelo Parvi") is False
+
+
+def test_the_lock_roster_holds_exceptions_when_the_default_is_on():
+    """With lock_default on, `locked` names the characters that are NOT
+    locked. One list plus a default cannot disagree with itself; two
+    rosters would have had to agree about a character in neither."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        locked=lambda: ["Aiga Otsolen"],
+        lock_default=lambda: True,
+    )
+    assert h._is_locked("Aiga Otsolen") is False
+    assert h._is_locked("Zuelo Parvi") is True
+
+
+def test_a_raising_lock_default_callable_leaves_the_preview_unlocked():
+    """Runs on the preview thread; a raise must not kill the pump, and the
+    fallback is UNLOCKED for the same reason the rosters default open --
+    taking away the drag because a settings read failed would leave the
+    user with a preview they cannot move and nothing explaining why."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        locked=lambda: ["Aiga Otsolen"],
+        lock_default=boom,
+    )
+    assert h._is_locked("Aiga Otsolen") is False
+
+
+def test_the_default_size_accepts_a_plain_pair_or_a_callable():
+    """preview.width/height were sampled ONCE at construction, so they
+    could only change on a restart -- tolerable while they had no user
+    interface, and not once they got a field. Both forms resolve, so every
+    existing caller that passes a tuple keeps its meaning."""
+    fixed = host.PreviewHost(on_layout_changed=lambda *a: None, size=(640, 360))
+    assert fixed._default_size() == (640, 360)
+
+    live = {"size": (320, 210)}
+    reads = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        size=lambda: live["size"],
+    )
+    assert reads._default_size() == (320, 210)
+    live["size"] = (800, 500)
+    assert reads._default_size() == (800, 500)
+
+
+def test_a_raising_default_size_callable_falls_back_to_the_shipped_size():
+    """Same posture as every other live read here. The fallback is the
+    constant this argument defaults to, not a remembered last-good value:
+    a preview placed at a stale size is harder to explain than one placed
+    at the shipped one."""
+
+    def boom():
+        raise RuntimeError("settings vanished")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, size=boom)
+    assert h._default_size() == host.DEFAULT_SIZE
+
+
 def test_lock_aspect_reads_the_callable():
     h = host.PreviewHost(on_layout_changed=lambda *a: None, lock_aspect=lambda: False)
     assert h._locking_aspect() is False

@@ -468,10 +468,30 @@ def build_preview_host(state, api_box):
                 state.settings.get("preview", {}).get("lock_aspect", True) is not False
             )
 
+        def lock_default():
+            # Live, same as the roster it modifies. False when absent, so a
+            # settings file predating the key resolves _is_locked to plain
+            # membership -- the behaviour that shipped.
+            return state.settings.get("preview", {}).get("lock_default", False) is True
+
+        def default_size():
+            # THE ONE SETTING HERE THAT WAS NOT LIVE. preview.width/height
+            # were read once, into `size=` below, so the pair a preview
+            # opens at could only change by restarting the app -- and they
+            # had no user interface at all, so nothing ever asked them to.
+            # Giving them a field made the staleness reachable, so they
+            # join every other preview setting instead: a callable, read at
+            # the moment a rect is resolved.
+            #
+            # The floors are settings.py's (120x90, validated_preview), not
+            # restated here -- this only has to survive a section that
+            # predates the keys.
+            section_now = state.settings.get("preview", {})
+            return (section_now.get("width", 320), section_now.get("height", 210))
+
         return PreviewHost(
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
-            size=(section.get("width", 320), section.get("height", 210)),
             # A bound method, never a lambda wrapping one: a name resolved
             # lazily inside a lambda is not checked when this function
             # runs, and tests/test_preview_wiring.py records what that cost
@@ -488,7 +508,9 @@ def build_preview_host(state, api_box):
             opacity=opacity,
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,
+            size=default_size,
             locked=locked,
+            lock_default=lock_default,
             excluded=excluded,
             snap=snap,
             lock_aspect=lock_aspect,

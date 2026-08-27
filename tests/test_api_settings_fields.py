@@ -736,6 +736,100 @@ def test_set_preview_lock_aspect_coerces_to_a_bool(monkeypatch, tmp_path):
     assert api._state.settings["preview"]["lock_aspect"] is False
 
 
+def test_set_preview_lock_default_persists_and_pushes_live(monkeypatch, tmp_path):
+    """A live PreviewWindow holds a RESOLVED lock flag, so flipping the
+    default has to restyle for the same reason lock_aspect does -- without
+    it every open preview keeps its old lock until the next launch."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    result = api.set_preview_lock_default(True)
+
+    assert result["applied"] is True
+    assert api._state.settings["preview"]["lock_default"] is True
+    assert api._preview_host.restyled == 1
+
+
+def test_set_preview_lock_default_coerces_to_a_bool(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    api.set_preview_lock_default("")
+
+    assert api._state.settings["preview"]["lock_default"] is False
+
+
+def test_the_lock_roster_stores_the_difference_from_the_default(monkeypatch, tmp_path):
+    """`preview.locked` holds the characters that DIFFER from
+    lock_default, so set_preview_locked takes the effective state the
+    caller wants and computes membership itself.
+
+    The two directions are the point. With the default off, locking a
+    character puts them IN the list -- unchanged from before this setting
+    existed. With the default on, locking a character means they agree
+    with the default, so they come OUT of it. Reading membership as "is
+    locked" would report every character backwards the moment the default
+    was ticked.
+
+    Computed here rather than on the page because PreviewHost._is_locked
+    has to agree with it, and the two are one rule.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    api._state.settings["preview"]["lock_default"] = False
+    api.set_preview_locked("Aiga Otsolen", True)
+    assert api._state.settings["preview"]["locked"] == ["Aiga Otsolen"]
+
+    api.set_preview_locked("Aiga Otsolen", False)
+    assert api._state.settings["preview"]["locked"] == []
+
+    api._state.settings["preview"]["lock_default"] = True
+    # Locked AND the default is locked: nothing differs, so nothing is
+    # stored -- and the character is still locked.
+    api.set_preview_locked("Zuelo Parvi", True)
+    assert api._state.settings["preview"]["locked"] == []
+    # Unlocked against a locked default is the exception, and IS stored.
+    api.set_preview_locked("Zuelo Parvi", False)
+    assert api._state.settings["preview"]["locked"] == ["Zuelo Parvi"]
+
+
+def test_set_preview_default_size_refuses_below_the_floor(monkeypatch, tmp_path):
+    """The same floor set_preview_size enforces, and deliberately the same
+    sentence: a default the per-character control would refuse is a default
+    that cannot be honoured."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size(10, 10)
+
+    assert result["applied"] is False
+    assert "smallest preview" in result["error"]
+    assert api._state.settings["preview"]["width"] == 320
+
+
+def test_set_preview_default_size_refuses_junk(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size("wide", None)
+
+    assert result["applied"] is False
+    assert api._state.settings["preview"]["width"] == 320
+
+
+def test_set_preview_default_size_writes_both_halves(monkeypatch, tmp_path):
+    """Two keys, one control. They are a pair everywhere they are read
+    (geometry.default_stack takes one tuple), so a write that landed one
+    and dropped the other would place previews at a size the user never
+    asked for."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size(640, 360)
+
+    assert result["applied"] is True
+    assert api._state.settings["preview"]["width"] == 640
+    assert api._state.settings["preview"]["height"] == 360
+
+
 class _RestyleSpy:
     """Just enough PreviewHost for the restyle assertion above."""
 

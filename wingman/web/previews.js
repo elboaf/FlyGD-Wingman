@@ -10,7 +10,8 @@
   var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
-               locked: [], never_minimize: [], excluded: [],
+               locked: [], lock_default: false,
+               never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}, sizable: []};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
@@ -414,7 +415,15 @@
          + '; a different shape will stretch the picture.';
   }
 
-  function isLocked(name) { return (state.locked || []).indexOf(name) !== -1; }
+  // The EFFECTIVE lock, not membership. Since preview.lock_default landed,
+  // `locked` holds the characters that DIFFER from the default, so a plain
+  // membership test would paint every box inverted the moment the default
+  // was on. Resolved the same way PreviewHost._is_locked resolves it --
+  // the two have to agree, and this is the page's half.
+  function isLocked(name) {
+    var member = (state.locked || []).indexOf(name) !== -1;
+    return !!state.lock_default !== member;
+  }
   function isNeverMinimize(name) {
     return (state.never_minimize || []).indexOf(name) !== -1;
   }
@@ -467,7 +476,12 @@
       var wanted = box.checked;
       WM.send('set_preview_locked', name, wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
-        state.locked = wanted
+        // `wanted` is the effective lock; the roster stores who DIFFERS
+        // from lock_default. Python computes the same membership in
+        // set_preview_locked -- this patch only has to reach the same
+        // answer, or the next render would repaint from a stale list.
+        var member = wanted !== !!state.lock_default;
+        state.locked = member
           ? (state.locked || []).concat(name)
           : (state.locked || []).filter(function (n) { return n !== name; });
       });

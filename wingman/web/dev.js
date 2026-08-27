@@ -54,7 +54,10 @@
    'set_preview_snap',
    // Same shape again: settings.js reverts the checkbox on anything that
    // is not `applied`.
-   'set_preview_lock_aspect'
+   'set_preview_lock_aspect',
+   // Same shape once more: a discrete checkbox settings.js reverts on
+   // anything that is not `applied`.
+   'set_preview_lock_default'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -131,6 +134,15 @@
       return Promise.resolve({w: 0, h: 0, error: 'Sizes look like 1280x720.'});
     }
     return Promise.resolve({w: parseInt(m[1], 10), h: parseInt(m[2], 10), error: null});
+  };
+
+  // Two arguments, so it cannot ride the single-value allowlist above.
+  // Same {applied, persisted, error} shape settings.js reverts the field
+  // on -- and `persisted: true`, because the not-persisted branch has its
+  // own sentence and a harness that never reaches it would hide one.
+  api.set_preview_default_size = function (w, h) {
+    console.log('DEV api.set_preview_default_size(', w, h, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
   api.test_alert = function (event) {
@@ -433,6 +445,18 @@
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
             show_labels: true, opacity: 255, snap: true, lock_aspect: true,
+            // The global default size. Present because the real payload
+            // always carries it -- get_settings ships `dict(cfg)` whole --
+            // and without it the Default preview size field renders EMPTY
+            // under ?dev=1, which is indistinguishable from a field whose
+            // listener never ran. Deliberately not 320x210: a fixture that
+            // matches the shipped default cannot show that the field is
+            // reading the payload rather than a hardcoded fallback.
+            width: 480, height: 300,
+            // Off, matching the shipped default, so the harness shows the
+            // per-character Lock boxes in their ordinary sense (ticked
+            // means locked) rather than as exceptions.
+            lock_default: false,
             // Task 10: read here by settings.js's own wm:settings listener
             // AND by previews.js's (previews.js needs it to decide whether
             // each row's Never-minimize checkbox is enabled).

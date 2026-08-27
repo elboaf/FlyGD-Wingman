@@ -144,6 +144,7 @@ class PreviewHost:
         minimize_inactive_clients=None,
         never_minimize=None,
         locked=None,
+        lock_default=None,
         excluded=None,
         snap=None,
         lock_aspect=None,
@@ -185,6 +186,12 @@ class PreviewHost:
         # _is_locked/_is_excluded below do the per-window membership test.
         self._never_minimize = never_minimize
         self._locked = locked
+        # preview.lock_default: whether a character NOT in `locked` is
+        # locked anyway, which makes `locked` a list of exceptions. Read
+        # live like the roster it modifies, and resolved with it in one
+        # place (_is_locked) so the two cannot be consulted separately and
+        # disagree.
+        self._lock_default = lock_default
         # preview.excluded: characters opted out of previews entirely. Read
         # live like the rest, and read in THREE places rather than one --
         # _sweep (no window), _registerable (no hotkey registration) and
@@ -200,6 +207,13 @@ class PreviewHost:
         # drag begins, so the Settings checkbox must reach an already-open
         # preview without a restart.
         self._lock_aspect = lock_aspect
+        # A pair, or a callable returning one. Every other setting here is
+        # live and this one was not: it was sampled once at construction,
+        # so preview.width/height could only take effect on a restart --
+        # tolerable while they had no user interface, and not once they
+        # got a field. _default_size() resolves whichever was passed, so
+        # the old positional pair still works and every existing caller
+        # (and test) keeps its meaning.
         self._size = size
         self._thread = None
         self._hwnd = None  # message-only window, see _run
@@ -1194,8 +1208,35 @@ class PreviewHost:
         # top edge instead of the bounding box's.
         target = geometry.stack_monitor(monitors, self._screen())
         return geometry.clamp_to_monitors(
-            geometry.default_stack(index, target, self._size), monitors
+            geometry.default_stack(index, target, self._default_size()), monitors
         )
+
+    def _default_size(self) -> tuple:
+        """The size an unsaved preview opens at, read live.
+
+        Accepts either a plain pair or a callable returning one, so the
+        positional `size=(w, h)` every existing caller passes keeps working
+        while build_preview_host hands over a live read instead.
+
+        Same posture as _snapping and the rest: this runs on the preview
+        thread inside the pump, so a callable that raises must not kill it.
+        The fallback is DEFAULT_SIZE, the constant this argument defaults
+        to, rather than a remembered last-good value -- a preview placed at
+        a stale size is harder to explain than one placed at the shipped
+        one.
+        """
+        if self._size is None:
+            return DEFAULT_SIZE
+        if not callable(self._size):
+            return self._size
+        try:
+            width, height = self._size()
+            return (int(width), int(height))
+        except Exception:
+            logger.exception(
+                "Could not read preview.width/height; using the default size"
+            )
+            return DEFAULT_SIZE
 
     def _restoring(self) -> bool:
         """Whether a saved rect should be honoured, read live.
@@ -1312,11 +1353,26 @@ class PreviewHost:
         `locked` flag when Task 1 introduced the `preview.locked`
         character-name list -- see the comment on the _sweep call site.
         Same guard as _labels_shown.
+
+        Two inputs, resolved together and only here. `preview.lock_default`
+        says what a character NOT in the list is, so the list holds
+        EXCEPTIONS to it and the answer is the exclusive-or of the two.
+        With lock_default absent or False the expression collapses to
+        `stable_key in locked`, which is exactly the behaviour that
+        predates the setting -- which is why it needs no migration.
+
+        Both reads are inside the one try: a failure in either leaves the
+        preview unlocked, the same posture the other rosters take. Locking
+        a window because a settings read failed would take away the drag
+        with nothing on screen to explain it.
         """
         if self._locked is None:
             return False
         try:
-            return stable_key in (self._locked() or [])
+            default = False
+            if self._lock_default is not None:
+                default = bool(self._lock_default())
+            return default != (stable_key in (self._locked() or []))
         except Exception:
             logger.exception("Could not read locked; defaulting to unlocked")
             return False
