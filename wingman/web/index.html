@@ -573,100 +573,57 @@
     <div class="settings" id="section-previews">
       <section class="card">
         <h2>EVE client previews</h2>
-        <div class="row">
-          <!-- The .check/.box pattern is not decoration: .check input is
-               opacity:0 and the styled .box is the visible control. A bare
-               checkbox here rendered as a native white widget. -->
-          <label class="check">
-            <input type="checkbox" id="preview-enabled"><span class="box"></span>
-            Show live previews of running EVE clients
-          </label>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint">Click a preview to switch to that client.
-            Drag to move it, drag the bottom-right corner to resize.
-            Positions are remembered per character.</span></div>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
-            Reopen previews where you last put them
-          </label>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="restore-preview-positions-status">Off opens
-            each preview in a default stack instead. Positions are still
-            remembered while this is off, so turning it back on restores
-            what you last had.</span></div>
-        <!-- Round 5, C4. This lived under GLOBAL KEYBINDS until round 5,
-             where it was the one control in that card that is not a
-             keybind: it changes what happens to a client's WINDOW when you
-             switch away from it, which is the same kind of fact as
-             "reopen previews where you last put them" directly above.
-             It is also the control that governs every per-character
-             Never-minimize box, and since D6 those boxes do not exist
-             until it is on -- so it now sits with the other window
-             behaviour, one card above the disclosure it creates. -->
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
-            Minimize a client's window while it is not the one you switched to
-          </label>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <!-- Static baseline text, same DEFAULT_HINT/say() pattern as
-               preview-show-labels-status: settings.js overwrites this with
-               a persistence failure or the previews-off dependence note,
-               then restores it.
+        <!-- THE master switch, and it is not a peer of the nine controls
+             below it: seven of them are gated on it, and it is what the
+             one dependence line under it speaks for.
 
-               Shortened when the per-character exemption moved into its
-               own disclosure just below (renderNeverMinimizeBlock): the
-               second sentence used to point the reader at the character
-               table for the "Never minimize" box this toggle creates, and
-               that box no longer lives there. -->
-          <span class="hint" id="preview-minimize-inactive-status">Applies
-            the next time a client is switched away from, not this
-            one.</span></div>
-        <details class="pv-exc" id="preview-nm-exceptions">
-          <summary id="preview-nm-exceptions-summary"></summary>
-          <div class="pv-exc-list" id="preview-nm-exceptions-list"
-               role="group" aria-labelledby="preview-nm-exceptions-summary"></div>
-        </details>
-        <!-- AFTER the never-minimize disclosure, not between it and the
-             toggle that creates it: those two are one unit, and splitting
-             them would put an unrelated checkbox inside a control and its
-             own exception list.
+             `.pv-master` is the whole of that precedence -- a rule under
+             the switch, the same hairline .bind-group uses, so the block
+             beneath reads as subordinate to it rather than as nine
+             siblings of which the first happens to matter. It is NOT a
+             type change: the label stays --fs-body like every other
+             checkbox, because the thing being said is "these belong to
+             that", not "that is a heading".
 
-             Still in this card rather than with the appearance controls
-             below, though: both this and Minimize are facts about what
-             happens to WINDOWS when you switch away, not about how a
-             preview is drawn. TriffView calls this
-             HideThumbnailsOnLostFocus, inherited from EVE-O Preview, so a
-             user arriving from either will look for it here first. -->
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="preview-hide-on-lost-focus">
-            <span class="box"></span>
-            Hide every preview while you are not in EVE
-          </label>
+             The controls stay LIVE while it is off. S3's rule, restated
+             at alerts.js:27 -- recording a preference for later is an
+             action that CAN be carried out -- and ui/copy.py's note that
+             disabling the only route to a control's own precondition is a
+             dead end the reader cannot see the exit from. -->
+        <div class="pv-master">
+          <div class="row">
+            <!-- The .check/.box pattern is not decoration: .check input is
+                 opacity:0 and the styled .box is the visible control. A bare
+                 checkbox here rendered as a native white widget. -->
+            <label class="check">
+              <input type="checkbox" id="preview-enabled"><span class="box"></span>
+              Show live previews of running EVE clients
+            </label>
+          </div>
+          <div class="row"><span class="lab"></span>
+            <span class="hint">Click a preview to switch to that client.
+              Drag to move it, drag the bottom-right corner to resize.
+              Positions are remembered per character.</span></div>
+          <!-- ONE line for the whole block, not one per control. Alerts
+               already does this (alerts.js's DEPENDS): twelve controls under
+               a switch that turns them all off, and one sentence saying so
+               while it is true. Previews answered the same question
+               per-control and ended with the SAME SENTENCE written six times
+               -- settings.js 714, 791, 896, 955, 1006, 1220 -- plus a
+               seventh, already shortened, at 624. Turning the switch off
+               filled the card with its own footnote.
+
+               Deliberately does NOT open "Previews are off". Round 3's R4
+               finding 3 left ui/copy.py's INERT_NOTES["previews_off"] as the
+               single statement of the STATE, and that renders one card down
+               in #preview-binds-off. This one carries the consequence for
+               the settings above it and nothing else, which is the half R4
+               found the per-row copies were not pulling their weight on. -->
+          <div class="row"><span class="lab"></span>
+            <span class="hint" id="preview-depends" hidden></span></div>
         </div>
-        <div class="row"><span class="lab"></span>
-          <!-- Both sentences are required reading, not decoration. The
-               first pre-empts "the previews vanished when I opened
-               Wingman", which strict parity with TriffView would have
-               caused. The second is the real cost of the feature.
 
-               It says "if it is set to persist" rather than promising the
-               alert will be there: that is only true while
-               preview.alerts.persist_until_selected is on. It defaults on,
-               but it is a toggle the user can turn off in Alerts, and with
-               it off an alert raised while you are away expires unseen.
-               An unqualified promise here would be the one place in the
-               feature that lies. -->
-          <span class="hint" id="preview-hide-on-lost-focus-status">Wingman's
-            own window does not count, so previews stay up while you
-            arrange them. Alerts are hidden too &mdash; one raised while
-            you are away is still waiting when you come back, if it is set
-            to persist.</span></div>
+        <div class="bind-group"><span class="bind-group-name">Appearance</span></div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -702,23 +659,32 @@
             and label stay at full strength.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-opacity-status"></span></div>
+
+        <div class="bind-group"><span class="bind-group-name">Placement</span></div>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
+            Reopen previews where you last put them
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- The second sentence is the one that earns the space: it
+               answers "have I just lost my layout?", which the first
+               sentence alone provokes. Not a restatement of the box. -->
+          <span class="hint" id="restore-preview-positions-status">Off opens
+            each preview in a default stack instead. Positions are still
+            remembered while this is off, so turning it back on restores
+            what you last had.</span></div>
         <div class="row"><label class="check">
             <input type="checkbox" id="preview-snap"><span class="box"></span>
             Snap previews to each other and the screen edges
           </label>
-          <span class="hint" id="preview-snap-status">Off places a dragged
-            preview exactly where you drop it.</span></div>
-        <div class="row"><label class="check">
-            <input type="checkbox" id="preview-lock-aspect"><span class="box"></span>
-            Keep previews the same shape as their client
-          </label>
-          <!-- "Stretches", not "letterboxes": DWM scales a thumbnail to
-               fill whatever rectangle it is given, measured in
-               docs/preview-sizing-design.md. An earlier draft of this
-               feature promised black bars that never appear. -->
-          <span class="hint" id="preview-lock-aspect-status">Off lets the
-            resize handle move each edge freely, stretching the
-            picture.</span></div>
+          <!-- Round 6. The hint here read "Off places a dragged preview
+               exactly where you drop it", which is the box's own sentence
+               inverted and nothing else -- the one hint on this card that
+               a reader could have written from the label. The slot stays
+               because settings.js reports persistence failures through it. -->
+          <span class="hint" id="preview-snap-status"></span></div>
         <div class="row"><label class="check">
             <input type="checkbox" id="preview-lock-default"><span class="box"></span>
             Lock previews in place by default
@@ -738,6 +704,19 @@
           <div class="pv-exc-list" id="preview-lock-exceptions-list"
                role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
         </details>
+
+        <div class="bind-group"><span class="bind-group-name">Size and shape</span></div>
+        <div class="row"><label class="check">
+            <input type="checkbox" id="preview-lock-aspect"><span class="box"></span>
+            Keep previews the same shape as their client
+          </label>
+          <!-- "Stretches", not "letterboxes": DWM scales a thumbnail to
+               fill whatever rectangle it is given, measured in
+               docs/preview-sizing-design.md. An earlier draft of this
+               feature promised black bars that never appear. -->
+          <span class="hint" id="preview-lock-aspect-status">Off lets the
+            resize handle move each edge freely, stretching the
+            picture.</span></div>
         <div class="row">
           <label class="lab" for="preview-default-size">Default preview
             size</label>
@@ -750,6 +729,83 @@
           <span class="hint" id="preview-default-size-status">Where a
             preview opens before you have moved it. Press Enter to
             save.</span></div>
+
+        <!-- The one group that reaches through the mirror to the REAL EVE
+             window, which is why it is a group and why it is last. Every
+             other control on this card changes something Wingman drew;
+             these two change what the game's own window does. -->
+        <div class="bind-group">
+          <span class="bind-group-name">When you switch away</span></div>
+        <!-- Round 5, C4. This lived under GLOBAL KEYBINDS until round 5,
+             where it was the one control in that card that is not a
+             keybind: it changes what happens to a client's WINDOW when you
+             switch away from it. Round 6 moved it once more, out of the
+             loose run at the top of this card and into the group that
+             names what it and Hide have in common -- it is also the
+             control that governs every per-character Never-minimize box,
+             and since D6 those boxes do not exist until it is on, so it
+             still sits one line above the disclosure it creates. -->
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
+            Minimize a client's window while it is not the one you switched to
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Static baseline text, same DEFAULT_HINT/say() pattern as
+               preview-show-labels-status: settings.js overwrites this with
+               a persistence failure, then restores it. The dependence half
+               is gone from here -- #preview-depends speaks for the whole
+               card now.
+
+               Shortened when the per-character exemption moved into its
+               own disclosure just below (renderNeverMinimizeBlock): the
+               second sentence used to point the reader at the character
+               table for the "Never minimize" box this toggle creates, and
+               that box no longer lives there. -->
+          <span class="hint" id="preview-minimize-inactive-status">Applies
+            the next time a client is switched away from, not this
+            one.</span></div>
+        <details class="pv-exc" id="preview-nm-exceptions">
+          <summary id="preview-nm-exceptions-summary"></summary>
+          <div class="pv-exc-list" id="preview-nm-exceptions-list"
+               role="group" aria-labelledby="preview-nm-exceptions-summary"></div>
+        </details>
+        <!-- AFTER the never-minimize disclosure, not between it and the
+             toggle that creates it: those two are one unit, and splitting
+             them would put an unrelated checkbox inside a control and its
+             own exception list.
+
+             TriffView calls this HideThumbnailsOnLostFocus, inherited from
+             EVE-O Preview, so a user arriving from either will look for it
+             with the window behaviour rather than with the appearance
+             controls -- which is what this group now is. -->
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="preview-hide-on-lost-focus">
+            <span class="box"></span>
+            Hide every preview while you are not in EVE
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- Both sentences are required reading, not decoration. The
+               first pre-empts "the previews vanished when I opened
+               Wingman", which strict parity with TriffView would have
+               caused. The second is the real cost of the feature.
+
+               It says "if it is set to persist" rather than promising the
+               alert will be there: that is only true while
+               preview.alerts.persist_until_selected is on. It defaults on,
+               but it is a toggle the user can turn off in Alerts, and with
+               it off an alert raised while you are away expires unseen.
+               An unqualified promise here would be the one place in the
+               feature that lies. -->
+          <span class="hint" id="preview-hide-on-lost-focus-status">Wingman's
+            own window does not count, so previews stay up while you
+            arrange them. Alerts are hidden too &mdash; one raised while
+            you are away is still waiting when you come back, if it is set
+            to persist.</span></div>
+
         <div class="row">
           <button class="btn danger" id="preview-reset">Reset previews</button>
           <span class="hint" id="preview-reset-status">Puts every preview

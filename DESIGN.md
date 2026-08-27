@@ -273,9 +273,10 @@ it is reached through. With the EVE gate off the rail is two entries,
 `#eve-binds` and `#preview-binds` both take the column away from their
 rows, for two different reasons that make the same hole. `#eve-binds` does
 it because its labels are long action names and it gives them a whole line
-instead. `#preview-binds` does it to give the character name a FIXED 150px
-track of its own — an inline column, not a line — so the name is a cell in
-the table rather than a heading above it. Either way ID specificity beats
+instead. `#preview-binds` does it to give the character name a
+length-bounded `minmax(150px, 260px)` track of its own — an inline column,
+not a line — so the name is a cell in the table rather than a heading above
+it. Either way ID specificity beats
 the `max-width: 720px` block written against `.settings .row > .lab`, so
 the collapse silently skipped exactly the rows that needed it most.
 `tests/test_page_conventions.py` enforces the general rule. See "What this
@@ -302,12 +303,23 @@ shares no tracks at all.
 
 **What did NOT retire is the ban on a `max-content` first track**, which
 was the actual bug. Each list must reach its shape on purpose: Bookmarks
-by spanning its label, Previews by a fixed 150px column. Neither may
-arrive at one by letting the track follow its own content.
+by spanning its label, Previews by a column whose every part is a length.
+Neither may arrive at one by letting the track follow its own content.
 `test_each_keybind_list_declares_a_deliberate_first_track` is the guard,
 and it is what replaced the old cross-list equality test. Do not restore
 that test from B1's reasoning — the reasoning is recorded here precisely
 so the conclusion is not re-derived from it.
+
+Round 6 widened Previews' column from a flat `150px` to
+`minmax(150px, 260px)` and the ban is unaffected, which is the point worth
+recording: B1 forbids a track sized *by the roster*, not a track that
+varies with the WINDOW. Both ends are lengths, so the column still cannot
+move between sessions with whoever is logged in — it simply stops
+ellipsizing a name to 106px on a window that has 191px of unused gutter
+beside it. `_preview_binds_cell_tracks` in `test_page_conventions.py`
+checks the rule rather than the spelling, and rejects `max-content`
+anywhere in the track including inside a `minmax()`, which the regex it
+replaced could not see.
 
 **Open, not decided — the two stacked treatments are 1px apart.**
 `.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
@@ -543,6 +555,41 @@ in. The EVE gate learned this twice: once by persisting without repainting,
 once by clearing the current route but not the route the gear returns to.
 **Hiding a screen means cutting every route into it, not just the one the
 user is standing on.**
+
+**A precondition is stated once, by the control that owns it — not by
+every control it governs.** A master switch that gates a block of settings
+gets ONE line saying what the block is waiting for, and the block is drawn
+as subordinate to it: `alerts.js`'s `DEPENDS` for the twelve controls under
+`#alert-enabled`, and `#preview-depends` for the nine under
+`#preview-enabled` (`.pv-master` in `style.css` is the rule under the
+switch that says so structurally).
+
+Previews is the worked example because it got there the other way first.
+Saying it per-control put the same sentence in seven blocks, each with its
+own copy of the machinery to place it; round 3's R4 caught three of them
+colliding in one view and shortened one, which fixed the view it was
+looking at and left six. Turning the switch off then filled the card with
+its own footnote. **The cost of a per-control note is not the note, it is
+that nothing counts them.**
+
+Two rules follow from that, and both are load-bearing:
+
+- **Do not disable the block.** Recording a preference for later is an
+  action that can be carried out, and disabling the only route to a
+  control's own precondition is a dead end the reader cannot see the exit
+  from (`ui/copy.py`). The line says it; the controls stay live.
+- **Only one sentence may open with the state.** `ui/copy.py`'s
+  `INERT_NOTES["previews_off"]` is that sentence for Previews. A second
+  note in the same view says the consequence and the way out, and does not
+  restate what the unticked box already shows.
+
+**An empty hint costs no line.** A continuation row that exists only to
+carry a `.hint` collapses while that hint is empty — `.settings .row:has(>
+.lab:empty):has(> .hint:empty)`. Two of these sit in Previews permanently,
+because their status slots carry no default text and are blank until a
+write fails. `:empty` re-evaluates when a message lands, so the row returns
+on its own; this is a display rule and not a `hidden` attribute somebody
+has to remember to clear.
 
 
 ## Routes and sections

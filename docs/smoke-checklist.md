@@ -2960,6 +2960,58 @@ place a preview is hidden, and no test in the suite creates a real window
       pulsing — when you click back into EVE. This is the feature's real
       cost, and the hint under the checkbox says so.
 
+### The card's own shape
+
+Nothing in the suite renders this page, so every item here is a rendering
+behaviour a lexical guard cannot reach.
+
+- [ ] **LOAD-BEARING: previews off says it ONCE.** Settings > Previews,
+      untick `Show live previews of running EVE clients`. Expected: exactly
+      one new sentence appears — `Nothing below is in effect yet — these
+      apply when you turn previews back on.` — inside the master block,
+      above the rule, and the card grows by about one line (26px measured
+      in the harness at the 840 floor). NOT under Show-the-character-name,
+      opacity, Snap, Keep-the-same-shape, Minimize and Hide as well: that
+      is the state this replaced, six copies of one sentence, four of them
+      visible at once. Tick it again and the line must GO, not linger.
+- [ ] **Every control below stays live while it is off.** Same state: tick
+      Snap, drag the opacity slider, type a default size. Expected: all of
+      them work and persist. Recording a preference for later is an action
+      that can be carried out, and the line is what says so — nothing here
+      is disabled.
+- [ ] **A write failure still speaks for its own control.** The shared
+      line replaced the DEPENDENCE note in each status slot, not the slot.
+      With previews off and the settings file made unwritable, toggle
+      Snap: the per-control message must still appear beside Snap.
+- [ ] **Four groups, in order.** Expected, reading down: `APPEARANCE`,
+      `PLACEMENT`, `SIZE AND SHAPE`, `WHEN YOU SWITCH AWAY` — small caps,
+      dimmer and a step smaller than the card heading, each over a
+      hairline. The last group holds the two controls that reach the REAL
+      EVE window, which is why it is separate and why it is last.
+- [ ] **An empty status row costs no line.** With everything healthy,
+      the slots under `Show the character name` and under the opacity
+      caption are blank and must occupy NO vertical space. Then force a
+      message into one (a failed write): the row must appear, and vanish
+      again when the message clears. `:empty` drives it, so nothing has to
+      remember to clear a `hidden` attribute.
+- [ ] **The roster card is as wide as its table and no wider.** Settings >
+      Previews at the character list, window at its default size.
+      Expected: the keybinds card is wider than the card above it but not
+      full-width — measured 673 against 620 at 1015 CSS — with `Size…`
+      landing near its right edge rather than stranded mid-card. A
+      full-pane card here is the regression: this table has fixed tracks,
+      so the width it does not use becomes dead space inside every row.
+- [ ] **A long character name is not clipped at the default size.**
+      Expected: names up to roughly 20 characters render whole. The column
+      is `minmax(150px, 260px)` — both ends lengths, so it still cannot
+      move between sessions with whoever is logged in, which is what round
+      3's B1 forbade. A genuinely extreme name still ellipsizes and still
+      carries the full string in its `title`.
+- [ ] **Neither width overflows.** At the 840x625 floor and at the default
+      size, `document.documentElement.scrollWidth` must equal
+      `clientWidth`. The roster card is `width: max-content` with
+      `max-width: 100%`; the cap is what keeps the floor honest.
+
 ### Frozen build
 
 - [ ] **LOAD-BEARING: the installed build serves `skills.js`.** Install the

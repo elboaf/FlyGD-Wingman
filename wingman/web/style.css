@@ -1558,6 +1558,91 @@ button.btn:disabled,
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
+/* The Previews master switch owns the block under it instead of sitting in
+   it. Seven of the nine controls below are gated on this one, and the card
+   used to say so in prose -- the same sentence in six blocks, plus a
+   seventh already shortened once for exactly this reason (settings.js).
+   A rule under the switch says it once, structurally, and #preview-depends
+   says the rest in one line.
+
+   The rule is .bind-group's hairline, deliberately: this card now draws
+   four of those between its groups, and a DIFFERENT divider over the
+   master switch would read as a fifth kind of thing rather than as the
+   same sheet's way of separating a block. Below rather than above, which
+   is the whole difference -- .bind-group opens a group, this one closes
+   the switch that governs the groups.
+
+   It WRAPS three rows -- the switch, the sentence explaining it, and
+   #preview-depends -- rather than sitting on the switch's own row. The
+   two hints belong to the switch, so a rule drawn immediately under the
+   checkbox would have cut the master block in half rather than closed it.
+
+   flex column with a gap, NOT the 10px bottom margin .row carries by
+   default. #preview-depends is `hidden` whenever previews are on, and a
+   display:none child is not a flex item, so the gap simply is not drawn
+   -- where the margin would have left 10px of the hidden row's spacing
+   behind and made the block's bottom edge move by 10px depending on the
+   state of the switch above it.
+
+   No type change on the label. The switch stays --fs-body like every
+   other checkbox on the card, because what is being said is "these belong
+   to that", not "that is a heading". Raising it would put a control into
+   the .14em heading rank that
+   test_the_uppercase_tracked_labels_split_headings_from_sub_labels
+   pins to two card headings and two sub-labels, and a checkbox is
+   neither. */
+.pv-master {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--field-border);
+}
+.pv-master > .row { margin-bottom: 0; }
+
+/* A continuation row whose hint is EMPTY reserves nothing and must not
+   cost a line. Two of these sit in the Previews card permanently --
+   #preview-show-labels-status and #preview-opacity-status carry no
+   default text at all, so they are blank until a write fails, which for
+   most installs is never. Measured at the 840 floor they were 18px each.
+
+   `.lab:empty` already collapses the other half of the same row, so the
+   row was rendering as pure margin with both its children hidden.
+
+   Both `:empty` checks are load-bearing. A row holding a checkbox keeps
+   its height whatever its hint says (the Snap row is exactly that), and
+   `:has(> .lab:empty)` is what limits this to the continuation rows that
+   exist only to carry a hint. `:empty` re-evaluates when settings.js
+   writes a message in, so the row comes back the moment it has something
+   to say -- which is why this is a display rule and not a `hidden`
+   attribute anything has to remember to clear. */
+.settings .row:has(> .lab:empty):has(> .hint:empty) { display: none; }
+
+/* .bind-group inside a flex card, not a grid.
+   Its `grid-column: 1 / -1` is inert here and stays as written: the class
+   is shared with #preview-binds and bookmarks.js's grouped lists, where
+   the span is load-bearing, and forking it into a second class would give
+   the sheet two dividers that have to be kept looking identical by hand.
+   What this card uses is the hairline, the 14px/10px rhythm and the
+   --fs-label uppercase name -- all of which apply unchanged. */
+
+/* A tighter rhythm than the grid lists this class was written for, scoped
+   to dividers that are direct children of a settings card. #preview-binds
+   and bookmarks.js build theirs INSIDE their list host, so neither is a
+   `.card >` child and neither is touched.
+
+   Why tighter: 14px + 10px was measured for ONE divider separating two
+   halves of a row list. This card draws four in a column whose own row
+   rhythm is 10px, and at 39px each (14 margin + 10 padding + 1 border +
+   14 of name) they cost 156px on a screen whose complaint is its height.
+   10px + 6px keeps the hairline and the rank and returns 32px. */
+.settings .card > .bind-group { margin-top: 10px; padding-top: 6px; }
+
+/* The first divider needs no top margin: .pv-master's own 12px of padding
+   already separates it, and 14px on top of that drew a gap half again the
+   size of the three below it. Adjacent-sibling rather than a
+   first-of-type, which would not match -- every .row on this card is a
+   div too, so `:first-of-type` is the first ROW, not the first divider. */
+.pv-master + .bind-group { margin-top: 0; }
+
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
@@ -2094,14 +2179,22 @@ button.btn:disabled,
      every row. The trailing minmax(0, 1fr) absorbs the leftover width so
      the four stay packed at the start instead of spreading.
 
-     THE NAME TRACK IS FIXED, NOT max-content, and that is the whole
-     reason this list may have an inline name at all. `max-content` over
+     THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
+     this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. 150px keeps the
-     stability B1 bought while dropping the cross-list half of its rule --
-     Bookmarks still stacks, because "Convert EvE-Scout Bookmarks" is
-     189.6px and genuinely needs its own line. Names wider than the track
-     ellipsize and carry a `title`.
+     in, so the bind button moves between sessions. `minmax(150px, 260px)`
+     keeps the stability B1 bought -- both ends are lengths, so the track
+     never consults the roster -- while dropping the cross-list half of
+     its rule. Bookmarks still stacks, because "Convert EvE-Scout
+     Bookmarks" is 189.6px and genuinely needs its own line.
+
+     Round 6 raised the ceiling from a flat 150px. At 150 a name was
+     ellipsized to 106px (the track less the `offline` tag) on a window
+     with 191px of empty gutter beside the card -- the truncation was not
+     paying for anything. The floor stays 150 so the 840 floor is
+     unaffected; the 260 ceiling is only reachable once the card is wide
+     enough, which it now is (see the max-width block below). Names wider
+     than the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2121,7 +2214,54 @@ button.btn:disabled,
      and this number changes with it -- test_page_conventions.py now
      DERIVES the expected count from makeRow's own appends rather than
      trusting this comment. */
-  grid-template-columns: 150px repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(150px, 260px) repeat(4, max-content) minmax(0, 1fr);
+}
+
+/* Round 6. The 620px measure is right for this section's PROSE and wrong
+   for its one table, which is the finding Profiles reached a round earlier
+   and fixed the same way (see `#route-evesettings > .settings` below, and
+   its D1 note: "deliberate for prose and form rows, accidental for the
+   roster"). Previews has a roster with the same shape and never got the
+   same treatment; measured at 1015 CSS wide, 191px of empty gutter sat
+   beside the card while a character name was ellipsized to 106px inside
+   it.
+
+   Scoped to the card that HOLDS the table, and re-capped inside it, for
+   exactly the reason the Profiles rule gives: the precedence paragraph
+   above the rows is prose and belongs at 620 with the rest of the
+   section. Card 1 is untouched -- its hints already run 85-95 characters
+   at 620, which is past the measure prose wants, so widening it would
+   make it worse rather than better.
+
+   `width: max-content`, NOT `max-width: none`. That is the one place this
+   departs from the Profiles rule it is otherwise copying, and the reason
+   is that the two rosters spend width differently. `.es-roster` is
+   `columns: 170px`, so every extra pixel becomes another column of names
+   and a card filling the pane is a card doing something with it. This
+   table has fixed and max-content tracks and a trailing `minmax(0, 1fr)`
+   that absorbs whatever is left, so a full-pane card just moved the dead
+   space from OUTSIDE the card to inside every row -- measured at 1015,
+   160px of it -- and left two cards in one section with 180px of
+   difference between their right edges. Sized to its content the card is
+   as wide as the table needs and no wider: the tracks and gaps come to
+   639px, so it lands near 671 against card 1's 620 rather than at 801.
+
+   `align-self: start` because `.settings` is a flex column, whose items
+   stretch to full width by default -- without it `width: max-content` is
+   overridden by the stretch and nothing changes. `max-width: 100%` keeps
+   it inside the pane at the 840 floor, where the content is wider than
+   the space and the trailing flexible track gives way instead.
+
+   `#section-previews.active` is already in the watermark suppression list
+   at the top of this sheet, so closing this section's gutter cannot
+   strand the ship mark the way .settings' own margin note warns about. */
+#section-previews { max-width: none; }
+#section-previews > .card { max-width: 620px; }
+#section-previews > .card:has(> #preview-binds) {
+  width: max-content; max-width: 100%; align-self: start;
+}
+#section-previews > .card:has(> #preview-binds) > :not(#preview-binds) {
+  max-width: 620px;
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the

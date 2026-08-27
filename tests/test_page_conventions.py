@@ -1284,6 +1284,61 @@ def _makerow_body() -> str:
     return src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
 
 
+def _preview_binds_cell_tracks() -> int:
+    """How many CELL-BEARING tracks #preview-binds declares -- the name
+    track plus the repeated control tracks -- checking as it goes that the
+    name track still refuses to consult its own content.
+
+    NOT every track: the template ends with `minmax(0, 1fr)`, which exists
+    to absorb the leftover width so the controls stay packed at the start,
+    and no row appends a cell for it. The counts this feeds compare
+    against makeRow's appends and makeHeadRow's array literal, so the
+    trailing track has to stay out of them -- as it did in the regex this
+    replaces.
+
+    Both callers below used to inline `(\\d+)px\\s+repeat\\((\\d+),`, which
+    pinned the SPELLING of a deliberate first track rather than the
+    property that makes it deliberate. Round 6 widened the name column to
+    `minmax(150px, 260px)` -- still two lengths, still never sized by
+    whoever is logged in, which is all round 3's B1 ever asked for -- and
+    both guards failed on the shape while the rule they exist for held.
+
+    So the check is the rule: every part of the first track has to be a
+    LENGTH. `max-content`, `min-content`, `auto` and `fit-content()` are
+    rejected wherever they appear in it, which also closes the hole the
+    old regex left open at the other end -- `minmax(max-content, 260px)`
+    is B1 exactly, and a first-token test cannot see it.
+    """
+    rule = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert rule, "#preview-binds has no rule block"
+    template = re.search(r"grid-template-columns:\s*([^;]+);", rule.group(1))
+    assert template, "#preview-binds declares no grid-template-columns"
+
+    tracks = _tracks(template.group(1))
+    assert tracks, "#preview-binds declares an empty template"
+
+    first = tracks[0]
+    for keyword in ("max-content", "min-content", "auto", "fit-content"):
+        assert keyword not in first, (
+            f"#preview-binds' first track is {first!r}, which sizes the "
+            f"character name from its own content -- that is round 3's B1, "
+            f"where the bind button moved between sessions with whoever was "
+            f"logged in. Both ends of the track must be lengths"
+        )
+    assert re.search(r"\d", first), (
+        f"#preview-binds' first track is {first!r} and names no length at "
+        f"all; B1 requires a track the roster cannot move"
+    )
+
+    repeat = re.search(r"repeat\((\d+),", template.group(1))
+    assert repeat, (
+        "#preview-binds no longer declares its control tracks as "
+        "repeat(N, ...), which is what the cell counts below are derived "
+        "from"
+    )
+    return 1 + int(repeat.group(1))
+
+
 def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     """The invariant the delta test above cannot see.
 
@@ -1308,15 +1363,7 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     # is why the -1 that used to discount it is gone.
     cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
 
-    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
-    assert m, "#preview-binds has no rule block"
-    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
-    assert fixed, (
-        "#preview-binds no longer declares a fixed first track followed by "
-        "repeat(N, ...) -- a max-content name column is round 3's B1 bug, "
-        "where the track followed whoever was logged in"
-    )
-    tracks = 1 + int(fixed.group(2))
+    tracks = _preview_binds_cell_tracks()
 
     assert cells == tracks, (
         f"makeRow appends {cells} cells per character row but #preview-binds "
@@ -1383,12 +1430,7 @@ def test_the_previews_header_row_names_one_column_per_track():
 
     m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert m, "#preview-binds has no rule block"
-    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
-    assert fixed, (
-        "#preview-binds no longer declares a fixed first track followed by "
-        "repeat(N, ...)"
-    )
-    tracks = 1 + int(fixed.group(2))
+    tracks = _preview_binds_cell_tracks()
     assert base == tracks, (
         f"makeHeadRow names {base} columns but #preview-binds declares "
         f"{tracks} tracks -- the headings sit over the wrong controls, and "
@@ -2012,6 +2054,55 @@ def test_every_element_id_in_the_page_is_unique():
     ids = re.findall(r'\bid="([^"]+)"', index)
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     assert not dupes, f"these ids appear more than once in index.html: {dupes}"
+
+
+def test_the_previews_dependence_line_is_stated_once_and_reads_the_switch():
+    """One line for a block, not one per control -- and it must be able to
+    read the switch it speaks for.
+
+    The Previews card carried this sentence in SEVEN blocks, six of them
+    word for word, each with its own previewsOn/sayDependence/
+    refreshDependence to place it; one copy had already drifted to spelling
+    its local `enabled`. Round 3's R4 caught three of them colliding in one
+    view and shortened one, which fixed that view and left six. Nothing
+    counted them, which is what this closes.
+
+    THE ORDERING HALF IS THE PART THAT FAILS SILENTLY. Both the master
+    switch's block and the dependence block listen on `wm:settings`; the
+    first sets `#preview-enabled` from the payload and the second reads
+    `.checked` back off it. Listeners fire in registration order and these
+    IIFEs run in source order, so the dependence block has to come SECOND.
+    Move it up and the line reports the previous payload's state -- on a
+    screen where every control still works and nothing else looks wrong.
+    Verified over CDP against a dispatched payload; asserted here because
+    nothing in this suite renders the page.
+    """
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    index = (WEB / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="preview-depends"' in index, "the shared dependence slot is gone"
+    assert index.count('id="preview-depends"') == 1
+
+    # The sentence lives in exactly one place.
+    assert js.count("in effect yet") == 1, (
+        "the dependence sentence is written more than once in settings.js -- "
+        "that is the state this replaced, six copies of one sentence"
+    )
+    for dead in ("sayDependence", "refreshDependence", "previewsOn"):
+        assert dead not in js, (
+            f"{dead} is back: the per-control dependence machinery was "
+            f"duplicated into seven blocks and is what the shared line "
+            f"replaced"
+        )
+
+    master = js.index("WM.el('preview-enabled')")
+    shared = js.index("WM.el('preview-depends')")
+    assert master < shared, (
+        "the #preview-depends block is registered BEFORE the master "
+        "switch's, so its wm:settings listener reads #preview-enabled "
+        "before that payload has been written into it -- the line reports "
+        "the previous payload's state and nothing on the screen looks wrong"
+    )
 
 
 def test_hide_on_lost_focus_is_wired_end_to_end():
