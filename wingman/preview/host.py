@@ -1019,6 +1019,7 @@ class PreviewHost:
             return ok
 
         time.sleep(SWITCH_SETTLE_MS / 1000.0)
+        started = time.perf_counter()
         sent = libs.user32.SendMessageTimeoutW(
             previous.hwnd,
             win32.WM_SYSCOMMAND,
@@ -1039,10 +1040,23 @@ class PreviewHost:
             # INFO for the same reason window.py logs a refused activation
             # at INFO: the root logger runs at INFO, and this is what
             # "minimize sometimes does nothing" looks like in a user's log.
+            #
+            # The elapsed time is what separates those three, and it is the
+            # only one of them a user's log can ever tell us: a send that
+            # spent the whole budget waiting really did time out, while one
+            # that came back in under a millisecond was refused outright
+            # and never waited for anything. Without it the line reads
+            # identically either way -- which is how a live install could
+            # log 166 of these in a session and still leave the cause open.
+            # Every mechanism reproducible off a loaded client is fast: a
+            # WM_NULL round trip is 1-50ms, a real SC_MINIMIZE to a quiet
+            # client is 6-9ms, and the same send on the live switch path,
+            # 10ms after the window lost the foreground, is 32-40ms.
             logger.info(
                 "Minimize of 0x%x did not complete (timeout or abandoned) "
-                "within %dms; leaving it as it is",
+                "after %.0fms of a %dms budget; leaving it as it is",
                 previous.hwnd,
+                (time.perf_counter() - started) * 1000,
                 MINIMIZE_TIMEOUT_MS,
             )
             return ok

@@ -2087,6 +2087,25 @@ def test_a_timed_out_minimize_does_not_reactivate(monkeypatch):
     assert kinds == ["foreground", "activate", "ring", "sleep", "send"]
 
 
+def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog):
+    """A zero return has three causes the API does not separate, and the
+    elapsed time is the only one of them that survives into a user's log:
+    a send that spent the whole budget timed out, one that came back
+    instantly was refused. The line used to read identically either way,
+    which is how a live install logged 166 of them in one session and left
+    the cause open."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+    monkeypatch.setattr(host.time, "sleep", lambda s: None)
+
+    with caplog.at_level("INFO", logger="wingman.preview.host"):
+        assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    line = "".join(r.message for r in caplog.records if "Minimize of" in r.message)
+    assert line, "the failed minimize logged nothing"
+    assert f"of a {host.MINIMIZE_TIMEOUT_MS}ms budget" in line
+    assert "did not complete" in line
+
+
 def test_a_never_minimize_character_is_left_alone(monkeypatch):
     """The roster names the client being switched AWAY from -- the one
     that would be minimized."""
