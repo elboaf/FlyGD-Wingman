@@ -203,9 +203,11 @@ def _media_spans(max_width: int) -> list[tuple[int, int]]:
 
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
-    rows on purpose -- their labels are long action and character names,
-    not "Privacy" -- with an ID selector: `#eve-binds .row > .lab` and
-    `#preview-binds .row > .lab`.
+    rows on purpose, for two different reasons: `#eve-binds` because its
+    labels are long action names and it gives them a whole line instead,
+    `#preview-binds` because it gives the character name a fixed 150px
+    track of its own -- an inline column, not a line. Both do it with an
+    ID selector: `#eve-binds .row > .lab` and `#preview-binds .row > .lab`.
 
     ID specificity also beats the `max-width: 720px` block that collapses
     the column above its field, and that block is written against
@@ -1492,11 +1494,19 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
         r"#preview-binds \.row > \.lab > \.lab-name \{(.*?)\}", CSS, re.DOTALL
     )
     assert name, "the previews name span has no rule of its own to ellipsize in"
-    for prop in ("min-width: 0", "text-overflow: ellipsis", "white-space: nowrap"):
+    # `overflow: hidden` is in this list because `text-overflow` is INERT
+    # without it -- the name would spill over the tag instead of
+    # truncating, which is the same lost word by a different route.
+    for prop in (
+        "min-width: 0",
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "white-space: nowrap",
+    ):
         assert prop in name.group(1), (
-            f".lab-name must declare `{prop}` -- without all three the name "
-            f"either refuses to shrink inside the flex row or wraps instead "
-            f"of ellipsizing"
+            f".lab-name must declare `{prop}` -- without all four the name "
+            f"either refuses to shrink inside the flex row, spills over the "
+            f"tag, or wraps instead of ellipsizing"
         )
 
     tag = re.search(
@@ -1534,14 +1544,31 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     A definite column-start resets auto-placement to a fresh row. The
     spanning label used to do this for free, which is why the hazard is
     new: it arrived with the inline name, not with the grid.
+
+    Read outside the narrow blocks, like the two sibling guards. A scan of
+    the whole stylesheet would go green with this rule moved inside
+    `@media (max-width: 720px)` -- a width the window can never reach,
+    since the CSS floor is 840x625 -- while every row after the first
+    walked a column left at every width that IS reachable.
+
+    `1\\s*;` rather than `1`, so the search cannot be satisfied by a
+    `grid-column-start: 10` or `: 12` that happens to start with the right
+    digit.
     """
-    assert re.search(
-        r"#preview-binds \.row > :first-child \{[^}]*grid-column-start:\s*1",
-        CSS,
-        re.DOTALL,
-    ), (
-        "#preview-binds rows no longer pin their first cell to column 1, so "
-        "the trailing flexible track swallows the next row's first cell"
+    narrow = _media_spans(720)
+    pinned = [
+        b
+        for b in re.finditer(
+            r"#preview-binds \.row > :first-child \{[^}]*grid-column-start:\s*1\s*;",
+            CSS,
+            re.DOTALL,
+        )
+        if not any(lo <= b.start() < hi for lo, hi in narrow)
+    ]
+    assert pinned, (
+        "#preview-binds rows no longer pin their first cell to column 1 at "
+        "full width, so the trailing flexible track swallows the next row's "
+        "first cell"
     )
 
 
