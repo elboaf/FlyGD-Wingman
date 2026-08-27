@@ -1481,7 +1481,14 @@ only ever checked by hand.
       own existence rather than one cell in every row.
       Open the disclosure and tick a name in its roster: the summary above
       it changes immediately, without a reload, the same as the Lock block
-      below it.
+      below it. **Tick the NEXT name with the keyboard** — Tab to it and
+      press Space. The box you just ticked must still have focus (its
+      focus ring is still on it, and the following Tab reaches the name
+      after it, not the top of the page). Repainting the whole block here
+      rebuilds every checkbox including the one being clicked; Chromium
+      then moves focus to `<body>`, so ticking thirteen names by keyboard
+      meant thirteen restarts from the top of the page. The summary
+      repaints on its own now, and the roster is left standing.
       **An opted-out character stays live here, unlike in the Lock
       block.** Untick `Preview` on a character — their preview stops and
       the rest of their `#preview-binds` row goes dim — then open this
@@ -1496,6 +1503,18 @@ only ever checked by hand.
       previous row's leftover columns. Nothing in this table toggles that
       cell count any more; watch for it whenever a row's own cells vary
       instead — an unset bind, an absent `Clear`, an absent `Size…`.
+- [ ] **A roster checkbox announces the character, and the block says
+      what the tick means.** Settings > Previews, either disclosure open,
+      with a screen reader (or the accessibility pane of any Chromium
+      inspector pointed at the real window). Expected on one of the
+      roster boxes: the accessible name is the character's name and
+      nothing else — not "Lock <name>", not "<name> <name>" — and the
+      group it sits in is named by the disclosure's own summary sentence,
+      which is what supplies "locked" or "never minimized". The row's own
+      `Preview` box is the opposite case and must keep its `aria-label`:
+      that label has no visible text at all. Restating the purpose on
+      every roster box would override the visible name, which is the
+      failure WCAG 2.5.3 names.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
       `Character`, `Preview`, `Keybind`, `Size` — sentence case, a step
@@ -1521,8 +1540,10 @@ only ever checked by hand.
 - [ ] **The Lock summary resolves all four states of the polarity table.**
       Settings > Previews, the Lock block beneath `Lock previews in place
       by default`. Reach each state by flipping the default toggle and
-      ticking names in the disclosure's roster, and check the summary
-      reads exactly:
+      ticking names in the disclosure's roster (by keyboard for at least
+      one of them, and the ticked box must keep its focus ring — same
+      check, same reason, as the Never-minimize disclosure above), and
+      check the summary reads exactly:
       - default OFF, no exceptions ticked — a door, `Lock individual
         characters`.
       - default OFF, some ticked — `Locked: ` and their names.
