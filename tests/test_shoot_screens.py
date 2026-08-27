@@ -252,6 +252,7 @@ def test_manifest_records_what_the_gate_skipped():
         python="C:/py/python.exe",
         viewport={"width": 1015, "height": 700},
         eve_shown=False,
+        engine_present=True,
         shots=[{"key": "uploader", "file": "01-uploader.png", "error": None}],
         skipped=skipped,
     )
@@ -276,6 +277,7 @@ def test_manifest_counts_a_failed_shot_as_not_shot():
         python="C:/py/python.exe",
         viewport={"width": 1015, "height": 700},
         eve_shown=True,
+        engine_present=True,
         shots=[
             {"key": "uploader", "file": "01-uploader.png", "error": None},
             {"key": "skills", "file": None, "error": "TypeError: x is undefined"},
@@ -317,3 +319,82 @@ def test_restore_incumbent_keeps_source_build_arguments_intact(monkeypatch):
     (args, _kwargs) = calls[0]
     called_with = args[0]
     assert "-m wingman" in called_with
+
+
+def test_dialog_body_matches_the_shape_the_app_actually_raises():
+    """The staged confirm stands in for Api._delete_worker's dialog, and a
+    screenshot of a dialog the app cannot produce is worse than no shot.
+
+    Asserts the SHAPE, not the wording: the heading, one bulleted line per
+    file, and the cost sentence. A one-line body hides that the real dialog
+    enumerates what it is about to destroy, which is the whole reason that
+    dialog is worth a screenshot."""
+    body = shoot.DIALOG_BODY
+    assert body.startswith("Permanently delete these files from disk?")
+    assert body.endswith("This cannot be undone.")
+    bullets = [ln for ln in body.splitlines() if ln.startswith("  \u2022 ")]
+    assert len(bullets) == len(shoot.DIALOG_NAMES) >= 2
+    for name in shoot.DIALOG_NAMES:
+        assert f"  \u2022 {name}" in body
+
+
+def test_manifest_records_a_set_shot_without_the_engine():
+    """False here means Settings > Bookmarks shot its engine-missing error,
+    which is a property of this tool and not of the app. Every set shot
+    before ensure_engine existed carried that error with nothing in the
+    manifest to say so, and two reviewers filed it as a live regression."""
+    manifest = shoot.build_manifest(
+        branch="main",
+        sha="abc1234",
+        dirty=False,
+        python="C:/py/python.exe",
+        viewport={"width": 1015, "height": 700},
+        eve_shown=True,
+        engine_present=False,
+        shots=[{"key": "uploader", "file": "01-uploader.png", "error": None}],
+        skipped=[],
+    )
+    assert manifest["engine_present"] is False
+
+
+def test_ensure_engine_is_a_noop_when_the_binary_is_already_there(tmp_path):
+    """The fetcher self-skips on a matching pin, but this must not even
+    spawn it -- the shoot runs before the user's app is restarted and has
+    no business making a network call it does not need."""
+    exe = tmp_path / "packaging" / "bin" / "AutoHotkeyU64.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    calls = []
+    original = shoot.subprocess.run
+    try:
+        shoot.subprocess.run = lambda *a, **kw: calls.append(a)
+        assert shoot.ensure_engine(str(tmp_path), "python") is True
+    finally:
+        shoot.subprocess.run = original
+    assert calls == []
+
+
+def test_ensure_engine_reports_false_without_raising_when_it_cannot_fetch(tmp_path):
+    """Non-fatal on purpose: offline, the old behaviour is still eight good
+    screens. Aborting the run here would strand a user who has already been
+    asked to quit their app."""
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "fetch_autohotkey.py").write_text("")
+
+    class _Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "ERROR: download failed"
+
+    original = shoot.subprocess.run
+    try:
+        shoot.subprocess.run = lambda *a, **kw: _Failed()
+        assert shoot.ensure_engine(str(tmp_path), "python") is False
+    finally:
+        shoot.subprocess.run = original
+
+
+def test_ensure_engine_reports_false_when_the_fetcher_is_absent(tmp_path):
+    """A checkout without packaging/ is not an error, just a set that will
+    carry the artifact."""
+    assert shoot.ensure_engine(str(tmp_path), "python") is False
