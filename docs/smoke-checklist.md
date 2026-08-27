@@ -1981,11 +1981,15 @@ foreground.
       picked instead of the client you switched to. This is silent by
       design — there is no clean recovery — but should be observed rather
       than assumed absent.
-- [ ] Reader's note, not a defect to file on its own: the Minimize-inactive
-      checkbox and the never-minimize column sit in the card headed "Global
-      keybinds" — right for their adjacency to that column, but that card's
-      intro tells the user everything in it is a global keybind, and
-      minimize-inactive is not one. Worth noticing during the walk.
+- [ ] Reader's note, not a defect to file on its own: the never-minimize
+      COLUMN sits in the card headed "Global keybinds" — right for its
+      adjacency to the character rows, but that card's intro tells the
+      user everything in it is a global keybind, and a per-character
+      minimize exemption is not one. Worth noticing during the walk.
+      (The Minimize-inactive CHECKBOX used to sit there too and this note
+      used to say so; round 5's C4 moved it up to "EVE client previews",
+      beside the other window-behaviour settings, which is where the
+      Previews checklist item above expects to find it.)
 
 ### Opacity is translucency, not dimming
 

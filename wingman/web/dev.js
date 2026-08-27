@@ -746,6 +746,17 @@
       // row) -- so both checkboxes are proven against both branches
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
+      // Rides THIS payload, not the settings one -- previews.js resolves
+      // isLocked from `state`, which is the hotkey payload wholesale. The
+      // settings fixture carries a copy for settings.js's own checkbox;
+      // both are false and must stay in step, or the harness shows the
+      // table disagreeing with the control that governs it.
+      //
+      // Present rather than omitted even though `!!undefined` is already
+      // false: Api.get_preview_hotkey_state always sends the bool, and a
+      // fixture that leans on a JS coercion the real payload never
+      // exercises is a fixture that agrees by luck.
+      lock_default: false,
       never_minimize: ['Tanuki Solette'],
       // One opted-out character, and deliberately one that is ONLINE and
       // holds a keybind ('Zuelo Parvi'): that is the row where the state

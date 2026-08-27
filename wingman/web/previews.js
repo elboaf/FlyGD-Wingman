@@ -1041,6 +1041,15 @@
   // beside the thing that caused it.
   document.addEventListener('wm:preview-lock-default', function (event) {
     state.lock_default = !!(event.detail && event.detail.enabled);
+    // Bumped like a push, because for the row handlers this IS one. A
+    // Lock toggle in flight sampled `pushes` before its bridge call and
+    // computes membership as `wanted !== state.lock_default` when it
+    // resolves -- so without this it would pair a `wanted` read under the
+    // OLD default with the NEW one and store the exact opposite
+    // membership, silently. `pushes` already means "state changed under
+    // you, drop your optimistic patch", which is precisely the condition
+    // here; a second counter would be the same guard under another name.
+    pushes += 1;
     requestRender();
   });
 
