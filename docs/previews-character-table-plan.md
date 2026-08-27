@@ -748,9 +748,11 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
         "makeRow no longer chooses whether to build Clear -- it is back to "
         "rendering a control that can only refuse on every unbound row"
     )
-    assert "WM.setEnabled(clear" not in body, (
-        "Clear is disabled rather than absent again: at opacity .45 over "
-        "--text-faint that is 1.94:1, unreadable, and still holding a track"
+    assert re.search(r"WM\.setEnabled\(clear,[^)]*\boff\b", body), (
+        "Clear is no longer gated on the row's opted-out state. Only the "
+        "GESTURE half of the old `!off && !!gesture` gate moved out here, "
+        "into whether the control is built at all; the opted-out half "
+        "stays, or an inert row's one live control is the destructive one"
     )
 ```
 
