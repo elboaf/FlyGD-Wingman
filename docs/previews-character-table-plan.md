@@ -66,9 +66,11 @@ The class is the entire visible treatment: `inert()` sets `WM.setEnabled` on the
 
 Add one sentence to the comment above the first, recording why they are no longer scoped: the control they describe now renders in two places, and scoping it to `#preview-binds` would silently drop the treatment in the second.
 
-- [ ] **Step 2: Update the two derived-count guards to the new numbers**
+- [ ] **Step 2: Update the three guards that name Lock**
 
-`makeRow` will append **six** cells per character row instead of seven, and `#preview-binds` will declare `repeat(6, ...)` with `.no-nm` at `repeat(5, ...)`. Both guards derive rather than restate, so no test edit is needed for the counts themselves. Only the header guard names a literal. In `test_the_previews_headings_are_in_the_order_makeRow_builds` (`:1419`), delete the `Lock` entry from `owners`:
+`makeRow` will append **six** cells per character row instead of seven, and `#preview-binds` will declare `repeat(6, ...)` with `.no-nm` at `repeat(5, ...)`. The two count guards derive rather than restate, so they need no edit. Three guards name `Lock` literally and do need one.
+
+In `test_the_previews_headings_are_in_the_order_makeRow_builds` (`:1419`), delete the `Lock` entry from `owners`:
 
 ```python
     owners = (
@@ -78,6 +80,36 @@ Add one sentence to the comment above the first, recording why they are no longe
         ("Never minimize", "makeNeverMinimizeCheck"),
     )
 ```
+
+`test_an_opted_out_character_row_disables_its_own_controls` (`:1509`) asserts `makeLockCheck(character, ... off)` inside `makeRow`. The call is leaving, but the invariant is not: the spec keeps "Lock is inert for an opted-out character". Move the assertion to the block's call site. Replace the second loop with:
+
+```python
+    for builder in ("makeSizeButton",):
+        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
+            f"makeRow does not pass the row's opted-out state to {builder}"
+        )
+    # Lock left the row for its own disclosure, and took this invariant with
+    # it: with no window there is nothing to lock, so the block must pass
+    # each character's opted-out state the way the row used to. Asserted on
+    # the CALL, not inside the builder, because the call site is what
+    # decides -- the same reasoning the never-minimize guard below gives.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
+        "the Lock block does not pass each character's opted-out state, so "
+        "an opted-out character gets a live control over a window that is "
+        "not there"
+    )
+```
+
+`test_never_minimize_stays_live_on_an_opted_out_row` (`:1534`) asserts both builders against `makeRow`. Only its Lock half moves in this task; its never-minimize half still holds until Task 2. Replace its Lock assertion with the same `src`-scoped one:
+
+```python
+    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
+        "Lock SHOULD be gated -- with no window there is nothing to lock"
+    )
+```
+
+reading `src` the same way, and leave the `makeNeverMinimizeCheck(character)` assertion alone.
 
 - [ ] **Step 3: Run the suite to watch it fail**
 
@@ -297,6 +329,40 @@ def test_the_previews_grid_declares_exactly_one_template():
 
 In `test_the_previews_headings_are_in_the_order_makeRow_builds` (`:1419`), delete the `Never minimize` entry from `owners`, leaving `Preview`, `Keybind`, `Size`.
 
+`test_the_previews_header_row_names_one_column_per_track` (`:1353`) loops over two selectors and asserts each has a rule block. The second stops existing in this task. Reduce the loop to one selector and drop the now-meaningless `conditional` term:
+
+```python
+    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert m, "#preview-binds has no rule block"
+    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
+    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+    assert base == int(tracks.group(1)), (
+        f"makeHeadRow names {base} columns but #preview-binds declares "
+        f"{tracks.group(1)} tracks -- the headings sit over the wrong "
+        f"controls, and a heading falling into a narrower shared track "
+        f"widens it for every row below"
+    )
+```
+
+Keep `base` derived from the array literal. Delete the `conditional = body.count("cells.push(")` line and add an assertion that no conditional heading has crept back, so the two-state hazard cannot return unguarded:
+
+```python
+    assert "cells.push(" not in body, (
+        "makeHeadRow names a conditional column again, so the header's cell "
+        "count varies with a setting and one template cannot describe both"
+    )
+```
+
+`test_never_minimize_stays_live_on_an_opted_out_row` (`:1534`) still asserts `makeNeverMinimizeCheck(character)` against `makeRow`, and that call is leaving. The invariant is not: the spec keeps never-minimize live for an opted-out character. Move it to the block's call site:
+
+```python
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert re.search(r"makeNeverMinimizeCheck\(name\)", src), (
+        "makeNeverMinimizeCheck is being passed an opted-out state, which "
+        "would grey a checkbox whose setting is still enforced"
+    )
+```
+
 - [ ] **Step 2: Run to watch it fail**
 
 Run: `uv run --no-sync python -m pytest tests/test_page_conventions.py -q`
@@ -462,6 +528,35 @@ git commit -m "Previews: move Never minimize out of the row, retiring .no-nm"
         f"makeRow appends {cells} cells per character row but #preview-binds "
         f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
+    )
+```
+
+Then fix the header guard, which reads its track count with a regex anchored to `repeat(` and will not match a fixed first track. In `test_the_previews_header_row_names_one_column_per_track`, replace the `tracks` search and its assertion:
+
+```python
+    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),",
+                      m.group(1))
+    assert fixed, (
+        "#preview-binds no longer declares a fixed first track followed by "
+        "repeat(N, ...)"
+    )
+    tracks = 1 + int(fixed.group(2))
+    assert base == tracks, (
+        f"makeHeadRow names {base} columns but #preview-binds declares "
+        f"{tracks} tracks -- the headings sit over the wrong controls, and "
+        f"a heading falling into a narrower shared track widens it for "
+        f"every row below"
+    )
+```
+
+Then guard the new column in `test_the_previews_headings_are_in_the_order_makeRow_builds`, so it is ordered against its own cell like every other heading:
+
+```python
+    owners = (
+        ("Character", "'lab'"),
+        ("Preview", "makeExcludedCheck"),
+        ("Keybind", "'bindbtn'"),
+        ("Size", "makeSizeButton"),
     )
 ```
 
@@ -632,7 +727,7 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     that path predates this change.
     """
     body = _makerow_body()
-    assert "makeClearButton" in body or "gesture ?" in body, (
+    assert "if (gesture) {" in body, (
         "makeRow no longer chooses whether to build Clear -- it is back to "
         "rendering a control that can only refuse on every unbound row"
     )
