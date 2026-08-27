@@ -145,9 +145,11 @@
     // in the cycle, so a live control there would be one that saves a
     // setting nothing reads.
     //
-    // `Never minimize` is the exception and stays live -- see the comment
-    // on its append below. It governs the real EVE window, not the
-    // preview, and opting out does not stop it.
+    // `Never minimize` is the exception and stays live. It governs the
+    // real EVE window, not the preview, and opting out does not stop it --
+    // see renderLockBlock (passes `isExcluded(name)`) versus
+    // renderNeverMinimizeBlock (does not) for where that asymmetry is
+    // expressed now that both live in their own disclosures, not this row.
     //
     // The NAME is deliberately not dimmed either. `.dim` on a .lab already
     // means "not logged in" -- the `.off-tag` word this function appends
@@ -298,26 +300,38 @@
     // characters, and Never-minimize means nothing for them. #preview-binds
     // is a CSS grid with `.row { display: contents }` (style.css), so
     // every row must contribute the same number of cells or a short row's
-    // children bleed into the next row's columns. Two empty fillers keep
-    // the grid aligned instead of shrinking the column count for those two
-    // rows only.
+    // children bleed into the next row's columns.
     //
-    // Round 5, C3 and decision D6: the Never-minimize cell exists only
-    // while the global "Minimize a client's window..." toggle is ON. It
-    // used to be built for every character and then DISABLED whenever the
-    // global was off -- which is the default -- so the ordinary state of
-    // this screen was ~13 permanently dead controls, one per character,
-    // each carrying a tooltip explaining why it could not be used. D6
-    // keeps the setting per-character and stops it rendering at all in
-    // the state where it can do nothing.
+    // Round 5, C3 and decision D6 introduced a Never-minimize cell here
+    // that existed only while the global "Minimize a client's window..."
+    // toggle was ON -- built for every character and then DISABLED
+    // whenever the global was off, which is the default, so the ordinary
+    // state of this screen was ~13 permanently dead controls, one per
+    // character, each carrying a tooltip explaining why it could not be
+    // used. That made the cell count vary across renders (one template
+    // for each toggle state, kept in sync by hand as `#preview-binds` /
+    // `#preview-binds.no-nm`), which is what this task retired: the cell
+    // and the toggling both left `makeRow`, and D6's reasoning -- a
+    // control must not render at all in a state where it can do nothing
+    // -- now governs whether renderNeverMinimizeBlock's whole disclosure
+    // is `hidden`, not a per-row cell.
     //
-    // The cell count stays uniform ACROSS rows within one render, which is
-    // the invariant #preview-binds' grid actually needs; it is the track
-    // COUNT that varies, and render() tells the stylesheet which it is.
+    // The `if` below is deliberately EMPTY -- comments only, no
+    // statements. It used to build the Never-minimize cell for a real
+    // character; the single filler for that same cell now lives in the
+    // `else`, one for cycle forward/back (no character) exactly as it did
+    // before, so the two branches still contribute equal cell counts.
+    // Nothing here needs collapsing to `if (!character)`: the `} else {`
+    // shape is what test_the_previews_grid_has_one_track_per_cell_makeRow_appends
+    // splits the function body on to find both halves, and the surviving
+    // prose below is the record of what this branch used to build, kept
+    // so the next person does not read an empty block as dead code and
+    // delete it along with the guard it satisfies.
     if (character) {
-      // NOT passed `off`, unlike every other control on the row. Opting a
-      // character out stops their PREVIEW; it does not stop
-      // minimize_inactive_clients, because _activate_client resolves
+      // NOT passed `off`, unlike every other control on the row -- true
+      // of makeNeverMinimizeCheck's call site now, same reasoning as
+      // always. Opting a character out stops their PREVIEW; it does not
+      // stop minimize_inactive_clients, because _activate_client resolves
       // `previous_key` from PreviewHost._clients -- which deliberately
       // still holds opted-out characters -- and so still consults
       // _is_never_minimize when switching away from that character's real
