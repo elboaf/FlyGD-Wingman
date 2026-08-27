@@ -17,7 +17,9 @@
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
   // (settings.js), not here, and this file only needs to know its CURRENT
-  // value to decide whether a row's Never-minimize box is usable. Reusing
+  // value to decide whether the Never-minimize disclosure is rendered at
+  // all (D6: the block is absent while the toggle is off, not present and
+  // dead -- renderNeverMinimizeBlock). Reusing
   // the wm:settings listener below (already read for inert_notes) avoids
   // a second round trip for one boolean.
   var minimizeInactive = false;
@@ -366,9 +368,11 @@
     //
     // The `if` below is deliberately EMPTY -- comments only, no
     // statements. It used to build the Never-minimize cell for a real
-    // character; the single filler for that same cell now lives in the
-    // `else`, one for cycle forward/back (no character) exactly as it did
-    // before, so the two branches still contribute equal cell counts.
+    // character. That cell is gone from BOTH branches now, so nothing
+    // here stands in for it and nothing should: the one filler left in
+    // the `else` stands in for Size..., on the cycle forward/back rows
+    // that have no character, exactly as the comment there says. That is
+    // what keeps the two branches' cell counts equal.
     // Nothing here needs collapsing to `if (!character)`: the `} else {`
     // shape is what test_the_previews_grid_has_one_track_per_cell_makeRow_appends
     // splits the function body on to find both halves, and the surviving
@@ -589,9 +593,14 @@
         state.locked = member ? without.concat(name) : without;
         // The block's summary reads this list, so patching it without a
         // repaint leaves the sentence above the box stating the state
-        // before the click. Only this block, not render(): a full render
-        // while a keybind capture is armed detaches the armed button.
-        renderLockBlock();
+        // before the click. The SUMMARY only, and the hazard it dodges
+        // has two levels: a full render() while a keybind capture is
+        // armed detaches the armed button, and rebuilding this block's
+        // roster would detach the checkbox running this very handler --
+        // Chromium moves focus to <body> when the focused element is
+        // removed, so a keyboard user ticking names would be thrown back
+        // to the top of the page on every tick. See paintLockSummary.
+        paintLockSummary();
       });
     });
     return inert(label, box, off);
@@ -637,14 +646,18 @@
     // once cut down to " Off".
     //
     // Those are PRE-CHANGE figures and no longer describe this screen.
-    // With the words gone the seven tracks and their six intervening gaps
-    // measure 502.16px of the same 586px -- counted the same way 504.75
-    // was, which excludes the gap before the trailing 1fr. (Counting that
-    // gap gives 512.16, and an earlier draft printed it beside 504.75, so
-    // the two numbers put side by side to be compared were counted
-    // differently.) A cell with no text wants the box's 15px, so the
-    // phrase moved into a heading rendered once instead of being cut to
-    // fit a track.
+    // The next measurement was taken with the words gone but the layout
+    // still SEVEN tracks: they and their six intervening gaps took
+    // 502.16px of the same 586px -- counted the same way 504.75 was,
+    // which excludes the gap before the trailing 1fr. (Counting that gap
+    // gives 512.16, and an earlier draft printed it beside 504.75, so the
+    // two numbers put side by side to be compared were counted
+    // differently.) That layout is gone in its turn: Lock and Never
+    // minimize left for their own disclosures, the name came inline, and
+    // the five tracks left measure 519.25px. The figures stand as taken,
+    // because what they demonstrate has not changed -- a cell with no
+    // text wants the box's 15px, so the phrase moved into a heading
+    // rendered once instead of being cut to fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
     var label = WM.make('label', 'check optout', '');
     label.title = 'Untick to give this character no preview window. Its own '
@@ -687,12 +700,15 @@
   // Both halves are set here together so the look and the behaviour
   // cannot disagree.
   //
-  // The class USED to be justified as "a rule could dim the box but not
-  // the word beside it, so dim the whole label". These labels have no
-  // word any more -- the column header carries it -- so that argument is
-  // spent and style.css says so where the rule lives. The class stays
-  // because it carries `cursor`, which sits on `.check` and nothing else
-  // can reach.
+  // "A rule could dim the box but not the word beside it, so dim the
+  // whole label" is live reasoning again, not history: `inert()` has
+  // exactly one caller, makeLockCheck, and its label inside the Lock
+  // disclosure carries the character's name as visible text. Dimming the
+  // 15px square while the name beside it stayed at full strength would
+  // read as a rendering fault. The class also carries `cursor`, which
+  // sits on `.check` and nothing else can reach. style.css keeps the full
+  // record where the rule lives, including the spell in between when Lock
+  // sat in the row grid with an empty label and only a box to dim.
   function inert(label, box, off) {
     WM.setEnabled(box, !off);
     label.classList.toggle('inert', !!off);
@@ -728,7 +744,10 @@
           return n !== name;
         });
         state.never_minimize = wanted ? without.concat(name) : without;
-        renderNeverMinimizeBlock();
+        // Summary only, never the roster -- the same two-level hazard
+        // makeLockCheck's handler records, and the same reason: this
+        // handler is running on a checkbox the roster owns.
+        paintNeverMinimizeSummary();
       });
     });
     return label;
@@ -919,18 +938,37 @@
     return 'Locked: ' + nameList(names);
   }
 
+  // The summary sentence on its own, split out from the roster beneath it
+  // because that roster CONTAINS the checkbox whose change handler asks
+  // for the repaint. Rebuilding the list from there empties it and builds
+  // a fresh box for every character including the one just clicked;
+  // Chromium moves focus to <body> when the focused element is removed,
+  // so a keyboard user ticking names loses focus on every tick and has to
+  // Tab from the top of the page again -- thirteen characters, thirteen
+  // restarts.
+  //
+  // The rebuild would also be pure waste. set_preview_locked changes one
+  // name, the clicked box already shows its own value, and no other box's
+  // isLocked() answer moves. The one thing that DOES move them all is
+  // lock_default changing mid-flight, and makeLockCheck's defaultAtSend
+  // branch answers that with a full refresh() rather than through here.
+  function paintLockSummary() {
+    var summary = WM.el('preview-lock-exceptions-summary');
+    if (!summary) { return; }
+    var all = rows().map(function (entry) { return entry.name; });
+    summary.textContent = lockSummary(all.filter(isLocked), all);
+  }
+
   // The character-list half of the Lock disclosure: which characters are
-  // currently locked, and the sentence in the summary that names them.
-  // Called from render() and, so the sentence never lags one click behind
-  // the box the user just ticked, from makeLockCheck's own change handler.
+  // currently locked, and -- through paintLockSummary -- the sentence that
+  // names them. Called from render() only. The change handler repaints the
+  // summary and leaves the roster standing, for the reason above.
   function renderLockBlock() {
     var box = WM.el('preview-lock-exceptions');
-    var summary = WM.el('preview-lock-exceptions-summary');
     var list = WM.el('preview-lock-exceptions-list');
-    if (!box || !summary || !list) { return; }
+    if (!box || !list) { return; }
     var all = rows().map(function (entry) { return entry.name; });
-    var locked = all.filter(isLocked);
-    summary.textContent = lockSummary(locked, all);
+    paintLockSummary();
     list.textContent = '';
     all.forEach(function (name) {
       list.appendChild(makeLockCheck(name, isExcluded(name)));
@@ -946,21 +984,34 @@
                         : 'Exempt individual characters';
   }
 
+  // The summary half, split from the roster for the reason
+  // paintLockSummary states in full: the roster holds the checkbox that
+  // asks for this repaint, and rebuilding it there would detach that
+  // checkbox and drop the keyboard user's focus to <body>.
+  function paintNeverMinimizeSummary() {
+    var summary = WM.el('preview-nm-exceptions-summary');
+    if (!summary) { return; }
+    var all = rows().map(function (entry) { return entry.name; });
+    summary.textContent = nmSummary(all.filter(isNeverMinimize));
+  }
+
   // The character-list half of the Never-minimize disclosure, mirroring
-  // renderLockBlock. Called from render() and from makeNeverMinimizeCheck's
-  // own change handler, so the summary never lags one click behind the box
-  // the user just ticked.
+  // renderLockBlock. Called from render() only; makeNeverMinimizeCheck's
+  // change handler goes through paintNeverMinimizeSummary instead, so the
+  // summary never lags one click behind the box the user just ticked
+  // without the roster being rebuilt underneath them.
   function renderNeverMinimizeBlock() {
     var box = WM.el('preview-nm-exceptions');
-    var summary = WM.el('preview-nm-exceptions-summary');
     var list = WM.el('preview-nm-exceptions-list');
-    if (!box || !summary || !list) { return; }
+    if (!box || !list) { return; }
     var all = rows().map(function (entry) { return entry.name; });
     // D6: the whole block is absent while the global toggle is off, not
     // present and dead -- nothing here can do anything in that state.
+    // Decided here rather than in the summary painter, which is only ever
+    // reached from inside a block that is on screen.
     box.hidden = !minimizeInactive || !all.length;
     if (box.hidden) { return; }
-    summary.textContent = nmSummary(all.filter(isNeverMinimize));
+    paintNeverMinimizeSummary();
     list.textContent = '';
     all.forEach(function (name) {
       // NOT gated on isExcluded, unlike the Lock block above. Opting a

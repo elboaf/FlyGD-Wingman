@@ -458,8 +458,10 @@
             // means locked) rather than as exceptions.
             lock_default: false,
             // Task 10: read here by settings.js's own wm:settings listener
-            // AND by previews.js's (previews.js needs it to decide whether
-            // each row's Never-minimize checkbox is enabled).
+            // AND by previews.js's. ON so the harness renders the
+            // Never-minimize disclosure at all -- D6 makes the whole block
+            // absent while this is off, so the shipped-default value would
+            // leave half the exception UI unreachable in the harness.
             minimize_inactive_clients: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
@@ -745,11 +747,15 @@
         'Ctrl+Alt+2': true,
         'Ctrl+Alt+Right': true
       },
-      // One lock and one never-minimize, split across the online/offline
-      // divide on purpose: 'Aiga Otsolen' is running (Lock on an online
-      // row), 'Tanuki Solette' is not (Never-minimize on an offline/dim
-      // row) -- so both checkboxes are proven against both branches
-      // rather than only the offline one the prior fix round covered.
+      // One lock and one never-minimize, on different characters on
+      // purpose: 'Aiga Otsolen' is running and 'Tanuki Solette' is not.
+      // Neither checkbox sits on a row any more -- both moved into the
+      // disclosures under their global toggles, where every character is
+      // listed the same way regardless of whether their client is up. The
+      // split is kept because the two rosters are built from the same
+      // `rows()` the table is, so a fixture whose ticks all landed on
+      // running characters would not show that an offline character
+      // reaches the blocks at all.
       locked: ['Aiga Otsolen'],
       // Rides THIS payload, not the settings one -- previews.js resolves
       // isLocked from `state`, which is the hotkey payload wholesale. The

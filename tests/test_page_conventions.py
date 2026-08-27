@@ -1431,6 +1431,21 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
             f"names a {heading!r} column over it"
         )
 
+    # The blank cell is the `.rowacts` track (Clear + Edit... share it).
+    # It carries no word, so the loop above cannot see it -- and reordering
+    # the literal to ['Character', 'Preview', 'Keybind', 'Size', ''] keeps
+    # both sequences below sorted and the count at 5, while `Size` would
+    # sit over the actions cell and the blank over Size.
+    cells = re.search(r"var cells = \[([^\]]*)\]", head)
+    assert cells, "makeHeadRow no longer declares its headings as one literal"
+    names = [c.strip().strip("'") for c in cells.group(1).split(",")]
+    assert names.index("") == 3, (
+        f"makeHeadRow's blank heading is at index {names.index('')}, not 3: "
+        f"{names}. The blank labels `.rowacts`, which makeRow appends "
+        f"fourth; anywhere else and every heading from there on is over "
+        f"the wrong control with the count still agreeing"
+    )
+
     heading_order = [head.index(f"'{h}'") for h, _ in owners]
     append_order = [body.index(t) for _, t in owners]
     assert heading_order == sorted(heading_order), (
@@ -1645,6 +1660,19 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
         "control is inert, deleting the chord that row's own tooltip just "
         "promised was kept"
     )
+    # Drawing Clear conditionally is only half of it. Clear and Edit... share
+    # ONE grid cell now, so a row that skips Clear would otherwise slide
+    # Edit... left into the space Clear had -- the same verb at two x
+    # positions down the column, keyed on something the reader cannot see.
+    # Right-aligning inside the cell pins Edit... to one edge and turns a
+    # missing Clear into an empty slot. That is one declaration, and
+    # deleting it left the whole suite green until a review looked for it.
+    acts = re.search(r"\.rowacts\s*\{([^}]*)\}", CSS)
+    assert acts, "`.rowacts` has no rule -- Clear and Edit... share its cell"
+    assert "justify-content: flex-end" in acts.group(1), (
+        "`.rowacts` no longer right-aligns its contents, so Edit... sits at "
+        "one x position on a bound row and another on an unbound one"
+    )
 
 
 def test_an_opted_out_character_row_disables_its_own_controls():
@@ -1709,12 +1737,64 @@ def test_never_minimize_stays_live_on_an_opted_out_row():
     same as Lock's. Asserted on the block's own call site rather than
     inside the builder, because the builder is shared and it is the call
     site that decides.
+
+    A bare ``makeNeverMinimizeCheck(name)`` search over the whole file is
+    NOT enough, and shipped that way once: ``function
+    makeNeverMinimizeCheck(name) {`` satisfies it by itself, so mutating
+    the call site to pass ``isExcluded(name)`` left the guard green. The
+    Lock counterpart never had that hole because a second argument is what
+    it looks for. This one is anchored on the append instead.
     """
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    assert re.search(r"makeNeverMinimizeCheck\(name\)", src), (
-        "makeNeverMinimizeCheck is being passed an opted-out state, which "
-        "would grey a checkbox whose setting is still enforced"
+    assert "list.appendChild(makeNeverMinimizeCheck(name));" in src, (
+        "the Never-minimize block no longer appends "
+        "`makeNeverMinimizeCheck(name)` verbatim -- if it gained an "
+        "argument it is being passed an opted-out state, which would grey "
+        "a checkbox whose setting is still enforced"
     )
+    # Belt and braces, and the half that survives a reformat of the line
+    # above: the block's body must not consult the opt-out roster at all.
+    block = src.split("function renderNeverMinimizeBlock(", 1)[1]
+    block = block.split("\n  }", 1)[0]
+    assert "isExcluded" not in block, (
+        "renderNeverMinimizeBlock consults isExcluded -- whatever it does "
+        "with the answer, this control is not allowed to vary on it"
+    )
+
+
+def test_the_disclosure_rosters_do_not_relabel_their_own_checkboxes():
+    """The character name is VISIBLE text inside each roster label, so an
+    accessible name already exists. Re-adding the `aria-label` the row
+    checkboxes carry -- which is what the row versions of these two builders
+    did, and what an edit restoring "consistency" would reach for first --
+    overrides that visible name, which is the failure WCAG 2.5.3 names.
+
+    What the tick MEANS ("locked", "never minimized") reaches the reader
+    once, through the roster container's `aria-labelledby` pointing at its
+    own `<summary>`, rather than being restated on every row. The row's own
+    opt-out box keeps its `aria-label` and must: its label has no text at
+    all.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    for builder in ("makeLockCheck", "makeNeverMinimizeCheck"):
+        body = src.split(f"function {builder}(", 1)[1].split("\n  }", 1)[0]
+        assert "aria-label" not in body, (
+            f"{builder} sets an aria-label. Its label carries the character "
+            f"name as visible text, so that overrides the visible name "
+            f"instead of adding to it (WCAG 2.5.3)"
+        )
+        assert re.search(r"WM\.make\('label', 'check[^']*', name\)", body), (
+            f"{builder} no longer builds its label with the character name "
+            f"as its text, so the checkbox has no accessible name at all"
+        )
+
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    for block in ("preview-lock-exceptions", "preview-nm-exceptions"):
+        assert f'aria-labelledby="{block}-summary"' in html, (
+            f"#{block}-list does not point at its own summary, so a "
+            f"screen reader announces the character name with nothing to "
+            f"say whether the tick is about locking or about minimizing"
+        )
 
 
 def test_a_shared_chord_ignores_opted_out_characters():

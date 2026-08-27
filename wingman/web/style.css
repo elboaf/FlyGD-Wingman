@@ -1449,13 +1449,18 @@ button.btn:disabled,
    surviving instance of the same treatment, and the reasoning for scoping
    it narrowly rather than putting an opacity on `.check` is there. */
 
-/* The same treatment, scoped the same narrow way, for the one state that
-   really does need a dimmed-but-present checkbox: a character opted out of
-   previews. D6's objection does not apply here, because this is not the
-   default -- an ordinary Previews screen carries none of these, and a row
-   only takes it once the user has ticked "Off" on that row
-   themselves, which is exactly the moment the rest of the row stops being
-   able to do anything.
+/* The same treatment for the one state that really does need a
+   dimmed-but-present checkbox: a character opted out of previews. D6's
+   objection does not apply here, because this is not the default -- an
+   ordinary Previews screen carries none of these, and the class is taken
+   only once the user has unticked that character's own `Preview` box,
+   which is exactly the moment there is no longer a window to lock.
+
+   Read that as being about ONE CHECKBOX, not a row. It was written when
+   Lock sat in the #preview-binds grid beside a box named `Off`; that box
+   became the inverted `Preview` box, Lock moved out to its own disclosure
+   under the global toggle, and this rule is unscoped now. The closing
+   paragraphs below hold that history and the reason the scope went.
 
    The class is set by previews.js rather than derived from `:disabled`,
    and NOT because the selector cannot reach the control -- it can:
