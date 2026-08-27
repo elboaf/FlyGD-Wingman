@@ -5,17 +5,121 @@ unreliable on network and mapped drives, watchdog would be another
 dependency, and polling one directory every few seconds costs nothing.
 
 A file appearing is not a file finished. Size must hold steady across
-several consecutive polls before the file is announced.
+several consecutive polls, AND the writer must have let go of the file,
+before it is announced. The second half is not belt-and-braces: a steady
+size alone is not evidence of anything, because OBS's muxer does not grow
+the file smoothly. See file_is_closed below.
 """
 
+import ctypes
 import json
 import logging
+import sys
+from ctypes import wintypes
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from . import library
 
 logger = logging.getLogger(__name__)
+
+# ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION: someone else holds a
+# handle. Every other failure means the probe could not get an answer.
+_WRITER_STILL_HOLDS_IT = frozenset({32, 33})
+
+
+@lru_cache(maxsize=1)
+def _kernel32():
+    """The CreateFileW binding, built once.
+
+    Cached for the reason dpapi.py:63-66 and preview/win32.py record: the
+    DLL handle and its argtypes/restype are process-global mutations, so
+    redoing them on every probe -- once per settled recording per poll,
+    forever -- is wasted work rather than just noise.
+
+    ctypes and ctypes.wintypes import fine on Linux; ctypes.WinDLL is what
+    does not exist there, so the binding is built lazily in here and this
+    module still imports for the suite. The layout preview/win32.py:1-9
+    establishes.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # HANDLE CreateFileW(LPCWSTR, DWORD, DWORD, LPVOID, DWORD, DWORD, HANDLE)
+    # Declared in full for the reason win32.py:10-16 records: undeclared,
+    # ctypes marshals the returned HANDLE as a 32-bit int, so the
+    # INVALID_HANDLE_VALUE comparison below misses on a 64-bit build -- a
+    # locked file would read as opened, and this bug would come straight
+    # back with nothing in the diff to explain it.
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
+def _create_file_exclusive(path) -> tuple[bool, int]:
+    """Open *path* denying all sharing. Returns (opened, last_error)."""
+    kernel32 = _kernel32()
+    handle = kernel32.CreateFileW(
+        str(path),
+        0x80000000,  # GENERIC_READ
+        0,  # dwShareMode = 0: deny everything, which is the whole test
+        None,
+        3,  # OPEN_EXISTING
+        0x80,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    if handle == wintypes.HANDLE(-1).value:  # INVALID_HANDLE_VALUE
+        return False, ctypes.get_last_error()
+    kernel32.CloseHandle(handle)
+    return True, 0
+
+
+def windows_file_is_closed(path, *, _create_file=_create_file_exclusive) -> bool:
+    """Whether no other process holds *path* open.
+
+    A share-mode-0 open is refused while any handle to the file exists, so
+    this answers "has the recorder finished with it" directly rather than
+    inferring it from the size. Our own handle lives for microseconds and
+    is closed immediately.
+
+    Fails OPEN. A probe that cannot get an answer -- permissions on a
+    mapped drive, an antivirus filter, a path that vanished -- must not
+    silently stop the app announcing recordings for the rest of the
+    session. Guessing "closed" degrades to the behaviour this replaced,
+    which is a repeated notification: annoying, and visible. That is the
+    trade _save() makes with its swallowed OSError too.
+
+    One consequence worth knowing: library.probe runs ffprobe over any
+    recording whose duration is not already in the durations cache, and
+    that holds a brief handle of its own. Overlapping with it reads as
+    "still being written" and defers the announcement to the next poll,
+    three seconds later.
+    """
+    opened, err = _create_file(path)
+    if opened:
+        return True
+    return err not in _WRITER_STILL_HOLDS_IT
+
+
+def file_is_closed(path) -> bool:
+    """Platform default for the Watcher's probe.
+
+    Off Windows there is no equivalent test -- POSIX advisory locks say
+    nothing about ordinary writers -- and the app is Windows-only. Answering
+    True there keeps the watcher's Linux behaviour exactly as it was.
+    """
+    if sys.platform != "win32":
+        return True
+    return windows_file_is_closed(path)
 
 
 @dataclass
@@ -48,10 +152,13 @@ def save_seen(path: Path, seen: dict[str, SeenEntry]) -> None:
 
 
 class Watcher:
-    def __init__(self, directory, seen_path, *, stable_polls: int = 3):
+    def __init__(self, directory, seen_path, *, stable_polls: int = 3, is_closed=None):
         self.directory = Path(directory)
         self.seen_path = Path(seen_path)
         self.stable_polls = stable_polls
+        # Injected seam rather than a platform branch inside poll_once: the
+        # whole suite runs on Linux, where the real probe cannot exist.
+        self.is_closed = file_is_closed if is_closed is None else is_closed
         self.seen = load_seen(self.seen_path)
         self._pending: dict[str, tuple[int, int]] = {}  # key -> (size, stable_count)
 
@@ -119,6 +226,18 @@ class Watcher:
             else:
                 count = 1
             if count >= self.stable_polls:
+                # Steady size is the cheap filter; the handle probe is the
+                # actual verdict, and it runs only once a file has settled
+                # so a folder of old recordings is not opened every poll.
+                #
+                # A file still held open stays in _pending at its current
+                # count. It is re-probed each poll from here on -- one
+                # CreateFile every three seconds for one file -- and is
+                # announced on the first poll after the writer lets go,
+                # rather than waiting out another settle.
+                if not self.is_closed(path):
+                    self._pending[key] = (stat.st_size, count)
+                    continue
                 self._pending.pop(key, None)
                 self.seen[key] = SeenEntry(size=stat.st_size, mtime=stat.st_mtime)
                 ready.append(path)

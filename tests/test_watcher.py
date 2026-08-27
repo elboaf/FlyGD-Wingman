@@ -278,3 +278,165 @@ def test_file_deleted_then_recreated_at_same_path_is_reannounced(tmp_path):
     # assertion flaky for a reason unrelated to what it is testing.
     os.utime(f, (0, 0))
     assert [p.name for p in _settle(w, f)] == ["a.mkv"]
+
+
+# --- Files the writer still has open -----------------------------------
+#
+# The bug these cover: OBS's muxer does not grow the file smoothly. On NTFS
+# the size only advances when it flushes -- measured at 17-20s apart on the
+# recording that produced this fix -- while poll_once needs just three quiet
+# polls (9s at POLL_SECONDS=3.0) to call a file finished. Size AND mtime are
+# byte-identical between flushes, so the seen-set's unchanged check did not
+# suppress it either: every flush re-entered _pending and re-announced the
+# same still-recording file, once per flush, for the length of the recording.
+
+
+def _fake_probe(states):
+    """is_closed seam driven by a name -> bool map, read at call time."""
+    return lambda path: states.get(Path(path).name, True)
+
+
+def test_file_still_held_open_by_the_writer_is_never_announced(tmp_path):
+    """The reported bug: a recording in progress announced over and over.
+
+    Size holds constant across far more polls than stable_polls here, which
+    is exactly what a flush gap looks like from the watcher's side.
+    """
+    states = {"recording.mkv": False}
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json", is_closed=_fake_probe(states))
+    w.baseline()
+    _write(tmp_path / "recording.mkv", 10)
+    for _ in range(12):
+        assert w.poll_once() == []
+
+
+def test_file_is_announced_once_the_writer_closes_it(tmp_path):
+    states = {"recording.mkv": False}
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json", is_closed=_fake_probe(states))
+    w.baseline()
+    f = _write(tmp_path / "recording.mkv", 10)
+    _settle(w, f)
+    assert w.poll_once() == []
+    states["recording.mkv"] = True  # OBS stopped; the handle is gone
+    assert [p.name for p in w.poll_once()] == ["recording.mkv"]
+    assert w.poll_once() == []  # and exactly once
+
+
+def test_an_open_file_does_not_hide_a_finished_one(tmp_path):
+    """A still-recording file must not suppress its neighbours: OBS writes
+    the replay buffer and the recording into the same folder."""
+    states = {"recording.mkv": False, "Fight 2026.mkv": True}
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json", is_closed=_fake_probe(states))
+    w.baseline()
+    _write(tmp_path / "recording.mkv", 10)
+    _write(tmp_path / "Fight 2026.mkv", 20)
+    assert [p.name for p in _settle(w, None)] == ["Fight 2026.mkv"]
+
+
+def test_probe_runs_only_on_files_that_have_settled(tmp_path):
+    """One open per candidate per settle, not one per file per poll: the
+    folder holds a back catalogue this would otherwise open on a
+    three-second loop forever."""
+    calls = []
+
+    def counting(path):
+        calls.append(Path(path).name)
+        return True
+
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json", is_closed=counting)
+    w.baseline()
+    _write(tmp_path / "old.mkv", 10)
+    _settle(w, None)
+    calls.clear()
+    for _ in range(5):
+        w.poll_once()  # nothing changed; nothing should be probed
+    assert calls == []
+
+
+# --- The Windows probe itself ------------------------------------------
+
+
+def test_windows_probe_reports_open_when_the_share_is_violated():
+    """ERROR_SHARING_VIOLATION is the whole signal: another process holds a
+    handle, so a share-mode-0 open is refused. Measured against a live OBS
+    recording, which returned exactly this while two finished files in the
+    same folder opened cleanly."""
+    assert (
+        watcher.windows_file_is_closed("x.mkv", _create_file=lambda p: (False, 32))
+        is False
+    )
+
+
+def test_windows_probe_reports_open_on_a_lock_violation():
+    assert (
+        watcher.windows_file_is_closed("x.mkv", _create_file=lambda p: (False, 33))
+        is False
+    )
+
+
+def test_windows_probe_reports_closed_when_the_open_succeeds():
+    assert (
+        watcher.windows_file_is_closed("x.mkv", _create_file=lambda p: (True, 0))
+        is True
+    )
+
+
+def test_windows_probe_fails_open_on_an_unrelated_error():
+    """Fails open deliberately. A probe that cannot answer -- permissions on
+    a mapped drive, an antivirus filter -- must not silently stop every
+    notification the app makes. The worst case of guessing "closed" is the
+    behaviour this fix replaced, which is annoying rather than silent; the
+    same trade _save() makes with its swallowed OSError."""
+    assert (
+        watcher.windows_file_is_closed("x.mkv", _create_file=lambda p: (False, 5))
+        is True
+    )  # ERROR_ACCESS_DENIED
+
+
+def test_default_probe_is_a_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(watcher.sys, "platform", "linux")
+    assert watcher.file_is_closed("/nonexistent/whatever.mkv") is True
+
+
+def _poll_a_flushing_writer(w, f, polls=30, flush_every=6):
+    """Drive *w* over a writer that flushes slower than the settle window.
+
+    A constant size does NOT reproduce the defect: the first announcement
+    puts the file in the seen-set, and an unchanged size and mtime are
+    suppressed there forever after. The repeat needs the size to keep
+    CHANGING -- which is precisely what a flush is -- so each one re-enters
+    _pending and settles again. Anything that reproduces this bug has to
+    flush; measured cadence on the recording that prompted the fix was one
+    flush per 17-20s against a 9s settle.
+    """
+    announced = 0
+    for poll in range(polls):
+        if poll % flush_every == 0:
+            _write(f, 100 * (poll + 1))
+        announced += len(w.poll_once())
+    return announced
+
+
+def test_a_flushing_writer_is_announced_once_per_flush_without_the_probe(tmp_path):
+    """Executable documentation of the defect, not a wish: this is what the
+    watcher did before the handle probe, and it is why a bigger
+    stable_polls could not have fixed it -- the flush gap is unbounded, so
+    any threshold below it still settles."""
+    w = watcher.Watcher(
+        tmp_path, tmp_path / "seen.json", is_closed=lambda p: True
+    )  # the pre-fix contract: a quiet size is taken as proof
+    w.baseline()
+    assert _poll_a_flushing_writer(w, tmp_path / "recording.mkv") > 1
+
+
+def test_a_flushing_writer_is_not_announced_at_all_while_it_is_open(tmp_path):
+    """The fix, against the same writer. Verified end to end on Windows
+    against a real held handle: 5 announcements before, 0 after, and
+    exactly 1 on the first poll once the handle closed."""
+    states = {"recording.mkv": False}
+    w = watcher.Watcher(tmp_path, tmp_path / "seen.json", is_closed=_fake_probe(states))
+    w.baseline()
+    f = tmp_path / "recording.mkv"
+    assert _poll_a_flushing_writer(w, f) == 0
+    states["recording.mkv"] = True  # OBS stopped
+    assert [p.name for p in w.poll_once()] == ["recording.mkv"]
