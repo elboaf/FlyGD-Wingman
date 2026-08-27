@@ -160,6 +160,26 @@ two states, not four: door when the list is empty, fact when it is not.
 Names, not counts, and truncate long lists the way `alerts.js:463-471`
 already argues for the same problem on the same kind of sentence.
 
+### Accessible naming
+
+The row checkboxes carry an `aria-label` naming their character
+(`previews.js:462`, `:475`, `:648`) because the visible label has no text
+at all: that is `DESIGN.md:194`'s rule, and it is a rule about a checkbox
+in a table column.
+
+**Do not carry those labels over.** In the blocks the character name IS
+visible text inside the `<label>`, so an accessible name exists already
+and a retained `aria-label` would override the visible one, which is the
+failure WCAG 2.5.3 names.
+
+What is genuinely missing is what the tick MEANS. "Amelio Pellion,
+checkbox, checked" does not say whether that is about locking or about
+minimizing, and the only thing that supplies it is the summary, which is
+not programmatically associated with anything. Associate the group: give
+each roster container an `aria-labelledby` pointing at its own `<summary>`
+so the block's purpose reaches the accessible name computation once,
+rather than being restated on every row.
+
 ### Where the code lives
 
 `previews.js` renders both blocks, even though their markup sits in the
@@ -176,6 +196,42 @@ endpoints the row checkboxes call today, and read fields the payload
 already carries (`:2489`). The write path is unchanged; only where the
 checkbox lives changes.
 
+### Keeping the summary live, which nothing currently does
+
+**This is the one thing in this design that today's code actively does not
+support**, and it was missed until an independent review of this document
+went looking for it.
+
+Both per-character handlers patch `state` and return without rendering:
+`set_preview_locked`'s at `previews.js:504` and `set_never_minimize`'s at
+`:660`. That is correct today and deliberate. The box the user clicked
+already shows its own new value, so a repaint would be waste, and the
+endpoints do not push either (`api.py:2929`, `:2938`).
+`makeExcludedCheck` is the only one that calls `requestRender()`, and only
+because opting out changes OTHER controls on its row.
+
+A summary sentence derived from `state.locked` turns that deliberate
+non-render into a stale-summary bug: tick a box inside the block and the
+line above it still says "nobody" until something else happens to repaint.
+So both handlers must repaint their block on success. This design
+introduces the first read of that state that is not the control the user
+just clicked, which is why the gap did not exist before it.
+
+**Repaint through the existing guards, not around them.** Two are already
+there and both are load-bearing:
+
+- The `pushes` generation guard, which drops a patch when a newer hotkey
+  table landed mid-flight.
+- The lock handler's `defaultAtSend` guard (`previews.js:503-516`), which
+  calls `refresh()` when `lock_default` changed while the write was in
+  flight. Its comment records that bumping `pushes` there instead was
+  tried and made `send()` drop a keybind save Python had accepted. Do not
+  re-try that.
+
+Repaint the block only, not the whole table: a full `render()` while a
+keybind capture is armed is the trap `requestRender()` and `pendingRender`
+exist for.
+
 
 ## What must not change
 
@@ -185,6 +241,23 @@ checkbox lives changes.
   Guarded by `test_never_minimize_stays_live_on_an_opted_out_row`.
 - **Lock is inert for an opted-out character.** With no window there is
   nothing to lock. The asymmetry with the line above is the point.
+
+  **The styling that says so does not travel with the control.** Both
+  inert rules are scoped to the host the checkbox is leaving:
+  `#preview-binds .check.inert` (`style.css:1480`) and
+  `#preview-binds .check.inert input:not(:checked) + .box` (`:1502`).
+  `makeLockCheck` returns through `inert()` (`previews.js:530`), which
+  sets the class and calls `WM.setEnabled` on the INPUT; the input is
+  `opacity: 0` and positioned out of flow, so the class is the entire
+  visible treatment. Relocated without those selectors, an opted-out
+  character's Lock box looks live and clicking it does nothing.
+
+  The second rule is the one that is easy to drop as decoration and is
+  not. Its comment (`style.css:1484-1493`) records that it is qualified
+  with `input:not(:checked)` specifically so a character who is BOTH
+  locked and opted out keeps the checked gradient under the dimming
+  instead of being repainted as unticked. That state is exactly the one
+  the block makes easier to reach.
 - **The Never-minimize block exists only while the global toggle is on**
   (D6), the same rule that governs the column today.
 - **`Size…` renders only where `set_preview_size` can succeed**, with a
@@ -274,6 +347,13 @@ Also in the blast radius: the bind button's opted-out tooltip says "comes
 back when you untick **Off**" (`previews.js:207`), and there has been no
 box named `Off` since it became the inverted `Preview` box at `:548`.
 
+**CSS.** Ten rules are scoped to `#preview-binds` (`style.css:1480`,
+`:1502`, `:1965`, `:2026`, `:2069`, `:2072`, `:2076`, `:2077`, `:2093`,
+`:2106`). Eight describe the grid and travel with it. The first two are
+the inert-checkbox treatment and must move or widen with the control, for
+the reason under "What must not change" above. `:2069` is `.no-nm` and
+goes.
+
 
 ## Out of scope
 
@@ -302,7 +382,17 @@ and not the ceiling.
    `scrollWidth > clientWidth`.
 4. All four summary states from the polarity table, by flipping
    `lock_default` and the exception list.
-5. A hand pass against `docs/smoke-checklist.md`, which needs updating for
+5. **Tick a box inside each block and watch its own summary**, which is
+   the failure mode "Keeping the summary live" describes and the one no
+   lexical guard can see. Do it with a keybind capture armed as well, to
+   prove the repaint does not detach the armed button.
+6. **An opted-out character's Lock box in the block must read inert**, and
+   a character who is both locked and opted out must still show a ticked
+   box under the dimming.
+7. The accessible name of a roster checkbox, which should be the character
+   name with the block's purpose reaching it through the group, and must
+   not be a doubled or overridden label.
+8. A hand pass against `docs/smoke-checklist.md`, which needs updating for
    the moved controls.
 
 ## Open items
