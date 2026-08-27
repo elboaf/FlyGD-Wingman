@@ -962,6 +962,40 @@ class PreviewHost:
 
         ok = window_mod.activate(libs, client.hwnd)
 
+        if ok:
+            # The ring moves HERE, inline, the instant the switch is known
+            # to have taken -- it does NOT wait for the foreground hook and
+            # the sweep it asks for, which is what used to move it.
+            #
+            # Everything below this line blocks the preview thread:
+            # SWITCH_SETTLE_MS of sleep plus up to MINIMIZE_TIMEOUT_MS on
+            # another process's queue. The EVENT_SYSTEM_FOREGROUND event
+            # and the WM_APP_SWEEP_NOW its callback posts are both queued
+            # behind that block, so the client came forward and its preview
+            # stayed unhighlighted for the whole ~110ms -- and for up to the
+            # 700ms sweep on a run where the queued WinEvent was dropped.
+            # Measured on a live install: the minimize send times out for
+            # its full budget on EVERY switch (166 consecutive timeouts in
+            # one session's log), so that block is not a rare worst case,
+            # it is the normal path.
+            #
+            # The hook and the sweep stay exactly as they were: they are
+            # still the only thing that catches alt-tab, and the only thing
+            # that moves the ring off a client the user left by any route
+            # other than a switch Wingman performed itself.
+            #
+            # TriffView marks its highlight in the same place, ahead of its
+            # own settle and minimize (TriffViewSubsystem.cs,
+            # TryActivateClient) -- the port dropped that ordering.
+            #
+            # Assigned rather than left for the hook to report: activate()
+            # read GetForegroundWindow to reach `ok`, so this IS the live
+            # foreground, and _apply_selection prefers _foreground over a
+            # syscall of its own. Leaving it stale would make the line below
+            # re-apply the OUTGOING client's ring.
+            self._foreground = client.hwnd
+            self._apply_selection(libs)
+
         # Every decision about *whether* to minimize lives in switching.py
         # so it can be tested off Windows; this function owns only the
         # Win32 calls and their order.
