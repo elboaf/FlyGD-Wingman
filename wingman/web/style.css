@@ -1467,8 +1467,48 @@ button.btn:disabled,
    at full strength would read as a rendering fault rather than as a
    disabled control, so the class carries the whole label. previews.js's
    `inert()` sets the class and the input's `disabled` together so the
-   look and the behaviour cannot disagree. */
+   look and the behaviour cannot disagree.
+
+   THAT ARGUMENT IS SPENT, and the rule is kept for what is left of it.
+   The character rows' checkboxes have no word beside the box any more --
+   the column header carries it once -- so "the whole label" is now the
+   15px box and nothing else, and opacity alone on a square that small is
+   close to invisible. The class still covers the label because `cursor`
+   still lives there and a future labelled `.check` in this grid would
+   need it; the box itself now takes a flatter, borderless fill as well,
+   so an inert control reads as inert at the size it actually is. */
 #preview-binds .check.inert { opacity: .45; cursor: default; }
+/* Carried by the BOX, not the label, so it survives the label having no
+   text to dim. Both tokens are already in the palette.
+
+   `input:not(:checked)` is load-bearing, not tidiness. This selector is
+   (1,3,0) against `.check input:checked + .box`'s (0,3,1), so an
+   unqualified version WINS over the checked treatment and paints a ticked
+   box as an empty one -- measured: backgroundImage `none`, background
+   --sunken, on a box whose input was checked. That state is reachable and
+   is exactly the one worth seeing: a character who is BOTH locked and
+   opted out of previews. Qualified this way the checked gradient stands
+   and the label's .45 opacity dims it, which reads as "locked, and
+   currently inert" instead of "not locked".
+
+   THE BORDER IS DELIBERATELY NOT TOUCHED. A first version also set it to
+   --panel-border, which is the card's own hairline token: composited at
+   .45 that is about 1.05:1 against the card, so the 15px square had no
+   perceptible edge and an opted-out row's Lock column read as an empty
+   gap -- the exact misreading makeSizeFiller was added to prevent one
+   column to the left. --control-edge is about 1.23:1 there. Neither meets
+   the 3:1 DESIGN.md sets for a state border, and that miss predates this
+   rule, but the box has to stay FINDABLE before it can be dimmed. */
+#preview-binds .check.inert input:not(:checked) + .box {
+  background: var(--sunken);
+}
+/* The Size column's cell for a character that cannot be sized yet.
+   Carries a title explaining how to make one settable, and therefore has
+   to be HOVERABLE: as an empty span it computed to 46.44 x 0 and
+   elementFromPoint at its centre returned null, so the explanation could
+   never be reached. The dash gives it a line box, and says "nothing here"
+   to someone who never hovers at all. */
+.size-none { color: var(--text-faint); cursor: default; }
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
@@ -1945,8 +1985,43 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-dim);
 }
-/* Only rendered while something is actually dimmed -- see previews.js. */
+/* No producer since the offline legend moved onto the rows as `.off-tag`
+   (previews.js). Kept rather than deleted: the type-scale note at the top
+   of this file lists it by name as one of the four muted-prose classes,
+   and .bind-group is still built beside a name that a second note could
+   qualify. Delete both together if that stops being true. */
 .bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
+
+/* The column headers above the character rows. Built once by previews.js's
+   makeHeadRow, one span per track, riding `.row { display: contents }` so
+   they land in the same grid tracks as the controls they label.
+
+   --fs-muted and sentence case, the same treatment as the recording list's
+   headers: DESIGN.md's rule is that a header sits BELOW body size because
+   it labels the data and is not the data. Deliberately NOT the uppercase
+   .14em treatment .bind-group-name carries -- that rank is for the subhead
+   above, and a second tracked-uppercase run here would compete with it.
+
+   No separate inset. DESIGN.md: "A header row is laid out by the same
+   padding as the rows beneath it, with no separate inset. A header that
+   does not share its column's inset is not labelling that column." The
+   grid gives both the same track, so there is nothing to add.
+
+   There is no sort indicator here and there must not be: these columns do
+   not sort, and the rule about ordering an arrow before a right-aligned
+   label exists for the lists that do. */
+.bind-head > span {
+  font-size: var(--fs-muted); color: var(--text-dim);
+  white-space: nowrap; padding-bottom: 2px;
+}
+/* Sits with the name it qualifies, inside `.lab`, so it scrolls with its
+   own row rather than depending on a legend at the top of the list. Text
+   is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
+   --fs-muted so it reads as an annotation on the name rather than as a
+   second name. */
+.off-tag {
+  margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
+}
 
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;

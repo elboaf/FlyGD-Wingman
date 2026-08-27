@@ -736,6 +736,152 @@ def test_set_preview_lock_aspect_coerces_to_a_bool(monkeypatch, tmp_path):
     assert api._state.settings["preview"]["lock_aspect"] is False
 
 
+def test_set_preview_lock_default_persists_and_pushes_live(monkeypatch, tmp_path):
+    """A live PreviewWindow holds a RESOLVED lock flag, so flipping the
+    default has to restyle for the same reason lock_aspect does -- without
+    it every open preview keeps its old lock until the next launch."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    result = api.set_preview_lock_default(True)
+
+    assert result["applied"] is True
+    assert api._state.settings["preview"]["lock_default"] is True
+    assert api._preview_host.restyled == 1
+
+
+def test_set_preview_lock_default_coerces_to_a_bool(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    api.set_preview_lock_default("")
+
+    assert api._state.settings["preview"]["lock_default"] is False
+
+
+def test_the_lock_roster_stores_the_difference_from_the_default(monkeypatch, tmp_path):
+    """`preview.locked` holds the characters that DIFFER from
+    lock_default, so set_preview_locked takes the effective state the
+    caller wants and computes membership itself.
+
+    The two directions are the point. With the default off, locking a
+    character puts them IN the list -- unchanged from before this setting
+    existed. With the default on, locking a character means they agree
+    with the default, so they come OUT of it. Reading membership as "is
+    locked" would report every character backwards the moment the default
+    was ticked.
+
+    Computed here rather than on the page because PreviewHost._is_locked
+    has to agree with it, and the two are one rule.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _RestyleSpy()
+
+    api._state.settings["preview"]["lock_default"] = False
+    api.set_preview_locked("Aiga Otsolen", True)
+    assert api._state.settings["preview"]["locked"] == ["Aiga Otsolen"]
+
+    api.set_preview_locked("Aiga Otsolen", False)
+    assert api._state.settings["preview"]["locked"] == []
+
+    api._state.settings["preview"]["lock_default"] = True
+    # Locked AND the default is locked: nothing differs, so nothing is
+    # stored -- and the character is still locked.
+    api.set_preview_locked("Zuelo Parvi", True)
+    assert api._state.settings["preview"]["locked"] == []
+    # Unlocked against a locked default is the exception, and IS stored.
+    api.set_preview_locked("Zuelo Parvi", False)
+    assert api._state.settings["preview"]["locked"] == ["Zuelo Parvi"]
+
+
+def test_set_preview_default_size_refuses_below_the_floor(monkeypatch, tmp_path):
+    """The same floor set_preview_size enforces, and deliberately the same
+    sentence: a default the per-character control would refuse is a default
+    that cannot be honoured."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size(10, 10)
+
+    assert result["applied"] is False
+    assert "smallest preview" in result["error"]
+    assert api._state.settings["preview"]["width"] == 320
+
+
+def test_set_preview_default_size_refuses_junk(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size("wide", None)
+
+    assert result["applied"] is False
+    assert api._state.settings["preview"]["width"] == 320
+
+
+def test_set_preview_default_size_writes_both_halves(monkeypatch, tmp_path):
+    """Two keys, one control. They are a pair everywhere they are read
+    (geometry.default_stack takes one tuple), so a write that landed one
+    and dropped the other would place previews at a size the user never
+    asked for."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+
+    result = api.set_preview_default_size(640, 360)
+
+    assert result["applied"] is True
+    assert api._state.settings["preview"]["width"] == 640
+    assert api._state.settings["preview"]["height"] == 360
+
+
+def test_a_failed_default_size_write_leaves_neither_half_applied(monkeypatch, tmp_path):
+    """The reason both keys go through ONE settings_mod.update block.
+
+    Written as two sequential writes this could half-succeed: `update`
+    restores the live dict on OSError, so a failure on the SECOND write
+    left the first applied and persisted while the method reported
+    applied: False and the page reverted its field -- the user reading
+    the old pair over a section holding a new width and an old height.
+
+    The fake therefore fails only the second save, not every save. A
+    blanket failure would take the first write down too and this test
+    would pass against the very implementation it exists to reject.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    real = api_mod.settings_mod._save_locked
+    calls = []
+
+    def flaky(data, path=None):
+        calls.append(1)
+        if len(calls) >= 2:
+            raise OSError("read-only")
+        return real(data, path)
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", flaky)
+    result = api.set_preview_default_size(640, 360)
+
+    width = api._state.settings["preview"]["width"]
+    height = api._state.settings["preview"]["height"]
+    if result["applied"]:
+        assert (width, height) == (640, 360)
+    else:
+        assert (width, height) == (320, 210), (
+            "a refused default-size write left one half applied -- the page "
+            "reverts its field on applied: False, so the user would be shown "
+            "a pair the app is not using"
+        )
+
+
+def test_rewriting_the_same_default_size_does_not_touch_the_file(monkeypatch, tmp_path):
+    """Same no-op guard every other preview write carries: a save projects
+    the complete document, so an unchanged pair is a full rewrite."""
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    api.set_preview_default_size(640, 360)
+    assert saved["preview"]["width"] == 640
+
+    saved.clear()
+    result = api.set_preview_default_size(640, 360)
+
+    assert result["applied"] is True
+    assert saved == {}, "a no-op default-size write reached _save_locked"
+
+
 class _RestyleSpy:
     """Just enough PreviewHost for the restyle assertion above."""
 

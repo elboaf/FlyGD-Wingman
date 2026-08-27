@@ -54,7 +54,10 @@
    'set_preview_snap',
    // Same shape again: settings.js reverts the checkbox on anything that
    // is not `applied`.
-   'set_preview_lock_aspect'
+   'set_preview_lock_aspect',
+   // Same shape once more: a discrete checkbox settings.js reverts on
+   // anything that is not `applied`.
+   'set_preview_lock_default'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -131,6 +134,15 @@
       return Promise.resolve({w: 0, h: 0, error: 'Sizes look like 1280x720.'});
     }
     return Promise.resolve({w: parseInt(m[1], 10), h: parseInt(m[2], 10), error: null});
+  };
+
+  // Two arguments, so it cannot ride the single-value allowlist above.
+  // Same {applied, persisted, error} shape settings.js reverts the field
+  // on -- and `persisted: true`, because the not-persisted branch has its
+  // own sentence and a harness that never reaches it would hide one.
+  api.set_preview_default_size = function (w, h) {
+    console.log('DEV api.set_preview_default_size(', w, h, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
   api.test_alert = function (event) {
@@ -433,6 +445,18 @@
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
             show_labels: true, opacity: 255, snap: true, lock_aspect: true,
+            // The global default size. Present because the real payload
+            // always carries it -- get_settings ships `dict(cfg)` whole --
+            // and without it the Default preview size field renders EMPTY
+            // under ?dev=1, which is indistinguishable from a field whose
+            // listener never ran. Deliberately not 320x210: a fixture that
+            // matches the shipped default cannot show that the field is
+            // reading the payload rather than a hardcoded fallback.
+            width: 480, height: 300,
+            // Off, matching the shipped default, so the harness shows the
+            // per-character Lock boxes in their ordinary sense (ticked
+            // means locked) rather than as exceptions.
+            lock_default: false,
             // Task 10: read here by settings.js's own wm:settings listener
             // AND by previews.js's (previews.js needs it to decide whether
             // each row's Never-minimize checkbox is enabled).
@@ -722,6 +746,17 @@
       // row) -- so both checkboxes are proven against both branches
       // rather than only the offline one the prior fix round covered.
       locked: ['Aiga Otsolen'],
+      // Rides THIS payload, not the settings one -- previews.js resolves
+      // isLocked from `state`, which is the hotkey payload wholesale. The
+      // settings fixture carries a copy for settings.js's own checkbox;
+      // both are false and must stay in step, or the harness shows the
+      // table disagreeing with the control that governs it.
+      //
+      // Present rather than omitted even though `!!undefined` is already
+      // false: Api.get_preview_hotkey_state always sends the bool, and a
+      // fixture that leans on a JS coercion the real payload never
+      // exercises is a fixture that agrees by luck.
+      lock_default: false,
       never_minimize: ['Tanuki Solette'],
       // One opted-out character, and deliberately one that is ONLINE and
       // holds a keybind ('Zuelo Parvi'): that is the row where the state
@@ -738,6 +773,14 @@
       // the Size… control cannot be exercised at all under ?dev=1.
       sizes: { 'Aiga Otsolen': [1280, 720] },
       client_sizes: { 'Aiga Otsolen': [1920, 1080], 'Zuelo Parvi': [1600, 900] },
+      // Which characters set_preview_size can succeed for -- Api computes
+      // it as (running | in layouts), and the page renders Size... only
+      // for these. Deliberately NOT every name above: the two online
+      // characters plus 'Tanuki Solette', who is offline but has been
+      // dragged once, so the harness shows both states of the column. If
+      // this listed everyone the fixture would hide the whole point of the
+      // gate, which is that most of a real roster cannot be sized.
+      sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
       // ACTIVE, matching what Api._bookmark_chords would return for the
       // get_bookmarks fixture above: it ships `enabled: true` with
       // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a

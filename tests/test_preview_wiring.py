@@ -7,6 +7,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import contextlib
 import copy
+import types
 
 from tests.test_api import make_api
 
@@ -560,6 +561,49 @@ def test_get_preview_hotkey_state_reports_locked_and_never_minimize(tmp_path):
     payload = api.get_preview_hotkey_state()
     assert payload["locked"] == []
     assert payload["never_minimize"] == []
+
+
+def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
+    tmp_path,
+):
+    """`sizable` is the set set_preview_size can actually succeed for.
+
+    It refuses for a character that is neither running nor already in
+    `layouts` -- there is no x/y to write, and layout.deserialize drops an
+    entry without a full rect, so a w/h stored alone would vanish at the
+    next load after the page had reported it accepted. The refusal is
+    right; offering the control anyway was not, and on a fresh install it
+    was a guaranteed refusal for every offline character.
+
+    Pinned here rather than in the page tests because the RULE is Python's:
+    previews.js only reads the answer, and restating "running, or already
+    in layouts" in JavaScript would put it in two places.
+    """
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "layouts": {"Aiga Otsolen": {"x": 0, "y": 0, "w": 320, "h": 210}},
+    }
+    # No host at all: only the dragged character qualifies.
+    assert api.get_preview_hotkey_state()["sizable"] == ["Aiga Otsolen"]
+
+    # A running character qualifies WITHOUT a layouts entry -- that is the
+    # first branch of set_preview_size, which resizes the live window and
+    # never consults `layouts`.
+    api._preview_host = types.SimpleNamespace(
+        is_running=True,
+        characters=lambda: ["Zuelo Parvi"],
+        hotkey_status=dict,
+        client_sizes=dict,
+    )
+    assert api.get_preview_hotkey_state()["sizable"] == [
+        "Aiga Otsolen",
+        "Zuelo Parvi",
+    ]
+
+    # Neither running nor dragged: absent, so the page draws no control.
+    api._preview_host = None
+    api._state.settings["preview"] = {"seen": ["Nobody Home"]}
+    assert api.get_preview_hotkey_state()["sizable"] == []
 
 
 def test_a_failed_preview_setting_write_is_refused_not_claimed(tmp_path, monkeypatch):
