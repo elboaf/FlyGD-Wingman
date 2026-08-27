@@ -3283,35 +3283,43 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
 .skills-filterbar .field { flex: 1; }
 
-/* S8 -- the pane is elastic and its content is not, so every extra pixel of
-   window used to become RULED emptiness.
+/* S8's premise held until round 6, and round 6 falsified it. Both halves
+   are kept because the reasoning is the load-bearing part.
 
-   Measured on main: window 833 -> 976 CSS moved the pane's right edge +276
+   WHAT S8 SAW, and it was right: the pane is elastic and its content was
+   not, so every extra pixel of window became RULED emptiness. Measured on
+   main at the time, window 833 -> 976 CSS moved the pane's right edge +276
    physical while `Not trained`'s right edge moved +12, leaving 239 -> 371
-   CSS px of empty pane to the right of every answer. The separators below
-   ruled all of it, so the emptiness read as an unfinished table rather than
-   as margin -- which is the walkthrough's own diagnosis and names the fix.
+   CSS px of empty pane to the right of every answer, with the separators
+   ruling all of it -- an unfinished table rather than a margin.
 
-   NOT by widening the name column. --name-col is 240 because that is the
-   width the longest EVE skill and character names need and no more; the
-   block below records that 320 was tried and reserved 80px nothing could
-   fill. The status column is right where it belongs. What was wrong is
-   only that the rule under each row kept going.
+   WHAT S8 CHOSE: `width: max-content`, so the figure was DERIVED from the
+   row rather than chosen, and the rules stopped where the answers did.
+   Its closing argument was that "Profiles wasted width OUTSIDE a fixed
+   card and had a roster that could use it; Skills wastes it INSIDE an
+   elastic pane and has CONTENT THAT CANNOT."
 
-   width: max-content, so the figure is DERIVED from the row rather than
-   chosen: the list is as wide as a chevron, the 240px name cap, a gap and
-   the widest status, and the separators stop there. max-width: 100% keeps
-   the 840 floor unaffected -- below the content width the list shrinks as
-   it always did, and the names ellipsise rather than overflow.
+   WHAT CHANGED: the content can. Round 6's roster row carries the missing
+   requirement NAMES (.skills-missing below, controller._ROSTER_NAME_CAP),
+   which is real content of variable length and exactly what the width was
+   missing. The critique also measured the cost of leaving it: at 1015 CSS
+   the roster's rightmost pixel was 593, while the filter field and `Copy
+   plan` above it ran to the pane edge -- so the screen had TWO right
+   edges and the honest margin read as a truncated table anyway, which is
+   the symptom S8 set out to remove.
 
-   This is NOT P10's fix and must not be merged with it. Profiles wasted
-   width OUTSIDE a fixed card and had a roster that could use it; Skills
-   wastes it INSIDE an elastic pane and has content that cannot. So
-   Profiles turns the width into columns and Skills turns it into honest
-   margin. Same symptom, opposite mechanisms. */
+   So: `width: 100%`, one edge, and the margin is now inside the row where
+   .skills-missing can use it. --name-col is untouched at 240 for the
+   reason the block below still gives, and the status column has not
+   moved; what fills the recovered width is the second line, not a wider
+   first one. The 840 floor is unaffected either way -- at or below the
+   content width this shrinks as it always did, and the names ellipsise.
+
+   Do not restore `max-content` without also removing .skills-missing;
+   the two are one decision. */
 .skills-roster {
   flex: 1; min-height: 0; overflow-y: auto;
-  width: max-content; max-width: 100%;
+  width: 100%;
 }
 .skills-group { margin-bottom: 12px; }
 .skills-group-head {
@@ -3383,6 +3391,30 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   cursor: pointer; text-align: left;
 }
 .skills-row-top:hover { background: var(--row-hover); }
+/* The missing requirement names, a second line under the row's name.
+
+   Indented to the name column, not to the chevron: it continues the
+   sentence the row's name and count started, so it hangs off the name
+   rather than off the row's left edge. 10px row padding + 10px chevron +
+   9px gap = 29, which is where .skills-name begins.
+
+   --text-faint and --fs-muted, one step below the count it elaborates:
+   this labels the number, it is not the number. Same rule the card hints
+   follow.
+
+   NOT clipped with ellipsis. The row states its own remainder ("and 6
+   more", skills.js), so there is nothing for a truncation to hide; if the
+   three names are wider than the pane at the floor they wrap, which costs
+   a line on a row that is already two.
+
+   pointer-events: none so the line does not eat clicks aimed at the row's
+   own toggle -- it is a sibling of the <button>, not inside it. */
+.skills-missing {
+  display: block; padding: 0 10px 7px 29px;
+  margin-top: -3px;
+  color: var(--text-faint); font-size: var(--fs-muted); line-height: 1.45;
+  pointer-events: none;
+}
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
 /* max-width is what closes the ~1000px gap between a row's subject and
    its answer. `flex: 1` alone let the name box eat every spare pixel and

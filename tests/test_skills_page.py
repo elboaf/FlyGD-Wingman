@@ -372,6 +372,88 @@ SMOKE = re.sub(
 )
 
 
+def test_the_roster_row_names_what_is_missing_from_the_same_tuple():
+    """Round 6, P1-2.
+
+    The roster said `9 requirements` beside 420 CSS px of empty pane, so
+    the one screen whose job is "which of my characters can fly this" hid
+    WHICH nine behind a row expand. The names now ride the roster payload.
+
+    The count and the names must have ONE source. If a row could show `9
+    requirements` over a list built from anything but the tuple that 9
+    counts, the two would disagree the first time a state name changed --
+    and disagree quietly, since nothing renders this page in the suite.
+    """
+    # Behavioural: the helper filters the SAME tuple missing_count counts.
+    reqs = tuple(
+        evaluator.RequirementAnalysis(
+            skill_name=name,
+            required_level=level,
+            active_level=None,
+            trained_level=None,
+            state=state,
+            queued_finish_utc=None,
+            queue_timing_unknown=False,
+        )
+        for name, level, state in (
+            ("Gunnery", 5, evaluator.MISSING),
+            ("Drones", 4, evaluator.ACTIVE),
+            ("Heavy Assault Cruisers", 5, evaluator.MISSING),
+            ("Motion Prediction", 3, evaluator.MISSING),
+            ("Shield Management", 2, evaluator.MISSING),
+        )
+    )
+    analysis = evaluator.PlanAnalysis(
+        readiness=evaluator.MISSING,
+        estimated_finish_utc=None,
+        queue_timing_unknown=False,
+        requirements=reqs,
+    )
+    assert analysis.missing_count == 4
+    # Trained requirements are skipped, roman levels, order preserved.
+    assert evaluator.missing_names(analysis, 3) == (
+        "Gunnery V",
+        "Heavy Assault Cruisers V",
+        "Motion Prediction III",
+    )
+    # The cap bounds the payload; it does not change the count.
+    assert len(evaluator.missing_names(analysis, 3)) == 3
+    assert analysis.missing_count == 4, (
+        "the cap must bound the NAMES only -- the row states its remainder "
+        "from the count, so a capped count would under-report"
+    )
+
+    # Lexical: the page states the remainder rather than truncating, and
+    # derives it from missing_count rather than from the list's length.
+    assert "ch.missing_count - names.length" in SKILLS, (
+        "the remainder must be missing_count minus what was sent; a "
+        "hard-coded cap here is a second copy of _ROSTER_NAME_CAP"
+    )
+    assert "' and ' + rest + ' more'" in SKILLS, (
+        "a truncation with no stated remainder hides how much is missing"
+    )
+
+    # The cap is stated once, in Python, and is smaller than the copy
+    # confirm's -- a scanned row is not a modal the reader has stopped at.
+    controller = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "wingman"
+        / "eveskills"
+        / "controller.py"
+    ).read_text(encoding="utf-8")
+    cap = re.search(r"_ROSTER_NAME_CAP = (\d+)", controller)
+    assert cap, "the roster name cap is gone"
+    assert int(cap.group(1)) >= 1
+    copy_py = (
+        pathlib.Path(__file__).resolve().parents[1] / "wingman" / "ui" / "copy.py"
+    ).read_text(encoding="utf-8")
+    copy_cap = re.search(r"_COPY_NAME_CAP = (\d+)", copy_py)
+    assert copy_cap and int(cap.group(1)) <= int(copy_cap.group(1)), (
+        "the roster cap must not exceed the copy confirm's: a row read by "
+        "scanning cannot carry more names than a modal read on purpose"
+    )
+
+
 def test_the_small_roster_expansion_is_one_shot_and_capped():
     """S1. The expanded row is the only surface in the app for forgetting a
     character or re-authenticating it, and it opened behind a chevron above

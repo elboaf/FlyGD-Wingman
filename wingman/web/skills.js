@@ -778,6 +778,28 @@
     }
     top.addEventListener('click', function () { toggle(ch.character_id); });
     row.appendChild(top);
+    // Round 6, P1-2. `9 requirements` beside 420 CSS px of empty pane made
+    // the one screen whose job is "which of my characters can fly this"
+    // hide WHICH nine behind a row expand. The names ride the roster
+    // payload -- see controller._ROSTER_NAME_CAP; they are taken off the
+    // same tuple missing_count counts, so they cannot disagree with the
+    // number to their left.
+    //
+    // Appended to the ROW, not to `top`: it is a second line under the
+    // name, and putting it in the button's flex row would make it compete
+    // with the status for the same track. The row stays one click target
+    // either way -- this span is inside the <button>'s sibling, so it does
+    // not nest interactive content.
+    var names = ch.missing_names || [];
+    if (names.length) {
+      var rest = ch.missing_count - names.length;
+      var text = names.join(', ');
+      // The remainder is stated, never implied by a truncation: `and 6
+      // more` is a fact, a trailing ellipsis is a mystery. Same rule
+      // ui/copy.py's _COPY_NAME_CAP follows for the copy confirm.
+      if (rest > 0) text += ' and ' + rest + ' more';
+      row.appendChild(WM.make('span', 'skills-missing', text));
+    }
 
     if (expanded[ch.character_id]) row.appendChild(detailNode(ch));
     return row;
