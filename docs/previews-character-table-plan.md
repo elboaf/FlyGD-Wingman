@@ -20,7 +20,8 @@
 - `hidden` needs an explicit `[hidden]` override on any selector that sets a `display`.
 - The CSS viewport floor is **840x625 logical pixels at every display scaling**.
 - The `#preview-binds` card interior is **586px at every window width**. Grid tracks do not wrap: exceeding it clips a control at every width.
-- `ruff check` and `ruff format --check` must pass. Line length 88.
+- `ruff check` and `ruff format --check` must pass. Line length 88. Note that ruff does not lint `.js` or `.css`, so comment width in those files is on you.
+- **Prose that describes moved machinery is a defect, and this lane creates it constantly.** Comments here carry the *why*, often naming the incident that caused the rule, so a comment must never be deleted because its rule looks arbitrary. But a comment left stating something the code no longer does is a defect this repo treats seriously. Tasks 1 and 2 each spent a fix round on exactly this and nothing else. Before you commit, re-read every comment within about forty lines of anything you moved, and every comment that points at a thing by its location ("see the comment on its append below", "the column header carries it once"). Keep the history and change the tense and the subject: say what was true then, what this task retired, and what is true now.
 - Run the whole suite: `uv run --no-sync python -m pytest tests/`.
 
 ## The CDP verification harness
