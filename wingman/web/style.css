@@ -1656,12 +1656,17 @@ button.btn:disabled,
    10px + 6px keeps the hairline and the rank and returns 32px. */
 .settings .card > .bind-group { margin-top: 10px; padding-top: 6px; }
 
-/* The first divider needs no top margin: .pv-master's own 12px of padding
-   already separates it, and 14px on top of that drew a gap half again the
-   size of the three below it. Adjacent-sibling rather than a
-   first-of-type, which would not match -- every .row on this card is a
-   div too, so `:first-of-type` is the first ROW, not the first divider. */
-.pv-master + .bind-group { margin-top: 0; }
+/* The first divider is NOT special-cased, and that is deliberate after
+   measuring it. An earlier draft carried `.pv-master + .bind-group
+   { margin-top: 0 }` on the theory that .pv-master's own 12px of padding
+   already separated it. That rule never applied -- `.settings .card >
+   .bind-group` is (0,3,0) and the sibling selector is (0,2,0) -- and the
+   10px it was trying to remove turns out to be what the card wants:
+   measured, .pv-master's border-bottom and the first divider's border-top
+   sit 10px apart, so they read as two rules with a gap rather than
+   painting as one 2px line, and the first group keeps the same rhythm as
+   the three below it. Do not re-add the override without re-measuring
+   that pair: at 0 they touch. */
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
