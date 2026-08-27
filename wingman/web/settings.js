@@ -1009,10 +1009,13 @@
         say((res && res.error) || 'Could not save this.');
         return;
       }
-      // The character table is in THIS section, on screen right now, and
-      // every one of its Lock boxes paints from this boolean -- so a write
-      // that only touched settings would leave all of them showing the
-      // exact inverse of the truth, silently, until the next full reload.
+      // The Lock disclosure is directly beneath this toggle, on screen
+      // right now, and every one of its checkboxes paints from this
+      // boolean -- isLocked() resolves membership against it with an XOR
+      // -- so a write that only touched settings would leave all of them
+      // showing the exact inverse of the truth, silently, until the next
+      // full reload. Its summary sentence resolves the same pair and
+      // would be inverted with them.
       // Same narrow exception, same shape, and the same reason as
       // wm:preview-minimize-inactive below: wm:settings is deliberately
       // never re-dispatched after a single-field write, because repainting
@@ -1183,9 +1186,12 @@
       // applied is true whether or not persistence succeeded -- update.
       // update never reverts the in-memory dict on an OSError, only on
       // raising before that (see _write_preview_setting's own comment),
-      // so the live value really did change here and previews.js's
-      // per-row Never-minimize checkboxes need to know now, not at the
-      // next full page load. wm:settings itself cannot carry this: it is
+      // so the live value really did change here and previews.js needs to
+      // know now, not at the next full page load. It decides more than an
+      // enabled state: D6 says the Never-minimize disclosure beneath this
+      // toggle is absent entirely while the toggle is off, so this event
+      // is what makes the whole block appear and disappear.
+      // wm:settings itself cannot carry this: it is
       // deliberately never re-dispatched after a single-field write (see
       // list.js's refreshRecordingDir), because repainting the whole
       // Settings form would clobber whatever else the user is mid-edit on.

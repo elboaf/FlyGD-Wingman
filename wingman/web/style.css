@@ -1449,13 +1449,18 @@ button.btn:disabled,
    surviving instance of the same treatment, and the reasoning for scoping
    it narrowly rather than putting an opacity on `.check` is there. */
 
-/* The same treatment, scoped the same narrow way, for the one state that
-   really does need a dimmed-but-present checkbox: a character opted out of
-   previews. D6's objection does not apply here, because this is not the
-   default -- an ordinary Previews screen carries none of these, and a row
-   only takes it once the user has ticked "Off" on that row
-   themselves, which is exactly the moment the rest of the row stops being
-   able to do anything.
+/* The same treatment for the one state that really does need a
+   dimmed-but-present checkbox: a character opted out of previews. D6's
+   objection does not apply here, because this is not the default -- an
+   ordinary Previews screen carries none of these, and the class is taken
+   only once the user has unticked that character's own `Preview` box,
+   which is exactly the moment there is no longer a window to lock.
+
+   Read that as being about ONE CHECKBOX, not a row. It was written when
+   Lock sat in the #preview-binds grid beside a box named `Off`; that box
+   became the inverted `Preview` box, Lock moved out to its own disclosure
+   under the global toggle, and this rule is unscoped now. The closing
+   paragraphs below hold that history and the reason the scope went.
 
    The class is set by previews.js rather than derived from `:disabled`,
    and NOT because the selector cannot reach the control -- it can:
@@ -1469,17 +1474,33 @@ button.btn:disabled,
    `inert()` sets the class and the input's `disabled` together so the
    look and the behaviour cannot disagree.
 
-   THAT ARGUMENT IS SPENT, and the rule is kept for what is left of it.
-   The character rows' checkboxes have no word beside the box any more --
-   the column header carries it once -- so "the whole label" is now the
-   15px box and nothing else, and opacity alone on a square that small is
-   close to invisible. The class still covers the label because `cursor`
-   still lives there and a future labelled `.check` in this grid would
-   need it; the box itself now takes a flatter, borderless fill as well,
-   so an inert control reads as inert at the size it actually is. */
-#preview-binds .check.inert { opacity: .45; cursor: default; }
-/* Carried by the BOX, not the label, so it survives the label having no
-   text to dim. Both tokens are already in the palette.
+   THAT ARGUMENT IS SPENT for the row it was written about. While Lock sat
+   in #preview-binds, its label read '' -- the column header carried the
+   word once -- so "the whole label" was a bare 15px box, and opacity alone
+   on a square that small was close to invisible. The class still covers
+   the label because `cursor` still lives there; the box itself also takes
+   a flatter, borderless fill, so an inert control reads as inert at the
+   size it actually is.
+
+   Lock has since left that row for its own disclosure, and `inert()` now
+   has exactly one caller: `makeLockCheck`, whose label there carries the
+   character's name as visible text (Step 8 of the disclosure work put it
+   back). So the labelled case the old paragraph called a hypothetical
+   future is the one real case today, and the class dims that text along
+   with the box -- which is what lets a locked-and-excluded character read
+   as "locked, but nothing to lock" instead of "not locked" (see the
+   border note below for the box half of that same state).
+
+   No longer scoped to `#preview-binds`: `makeLockCheck` renders only
+   inside the Lock disclosure under the global toggle now, not in the row
+   grid at all. Scoping this rule to the row grid -- where it started --
+   would leave that one caller unstyled. */
+.check.inert { opacity: .45; cursor: default; }
+/* Carried by the BOX, not the label -- kept there from when it had to
+   survive the label having no text to dim (see above: that is no longer
+   true of the one caller left, but the box is still the right place for
+   it, since the label's opacity already dims whatever text it has).
+   Both tokens are already in the palette.
 
    `input:not(:checked)` is load-bearing, not tidiness. This selector is
    (1,3,0) against `.check input:checked + .box`'s (0,3,1), so an
@@ -1493,13 +1514,17 @@ button.btn:disabled,
 
    THE BORDER IS DELIBERATELY NOT TOUCHED. A first version also set it to
    --panel-border, which is the card's own hairline token: composited at
-   .45 that is about 1.05:1 against the card, so the 15px square had no
-   perceptible edge and an opted-out row's Lock column read as an empty
-   gap -- the exact misreading makeSizeFiller was added to prevent one
-   column to the left. --control-edge is about 1.23:1 there. Neither meets
-   the 3:1 DESIGN.md sets for a state border, and that miss predates this
+   .45 that is about 1.05:1 against the card -- measured back when Lock was
+   still a row cell, where the 15px square then had no perceptible edge and
+   an opted-out row's Lock column read as an empty gap (the exact
+   misreading makeSizeFiller was added to prevent, one column to the left).
+   That measurement is what set --control-edge instead; the relationship
+   between the two tokens has not changed now that the same box sits in
+   the disclosure rather than the row, so the finding still applies without
+   remeasuring. --control-edge is about 1.23:1 there. Neither meets the
+   3:1 DESIGN.md sets for a state border, and that miss predates this
    rule, but the box has to stay FINDABLE before it can be dimmed. */
-#preview-binds .check.inert input:not(:checked) + .box {
+.check.inert input:not(:checked) + .box {
   background: var(--sunken);
 }
 /* The Size column's cell for a character that cannot be sized yet.
@@ -1509,6 +1534,29 @@ button.btn:disabled,
    never be reached. The dash gives it a line box, and says "nothing here"
    to someone who never hovers at all. */
 .size-none { color: var(--text-faint); cursor: default; }
+
+/* The per-character exceptions to a global preview default. Sits directly
+   under the toggle it excepts, indented to that toggle's label text (the
+   .check wrapper's 15px box plus its 9px gap), so the exception reads as
+   belonging to the rule above it rather than to the control below.
+
+   The gap above comes from the preceding .row's own `margin-bottom: 10px`,
+   not from any margin declared here: adjacent block margins collapse to
+   their larger value, so a smaller top margin on this element is discarded
+   rather than added. Top margin is 0 for that reason -- declaring a small
+   positive number here would only misdescribe what already happens. The
+   20px below is what actually creates the asymmetry: the collapsed summary
+   is one line, and a 10px/10px gap either side lets it read as a heading
+   for the NEXT toggle rather than a note on the one above. Measured
+   10px above / 20px below at the 840x625 floor. */
+.pv-exc { margin: 0 0 20px 24px; font-size: var(--fs-muted); }
+.pv-exc summary { cursor: pointer; color: var(--text-dim); }
+.pv-exc summary:hover { color: var(--text); }
+/* Same column treatment .es-roster uses on Profiles, and for the same
+   reason: a list of character names in a card too narrow for one column
+   leaves most of its width empty. */
+.pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
+.pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
@@ -2018,7 +2066,13 @@ button.btn:disabled,
    own row rather than depending on a legend at the top of the list. Text
    is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
    --fs-muted so it reads as an annotation on the name rather than as a
-   second name. */
+   second name.
+
+   Now that the name sits in a fixed track, "text is the encoding" needs
+   the tag to survive a name that fills it -- see the `flex: none` under
+   #preview-binds, which is what keeps this word from being ellipsized
+   away with the name. The margin-left below is why that block declares no
+   `gap`. */
 .off-tag {
   margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
 }
@@ -2026,77 +2080,104 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Seven fixed tracks, then one flexible one. The character name takes a
-     line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
-     size the CONTROLS on the line beneath it: Off, bind button,
-     Clear, Edit…, Size…, Lock, Never minimize -- exactly the seven
-     children previews.js's makeRow appends after the label. The trailing
-     minmax(0, 1fr) absorbs the leftover width so the seven stay packed at
-     the start instead of spreading.
+  /* A fixed name column, four content-sized control tracks, then one
+     flexible one. The character name sits in track 1 rather than taking a
+     line of its own -- the `.lab` override below no longer spans -- and
+     the four that follow size the CONTROLS beside it: Off, bind button,
+     the actions cell (Clear/Edit… together, `.rowacts`), Size… --
+     exactly the four children previews.js's makeRow appends after the
+     label. Clear and Edit… used to be two of those children, one track
+     each; they now share the one `.rowacts` span, which is what dropped
+     the count from five. Lock and Never minimize used to sit here too, as
+     a sixth and a conditional seventh; both now render once, in their own
+     disclosures under their global toggles, rather than as a track on
+     every row. The trailing minmax(0, 1fr) absorbs the leftover width so
+     the four stay packed at the start instead of spreading.
 
-     "Off" leads rather than joining the other two checkboxes at the
-     end because it governs every control after it: with it ticked the rest
-     of the row is inert, and a master switch reads better before the
+     THE NAME TRACK IS FIXED, NOT max-content, and that is the whole
+     reason this list may have an inline name at all. `max-content` over
+     character names is round 3's B1: the track follows whoever is logged
+     in, so the bind button moves between sessions. 150px keeps the
+     stability B1 bought while dropping the cross-list half of its rule --
+     Bookmarks still stacks, because "Convert EvE-Scout Bookmarks" is
+     189.6px and genuinely needs its own line. Names wider than the track
+     ellipsize and carry a `title`.
+     test_each_keybind_list_declares_a_deliberate_first_track holds both
+     halves of that.
+
+     "Off" leads the controls rather than joining the other checkbox at
+     the end because it governs every control after it: with it ticked the
+     rest of the row is inert, and a master switch reads better before the
      things it switches off than stranded past them.
 
      The count is load-bearing rather than cosmetic. `.row` is
      display:contents, so the grid sees one flat stream of cells and cannot
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
-     That is why makeRow always appends exactly one of {both checkboxes} or
-     {three filler spans} -- cycle forward/back have no character, and
-     without the fillers those two rows would misalign every row after
-     them. Change the number of per-row children and this number changes
-     with it -- test_page_conventions.py now DERIVES the expected count
-     from makeRow's own appends rather than trusting this comment. */
-  grid-template-columns: repeat(7, max-content) minmax(0, 1fr);
-}
-/* Six, in the default state. Decision D6 (round 5, C3): the per-character
-   Never-minimize checkbox does not render while the global minimize toggle
-   is off, so previews.js appends six cells per row instead of seven and
-   sets this class in the same render. Declaring seven regardless would
-   leave a max-content track holding nothing -- harmless in itself, but it
-   still carries its 10px column-gap, so the row would end in a gap after
-   Lock with no control in it.
-
-   The count here is one less than the block above BY HAND, which is the
-   one thing in this pair that can drift; test_page_conventions.py asserts
-   the difference rather than either number. Both numbers rose by one when
-   Size… landed, and git merged that change without conflict while leaving
-   this one at four -- a difference of two, which the layout would have
-   shown as every row after the first sliding into the previous row's
-   leftover columns. The asserted difference is what catches that. */
-#preview-binds.no-nm {
-  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
+     That is why makeRow always appends exactly one of {the opt-out
+     checkbox} and {the Size control or its filler} -- cycle forward/back
+     have no character, and without the filler those two rows would
+     misalign every row after them. Change the number of per-row children
+     and this number changes with it -- test_page_conventions.py now
+     DERIVES the expected count from makeRow's own appends rather than
+     trusting this comment. */
+  grid-template-columns: 150px repeat(4, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
    [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
    children with the row itself gone. */
 #preview-binds .row[hidden] { display: none; }
+/* The name is a cell now, not a line. No `grid-column: 1 / -1`, and no
+   `margin-top` either -- that margin existed to separate one stacked
+   name-plus-controls block from the next, and there are no blocks to
+   separate once every row is one line. #eve-binds still stacks and still
+   carries both.
+
+   A FLEX ROW, and the ellipsis is on the name span rather than here. The
+   cell holds two things -- the name and, for an offline character, the
+   `.off-tag` word -- and only the name can truncate gracefully: a
+   character is identifiable from a prefix and the whole string is in the
+   cell's `title`. The tag is the ENCODING of the offline state, with
+   `.lab.dim`'s colour only reinforcing it, so clipping it leaves
+   colour-only state (WCAG 1.4.1), which is the failure the word was added
+   to prevent. Ellipsizing `.lab` itself clips the pair: measured at the
+   840x625 floor, a 14-character name left the tag 19.6px of headroom and
+   a 37-character one pushed its right edge to 500.41 against a track
+   ending at 359. Splitting the cell costs offline rows about 44px of name
+   width and online rows nothing, since the tag only exists when the
+   character is offline. Scoped to this list: `.lab` is shared with
+   Settings and Profiles, which have no tag and must not become flex.
+
+   No `gap` -- `.off-tag` carries its own 8px margin-left, and a gap here
+   would double it. */
 #preview-binds .row > .lab {
-  grid-column: 1 / -1;
+  display: flex; align-items: baseline;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
-/* 4px row-gap holds the name to its own controls; this restores the space
-   BETWEEN items. One gap cannot do both jobs here, because display:contents
-   flattens every row into the same grid, so the grid cannot tell "the line
-   under a name" from "the next name". Same reason .settings .row carries
-   its own 4px row-gap: a label equidistant from its field and from the row
-   above belongs to neither.
+/* `min-width: 0` because a flex item's default `min-width: auto` refuses
+   to shrink below its content, which would push the tag out of the cell
+   instead of ellipsizing the name -- the whole point of the split. */
+#preview-binds .row > .lab > .lab-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#preview-binds .row > .lab > .off-tag { flex: none; }
+/* Each row contributes fewer cells than the grid has tracks, because the
+   trailing flexible one holds no control. Without a definite start, grid
+   auto-placement puts the NEXT row's first cell there and every row after
+   it walks one column left. The spanning label used to prevent this for
+   free; the inline name is what makes it necessary. */
+#preview-binds .row > :first-child { grid-column-start: 1; }
 
-   Applied to every .lab rather than skipping the first with
-   :not(:first-child): rows here are hidden individually (previews.js hides
-   a row per character), so "first child" is not "first visible row", and
-   12px above the leading name is right anyway -- it follows the card's
-   prose. */
-#preview-binds .row > .lab { margin-top: 8px; }
-
-/* Redundant since B1 collapsed the column unconditionally above, and kept
-   deliberately: tests/test_page_conventions.py requires every id override
-   of the shared label column to restore the collapse inside this block,
-   and that rule protects the NEXT override, which will not have collapsed
-   itself. See #eve-binds below. */
+/* This one no longer merely restates the override above. While B1
+   collapsed the column unconditionally, this block said the same thing
+   twice; the name sits in a 150px track now, so below 720px this is what
+   would actually hand it the whole line back instead of ellipsizing it in
+   a track a narrow card cannot afford. WOULD, not does -- the CSS floor
+   is 840x625 at every scaling (see the note at #eve-binds), so 720px is
+   still unreachable through the window and this is still kept for the
+   rule: tests/test_page_conventions.py requires every id override of the
+   shared label column to restore the collapse inside this block. */
 @media (max-width: 720px) {
   #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
@@ -2121,6 +2202,26 @@ button.btn:disabled,
    Keeping the normal text colour is deliberate -- the binding is real
    and saved; only its registration is unknown. */
 .bindbtn.unknown { border-style: dashed; border-color: var(--panel-border); }
+
+/* An unbound chord. Measured against the card, --control (this button's
+   fill) is 1.09:1 and --control-border 1.32:1, so the box is very nearly
+   invisible and what carried "Not set" thirteen times was --text at
+   13.71:1 -- the loudest thing on a screen whose subject is the roster.
+   --text-dim is 6.43:1 on --control, well over AA, and leaves a BOUND
+   chord as the thing that stands out.
+
+   Cannot collide with the three states above: clashes() returns null for
+   an empty gesture and no bookmark chord list contains "", so an unset
+   button is never also .clash, .unknown or .dim. */
+.bindbtn.unset { color: var(--text-dim); }
+
+/* The shared cell Clear and Edit… render into, previews.js's makeRow.
+   Right-aligned inside its own cell so Edit… holds one x whether or not
+   Clear is beside it. The track is max-content over the rows that have
+   both, so a row without Clear reads as an empty slot rather than as a
+   shifted control. */
+.rowacts { display: flex; gap: 2px; justify-content: flex-end; }
+
 /* ====================== EVE Settings route ==========================
    Same card markup as the settings and bookmarks routes, so it needs the
    same column direction and scroll safeguard: three cards, two of them
@@ -2604,8 +2705,17 @@ button.btn:disabled,
    the stacked full-width .lab every other section on this route already
    uses, and which THIS FILE ALREADY IMPLEMENTED below 720px as the narrow
    form of these same rows. It is the only shape that depends on no
-   content: both sections now put the bind button at x=1 on line two, at
-   every width, whoever is logged in.
+   content: the bind button sits at x=1 on line two, at every width,
+   whoever is logged in.
+
+   THAT WAS ONCE TRUE OF BOTH SECTIONS, and now describes this one alone.
+   #preview-binds took its name back into a FIXED 150px track, which keeps
+   the content-independence this argument is about while spending a column
+   on it -- affordable there because character names are uniform and short,
+   and not here, where "Convert EvE-Scout Bookmarks" is 189.6px. The
+   cross-list half of B1's rule is retired; the no-max-content half is not,
+   and test_each_keybind_list_declares_a_deliberate_first_track holds both
+   lists to whichever shape they declared.
 
    IT COSTS HEIGHT, and the figure is here so the trade can be reversed
    knowingly rather than rediscovered. Measured at the 840 floor, both trees
@@ -2630,8 +2740,8 @@ button.btn:disabled,
    is the only way the three control columns can be three columns rather
    than one per row. The rows keep no box of their own, so .row's spacing is
    re-stated here: 10px across as the column-gap, and 12px down as 4px of
-   row-gap plus the .lab's 8px margin (see #preview-binds for why those are
-   two numbers and not one).
+   row-gap plus the .lab's 8px margin (see the note on that margin below
+   for why those are two numbers and not one).
 
    The trailing `minmax(0, 1fr)` track holds no control and exists so that
    `grid-column: 1 / -1` reaches the CARD's width rather than the three
@@ -2657,8 +2767,26 @@ button.btn:disabled,
   grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
-/* See #preview-binds for why this is a margin and not the grid's row-gap,
-   and why it is not skipped on the first row. */
+/* A margin and not the grid's row-gap, and not skipped on the first row.
+   The 4px row-gap holds a name to its own controls; this restores the
+   space BETWEEN items. One gap cannot do both jobs, because
+   display:contents flattens every row into the same grid, so the grid
+   cannot tell "the line under a name" from "the next name". Same reason
+   .settings .row carries its own 4px row-gap: a label equidistant from
+   its field and from the row above belongs to neither.
+
+   Applied to every .lab rather than skipping the first with
+   :not(:first-child), for which #preview-binds had the stronger reason:
+   previews.js hides a row per character, so "first child" was not "first
+   visible row" there. Bookmarks rebuilds its list wholesale and hides
+   only the host, so what carries the rule HERE is the other half -- 12px
+   above the leading name is right anyway, because it follows the card's
+   prose.
+
+   #preview-binds used to carry this rule and the reasoning behind it. Its
+   name is inline now, so it has no stacked blocks to separate and dropped
+   both; this list is the only one left that stacks, which is why the
+   argument lives here. */
 #eve-binds .row > .lab { margin-top: 8px; }
 
 /* Settings 1's third case, kept in its grid form. Lane 0's
@@ -2666,7 +2794,10 @@ button.btn:disabled,
    field, but it sets `.settings .row > .lab` -- which this id-specificity
    override beats, so the rule never reached these rows and the name
    SHRANK instead, which is the failure the collapse exists to prevent.
-   #preview-binds carries the same override and the same repair.
+   #preview-binds carries the same override and the same repair -- and
+   since its name went inline, its repair is the one that would still
+   change something if the window could reach 720px, rather than restating
+   what its override already does.
 
    Since B1 the override above collapses the column unconditionally, so
    this block now restates it and changes nothing. It is kept for the rule

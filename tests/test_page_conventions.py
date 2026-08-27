@@ -177,11 +177,37 @@ def test_settings_rows_label_through_the_shared_column():
             )
 
 
+def _media_spans(max_width: int) -> list[tuple[int, int]]:
+    """(start, end) offsets into CSS of every `max-width: <n>px` block BODY,
+    brace-matched.
+
+    Slicing from the first occurrence to the end of the file is not enough:
+    these rules may sit beside the override they correct, so such a slice
+    also contains the override itself and an assertion passes on the wrong
+    text. That is not hypothetical -- the first version of
+    test_an_id_override_of_the_label_column_still_collapses_at_the_floor did
+    exactly that and survived deleting the rule it exists to require.
+
+    Offsets rather than text, because the second caller needs to ask where a
+    rule IS, not only what the narrow blocks contain.
+    """
+    spans = []
+    for m in re.finditer(rf"@media \(max-width: {max_width}px\)\s*\{{", CSS):
+        i, depth = m.end(), 1
+        while i < len(CSS) and depth:
+            depth += {"{": 1, "}": -1}.get(CSS[i], 0)
+            i += 1
+        spans.append((m.end(), i - 1))
+    return spans
+
+
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
-    rows on purpose -- their labels are long action and character names,
-    not "Privacy" -- with an ID selector: `#eve-binds .row > .lab` and
-    `#preview-binds .row > .lab`.
+    rows on purpose, for two different reasons: `#eve-binds` because its
+    labels are long action names and it gives them a whole line instead,
+    `#preview-binds` because it gives the character name a fixed 150px
+    track of its own -- an inline column, not a line. Both do it with an
+    ID selector: `#eve-binds .row > .lab` and `#preview-binds .row > .lab`.
 
     ID specificity also beats the `max-width: 720px` block that collapses
     the column above its field, and that block is written against
@@ -197,20 +223,7 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     overrides = set(re.findall(r"(#[\w-]+) \.row > \.lab \{", CSS))
     assert overrides, "no id override of the shared label column found at all"
 
-    # The BODIES of every max-width:720px block, brace-matched. Slicing from
-    # the first occurrence to the end is not enough: these rules may sit
-    # beside the override they correct, so such a slice also contains the
-    # override itself and the assertion passes on the wrong text. That is
-    # not hypothetical -- the first version of this test did exactly that
-    # and survived deleting the rule it exists to require.
-    narrow = []
-    for m in re.finditer(r"@media \(max-width: 720px\)\s*\{", CSS):
-        i, depth = m.end(), 1
-        while i < len(CSS) and depth:
-            depth += {"{": 1, "}": -1}.get(CSS[i], 0)
-            i += 1
-        narrow.append(CSS[m.end() : i - 1])
-    body = "\n".join(narrow)
+    body = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(720))
 
     for host in sorted(overrides):
         assert f"{host} .row > .lab" in body, (
@@ -219,105 +232,64 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
-def test_the_two_keybind_lists_render_the_same_row():
-    """Bookmarks and Previews build a keybind row from the same four
-    elements, and for two rounds they rendered it at two geometries.
+def test_each_keybind_list_declares_a_deliberate_first_track():
+    """Round 3's B1 made both bind lists stack the name above its controls,
+    because each list's first track was `max-content` over ITS OWN labels
+    and the bind button sat 103.4 CSS px apart in two sections of one
+    screen -- Previews' half moving between sessions, because the track
+    followed whoever was logged in.
 
-    Each list is its own grid, and the first track used to be max-content
-    over ITS OWN labels -- so the column was 189.6px in Bookmarks ("Convert
-    EvE-Scout Bookmarks") and 86.2px in Previews ("Cycle forward"), putting
-    the bind button 103.4 CSS px apart in two sections of one screen.
-    Previews' half of that is not even stable between sessions: the track
-    tracked whichever characters were logged in. Round 3's B1.
+    THAT RULE IS RETIRED, deliberately, and this is what replaced it. The
+    two lists differ in content: Bookmarks' longest label is "Convert
+    EvE-Scout Bookmarks" at 189.6px and needs its own line, while character
+    names are uniform and short enough for a column. Only four ungrouped
+    Bookmarks rows were ever in the shared grid anyway -- round 5's C8 moved
+    the other fourteen into .bind-dense, which is flex and shares no tracks.
 
-    The fix was to stack the name above its controls in both, so the
-    geometry depends on no content at all. Nothing renders the page in this
-    suite, so what stops the two drifting apart again is this: the two
-    grids must declare control tracks of the same KIND and the same
-    flexible trailing track, and both must put the name on its own line.
-    Both halves are read out of the stylesheet rather than restated here,
-    so the test cannot disagree with the file about what the shared value
-    is -- only about whether it is shared.
+    What still has to hold is that neither list gets there by accident. A
+    `max-content` first track is the original bug; each list must declare
+    either a fixed track or a spanning label, and say which.
 
-    THIS USED TO BE A BYTE-EQUALITY CHECK on the two templates, and it was
-    RELAXED DELIBERATELY -- it did not erode. Previews grew two
-    per-character controls, Lock and Never minimize, that Bookmarks has no
-    equivalent of, so the two templates now share a prefix and then
-    diverge: three control tracks against five. Byte equality could only
-    have been restored by giving Bookmarks two tracks holding nothing,
-    which would be a lie in the stylesheet about a row that has three
-    controls.
-
-    What matters is that byte equality was never the invariant, only a
-    proxy for it. B1 was the bind button sitting at two different offsets;
-    that offset is decided by `.lab { grid-column: 1 / -1 }`, asserted
-    below and untouched, which puts the name on its own line and starts
-    the control line at the container edge in both lists. Measured in the
-    ?dev=1 harness at 840x625 after the divergence: the bind button is at
-    offset 0 in BOTH, and the three shared control tracks compute
-    identically at 150 / 40.7969 / 42.4531px. So what is guarded here is
-    what is left -- the shared tracks must still be the same KIND of track
-    (a content-sized column, not one list switching to a fixed or
-    fractional one), and neither list may drop the trailing flexible track
-    that lets `grid-column: 1 / -1` reach the card's width instead of the
-    control tracks' width.
+    Read over EVERY `.lab` override a host declares, not the first one the
+    file happens to contain. Both hosts carry two: the override itself and
+    the `max-width: 720px` restore that hands the name a whole line at a
+    narrow width -- required by
+    test_an_id_override_of_the_label_column_still_collapses_at_the_floor
+    and deliberately not re-checked here. A first-match read would make
+    this test's answer depend on which of the two comes first in the
+    stylesheet, so swapping two rule blocks -- an edit with no visible
+    effect at any width this window can reach, since the CSS floor is
+    840x625 -- would flip it silently. That is precisely the failure a
+    lexical guard exists to prevent, so the property is asserted over the
+    non-media blocks as a set.
     """
-    hosts = ("#eve-binds", "#preview-binds")
+    narrow = _media_spans(720)
 
-    columns = {}
-    for host in hosts:
+    for host, expected in (("#eve-binds", "span"), ("#preview-binds", "fixed")):
         m = re.search(re.escape(host) + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{host} has no rule block at all"
-        tracks = re.search(r"grid-template-columns:\s*([^;]+);", m.group(1))
-        assert tracks, f"{host} declares no grid-template-columns"
-        columns[host] = " ".join(tracks.group(1).split())
-
-    # Split each template into "how many control tracks", "of what kind",
-    # and "what trails them". Anchored and whole-string: a template this
-    # cannot parse fails here rather than being waved through, which is
-    # what stops the relaxation above from widening any further by
-    # accident.
-    shape = {}
-    for host in hosts:
-        m = re.fullmatch(r"repeat\((\d+),\s*([^)]+)\)\s+(.+)", columns[host])
-        assert m, (
-            f"{host} no longer declares its columns as `repeat(N, <kind>) "
-            f"<trailing>`, so this test can no longer tell whether the two "
-            f"lists still agree: {columns[host]!r}"
+        assert m, f"{host} has no rule block"
+        template = re.search(r"grid-template-columns:([^;]*);", m.group(1))
+        assert template, f"{host} declares no grid-template-columns"
+        first = template.group(1).strip().split()[0]
+        assert not first.startswith("max-content"), (
+            f"{host}'s first track is max-content over its own labels, "
+            f"which is round 3's B1 -- the bind button moves with the "
+            f"content and, in Previews, between sessions"
         )
-        shape[host] = (int(m.group(1)), m.group(2).strip(), m.group(3).strip())
-
-    bookmarks, previews = shape["#eve-binds"], shape["#preview-binds"]
-
-    assert bookmarks[1] == previews[1], (
-        "the two keybind lists size their control tracks differently, which "
-        f"puts their shared controls back at two geometries -- round 3's B1: "
-        f"{bookmarks[1]!r} vs {previews[1]!r}"
-    )
-
-    for host in hosts:
-        assert shape[host][2] == "minmax(0, 1fr)", (
-            f"{host} dropped the flexible trailing track, so its full-width "
-            f"name now reaches only as far as its control tracks instead of "
-            f"the card: {shape[host][2]!r}"
-        )
-
-    # Previews may carry MORE controls than Bookmarks -- Lock and Never
-    # minimize are per-character and Bookmarks has no character. It may not
-    # carry fewer: that would mean a control went missing from the row
-    # rather than being added to it.
-    assert previews[0] >= bookmarks[0], (
-        f"Previews declares fewer control tracks than Bookmarks "
-        f"({previews[0]} < {bookmarks[0]}), so a control its rows build has "
-        f"no column to sit in"
-    )
-
-    for host in hosts:
-        m = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{host} has no .lab override"
-        assert "grid-column: 1 / -1" in m.group(1), (
-            f"{host}'s name no longer takes its own line, so its bind button "
-            f"is back at an offset that depends on that list's own labels"
+        blocks = [
+            b
+            for b in re.finditer(
+                re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL
+            )
+            if not any(lo <= b.start() < hi for lo, hi in narrow)
+        ]
+        assert blocks, f"{host} no longer overrides the shared label column"
+        spans = any("grid-column: 1 / -1" in b.group(1) for b in blocks)
+        assert spans == (expected == "span"), (
+            f"{host}'s label {'spans' if spans else 'sits in a track'} at "
+            f"full width, which is not what this list decided: Bookmarks "
+            f"spans for its 189.6px labels, Previews takes a fixed column "
+            f"for its names"
         )
 
 
@@ -1279,31 +1251,25 @@ def test_the_dense_bind_column_can_hold_a_whole_control_line():
     )
 
 
-def test_the_previews_grid_drops_exactly_one_track_with_never_minimize():
-    """Decision D6 (round 5, C3): the per-character Never-minimize checkbox
-    does not render while the global minimize toggle is off, so
-    previews.js appends one fewer cell per row and sets `.no-nm`.
+def test_the_previews_grid_declares_exactly_one_template():
+    """`.no-nm` existed because the Never-minimize cell rendered only while
+    the global minimize toggle was on, so makeRow appended a different
+    number of cells in each state and the stylesheet needed two templates
+    whose difference was maintained by hand.
 
-    `.row` is display:contents, so the grid sees one flat stream of cells
-    and cannot tell one row from the next: if the template and the cell
-    count disagree by even one, every row after the first is pulled into
-    the previous row's leftover columns. The two track counts are written
-    by hand in two rules, which is the drift this asserts against -- the
-    difference, not either number.
+    That control now lives in its own disclosure under the toggle, so the
+    row's cell count no longer varies and the second template is gone. A
+    reintroduced conditional cell must bring back a guard for its own
+    difference rather than reusing this one.
     """
-    counts = []
-    for selector in ("#preview-binds", r"#preview-binds\.no-nm"):
-        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{selector} has no rule block"
-        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
-        counts.append(int(tracks.group(1)))
-
-    full, without = counts
-    assert full - without == 1, (
-        f"the two #preview-binds templates differ by {full - without} tracks, "
-        f"not 1 -- makeRow adds or drops exactly one cell (Never minimize) "
-        f"between the two states"
+    assert ".no-nm" not in CSS, (
+        "#preview-binds.no-nm is back -- a conditional cell needs a guard "
+        "on the difference between the two templates, not just a template"
+    )
+    body = _makerow_body()
+    assert "minimizeInactive" not in body, (
+        "makeRow appends a conditional cell again, so its cell count "
+        "varies with a setting and one template cannot describe both"
     )
 
 
@@ -1327,25 +1293,34 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     BOTH templates are wrong by the same amount. This derives the cell
     count from makeRow itself rather than restating it.
 
-    The label is excluded: `#preview-binds .row > .lab` is
-    `grid-column: 1 / -1`, so it spans the row rather than sitting in one
-    of the tracks the controls occupy. The `else` branch is excluded
+    The label USED to be excluded, because `#preview-binds .row > .lab` was
+    `grid-column: 1 / -1` and spanned the row instead of sitting in a
+    track. It sits in track 1 now, so it is a cell like any other and the
+    `-1` that discounted it is gone. The `else` branch is still excluded,
     because its fillers stand in for the character branch's controls one
     for one -- counting both would double every cell.
     """
     body = _makerow_body()
     halves = body.split("} else {", 1)
     assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
-    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(") - 1
+    # The label is COUNTED now: it sits in track 1 rather than spanning the
+    # row, so it is a cell like any other. That is the whole change, and it
+    # is why the -1 that used to discount it is gone.
+    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
 
     m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert m, "#preview-binds has no rule block"
-    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
+    assert fixed, (
+        "#preview-binds no longer declares a fixed first track followed by "
+        "repeat(N, ...) -- a max-content name column is round 3's B1 bug, "
+        "where the track followed whoever was logged in"
+    )
+    tracks = 1 + int(fixed.group(2))
 
-    assert cells == int(tracks.group(1)), (
+    assert cells == tracks, (
         f"makeRow appends {cells} cells per character row but #preview-binds "
-        f"declares {tracks.group(1)} tracks -- every row after the first is "
+        f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
     )
 
@@ -1361,8 +1336,12 @@ def test_the_previews_header_row_names_one_column_per_track():
 
     WHAT A MISMATCH ACTUALLY COSTS, measured for every cell rather than
     for one: the header's captions land over the wrong controls, AND the
-    rows below shift. Deleting each heading in turn in the ?dev=1 harness
-    at 840x625 moves the first character row's controls to
+    rows below shift. Measured against the SEVEN-column layout, before
+    Lock and Never minimize moved out of the row into their own
+    disclosures and before the name came inline. The table is left as it
+    was taken: the mechanism it demonstrates outlived the layout it was
+    measured on. Deleting each heading in turn in the ?dev=1 harness at
+    840x625 moves the first character row's controls to
 
         Preview        209/265/425/477/531/587/685
         Keybind        209/264/424/476/530/586/684
@@ -1379,13 +1358,12 @@ def test_the_previews_header_row_names_one_column_per_track():
     concluded the damage was local.
 
     Vertical placement really does not cascade: y was identical in all
-    seven runs, because every row leads with `.lab { grid-column: 1 / -1 }`
-    and a definite column-start resets auto-placement to a fresh row.
-
-    Both states are checked, because the header carries the same
-    conditional cell makeRow does: the Never-minimize column exists only
-    while the global minimize toggle is on (D6), so the header must lose
-    its heading in step or the remaining headings sit over the wrong data.
+    seven runs. The reset to a fresh row is now
+    `#preview-binds .row > :first-child { grid-column-start: 1 }`. The
+    spanning `.lab` used to do it for free, which is why the hazard is
+    newer than the grid -- it arrived with the inline name, and
+    test_every_previews_row_starts_a_fresh_grid_line is what holds the
+    replacement in place.
 
     Counted from the array literal rather than from `row.appendChild(`:
     makeHeadRow appends inside a forEach, so the literal-substring trick
@@ -1398,32 +1376,35 @@ def test_the_previews_header_row_names_one_column_per_track():
     literal = re.search(r"var cells = \[(.*?)\];", body, re.DOTALL)
     assert literal, "makeHeadRow no longer builds its cells from an array literal"
     base = len([part for part in literal.group(1).split(",") if part.strip()])
-    conditional = body.count("cells.push(")
+    assert "cells.push(" not in body, (
+        "makeHeadRow names a conditional column again, so the header's cell "
+        "count varies with a setting and one template cannot describe both"
+    )
 
-    for selector, expected in (
-        ("#preview-binds", base + conditional),
-        (r"#preview-binds\.no-nm", base),
-    ):
-        m = re.search(selector + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{selector} has no rule block"
-        tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-        assert tracks, f"{selector} no longer declares repeat(N, ...) tracks"
-        assert expected == int(tracks.group(1)), (
-            f"makeHeadRow names {expected} columns but {selector} declares "
-            f"{tracks.group(1)} tracks -- the headings sit over the wrong "
-            f"controls, and a heading falling into a narrower shared track "
-            f"widens it for every row below"
-        )
+    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert m, "#preview-binds has no rule block"
+    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
+    assert fixed, (
+        "#preview-binds no longer declares a fixed first track followed by "
+        "repeat(N, ...)"
+    )
+    tracks = 1 + int(fixed.group(2))
+    assert base == tracks, (
+        f"makeHeadRow names {base} columns but #preview-binds declares "
+        f"{tracks} tracks -- the headings sit over the wrong controls, and "
+        f"a heading falling into a narrower shared track widens it for "
+        f"every row below"
+    )
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():
     """Counting columns is not the same as naming the right one.
 
     The guard above compares two NUMBERS. Reorder makeRow's appends --
-    moving makeLockCheck ahead of the Size cell is an entirely plausible
-    edit -- and every heading is over the wrong control while both counts
-    still agree. Nothing in this suite renders the page, so that would
-    ship looking exactly like a correct table.
+    moving makeExcludedCheck ahead of the name cell is an entirely
+    plausible edit -- and every heading is over the wrong control while
+    both counts still agree. Nothing in this suite renders the page, so
+    that would ship looking exactly like a correct table.
 
     So: each named heading is tied to the append that fills its column,
     and the two sequences must run in the same order.
@@ -1434,11 +1415,10 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
 
     # heading -> the token in makeRow that builds the cell it labels.
     owners = (
+        ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
         ("Size", "makeSizeButton"),
-        ("Lock", "makeLockCheck"),
-        ("Never minimize", "makeNeverMinimizeCheck"),
     )
 
     for heading, token in owners:
@@ -1451,6 +1431,21 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
             f"names a {heading!r} column over it"
         )
 
+    # The blank cell is the `.rowacts` track (Clear + Edit... share it).
+    # It carries no word, so the loop above cannot see it -- and reordering
+    # the literal to ['Character', 'Preview', 'Keybind', 'Size', ''] keeps
+    # both sequences below sorted and the count at 5, while `Size` would
+    # sit over the actions cell and the blank over Size.
+    cells = re.search(r"var cells = \[([^\]]*)\]", head)
+    assert cells, "makeHeadRow no longer declares its headings as one literal"
+    names = [c.strip().strip("'") for c in cells.group(1).split(",")]
+    assert names.index("") == 3, (
+        f"makeHeadRow's blank heading is at index {names.index('')}, not 3: "
+        f"{names}. The blank labels `.rowacts`, which makeRow appends "
+        f"fourth; anywhere else and every heading from there on is over "
+        f"the wrong control with the count still agreeing"
+    )
+
     heading_order = [head.index(f"'{h}'") for h, _ in owners]
     append_order = [body.index(t) for _, t in owners]
     assert heading_order == sorted(heading_order), (
@@ -1462,6 +1457,133 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         f"{append_order}. Every heading below the swap labels the wrong "
         f"control, and the cell COUNTS still agree, so nothing else here "
         f"would catch it."
+    )
+
+
+def test_only_the_previews_name_is_allowed_to_ellipsize():
+    """The name and the `offline` tag share one 150px cell, and only one of
+    them can truncate gracefully.
+
+    A character is identifiable from a prefix and the whole string is in
+    the cell's `title`, so clipping the NAME costs nothing. The tag is not
+    the same kind of thing: it is the encoding of the offline state, and
+    `.lab.dim`'s colour only reinforces it. Lose the word and what is left
+    is colour-only state, WCAG 1.4.1 -- the failure the tag was added to
+    prevent.
+
+    Putting the ellipsis on `.lab` itself clips the PAIR, so a long enough
+    name takes the tag with it. Measured in the harness at the 840x625
+    floor before this split: a 14-character name left the tag 19.6px of
+    headroom, a 37-character one pushed its right edge to 500.41 against a
+    track ending at 359 -- the word gone entirely, with no width at which
+    the reader is told.
+
+    So the cell is a flex row: the name yields (`min-width: 0` plus the
+    ellipsis) and the tag reserves its width (`flex: none`). Offline rows
+    pay about 44px of name width for it and online rows pay nothing, since
+    the tag only exists when `online === false`.
+
+    Reads the non-media `.lab` block, not the first one in the file, for
+    the reason test_each_keybind_list_declares_a_deliberate_first_track
+    spells out: this host declares two and a first-match read would answer
+    from whichever the stylesheet happens to list first.
+    """
+    narrow = _media_spans(720)
+    labs = [
+        b
+        for b in re.finditer(r"#preview-binds \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
+        if not any(lo <= b.start() < hi for lo, hi in narrow)
+    ]
+    assert labs, "#preview-binds no longer overrides the shared label column"
+    lab = "\n".join(b.group(1) for b in labs)
+    assert re.search(r"display:\s*flex", lab), (
+        "#preview-binds's label cell is no longer a flex row, so the tag "
+        "cannot reserve its width against the name"
+    )
+    assert "text-overflow" not in lab, (
+        "#preview-binds's label cell ellipsizes as a whole again, which "
+        "clips the `offline` tag along with the name it qualifies"
+    )
+
+    name = re.search(
+        r"#preview-binds \.row > \.lab > \.lab-name \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert name, "the previews name span has no rule of its own to ellipsize in"
+    # `overflow: hidden` is in this list because `text-overflow` is INERT
+    # without it -- the name would spill over the tag instead of
+    # truncating, which is the same lost word by a different route.
+    for prop in (
+        "min-width: 0",
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "white-space: nowrap",
+    ):
+        assert prop in name.group(1), (
+            f".lab-name must declare `{prop}` -- without all four the name "
+            f"either refuses to shrink inside the flex row, spills over the "
+            f"tag, or wraps instead of ellipsizing"
+        )
+
+    tag = re.search(
+        r"#preview-binds \.row > \.lab > \.off-tag \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert tag and "flex: none" in tag.group(1), (
+        "the `offline` tag no longer reserves its width, so the flex row "
+        "shrinks it away and the state goes back to being colour-only"
+    )
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+    assert "'lab-name'" in body, (
+        "makeRow no longer builds a .lab-name span, so the CSS above has "
+        "nothing to apply to and the name is a bare text node again"
+    )
+    # The tag is appended to the LAB, not the row. Appending it to the row
+    # would give offline rows one cell more than online ones, which the
+    # cell-count guard cannot see because it counts appends lexically
+    # rather than per render.
+    assert "lab.appendChild(WM.make('span', 'off-tag'" in body, (
+        "the offline tag is no longer appended to the label cell -- in the "
+        "row it would be an extra grid cell on offline rows only"
+    )
+
+
+def test_every_previews_row_starts_a_fresh_grid_line():
+    """With the name inline each row contributes fewer cells than the grid
+    has tracks, because the trailing minmax(0, 1fr) holds no control. Grid
+    auto-placement then puts the NEXT row's first cell in that leftover
+    track, and every row after it walks one column left -- measured in the
+    harness as the second character's name landing in the far-right column
+    while its own controls slid under the wrong headings.
+
+    A definite column-start resets auto-placement to a fresh row. The
+    spanning label used to do this for free, which is why the hazard is
+    new: it arrived with the inline name, not with the grid.
+
+    Read outside the narrow blocks, like the two sibling guards. A scan of
+    the whole stylesheet would go green with this rule moved inside
+    `@media (max-width: 720px)` -- a width the window can never reach,
+    since the CSS floor is 840x625 -- while every row after the first
+    walked a column left at every width that IS reachable.
+
+    `1\\s*;` rather than `1`, so the search cannot be satisfied by a
+    `grid-column-start: 10` or `: 12` that happens to start with the right
+    digit.
+    """
+    narrow = _media_spans(720)
+    pinned = [
+        b
+        for b in re.finditer(
+            r"#preview-binds \.row > :first-child \{[^}]*grid-column-start:\s*1\s*;",
+            CSS,
+            re.DOTALL,
+        )
+        if not any(lo <= b.start() < hi for lo, hi in narrow)
+    ]
+    assert pinned, (
+        "#preview-binds rows no longer pin their first cell to column 1 at "
+        "full width, so the trailing flexible track swallows the next row's "
+        "first cell"
     )
 
 
@@ -1506,6 +1628,53 @@ def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
     )
 
 
+def test_clear_is_not_drawn_where_it_could_only_refuse():
+    """D6's rule -- do not draw a control in a state where it can only
+    refuse -- applied to the control that broke it worst. `Clear` used to
+    be rendered on every row and disabled wherever there was no chord to
+    clear, which on a fresh install is every row. It is a .linkbtn, so
+    :disabled is opacity .45 over --text-faint: 1.94:1 against the card, a
+    control nobody can read holding a grid track on thirteen rows.
+
+    Only the render-at-all gate moved. `Clear` still goes through
+    WM.setEnabled against the row's own opted-out state once it exists --
+    an opted-out row otherwise leaves the destructive control as the only
+    LIVE one beside a bind button, Edit... and Size... that are all inert,
+    directly contradicting that button's own tooltip ("is still saved, and
+    comes back when you tick Preview again"). A first version of this test
+    asserted `WM.setEnabled(clear` was gone entirely and that shipped
+    briefly before review caught it; the docstring above is what changed,
+    not the fix.
+
+    Its function is not lost either way. Edit... with an empty submission
+    clears, and that path predates this change.
+    """
+    body = _makerow_body()
+    assert "if (gesture) {" in body, (
+        "makeRow no longer chooses whether to build Clear -- it is back to "
+        "rendering a control that can only refuse on every unbound row"
+    )
+    assert re.search(r"WM\.setEnabled\(clear,[^)]*\boff\b", body), (
+        "Clear is built without going through WM.setEnabled against the "
+        "row's opted-out state -- it is live on a row where every other "
+        "control is inert, deleting the chord that row's own tooltip just "
+        "promised was kept"
+    )
+    # Drawing Clear conditionally is only half of it. Clear and Edit... share
+    # ONE grid cell now, so a row that skips Clear would otherwise slide
+    # Edit... left into the space Clear had -- the same verb at two x
+    # positions down the column, keyed on something the reader cannot see.
+    # Right-aligning inside the cell pins Edit... to one edge and turns a
+    # missing Clear into an empty slot. That is one declaration, and
+    # deleting it left the whole suite green until a review looked for it.
+    acts = re.search(r"\.rowacts\s*\{([^}]*)\}", CSS)
+    assert acts, "`.rowacts` has no rule -- Clear and Edit... share its cell"
+    assert "justify-content: flex-end" in acts.group(1), (
+        "`.rowacts` no longer right-aligns its contents, so Edit... sits at "
+        "one x position on a bound row and another on an unbound one"
+    )
+
+
 def test_an_opted_out_character_row_disables_its_own_controls():
     """The chosen shape for a character opted out of previews: the row
     stays visible -- there has to be somewhere to turn it back on -- but
@@ -1514,25 +1683,46 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     What this pins is that they go through WM.setEnabled against the row's
     own opted-out state, rather than merely being dimmed in CSS: a control
     that only LOOKS dead still fires on click.
+
+    `clear` belongs in this loop even though it is no longer drawn
+    unconditionally (test_clear_is_not_drawn_where_it_could_only_refuse):
+    the render-at-all gate and the opted-out gate are two different
+    questions, and only the first one changed. Once `Clear` exists it
+    still has to be inert on an opted-out row -- otherwise it is the one
+    LIVE control left beside a bind button, Edit... and Size... that have
+    all gone dark, deleting a chord its own row's tooltip just promised was
+    kept.
     """
     body = _makerow_body()
     for control in ("button", "clear", "typed"):
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
-    # The three above are gated INLINE; these receive the state as an
-    # argument instead, and were unguarded until a review pointed out that
-    # dropping the second argument at either call site leaves the control
-    # live and undimmed with the whole suite green -- which is the exact
-    # failure this test's docstring claims to prevent.
-    for builder in ("makeSizeButton", "makeLockCheck"):
+    # The above is gated INLINE; this receives the state as an argument
+    # instead, and was unguarded until a review pointed out that dropping
+    # the second argument at the call site leaves the control live and
+    # undimmed with the whole suite green -- which is the exact failure
+    # this test's docstring claims to prevent.
+    for builder in ("makeSizeButton",):
         assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
             f"makeRow does not pass the row's opted-out state to {builder}"
         )
+    # Lock left the row for its own disclosure, and took this invariant with
+    # it: with no window there is nothing to lock, so the block must pass
+    # each character's opted-out state the way the row used to. Asserted on
+    # the CALL, not inside the builder, because the call site is what
+    # decides -- the same reasoning the never-minimize guard below gives.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
+        "the Lock block does not pass each character's opted-out state, so "
+        "an opted-out character gets a live control over a window that is "
+        "not there"
+    )
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():
-    """The one control on the row that must NOT go inert with the rest.
+    """The one control that must NOT go inert with the rest of an
+    opted-out character's row.
 
     Opting a character out stops their PREVIEW. It does not stop
     minimize_inactive_clients: `_activate_client` resolves `previous_key`
@@ -1542,17 +1732,69 @@ def test_never_minimize_stays_live_on_an_opted_out_row():
     force with no way to change it -- the same shape as the roster
     eviction hazard `LayoutStore._protected` exists for.
 
-    Asserted on the CALL rather than inside the builder, because the
-    builder is shared and it is the call site that decides.
+    The invariant used to be asserted against makeRow's call, but that call
+    is gone -- Never minimize now renders once, in its own disclosure, the
+    same as Lock's. Asserted on the block's own call site rather than
+    inside the builder, because the builder is shared and it is the call
+    site that decides.
+
+    A bare ``makeNeverMinimizeCheck(name)`` search over the whole file is
+    NOT enough, and shipped that way once: ``function
+    makeNeverMinimizeCheck(name) {`` satisfies it by itself, so mutating
+    the call site to pass ``isExcluded(name)`` left the guard green. The
+    Lock counterpart never had that hole because a second argument is what
+    it looks for. This one is anchored on the append instead.
     """
-    body = _makerow_body()
-    assert re.search(r"makeNeverMinimizeCheck\(character\)", body), (
-        "makeNeverMinimizeCheck is being passed the row's opted-out state, "
-        "which would grey a checkbox whose setting is still enforced"
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "list.appendChild(makeNeverMinimizeCheck(name));" in src, (
+        "the Never-minimize block no longer appends "
+        "`makeNeverMinimizeCheck(name)` verbatim -- if it gained an "
+        "argument it is being passed an opted-out state, which would grey "
+        "a checkbox whose setting is still enforced"
     )
-    assert re.search(r"makeLockCheck\(character,[^)]*\boff\b", body), (
-        "Lock SHOULD be gated -- with no window there is nothing to lock"
+    # Belt and braces, and the half that survives a reformat of the line
+    # above: the block's body must not consult the opt-out roster at all.
+    block = src.split("function renderNeverMinimizeBlock(", 1)[1]
+    block = block.split("\n  }", 1)[0]
+    assert "isExcluded" not in block, (
+        "renderNeverMinimizeBlock consults isExcluded -- whatever it does "
+        "with the answer, this control is not allowed to vary on it"
     )
+
+
+def test_the_disclosure_rosters_do_not_relabel_their_own_checkboxes():
+    """The character name is VISIBLE text inside each roster label, so an
+    accessible name already exists. Re-adding the `aria-label` the row
+    checkboxes carry -- which is what the row versions of these two builders
+    did, and what an edit restoring "consistency" would reach for first --
+    overrides that visible name, which is the failure WCAG 2.5.3 names.
+
+    What the tick MEANS ("locked", "never minimized") reaches the reader
+    once, through the roster container's `aria-labelledby` pointing at its
+    own `<summary>`, rather than being restated on every row. The row's own
+    opt-out box keeps its `aria-label` and must: its label has no text at
+    all.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    for builder in ("makeLockCheck", "makeNeverMinimizeCheck"):
+        body = src.split(f"function {builder}(", 1)[1].split("\n  }", 1)[0]
+        assert "aria-label" not in body, (
+            f"{builder} sets an aria-label. Its label carries the character "
+            f"name as visible text, so that overrides the visible name "
+            f"instead of adding to it (WCAG 2.5.3)"
+        )
+        assert re.search(r"WM\.make\('label', 'check[^']*', name\)", body), (
+            f"{builder} no longer builds its label with the character name "
+            f"as its text, so the checkbox has no accessible name at all"
+        )
+
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    for block in ("preview-lock-exceptions", "preview-nm-exceptions"):
+        assert f'aria-labelledby="{block}-summary"' in html, (
+            f"#{block}-list does not point at its own summary, so a "
+            f"screen reader announces the character name with nothing to "
+            f"say whether the tick is about locking or about minimizing"
+        )
 
 
 def test_a_shared_chord_ignores_opted_out_characters():

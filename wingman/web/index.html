@@ -605,7 +605,7 @@
              It is also the control that governs every per-character
              Never-minimize box, and since D6 those boxes do not exist
              until it is on -- so it now sits with the other window
-             behaviour, one card above the rows it creates. -->
+             behaviour, one card above the disclosure it creates. -->
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-minimize-inactive"><span class="box"></span>
@@ -618,15 +618,19 @@
                a persistence failure or the previews-off dependence note,
                then restores it.
 
-               The second sentence changed with D6: the per-character
-               exemption is no longer something the reader can go and look
-               at while this is off, because it is not rendered then. So it
-               says what turning this on ADDS, rather than pointing at a
-               row of dimmed checkboxes that used to be there. -->
+               Shortened when the per-character exemption moved into its
+               own disclosure just below (renderNeverMinimizeBlock): the
+               second sentence used to point the reader at the character
+               table for the "Never minimize" box this toggle creates, and
+               that box no longer lives there. -->
           <span class="hint" id="preview-minimize-inactive-status">Applies
-            the next time a client is switched away from, not this one.
-            While it is on, each character below gets a "Never minimize"
-            box that exempts it.</span></div>
+            the next time a client is switched away from, not this
+            one.</span></div>
+        <details class="pv-exc" id="preview-nm-exceptions">
+          <summary id="preview-nm-exceptions-summary"></summary>
+          <div class="pv-exc-list" id="preview-nm-exceptions-list"
+               role="group" aria-labelledby="preview-nm-exceptions-summary"></div>
+        </details>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -693,6 +697,11 @@
           <span class="hint" id="preview-lock-default-status">Applies to
             every character whose own Lock box you have not changed.</span>
           </div>
+        <details class="pv-exc" id="preview-lock-exceptions">
+          <summary id="preview-lock-exceptions-summary"></summary>
+          <div class="pv-exc-list" id="preview-lock-exceptions-list"
+               role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
+        </details>
         <div class="row">
           <label class="lab" for="preview-default-size">Default preview
             size</label>
