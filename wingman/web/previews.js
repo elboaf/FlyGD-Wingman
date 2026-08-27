@@ -124,10 +124,23 @@
 
   function makeRow(label, gesture, online, onSet, character) {
     var row = WM.make('div', 'row');
-    var lab = WM.make('span', 'lab', label);
+    var lab = WM.make('span', 'lab');
+    // The name in a span of its own, not as `.lab`'s own text. The cell is
+    // a flex row (style.css) so that the name can ellipsize inside its
+    // fixed 150px track while the `offline` tag beside it keeps its full
+    // width -- the tag is the encoding of that state and cannot be
+    // truncated away. Appended to `lab`, NOT to `row`: an extra child on
+    // the row would be an extra grid cell, and the cell-count guard reads
+    // appends lexically, so it could not see one that appears on offline
+    // rows only.
+    lab.appendChild(WM.make('span', 'lab-name', label));
     // The track is a fixed 150px, so a long name ellipsizes. The title is
-    // the only place the whole of it can be read. Rewritten below for an
-    // offline character, which has a second thing to say.
+    // the only place the whole of it can be read. Unconditional, including
+    // for names that plainly fit: knowing whether this one truncated means
+    // comparing scrollWidth to clientWidth, which is a forced reflow per
+    // row -- thirteen of them to avoid a tooltip repeating a short name.
+    // It carries the name alone; the offline state is visible text in the
+    // cell and does not need a second home here.
     lab.title = label;
     // Offline is information, not an error: the binding is still saved and
     // still works the moment that character logs in.
@@ -140,19 +153,6 @@
     if (online === false) {
       lab.classList.add('dim');
       lab.appendChild(WM.make('span', 'off-tag', 'offline'));
-      // The word goes into the title too, and that is not belt-and-braces.
-      // The tag sits AFTER the name inside the same 150px track, so a name
-      // long enough to fill the track ellipsizes the tag away with it --
-      // measured in the harness at the 840x625 floor: a 14-character name
-      // leaves the tag 19.6px of headroom, a 37-character one pushes its
-      // right edge to 500.41 against a track ending at 359, so the word is
-      // gone and `.dim` is all that is left. That is the colour-only state
-      // this tag exists to avoid, so the title has to carry it where the
-      // track cannot. It is a FALLBACK and not a repair -- a hover target
-      // is not visible text, and the real answer is a place for the tag
-      // that the name's ellipsis cannot reach. Recorded here so that is a
-      // known gap rather than a rediscovery.
-      lab.title = label + ' \u2014 offline';
     }
     row.appendChild(lab);
 

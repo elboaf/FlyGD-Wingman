@@ -177,6 +177,30 @@ def test_settings_rows_label_through_the_shared_column():
             )
 
 
+def _media_spans(max_width: int) -> list[tuple[int, int]]:
+    """(start, end) offsets into CSS of every `max-width: <n>px` block BODY,
+    brace-matched.
+
+    Slicing from the first occurrence to the end of the file is not enough:
+    these rules may sit beside the override they correct, so such a slice
+    also contains the override itself and an assertion passes on the wrong
+    text. That is not hypothetical -- the first version of
+    test_an_id_override_of_the_label_column_still_collapses_at_the_floor did
+    exactly that and survived deleting the rule it exists to require.
+
+    Offsets rather than text, because the second caller needs to ask where a
+    rule IS, not only what the narrow blocks contain.
+    """
+    spans = []
+    for m in re.finditer(rf"@media \(max-width: {max_width}px\)\s*\{{", CSS):
+        i, depth = m.end(), 1
+        while i < len(CSS) and depth:
+            depth += {"{": 1, "}": -1}.get(CSS[i], 0)
+            i += 1
+        spans.append((m.end(), i - 1))
+    return spans
+
+
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
     rows on purpose -- their labels are long action and character names,
@@ -197,20 +221,7 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     overrides = set(re.findall(r"(#[\w-]+) \.row > \.lab \{", CSS))
     assert overrides, "no id override of the shared label column found at all"
 
-    # The BODIES of every max-width:720px block, brace-matched. Slicing from
-    # the first occurrence to the end is not enough: these rules may sit
-    # beside the override they correct, so such a slice also contains the
-    # override itself and the assertion passes on the wrong text. That is
-    # not hypothetical -- the first version of this test did exactly that
-    # and survived deleting the rule it exists to require.
-    narrow = []
-    for m in re.finditer(r"@media \(max-width: 720px\)\s*\{", CSS):
-        i, depth = m.end(), 1
-        while i < len(CSS) and depth:
-            depth += {"{": 1, "}": -1}.get(CSS[i], 0)
-            i += 1
-        narrow.append(CSS[m.end() : i - 1])
-    body = "\n".join(narrow)
+    body = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(720))
 
     for host in sorted(overrides):
         assert f"{host} .row > .lab" in body, (
@@ -236,7 +247,22 @@ def test_each_keybind_list_declares_a_deliberate_first_track():
     What still has to hold is that neither list gets there by accident. A
     `max-content` first track is the original bug; each list must declare
     either a fixed track or a spanning label, and say which.
+
+    Read over EVERY `.lab` override a host declares, not the first one the
+    file happens to contain. Both hosts carry two: the override itself and
+    the `max-width: 720px` restore that hands the name a whole line at a
+    narrow width -- required by
+    test_an_id_override_of_the_label_column_still_collapses_at_the_floor
+    and deliberately not re-checked here. A first-match read would make
+    this test's answer depend on which of the two comes first in the
+    stylesheet, so swapping two rule blocks -- an edit with no visible
+    effect at any width this window can reach, since the CSS floor is
+    840x625 -- would flip it silently. That is precisely the failure a
+    lexical guard exists to prevent, so the property is asserted over the
+    non-media blocks as a set.
     """
+    narrow = _media_spans(720)
+
     for host, expected in (("#eve-binds", "span"), ("#preview-binds", "fixed")):
         m = re.search(re.escape(host) + r" \{(.*?)\}", CSS, re.DOTALL)
         assert m, f"{host} has no rule block"
@@ -248,13 +274,20 @@ def test_each_keybind_list_declares_a_deliberate_first_track():
             f"which is round 3's B1 -- the bind button moves with the "
             f"content and, in Previews, between sessions"
         )
-        lab = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
-        assert lab, f"{host} no longer overrides the shared label column"
-        spans = "grid-column: 1 / -1" in lab.group(1)
+        blocks = [
+            b
+            for b in re.finditer(
+                re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL
+            )
+            if not any(lo <= b.start() < hi for lo, hi in narrow)
+        ]
+        assert blocks, f"{host} no longer overrides the shared label column"
+        spans = any("grid-column: 1 / -1" in b.group(1) for b in blocks)
         assert spans == (expected == "span"), (
-            f"{host}'s label {'spans' if spans else 'sits in a track'}, "
-            f"which is not what this list decided: Bookmarks spans for its "
-            f"189.6px labels, Previews takes a fixed column for its names"
+            f"{host}'s label {'spans' if spans else 'sits in a track'} at "
+            f"full width, which is not what this list decided: Bookmarks "
+            f"spans for its 189.6px labels, Previews takes a fixed column "
+            f"for its names"
         )
 
 
@@ -1407,6 +1440,86 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         f"{append_order}. Every heading below the swap labels the wrong "
         f"control, and the cell COUNTS still agree, so nothing else here "
         f"would catch it."
+    )
+
+
+def test_only_the_previews_name_is_allowed_to_ellipsize():
+    """The name and the `offline` tag share one 150px cell, and only one of
+    them can truncate gracefully.
+
+    A character is identifiable from a prefix and the whole string is in
+    the cell's `title`, so clipping the NAME costs nothing. The tag is not
+    the same kind of thing: it is the encoding of the offline state, and
+    `.lab.dim`'s colour only reinforces it. Lose the word and what is left
+    is colour-only state, WCAG 1.4.1 -- the failure the tag was added to
+    prevent.
+
+    Putting the ellipsis on `.lab` itself clips the PAIR, so a long enough
+    name takes the tag with it. Measured in the harness at the 840x625
+    floor before this split: a 14-character name left the tag 19.6px of
+    headroom, a 37-character one pushed its right edge to 500.41 against a
+    track ending at 359 -- the word gone entirely, with no width at which
+    the reader is told.
+
+    So the cell is a flex row: the name yields (`min-width: 0` plus the
+    ellipsis) and the tag reserves its width (`flex: none`). Offline rows
+    pay about 44px of name width for it and online rows pay nothing, since
+    the tag only exists when `online === false`.
+
+    Reads the non-media `.lab` block, not the first one in the file, for
+    the reason test_each_keybind_list_declares_a_deliberate_first_track
+    spells out: this host declares two and a first-match read would answer
+    from whichever the stylesheet happens to list first.
+    """
+    narrow = _media_spans(720)
+    labs = [
+        b
+        for b in re.finditer(r"#preview-binds \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
+        if not any(lo <= b.start() < hi for lo, hi in narrow)
+    ]
+    assert labs, "#preview-binds no longer overrides the shared label column"
+    lab = "\n".join(b.group(1) for b in labs)
+    assert re.search(r"display:\s*flex", lab), (
+        "#preview-binds's label cell is no longer a flex row, so the tag "
+        "cannot reserve its width against the name"
+    )
+    assert "text-overflow" not in lab, (
+        "#preview-binds's label cell ellipsizes as a whole again, which "
+        "clips the `offline` tag along with the name it qualifies"
+    )
+
+    name = re.search(
+        r"#preview-binds \.row > \.lab > \.lab-name \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert name, "the previews name span has no rule of its own to ellipsize in"
+    for prop in ("min-width: 0", "text-overflow: ellipsis", "white-space: nowrap"):
+        assert prop in name.group(1), (
+            f".lab-name must declare `{prop}` -- without all three the name "
+            f"either refuses to shrink inside the flex row or wraps instead "
+            f"of ellipsizing"
+        )
+
+    tag = re.search(
+        r"#preview-binds \.row > \.lab > \.off-tag \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert tag and "flex: none" in tag.group(1), (
+        "the `offline` tag no longer reserves its width, so the flex row "
+        "shrinks it away and the state goes back to being colour-only"
+    )
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+    assert "'lab-name'" in body, (
+        "makeRow no longer builds a .lab-name span, so the CSS above has "
+        "nothing to apply to and the name is a bare text node again"
+    )
+    # The tag is appended to the LAB, not the row. Appending it to the row
+    # would give offline rows one cell more than online ones, which the
+    # cell-count guard cannot see because it counts appends lexically
+    # rather than per render.
+    assert "lab.appendChild(WM.make('span', 'off-tag'" in body, (
+        "the offline tag is no longer appended to the label cell -- in the "
+        "row it would be an extra grid cell on offline rows only"
     )
 
 

@@ -2055,7 +2055,13 @@ button.btn:disabled,
    own row rather than depending on a legend at the top of the list. Text
    is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
    --fs-muted so it reads as an annotation on the name rather than as a
-   second name. */
+   second name.
+
+   Now that the name sits in a fixed track, "text is the encoding" needs
+   the tag to survive a name that fills it -- see the `flex: none` under
+   #preview-binds, which is what keeps this word from being ellipsized
+   away with the name. The margin-left below is why that block declares no
+   `gap`. */
 .off-tag {
   margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
 }
@@ -2112,11 +2118,36 @@ button.btn:disabled,
    `margin-top` either -- that margin existed to separate one stacked
    name-plus-controls block from the next, and there are no blocks to
    separate once every row is one line. #eve-binds still stacks and still
-   carries both. */
+   carries both.
+
+   A FLEX ROW, and the ellipsis is on the name span rather than here. The
+   cell holds two things -- the name and, for an offline character, the
+   `.off-tag` word -- and only the name can truncate gracefully: a
+   character is identifiable from a prefix and the whole string is in the
+   cell's `title`. The tag is the ENCODING of the offline state, with
+   `.lab.dim`'s colour only reinforcing it, so clipping it leaves
+   colour-only state (WCAG 1.4.1), which is the failure the word was added
+   to prevent. Ellipsizing `.lab` itself clips the pair: measured at the
+   840x625 floor, a 14-character name left the tag 19.6px of headroom and
+   a 37-character one pushed its right edge to 500.41 against a track
+   ending at 359. Splitting the cell costs offline rows about 44px of name
+   width and online rows nothing, since the tag only exists when the
+   character is offline. Scoped to this list: `.lab` is shared with
+   Settings and Profiles, which have no tag and must not become flex.
+
+   No `gap` -- `.off-tag` carries its own 8px margin-left, and a gap here
+   would double it. */
 #preview-binds .row > .lab {
+  display: flex; align-items: baseline;
   width: auto; min-width: 0; text-align: left; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* `min-width: 0` because a flex item's default `min-width: auto` refuses
+   to shrink below its content, which would push the tag out of the cell
+   instead of ellipsizing the name -- the whole point of the split. */
+#preview-binds .row > .lab > .lab-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#preview-binds .row > .lab > .off-tag { flex: none; }
 /* Each row contributes fewer cells than the grid has tracks, because the
    trailing flexible one holds no control. Without a definite start, grid
    auto-placement puts the NEXT row's first cell there and every row after

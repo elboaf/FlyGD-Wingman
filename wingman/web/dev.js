@@ -726,12 +726,13 @@
       // shrink; B1 then gave the name a full-width line of its own, where
       // nothing could squeeze it; the name is back in a column now, a
       // FIXED 150px one. At 291px of text against that track it is the
-      // only fixture row that exercises the ellipsis, the `title`
-      // fallback, and -- measured -- the case where the trailing
-      // `offline` tag is clipped away with the name it qualifies. It also
-      // still proves the older half: a name wider than the control line
-      // neither wraps badly nor pushes the card into horizontal overflow
-      // at the 840px floor.
+      // only fixture row that exercises the ellipsis, the `title` that
+      // carries the untruncated name, and -- with this row also being
+      // offline -- the proof that the `offline` tag keeps its full width
+      // while the name yields, which is what the flex split of `.lab`
+      // exists to do. It also still proves the older half: a name wider
+      // than the control line neither wraps badly nor pushes the card into
+      // horizontal overflow at the 840px floor.
       roster: [
         'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
         'Aleksandrina Shadowbanes Voidstriders'
