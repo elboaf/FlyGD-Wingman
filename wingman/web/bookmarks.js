@@ -474,7 +474,8 @@
     // through the styled overlay; skills.js:624 records deliberately
     // avoiding window.confirm for the same reason.
     WM.confirm('Reset keybinds',
-               'Replace all 18 keybinds with the recommended defaults?')
+               'Replace all 18 keybinds with the recommended defaults?',
+               { destructive: true })
       .then(function (ok) {
         if (!ok) { return; }
         WM.send('reset_binds').then(render);

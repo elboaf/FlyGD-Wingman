@@ -52,6 +52,11 @@ def test_delete_confirms_by_naming_every_file_and_saying_it_is_final(tmp_path):
     assert "a.mkv" in body and "b.mkv" in body
     assert "cannot be undone" in body
     assert (tmp_path / "a.mkv").exists()
+    # Round 6, P0-1. A body that says "cannot be undone" over a Confirm
+    # rendered in the accent purple is the colour system contradicting the
+    # copy, which is what shipped: panel.js hard-coded `btn acc` on every
+    # confirm. The flag is what lets the page render .btn.danger instead.
+    assert api._confirm.destructive == [True]
 
 
 def test_declining_the_delete_leaves_the_files_alone(tmp_path):

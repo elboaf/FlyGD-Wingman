@@ -589,7 +589,7 @@ class Api:
             "onDialog", {"kind": kind, "title": title, "body": body, "request_id": None}
         )
 
-    def _confirm(self, title: str, body: str) -> bool:
+    def _confirm(self, title: str, body: str, *, destructive: bool = False) -> bool:
         """Ask the page a yes/no question and block until it answers.
 
         This blocks the CALLING thread, which must be a worker -- exactly as
@@ -600,15 +600,39 @@ class Api:
 
         The Event is registered before the push, not after: `evaluate_js`
         can complete and the user can answer before this method resumes.
-        """
-        return self._ask(title, body, timeout=None)
 
-    def _ask(self, title: str, body: str, *, timeout: float | None) -> bool:
+        `destructive` picks the affirming button's treatment on the page.
+        See _ask.
+        """
+        return self._ask(title, body, timeout=None, destructive=destructive)
+
+    def _ask(
+        self,
+        title: str,
+        body: str,
+        *,
+        timeout: float | None,
+        destructive: bool = False,
+    ) -> bool:
         """The body of _confirm, with the wait made optional.
 
         `timeout=None` is _confirm's own unbounded wait, unchanged. A
         deadline is only useful to a caller that holds something while it
         waits -- see _eve_confirm.
+
+        `destructive=True` sends the page a dialog whose Confirm is
+        .btn.danger rather than .btn.acc. It is a claim about the ACTION,
+        not about the wording: pass it wherever the affirming answer
+        destroys something clicking again will not bring back. The
+        default is False because most confirms are not that, and a
+        destructive treatment that appears everywhere says nothing.
+
+        This exists because panel.js used to hard-code `btn acc` on every
+        confirm under a comment reading "Upload is the app's only
+        irreversible action". Delete and the EVE settings copy had both
+        falsified that by the time it was read, so the one dialog in the
+        app that overwrites 34 characters' settings was rendering its
+        Confirm in the same encouraging purple as `Upload`.
         """
         request_id = self._id_factory()
         event = threading.Event()
@@ -623,6 +647,7 @@ class Api:
                     "title": title,
                     "body": body,
                     "request_id": request_id,
+                    "destructive": destructive,
                 },
             )
             if not event.wait(timeout):
@@ -796,6 +821,7 @@ class Api:
             "Confirm Delete",
             f"Permanently delete these files from disk?\n\n{names}"
             "\n\nThis cannot be undone.",
+            destructive=True,
         ):
             return
         deleted, failures = library.delete([i.path for i in infos])
@@ -3698,7 +3724,7 @@ class Api:
             raise
         return True
 
-    def _eve_confirm(self, title: str, body: str) -> bool:
+    def _eve_confirm(self, title: str, body: str, *, destructive: bool = False) -> bool:
         """_confirm, bounded, for the workers that hold the mutation lock.
 
         _push swallows every evaluate_js failure, so a confirmation whose
@@ -3706,7 +3732,9 @@ class Api:
         the lock -- permanently refusing every later copy, backup, restore
         and delete. A missing answer is read as "no".
         """
-        return self._ask(title, body, timeout=EVE_CONFIRM_TIMEOUT_S)
+        return self._ask(
+            title, body, timeout=EVE_CONFIRM_TIMEOUT_S, destructive=destructive
+        )
 
     def _eve_done(self, ok: bool) -> None:
         """Tell the page the mutation finished, so it can re-enable its
@@ -3746,6 +3774,7 @@ class Api:
                     self._eve_client_running(),
                     source_name=self._eve_label(source),
                 ),
+                destructive=True,
             ):
                 return
             report = evesettings_ops.copy_to_targets(
@@ -3822,6 +3851,7 @@ class Api:
                 "Restore this backup?\n\nThe current settings are backed "
                 "up first. For a whole settings set, any file not in the "
                 "backup is removed.",
+                destructive=True,
             ):
                 return
             store = paths.eve_settings_backup_dir()
@@ -3847,6 +3877,7 @@ class Api:
             if not self._eve_confirm(
                 "Confirm Delete",
                 f"Permanently delete {Path(archive).name}?\n\nThis cannot be undone.",
+                destructive=True,
             ):
                 return
             evesettings_backup.delete(paths.eve_settings_backup_dir(), archive)

@@ -30,10 +30,12 @@ def build(tmp_path, monkeypatch, answer=True):
     )
     built = api_mod.Api(state, spawn=ImmediateThread)
     built._window = FakeWindow()
-    built._confirm = lambda title, body: answer
+    built._confirm = lambda title, body, **kw: answer
     # The EVE workers ask through _eve_confirm, which is _confirm with a
     # deadline; both are stubbed so a test never parks on a dialog.
-    built._eve_confirm = lambda title, body: answer
+    # **kw swallows round-6's `destructive`, which these tests do not
+    # assert; test_the_copy_confirm_is_marked_destructive below does.
+    built._eve_confirm = lambda title, body, **kw: answer
     return built
 
 
@@ -121,7 +123,7 @@ def test_the_copy_confirm_names_the_source_and_the_targets(tmp_path, monkeypatch
     api._eve_names.names[1] = "Guarzo Opper"
     api._eve_names.names[2] = "Zircon Gravimeld"
     seen = []
-    api._eve_confirm = lambda title, body: seen.append(body) or False
+    api._eve_confirm = lambda title, body, **kw: seen.append(body) or False
 
     api.eve_settings_copy(
         str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
@@ -609,12 +611,44 @@ def confirms(api):
     """Capture confirm bodies and decline, so nothing is written."""
     asked = []
 
-    def ask(title, body):
+    def ask(title, body, *, destructive=False):
         asked.append((title, body))
         return False
 
     api._eve_confirm = ask
     return asked
+
+
+def test_the_copy_confirm_is_marked_destructive(tmp_path, monkeypatch):
+    """Round 6, P0-1: the affirming button must be .btn.danger, not .btn.acc.
+
+    Asserted at the CALL, not in the source. `panel.js` used to hard-code
+    `btn acc` on every confirm under a comment claiming upload was the
+    app's only irreversible action, so this dialog -- the one that
+    overwrites another character's EVE settings -- offered the same
+    encouraging purple as `Upload`, auto-focused. The page cannot pick the
+    treatment unless the flag actually crosses the bridge, so the flag is
+    what this checks.
+    """
+    api = build(tmp_path, monkeypatch)
+    seen = []
+
+    def ask(title, body, *, destructive=False):
+        seen.append(destructive)
+        return False
+
+    api._eve_confirm = ask
+    profile = eve_tree(tmp_path)
+    api._eve_client_running = lambda: False
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
+
+    assert seen == [True], (
+        "eve_settings_copy must ask with destructive=True; without it the "
+        "page renders Confirm as .btn.acc"
+    )
 
 
 def test_the_copy_confirm_names_characters_rather_than_files(tmp_path, monkeypatch):

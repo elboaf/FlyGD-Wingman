@@ -26,6 +26,7 @@ well designed; they only stop a convention being dropped silently. What
 they cannot see is recorded in DESIGN.md.
 """
 
+import ast
 import pathlib
 import re
 
@@ -981,6 +982,105 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_a_destructive_confirm_does_not_take_the_accent_button():
+    """The affirming button of a destructive confirm is .btn.danger.
+
+    Round 6, P0-1. `panel.js` hard-coded `btnOk.className = isConfirm ?
+    'btn acc' : 'btn'` under a comment reading "Upload is the app's only
+    irreversible action". Delete and the EVE settings copy had both
+    falsified that premise by the time anyone re-read it, so the dialog
+    that overwrites 34 characters' settings rendered its Confirm in the
+    same encouraging purple as `Upload` -- auto-focused, so it carried the
+    focus ring too -- while the .btn.danger trigger that opened it sat
+    behind the overlay in red.
+
+    Three things are asserted, because the bug can come back three ways.
+    """
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+
+    # 1. The class is chosen from item.destructive, not from isConfirm alone.
+    assert "item.destructive" in panel, (
+        "panel.js must read item.destructive when picking the affirming "
+        "button's class; without it every confirm is .btn.acc again"
+    )
+    assert re.search(r"'btn danger'", panel), (
+        "panel.js must be able to render the affirming button as "
+        "'btn danger' -- .btn.danger is the app's one destructive treatment"
+    )
+
+    # 2. Python must be ABLE to say so, or the four workers that destroy
+    #    something have no way to ask for it.
+    api = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
+    assert '"destructive": destructive' in api, (
+        "_ask must put `destructive` in the onDialog payload; the page "
+        "cannot read a flag that never crosses the bridge"
+    )
+
+    # 3. Every Python confirm whose body says the action is final must
+    #    pass the flag. Walked with ast, NOT matched with a regex: the
+    #    first version of this guard used one, matched 3 of the 4 call
+    #    sites, and passed while `Confirm Copy` -- the dialog that
+    #    overwrites 34 characters' settings, and the whole reason for this
+    #    test -- was silently outside it. A call site is a call node.
+    tree = ast.parse(api)
+    seen = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (
+            isinstance(fn, ast.Attribute) and fn.attr in ("_confirm", "_eve_confirm")
+        ):
+            continue
+        if not (isinstance(fn.value, ast.Name) and fn.value.id == "self"):
+            continue
+        title = (
+            node.args[0].value
+            if node.args and isinstance(node.args[0], ast.Constant)
+            else "<computed>"
+        )
+        source = ast.get_source_segment(api, node) or ""
+        final = (
+            "cannot be undone" in source
+            or "Permanently delete" in source
+            or "format_eve_copy_confirm" in source
+        )
+        flagged = any(
+            kw.arg == "destructive"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in node.keywords
+        )
+        seen[(title, node.lineno)] = (final, flagged)
+
+    # The count is asserted so this cannot go quiet the way the regex did.
+    assert len(seen) >= 4, (
+        f"expected at least 4 self._confirm/_eve_confirm call sites, "
+        f"walked {len(seen)}: {sorted(seen)}"
+    )
+    unflagged = sorted(
+        f"{title} (api.py:{line})"
+        for (title, line), (final, flagged) in seen.items()
+        if final and not flagged
+    )
+    assert not unflagged, (
+        "these confirms say the action is final but do not pass "
+        f"destructive=True, so their Confirm renders as .btn.acc: {unflagged}"
+    )
+    # And the converse, so the treatment keeps meaning something: Upload
+    # is irreversible in that a video becomes public, but it destroys
+    # nothing and it is the one action the Uploader exists to perform.
+    upload = [
+        flagged
+        for (title, _), (_, flagged) in seen.items()
+        if title == "Confirm Upload"
+    ]
+    assert upload == [False], (
+        "Confirm Upload must keep .btn.acc -- a destructive treatment on "
+        f"every confirm says nothing (found {upload})"
     )
 
 

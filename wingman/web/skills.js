@@ -376,7 +376,8 @@
         }
         WM.confirm('Merge groups',
                    '“' + wanted + '” already exists. Renaming “'
-                   + current + '” will merge the two into one group.')
+                   + current + '” will merge the two into one group.',
+                   { destructive: true })
           .then(function (ok) {
             if (ok) WM.send('skills_rename_group', current, wanted);
           });
@@ -390,7 +391,8 @@
     WM.confirm('Delete group',
                'Delete “' + current + '”? Its ' + total
                + (total === 1 ? ' character' : ' characters')
-               + ' stay on the roster and become ungrouped.')
+               + ' stay on the roster and become ungrouped.',
+               { destructive: true })
       .then(function (ok) {
         if (ok) WM.send('skills_delete_group', current);
       });

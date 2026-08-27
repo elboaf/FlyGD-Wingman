@@ -434,7 +434,8 @@
     WM.confirm('Remove webhook',
                'Combat logs stop being posted to ' + which + ' — and '
              + 'Wingman cannot get the URL back. You would create a new '
-             + 'webhook in Discord and paste it here.')
+             + 'webhook in Discord and paste it here.',
+               { destructive: true })
       .then(function (ok) {
         if (!ok) { return; }
         commit('msg-discord', ['clear_discord_webhook'], null,
@@ -1001,7 +1002,8 @@
     WM.confirm('Reset previews',
                'Every preview goes back to its default size and place. The '
              + 'positions you have dragged are discarded, and Wingman '
-             + 'cannot get them back.')
+             + 'cannot get them back.',
+               { destructive: true })
       .then(function (ok) {
         if (!ok) { return; }
         WM.send('reset_preview_layouts').then(function (res) {

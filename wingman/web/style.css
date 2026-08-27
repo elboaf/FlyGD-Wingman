@@ -1743,6 +1743,16 @@ button.btn:disabled,
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
   box-shadow: 0 0 9px rgb(var(--brand-rgb) / .5);
 }
+/* A destructive confirm takes --danger, the token minted at :root for
+   "this control destroys something", so the heading agrees with the
+   .btn.danger the affirming button now carries. Later than
+   .dialog.confirm and equal specificity (0,2,0), which is what lets a
+   dialog carry both classes -- panel.js sets `dialog confirm destructive`
+   so a page that never passes the flag is unchanged. */
+.dialog.confirm.destructive h3::before {
+  background: var(--danger);
+  box-shadow: 0 0 9px var(--danger);
+}
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
      (n/total) titles in it; pre-wrap is what keeps that layout. */

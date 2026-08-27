@@ -366,9 +366,30 @@
     // A prompt is answerable too, so it needs the same way out.
     btnCancel.hidden = !(isConfirm || isPrompt);
     btnOk.textContent = isConfirm ? 'Confirm' : (isPrompt ? 'Set' : 'OK');
-    // Upload is the app's only irreversible action, so the accent stays on
-    // the affirming button of a confirm and on nothing else in the dialog.
-    btnOk.className = isConfirm ? 'btn acc' : 'btn';
+    // The affirming button of a destructive confirm is .btn.danger, not
+    // .btn.acc.
+    //
+    // This line used to read `isConfirm ? 'btn acc' : 'btn'` under a
+    // comment saying "Upload is the app's only irreversible action, so
+    // the accent stays on the affirming button of a confirm". Delete and
+    // the EVE settings copy had both falsified that premise long before
+    // anyone re-read it, so `Delete recording?` and `Copy X's settings
+    // onto 34 other characters?` were rendering Confirm in the same
+    // encouraging purple as `Upload` -- and auto-focused, so it also
+    // carried the focus ring. The trigger that opens the delete dialog is
+    // itself .btn.danger (index.html:112): the colour system inverted at
+    // the exact moment the stakes peaked.
+    //
+    // Upload keeps .btn.acc. It is irreversible in the sense that a video
+    // becomes public, but it destroys nothing, and it is the one action
+    // the Uploader exists to perform.
+    var destructive = isConfirm && !!item.destructive;
+    btnOk.className = destructive
+      ? 'btn danger'
+      : (isConfirm ? 'btn acc' : 'btn');
+    // The heading tick takes the same severity, so the dialog reads as
+    // destructive before the eye reaches the button.
+    if (destructive) { dlg.className = 'dialog confirm destructive'; }
     overlay.hidden = false;
     // The field, not the button: a prompt exists to be typed into, and
     // landing on OK means every user starts with a Tab.
@@ -410,9 +431,15 @@
   // with the page's origin.
   //
   // Same queue, same styling, same Escape-is-No rule as a Python dialog.
-  WM.confirm = function (title, body) {
+  //
+  // `opts.destructive` marks the affirming answer as one that destroys
+  // something clicking again will not bring back; it picks .btn.danger
+  // over .btn.acc. Pass it for the ACTION, not for the wording -- a
+  // treatment that appears on every confirm says nothing.
+  WM.confirm = function (title, body, opts) {
     return new Promise(function (resolve) {
       var item = { kind: 'confirm', title: title, body: body,
+                   destructive: !!(opts && opts.destructive),
                    resolve: resolve };
       if (active) { queue.push(item); } else { show(item); }
     });
