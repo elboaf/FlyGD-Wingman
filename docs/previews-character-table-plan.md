@@ -530,6 +530,8 @@ git commit -m "Previews: move Never minimize out of the row, retiring .no-nm"
     )
 ```
 
+**While you are in this test, decide the shape of `makeRow`'s branch.** Task 2 left `if (character) { <comments only> } else { <one filler append> }` — an empty `if` whose prose records what used to be built there. The obvious cleanup is `if (!character)`, and it is blocked by this very test: the body is split on the literal string `"} else {"` and the split is asserted to find two halves, so collapsing the branch fails the guard with "makeRow no longer has the cycle-row filler branch". You are rewriting the guard, so you may collapse the branch and change the split with it, or leave both. If you collapse it, keep the prose — move it above the `if` — and replace the split-based count with one that does not depend on a brace-and-keyword string. If you leave it, say nothing; Task 2 already documented why it is empty.
+
 Then fix the header guard, which reads its track count with a regex anchored to `repeat(` and will not match a fixed first track. In `test_the_previews_header_row_names_one_column_per_track`, replace the `tracks` search and its assertion:
 
 ```python
