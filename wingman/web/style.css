@@ -1476,8 +1476,14 @@ button.btn:disabled,
    close to invisible. The class still covers the label because `cursor`
    still lives there and a future labelled `.check` in this grid would
    need it; the box itself now takes a flatter, borderless fill as well,
-   so an inert control reads as inert at the size it actually is. */
-#preview-binds .check.inert { opacity: .45; cursor: default; }
+   so an inert control reads as inert at the size it actually is.
+
+   No longer scoped to `#preview-binds`: `makeLockCheck` now also renders
+   inside the Lock disclosure below the global toggle, and an opted-out
+   character's box has to read as inert there too. Scoping this to the
+   row grid would silently drop the treatment in the second place a check
+   built by `inert()` can appear. */
+.check.inert { opacity: .45; cursor: default; }
 /* Carried by the BOX, not the label, so it survives the label having no
    text to dim. Both tokens are already in the palette.
 
@@ -1499,7 +1505,7 @@ button.btn:disabled,
    column to the left. --control-edge is about 1.23:1 there. Neither meets
    the 3:1 DESIGN.md sets for a state border, and that miss predates this
    rule, but the box has to stay FINDABLE before it can be dimmed. */
-#preview-binds .check.inert input:not(:checked) + .box {
+.check.inert input:not(:checked) + .box {
   background: var(--sunken);
 }
 /* The Size column's cell for a character that cannot be sized yet.
@@ -1509,6 +1515,23 @@ button.btn:disabled,
    never be reached. The dash gives it a line box, and says "nothing here"
    to someone who never hovers at all. */
 .size-none { color: var(--text-faint); cursor: default; }
+
+/* The per-character exceptions to a global preview default. Sits directly
+   under the toggle it excepts, indented to that toggle's label text (the
+   .check wrapper's 15px box plus its 9px gap), so the exception reads as
+   belonging to the rule above it rather than to the control below.
+
+   The gap above is deliberately smaller than the gap below: the collapsed
+   summary is one line, and equal gaps let it read as a heading for the
+   NEXT toggle. */
+.pv-exc { margin: 2px 0 10px 24px; font-size: var(--fs-muted); }
+.pv-exc summary { cursor: pointer; color: var(--text-dim); }
+.pv-exc summary:hover { color: var(--text); }
+/* Same column treatment .es-roster uses on Profiles, and for the same
+   reason: a list of character names in a card too narrow for one column
+   leaves most of its width empty. */
+.pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
+.pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
@@ -2026,15 +2049,17 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Seven fixed tracks, then one flexible one. The character name takes a
+  /* Six fixed tracks, then one flexible one. The character name takes a
      line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
      size the CONTROLS on the line beneath it: Off, bind button,
-     Clear, Edit…, Size…, Lock, Never minimize -- exactly the seven
-     children previews.js's makeRow appends after the label. The trailing
-     minmax(0, 1fr) absorbs the leftover width so the seven stay packed at
+     Clear, Edit…, Size…, Never minimize -- exactly the six children
+     previews.js's makeRow appends after the label. Lock used to be a
+     seventh; it now renders once, in its own disclosure under the global
+     Lock toggle, rather than as a track on every row. The trailing
+     minmax(0, 1fr) absorbs the leftover width so the six stay packed at
      the start instead of spreading.
 
-     "Off" leads rather than joining the other two checkboxes at the
+     "Off" leads rather than joining the other checkbox at the
      end because it governs every control after it: with it ticked the rest
      of the row is inert, and a master switch reads better before the
      things it switches off than stranded past them.
@@ -2043,21 +2068,22 @@ button.btn:disabled,
      display:contents, so the grid sees one flat stream of cells and cannot
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
-     That is why makeRow always appends exactly one of {both checkboxes} or
-     {three filler spans} -- cycle forward/back have no character, and
+     That is why makeRow always appends exactly one of {the opt-out
+     checkbox}, {the Size control or its filler}, and {the Never-minimize
+     checkbox or its filler} -- cycle forward/back have no character, and
      without the fillers those two rows would misalign every row after
      them. Change the number of per-row children and this number changes
      with it -- test_page_conventions.py now DERIVES the expected count
      from makeRow's own appends rather than trusting this comment. */
-  grid-template-columns: repeat(7, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
 }
-/* Six, in the default state. Decision D6 (round 5, C3): the per-character
+/* Five, in the default state. Decision D6 (round 5, C3): the per-character
    Never-minimize checkbox does not render while the global minimize toggle
-   is off, so previews.js appends six cells per row instead of seven and
-   sets this class in the same render. Declaring seven regardless would
+   is off, so previews.js appends five cells per row instead of six and
+   sets this class in the same render. Declaring six regardless would
    leave a max-content track holding nothing -- harmless in itself, but it
    still carries its 10px column-gap, so the row would end in a gap after
-   Lock with no control in it.
+   Size… with no control in it.
 
    The count here is one less than the block above BY HAND, which is the
    one thing in this pair that can drift; test_page_conventions.py asserts
@@ -2067,7 +2093,7 @@ button.btn:disabled,
    shown as every row after the first sliding into the previous row's
    leftover columns. The asserted difference is what catches that. */
 #preview-binds.no-nm {
-  grid-template-columns: repeat(6, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the

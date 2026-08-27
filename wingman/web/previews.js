@@ -281,13 +281,13 @@
     //
     // A filler and not a missing cell. `.row` is display:contents, so a
     // row that skipped this cell would leave its remaining controls one
-    // track to the left -- Lock sitting under the Size heading, and Never
-    // minimize under Lock's. The damage is confined to that row (every
-    // row leads with a full-width `.lab`, which forces a fresh grid row),
-    // but a row whose controls sit under the wrong headings is exactly
-    // the lie the headings were added to stop. One appendChild with a
-    // ternary, for the same reason the opt-out box at the top of this
-    // function uses one.
+    // track to the left -- Never minimize sitting under the Size heading.
+    // The damage is confined to that row (every row leads with a
+    // full-width `.lab`, which forces a fresh grid row), but a row whose
+    // controls sit under the wrong headings is exactly the lie the
+    // headings were added to stop. One appendChild with a ternary, for
+    // the same reason the opt-out box at the top of this function uses
+    // one.
     if (character) {
       row.appendChild(isSizable(character)
                       ? makeSizeButton(character, off)
@@ -295,12 +295,12 @@
     }
 
     // Cycle forward/back have no `character` -- they are chords, not
-    // characters, and neither Lock nor Never-minimize means anything for
-    // them. #preview-binds is a CSS grid with `.row { display: contents }`
-    // (style.css), so every row must contribute the same number of cells
-    // or a short row's children bleed into the next row's columns. Three
-    // empty fillers keep the grid aligned instead of shrinking the column
-    // count for those two rows only.
+    // characters, and Never-minimize means nothing for them. #preview-binds
+    // is a CSS grid with `.row { display: contents }` (style.css), so
+    // every row must contribute the same number of cells or a short row's
+    // children bleed into the next row's columns. Two empty fillers keep
+    // the grid aligned instead of shrinking the column count for those two
+    // rows only.
     //
     // Round 5, C3 and decision D6: the Never-minimize cell exists only
     // while the global "Minimize a client's window..." toggle is ON. It
@@ -315,7 +315,6 @@
     // the invariant #preview-binds' grid actually needs; it is the track
     // COUNT that varies, and render() tells the stylesheet which it is.
     if (character) {
-      row.appendChild(makeLockCheck(character, off));
       // NOT passed `off`, unlike every other control on the row. Opting a
       // character out stops their PREVIEW; it does not stop
       // minimize_inactive_clients, because _activate_client resolves
@@ -326,23 +325,25 @@
       // no control to change it, which is the same shape as the roster
       // eviction LayoutStore._protected exists to prevent.
       //
-      // Lock above IS gated, and the asymmetry is the point: with no
-      // window there is nothing to lock, so that control really is inert.
+      // Lock used to sit here too, gated on `off` -- the asymmetry with
+      // Never minimize was the point: with no window there is nothing to
+      // lock. It has since left the row for its own disclosure under the
+      // global Lock toggle (renderLockBlock), which passes each
+      // character's opted-out state the same way.
       if (minimizeInactive) {
         row.appendChild(makeNeverMinimizeCheck(character));
       }
     } else {
-      // Three fillers with never-minimize on, two with it off. One stands
-      // in for Size…, one for Lock, and the third mirrors the conditional
-      // checkbox above -- so the count tracks the character branch instead
-      // of being stated twice. A constant here would be right in exactly
-      // one of the two states and silently pull every row after this one
-      // into the previous row's leftover columns in the other.
+      // Two fillers with never-minimize on, one with it off. One stands
+      // in for Size…, and the other mirrors the conditional checkbox
+      // above -- so the count tracks the character branch instead of
+      // being stated twice. A constant here would be right in exactly one
+      // of the two states and silently pull every row after this one into
+      // the previous row's leftover columns in the other.
       //
       // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
       // the ternary at the top of this function, which runs for both kinds
       // of row.
-      row.appendChild(document.createElement('span'));
       row.appendChild(document.createElement('span'));
       if (minimizeInactive) { row.appendChild(document.createElement('span')); }
     }
@@ -459,21 +460,22 @@
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isLocked(name);
-    // No word beside the box: the column header says "Lock" once. The
-    // accessible name moves onto the INPUT rather than being dropped --
-    // the label element is what a screen reader would have read, and an
-    // empty one leaves thirteen unnamed checkboxes. `.check input` is
-    // position:absolute, so it is not a flex item and the wrapper's 9px
-    // gap reserves no space beside a box with no text.
-    //
     // The wrapper is built HERE, before the listener, and that ordering is
     // load-bearing: test_page_conventions.py looks for `'box'` within 600
     // characters of `.type = 'checkbox'`, and the listener below is long
     // enough to push it out of that window. The rule it guards is real --
     // a bare input is a white Win32 widget on a dark card -- so the fix is
     // to keep the wrapper next to the input, not to widen the window.
-    box.setAttribute('aria-label', 'Lock ' + name + "'s preview in place");
-    var label = WM.make('label', 'check', '');
+    //
+    // The name is VISIBLE text here, not an aria-label. Under a column
+    // header the word beside the box is the header repeated once per row,
+    // which is why it used to be dropped and the accessible name moved
+    // onto the input (DESIGN.md). In a list there is no header to carry
+    // it, so the word comes back and the aria-label goes: a label with
+    // text AND an aria-label would override the visible one, which is the
+    // failure WCAG 2.5.3 names. What the tick MEANS reaches the reader
+    // through the group's aria-labelledby, once, not per row.
+    var label = WM.make('label', 'check', name);
     label.title = 'Stops this preview being moved by a left drag. A right '
                 + 'drag still moves it.';
     label.prepend(WM.make('span', 'box'));
@@ -525,6 +527,11 @@
         // Filtered first and concatenated onto the filtered list, so a
         // name already present cannot be added twice.
         state.locked = member ? without.concat(name) : without;
+        // The block's summary reads this list, so patching it without a
+        // repaint leaves the sentence above the box stating the state
+        // before the click. Only this block, not render(): a full render
+        // while a keybind capture is armed detaches the armed button.
+        renderLockBlock();
       });
     });
     return inert(label, box, off);
@@ -824,7 +831,7 @@
   // its hole beside itself rather than pulling the next row up.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Preview', 'Keybind', '', '', 'Size', 'Lock'];
+    var cells = ['Preview', 'Keybind', '', '', 'Size'];
     // Tracks the conditional cell in makeRow rather than restating it: the
     // Never-minimize column exists only while the global minimize toggle
     // is on (D6), and a header for a column that is not rendered would
@@ -834,6 +841,55 @@
       row.appendChild(WM.make('span', '', text));
     });
     return row;
+  }
+
+  // How many names a summary spells out before it counts the rest. Same
+  // number and same reason as alerts.js's HEALTH_NAMES_MAX: a list of
+  // names is what the reader can act on, and a bare count is not.
+  var EXC_NAMES_MAX = 3;
+
+  function nameList(names) {
+    var shown = names.slice(0, EXC_NAMES_MAX);
+    var rest = names.length - shown.length;
+    return rest > 0 ? shown.join(', ') + ' and ' + rest + ' more'
+                    : shown.join(', ');
+  }
+
+  // The summary is keyed on the RESOLVED state, not on the exception list
+  // being empty. With lock_default on and no exceptions every character is
+  // already locked, so a door inviting the reader to lock one would offer
+  // something already done.
+  function lockSummary(names, all) {
+    if (!names.length) { return 'Lock individual characters'; }
+    if (names.length === all.length) { return 'Locked: every character'; }
+    var unlocked = all.filter(function (n) {
+      return names.indexOf(n) === -1;
+    });
+    // Past halfway the exception is shorter than the rule, and naming the
+    // shorter side is what makes the sentence readable at 13 characters.
+    if (unlocked.length < names.length) {
+      return 'Locked: every character except ' + nameList(unlocked);
+    }
+    return 'Locked: ' + nameList(names);
+  }
+
+  // The character-list half of the Lock disclosure: which characters are
+  // currently locked, and the sentence in the summary that names them.
+  // Called from render() and, so the sentence never lags one click behind
+  // the box the user just ticked, from makeLockCheck's own change handler.
+  function renderLockBlock() {
+    var box = WM.el('preview-lock-exceptions');
+    var summary = WM.el('preview-lock-exceptions-summary');
+    var list = WM.el('preview-lock-exceptions-list');
+    if (!box || !summary || !list) { return; }
+    var all = rows().map(function (entry) { return entry.name; });
+    var locked = all.filter(isLocked);
+    summary.textContent = lockSummary(locked, all);
+    list.textContent = '';
+    all.forEach(function (name) {
+      list.appendChild(makeLockCheck(name, isExcluded(name)));
+    });
+    box.hidden = !all.length;
   }
 
   function render() {
@@ -923,6 +979,7 @@
 
     var empty = WM.el('preview-binds-empty');
     if (empty) { empty.hidden = list.length > 0; }
+    renderLockBlock();
   }
 
   function send(next) {

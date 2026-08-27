@@ -1437,7 +1437,6 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
         ("Size", "makeSizeButton"),
-        ("Lock", "makeLockCheck"),
         ("Never minimize", "makeNeverMinimizeCheck"),
     )
 
@@ -1520,15 +1519,26 @@ def test_an_opted_out_character_row_disables_its_own_controls():
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
-    # The three above are gated INLINE; these receive the state as an
-    # argument instead, and were unguarded until a review pointed out that
-    # dropping the second argument at either call site leaves the control
-    # live and undimmed with the whole suite green -- which is the exact
-    # failure this test's docstring claims to prevent.
-    for builder in ("makeSizeButton", "makeLockCheck"):
+    # The above is gated INLINE; this receives the state as an argument
+    # instead, and was unguarded until a review pointed out that dropping
+    # the second argument at the call site leaves the control live and
+    # undimmed with the whole suite green -- which is the exact failure
+    # this test's docstring claims to prevent.
+    for builder in ("makeSizeButton",):
         assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
             f"makeRow does not pass the row's opted-out state to {builder}"
         )
+    # Lock left the row for its own disclosure, and took this invariant with
+    # it: with no window there is nothing to lock, so the block must pass
+    # each character's opted-out state the way the row used to. Asserted on
+    # the CALL, not inside the builder, because the call site is what
+    # decides -- the same reasoning the never-minimize guard below gives.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
+        "the Lock block does not pass each character's opted-out state, so "
+        "an opted-out character gets a live control over a window that is "
+        "not there"
+    )
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():
@@ -1550,7 +1560,8 @@ def test_never_minimize_stays_live_on_an_opted_out_row():
         "makeNeverMinimizeCheck is being passed the row's opted-out state, "
         "which would grey a checkbox whose setting is still enforced"
     )
-    assert re.search(r"makeLockCheck\(character,[^)]*\boff\b", body), (
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
         "Lock SHOULD be gated -- with no window there is nothing to lock"
     )
 
