@@ -125,6 +125,10 @@
   function makeRow(label, gesture, online, onSet, character) {
     var row = WM.make('div', 'row');
     var lab = WM.make('span', 'lab', label);
+    // The track is a fixed 150px, so a long name ellipsizes. The title is
+    // the only place the whole of it can be read. Rewritten below for an
+    // offline character, which has a second thing to say.
+    lab.title = label;
     // Offline is information, not an error: the binding is still saved and
     // still works the moment that character logs in.
     //
@@ -136,6 +140,19 @@
     if (online === false) {
       lab.classList.add('dim');
       lab.appendChild(WM.make('span', 'off-tag', 'offline'));
+      // The word goes into the title too, and that is not belt-and-braces.
+      // The tag sits AFTER the name inside the same 150px track, so a name
+      // long enough to fill the track ellipsizes the tag away with it --
+      // measured in the harness at the 840x625 floor: a 14-character name
+      // leaves the tag 19.6px of headroom, a 37-character one pushes its
+      // right edge to 500.41 against a track ending at 359, so the word is
+      // gone and `.dim` is all that is left. That is the colour-only state
+      // this tag exists to avoid, so the title has to carry it where the
+      // track cannot. It is a FALLBACK and not a repair -- a hover target
+      // is not visible text, and the real answer is a place for the tag
+      // that the name's ellipsis cannot reach. Recorded here so that is a
+      // known gap rather than a rediscovery.
+      lab.title = label + ' \u2014 offline';
     }
     row.appendChild(lab);
 
@@ -284,12 +301,16 @@
     // A filler and not a missing cell. `.row` is display:contents, so a
     // row that skipped this cell would leave its remaining controls one
     // track to the left -- Never minimize sitting under the Size heading.
-    // The damage is confined to that row (every row leads with a
-    // full-width `.lab`, which forces a fresh grid row), but a row whose
-    // controls sit under the wrong headings is exactly the lie the
-    // headings were added to stop. One appendChild with a ternary, for
-    // the same reason the opt-out box at the top of this function uses
-    // one.
+    // The damage is confined to that row, but a row whose controls sit
+    // under the wrong headings is exactly the lie the headings were added
+    // to stop. One appendChild with a ternary, for the same reason the
+    // opt-out box at the top of this function uses one.
+    //
+    // What confines it is `#preview-binds .row > :first-child
+    // { grid-column-start: 1 }` in style.css. The full-width `.lab` used
+    // to force a fresh grid row for free; the name sits in track 1 now,
+    // so that rule is the only thing resetting the auto-placement cursor
+    // and a short row would otherwise pull EVERY row after it left.
     if (character) {
       row.appendChild(isSizable(character)
                       ? makeSizeButton(character, off)
@@ -782,11 +803,13 @@
   // spell their own names on every row instead of living in a header;
   // all three have since moved out -- Off's word into the `Preview`
   // heading below, Lock and Never minimize into their own per-toggle
-  // disclosures (renderLockBlock, renderNeverMinimizeBlock) -- so this
-  // header now names a fixed five tracks, not a conditional six or
-  // seven. `Clear`, `Edit...` and `Size...` keep their words -- they are
-  // verbs on a control, not the name of a column -- so they were never in
-  // that count.
+  // disclosures (renderLockBlock, renderNeverMinimizeBlock). The
+  // character name came the other way, out of a full-width line of its
+  // own and into a fixed track, which is what `Character` names. So this
+  // header now names a fixed six tracks, not a conditional six or seven.
+  // `Clear`, `Edit...` and `Size...` keep their words -- they are verbs
+  // on a control, not the name of a column -- so they were never in that
+  // count.
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
@@ -802,28 +825,35 @@
   // guard derives the per-row track count from makeRow's own appends, so
   // a header appended there would be counted as extra controls on every
   // row. It contributes the same number of TRACK cells a character row
-  // does -- five. (A character row appends one more child than that: its
-  // `.lab` spans the whole row rather than sitting in a track, which is
-  // why the guard subtracts it.)
+  // does -- six. (It used to contribute one FEWER than a character row
+  // appends, because the `.lab` spanned the whole row rather than sitting
+  // in a track and the guard subtracted it. The name is a track now, so
+  // the two counts are simply equal.)
   //
   // Clear and Edit... get empty cells rather than headings. They are
   // subordinate to the bind button they act on -- naming them in the
   // header would claim they are columns of data, and they are verbs.
   //
   // A wrong cell count here reaches the rows below, not just the header,
-  // because the columns are shared `max-content` tracks: measured in the
-  // ?dev=1 harness at 840x625 by deleting a heading in turn, every later
-  // column's controls shifted right by the width the deleted heading no
-  // longer claimed. Only the LAST cell was ever free to delete without
-  // moving anything after it.
+  // because the columns are shared `max-content` tracks. Measured in the
+  // ?dev=1 harness at 840x625 against the SEVEN-column layout, before
+  // Lock and Never minimize moved to their own disclosures and before the
+  // name came inline: deleting a heading in turn, every later column's
+  // controls shifted right by the width the deleted heading no longer
+  // claimed. Only the LAST cell was ever free to delete without moving
+  // anything after it. The layout it was taken on is gone; the mechanism
+  // it demonstrates is not, which is why the figures stand as taken.
   //
-  // Vertical placement genuinely does not cascade: every row leads with
-  // `.lab { grid-column: 1 / -1 }`, and a definite column-start of 1
-  // resets the auto-placement cursor to a fresh row rather than pulling
-  // the next row up into a short one's gap.
+  // Vertical placement genuinely does not cascade -- but the rule that
+  // makes that true has changed hands. Every row used to lead with
+  // `.lab { grid-column: 1 / -1 }`, whose definite column-start of 1 reset
+  // the auto-placement cursor to a fresh row for free. The name sits in a
+  // track now, so `#preview-binds .row > :first-child
+  // { grid-column-start: 1 }` in style.css does that job instead, and the
+  // hazard arrived with the inline name rather than with the grid.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Preview', 'Keybind', '', '', 'Size'];
+    var cells = ['Character', 'Preview', 'Keybind', '', '', 'Size'];
     cells.forEach(function (text) {
       row.appendChild(WM.make('span', '', text));
     });

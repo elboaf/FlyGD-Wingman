@@ -219,105 +219,42 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
-def test_the_two_keybind_lists_render_the_same_row():
-    """Bookmarks and Previews build a keybind row from the same four
-    elements, and for two rounds they rendered it at two geometries.
+def test_each_keybind_list_declares_a_deliberate_first_track():
+    """Round 3's B1 made both bind lists stack the name above its controls,
+    because each list's first track was `max-content` over ITS OWN labels
+    and the bind button sat 103.4 CSS px apart in two sections of one
+    screen -- Previews' half moving between sessions, because the track
+    followed whoever was logged in.
 
-    Each list is its own grid, and the first track used to be max-content
-    over ITS OWN labels -- so the column was 189.6px in Bookmarks ("Convert
-    EvE-Scout Bookmarks") and 86.2px in Previews ("Cycle forward"), putting
-    the bind button 103.4 CSS px apart in two sections of one screen.
-    Previews' half of that is not even stable between sessions: the track
-    tracked whichever characters were logged in. Round 3's B1.
+    THAT RULE IS RETIRED, deliberately, and this is what replaced it. The
+    two lists differ in content: Bookmarks' longest label is "Convert
+    EvE-Scout Bookmarks" at 189.6px and needs its own line, while character
+    names are uniform and short enough for a column. Only four ungrouped
+    Bookmarks rows were ever in the shared grid anyway -- round 5's C8 moved
+    the other fourteen into .bind-dense, which is flex and shares no tracks.
 
-    The fix was to stack the name above its controls in both, so the
-    geometry depends on no content at all. Nothing renders the page in this
-    suite, so what stops the two drifting apart again is this: the two
-    grids must declare control tracks of the same KIND and the same
-    flexible trailing track, and both must put the name on its own line.
-    Both halves are read out of the stylesheet rather than restated here,
-    so the test cannot disagree with the file about what the shared value
-    is -- only about whether it is shared.
-
-    THIS USED TO BE A BYTE-EQUALITY CHECK on the two templates, and it was
-    RELAXED DELIBERATELY -- it did not erode. Previews grew two
-    per-character controls, Lock and Never minimize, that Bookmarks has no
-    equivalent of, so the two templates now share a prefix and then
-    diverge: three control tracks against five. Byte equality could only
-    have been restored by giving Bookmarks two tracks holding nothing,
-    which would be a lie in the stylesheet about a row that has three
-    controls.
-
-    What matters is that byte equality was never the invariant, only a
-    proxy for it. B1 was the bind button sitting at two different offsets;
-    that offset is decided by `.lab { grid-column: 1 / -1 }`, asserted
-    below and untouched, which puts the name on its own line and starts
-    the control line at the container edge in both lists. Measured in the
-    ?dev=1 harness at 840x625 after the divergence: the bind button is at
-    offset 0 in BOTH, and the three shared control tracks compute
-    identically at 150 / 40.7969 / 42.4531px. So what is guarded here is
-    what is left -- the shared tracks must still be the same KIND of track
-    (a content-sized column, not one list switching to a fixed or
-    fractional one), and neither list may drop the trailing flexible track
-    that lets `grid-column: 1 / -1` reach the card's width instead of the
-    control tracks' width.
+    What still has to hold is that neither list gets there by accident. A
+    `max-content` first track is the original bug; each list must declare
+    either a fixed track or a spanning label, and say which.
     """
-    hosts = ("#eve-binds", "#preview-binds")
-
-    columns = {}
-    for host in hosts:
+    for host, expected in (("#eve-binds", "span"), ("#preview-binds", "fixed")):
         m = re.search(re.escape(host) + r" \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{host} has no rule block at all"
-        tracks = re.search(r"grid-template-columns:\s*([^;]+);", m.group(1))
-        assert tracks, f"{host} declares no grid-template-columns"
-        columns[host] = " ".join(tracks.group(1).split())
-
-    # Split each template into "how many control tracks", "of what kind",
-    # and "what trails them". Anchored and whole-string: a template this
-    # cannot parse fails here rather than being waved through, which is
-    # what stops the relaxation above from widening any further by
-    # accident.
-    shape = {}
-    for host in hosts:
-        m = re.fullmatch(r"repeat\((\d+),\s*([^)]+)\)\s+(.+)", columns[host])
-        assert m, (
-            f"{host} no longer declares its columns as `repeat(N, <kind>) "
-            f"<trailing>`, so this test can no longer tell whether the two "
-            f"lists still agree: {columns[host]!r}"
+        assert m, f"{host} has no rule block"
+        template = re.search(r"grid-template-columns:([^;]*);", m.group(1))
+        assert template, f"{host} declares no grid-template-columns"
+        first = template.group(1).strip().split()[0]
+        assert not first.startswith("max-content"), (
+            f"{host}'s first track is max-content over its own labels, "
+            f"which is round 3's B1 -- the bind button moves with the "
+            f"content and, in Previews, between sessions"
         )
-        shape[host] = (int(m.group(1)), m.group(2).strip(), m.group(3).strip())
-
-    bookmarks, previews = shape["#eve-binds"], shape["#preview-binds"]
-
-    assert bookmarks[1] == previews[1], (
-        "the two keybind lists size their control tracks differently, which "
-        f"puts their shared controls back at two geometries -- round 3's B1: "
-        f"{bookmarks[1]!r} vs {previews[1]!r}"
-    )
-
-    for host in hosts:
-        assert shape[host][2] == "minmax(0, 1fr)", (
-            f"{host} dropped the flexible trailing track, so its full-width "
-            f"name now reaches only as far as its control tracks instead of "
-            f"the card: {shape[host][2]!r}"
-        )
-
-    # Previews may carry MORE controls than Bookmarks -- Lock and Never
-    # minimize are per-character and Bookmarks has no character. It may not
-    # carry fewer: that would mean a control went missing from the row
-    # rather than being added to it.
-    assert previews[0] >= bookmarks[0], (
-        f"Previews declares fewer control tracks than Bookmarks "
-        f"({previews[0]} < {bookmarks[0]}), so a control its rows build has "
-        f"no column to sit in"
-    )
-
-    for host in hosts:
-        m = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
-        assert m, f"{host} has no .lab override"
-        assert "grid-column: 1 / -1" in m.group(1), (
-            f"{host}'s name no longer takes its own line, so its bind button "
-            f"is back at an offset that depends on that list's own labels"
+        lab = re.search(re.escape(host) + r" \.row > \.lab \{(.*?)\}", CSS, re.DOTALL)
+        assert lab, f"{host} no longer overrides the shared label column"
+        spans = "grid-column: 1 / -1" in lab.group(1)
+        assert spans == (expected == "span"), (
+            f"{host}'s label {'spans' if spans else 'sits in a track'}, "
+            f"which is not what this list decided: Bookmarks spans for its "
+            f"189.6px labels, Previews takes a fixed column for its names"
         )
 
 
@@ -1321,25 +1258,34 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     BOTH templates are wrong by the same amount. This derives the cell
     count from makeRow itself rather than restating it.
 
-    The label is excluded: `#preview-binds .row > .lab` is
-    `grid-column: 1 / -1`, so it spans the row rather than sitting in one
-    of the tracks the controls occupy. The `else` branch is excluded
+    The label USED to be excluded, because `#preview-binds .row > .lab` was
+    `grid-column: 1 / -1` and spanned the row instead of sitting in a
+    track. It sits in track 1 now, so it is a cell like any other and the
+    `-1` that discounted it is gone. The `else` branch is still excluded,
     because its fillers stand in for the character branch's controls one
     for one -- counting both would double every cell.
     """
     body = _makerow_body()
     halves = body.split("} else {", 1)
     assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
-    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(") - 1
+    # The label is COUNTED now: it sits in track 1 rather than spanning the
+    # row, so it is a cell like any other. That is the whole change, and it
+    # is why the -1 that used to discount it is gone.
+    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
 
     m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert m, "#preview-binds has no rule block"
-    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
+    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
+    assert fixed, (
+        "#preview-binds no longer declares a fixed first track followed by "
+        "repeat(N, ...) -- a max-content name column is round 3's B1 bug, "
+        "where the track followed whoever was logged in"
+    )
+    tracks = 1 + int(fixed.group(2))
 
-    assert cells == int(tracks.group(1)), (
+    assert cells == tracks, (
         f"makeRow appends {cells} cells per character row but #preview-binds "
-        f"declares {tracks.group(1)} tracks -- every row after the first is "
+        f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
     )
 
@@ -1355,8 +1301,12 @@ def test_the_previews_header_row_names_one_column_per_track():
 
     WHAT A MISMATCH ACTUALLY COSTS, measured for every cell rather than
     for one: the header's captions land over the wrong controls, AND the
-    rows below shift. Deleting each heading in turn in the ?dev=1 harness
-    at 840x625 moves the first character row's controls to
+    rows below shift. Measured against the SEVEN-column layout, before
+    Lock and Never minimize moved out of the row into their own
+    disclosures and before the name came inline. The table is left as it
+    was taken: the mechanism it demonstrates outlived the layout it was
+    measured on. Deleting each heading in turn in the ?dev=1 harness at
+    840x625 moves the first character row's controls to
 
         Preview        209/265/425/477/531/587/685
         Keybind        209/264/424/476/530/586/684
@@ -1373,8 +1323,12 @@ def test_the_previews_header_row_names_one_column_per_track():
     concluded the damage was local.
 
     Vertical placement really does not cascade: y was identical in all
-    seven runs, because every row leads with `.lab { grid-column: 1 / -1 }`
-    and a definite column-start resets auto-placement to a fresh row.
+    seven runs. The reset to a fresh row is now
+    `#preview-binds .row > :first-child { grid-column-start: 1 }`. The
+    spanning `.lab` used to do it for free, which is why the hazard is
+    newer than the grid -- it arrived with the inline name, and
+    test_every_previews_row_starts_a_fresh_grid_line is what holds the
+    replacement in place.
 
     Counted from the array literal rather than from `row.appendChild(`:
     makeHeadRow appends inside a forEach, so the literal-substring trick
@@ -1394,13 +1348,17 @@ def test_the_previews_header_row_names_one_column_per_track():
 
     m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert m, "#preview-binds has no rule block"
-    tracks = re.search(r"grid-template-columns:\s*repeat\((\d+),", m.group(1))
-    assert tracks, "#preview-binds no longer declares repeat(N, ...) tracks"
-    assert base == int(tracks.group(1)), (
+    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
+    assert fixed, (
+        "#preview-binds no longer declares a fixed first track followed by "
+        "repeat(N, ...)"
+    )
+    tracks = 1 + int(fixed.group(2))
+    assert base == tracks, (
         f"makeHeadRow names {base} columns but #preview-binds declares "
-        f"{tracks.group(1)} tracks -- the headings sit over the wrong "
-        f"controls, and a heading falling into a narrower shared track "
-        f"widens it for every row below"
+        f"{tracks} tracks -- the headings sit over the wrong controls, and "
+        f"a heading falling into a narrower shared track widens it for "
+        f"every row below"
     )
 
 
@@ -1408,10 +1366,10 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
     """Counting columns is not the same as naming the right one.
 
     The guard above compares two NUMBERS. Reorder makeRow's appends --
-    moving makeLockCheck ahead of the Size cell is an entirely plausible
-    edit -- and every heading is over the wrong control while both counts
-    still agree. Nothing in this suite renders the page, so that would
-    ship looking exactly like a correct table.
+    moving makeExcludedCheck ahead of the name cell is an entirely
+    plausible edit -- and every heading is over the wrong control while
+    both counts still agree. Nothing in this suite renders the page, so
+    that would ship looking exactly like a correct table.
 
     So: each named heading is tied to the append that fills its column,
     and the two sequences must run in the same order.
@@ -1422,6 +1380,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
 
     # heading -> the token in makeRow that builds the cell it labels.
     owners = (
+        ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
         ("Size", "makeSizeButton"),
@@ -1448,6 +1407,28 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         f"{append_order}. Every heading below the swap labels the wrong "
         f"control, and the cell COUNTS still agree, so nothing else here "
         f"would catch it."
+    )
+
+
+def test_every_previews_row_starts_a_fresh_grid_line():
+    """With the name inline each row contributes fewer cells than the grid
+    has tracks, because the trailing minmax(0, 1fr) holds no control. Grid
+    auto-placement then puts the NEXT row's first cell in that leftover
+    track, and every row after it walks one column left -- measured in the
+    harness as the second character's name landing in the far-right column
+    while its own controls slid under the wrong headings.
+
+    A definite column-start resets auto-placement to a fresh row. The
+    spanning label used to do this for free, which is why the hazard is
+    new: it arrived with the inline name, not with the grid.
+    """
+    assert re.search(
+        r"#preview-binds \.row > :first-child \{[^}]*grid-column-start:\s*1",
+        CSS,
+        re.DOTALL,
+    ), (
+        "#preview-binds rows no longer pin their first cell to column 1, so "
+        "the trailing flexible track swallows the next row's first cell"
     )
 
 

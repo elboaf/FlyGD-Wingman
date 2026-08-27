@@ -2063,19 +2063,31 @@ button.btn:disabled,
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* Five fixed tracks, then one flexible one. The character name takes a
-     line of its own (`.lab { grid-column: 1 / -1 }` below), so the tracks
-     size the CONTROLS on the line beneath it: Off, bind button, Clear,
-     Edit…, Size… -- exactly the five children previews.js's makeRow
-     appends after the label. Lock and Never minimize used to sit here
-     too, as a sixth and a conditional seventh; both now render once, in
-     their own disclosures under their global toggles, rather than as a
+  /* A fixed name column, five content-sized control tracks, then one
+     flexible one. The character name sits in track 1 rather than taking a
+     line of its own -- the `.lab` override below no longer spans -- and
+     the five that follow size the CONTROLS beside it: Off, bind button,
+     Clear, Edit…, Size… -- exactly the five children previews.js's
+     makeRow appends after the label. Lock and Never minimize used to sit
+     here too, as a sixth and a conditional seventh; both now render once,
+     in their own disclosures under their global toggles, rather than as a
      track on every row. The trailing minmax(0, 1fr) absorbs the leftover
-     width so the five stay packed at the start instead of spreading.
+     width so the six stay packed at the start instead of spreading.
 
-     "Off" leads rather than joining the other checkbox at the
-     end because it governs every control after it: with it ticked the rest
-     of the row is inert, and a master switch reads better before the
+     THE NAME TRACK IS FIXED, NOT max-content, and that is the whole
+     reason this list may have an inline name at all. `max-content` over
+     character names is round 3's B1: the track follows whoever is logged
+     in, so the bind button moves between sessions. 150px keeps the
+     stability B1 bought while dropping the cross-list half of its rule --
+     Bookmarks still stacks, because "Convert EvE-Scout Bookmarks" is
+     189.6px and genuinely needs its own line. Names wider than the track
+     ellipsize and carry a `title`.
+     test_each_keybind_list_declares_a_deliberate_first_track holds both
+     halves of that.
+
+     "Off" leads the controls rather than joining the other checkbox at
+     the end because it governs every control after it: with it ticked the
+     rest of the row is inert, and a master switch reads better before the
      things it switches off than stranded past them.
 
      The count is load-bearing rather than cosmetic. `.row` is
@@ -2089,36 +2101,38 @@ button.btn:disabled,
      and this number changes with it -- test_page_conventions.py now
      DERIVES the expected count from makeRow's own appends rather than
      trusting this comment. */
-  grid-template-columns: repeat(5, max-content) minmax(0, 1fr);
+  grid-template-columns: 150px repeat(5, max-content) minmax(0, 1fr);
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
    [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
    children with the row itself gone. */
 #preview-binds .row[hidden] { display: none; }
+/* The name is a cell now, not a line. No `grid-column: 1 / -1`, and no
+   `margin-top` either -- that margin existed to separate one stacked
+   name-plus-controls block from the next, and there are no blocks to
+   separate once every row is one line. #eve-binds still stacks and still
+   carries both. */
 #preview-binds .row > .lab {
-  grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 4px row-gap holds the name to its own controls; this restores the space
-   BETWEEN items. One gap cannot do both jobs here, because display:contents
-   flattens every row into the same grid, so the grid cannot tell "the line
-   under a name" from "the next name". Same reason .settings .row carries
-   its own 4px row-gap: a label equidistant from its field and from the row
-   above belongs to neither.
+/* Each row contributes fewer cells than the grid has tracks, because the
+   trailing flexible one holds no control. Without a definite start, grid
+   auto-placement puts the NEXT row's first cell there and every row after
+   it walks one column left. The spanning label used to prevent this for
+   free; the inline name is what makes it necessary. */
+#preview-binds .row > :first-child { grid-column-start: 1; }
 
-   Applied to every .lab rather than skipping the first with
-   :not(:first-child): rows here are hidden individually (previews.js hides
-   a row per character), so "first child" is not "first visible row", and
-   12px above the leading name is right anyway -- it follows the card's
-   prose. */
-#preview-binds .row > .lab { margin-top: 8px; }
-
-/* Redundant since B1 collapsed the column unconditionally above, and kept
-   deliberately: tests/test_page_conventions.py requires every id override
-   of the shared label column to restore the collapse inside this block,
-   and that rule protects the NEXT override, which will not have collapsed
-   itself. See #eve-binds below. */
+/* This one no longer merely restates the override above. While B1
+   collapsed the column unconditionally, this block said the same thing
+   twice; the name sits in a 150px track now, so below 720px this is what
+   would actually hand it the whole line back instead of ellipsizing it in
+   a track a narrow card cannot afford. WOULD, not does -- the CSS floor
+   is 840x625 at every scaling (see the note at #eve-binds), so 720px is
+   still unreachable through the window and this is still kept for the
+   rule: tests/test_page_conventions.py requires every id override of the
+   shared label column to restore the collapse inside this block. */
 @media (max-width: 720px) {
   #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
@@ -2626,8 +2640,17 @@ button.btn:disabled,
    the stacked full-width .lab every other section on this route already
    uses, and which THIS FILE ALREADY IMPLEMENTED below 720px as the narrow
    form of these same rows. It is the only shape that depends on no
-   content: both sections now put the bind button at x=1 on line two, at
-   every width, whoever is logged in.
+   content: the bind button sits at x=1 on line two, at every width,
+   whoever is logged in.
+
+   THAT WAS ONCE TRUE OF BOTH SECTIONS, and now describes this one alone.
+   #preview-binds took its name back into a FIXED 150px track, which keeps
+   the content-independence this argument is about while spending a column
+   on it -- affordable there because character names are uniform and short,
+   and not here, where "Convert EvE-Scout Bookmarks" is 189.6px. The
+   cross-list half of B1's rule is retired; the no-max-content half is not,
+   and test_each_keybind_list_declares_a_deliberate_first_track holds both
+   lists to whichever shape they declared.
 
    IT COSTS HEIGHT, and the figure is here so the trade can be reversed
    knowingly rather than rediscovered. Measured at the 840 floor, both trees
@@ -2652,8 +2675,8 @@ button.btn:disabled,
    is the only way the three control columns can be three columns rather
    than one per row. The rows keep no box of their own, so .row's spacing is
    re-stated here: 10px across as the column-gap, and 12px down as 4px of
-   row-gap plus the .lab's 8px margin (see #preview-binds for why those are
-   two numbers and not one).
+   row-gap plus the .lab's 8px margin (see the note on that margin below
+   for why those are two numbers and not one).
 
    The trailing `minmax(0, 1fr)` track holds no control and exists so that
    `grid-column: 1 / -1` reaches the CARD's width rather than the three
@@ -2679,8 +2702,26 @@ button.btn:disabled,
   grid-column: 1 / -1;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
-/* See #preview-binds for why this is a margin and not the grid's row-gap,
-   and why it is not skipped on the first row. */
+/* A margin and not the grid's row-gap, and not skipped on the first row.
+   The 4px row-gap holds a name to its own controls; this restores the
+   space BETWEEN items. One gap cannot do both jobs, because
+   display:contents flattens every row into the same grid, so the grid
+   cannot tell "the line under a name" from "the next name". Same reason
+   .settings .row carries its own 4px row-gap: a label equidistant from
+   its field and from the row above belongs to neither.
+
+   Applied to every .lab rather than skipping the first with
+   :not(:first-child), for which #preview-binds had the stronger reason:
+   previews.js hides a row per character, so "first child" was not "first
+   visible row" there. Bookmarks rebuilds its list wholesale and hides
+   only the host, so what carries the rule HERE is the other half -- 12px
+   above the leading name is right anyway, because it follows the card's
+   prose.
+
+   #preview-binds used to carry this rule and the reasoning behind it. Its
+   name is inline now, so it has no stacked blocks to separate and dropped
+   both; this list is the only one left that stacks, which is why the
+   argument lives here. */
 #eve-binds .row > .lab { margin-top: 8px; }
 
 /* Settings 1's third case, kept in its grid form. Lane 0's
@@ -2688,7 +2729,10 @@ button.btn:disabled,
    field, but it sets `.settings .row > .lab` -- which this id-specificity
    override beats, so the rule never reached these rows and the name
    SHRANK instead, which is the failure the collapse exists to prevent.
-   #preview-binds carries the same override and the same repair.
+   #preview-binds carries the same override and the same repair -- and
+   since its name went inline, its repair is the one that would still
+   change something if the window could reach 720px, rather than restating
+   what its override already does.
 
    Since B1 the override above collapses the column unconditionally, so
    this block now restates it and changes nothing. It is kept for the rule

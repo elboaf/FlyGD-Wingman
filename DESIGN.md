@@ -195,7 +195,13 @@ character, forty of them.
 Under a column header the word beside the box is the header repeated once
 per row — on the Previews character list that was three words × thirteen
 rows, and because the tracks are `max-content` the longest of them set a
-width every row paid for. The `.check` wrapper stays (it is what makes the
+width every row paid for. That is the state the rule was argued from, and
+it has since been acted on twice over: two of those three columns, `Lock`
+and `Never minimize`, have left the table for disclosures under the global
+toggles they are exceptions to, and only the `Preview` box is still a
+checkbox in a column here. The rule is unchanged — it is about any
+checkbox under any column header — but its worked example is now one
+column, not three. The `.check` wrapper stays (it is what makes the
 box dark), the label's text goes, and the accessible name moves onto the
 input as an `aria-label` naming the row: an empty `<label>` is what a
 screen reader would otherwise read. `.check input` is `position: absolute`,
@@ -264,14 +270,44 @@ it is reached through. With the EVE gate off the rail is two entries,
 `Uploading` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
-`#eve-binds` and `#preview-binds` take the column away from their rows on
-purpose, because their labels are long action and character names. ID
-specificity also beats the `max-width: 720px` block written against
-`.settings .row > .lab`, so the collapse silently skipped exactly the rows
-that needed it most. `tests/test_page_conventions.py` enforces the general
-rule. See "What this means for `style.css`" above: those two restores are
-unreachable through the window and mandatory, which is not a
-contradiction.
+`#eve-binds` and `#preview-binds` both take the column away from their
+rows, for two different reasons that make the same hole. `#eve-binds` does
+it because its labels are long action names and it gives them a whole line
+instead. `#preview-binds` does it to give the character name a FIXED 150px
+track of its own — an inline column, not a line — so the name is a cell in
+the table rather than a heading above it. Either way ID specificity beats
+the `max-width: 720px` block written against `.settings .row > .lab`, so
+the collapse silently skipped exactly the rows that needed it most.
+`tests/test_page_conventions.py` enforces the general rule. See "What this
+means for `style.css`" above: those two restores are unreachable through
+the window and mandatory, which is not a contradiction.
+
+**Round 3's B1 shared shape is retired, and the half that is not.** B1
+found the two bind lists rendering one row at two geometries: each list's
+first track was `max-content` over ITS OWN labels, so the bind button sat
+189.6px into Bookmarks and 86.2px into Previews — 103.4 CSS px apart in
+two sections of one screen, and Previews' half moved between sessions
+because the track followed whoever was logged in. The fix was to delete
+the column in both and stack the name above its controls. That cured the
+offset, and it also gave the Previews list a shape sized for Bookmarks'
+content: thirteen characters read as thirteen headings, with the column
+headers off screen by the sixth row.
+
+So the two lists no longer share a shape, deliberately. They differ in
+content — "Convert EvE-Scout Bookmarks" is 189.6px and genuinely needs its
+own line, while character names are uniform and short — and only four
+ungrouped Bookmarks rows were ever in the shared grid anyway, round 5's C8
+having moved the other fourteen into `.bind-dense`, which is flex and
+shares no tracks at all.
+
+**What did NOT retire is the ban on a `max-content` first track**, which
+was the actual bug. Each list must reach its shape on purpose: Bookmarks
+by spanning its label, Previews by a fixed 150px column. Neither may
+arrive at one by letting the track follow its own content.
+`test_each_keybind_list_declares_a_deliberate_first_track` is the guard,
+and it is what replaced the old cross-list equality test. Do not restore
+that test from B1's reasoning — the reasoning is recorded here precisely
+so the conclusion is not re-derived from it.
 
 **Open, not decided — the two stacked treatments are 1px apart.**
 `.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
