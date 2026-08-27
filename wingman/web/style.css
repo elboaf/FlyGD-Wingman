@@ -1467,8 +1467,22 @@ button.btn:disabled,
    at full strength would read as a rendering fault rather than as a
    disabled control, so the class carries the whole label. previews.js's
    `inert()` sets the class and the input's `disabled` together so the
-   look and the behaviour cannot disagree. */
+   look and the behaviour cannot disagree.
+
+   THAT ARGUMENT IS SPENT, and the rule is kept for what is left of it.
+   The character rows' checkboxes have no word beside the box any more --
+   the column header carries it once -- so "the whole label" is now the
+   15px box and nothing else, and opacity alone on a square that small is
+   close to invisible. The class still covers the label because `cursor`
+   still lives there and a future labelled `.check` in this grid would
+   need it; the box itself now takes a flatter, borderless fill as well,
+   so an inert control reads as inert at the size it actually is. */
 #preview-binds .check.inert { opacity: .45; cursor: default; }
+/* Carried by the BOX, not the label, so it survives the label having no
+   text to dim. Both tokens are already in the palette. */
+#preview-binds .check.inert .box {
+  background: var(--sunken); border-color: var(--panel-border);
+}
 
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
@@ -1945,7 +1959,11 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-dim);
 }
-/* Only rendered while something is actually dimmed -- see previews.js. */
+/* No producer since the offline legend moved onto the rows as `.off-tag`
+   (previews.js). Kept rather than deleted: the type-scale note at the top
+   of this file lists it by name as one of the four muted-prose classes,
+   and .bind-group is still built beside a name that a second note could
+   qualify. Delete both together if that stops being true. */
 .bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
 
 /* The column headers above the character rows. Built once by previews.js's

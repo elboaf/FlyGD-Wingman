@@ -686,8 +686,10 @@
           <!-- Says plainly what a default does to the rows below, because
                the per-character boxes hold EXCEPTIONS to this rather than
                a list of locked characters: ticking this flips every
-               character that is not already an exception, and unticking
-               brings back exactly the arrangement that preceded it. -->
+               character that is not already an exception. Deliberately
+               does NOT promise that unticking undoes it -- a box changed
+               while this is on means the opposite thing once it is off,
+               and api.py's set_preview_lock_default has the example. -->
           <span class="hint" id="preview-lock-default-status">Applies to
             every character whose own Lock box you have not changed.</span>
           </div>

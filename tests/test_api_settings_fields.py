@@ -830,6 +830,58 @@ def test_set_preview_default_size_writes_both_halves(monkeypatch, tmp_path):
     assert api._state.settings["preview"]["height"] == 360
 
 
+def test_a_failed_default_size_write_leaves_neither_half_applied(monkeypatch, tmp_path):
+    """The reason both keys go through ONE settings_mod.update block.
+
+    Written as two sequential writes this could half-succeed: `update`
+    restores the live dict on OSError, so a failure on the SECOND write
+    left the first applied and persisted while the method reported
+    applied: False and the page reverted its field -- the user reading
+    the old pair over a section holding a new width and an old height.
+
+    The fake therefore fails only the second save, not every save. A
+    blanket failure would take the first write down too and this test
+    would pass against the very implementation it exists to reject.
+    """
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    real = api_mod.settings_mod._save_locked
+    calls = []
+
+    def flaky(data, path=None):
+        calls.append(1)
+        if len(calls) >= 2:
+            raise OSError("read-only")
+        return real(data, path)
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", flaky)
+    result = api.set_preview_default_size(640, 360)
+
+    width = api._state.settings["preview"]["width"]
+    height = api._state.settings["preview"]["height"]
+    if result["applied"]:
+        assert (width, height) == (640, 360)
+    else:
+        assert (width, height) == (320, 210), (
+            "a refused default-size write left one half applied -- the page "
+            "reverts its field on applied: False, so the user would be shown "
+            "a pair the app is not using"
+        )
+
+
+def test_rewriting_the_same_default_size_does_not_touch_the_file(monkeypatch, tmp_path):
+    """Same no-op guard every other preview write carries: a save projects
+    the complete document, so an unchanged pair is a full rewrite."""
+    api, _window, saved = settings_api(tmp_path, monkeypatch)
+    api.set_preview_default_size(640, 360)
+    assert saved["preview"]["width"] == 640
+
+    saved.clear()
+    result = api.set_preview_default_size(640, 360)
+
+    assert result["applied"] is True
+    assert saved == {}, "a no-op default-size write reached _save_locked"
+
+
 class _RestyleSpy:
     """Just enough PreviewHost for the restyle assertion above."""
 

@@ -1354,13 +1354,23 @@ def test_the_previews_header_row_names_one_column_per_track():
     """The header row is a grid row like any other, and gets the same trap.
 
     makeHeadRow is deliberately NOT part of makeRow -- the count above
-    derives from makeRow's own appends, so a header built there would
-    inflate it by a whole row's worth. That keeps the two counts honest but
-    leaves the header itself unguarded, which is what this closes: the
-    header rides the same `.row { display: contents }` mechanism, so a
-    header that names six columns over a seven-track grid slides every
-    character row below it into the previous row's leftover columns --
-    exactly the failure the makeRow guard exists to catch, one row higher.
+    derives from makeRow's own appends, so a header built there would be
+    counted as extra controls on every row. That keeps the two counts
+    honest but leaves the header itself unguarded, which is what this
+    closes.
+
+    WHAT A MISMATCH ACTUALLY COSTS, measured rather than assumed: the
+    header's own captions land over the wrong controls, and nothing else.
+    It does not cascade. Every row makeRow builds leads with
+    `.lab { grid-column: 1 / -1 }`, and a full-width item cannot be placed
+    into a partly-filled row, so each name starts a fresh grid row at
+    track 1. Verified in the ?dev=1 harness at 840x625 by deleting a
+    header cell: every character row's seven cells stayed at
+    209/264/424/476/530/586/624. Headings one column out are a silent lie
+    about the data, which is reason enough for this guard -- but the
+    earlier claim that a short row drags the rows below it into the wrong
+    tracks is false, and it is repeated in style.css and in the makeRow
+    guard above.
 
     Both states are checked, because the header carries the same
     conditional cell makeRow does: the Never-minimize column exists only
@@ -1391,8 +1401,57 @@ def test_the_previews_header_row_names_one_column_per_track():
         assert expected == int(tracks.group(1)), (
             f"makeHeadRow names {expected} columns but {selector} declares "
             f"{tracks.group(1)} tracks -- the headings sit over the wrong "
-            f"data, and every row below the header is pulled one track over"
+            f"controls"
         )
+
+
+def test_the_previews_headings_are_in_the_order_makeRow_builds():
+    """Counting columns is not the same as naming the right one.
+
+    The guard above compares two NUMBERS. Reorder makeRow's appends --
+    moving makeLockCheck ahead of the Size cell is an entirely plausible
+    edit -- and every heading is over the wrong control while both counts
+    still agree. Nothing in this suite renders the page, so that would
+    ship looking exactly like a correct table.
+
+    So: each named heading is tied to the append that fills its column,
+    and the two sequences must run in the same order.
+    """
+    body = _makerow_body()
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+
+    # heading -> the token in makeRow that builds the cell it labels.
+    owners = (
+        ("Preview", "makeExcludedCheck"),
+        ("Keybind", "'bindbtn'"),
+        ("Size", "makeSizeButton"),
+        ("Lock", "makeLockCheck"),
+        ("Never minimize", "makeNeverMinimizeCheck"),
+    )
+
+    for heading, token in owners:
+        assert f"'{heading}'" in head, (
+            f"makeHeadRow no longer names a {heading!r} column, so the "
+            f"control {token} has no heading over it"
+        )
+        assert token in body, (
+            f"makeRow no longer builds {token}, but makeHeadRow still "
+            f"names a {heading!r} column over it"
+        )
+
+    heading_order = [head.index(f"'{h}'") for h, _ in owners]
+    append_order = [body.index(t) for _, t in owners]
+    assert heading_order == sorted(heading_order), (
+        "makeHeadRow's headings are no longer in column order"
+    )
+    assert append_order == sorted(append_order), (
+        "makeRow builds its cells in a different order from the headings "
+        f"makeHeadRow names: {[t for _, t in owners]} appear at "
+        f"{append_order}. Every heading below the swap labels the wrong "
+        f"control, and the cell COUNTS still agree, so nothing else here "
+        f"would catch it."
+    )
 
 
 def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
@@ -1405,13 +1464,15 @@ def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
     layouts entry is written on a drag or a resize, not when the client
     starts, so on a fresh install that was every offline character.
 
-    The FILLER is the grid invariant. `.row` is display:contents, so the
-    grid reads one flat stream of cells; a row that skipped this cell
-    entirely would pull every row after it one track over. The cell count
-    has to be uniform across rows within a render whatever varies between
-    renders, which is why this is a ternary inside one appendChild rather
-    than an `if` around it -- the same shape the opt-out box uses, and the
-    same reason.
+    The FILLER is the grid invariant. `.row` is display:contents, so a row
+    that skipped this cell would leave its remaining controls one track to
+    the left -- Lock under the Size heading, Never minimize under Lock's.
+    The damage stays inside that row (every row leads with a full-width
+    `.lab`, which forces a fresh grid row; measured in the header guard
+    above), but controls sitting under the wrong headings is exactly the
+    lie the headings were added to stop. Hence a ternary inside one
+    appendChild rather than an `if` around it -- the same shape the opt-out
+    box uses, and the same reason.
     """
     body = _makerow_body()
     assert re.search(r"isSizable\(character\)", body), (
@@ -1419,10 +1480,10 @@ def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
         "sized, so it is drawn for rows where it can only refuse"
     )
     gate = body.split("isSizable(character)", 1)[1].split(";", 1)[0]
-    assert "makeSizeButton" in gate and "createElement" in gate, (
+    assert "makeSizeButton" in gate and "makeSizeFiller" in gate, (
         "the Size... gate no longer chooses between the button and a "
-        "filler cell -- a missing cell pulls every row below it one track "
-        "over, because .row is display:contents"
+        "filler cell -- a missing cell puts every later control on that "
+        "row under the wrong heading"
     )
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))

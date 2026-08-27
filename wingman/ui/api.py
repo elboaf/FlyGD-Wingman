@@ -2682,8 +2682,16 @@ class Api:
         Flipping this flips every character NOT in the list, which is what
         a default means and is what the field's hint says. It is not a
         migration and does not rewrite the roster: the list keeps meaning
-        "these differ from the default", so unticking restores exactly the
-        arrangement that preceded the tick.
+        "these differ from the default".
+
+        That is not the same as being reversible, and the difference is
+        worth stating because the obvious reading is wrong. Untick-after-
+        tick restores the previous arrangement ONLY if no per-character
+        box was touched in between. Tick the default with an empty roster,
+        unlock one character (so they become the exception), then untick:
+        that character is now the only LOCKED one. The roster was never
+        rewritten -- the user changed it, meaning the opposite thing each
+        side of the flip.
         """
         result = self._write_preview_setting(("lock_default",), bool(enabled))
         if self._preview_host is not None:
@@ -2706,6 +2714,15 @@ class Api:
         No restyle: this does not change any window that is already open.
         It decides where the NEXT unsaved preview is placed, and
         build_preview_host now reads it live, so nothing has to be pushed.
+
+        Both keys are written in ONE `settings_mod.update` block rather
+        than through two `_write_preview_setting` calls. They are a pair
+        everywhere they are read -- geometry.default_stack takes one tuple
+        -- and two calls can half-succeed: `update` restores the live dict
+        on OSError, so a failed second write leaves the first one applied
+        and persisted while this method reports `applied: False` and the
+        page reverts its field. The user would then see the old pair over
+        a preview section holding a new width and an old height.
         """
         try:
             width, height = int(w), int(h)
@@ -2714,10 +2731,21 @@ class Api:
         floor_w, floor_h = preview_window.MIN_SIZE
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
-        result = self._write_preview_setting(("width",), width)
-        if not result.get("applied"):
-            return result
-        return self._write_preview_setting(("height",), height)
+        section = self._state.settings.get("preview", {})
+        if section.get("width") == width and section.get("height") == height:
+            # Same no-op guard every other preview write carries: a save
+            # projects the complete document, so an unchanged pair would
+            # otherwise be a full rewrite.
+            return self._field_ok()
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                node = doc.setdefault("preview", {})
+                node["width"] = width
+                node["height"] = height
+        except OSError:
+            logger.exception("Could not persist the default preview size")
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
 
     def set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.

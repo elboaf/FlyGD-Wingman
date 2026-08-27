@@ -150,10 +150,13 @@
     // preview, and opting out does not stop it.
     //
     // The NAME is deliberately not dimmed either. `.dim` on a .lab already
-    // means "not logged in" -- the group note above the list says so in
-    // those words -- and borrowing it for a second meaning would make that
-    // legend false for every opted-out character who is in fact online.
-    // The inert controls and the ticked box carry the state instead.
+    // means "not logged in" -- the `.off-tag` word this function appends
+    // beside the name says so in those words -- and borrowing it for a
+    // second meaning would make that word false for every opted-out
+    // character who is in fact online. (This used to cite the group note
+    // above the list, which said the same thing in one place until the
+    // word moved onto the rows themselves.) The inert controls and the
+    // unticked Preview box carry the state instead.
     var off = !!(character && isExcluded(character));
 
     // Track 1 of every row. A cycle row gets a filler rather than a box:
@@ -276,16 +279,19 @@
     // list. That is D6's rule (do not draw a control in the state where it
     // can do nothing) applied to the column that broke it worst.
     //
-    // A filler and not a missing cell. `.row` is display:contents, so the
-    // grid reads one flat stream and a short row pulls the next row's
-    // children into its empty columns -- the cell count has to be uniform
-    // ACROSS rows within one render, whatever varies between renders. One
-    // appendChild with a ternary, for the same reason the opt-out box at
-    // the top of this function uses one.
+    // A filler and not a missing cell. `.row` is display:contents, so a
+    // row that skipped this cell would leave its remaining controls one
+    // track to the left -- Lock sitting under the Size heading, and Never
+    // minimize under Lock's. The damage is confined to that row (every
+    // row leads with a full-width `.lab`, which forces a fresh grid row),
+    // but a row whose controls sit under the wrong headings is exactly
+    // the lie the headings were added to stop. One appendChild with a
+    // ternary, for the same reason the opt-out box at the top of this
+    // function uses one.
     if (character) {
       row.appendChild(isSizable(character)
                       ? makeSizeButton(character, off)
-                      : document.createElement('span'));
+                      : makeSizeFiller());
     }
 
     // Cycle forward/back have no `character` -- they are chords, not
@@ -474,16 +480,28 @@
     label.prepend(box);
     box.addEventListener('change', function () {
       var wanted = box.checked;
+      // Sampled before the bridge call, exactly as makeSizeButton does:
+      // onPreviewHotkeys replaces `state` wholesale and fires whenever an
+      // EVE client opens or closes -- routinely while someone is setting
+      // rows up. Without this the patch below lands on top of the newer
+      // payload using a pre-write answer, and for Lock it would also read
+      // `state.lock_default` off the NEW state while `wanted` came from
+      // the old render.
+      var before = pushes;
       WM.send('set_preview_locked', name, wanted).then(function (res) {
         if (!res || !res.applied) { box.checked = !wanted; return; }
+        if (pushes !== before) { return; }
         // `wanted` is the effective lock; the roster stores who DIFFERS
         // from lock_default. Python computes the same membership in
         // set_preview_locked -- this patch only has to reach the same
         // answer, or the next render would repaint from a stale list.
         var member = wanted !== !!state.lock_default;
-        state.locked = member
-          ? (state.locked || []).concat(name)
-          : (state.locked || []).filter(function (n) { return n !== name; });
+        var without = (state.locked || []).filter(function (n) {
+          return n !== name;
+        });
+        // Filtered first and concatenated onto the filtered list, so a
+        // name already present cannot be added twice.
+        state.locked = member ? without.concat(name) : without;
       });
     });
     return inert(label, box, off);
@@ -519,14 +537,19 @@
     box.checked = !isExcluded(name);
     // No word beside the box: the column header carries it once. That
     // RETIRES the width problem this control was named for, rather than
-    // working around it. Measured at the 840px floor: the card interior is
-    // 586px and the six other controls already spend 504.75px of it, so a
-    // seventh track had 81.25px minus a 10px column-gap to live in.
-    // " No preview" measured 93.66, which put the control line at 608.41
-    // -- 22.41px past the card's content edge. Grid tracks do not wrap, so
-    // that is a clipped control at every window width, not a reflow, which
-    // is why the honest phrase was once cut down to " Off". A cell with no
-    // text wants the box's 15px, so the word moved into the header instead
+    // working around it. Measured at the 840px floor when the label was
+    // still a word: the card interior is 586px and the six other controls
+    // then spent 504.75px of it, so a seventh track had 81.25px minus a
+    // 10px column-gap to live in. " No preview" measured 93.66, which put
+    // the control line at 608.41 -- 22.41px past the card's content edge,
+    // and grid tracks do not wrap, so that is a clipped control at every
+    // window width rather than a reflow. That is why the honest phrase was
+    // once cut down to " Off".
+    //
+    // Those are PRE-CHANGE figures and no longer describe this screen.
+    // With the words gone the seven tracks and their gaps measure 512.16px
+    // of the same 586px (?dev=1, 840x625). A cell with no text wants the
+    // box's 15px, so the phrase moved into a heading rendered once instead
     // of being cut to fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
     var label = WM.make('label', 'check optout', '');
@@ -672,12 +695,18 @@
   }
 
   // The column headers, built ONCE above the character rows -- which is
-  // the whole point of them. Every per-row control used to spell its own
-  // name: with thirteen characters and the two cycle rows that is 82 label
-  // instances where six words would do, and because the grid's tracks are
-  // max-content, the longest of those words SET the column width that all
-  // thirteen rows paid for. " Never minimize" wanted 104px of every row;
-  // the header wants 73px of one.
+  // the whole point of them. Three controls per character row used to
+  // spell their own names: `Off`, `Lock` and `Never minimize`, so 39
+  // label instances on a thirteen-character roster with the minimize
+  // toggle on, and 26 in the shipped default state where the
+  // Never-minimize cell is not rendered at all. `Clear`, `Edit...` and
+  // `Size...` keep their words -- they are verbs on a control, not the
+  // name of a column -- so they are not in that count.
+  //
+  // The width that bought is not per-row. Each column is ONE shared
+  // max-content track, so the longest text in a column sizes it for the
+  // header and all thirteen rows together: " Never minimize" set that
+  // track to ~104px, and the heading sets it to ~73px.
   //
   // Sentence case at --fs-muted with no tracking, matching the recording
   // list's headers (index.html's .list-head) rather than .bind-group-name
@@ -686,14 +715,40 @@
   // uppercase .14em rules test_page_conventions.py pins by name.
   //
   // NOT built inside makeRow, and not merely for tidiness: the cell-count
-  // guard derives the per-row track count from makeRow's own appends, so a
-  // header appended there would inflate it by seven. It contributes the
-  // same cell count as a character row through the same `.row` +
-  // display:contents mechanism, and its own count is asserted separately.
+  // guard derives the per-row track count from makeRow's own appends, so
+  // a header appended there would be counted as extra controls on every
+  // row. It contributes the same number of TRACK cells a character row
+  // does -- six, or seven with the minimize toggle on. (A character row
+  // appends one more child than that: its `.lab` spans the whole row
+  // rather than sitting in a track, which is why the guard subtracts it.)
   //
   // Clear and Edit... get empty cells rather than headings. They are
   // subordinate to the bind button they act on -- naming them in the
   // header would claim they are columns of data, and they are verbs.
+  //
+  // What a wrong cell count here costs, measured rather than assumed:
+  // the header's own captions land over the wrong controls. It does NOT
+  // cascade into the rows below. Every row makeRow builds leads with
+  // `.lab { grid-column: 1 / -1 }` (style.css), and a full-width item
+  // cannot be placed into a partly-filled row, so each name starts a
+  // fresh grid row at track 1 and a short row leaves its hole inside
+  // itself. Verified in the ?dev=1 harness at 840x625 by deleting a
+  // header cell: every character row's seven cells stayed at
+  // 209/264/424/476/530/586/624. That is worth having a guard for
+  // anyway -- headings one column out are a silent lie about the data --
+  // but the consequence is local.
+  function makeSizeFiller() {
+    // Holds the Size column open for a character that cannot be sized,
+    // and says why on hover rather than being a blank cell the reader has
+    // no account of. Before the gate, clicking Size... here produced the
+    // refusal sentence that NAMED the way out; withdrawing the control
+    // without the sentence would take that away too.
+    var cell = WM.make('span', 'size-none', '');
+    cell.title = 'A size can only be set once this preview exists. Start '
+               + 'the client, or move or resize its preview once.';
+    return cell;
+  }
+
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
     var cells = ['Preview', 'Keybind', '', '', 'Size', 'Lock'];
@@ -974,6 +1029,18 @@
   // nothing a user could be typing into.
   document.addEventListener('wm:preview-minimize-inactive', function (event) {
     minimizeInactive = !!(event.detail && event.detail.enabled);
+    requestRender();
+  });
+
+  // The same narrow exception, for the same reason, and here it is not a
+  // convenience: every Lock box on this screen is painted by resolving
+  // `state.lock_default` against the roster (isLocked), so a stale copy
+  // does not merely lag -- it shows the exact INVERSE of every row. The
+  // control that writes it is in this same Settings section, a few
+  // hundred pixels above the table, so the wrong state would be on screen
+  // beside the thing that caused it.
+  document.addEventListener('wm:preview-lock-default', function (event) {
+    state.lock_default = !!(event.detail && event.detail.enabled);
     requestRender();
   });
 

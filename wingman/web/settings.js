@@ -987,8 +987,12 @@
 // A discrete control, so it commits on change (DESIGN.md). What it says is
 // not "lock everything": preview.locked holds the characters that DIFFER
 // from this, so ticking locks every character whose own box has not been
-// changed, and unticking restores exactly the arrangement that preceded
-// it. PreviewHost._is_locked resolves the pair; nothing here does.
+// changed. PreviewHost._is_locked resolves the pair; nothing here does.
+//
+// Unticking is not an undo. It restores the previous arrangement only if
+// no per-character box was touched while it was on -- a box changed under
+// a locked default means the opposite thing once the default goes back
+// off. api.py's set_preview_lock_default carries the worked example.
 (function () {
   var box = WM.el('preview-lock-default');
   var status = WM.el('preview-lock-default-status');
@@ -1005,6 +1009,17 @@
         say((res && res.error) || 'Could not save this.');
         return;
       }
+      // The character table is in THIS section, on screen right now, and
+      // every one of its Lock boxes paints from this boolean -- so a write
+      // that only touched settings would leave all of them showing the
+      // exact inverse of the truth, silently, until the next full reload.
+      // Same narrow exception, same shape, and the same reason as
+      // wm:preview-minimize-inactive below: wm:settings is deliberately
+      // never re-dispatched after a single-field write, because repainting
+      // the whole form would clobber whatever else is mid-edit.
+      document.dispatchEvent(new CustomEvent('wm:preview-lock-default', {
+        detail: { enabled: wanted }
+      }));
       say(wanted
         ? 'New previews open locked. A right drag still moves one.'
         : 'New previews can be dragged freely.');
@@ -1044,7 +1059,13 @@
     if (text === applied) { return; }
     if (text === '') { field.value = applied; say(''); return; }
     WM.send('parse_preview_size', text).then(function (parsed) {
-      if (!parsed) { return; }
+      // A null reply is a bridge failure, not a parse verdict. Reverting
+      // and saying so matters more here than in the per-character Size...
+      // dialog, which just closes: this is a PERSISTENT field, so leaving
+      // the typed text in place would make the control state a size the
+      // app is not using, with the hint still reading "Press Enter to
+      // save" and nothing ever coming to correct it.
+      if (!parsed) { field.value = applied; say('Could not save this.'); return; }
       if (parsed.error) { say(parsed.error); return; }
       WM.send('set_preview_default_size', parsed.w, parsed.h)
         .then(function (res) {
