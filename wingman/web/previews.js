@@ -269,14 +269,20 @@
     // row and sit disabled on every unbound one, which on a fresh install
     // was all of them.
     //
-    // Not gated on `off` the way capture and Edit… are, on purpose: an
-    // opted-out character's preview and registration are gone, but the
-    // saved chord is still data, and removing it is not an attempt to
-    // touch either. Gating it on `off` too would grey out the one control
-    // an opted-out row still needs to undo a stale bind.
+    // Still gated on `off`, same as capture and Edit…, once it's built --
+    // that part of the old behaviour was never the problem. Undoing the
+    // gate too would leave `Clear` as the one live control on an
+    // opted-out row: the bind button, Edit… and Size… all go inert, and
+    // the tooltip on that very button promises the chord "is still saved,
+    // and comes back when you tick Preview again." A live `Clear` beside
+    // that sentence lets you delete the thing it just promised was kept.
+    // Only the render-at-all gate (D6's rule) was the fix; whether it's
+    // ALSO inert for an opted-out character is the separate, pre-existing
+    // question this doesn't touch.
     if (gesture) {
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { endCapture(); onSet(''); });
+      WM.setEnabled(clear, !off);
       acts.appendChild(clear);
     }
 

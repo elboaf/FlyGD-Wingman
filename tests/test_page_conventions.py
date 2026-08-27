@@ -1614,24 +1614,36 @@ def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
 
 
 def test_clear_is_not_drawn_where_it_could_only_refuse():
-    """Same rule as the Size test above, applied to the control that broke
-    it worst. `Clear` was rendered on every row and disabled wherever there
-    was no chord to clear -- which, on a fresh install, is every row. It is
-    a .linkbtn, so :disabled is opacity .45 over --text-faint: 1.94:1
-    against the card, a control nobody can read holding a grid track on
-    thirteen rows.
+    """D6's rule -- do not draw a control in a state where it can only
+    refuse -- applied to the control that broke it worst. `Clear` used to
+    be rendered on every row and disabled wherever there was no chord to
+    clear, which on a fresh install is every row. It is a .linkbtn, so
+    :disabled is opacity .45 over --text-faint: 1.94:1 against the card, a
+    control nobody can read holding a grid track on thirteen rows.
 
-    Its function is not lost. Edit... with an empty submission clears, and
-    that path predates this change.
+    Only the render-at-all gate moved. `Clear` still goes through
+    WM.setEnabled against the row's own opted-out state once it exists --
+    an opted-out row otherwise leaves the destructive control as the only
+    LIVE one beside a bind button, Edit... and Size... that are all inert,
+    directly contradicting that button's own tooltip ("is still saved, and
+    comes back when you tick Preview again"). A first version of this test
+    asserted `WM.setEnabled(clear` was gone entirely and that shipped
+    briefly before review caught it; the docstring above is what changed,
+    not the fix.
+
+    Its function is not lost either way. Edit... with an empty submission
+    clears, and that path predates this change.
     """
     body = _makerow_body()
     assert "if (gesture) {" in body, (
         "makeRow no longer chooses whether to build Clear -- it is back to "
         "rendering a control that can only refuse on every unbound row"
     )
-    assert "WM.setEnabled(clear" not in body, (
-        "Clear is disabled rather than absent again: at opacity .45 over "
-        "--text-faint that is 1.94:1, unreadable, and still holding a track"
+    assert re.search(r"WM\.setEnabled\(clear,[^)]*\boff\b", body), (
+        "Clear is built without going through WM.setEnabled against the "
+        "row's opted-out state -- it is live on a row where every other "
+        "control is inert, deleting the chord that row's own tooltip just "
+        "promised was kept"
     )
 
 
@@ -1644,17 +1656,17 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     own opted-out state, rather than merely being dimmed in CSS: a control
     that only LOOKS dead still fires on click.
 
-    `clear` dropped out of the loop below when it stopped being drawn
+    `clear` belongs in this loop even though it is no longer drawn
     unconditionally (test_clear_is_not_drawn_where_it_could_only_refuse):
-    it is built only when there is a gesture to clear, and once built it
-    is never a refusal the way capture and Edit... can be -- removing a
-    saved chord for an opted-out character is a legitimate action on data,
-    not an attempt to touch a window or registration that opting out took
-    away. Gating it on `off` too would grey out the one control an
-    opted-out row still needs to undo a stale bind.
+    the render-at-all gate and the opted-out gate are two different
+    questions, and only the first one changed. Once `Clear` exists it
+    still has to be inert on an opted-out row -- otherwise it is the one
+    LIVE control left beside a bind button, Edit... and Size... that have
+    all gone dark, deleting a chord its own row's tooltip just promised was
+    kept.
     """
     body = _makerow_body()
-    for control in ("button", "typed"):
+    for control in ("button", "clear", "typed"):
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
