@@ -292,11 +292,25 @@
     // with settings.json by hand. "of each" is load-bearing rather than
     // padding -- backup.prune keys on (kind, source, stem), so eleven
     // copies onto eleven different characters prune nothing.
-    WM.el('es-backup-note').textContent =
+    var note =
       'Every copy backs up what it is about to overwrite. The newest '
       + state.auto_keep + ' automatic backups of each character, account '
       + 'or profile are kept; the ones you make here stay until you '
       + 'delete them.';
+    WM.el('es-backup-note').textContent = note;
+    // Round 6, P1-3: the same sentence, above the button it reassures.
+    // One string, two mount points -- paintPill's pattern, and for the
+    // same reason the note in index.html gives: a second hand-written
+    // copy would be free to drift, and this one carries state.auto_keep,
+    // which is exactly the kind of number that has drifted before.
+    //
+    // Only the first sentence there. The pruning rule matters when you
+    // are looking AT the backups; at the commit it would bury the one
+    // fact that is load-bearing, which is that there will be a backup.
+    var commitNote = WM.el('es-copy-backup-note');
+    if (commitNote) {
+      commitNote.textContent = note.split('. ')[0] + '.';
+    }
     // An empty list means one of two things and only Python knows which.
     // Saying "No backups yet" about a store we were denied would invite an
     // overwrite the user believes is protected.

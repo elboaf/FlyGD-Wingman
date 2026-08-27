@@ -49,15 +49,48 @@ def test_the_backup_note_takes_its_number_off_the_payload():
     Four places once carried the bookmark-keybind count and three of them
     drifted; the one a user read was the one guarding an irreversible act.
     """
-    note = re.search(
-        r"WM\.el\('es-backup-note'\)\.textContent =(.*?);", CODE, re.DOTALL
-    )
+    note = re.search(r"var note =(.*?);", CODE, re.DOTALL)
     assert note, "the Backups card no longer explains what it prunes"
     assert "state.auto_keep" in note.group(1), (
         "the keep depth must come off the payload: " + note.group(1)
     )
     assert not re.search(r"\b\d+\b", note.group(1).replace("auto_keep", "")), (
         "a count is typed into the backup note: " + note.group(1)
+    )
+
+    # Round 6, P1-3: the sentence now has TWO homes -- the Backups card and
+    # the commit row above the button it reassures -- and both must render
+    # the SAME string. A second hand-written copy is what this test's own
+    # rationale warns about, and this one carries auto_keep, which is
+    # exactly the kind of number that drifted before.
+    assert "WM.el('es-backup-note').textContent = note;" in CODE, (
+        "the Backups card no longer renders the shared note"
+    )
+    assert "WM.el('es-copy-backup-note')" in CODE, (
+        "the commit row's mount point is gone, so the reassurance is back "
+        "to being two cards below the button it reassures"
+    )
+    assert "commitNote.textContent" in CODE, (
+        "the commit row's element is looked up but never written to"
+    )
+    # The MARKUP too, not only the JS. Deleting the <p> leaves every
+    # assertion above green -- WM.el returns null, the `if (commitNote)`
+    # guard swallows it, and the reassurance is silently back to being two
+    # cards below the button. Found by mutating exactly that.
+    assert 'id="es-copy-backup-note"' in HTML, (
+        "the commit row has no mount point, so the note renders nowhere"
+    )
+    commit_at = HTML.index('id="es-commit"')
+    note_at = HTML.index('id="es-copy-backup-note"')
+    backups_at = HTML.index("<h2>Backups</h2>")
+    assert commit_at < note_at < backups_at, (
+        "the note must sit between the commit row and the Backups card: "
+        "above the button it reassures, and not inside the card that "
+        "already carries the full sentence"
+    )
+    assert CODE.count("Every copy backs up what it is about to overwrite") == 1, (
+        "the backup sentence is written twice; paintPill's pattern is one "
+        "string over two mount points, for this exact reason"
     )
 
 

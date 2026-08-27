@@ -1175,6 +1175,26 @@
                wants the override, and this screen is the first to need it. -->
           <span id="es-eve-state-commit" class="pill">EVE closed</span>
         </div>
+        <!-- Round 6, P1-3. The copy confirm is the best writing in the app
+             -- ui/copy.py names the source, up to six targets, the
+             overflow count, the backup policy and the EVE-running hazard
+             -- and every word of it arrived AFTER the click. Before it,
+             this screen showed 37 checkboxes, a dimmed button and a pill,
+             with the safety story two cards down and below the fold at a
+             633px window.
+
+             The backup sentence, NOT a new one. evesettings.js renders the
+             same string into both mount points from one place, the way
+             paintPill already paints one pill over two -- the note above
+             refuses to hand-write the EVE hazard here precisely because a
+             second copy is free to drift from copy.py's, and that argument
+             applies to this sentence too. So there is one string and two
+             homes for it, and the Backups card keeps its own.
+
+             The EVE hazard is deliberately NOT restated: it is what the
+             pill beside the button is for, and copy.py states it in
+             full at the moment of commitment. -->
+        <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
       <section class="card">
