@@ -578,6 +578,66 @@
   });
 }());
 
+// ---- The one dependence line for the whole card --------------------------
+// Seven blocks below used to carry their own copy of this sentence, plus
+// their own previewsOn/sayDependence/refreshDependence to place it. Six
+// copies were identical, one had been shortened by round 3's R4, and one
+// of the seven had drifted to spelling its local `enabled`. Turning the
+// master switch off rendered the same sentence up to six times in one
+// card, four of them inside a single 840x625 viewport.
+//
+// alerts.js has always done it this way for its own twelve controls, and
+// the shape is the whole argument: a switch that governs a block gets ONE
+// line, and the block reads as subordinate to it (`.pv-master` in
+// style.css). Nothing here is disabled -- S3's rule, restated in
+// ui/copy.py: recording a preference for later is an action that CAN be
+// carried out, and disabling the only route to a control's own
+// precondition is a dead end the reader cannot see the exit from.
+//
+// Does NOT open "Previews are off". That clause belongs to ui/copy.py's
+// INERT_NOTES["previews_off"], which renders one card down in
+// #preview-binds-off and is the single statement of the STATE (R4
+// finding 3). This one carries only the consequence and the way out --
+// which is the shape ui/copy.py's own note docstring asks for.
+(function () {
+  var slot = WM.el('preview-depends');
+  var box = WM.el('preview-enabled');
+  if (!slot || !box) { return; }
+
+  slot.textContent = 'Nothing below is in effect yet — these apply when '
+                   + 'you turn previews back on.';
+
+  function refresh() { slot.hidden = !!box.checked; }
+
+  // The settled event, not the raw `change` the per-row copies listened
+  // to. set_preview_enabled can refuse, and the block above puts the box
+  // back when it does; `change` fires before that is known, so the old
+  // code could clear this line for a switch the backend never accepted.
+  // wm:preview-enabled-changed is dispatched inside the .then(), after
+  // the revert has already happened.
+  document.addEventListener('wm:preview-enabled-changed', refresh);
+
+  // ORDERING DEPENDENCY, and the reason this block sits directly below
+  // the master switch's rather than with the other previews blocks: both
+  // listen on wm:settings, this one reads `box.checked`, and the block
+  // above is what sets it from the payload. Listeners fire in
+  // registration order and the IIFEs run in source order, so the box
+  // holds the new value by the time this runs -- move this block above
+  // that one and the line reports the PREVIOUS payload's state, on a
+  // screen where nothing else looks wrong.
+  //
+  // Reading `s.preview.enabled` here instead would remove the ordering
+  // dependency and add a worse one: the truthiness of that key would then
+  // be spelled out in two blocks with nothing holding them in step, which
+  // is the shape this whole change exists to delete.
+  document.addEventListener('wm:settings', refresh);
+
+  // Hidden until the first payload lands: `hidden` is on the element in
+  // index.html, and nothing here removes it before wm:settings has said
+  // what the switch is. A line claiming previews are off on a screen that
+  // has not loaded yet would be the hydration gate's own failure mode.
+}());
+
 // ---- Where a preview opens -----------------------------------------------
 // Separate from the previews block above: this key is written by its own
 // bridge method so a write that fails can be reported rather than silently
@@ -610,30 +670,27 @@
   // CAN be carried out.
   //
   // What is actually wrong is that a dependent option is rendered as a
-  // peer of the switch it depends on, with nothing saying so. So the row
-  // says so, and only while it is true.
+  // peer of the switch it depends on, with nothing saying so.
   //
-  // Round 3, R4's finding 3: "Previews are off, so..." opened three
-  // sentences in one view, and the unticked switch two rows above says it
-  // a fourth time. This one is rendered ONLY while previews are off, so
-  // the state clause was carrying nothing the reader did not already have
-  // on screen -- what it has to say is when the setting starts mattering.
-  // The middle of the three is INERT_NOTES' previews_off, in ui/copy.py,
-  // which is not this lane's file; it is the one that still opens that
-  // way, deliberately left as the single statement of the state.
-  var DEPENDS = 'Applies when you turn previews back on.';
-
-  // Read from the switch itself rather than cached from the payload. The
-  // Enable checkbox lives in the block above and commits through its own
-  // endpoint, which does NOT push a settings payload, so a cached copy
-  // would keep reporting the state this row had when the section opened.
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
+  // ROUND 6 ANSWERS THAT STRUCTURALLY, and the dependence note is gone
+  // from this block because of it. Saying it per-row was the first fix,
+  // and round 3's R4 finding 3 already caught it going wrong -- "Previews
+  // are off, so..." opening three sentences in one view -- and shortened
+  // THIS one to "Applies when you turn previews back on." while leaving
+  // ui/copy.py's INERT_NOTES["previews_off"] as the single statement of
+  // the state. What R4 could not see from one row is that the same
+  // sentence was being written into seven blocks: six long copies plus
+  // this shortened one, with the machinery to place it (previewsOn,
+  // sayDependence, refreshDependence) duplicated beside each. One copy had
+  // already drifted, spelling its local `enabled` where the other six say
+  // `enable`.
+  //
+  // The card now says it ONCE, in #preview-depends, the way alerts.js has
+  // always said it for its own twelve controls -- and the master switch
+  // carries `.pv-master`, so the block below it reads as subordinate
+  // rather than as peers. The switch owning its dependants is what makes
+  // one sentence enough. See the previews-depends block at the foot of
+  // this file.
   box.addEventListener('change', function () {
     var wanted = box.checked;
     // WM.send resolves to null on any bridge failure rather than
@@ -655,7 +712,6 @@
         // hint (rather than confirming) clears a prior failure message
         // without adding noise on every successful toggle.
         say('');
-        sayDependence();
       }
     });
   });
@@ -669,26 +725,7 @@
     // showing the box unchecked would misreport what will happen.
     box.checked = !(s.preview
       && s.preview.restore_preview_positions === false);
-    refreshDependence();
   });
-
-  // The switch this row depends on. Its own handler is in the block above
-  // and reverts the box on a bridge failure without re-firing `change`, so
-  // this can be one push behind in that one case -- the next settings
-  // payload corrects it, and a failed bridge call has already put more
-  // than this sentence out of step.
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) {
-    enableBox.addEventListener('change', refreshDependence);
-  }
-
-  // Only ever overwrites the default hint, never a live message. A failure
-  // reported by the commit above is more urgent than a dependence note and
-  // must not be wiped by an unrelated field's settings push.
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Preview labels -------------------------------------------------------
@@ -708,19 +745,9 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  // Same dependence note as Position above: PreviewHost.restyle() only
-  // touches previews that are actually open, so with previews off this
-  // sets tomorrow's label, not today's.
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
-
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
+  // Covered by #preview-depends like the rest of the card: PreviewHost.
+  // restyle() only touches previews that are actually open, so with
+  // previews off this sets tomorrow's label, not today's.
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_preview_show_labels', wanted).then(function (res) {
@@ -746,7 +773,6 @@
           + 'it will not survive a restart.');
       } else {
         say('');
-        sayDependence();
       }
     });
   });
@@ -756,24 +782,15 @@
     // Absent means on: settings.py's default is True, and an upgrading
     // user's file predates the key.
     box.checked = !(s.preview && s.preview.show_labels === false);
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Preview opacity --------------------------------------------------
 // The "border and label stay full strength" sentence is a separate static
 // hint in index.html, not this status line: it has to stay on screen even
-// while this line is reporting a write failure or the previews-off
-// dependence note, because it is the one sentence in this card that
-// contradicts what a TriffView user would otherwise assume.
+// while this line is reporting a write failure, because it is the one
+// sentence in this card that contradicts what a TriffView user would
+// otherwise assume.
 (function () {
   var box = WM.el('preview-opacity');
   var readout = WM.el('preview-opacity-value');
@@ -787,9 +804,6 @@
   var DEFAULT_HINT = status.textContent;
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
-
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
 
   // Round 5, C2. The control is a PERCENTAGE and the stored setting is the
   // DWM thumbnail's 0-255 alpha byte; these two are the whole conversion
@@ -812,13 +826,6 @@
     return Math.round(alpha * 100 / ALPHA_MAX);
   }
   function show() { readout.textContent = box.value + '%'; }
-
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
 
   // Live readout as the thumb moves; the setting itself commits only on
   // `change` (DESIGN.md: discrete controls commit on change, and a range
@@ -853,7 +860,6 @@
           + 'not be written to settings — it will not survive a restart.');
       } else {
         say('');
-        sayDependence();
       }
     });
   });
@@ -864,16 +870,7 @@
     box.value = toPercent(value);
     lastGood = box.value;
     show();
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Hide previews while you are not in EVE ----------------------------
@@ -893,16 +890,6 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
-
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_preview_hide_on_lost_focus', wanted).then(function (res) {
@@ -914,7 +901,6 @@
       say(wanted
         ? 'Previews now hide whenever you leave EVE.'
         : 'Previews now stay on screen.');
-      sayDependence();
     });
   });
 
@@ -924,22 +910,14 @@
     // key is new and every existing install lacks it, so the wrong
     // default would blank the screen on upgrade.
     box.checked = !!(s.preview && s.preview.hide_on_lost_focus === true);
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Snap to neighbours and screen edges -------------------------------
 // Same shape as preview-show-labels above: a per-field endpoint that
-// reports {applied, persisted, error}, a box that goes back if the write
-// is refused, and the previews-off note when the setting is inert.
+// reports {applied, persisted, error}, and a box that goes back if the
+// write is refused. The previews-off note is NOT here any more --
+// #preview-depends states it once for the whole card.
 // set_preview_snap's writer is _write_preview_setting, same as show_labels,
 // so a persistence failure always comes back as `applied: false` -- there
 // is no separate "saved for this session only" case to report here.
@@ -952,16 +930,6 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
-
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_preview_snap', wanted).then(function (res) {
@@ -970,24 +938,28 @@
         say((res && res.error) || 'Could not save this.');
         return;
       }
-      say('Snapping is ' + (wanted ? 'on' : 'off') + '.');
-      sayDependence();
+      // The checkbox itself is the success feedback, which is the rule the
+      // show-labels block above states and the one this block did not
+      // follow: it confirmed with "Snapping is on.", a sentence the label
+      // beside the box already says.
+      //
+      // That was survivable while this slot held a default hint of about
+      // the same height -- the confirmation replaced it and the card did
+      // not move. Round 6 deleted that hint (it inverted the label and
+      // said nothing else), so the slot is empty, its row is collapsed by
+      // the empty-row rule in style.css, and an unconditional confirmation
+      // here would ADD a line on first toggle and never take it back.
+      // Clearing restores the collapsed row instead. Errors are unaffected
+      // -- the branch above still speaks, and for this endpoint a failed
+      // write arrives as `applied: false` rather than as a silent success.
+      say('');
     });
   });
 
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
     box.checked = !(s.preview && s.preview.snap === false);
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Keep previews the same shape as their client ----------------------
@@ -1003,16 +975,6 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
-
-  function previewsOn() {
-    var enabled = WM.el('preview-enabled');
-    return !!(enabled && enabled.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_preview_lock_aspect', wanted).then(function (res) {
@@ -1024,23 +986,13 @@
       say(wanted
         ? 'Previews keep their client\u2019s shape.'
         : 'The resize handle is freeform; the picture will stretch.');
-      sayDependence();
     });
   });
 
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
     box.checked = !(s.preview && s.preview.lock_aspect === false);
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());
 
 // ---- Lock previews by default ------------------------------------------
@@ -1217,16 +1169,6 @@
 
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  var DEPENDS = 'Previews are off, so this changes nothing yet — it '
-              + 'applies when you turn them back on.';
-
-  function previewsOn() {
-    var enable = WM.el('preview-enabled');
-    return !!(enable && enable.checked);
-  }
-
-  function sayDependence() { if (!previewsOn()) { say(DEPENDS); } }
-
   box.addEventListener('change', function () {
     var wanted = box.checked;
     WM.send('set_minimize_inactive_clients', wanted).then(function (res) {
@@ -1264,7 +1206,6 @@
           + 'it will not survive a restart.');
       } else {
         say('');
-        sayDependence();
       }
     });
   });
@@ -1275,14 +1216,5 @@
     // clients closure default (__main__.py) -- minimizing a real EVE
     // client window must be asked for, never assumed on upgrade.
     box.checked = !!(s.preview && s.preview.minimize_inactive_clients);
-    refreshDependence();
   });
-
-  var enableBox = WM.el('preview-enabled');
-  if (enableBox) { enableBox.addEventListener('change', refreshDependence); }
-
-  function refreshDependence() {
-    if (status.textContent === DEFAULT_HINT) { sayDependence(); }
-    else if (previewsOn() && status.textContent === DEPENDS) { say(''); }
-  }
 }());

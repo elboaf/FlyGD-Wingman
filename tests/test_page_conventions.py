@@ -683,6 +683,93 @@ def test_the_type_scale_comment_still_describes_the_type_scale():
     )
 
 
+def test_every_comment_in_the_stylesheet_opens_and_closes_exactly_once():
+    """A stray `*/` silently deletes the rule that follows it.
+
+    This sheet is mostly comment by volume, and its comments are edited
+    far more often than its declarations. Replace a comment's tail and
+    leave the old `*/` behind and you get two closers: the comment ends at
+    the first, the prose after it becomes a qualified-rule PRELUDE, CSS
+    error recovery reads that prelude up to the next `{` — which is the
+    real selector — and drops the whole block as invalid.
+
+    That happened on this branch to `.pv-master`. The symptom was not a
+    parse error anywhere: `.pv-master > .row` on the following line still
+    applied, so the block kept exactly enough styling to look deliberate
+    while its display, gap, padding and border were all gone.
+
+    NOTHING ELSE HERE CAN SEE IT. Every other guard in this file reads the
+    sheet lexically — they match selectors and declarations as text, and
+    text is exactly what a dropped rule still is. Only the browser knows,
+    and no test starts one.
+
+    Checks the property directly rather than counting: `/*` and `*/` in
+    equal numbers is true of the broken file too (the stray closer came
+    with a real opener elsewhere). What has to hold is that a closer never
+    appears while the scanner is outside a comment, and that the file does
+    not end inside one. CSS comments do not nest, so a `/*` seen while
+    already inside one is content, not a second opener.
+
+    The second assertion catches the OTHER half, which the first cannot
+    see: DELETE a closer instead of adding one and the tokens still
+    balance, because the comment simply runs on to the next comment's
+    closer and eats every rule in between. The tell is a rule opening at
+    column 0 inside a comment body. Every comment in this sheet is
+    indented, including the many that quote CSS at themselves, so a
+    selector starting hard against the left margin is never comment text.
+    """
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+
+    i, line, in_comment, opened_at = 0, 1, False, None
+    swallowed = []
+    at_line_start = True
+    while i < len(css):
+        if css[i] == "\n":
+            line += 1
+            i += 1
+            at_line_start = True
+            continue
+        pair = css[i : i + 2]
+        if not in_comment and pair == "/*":
+            in_comment, opened_at = True, line
+            i += 2
+            at_line_start = False
+            continue
+        if in_comment and pair == "*/":
+            in_comment = False
+            i += 2
+            at_line_start = False
+            continue
+        assert not (not in_comment and pair == "*/"), (
+            f"style.css:{line} closes a comment that was never opened. The "
+            f"CSS after it is read as a selector prelude and the next rule "
+            f"is dropped whole — silently, because every guard in this file "
+            f"reads the sheet as text"
+        )
+        # A rule opening hard against the left margin, inside a comment.
+        if in_comment and at_line_start and not css[i].isspace():
+            eol = css.find("\n", i)
+            text = css[i : eol if eol != -1 else len(css)]
+            if text.rstrip().endswith("{"):
+                swallowed.append((line, text.strip()[:60], opened_at))
+        at_line_start = False
+        i += 1
+
+    assert not in_comment, (
+        f"style.css: the comment opened at line {opened_at} is never closed, "
+        f"so everything after it is swallowed"
+    )
+    assert not swallowed, (
+        "these rules open at column 0 INSIDE a comment, which means a "
+        "comment's closer was deleted and the comment now runs on and eats "
+        "them: "
+        + "; ".join(
+            f"style.css:{ln} {sel!r} (swallowed by the comment opened at line {opened})"
+            for ln, sel, opened in swallowed
+        )
+    )
+
+
 def test_the_uppercase_tracked_labels_split_headings_from_sub_labels():
     """Four rules carry the `.14em` uppercase treatment. Two ranks, not one.
 
@@ -1284,6 +1371,61 @@ def _makerow_body() -> str:
     return src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
 
 
+def _preview_binds_cell_tracks() -> int:
+    """How many CELL-BEARING tracks #preview-binds declares -- the name
+    track plus the repeated control tracks -- checking as it goes that the
+    name track still refuses to consult its own content.
+
+    NOT every track: the template ends with `minmax(0, 1fr)`, which exists
+    to absorb the leftover width so the controls stay packed at the start,
+    and no row appends a cell for it. The counts this feeds compare
+    against makeRow's appends and makeHeadRow's array literal, so the
+    trailing track has to stay out of them -- as it did in the regex this
+    replaces.
+
+    Both callers below used to inline `(\\d+)px\\s+repeat\\((\\d+),`, which
+    pinned the SPELLING of a deliberate first track rather than the
+    property that makes it deliberate. Round 6 widened the name column to
+    `minmax(150px, 260px)` -- still two lengths, still never sized by
+    whoever is logged in, which is all round 3's B1 ever asked for -- and
+    both guards failed on the shape while the rule they exist for held.
+
+    So the check is the rule: every part of the first track has to be a
+    LENGTH. `max-content`, `min-content`, `auto` and `fit-content()` are
+    rejected wherever they appear in it, which also closes the hole the
+    old regex left open at the other end -- `minmax(max-content, 260px)`
+    is B1 exactly, and a first-token test cannot see it.
+    """
+    rule = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert rule, "#preview-binds has no rule block"
+    template = re.search(r"grid-template-columns:\s*([^;]+);", rule.group(1))
+    assert template, "#preview-binds declares no grid-template-columns"
+
+    tracks = _tracks(template.group(1))
+    assert tracks, "#preview-binds declares an empty template"
+
+    first = tracks[0]
+    for keyword in ("max-content", "min-content", "auto", "fit-content"):
+        assert keyword not in first, (
+            f"#preview-binds' first track is {first!r}, which sizes the "
+            f"character name from its own content -- that is round 3's B1, "
+            f"where the bind button moved between sessions with whoever was "
+            f"logged in. Both ends of the track must be lengths"
+        )
+    assert re.search(r"\d", first), (
+        f"#preview-binds' first track is {first!r} and names no length at "
+        f"all; B1 requires a track the roster cannot move"
+    )
+
+    repeat = re.search(r"repeat\((\d+),", template.group(1))
+    assert repeat, (
+        "#preview-binds no longer declares its control tracks as "
+        "repeat(N, ...), which is what the cell counts below are derived "
+        "from"
+    )
+    return 1 + int(repeat.group(1))
+
+
 def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     """The invariant the delta test above cannot see.
 
@@ -1308,15 +1450,7 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     # is why the -1 that used to discount it is gone.
     cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
 
-    m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
-    assert m, "#preview-binds has no rule block"
-    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
-    assert fixed, (
-        "#preview-binds no longer declares a fixed first track followed by "
-        "repeat(N, ...) -- a max-content name column is round 3's B1 bug, "
-        "where the track followed whoever was logged in"
-    )
-    tracks = 1 + int(fixed.group(2))
+    tracks = _preview_binds_cell_tracks()
 
     assert cells == tracks, (
         f"makeRow appends {cells} cells per character row but #preview-binds "
@@ -1383,12 +1517,7 @@ def test_the_previews_header_row_names_one_column_per_track():
 
     m = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert m, "#preview-binds has no rule block"
-    fixed = re.search(r"grid-template-columns:\s*(\d+)px\s+repeat\((\d+),", m.group(1))
-    assert fixed, (
-        "#preview-binds no longer declares a fixed first track followed by "
-        "repeat(N, ...)"
-    )
-    tracks = 1 + int(fixed.group(2))
+    tracks = _preview_binds_cell_tracks()
     assert base == tracks, (
         f"makeHeadRow names {base} columns but #preview-binds declares "
         f"{tracks} tracks -- the headings sit over the wrong controls, and "
@@ -1461,27 +1590,24 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
 
 
 def test_only_the_previews_name_is_allowed_to_ellipsize():
-    """The name and the `offline` tag share one 150px cell, and only one of
-    them can truncate gracefully.
+    """The name yields inside its track; nothing else in the cell may.
 
     A character is identifiable from a prefix and the whole string is in
-    the cell's `title`, so clipping the NAME costs nothing. The tag is not
-    the same kind of thing: it is the encoding of the offline state, and
-    `.lab.dim`'s colour only reinforces it. Lose the word and what is left
-    is colour-only state, WCAG 1.4.1 -- the failure the tag was added to
-    prevent.
+    the cell's `title`, so clipping the NAME costs nothing.
 
-    Putting the ellipsis on `.lab` itself clips the PAIR, so a long enough
-    name takes the tag with it. Measured in the harness at the 840x625
-    floor before this split: a 14-character name left the tag 19.6px of
-    headroom, a 37-character one pushed its right edge to 500.41 against a
-    track ending at 359 -- the word gone entirely, with no width at which
-    the reader is told.
+    THE CELL HELD TWO THINGS UNTIL ROUND 6. The second was an `offline`
+    tag, and the split below existed to stop a long name taking it with
+    it: putting the ellipsis on `.lab` itself clips the pair. Measured in
+    the harness at the 840x625 floor before the split, a 14-character name
+    left the tag 19.6px of headroom and a 37-character one pushed its
+    right edge to 500.41 against a track ending at 359 -- the word gone
+    entirely, with no width at which the reader is told.
 
-    So the cell is a flex row: the name yields (`min-width: 0` plus the
-    ellipsis) and the tag reserves its width (`flex: none`). Offline rows
-    pay about 44px of name width for it and online rows pay nothing, since
-    the tag only exists when `online === false`.
+    The tag is gone (see the offline-heading test below) and the split
+    STAYS, which is the part worth asserting. `display: flex` plus
+    `min-width: 0` on the name is also what lets it ellipsize inside a
+    fixed track at all, and that half was never about the tag. Collapse
+    the cell back to a plain block and long names clip with no marker.
 
     Reads the non-media `.lab` block, not the first one in the file, for
     the reason test_each_keybind_list_declares_a_deliberate_first_track
@@ -1497,12 +1623,13 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     assert labs, "#preview-binds no longer overrides the shared label column"
     lab = "\n".join(b.group(1) for b in labs)
     assert re.search(r"display:\s*flex", lab), (
-        "#preview-binds's label cell is no longer a flex row, so the tag "
-        "cannot reserve its width against the name"
+        "#preview-binds's label cell is no longer a flex row, so `min-width: "
+        "0` on the name has nothing to act inside and the ellipsis stops "
+        "working"
     )
     assert "text-overflow" not in lab, (
         "#preview-binds's label cell ellipsizes as a whole again, which "
-        "clips the `offline` tag along with the name it qualifies"
+        "truncates the cell rather than the name inside it"
     )
 
     name = re.search(
@@ -1510,8 +1637,8 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     )
     assert name, "the previews name span has no rule of its own to ellipsize in"
     # `overflow: hidden` is in this list because `text-overflow` is INERT
-    # without it -- the name would spill over the tag instead of
-    # truncating, which is the same lost word by a different route.
+    # without it -- the name would spill out of the cell instead of
+    # truncating, which is the same clipped name by a different route.
     for prop in (
         "min-width: 0",
         "overflow: hidden",
@@ -1520,17 +1647,9 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
     ):
         assert prop in name.group(1), (
             f".lab-name must declare `{prop}` -- without all four the name "
-            f"either refuses to shrink inside the flex row, spills over the "
-            f"tag, or wraps instead of ellipsizing"
+            f"either refuses to shrink inside the flex row, spills out of "
+            f"the cell, or wraps instead of ellipsizing"
         )
-
-    tag = re.search(
-        r"#preview-binds \.row > \.lab > \.off-tag \{(.*?)\}", CSS, re.DOTALL
-    )
-    assert tag and "flex: none" in tag.group(1), (
-        "the `offline` tag no longer reserves its width, so the flex row "
-        "shrinks it away and the state goes back to being colour-only"
-    )
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
@@ -1538,14 +1657,69 @@ def test_only_the_previews_name_is_allowed_to_ellipsize():
         "makeRow no longer builds a .lab-name span, so the CSS above has "
         "nothing to apply to and the name is a bare text node again"
     )
-    # The tag is appended to the LAB, not the row. Appending it to the row
-    # would give offline rows one cell more than online ones, which the
-    # cell-count guard cannot see because it counts appends lexically
-    # rather than per render.
-    assert "lab.appendChild(WM.make('span', 'off-tag'" in body, (
-        "the offline tag is no longer appended to the label cell -- in the "
-        "row it would be an extra grid cell on offline rows only"
+
+
+def test_the_offline_state_is_a_heading_over_its_block_not_a_colour():
+    """Offline is TEXT, and the text may not be able to leave the rows it
+    describes. Both halves have been got wrong here before, differently.
+
+    Round 5 wrote it as a legend above the first row. That failed for two
+    reasons: dimness alone carried the state for any row the legend had
+    scrolled past (WCAG 1.4.1), over a list ~780px tall where that was
+    most of them.
+
+    The fix was a word per row, which cured the encoding and created a
+    third problem nobody had measured: on a typical fleet ELEVEN OF
+    THIRTEEN rows are offline, so the word sat on the majority and the two
+    rows that mattered were the ones without it.
+
+    Round 6 is a heading over the offline block, which `rows()` already
+    returns contiguously. That is the legend again in every respect but
+    the one that broke it -- so `position: sticky` is not a flourish here,
+    it is the whole difference. A heading that can scroll off its own
+    block is round 5's defect wearing a different word.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    assert "off-tag" not in src, (
+        "the per-row `offline` tag is back alongside the heading, so the "
+        "word is stated twice for every row in the block"
     )
+    assert "'bind-group-name', 'Offline'" in src, (
+        "previews.js no longer builds an `Offline` heading -- with the "
+        "per-row tag gone that leaves `.lab.dim`'s colour as the only "
+        "encoding of the state, which is WCAG 1.4.1"
+    )
+    # Guarded because the split is what makes the heading contiguous. Sort
+    # the list some other way and the heading would sit above a block that
+    # is no longer all-offline.
+    assert "filter(function (e) { return !e.online; })" in src, (
+        "the offline rows are no longer selected as their own block, so "
+        "the heading no longer describes everything under it"
+    )
+
+    # Matches the selector loosely on purpose. The rule is written against
+    # `.bind-group:not(:empty)` -- an EMPTY .bind-group of the same class
+    # draws the rule that opens the table, and pinning a bare hairline to
+    # the top of the pane would leave a stray line over the rows. An
+    # anchored `\.bind-group \{` would answer "no sticky rule at all" for
+    # a sheet that has a perfectly good one, which is a false alarm rather
+    # than a caught defect.
+    rule = re.search(
+        r"#preview-binds \.bind-group(?::[a-z-]+(?:\([^)]*\))?)* \{(.*?)\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert rule, (
+        "#preview-binds's group heading has no rule of its own, so it is "
+        "not sticky and can scroll off the block it explains"
+    )
+    for prop in ("position: sticky", "top: 0", "background:"):
+        assert prop in rule.group(1), (
+            f"the offline heading must declare `{prop}`: without sticky and "
+            f"a top it leaves its own block, and without a background the "
+            f"rows scroll through the word"
+        )
 
 
 def test_every_previews_row_starts_a_fresh_grid_line():
@@ -2012,6 +2186,55 @@ def test_every_element_id_in_the_page_is_unique():
     ids = re.findall(r'\bid="([^"]+)"', index)
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     assert not dupes, f"these ids appear more than once in index.html: {dupes}"
+
+
+def test_the_previews_dependence_line_is_stated_once_and_reads_the_switch():
+    """One line for a block, not one per control -- and it must be able to
+    read the switch it speaks for.
+
+    The Previews card carried this sentence in SEVEN blocks, six of them
+    word for word, each with its own previewsOn/sayDependence/
+    refreshDependence to place it; one copy had already drifted to spelling
+    its local `enabled`. Round 3's R4 caught three of them colliding in one
+    view and shortened one, which fixed that view and left six. Nothing
+    counted them, which is what this closes.
+
+    THE ORDERING HALF IS THE PART THAT FAILS SILENTLY. Both the master
+    switch's block and the dependence block listen on `wm:settings`; the
+    first sets `#preview-enabled` from the payload and the second reads
+    `.checked` back off it. Listeners fire in registration order and these
+    IIFEs run in source order, so the dependence block has to come SECOND.
+    Move it up and the line reports the previous payload's state -- on a
+    screen where every control still works and nothing else looks wrong.
+    Verified over CDP against a dispatched payload; asserted here because
+    nothing in this suite renders the page.
+    """
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    index = (WEB / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="preview-depends"' in index, "the shared dependence slot is gone"
+    assert index.count('id="preview-depends"') == 1
+
+    # The sentence lives in exactly one place.
+    assert js.count("in effect yet") == 1, (
+        "the dependence sentence is written more than once in settings.js -- "
+        "that is the state this replaced, six copies of one sentence"
+    )
+    for dead in ("sayDependence", "refreshDependence", "previewsOn"):
+        assert dead not in js, (
+            f"{dead} is back: the per-control dependence machinery was "
+            f"duplicated into seven blocks and is what the shared line "
+            f"replaced"
+        )
+
+    master = js.index("WM.el('preview-enabled')")
+    shared = js.index("WM.el('preview-depends')")
+    assert master < shared, (
+        "the #preview-depends block is registered BEFORE the master "
+        "switch's, so its wm:settings listener reads #preview-enabled "
+        "before that payload has been written into it -- the line reports "
+        "the previous payload's state and nothing on the screen looks wrong"
+    )
 
 
 def test_hide_on_lost_focus_is_wired_end_to_end():

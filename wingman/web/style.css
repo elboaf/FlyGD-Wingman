@@ -1558,6 +1558,130 @@ button.btn:disabled,
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
+/* The Previews master switch owns the block under it instead of sitting in
+   it. Seven of the nine controls below are gated on this one, and the card
+   used to say so in prose -- the same sentence in six blocks, plus a
+   seventh already shortened once for exactly this reason (settings.js).
+   A rule under the switch says it once, structurally, and #preview-depends
+   says the rest in one line.
+
+   The rule is .bind-group's hairline, deliberately: this card now draws
+   four of those between its groups, and a DIFFERENT divider over the
+   master switch would read as a fifth kind of thing rather than as the
+   same sheet's way of separating a block. Below rather than above, which
+   is the whole difference -- .bind-group opens a group, this one closes
+   the switch that governs the groups.
+
+   It WRAPS three rows -- the switch, the sentence explaining it, and
+   #preview-depends -- rather than sitting on the switch's own row. The
+   two hints belong to the switch, so a rule drawn immediately under the
+   checkbox would have cut the master block in half rather than closed it.
+
+   flex column with a gap, NOT the 10px bottom margin .row carries by
+   default. #preview-depends is raised only while previews are off, and a
+   margin would leave its row's spacing behind when it goes -- the block's
+   bottom edge moving by 10px with the state of the switch inside it.
+
+   The gap alone does NOT achieve that, which is worth stating because it
+   looks as though it should: the flex items here are the ROWS, and it is
+   the hint INSIDE the third row that carries `hidden`, so the row stayed
+   a 0-height item and still took its gap. Measured before the row-collapse
+   rule below existed: 93px with previews on, and a 10px gap spent on
+   nothing. The two rules are one mechanism and neither works alone.
+
+   No type change on the label. The switch stays --fs-body like every
+   other checkbox on the card, because what is being said is "these belong
+   to that", not "that is a heading". Raising it would put a control into
+   the .14em heading rank that
+   test_the_uppercase_tracked_labels_split_headings_from_sub_labels
+   pins to two card headings and two sub-labels, and a checkbox is
+   neither. */
+.pv-master {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--field-border);
+}
+.pv-master > .row { margin-bottom: 0; }
+/* Both hints in this block explain the same checkbox, so both take the
+   24px step that says so. The shared rule cannot reach this one:
+   `.settings .row:has(> .check) + .row > .hint` indents a hint whose
+   PREVIOUS ROW holds the checkbox, and #preview-depends is two rows down
+   -- the "Click a preview…" row sits between them and has no `.check` of
+   its own. Left alone the two sentences stacked 24px apart inside one
+   bordered block, which reads as a mis-indent precisely because they are
+   adjacent and identical in kind.
+
+   By id, because the id is what makes it the exception: the selector has
+   to out-specify (0,5,0), and `.pv-master .hint` at (0,2,0) would lose
+   while looking like it had won -- the failure this branch already made
+   once with `.pv-master + .bind-group`. */
+#preview-depends { margin-left: 24px; }
+
+/* A continuation row whose hint contributes nothing must cost no line.
+   Such a row holds an empty `.lab` and one `.hint`, and `.lab:empty`
+   already hides the lab -- so with the hint blank the row was rendering
+   as pure margin with both its children invisible.
+
+   BLANK IS TWO STATES, and the first draft of this rule only caught one.
+   `:empty` covers a status slot with no default text
+   (#preview-show-labels-status, #preview-opacity-status: 18px each at the
+   840 floor, blank until a write fails, which for most installs is
+   never). `[hidden]` covers a note the page raises only while its
+   condition holds -- #preview-depends, #preview-binds-off,
+   #alerts-previews-off. Measured: with `hidden` alone the .pv-master
+   block held a 0-height row that still took one 10px flex gap, so the
+   block's height moved with the state of the switch above it, which is
+   exactly what the gap was chosen to prevent.
+
+   NOT applied to a live region. `#alerts-health` and `#alerts-status` are
+   `role="status"`, and a live region that is `display: none` when its
+   text lands may never be announced -- it would become visible in the
+   same tick, and some screen readers do not announce a region that was
+   not already rendered. They keep their line. `:not(:has(> .hint[role]))`
+   is that exclusion, and it is deliberately keyed on the ROLE rather than
+   on the two ids, so a third live region added later is covered without
+   anyone remembering this rule exists.
+
+   `:empty` and `[hidden]` both re-evaluate when settings.js writes a
+   message in, so the row returns on its own. That is why this is a
+   display rule and not a `hidden` attribute somebody has to clear. */
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty),
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]) {
+  display: none;
+}
+
+/* .bind-group inside a flex card, not a grid.
+   Its `grid-column: 1 / -1` is inert here and stays as written: the class
+   is shared with #preview-binds and bookmarks.js's grouped lists, where
+   the span is load-bearing, and forking it into a second class would give
+   the sheet two dividers that have to be kept looking identical by hand.
+   What this card uses is the hairline, the 14px/10px rhythm and the
+   --fs-label uppercase name -- all of which apply unchanged. */
+
+/* A tighter rhythm than the grid lists this class was written for, scoped
+   to dividers that are direct children of a settings card. #preview-binds
+   and bookmarks.js build theirs INSIDE their list host, so neither is a
+   `.card >` child and neither is touched.
+
+   Why tighter: 14px + 10px was measured for ONE divider separating two
+   halves of a row list. This card draws four in a column whose own row
+   rhythm is 10px, and at 39px each (14 margin + 10 padding + 1 border +
+   14 of name) they cost 156px on a screen whose complaint is its height.
+   10px + 6px keeps the hairline and the rank and returns 32px. */
+.settings .card > .bind-group { margin-top: 10px; padding-top: 6px; }
+
+/* The first divider is NOT special-cased, and that is deliberate after
+   measuring it. An earlier draft carried `.pv-master + .bind-group
+   { margin-top: 0 }` on the theory that .pv-master's own 12px of padding
+   already separated it. That rule never applied -- `.settings .card >
+   .bind-group` is (0,3,0) and the sibling selector is (0,2,0) -- and the
+   10px it was trying to remove turns out to be what the card wants:
+   measured, .pv-master's border-bottom and the first divider's border-top
+   sit 10px apart, so they read as two rules with a gap rather than
+   painting as one 2px line, and the first group keeps the same rhythm as
+   the three below it. Do not re-add the override without re-measuring
+   that pair: at 0 they touch. */
+
 .summary {
   color: var(--text-dim); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
@@ -2033,11 +2157,12 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-dim);
 }
-/* No producer since the offline legend moved onto the rows as `.off-tag`
-   (previews.js). Kept rather than deleted: the type-scale note at the top
-   of this file lists it by name as one of the four muted-prose classes,
-   and .bind-group is still built beside a name that a second note could
-   qualify. Delete both together if that stops being true. */
+/* No producer. The offline legend it once qualified became a per-row
+   `.off-tag`, and round 6 made it a sticky group heading instead. Kept
+   rather than deleted: the type-scale note at the top of this file lists
+   it by name as one of the four muted-prose classes, and .bind-group is
+   still built beside a name that a second note could qualify. Delete both
+   together if that stops being true. */
 .bind-group-note { font-size: var(--fs-muted); color: var(--text-faint); }
 
 /* The column headers above the character rows. Built once by previews.js's
@@ -2062,6 +2187,30 @@ button.btn:disabled,
   font-size: var(--fs-muted); color: var(--text-dim);
   white-space: nowrap; padding-bottom: 2px;
 }
+/* The rule that opens the table is drawn by an EMPTY `.bind-group` before
+   the header row (previews.js), not by the header cells themselves.
+
+   Putting `border-top` on `.bind-head > span` is the obvious move and it
+   is wrong: `.row` is display:contents here, so there is no row box, and a
+   per-cell border is broken by every one of the grid's 10px column gaps.
+   It renders as four dashes with holes where the gutters are. A
+   `.bind-group` is a single item spanning `1 / -1`, so its border is one
+   continuous line.
+
+   Unnamed, because the word is the thing that was removed: it read
+   `Characters` one line above a column header reading `Character` (round
+   6). The separation it drew is worth keeping -- the cycle rows above are
+   app commands, not characters, and ran into the list without it. */
+/* The `Preview` header is 45px of word over a 15px box, and the box was
+   pinned to the left of it -- measured 15px left of its own heading's
+   centre, on the one column whose control is narrower than its label.
+   Keybind and Size sat dead centre (0.0 both), so this was the only
+   column that read as mis-set, which is exactly how it was reported.
+
+   `justify-self` on the CELL, not `justify-content` on the label: the
+   label is the grid item, and centring its contents would leave the item
+   itself stretched across the track with the box still at its left. */
+#preview-binds .row > .check.optout { justify-self: center; }
 /* Sits with the name it qualifies, inside `.lab`, so it scrolls with its
    own row rather than depending on a legend at the top of the list. Text
    is the encoding; `.lab.dim`'s colour reinforces it. Lowercase and
@@ -2073,9 +2222,41 @@ button.btn:disabled,
    #preview-binds, which is what keeps this word from being ellipsized
    away with the name. The margin-left below is why that block declares no
    `gap`. */
-.off-tag {
-  margin-left: 8px; font-size: var(--fs-muted); color: var(--text-faint);
+/* The offline heading, and the whole encoding of the offline state now
+   that `.off-tag` is gone from the rows (previews.js). One word for the
+   block instead of one per row: eleven of thirteen rows are offline on a
+   typical fleet, so the word was on the MAJORITY and the two rows that
+   mattered were the ones without it.
+
+   STICKY, and that is the load-bearing part rather than a flourish. The
+   legend this replaces was rejected in round 5 because it sat above the
+   first row of a list ~780px tall and had scrolled off for most of the
+   rows it explained; a heading that can leave its own block is the same
+   defect wearing a different word. Sticky against `.settings-pane`, which
+   is the scroller (`overflow-y: auto`), so it cannot leave while a single
+   row it heads is still on screen.
+
+   It needs a background: sticky only stops it MOVING, and the rows would
+   otherwise scroll through the text. `--panel` matches the card's own
+   gradient closely enough at this y-position that the bar does not read
+   as a second surface; the card's gradient has already resolved to
+   --panel by 78%, which is above where this list starts.
+
+   `top: 0` and not the header row's height: the column headers are not
+   sticky, so there is nothing above this to clear. Make them sticky and
+   this number becomes their height.
+
+   `:not(:empty)` because the rule that opens the table is an EMPTY
+   .bind-group of the same class, and pinning a bare hairline to the top
+   of the pane would leave a stray line floating over the rows. Named
+   groups stick; rules do not. */
+#preview-binds .bind-group:not(:empty) {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel);
 }
+/* The opening rule wants less air than a named group: there is no word
+   under it to separate from, only the header row. */
+#preview-binds .bind-group:empty { margin-top: 12px; padding-top: 8px; }
 
 #preview-binds {
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
@@ -2094,14 +2275,22 @@ button.btn:disabled,
      every row. The trailing minmax(0, 1fr) absorbs the leftover width so
      the four stay packed at the start instead of spreading.
 
-     THE NAME TRACK IS FIXED, NOT max-content, and that is the whole
-     reason this list may have an inline name at all. `max-content` over
+     THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
+     this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. 150px keeps the
-     stability B1 bought while dropping the cross-list half of its rule --
-     Bookmarks still stacks, because "Convert EvE-Scout Bookmarks" is
-     189.6px and genuinely needs its own line. Names wider than the track
-     ellipsize and carry a `title`.
+     in, so the bind button moves between sessions. `minmax(150px, 260px)`
+     keeps the stability B1 bought -- both ends are lengths, so the track
+     never consults the roster -- while dropping the cross-list half of
+     its rule. Bookmarks still stacks, because "Convert EvE-Scout
+     Bookmarks" is 189.6px and genuinely needs its own line.
+
+     Round 6 raised the ceiling from a flat 150px. At 150 a name was
+     ellipsized to 106px (the track less the `offline` tag) on a window
+     with 191px of empty gutter beside the card -- the truncation was not
+     paying for anything. The floor stays 150 so the 840 floor is
+     unaffected; the 260 ceiling is only reachable once the card is wide
+     enough, which it now is (see the max-width block below). Names wider
+     than the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2121,7 +2310,54 @@ button.btn:disabled,
      and this number changes with it -- test_page_conventions.py now
      DERIVES the expected count from makeRow's own appends rather than
      trusting this comment. */
-  grid-template-columns: 150px repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(150px, 260px) repeat(4, max-content) minmax(0, 1fr);
+}
+
+/* Round 6. The 620px measure is right for this section's PROSE and wrong
+   for its one table, which is the finding Profiles reached a round earlier
+   and fixed the same way (see `#route-evesettings > .settings` below, and
+   its D1 note: "deliberate for prose and form rows, accidental for the
+   roster"). Previews has a roster with the same shape and never got the
+   same treatment; measured at 1015 CSS wide, 191px of empty gutter sat
+   beside the card while a character name was ellipsized to 106px inside
+   it.
+
+   Scoped to the card that HOLDS the table, and re-capped inside it, for
+   exactly the reason the Profiles rule gives: the precedence paragraph
+   above the rows is prose and belongs at 620 with the rest of the
+   section. Card 1 is untouched -- its hints already run 85-95 characters
+   at 620, which is past the measure prose wants, so widening it would
+   make it worse rather than better.
+
+   `width: max-content`, NOT `max-width: none`. That is the one place this
+   departs from the Profiles rule it is otherwise copying, and the reason
+   is that the two rosters spend width differently. `.es-roster` is
+   `columns: 170px`, so every extra pixel becomes another column of names
+   and a card filling the pane is a card doing something with it. This
+   table has fixed and max-content tracks and a trailing `minmax(0, 1fr)`
+   that absorbs whatever is left, so a full-pane card just moved the dead
+   space from OUTSIDE the card to inside every row -- measured at 1015,
+   160px of it -- and left two cards in one section with 180px of
+   difference between their right edges. Sized to its content the card is
+   as wide as the table needs and no wider: the tracks and gaps come to
+   639px, so it lands near 671 against card 1's 620 rather than at 801.
+
+   `align-self: start` because `.settings` is a flex column, whose items
+   stretch to full width by default -- without it `width: max-content` is
+   overridden by the stretch and nothing changes. `max-width: 100%` keeps
+   it inside the pane at the 840 floor, where the content is wider than
+   the space and the trailing flexible track gives way instead.
+
+   `#section-previews.active` is already in the watermark suppression list
+   at the top of this sheet, so closing this section's gutter cannot
+   strand the ship mark the way .settings' own margin note warns about. */
+#section-previews { max-width: none; }
+#section-previews > .card { max-width: 620px; }
+#section-previews > .card:has(> #preview-binds) {
+  width: max-content; max-width: 100%; align-self: start;
+}
+#section-previews > .card:has(> #preview-binds) > :not(#preview-binds) {
+  max-width: 620px;
 }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
@@ -2134,34 +2370,34 @@ button.btn:disabled,
    separate once every row is one line. #eve-binds still stacks and still
    carries both.
 
-   A FLEX ROW, and the ellipsis is on the name span rather than here. The
-   cell holds two things -- the name and, for an offline character, the
-   `.off-tag` word -- and only the name can truncate gracefully: a
-   character is identifiable from a prefix and the whole string is in the
-   cell's `title`. The tag is the ENCODING of the offline state, with
-   `.lab.dim`'s colour only reinforcing it, so clipping it leaves
-   colour-only state (WCAG 1.4.1), which is the failure the word was added
-   to prevent. Ellipsizing `.lab` itself clips the pair: measured at the
-   840x625 floor, a 14-character name left the tag 19.6px of headroom and
-   a 37-character one pushed its right edge to 500.41 against a track
-   ending at 359. Splitting the cell costs offline rows about 44px of name
-   width and online rows nothing, since the tag only exists when the
-   character is offline. Scoped to this list: `.lab` is shared with
-   Settings and Profiles, which have no tag and must not become flex.
+   A FLEX ROW, and the ellipsis is on the name span rather than here.
 
-   No `gap` -- `.off-tag` carries its own 8px margin-left, and a gap here
-   would double it. */
+   It held two things until round 6 -- the name and, for an offline
+   character, an `.off-tag` word -- and only the name could truncate
+   gracefully, so the cell was split to stop a long name taking the tag
+   with it. Measured at the 840x625 floor before that split: a
+   14-character name left the tag 19.6px of headroom and a 37-character
+   one pushed its right edge to 500.41 against a track ending at 359.
+
+   THE TAG IS GONE and the split stays. The offline state is a sticky
+   group heading now (previews.js), so there is no second thing in this
+   cell to protect -- but flex plus `min-width: 0` is also what lets
+   `.lab-name` ellipsize inside a fixed track at all, which is the half
+   that was never about the tag. Collapsing this back to a plain block
+   would take the ellipsis with it and clip names with no marker.
+
+   Scoped to this list: `.lab` is shared with Settings and Profiles, which
+   must not become flex. */
 #preview-binds .row > .lab {
   display: flex; align-items: baseline;
   width: auto; min-width: 0; text-align: left; color: var(--text);
 }
 /* `min-width: 0` because a flex item's default `min-width: auto` refuses
-   to shrink below its content, which would push the tag out of the cell
-   instead of ellipsizing the name -- the whole point of the split. */
+   to shrink below its content, so the name would overflow the track
+   instead of ellipsizing inside it. */
 #preview-binds .row > .lab > .lab-name {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-#preview-binds .row > .lab > .off-tag { flex: none; }
 /* Each row contributes fewer cells than the grid has tracks, because the
    trailing flexible one holds no control. Without a definite start, grid
    auto-placement puts the NEXT row's first cell there and every row after

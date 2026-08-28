@@ -2960,6 +2960,107 @@ place a preview is hidden, and no test in the suite creates a real window
       pulsing — when you click back into EVE. This is the feature's real
       cost, and the hint under the checkbox says so.
 
+### The card's own shape
+
+Nothing in the suite renders this page, so every item here is a rendering
+behaviour a lexical guard cannot reach.
+
+- [ ] **LOAD-BEARING: previews off says it ONCE.** Settings > Previews,
+      untick `Show live previews of running EVE clients`. Expected: exactly
+      one new sentence appears — `Nothing below is in effect yet — these
+      apply when you turn previews back on.` — inside the master block,
+      above the rule, and the card grows by about one line (26px measured
+      in the harness at the 840 floor). NOT under Show-the-character-name,
+      opacity, Snap, Keep-the-same-shape, Minimize and Hide as well: that
+      is the state this replaced, six copies of one sentence, four of them
+      visible at once. Tick it again and the line must GO, not linger.
+- [ ] **Every control below stays live while it is off.** Same state: tick
+      Snap, drag the opacity slider, type a default size. Expected: all of
+      them work and persist. Recording a preference for later is an action
+      that can be carried out, and the line is what says so — nothing here
+      is disabled.
+- [ ] **A write failure still speaks for its own control.** The shared
+      line replaced the DEPENDENCE note in each status slot, not the slot.
+      With previews off and the settings file made unwritable, toggle
+      Snap: the per-control message must still appear beside Snap.
+- [ ] **Four groups, in order.** Expected, reading down: `APPEARANCE`,
+      `PLACEMENT`, `SIZE AND SHAPE`, `WHEN YOU SWITCH AWAY` — small caps,
+      dimmer and a step smaller than the card heading, each over a
+      hairline. The last group holds the two controls that reach the REAL
+      EVE window, which is why it is separate and why it is last.
+- [ ] **An empty status row costs no line.** With everything healthy,
+      the slots under `Show the character name` and under the opacity
+      caption are blank and must occupy NO vertical space. Then force a
+      message into one (a failed write): the row must appear, and vanish
+      again when the message clears. `:empty` drives it, so nothing has to
+      remember to clear a `hidden` attribute.
+- [ ] **A raised-only note costs no line either, and this reaches three
+      sections.** The same rule collapses a row whose hint is `[hidden]`
+      rather than empty, so it also governs `#preview-binds-off`,
+      `#alerts-previews-off`, `#alerts-no-folder`, `#alerts-depends` and
+      Bookmarks' `#eve-blockers`. Walk Bookmarks, Previews and Alerts with
+      each of those notes both raised and clear. Expected: no row ever
+      shows blank, and no note ever fails to appear. The `hidden` case is
+      the one the first draft of this rule missed — the row stayed a
+      0-height flex item and still spent its 10px gap.
+- [ ] **A live region keeps its line.** Settings > Alerts. `#alerts-health`
+      and `#alerts-status` are `role="status"` and are deliberately NOT
+      collapsed: a live region that is `display: none` when its text lands
+      may never be announced. Expected: the `Watching gamelogs — …` line
+      renders in place, and with a screen reader on, a change to it is
+      spoken.
+- [ ] **The roster card is as wide as its table and no wider.** Settings >
+      Previews at the character list, window at its default size.
+      Expected: the keybinds card is wider than the card above it but not
+      full-width — measured 673 against 620 at 1015 CSS — with `Size…`
+      landing near its right edge rather than stranded mid-card. A
+      full-pane card here is the regression: this table has fixed tracks,
+      so the width it does not use becomes dead space inside every row.
+- [ ] **A long character name is not clipped at the default size.**
+      Expected: names up to roughly 20 characters render whole. The column
+      is `minmax(150px, 260px)` — both ends lengths, so it still cannot
+      move between sessions with whoever is logged in, which is what round
+      3's B1 forbade. A genuinely extreme name still ellipsizes and still
+      carries the full string in its `title`.
+- [ ] **Neither width overflows.** At the 840x625 floor and at the default
+      size, `document.documentElement.scrollWidth` must equal
+      `clientWidth`. The roster card is `width: max-content` with
+      `max-width: 100%`; the cap is what keeps the floor honest.
+- [ ] **The word `offline` appears ONCE, over its own block.** Settings >
+      Previews at the character list, with some clients running and some
+      not. Expected: running characters first, then a single `OFFLINE`
+      rule-and-heading, then the rest — every row under it dim, and NO
+      per-row `offline` tag anywhere. On a fleet with nobody logged in the
+      heading sits directly under the column headers and every row is
+      below it. The dimming reinforces the heading; it is not the encoding
+      on its own, which is the WCAG 1.4.1 failure this arrangement is the
+      third attempt at.
+- [ ] **The heading cannot leave its own block.** Same screen, a roster
+      long enough that the offline block exceeds the pane — about 16
+      characters at the 840x625 floor, fewer if the window is shorter.
+      Scroll to the bottom of the list. Expected: `OFFLINE` is still on
+      screen, pinned at the top of the pane, with the rows it heads under
+      it. Verified over CDP at 30 characters: the heading's top and the
+      pane's top both read 56. This is the whole reason it is sticky — the
+      legend it replaces was rejected in round 5 for scrolling off the
+      rows it explained.
+- [ ] **The rule above the column headers is one line, not four dashes.**
+      `.row` is `display: contents` in this grid, so a border on the
+      header CELLS is cut by every 10px column gap. It is drawn by an
+      empty `.bind-group` spanning `1 / -1` instead. If you see gaps in
+      that line at the gutters, the border has been moved back onto the
+      cells.
+- [ ] **`Preview` is centred over its checkbox.** The header word is 45px
+      and the box is 15px; every other column's control is dead centre
+      under its label, and this one was 15px left of it. Nothing else on
+      the row moves.
+- [ ] **The list says how to set a bind.** Above `Cycle forward`:
+      "Click a keybind and press the keys you want. Edit… lets you type
+      one instead." Both halves are load-bearing — nothing else says the
+      chord itself is clickable, and `Edit…` sits under a blank column
+      header. The label is deliberately not renamed to explain itself
+      (round 3's B6); the sentence is the fix.
+
 ### Frozen build
 
 - [ ] **LOAD-BEARING: the installed build serves `skills.js`.** Install the
