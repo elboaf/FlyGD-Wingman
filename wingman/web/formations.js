@@ -33,6 +33,13 @@
   var state = {
     path: '', name: '', formations: [], selected: 0, dirty: false, busy: false
   };
+  // Bumped by every edit, and sampled when a save is sent. A save takes a
+  // worker and a push to finish, and the pane stays live throughout -- so
+  // without this, an edit made WHILE saving is marked clean by the push
+  // that answers the older state and is then thrown away by `‹ Profiles`
+  // without a confirm. Disabling the whole pane for the duration would
+  // also fix it, and would punish the common case for the rare one.
+  var revision = 0, savingAt = -1;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -80,7 +87,7 @@
 
   function current() { return state.formations[state.selected] || null; }
   function round3(v) { return Math.round(v * 1000) / 1000; }
-  function markDirty() { state.dirty = true; paintCommit(); }
+  function markDirty() { state.dirty = true; revision += 1; paintCommit(); }
 
   function centroid(f) {
     var c = { x: 0, y: 0, z: 0 }, n = f.probes.length, i;
@@ -117,9 +124,17 @@
   }
 
   /* ---- load / save: the only two places meters appear ---- */
+  // The range is rounded to six places on the way in; the positions are
+  // not. rangeSelect matches a range against RANGES by value, and float
+  // dust in the file's f64 would make an exact 4 AU miss the option list
+  // and get appended as `3.9999999996 AU` -- the escape hatch for a
+  // genuinely unusual value, spent on a value that is not unusual at all.
+  // Six places is well under a metre at one AU. A position is the user's
+  // own number and is left exactly as the file has it.
   function fromMeters(f) {
     return { id: f.id, name: f.name, probes: f.probes.map(function (p) {
-      return { x: p.x / KM, y: p.y / KM, z: p.z / KM, range: p.range / AU };
+      return { x: p.x / KM, y: p.y / KM, z: p.z / KM,
+               range: Math.round(p.range / AU * 1e6) / 1e6 };
     }) };
   }
   function toMeters(f) {
@@ -151,14 +166,17 @@
       state.formations = reply.formations.map(fromMeters);
       state.selected = 0;
       state.dirty = false;
-      WM.el('fm-account').textContent = reply.name;
+      savingAt = -1;
+      WM.el('fm-account').textContent = state.name;
       renderAll();
     });
   }
 
   function save() {
     if (state.busy || !state.path) { return; }
-    state.busy = true; paintCommit();
+    state.busy = true;
+    savingAt = revision;
+    paintCommit();
     WM.send('eve_settings_save_formations', state.path,
             state.formations.map(toMeters)).then(function (accepted) {
       // The bridge returns as soon as a worker is spawned, so a falsy
@@ -176,7 +194,9 @@
   WM.formationsDone = function (payload) {
     if (WM.current_route !== 'formations') { return; }
     state.busy = false;
-    if (payload && payload.ok) { state.dirty = false; }
+    // Only what was actually written is clean. An edit landed since the
+    // send bumped the revision, and the push says nothing about it.
+    if (payload && payload.ok && revision === savingAt) { state.dirty = false; }
     paintCommit();
   };
 
