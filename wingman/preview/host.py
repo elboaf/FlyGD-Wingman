@@ -1130,7 +1130,24 @@ class PreviewHost:
         with _animation_off(libs):
             if minimize:
                 self._minimize(libs, previous.hwnd)
-            ok = window_mod.activate(libs, client.hwnd)
+            try:
+                ok = window_mod.activate(libs, client.hwnd)
+            except Exception:
+                # The outgoing client is already down and the verdict was
+                # never reached. On the click path the caller is the
+                # ctypes WndProc, which prints an uncaught exception to
+                # stderr and swallows it -- so without this the user gets
+                # the empty desktop with no line in the log. Roll back,
+                # say so, and let the exception carry on to whoever logs
+                # it; the switch itself is still a failure.
+                if switching.should_restore(activated=False, attempted=minimize):
+                    logger.exception(
+                        "Switch to 0x%x raised; restoring 0x%x",
+                        client.hwnd,
+                        previous.hwnd,
+                    )
+                    window_mod.activate(libs, previous.hwnd)
+                raise
             if ok:
                 # The ring moves HERE, inline, the instant the switch is
                 # known to have taken -- not on the sweep the foreground

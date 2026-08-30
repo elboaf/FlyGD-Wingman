@@ -2415,6 +2415,37 @@ def test_a_refused_switch_brings_the_minimized_client_back(monkeypatch):
     ]
 
 
+def test_an_activation_that_raises_still_restores_the_minimized_client(
+    monkeypatch, caplog
+):
+    """Between the minimize and the verdict there is one call that can
+    raise (a ctypes ArgumentError on a bad hwnd, say). On the click path
+    the caller is the ctypes WndProc, which prints an uncaught exception
+    and swallows it -- so the rollback cannot live only on the
+    refused-verdict branch, or this case is the empty desktop with no
+    log line. The exception still propagates: the switch failed."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+    calls = []
+
+    def activate(libs, hwnd):
+        calls.append(hwnd)
+        if hwnd == 0x2222:
+            raise RuntimeError("bad hwnd")
+        return True
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    with (
+        caplog.at_level("ERROR", logger="wingman.preview.host"),
+        pytest.raises(RuntimeError),
+    ):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert calls == [0x2222, 0x1111]
+    assert any("raised; restoring 0x1111" in r.message for r in caplog.records)
+    assert libs.user32.animation == 1
+
+
 def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
     """A zero send is not proof the client stayed up: a send that timed
     out is still delivered and processed later, so it can minimize the
