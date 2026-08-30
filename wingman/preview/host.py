@@ -64,13 +64,28 @@ def _animation_off(libs):
     """Suspend the minimize/restore window animation for the block.
 
     Ported from EVE-O Preview (WindowManager.TurnOffAnimation /
-    RestoreAnimation), where it is the default: with the animation on, a
-    minimize plus a restore is ~200-250ms of window-zoom, and that is
-    the bulk of the visible lag between clicking a preview and seeing the
-    client. Toggled for the switch only and put back in a finally, so a
-    refused activation or an exception cannot leave the user's desktop
-    without its animation. Left alone when it is already off: nothing to
-    write, and nothing to "restore" to a value the user never had.
+    RestoreAnimation), where it is the default. What it buys is the
+    VISIBLE zoom, and only that -- measured 2026-08-30, cross-thread
+    SendMessageTimeoutW(SC_MINIMIZE) against a synthetic top-level
+    window, n=7 each: 12.6ms median with the animation ON, 14.2ms with
+    it OFF. The animation is composited by DWM, not run inside the
+    target's message handler, so it delays neither the send nor the
+    switch. An earlier version of this comment claimed ~200-250ms and
+    called it "the bulk of the visible lag"; the blocking half of that
+    claim is measurably false, and the duration of the zoom itself has
+    never been measured here. It is also a no-op for anyone whose
+    animation is already off -- including this repo's maintainer, whose
+    desktop reads iMinAnimate=0 -- so it explains no part of the field
+    reports that motivated the switch reorder.
+
+    Kept anyway: for the Windows default (animation ON) the zoom is real
+    and on screen for every minimize and every restore of a minimized
+    client, which is perceived latency even when nothing is blocked.
+
+    Toggled for the switch only and put back in a finally, so a refused
+    activation or an exception cannot leave the user's desktop without
+    its animation. Left alone when it is already off: nothing to write,
+    and nothing to "restore" to a value the user never had.
 
     fWinIni is 0 on both calls -- the live value changes, the user's
     registry preference does not.
@@ -1084,14 +1099,33 @@ class PreviewHost:
         MinimizeWindow, then ActivateWindow), and it replaced TriffView's
         activate / settle 10ms / minimize / re-activate:
 
-        - The minimize goes to a client that still HAS the foreground,
-          which is the fast case: 6-9ms measured. The old sequence sent
-          it 10ms after the window lost the foreground, mid-deactivation,
-          and on a live install that send timed out for its full budget
-          on every switch (166 consecutive timeouts in one session's
-          log) -- and a timed-out send is still delivered later, so the
-          client minimized AFTER the switch, Windows handed the foreground
-          to whatever it picked next, and the user landed on the desktop.
+        - The minimize goes to a client that still HAS the foreground.
+          It does NOT make the send reliably faster: measured on two
+          live clients 2026-08-30, both orders are quick when the
+          clients are quiet -- old order median 29.6ms, new order
+          40.0ms, and with this thread owning a DWM thumbnail of the
+          target (the app's real shape) the old order ran 9.1ms. None
+          of 26 probe sends came near the budget.
+
+          What it does buy is what happens when the send DOES exceed
+          the budget: a timed-out send is still delivered later, and in
+          the old order that late minimize landed on the window the
+          switch had just left, which is where the compensating
+          re-activation came from. Minimizing before the activation
+          means a late minimize lands on a window that is no longer
+          the foreground, so it cannot take focus off the client the
+          user just asked for.
+
+          An earlier version of this comment said the old send "timed
+          out for its full budget on every switch (166 consecutive
+          timeouts)". That is not supported: the code logs only the
+          FAILURES, never the successes, so the field log's 223 lines
+          have no denominator. The 44 of them that carry an elapsed
+          time are real waits clipped at the budget (min 102ms, median
+          114ms, max 231ms), spread across normal play, and no probe
+          has reproduced one -- the remaining candidate is the client's
+          own message-pump latency during a busy moment (grid load, a
+          jump, a session change), which is EVE-side and not ordering.
         - Nothing is minimized after the activate, so there is no
           foreground theft to undo: the settle and the second activation
           are gone. This function no longer sleeps on the preview thread

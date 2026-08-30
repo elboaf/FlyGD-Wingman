@@ -2028,14 +2028,19 @@ foreground.
       straight through.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
-      target should appear with no window-zoom; that zoom was ~200-250 ms
-      of the old switch. Then open Windows' System > Accessibility >
-      Visual effects (or SystemPropertiesPerformance: "Animate windows
-      when minimizing and maximizing") and confirm the user's own setting
-      is still what it was — the switch toggles the LIVE value only, with
-      `fWinIni=0`, and puts it back in a `finally`. Do this check with the
-      animation ON to begin with; a machine that already has it off
-      exercises nothing.
+      target should appear with no window-zoom. Note what this is and is
+      not: the animation is composited by DWM and blocks nothing —
+      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
+      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
+      not about the switch finishing sooner. **This machine's own desktop
+      has the animation off (`iMinAnimate=0`), so the code path
+      early-returns here and the item cannot be walked without turning it
+      on first.** Windows' default is on, which is who it is for. Turn it
+      on under System > Accessibility > Visual effects (or
+      SystemPropertiesPerformance: "Animate windows when minimizing and
+      maximizing"), walk the switch, then confirm the setting is still on
+      afterwards — the switch toggles the LIVE value only, with
+      `fWinIni=0`, and puts it back in a `finally`.
 - [ ] A refused activation brings the outgoing client BACK. Windows refuses
       a foreground change from a process without recent input; with
       minimize-first the outgoing client is already down when that refusal
@@ -2050,12 +2055,21 @@ foreground.
       so that scene cannot tell you which one you saw. This is the check
       that decides whether minimize-inactive is compatible with the
       previews it sits beside.
-- [ ] Watch the log for `Minimize of 0x... did not complete`. The old
-      sequence logged it on every switch (166 in one session) because the
-      send went to a window mid-deactivation; the send now goes to the
-      foreground window, measured at 6-9 ms. A line here after this change
-      is a finding, and its elapsed-time figure says whether the client
-      timed out or refused outright.
+- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
+      do **not** treat one as a defect on its own. Only failures are
+      logged — a successful minimize writes nothing — so those lines have
+      no denominator and never showed the rate anyone read into them. The
+      44 that carry an elapsed time are real waits clipped at the budget
+      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
+      have failed to reproduce one: quiet clients answer in 7–57 ms in
+      both orders, including with the sending thread owning a DWM
+      thumbnail of the target. The open candidate is the client's own
+      message pump during a busy moment (grid load, a jump, a session
+      change), which no ordering change here can fix. What IS worth
+      filing: the elapsed figure separates a real wait from an instant
+      refusal, so a line reading well under a millisecond means something
+      new. The reorder's payoff is that a late-landing minimize can no
+      longer drop focus, so watch for THAT instead — see the item above.
 - [ ] Reader's note, not a defect to file on its own: the never-minimize
       COLUMN sits in the card headed "Global keybinds" — right for its
       adjacency to the character rows, but that card's intro tells the
