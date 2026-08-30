@@ -3736,7 +3736,7 @@ class Api:
         section = self._eve_section()
         return evesettings_identity.account_identity(
             account_id,
-            section.get("account_aliases") or {},
+            section.get("account_names") or {},
             section.get("account_characters") or {},
             lambda character_id: self._eve_names.label(int(character_id)),
         )
@@ -3803,7 +3803,7 @@ class Api:
                 "display_meta": identity["secondary"],
             }
             if record.kind == "account":
-                item["alias"] = (section.get("account_aliases") or {}).get(
+                item["account_name"] = (section.get("account_names") or {}).get(
                     record.file_id, ""
                 )
                 item["character_ids"] = list(
@@ -4126,26 +4126,33 @@ class Api:
     def _eve_decimal_id(value) -> bool:
         return isinstance(value, str) and value.isascii() and value.isdigit()
 
-    def eve_settings_set_account_alias(self, account_id: str, alias: str) -> dict:
-        if not self._eve_decimal_id(account_id) or not isinstance(alias, str):
+    def eve_settings_set_account_name(self, account_id: str, name: str) -> dict:
+        if not self._eve_decimal_id(account_id) or not isinstance(name, str):
             return self._field_refused("Choose a valid account.")
         found = self._eve_discover()
         if account_id not in {item.file_id for item in found.accounts}:
             return self._field_refused("That account is not in this profile.")
-        cleaned = alias.strip()
+        cleaned = name.strip()
+        if not cleaned:
+            return self._field_refused("Enter an EVE Online username.")
         if len(cleaned) > 80:
             return self._field_refused("Account names can be up to 80 characters.")
-        aliases = dict(self._eve_section().get("account_aliases") or {})
-        if cleaned:
-            aliases[account_id] = cleaned
-        else:
-            aliases.pop(account_id, None)
+        names = dict(self._eve_section().get("account_names") or {})
+        folded = cleaned.casefold()
+        if any(
+            other_id != account_id and str(other_name).strip().casefold() == folded
+            for other_id, other_name in names.items()
+        ):
+            return self._field_refused(
+                "That EVE Online username is already assigned to another account."
+            )
+        names[account_id] = cleaned
         try:
             settings_mod.update_section(
-                self._state.settings, "eve_settings", {"account_aliases": aliases}
+                self._state.settings, "eve_settings", {"account_names": names}
             )
         except OSError:
-            logger.exception("Could not persist EVE account alias")
+            logger.exception("Could not persist EVE account name")
             return self._field_refused("Could not save this account name.")
         return self._field_ok()
 
@@ -4157,11 +4164,12 @@ class Api:
         found = self._eve_discover()
         if account_id not in {item.file_id for item in found.accounts}:
             return self._field_refused("That account is not in this profile.")
+        section = self._eve_section()
+        if account_id not in (section.get("account_names") or {}):
+            return self._field_refused("Name this account before adding characters.")
         associations = {
             key: list(value)
-            for key, value in (
-                self._eve_section().get("account_characters") or {}
-            ).items()
+            for key, value in (section.get("account_characters") or {}).items()
         }
         known = {item.file_id for item in found.characters}
         known.update(value for values in associations.values() for value in values)
@@ -4171,6 +4179,10 @@ class Api:
                 return self._field_refused("That character is not known to Wingman.")
             if value not in wanted:
                 wanted.append(value)
+        if len(wanted) > 3:
+            return self._field_refused(
+                "An EVE account can have up to three characters."
+            )
         for key in list(associations):
             associations[key] = [
                 value for value in associations[key] if value not in wanted
