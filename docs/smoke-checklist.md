@@ -2631,27 +2631,81 @@ so these are the checks that matter and only a Windows machine can run them.
       not a panel inserted into the copy card. Before anything starts it explains
       what Wingman will watch, says to close every EVE client, and offers one
       primary action. Start identification, launch one character, enter the
-      game, then fully close that client and press `Check changes`. Wingman
-      proposes the one changed account and character and links nothing until
-      `Link character` is pressed. Completion names the linked pair and makes
-      `Back to Profiles` the primary next action.
+      game, make a small settings change, fully close that client, and press
+      `Check changes`. Wingman proposes the one changed account and character
+      and persists nothing when `Link character` opens the required account-name
+      step.
+- [ ] **No-change recovery names the required action.** Start identification but
+      make no settings change before closing the client and checking. Expected:
+      no link is proposed and the recovery copy explicitly says to make a small
+      settings change in the client, close it completely, and check again. Do
+      not substitute moving an in-game window for the settings change unless a
+      separate live test has proved that it dirties both required files.
+- [ ] **A pending match is disposable; the first save is atomic.** Select the
+      proposed character, then leave with `‹ Profiles` before entering an account
+      name. Return and verify neither the name nor the link was saved. Repeat the
+      observation, enter the EVE Online username, and use `Save and continue`.
+      Expected: the account name and first character link appear together, never
+      one without the other. The page explains that the username stays on this
+      computer.
+- [ ] **Account names are unique without regard to case.** Identify or manually
+      name a second account using only a case variation of the first account's
+      username. Expected: Wingman refuses it inline with `That EVE Online
+      username is already assigned to another account.` and changes neither
+      account.
+- [ ] **One-, two-, and three-character rosters can finish.** After the atomic
+      first save, verify `1 of 3 characters linked` and that `Done` is available.
+      Add a second character, verify `2 of 3` and that `Done` remains available,
+      then add a third and verify `3 of 3`. At three, neither the guided roster
+      nor manual management offers a fourth character, and a stale direct
+      request is refused.
+- [ ] **An empty remaining roster explains recovery.** Use a profile with no
+      other unlinked discovered character. Expected: the picker and `Add
+      character` are hidden, `Done` is the single primary action, and the copy
+      explains that only discovered characters can be offered and how to make a
+      character available later.
+- [ ] **Moves preserve the source on refusal.** Move a linked character to a
+      named account with room. Expected: `WM.confirm` names both accounts before
+      the move. Then attempt to move a character to an account that already has
+      three links. Expected: the move is refused and the character remains on
+      its current account.
+- [ ] **Identification supports repeated account work.** Re-identify an already
+      named account and verify `Link character` skips the naming step. From a
+      saved roster, choose `Identify another account`; it returns to the
+      explanation without leaving the focused sub-screen, and a new start takes
+      a fresh snapshot. The roster's `<named> of <discovered> accounts identified
+      in this profile` progress updates from the current profile payload.
+- [ ] **Names outlive every character link and EVE profile changes.** In `Manage
+      account names and character links…`, remove every character from a named
+      account. Expected: the name remains attached to its numeric account. Link
+      characters again, switch between the Default and Alt EVE settings
+      profiles, and return; names and confirmed links still follow the numeric
+      account number.
 - [ ] **Identification never guesses.** Repeat while two account clients are
       closed together. Expected: Wingman says more than one account changed and
       creates no association. Check once while EVE is still running too: it asks
       for the client to be closed rather than reading an incomplete write.
-- [ ] **Aliases and links survive EVE profile changes.** On the identity
-      sub-screen, open the secondary `Manage names and character links…`
-      disclosure. Name an account `Main multibox`, manually link a second
-      character, switch between the Default and Alt EVE settings profiles, and
-      return. Expected: the alias and confirmed character summary follow the
-      numeric account number. Moving a character already linked elsewhere asks
-      before changing the link.
 - [ ] **Identification and mutations exclude each other.** While the observation
       is active, Copy, backup Restore/Delete/Create, retention Apply, and
       formation editing are disabled and a direct stale click is refused. Then
       start a copy: `Identify accounts…` is disabled until it finishes. Leave
       the identity sub-screen with `‹ Profiles` during an observation and return:
       the observation was cancelled.
+- [ ] **Inspect every deterministic identity fixture in a browser.** Open
+      `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
+      `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,
+      `roster-two`, `roster-three`, `roster-empty`, `move`, and `full`. Check
+      every state at
+      the 840x625 viewport floor and at a wider viewport. Expected: content fits,
+      headings receive focus on step changes, each state has one primary action,
+      inline errors remain associated with their field, and the roster count is
+      announced as a live status.
+- [ ] **Complete the real Windows/live-EVE pass before release.** Browser fixtures
+      and automated tests do not prove that a real settings change dirties the
+      required account and character files. On Windows with a live EVE install,
+      execute the identification checks above end to end and verify the proposed
+      IDs match the launched character and its account before treating this flow
+      as operationally verified.
 - [ ] **The roster reads alphabetically, down each column** (round 5's
       R1/D4). With a few dozen characters, look at the target list and the
       `Copy from` dropdown. Expected: both are in NAME order, not in the
