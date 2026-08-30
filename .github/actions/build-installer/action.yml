@@ -195,7 +195,21 @@ runs:
     # signing.
 
     - name: Install the Rust toolchain for the settings codec
-      uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit like every other action here: `@stable` is a
+      # moving BRANCH of this repository, so it is upstream's HEAD running
+      # with our secrets on the release path, not a version we chose.
+      # 6c977a6 is the v1 tag (also master's head at the time of pinning).
+      #
+      # Two different "stable"s, and only one of them is now pinned: the
+      # ACTION is fixed at v1, while the `toolchain: stable` input below
+      # still floats to whatever rustc is current on the day of the build.
+      # That is deliberate -- the crates are pinned by Cargo.lock and built
+      # `--locked`, so the compiler is the one input we do want fresh, and
+      # a pinned rustc would quietly rot instead. The v1 action requires
+      # `toolchain` explicitly; only the branch form defaulted it.
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # v1
+      with:
+        toolchain: stable
 
     - name: Build the settings codec
       # Our own ~50-line crate over the MIT blue-marshal library. Built here
