@@ -225,8 +225,18 @@ runs:
       # all MIT/Apache-2.0 -- because MIT's condition is that the notice
       # travels with the binary, and the binary contains all of them.
       # Shipping blue-marshal's text alone covered one crate in eighteen.
+      # cargo fetch BEFORE the build, not instead of it: `cargo build` only
+      # unpacks the crates the resolved feature graph actually compiles, but
+      # Cargo.lock records the full graph -- proc-macro2 is listed as
+      # serde-derive's dependency and is never unpacked because our crate
+      # does not enable derive. collect_licenses.py iterates every package
+      # in the lock file, so it died on exactly that never-compiled crate
+      # (observed on the runner: "no vendored source for proc-macro2
+      # 1.0.107"). `cargo fetch --locked` downloads and unpacks EVERYTHING
+      # the lock names, which is the superset the licence step needs.
       shell: pwsh
       run: |
+        cargo fetch --locked --manifest-path packaging/settings-codec/Cargo.toml
         cargo build --release --locked --manifest-path packaging/settings-codec/Cargo.toml
         Copy-Item packaging/settings-codec/target/release/wingman-settings-codec.exe packaging/bin/
         python packaging/settings-codec/collect_licenses.py
