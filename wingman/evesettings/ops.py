@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import atomicio
-from . import tree
+from . import codec, selective, tree
 
 
 @dataclass(frozen=True)
@@ -49,24 +49,10 @@ def _describe(error: BaseException) -> str:
 describe = _describe
 
 
-def copy_to_targets(
-    source, targets, *, root, backup, copy=atomicio.copy_atomic
-) -> CopyReport:
-    """Copy *source* onto each of *targets*, backing each one up first.
-
-    `root` is the configured EVE folder. Every path is resolved and checked
-    to be under it before anything is read or written -- a junction inside
-    the settings tree pointing outside it is what this catches, and
-    copy_atomic creates missing parent directories, so an unchecked target
-    does not merely fail.
-
-    `backup` is called with the target path before it is overwritten and
-    must raise on failure -- a target whose backup could not be taken is
-    skipped untouched rather than overwritten unprotected.
-    """
+def _prepare_targets(source, targets, *, root) -> tuple[Path, str, list[Path]]:
     source = Path(source)
     # A bad source is the whole batch's problem, so it raises; a bad target
-    # is that target's problem and is reported in the loop below.
+    # is that target's problem and is reported in each copy loop.
     tree.require_under(root, source, suffix=".dat")
     source_kind = tree.file_kind(source)
     if source_kind is None:
@@ -92,24 +78,45 @@ def copy_to_targets(
         chosen.append(candidate)
     if not chosen:
         raise ValueError("Choose at least one target to copy to.")
+    return source, source_kind, chosen
+
+
+def _target_error(target: Path, *, root, source_kind: str) -> str | None:
+    try:
+        tree.require_under(root, target, suffix=".dat")
+    except ValueError as error:
+        return str(error)
+    target_kind = tree.file_kind(target)
+    if target_kind != source_kind:
+        return (
+            f"Cannot copy {source_kind} settings onto "
+            f"{target_kind or 'an unknown file'}."
+        )
+    return None
+
+
+def copy_to_targets(
+    source, targets, *, root, backup, copy=atomicio.copy_atomic
+) -> CopyReport:
+    """Copy *source* onto each of *targets*, backing each one up first.
+
+    `root` is the configured EVE folder. Every path is resolved and checked
+    to be under it before anything is read or written -- a junction inside
+    the settings tree pointing outside it is what this catches, and
+    copy_atomic creates missing parent directories, so an unchecked target
+    does not merely fail.
+
+    `backup` is called with the target path before it is overwritten and
+    must raise on failure -- a target whose backup could not be taken is
+    skipped untouched rather than overwritten unprotected.
+    """
+    source, source_kind, chosen = _prepare_targets(source, targets, root=root)
 
     outcomes = []
     for target in chosen:
-        try:
-            tree.require_under(root, target, suffix=".dat")
-        except ValueError as error:
-            outcomes.append(TargetOutcome(target, False, str(error)))
-            continue
-        target_kind = tree.file_kind(target)
-        if target_kind != source_kind:
-            outcomes.append(
-                TargetOutcome(
-                    target,
-                    False,
-                    f"Cannot copy {source_kind} settings onto "
-                    f"{target_kind or 'an unknown file'}.",
-                )
-            )
+        error = _target_error(target, root=root, source_kind=source_kind)
+        if error is not None:
+            outcomes.append(TargetOutcome(target, False, error))
             continue
         if target.exists():
             try:
@@ -125,6 +132,51 @@ def copy_to_targets(
                 continue
         try:
             copy(source, target)
+        except Exception as error:  # noqa: BLE001 - reported per target
+            outcomes.append(TargetOutcome(target, False, _describe(error)))
+            continue
+        outcomes.append(TargetOutcome(target, True))
+    return CopyReport(outcomes)
+
+
+def copy_selected_to_targets(
+    source,
+    targets,
+    *,
+    selected_groups,
+    root,
+    backup,
+    read=codec.read_document,
+    write=codec.write_document,
+) -> CopyReport:
+    """Copy selected decoded groups onto each existing target settings file."""
+    source, source_kind, chosen = _prepare_targets(source, targets, root=root)
+    source_document = read(source)
+
+    outcomes = []
+    for target in chosen:
+        error = _target_error(target, root=root, source_kind=source_kind)
+        if error is not None:
+            outcomes.append(TargetOutcome(target, False, error))
+            continue
+        if not target.exists():
+            outcomes.append(
+                TargetOutcome(target, False, "The target settings file does not exist.")
+            )
+            continue
+        try:
+            target_document = read(target)
+            updated = selective.copy_selected(
+                source_document.doc,
+                target_document.doc,
+                kind=source_kind,
+                selected_groups=selected_groups,
+            )
+            write(
+                target,
+                codec.Document(doc=updated, had_crc=target_document.had_crc),
+                backup=backup,
+            )
         except Exception as error:  # noqa: BLE001 - reported per target
             outcomes.append(TargetOutcome(target, False, _describe(error)))
             continue

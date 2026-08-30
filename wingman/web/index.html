@@ -1290,6 +1290,11 @@
           <label class="lab" for="es-source">Copy from</label>
           <select id="es-source" class="field"></select>
         </div>
+        <div class="row" id="es-copy-options" hidden>
+          <span class="lab">What to copy</span>
+          <div id="es-copy-groups" class="es-copy-groups"></div>
+          <p class="hint">Unchecked groups keep each target’s own settings. Everything else is copied.</p>
+        </div>
         <div class="row">
           <input id="es-filter" class="field" type="search" placeholder="Filter…"
                 aria-label="Filter characters or accounts">

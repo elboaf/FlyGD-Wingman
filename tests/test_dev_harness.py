@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from wingman import bookmarks
+from wingman.evesettings import selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -175,6 +176,50 @@ def test_the_harness_assigns_each_bridge_method_once():
     assert not dupes, (
         "dev.js assigns these bridge methods more than once, so the harness "
         "serves whichever came last: " + repr(dupes)
+    )
+
+
+def test_profiles_group_fixture_matches_the_python_payload():
+    """The browser harness must show exactly the groups Python sends."""
+    marker = "var selective = {"
+    assert marker in DEV_JS
+    block = DEV_JS[DEV_JS.index(marker) : DEV_JS.index("\n  };", DEV_JS.index(marker))]
+
+    def parsed(kind: str) -> list[dict]:
+        match = re.search(kind + r": \[(.*?)\n\s*\]", block, re.DOTALL)
+        assert match, kind
+        return [
+            {"id": ident, "label": label, "default_on": default == "true"}
+            for ident, label, default in re.findall(
+                r"\{ id: '([^']+)', label: '([^']+)', default_on: (true|false) \}",
+                match.group(1),
+            )
+        ]
+
+    assert parsed("characters") == selective.groups_payload("character")
+    assert parsed("accounts") == selective.groups_payload("account")
+    assert "selective_copy_available: true" in DEV_JS
+    assert "copy_groups: selective.groups_payload" in DEV_JS
+
+
+def test_profiles_delayed_mutation_logs_every_received_argument():
+    """The generic callback must retain group ids instead of truncating at targets."""
+    block = DEV_JS[
+        DEV_JS.index("function eveMutation(name) {") : DEV_JS.index(
+            "  ['eve_settings_copy'", DEV_JS.index("function eveMutation(name) {")
+        )
+    ]
+    assert re.search(r"return function \(\) \{", block), (
+        "the delayed mutation must accept the endpoint's complete argument list"
+    )
+    assert re.search(
+        r"console\.log\('DEV api\.' \+ name \+ '\(',\s*"
+        r"Array\.prototype\.slice\.call\(arguments\), '\)'\);",
+        block,
+        re.DOTALL,
+    ), (
+        "the delayed mutation must preserve and log all arguments, including "
+        "eve_settings_copy's third group-id argument"
     )
 
 

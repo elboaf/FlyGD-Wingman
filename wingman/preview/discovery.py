@@ -37,7 +37,7 @@ def _character(title: str):
     return None
 
 
-def list_clients(*, enumerator=None, pids=None, image_name=None) -> list:
+def list_clients(*, enumerator=None, pids=None, image_name=None, strict=False) -> list:
     """Every visible EVE client window, as Client records.
 
     Collaborators are injected for testing, following evewindows.py's
@@ -53,6 +53,8 @@ def list_clients(*, enumerator=None, pids=None, image_name=None) -> list:
     try:
         windows = enumerator()
     except Exception:
+        if strict:
+            raise
         logger.exception("Could not enumerate windows")
         return []
 
@@ -65,6 +67,8 @@ def list_clients(*, enumerator=None, pids=None, image_name=None) -> list:
             if not pid or image_name(pid) != CLIENT_IMAGE:
                 continue
         except Exception:
+            if strict:
+                raise
             logger.exception("Skipped window 0x%x during discovery", hwnd)
             continue
         character = _character(title)
