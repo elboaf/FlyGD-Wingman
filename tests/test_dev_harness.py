@@ -242,6 +242,20 @@ def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_
     assert 'display_meta: "Account 1001"' in DEV_JS
 
 
+def test_move_scenario_uses_the_guided_candidate_path():
+    move = _identity_scenarios()["move"]
+    assert move["stage"] == "move"
+    assert move["check"] == {
+        "status": "candidate",
+        "error": None,
+        "account_id": "1002",
+        "character_ids": ["90000000"],
+    }
+    assert "move_account" not in move
+    assert "move_character" not in move
+    assert "stage === 'move'" in DEV_JS
+
+
 def test_identity_harness_doubles_atomic_endpoints_without_alias_compatibility():
     stubbed = _stubbed()
     assert "eve_settings_identification_confirm" in stubbed
