@@ -135,10 +135,14 @@ Associations are local metadata only. They must not alter EVE files, backups,
 ESI state, or the launcher. They persist across settings profiles so the same
 account remains recognizable when the user switches from Default to Alt.
 
-If a manual edit moves a character to another account, the page names both
-accounts and confirms the move. Python validates the complete destination
-roster, including its three-character maximum, before removing the character
-from its previous account. A refused or failed move changes neither account.
+A character already linked to any account is omitted from every Add dropdown.
+Manual relocation is therefore an explicit remove-then-add sequence rather
+than an Add action that silently changes ownership. A guided identification
+candidate may still reveal that a character belongs to another account; that
+path names both accounts and confirms the move. Python validates the complete
+destination roster, including its three-character maximum, before removing the
+character from its previous account. A refused or failed move changes neither
+account.
 
 ## Human-readable account labels
 
@@ -319,10 +323,11 @@ characters discovered in the selected EVE profile but never implies they
 belong to this account. Each additional link requires an explicit user choice.
 
 The roster shows confirmed characters, one dropdown of remaining discovered
-characters, and **Add character**. Additions happen one at a time so a large
-multibox roster does not become a wall of checkboxes and each move can be
-confirmed separately. While an addition is available, **Add character** carries
-the screen's single accent treatment and **Done** remains an ordinary button.
+and globally unlinked characters, and **Add character**. Additions happen one
+at a time so a large multibox roster does not become a wall of checkboxes.
+Characters linked to this or any other account never remain in the dropdown.
+While an addition is available, **Add character** carries the screen's single
+accent treatment and **Done** remains an ordinary button.
 Done remains available after the first save, so one-character and two-character
 accounts are never forced to fill all slots. It returns to Profiles without a
 separate mostly empty completion screen.
@@ -336,9 +341,7 @@ accent action.
 
 At three links, show the `3 of 3` state and point users to the management
 disclosure if a wrong or obsolete link must be removed. Python refuses a fourth
-link. If the selected character belongs to another account, `WM.confirm` names
-both accounts before the request. A destination already at three does not offer
-a move and rejects a stale direct request.
+link. A destination already at three rejects a stale direct request.
 
 Beside **Done**, offer a secondary **Identify another account** action. It
 returns to the explanation step without leaving the sub-screen; pressing
@@ -355,16 +358,18 @@ sub-screen lets users:
 - add or rename an account using a non-empty, globally unique account name;
 - associate discovered characters with a named account, up to three total;
 - remove a confirmed association without removing the retained account name;
-- move a character from one account to another after explicit confirmation.
+- relocate a character by removing its existing link before it becomes
+  available in another account's Add dropdown.
 
 The existing alias endpoint is replaced by
 `eve_settings_set_account_name`; `eve_settings_set_account_characters` remains
 the complete-roster endpoint. Both are synchronous request/response methods.
 Python validates before mutating, persists the complete value, returns the
 standard `{applied, persisted, error}` shape, and the page refetches state after
-an applied change. Account names may be changed but never cleared. Moving a
-character is confirmed by the page through `WM.confirm` before sending the new
-complete association set. No new push handler is required.
+an applied change. Account names may be changed but never cleared. Add controls
+omit every character already linked to any account; Python still preserves
+single ownership if a stale or direct request supplies one. No new push handler
+is required.
 
 Manual management remains scoped to accounts discovered in the selected EVE
 profile. Names and links for an account absent from that profile remain stored
@@ -572,8 +577,10 @@ The implementation, `?dev=1` harness, and smoke pass cover:
 - optional remaining-character roster with Done available at one and two links;
 - no remaining discovered characters;
 - full three-character roster with no add affordance;
-- moving a character to an account with room;
-- refused move to a full account;
+- guided confirmation moving a previously linked character to an account with
+  room;
+- refused guided move to a full account;
+- linked characters omitted from guided and manual Add dropdowns;
 - named account absent from the selected profile;
 - manual account rename and refused name clearing;
 - identifying another account without leaving the sub-screen;
@@ -628,8 +635,9 @@ The implementation, `?dev=1` harness, and smoke pass cover:
   the observation.
 - Two concurrent confirmations cannot both consume one pending candidate.
 - Additional links stop at three in both guided and manual paths.
-- Moving a character validates destination capacity before changing its old
+- Guided candidate moves validate destination capacity before changing the old
   account.
+- Every linked character is omitted from both guided and manual Add dropdowns.
 - Cancel and route leave clear the snapshot and pending candidate.
 - No EVE file is written during observation or association persistence.
 
@@ -695,22 +703,27 @@ At minimum:
    management offers a fourth; verify a stale direct request is refused.
 7. Attempt a case-only duplicate account name and verify it is refused without
    changing either account.
-8. Move a character between accounts after confirmation, then verify a move to
-   a full account is refused without removing it from its current account.
-9. Exercise no-change and multiple-account ambiguity without creating a link;
-   verify no-change recovery mentions making a small settings change.
-10. Exercise a profile with no other discovered character and verify the empty
+8. Verify characters linked to any account are absent from every guided and
+   manual Add dropdown. Remove one link and verify that character then becomes
+   available to add elsewhere.
+9. Identify a character already linked to another account, accept the move
+   confirmation, and verify it leaves the source account and joins the
+   destination. Repeat with a full destination and verify refusal leaves the
+   source unchanged.
+10. Exercise no-change and multiple-account ambiguity without creating a link;
+    verify no-change recovery mentions making a small settings change.
+11. Exercise a profile with no other discovered character and verify the empty
     roster explains how to make one available later while Done remains usable.
-11. Copy account settings and verify the roster and confirmation use the same
+12. Copy account settings and verify the roster and confirmation use the same
     label.
-12. Check the identification flow in `?dev=1` at 840x625 and a wider viewport,
+13. Check the identification flow in `?dev=1` at 840x625 and a wider viewport,
     including every state listed under Page conventions.
-13. Check the backup table at 840x625 and a wide window with more than 20 rows.
-14. Restore a character, account, and profile backup after verifying the target
+14. Check the backup table at 840x625 and a wide window with more than 20 rows.
+15. Restore a character, account, and profile backup after verifying the target
     label and date.
-15. Lower retention, verify the exact deletion count, decline once, then
+16. Lower retention, verify the exact deletion count, decline once, then
     accept.
-16. Confirm manual backups survive pruning.
+17. Confirm manual backups survive pruning.
 
 ## Non-goals
 

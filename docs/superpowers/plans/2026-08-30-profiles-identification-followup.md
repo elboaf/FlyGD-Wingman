@@ -18,6 +18,7 @@
 - Replace the unreleased `account_aliases` model with `account_names`; do not add compatibility migration code.
 - Account names are trimmed, non-empty, at most 80 characters, and globally unique under `casefold()` while preserving display capitalization.
 - An account may have at most three confirmed characters, and one character may belong to at most one account.
+- Post-review amendment: every character already linked to any account is omitted from guided and manual Add dropdowns. Manual relocation requires remove then add; only a newly observed guided candidate may offer a confirmed move.
 - Never infer association from availability or timestamps. Every new or moved link is user-confirmed.
 - Wingman must never move or resize an EVE client window.
 - Every non-method `Api` attribute remains underscore-prefixed.
@@ -572,7 +573,7 @@ On **Save and continue** or Enter, call `eve_settings_identification_confirm`. K
 
 - [ ] **Step 8: Render and operate the bounded roster**
 
-Render confirmed names and `N of 3 characters linked`. Build the remaining dropdown from `state.identity_characters`, excluding only characters already linked to the destination. If the destination has three links or no remaining discovered character, hide the add row and show the corresponding message. Otherwise, use the existing complete-roster endpoint to add one selected character after any required move confirmation.
+Render confirmed names and `N of 3 characters linked`. Build the remaining dropdown from `state.identity_characters`, excluding characters linked to any account. If the destination has three links or no remaining globally unlinked discovered character, hide the add row and show the corresponding message. Otherwise, use the existing complete-roster endpoint to add one selected character. A manual relocation requires removing the old link first; the guided candidate path retains its explicit move confirmation.
 
 **Done** calls the existing route-return path. **Identify another account** clears page-owned pending state, calls identification cancel defensively, and returns to idle on the same route. Derive `<named> of <discovered>` from `state.accounts.filter(account_name)` and `state.accounts.length`.
 
@@ -708,7 +709,8 @@ Replace the original single-link completion language with checks for:
 - case-insensitive duplicate refusal;
 - one-, two-, and three-character roster completion;
 - no remaining discovered characters;
-- confirmed moves and refused moves to full accounts;
+- linked characters omitted from every Add dropdown and available only after removal;
+- guided candidate moves and refused moves to full accounts;
 - re-identifying an already named account;
 - Identify another account and current-profile progress;
 - retained names after removing every character;

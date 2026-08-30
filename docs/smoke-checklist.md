@@ -2668,13 +2668,17 @@ so these are the checks that matter and only a Windows machine can run them.
       character` are hidden, `Done` is the single primary action, and the copy
       explains that only discovered characters can be offered and how to make a
       character available later.
-- [ ] **Moves preserve the source on refusal.** Move a linked character to a
-      named account with room. Expected: `WM.confirm` names both accounts before
-      the move. Accept the confirmation, then verify the character is absent
-      from the source account's roster and present in the destination account's
-      roster. Then attempt to move a character to an account that already has
-      three links. Expected: the move is refused and the character remains on
-      its current account.
+- [ ] **Linked characters leave every Add dropdown.** Check both the guided
+      roster and manual account management. Expected: a character linked to any
+      account is absent, not offered as a move. Remove its existing link and
+      verify it becomes available to add to another account.
+- [ ] **Guided moves preserve the source on refusal.** Run identification for a
+      character already linked to another named account. Expected: `WM.confirm`
+      names both accounts before the move. Accept the confirmation, then verify
+      the character is absent from the source account's roster and present in
+      the destination account's roster. Repeat with a destination that already
+      has three links. Expected: the move is refused and the character remains
+      on its current account.
 - [ ] **Identification supports repeated account work.** Re-identify an already
       named account and verify `Link character` skips the naming step. From a
       saved roster, choose `Identify another account`; it returns to the

@@ -887,6 +887,33 @@ def test_account_management_uses_the_specified_names_and_links_label():
     assert "Close names and character links" not in CODE
 
 
+def test_switching_managed_accounts_clears_the_previous_inline_error():
+    render = re.search(
+        r"function renderIdentityAccount\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert render
+    assert "paintFieldError('es-manage-status', '');" in render.group(1)
+
+
+def test_add_dropdowns_exclude_characters_linked_to_any_account():
+    helper = re.search(
+        r"function linkedCharacterIds\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert helper
+    assert "state.accounts" in helper.group(1)
+    assert "account.character_ids" in helper.group(1)
+
+    manual = re.search(
+        r"function renderIdentityAccount\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    roster = re.search(r"function renderRoster\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert manual and roster
+    assert "linkedCharacterIds()" in manual.group(1)
+    assert "linkedCharacterIds()" in roster.group(1)
+    assert "if (claimed[character.id]) return;" in manual.group(1)
+    assert "if (claimed[character.id]) return;" in roster.group(1)
+
+
 def test_account_labels_never_lead_with_an_unhelpful_missing_state():
     assert "Unidentified" not in CODE
     assert "Unidentified" not in ACCOUNT_ROUTE

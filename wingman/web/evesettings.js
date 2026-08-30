@@ -230,6 +230,16 @@
     })[0] || null;
   }
 
+  function linkedCharacterIds() {
+    var claimed = {};
+    ((state && state.accounts) || []).forEach(function (account) {
+      (account.character_ids || []).forEach(function (characterId) {
+        claimed[characterId] = true;
+      });
+    });
+    return claimed;
+  }
+
   function confirmCharacterMove(accountId, characterId, done) {
     var account = accountById(accountId);
     var owner = (state.accounts || []).filter(function (other) {
@@ -295,6 +305,7 @@
 
   function renderIdentityAccount() {
     var account = accountById(WM.el('es-identity-account').value);
+    paintFieldError('es-manage-status', '');
     WM.el('es-manage-account-name').value = account ? account.account_name : '';
     var linked = account ? account.character_ids || [] : [];
     var host = WM.el('es-account-characters');
@@ -325,9 +336,10 @@
     }
 
     var add = WM.el('es-character-add');
+    var claimed = linkedCharacterIds();
     add.textContent = '';
     ((state && state.identity_characters) || []).forEach(function (character) {
-      if (linked.indexOf(character.id) !== -1) return;
+      if (claimed[character.id]) return;
       var option = document.createElement('option');
       option.value = character.id;
       option.textContent = character.name;
@@ -352,9 +364,10 @@
       ? account.account_name : 'Account roster';
     WM.el('ai-roster-count').textContent = linked.length + ' of 3 characters linked';
     var add = WM.el('ai-roster-character');
+    var claimed = linkedCharacterIds();
     add.textContent = '';
     ((state && state.identity_characters) || []).forEach(function (character) {
-      if (linked.indexOf(character.id) !== -1) return;
+      if (claimed[character.id]) return;
       var option = document.createElement('option');
       option.value = character.id;
       option.textContent = character.name;

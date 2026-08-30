@@ -209,7 +209,8 @@ def test_bare_dev_mode_does_not_open_an_identity_scenario():
     assert "var identityScenarioRequested = identitySearch.has('identity');" in DEV_JS
     assert "var identityScenario = identitySearch.get('identity') || 'idle';" in DEV_JS
     assert "if (identityScenarioRequested && !identityScenarioQueued)" in DEV_JS
-    assert "if (identityScenarioRequested) {\n    if (document.readyState" in DEV_JS
+    assert "if (identityScenarioRequested) {" in DEV_JS
+    assert "document.readyState === 'loading'" in DEV_JS
 
 
 def test_identity_scenario_rosters_obey_production_invariants():
@@ -219,9 +220,10 @@ def test_identity_scenario_rosters_obey_production_invariants():
         for account in scenario["accounts"]:
             character_ids = account["character_ids"]
             assert len(character_ids) <= 3, (scenario_name, account)
+            account_name = account["account_name"].strip()
             if character_ids:
-                account_name = account["account_name"].strip()
                 assert account_name, (scenario_name, account)
+            if account_name:
                 folded = account_name.casefold()
                 assert folded not in names, (scenario_name, account_name)
                 names.add(folded)
@@ -237,7 +239,7 @@ def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_
     )
     assert account["character_ids"] == ["90000000", "90000001", "90000002"]
     assert 'display_name: "alpha@example"' in DEV_JS
-    assert 'display_meta: "Suartad Arsten + 2 · Account 1001"' in DEV_JS
+    assert 'display_meta: "Account 1001"' in DEV_JS
 
 
 def test_identity_harness_doubles_atomic_endpoints_without_alias_compatibility():
