@@ -2654,11 +2654,15 @@ so these are the checks that matter and only a Windows machine can run them.
       username is already assigned to another account.` and changes neither
       account.
 - [ ] **One-, two-, and three-character rosters can finish.** After the atomic
-      first save, verify `1 of 3 characters linked` and that `Done` is available.
-      Add a second character, verify `2 of 3` and that `Done` remains available,
-      then add a third and verify `3 of 3`. At three, neither the guided roster
-      nor manual management offers a fourth character, and a stale direct
-      request is refused.
+      first save, verify `1 of 3 characters linked`, activate `Done`, and verify
+      the app returns to Profiles with the named account persisted with exactly
+      that first character. Reopen identification for the same account, add a
+      second character, verify `2 of 3`, activate `Done`, and verify Profiles
+      shows exactly those two linked characters. Repeat for a third character:
+      verify `3 of 3`, activate `Done`, and verify Profiles shows exactly all
+      three linked characters. At three, neither the guided roster nor manual
+      management offers a fourth character, and a stale direct request is
+      refused.
 - [ ] **An empty remaining roster explains recovery.** Use a profile with no
       other unlinked discovered character. Expected: the picker and `Add
       character` are hidden, `Done` is the single primary action, and the copy
@@ -2666,7 +2670,9 @@ so these are the checks that matter and only a Windows machine can run them.
       character available later.
 - [ ] **Moves preserve the source on refusal.** Move a linked character to a
       named account with room. Expected: `WM.confirm` names both accounts before
-      the move. Then attempt to move a character to an account that already has
+      the move. Accept the confirmation, then verify the character is absent
+      from the source account's roster and present in the destination account's
+      roster. Then attempt to move a character to an account that already has
       three links. Expected: the move is refused and the character remains on
       its current account.
 - [ ] **Identification supports repeated account work.** Re-identify an already
