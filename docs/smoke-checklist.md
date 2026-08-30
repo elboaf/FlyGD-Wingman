@@ -2017,16 +2017,32 @@ foreground.
 - [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
       Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
       outgoing client minimizes EVERY time. A single successful switch does
-      not satisfy this item. `activate()` restores a minimized window with
-      `ShowWindowAsync` — asynchronous — and then reads its verdict from
-      `GetForegroundWindow()` a few instructions later; a False `ok`
-      correctly skips the minimize, so switching BACK to a client this
-      feature just minimized is exactly where the race lands. The
-      user-visible shape is "works the first time, then intermittently",
-      which the single-switch item above passes straight through.
-- [ ] A failed activation leaves both clients exactly where they were — no
-      minimize happens. Hard to force deliberately; watch for it rather than
-      staging it.
+      not satisfy this item. The switch is minimize-first (EVE-O Preview's
+      order): the outgoing client is minimized while it still holds the
+      foreground, THEN the target is activated. Switching BACK to a client
+      this feature just minimized goes through `activate()`'s
+      `ShowWindowAsync(SW_RESTORE)`, which is asynchronous; the
+      `GetForegroundWindow()` verdict is read a few instructions later.
+      The user-visible shape of a problem there is "works the first time,
+      then intermittently", which the single-switch item above passes
+      straight through.
+- [ ] **No minimize/restore animation during the switch, and the user's
+      setting survives it.** The outgoing client should vanish and the
+      target should appear with no window-zoom; that zoom was ~200-250 ms
+      of the old switch. Then open Windows' System > Accessibility >
+      Visual effects (or SystemPropertiesPerformance: "Animate windows
+      when minimizing and maximizing") and confirm the user's own setting
+      is still what it was — the switch toggles the LIVE value only, with
+      `fWinIni=0`, and puts it back in a `finally`. Do this check with the
+      animation ON to begin with; a machine that already has it off
+      exercises nothing.
+- [ ] A refused activation brings the outgoing client BACK. Windows refuses
+      a foreground change from a process without recent input; with
+      minimize-first the outgoing client is already down when that refusal
+      is learned, so the host re-activates it (`switching.should_restore`).
+      The visible shape of a failure is the old TriffView complaint: an
+      empty desktop with nothing focused. Hard to force deliberately; watch
+      for it rather than staging it.
 - [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
       a client with visible motion — undocked, drones out, or the camera
       spinning. Do NOT use a docked ship on a static scene: it looks
@@ -2034,15 +2050,12 @@ foreground.
       so that scene cannot tell you which one you saw. This is the check
       that decides whether minimize-inactive is compatible with the
       previews it sits beside.
-- [ ] Watch whether the 10 ms settle before the minimize, and the 100 ms
-      `SendMessageTimeoutW` ceiling, are enough on a real, possibly loaded
-      client — both are ported constants that have never run outside this
-      pass.
-- [ ] Watch for a failed SECOND activation: the minimize succeeds but the
-      re-activation after it is refused, leaving you on whatever Windows
-      picked instead of the client you switched to. This is silent by
-      design — there is no clean recovery — but should be observed rather
-      than assumed absent.
+- [ ] Watch the log for `Minimize of 0x... did not complete`. The old
+      sequence logged it on every switch (166 in one session) because the
+      send went to a window mid-deactivation; the send now goes to the
+      foreground window, measured at 6-9 ms. A line here after this change
+      is a finding, and its elapsed-time figure says whether the client
+      timed out or refused outright.
 - [ ] Reader's note, not a defect to file on its own: the never-minimize
       COLUMN sits in the card headed "Global keybinds" — right for its
       adjacency to the character rows, but that card's intro tells the

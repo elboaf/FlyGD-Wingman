@@ -899,8 +899,17 @@ def test_the_client_placement_win32_surface_is_not_declared():
     to move Wingman's OWN preview windows, which is the whole feature.
     The rule is about EVE's windows, and no EVE window's HWND reaches any
     of these calls any more.
+
+    `SystemParametersInfoW` used to be on the list too, as the placement
+    feature's work-area reader. It is bound again for exactly two actions,
+    SPI_GETANIMATION/SPI_SETANIMATION -- the minimize/restore animation the
+    switch suspends (host.py, _animation_off). Neither takes a window or
+    touches a rect, so it cannot reach the rewrite this guard exists to
+    prevent; the closed list of SPI_ constants below is what keeps the
+    binding from quietly growing back into the work-area reader.
     """
     import pathlib
+    import re
 
     root = pathlib.Path(__file__).resolve().parents[1]
     src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
@@ -909,9 +918,12 @@ def test_the_client_placement_win32_surface_is_not_declared():
         "GetWindowPlacement",
         "WINDOWPLACEMENT",
         "SPI_GETWORKAREA",
-        "SystemParametersInfoW",
     ):
         assert gone not in src, gone
+    assert sorted(set(re.findall(r"\bSPI_[A-Z]+\b", src))) == [
+        "SPI_GETANIMATION",
+        "SPI_SETANIMATION",
+    ]
 
 
 def test_sc_minimize_is_present_and_documented():

@@ -1,12 +1,12 @@
-"""should_minimize: pure logic, five reasons to say no and one to say yes."""
+"""should_minimize / should_restore: pure logic. Five reasons not to
+minimize, one to; and the one case that has to undo a minimize."""
 
 import pytest
 
-from wingman.preview.switching import should_minimize
+from wingman.preview.switching import should_minimize, should_restore
 
 BASE = dict(
     enabled=True,
-    activated=True,
     previous_key="Alice",
     next_key="Bravo",
     never=[],
@@ -17,7 +17,6 @@ BASE = dict(
     "overrides",
     [
         {"enabled": False},
-        {"activated": False},
         {"previous_key": None},
         {"previous_key": ""},
         {"next_key": "Alice"},  # previous_key == next_key
@@ -25,7 +24,6 @@ BASE = dict(
     ],
     ids=[
         "feature-off",
-        "activation-failed",
         "no-previous-client",
         "empty-previous-client",
         "previous-equals-next",
@@ -40,19 +38,27 @@ def test_true_when_nothing_blocks_it():
     assert should_minimize(**BASE) is True
 
 
-def test_activated_false_wins_even_if_everything_else_says_minimize():
-    """The safety property: a failed switch must never minimize the client
-    the user was just on, no matter how the other inputs line up. Ported
-    from TriffView, whose switch sequence returns early on failed
-    activation -- otherwise the user is left looking at an empty desktop
-    with nothing focused."""
-    assert (
-        should_minimize(
-            enabled=True,
-            activated=False,
-            previous_key="Alice",
-            next_key="Bravo",
-            never=[],
-        )
-        is False
-    )
+@pytest.mark.parametrize(
+    "activated, attempted, expected",
+    [
+        (False, True, True),
+        (True, True, False),
+        (False, False, False),
+        (True, False, False),
+    ],
+    ids=["refused-after-minimize", "took", "refused-nothing-attempted", "clean"],
+)
+def test_should_restore(activated, attempted, expected):
+    """The safety property, in the shape minimize-first forces on it.
+    TriffView activates first and returns early on failure so a refused
+    switch minimizes nothing. Minimizing first is what removes the settle
+    and the race with the outgoing foreground, but it means the outgoing
+    client is already gone when a refusal is learned -- so the refusal
+    must bring it back, or the user is left on an empty desktop with
+    nothing focused, which is strictly worse than the switch not working.
+
+    Keyed on the minimize being ATTEMPTED, not on the send's verdict: a
+    timed-out send is still delivered later, so "the client is still where
+    it was" is not something the host can know.
+    """
+    assert should_restore(activated=activated, attempted=attempted) is expected
