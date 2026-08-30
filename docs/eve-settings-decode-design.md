@@ -78,11 +78,12 @@ the same round trip against real CCP-written files** (2026-08-29, twelve
 | 7 | Does a real `core_user_*.dat` re-encode byte-identically? | **No — semantically identical, and the difference is understood.** The client writes marshal **version 0** (`TY_SIGNATURE`, `0x7e`) with a shared-object table (290 entries, 1,160 trailing bytes). The library always writes **version 1** (`TY_SIGNATURE2`, `0x7d`) and, by documented design, never emits shared references. Output is 179,110 bytes against 154,550 (+16%). Decoding the re-encoded bytes gives JSON identical to the original for all twelve files. `had_crc=false` on every file and the re-encode correctly adds none. |
 | 8 | Are probe coordinates ints or doubles? | **Doubles.** Every position and range is `f64` (`184913199104.0`, range `1196782965600.0`). eve-wrench's unconditional `f64` is correct; nothing widens. |
 | 9 | What is the formation name's string type? | **Both, by origin.** The client's scratch entry is `"bytes:tempFormation"`; a user-created formation (made in-game 2026-08-29, read back from `settings_Default/core_user_19298063.dat`) is `"utf8:Test"` with id `int:0`, 8 probes, all `f64`, and `selectedFormationID` pointing at `0` with the same FILETIME stamp as `customFormations`. Read both prefixes; write user names as `utf8:`. |
+| 10 | Does the EVE client load a version-1 stream? | **Yes** (2026-08-29). With every client closed, `settings_Default/core_user_19298063.dat` was re-encoded untouched (163,145 → 187,338 bytes, `0x7d`, decode-back identical) and published over the live file, backup beside it. The client was launched on that account and closed; it rewrote the file as version 0 (170,409 bytes) with all 353 `ui` keys preserved (320 byte-identical including stamps, the rest restamped by ordinary session churn), the "Test" formation identical (8 probes, same coordinates) and `selectedFormationID` still `0`. A client that failed to read the file would have reset to defaults and the key count would have collapsed. |
 
-**What this does not prove:** that the EVE client accepts a version-1 stream.
 `blue-marshal` states `Marshal.cpp` reads both versions natively and eve-wrench
-ships on that basis, but it is an unverified claim about the client. It is the
-first line of the smoke checklist and gates any write path (see **Scope**).
+ships on that basis; finding 10 is Wingman's own proof against a real install.
+The smoke checklist keeps the line so a client update that changes the answer
+is caught by a walk, not by a user.
 
 Corpus caveat: the eleven numbered files were byte-identical to each other —
 that profile is itself the output of Wingman's copy — so this is a fair corpus,
