@@ -97,6 +97,9 @@ reached through injected seams or lazy `windll` binding):
   resize as a resolution change and rewrites its own config.
 - `evesettings/` — copy one character's/account's EVE settings onto others,
   backup first. Copy loops never abort on first failure; they report per target.
+  `codec.py` is the only module that knows a `.dat` has structure; it drives a
+  bundled sidecar that is a pure stdin/stdout filter and never opens a file.
+  `formations.py` is pure and speaks meters.
 - `eveskills/` — EVE SSO + ESI, skill-plan evaluation. `controller.py` is the
   **only writer** of the skills state document; every read-modify-write happens
   under its lock with the save in the same critical section.

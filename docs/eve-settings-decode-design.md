@@ -175,6 +175,39 @@ The 3D preview ports cleanly: eve-wrench's is hand-rolled SVG with a ~40-line
 yaw/pitch projection and no library, which is already the shape `wingman/web/`
 wants. No framework, no build step, no new dependency.
 
+### As built
+
+Slice 1 shipped with four deviations from the plan above, all deliberate:
+
+- The Python module is `wingman/evesettings/codec.py`, not `marshal.py` —
+  `marshal` is a stdlib module name and same-named files have shadowed the
+  stdlib in this repo's tooling before.
+- The sidecar is not a fetched `blue-marshal` binary but Wingman's own
+  ~50-line crate at `packaging/settings-codec/`, over `blue-marshal =1.0.1`,
+  built by cargo in `.github/actions/build-installer/action.yml`. Upstream's
+  own `marshal-tool` CLI is file-path based and always appends a checksum,
+  which does not fit the pure-filter, `had_crc`-preserving seam this design
+  needs; wrapping the library directly does. It is a pure stdin/stdout filter
+  with `decode`/`encode` subcommands and an `{had_crc, doc}` envelope, and it
+  never opens a file. `write_document` verifies its own output by decoding it
+  back before any backup or publish.
+- The state key is `formations_available`, not `decode_available` — the page
+  is hiding a *feature*, and a mechanism name (naming the codec) would
+  outlive a future pure-Python codec replacing the sidecar.
+- The editor is its own route id, `#route-formations`, reached from a fourth
+  Profiles card ("Probe formations", an account `<select>` plus "Edit
+  formations…"), added to `WM.EVE_ROUTES` but never shown in the title bar —
+  not a hidden face of `#route-evesettings`. `test_page_conventions.py`
+  allows only one `.btn.acc` per route, and the account roster has no
+  per-row controls to hang a second entry point off.
+
+Two format-note rules landed stricter than drafted above: `read_formations`
+refuses (raises) any file it does not fully understand, including a
+present-but-malformed formations container, rather than skipping the parts
+it cannot read; and `from_payload` rejects negative ids outright rather than
+treating them as valid input, since negative ids are reserved client scratch
+state (see the FILETIME/scratch note above).
+
 ## The format
 
 Formations live in the **account** file under
