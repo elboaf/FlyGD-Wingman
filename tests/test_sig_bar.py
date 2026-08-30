@@ -139,7 +139,9 @@ def test_toggle_persists_and_creates_the_window_shown(api, monkeypatch):
 
 
 def test_toggle_off_hides_the_existing_window_without_destroying_it(api):
-    api.toggle_sig_bar(True)  # the window already exists in the fixture
+    api.toggle_sig_bar(True)
+    assert api._sigbar_window.hidden is False
+    api.toggle_sig_bar(False)
     assert api._sigbar_window.hidden is True
     assert api._state.settings["sig_bar"]["enabled"] is False
 
@@ -193,8 +195,11 @@ def test_status_push_fans_out_to_both_pages(api):
     class RunningEngine:
         def status(self, enabled, now=None):
             return hotkeys.EngineStatus(
-                state="running", sig="MYR", root="J1234",
-                next_num="21", next_alpha="A",
+                state="running",
+                sig="MYR",
+                root="J1234",
+                next_num="21",
+                next_alpha="A",
             )
 
     api._state.engine = RunningEngine()

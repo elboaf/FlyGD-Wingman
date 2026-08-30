@@ -13,7 +13,6 @@ from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
 from .ui import api as api_mod
 from .ui import preflight
-from .ui import sigbar
 from .ui import window as window_mod
 from .ui.scheduler import Scheduler
 
@@ -747,6 +746,22 @@ def main() -> int:
     # Ignoring what we do not understand is the right failure here.
     window = window_mod.create(api, hidden="--hidden" in sys.argv[1:])
 
+    # The floating sig bar reopens here, not in run()'s startup func:
+    # test_startup pins that func to `api.refresh_auth` itself, and this
+    # hook is the better home anyway -- `shown` fires on the GUI thread
+    # (the same thread chrome.enable_resize rides), which is the thread a
+    # second WebView2 window has to be built on. The events guard is for
+    # the startup tests' window fake, which has no `events` attribute.
+    shown = getattr(window, "events", None)
+    if shown is not None:
+
+        def _restore_sigbar(api=api):
+            from .ui import sigbar
+
+            sigbar.restore(api)
+
+        shown.shown += _restore_sigbar
+
     def start_watching(directory) -> None:
         """Create the watcher and start the poll loop. Idempotent.
 
@@ -799,15 +814,7 @@ def main() -> int:
     # every launch, and the push lost to _push's bare except when the
     # timeout finally raises. pywebview runs this on its own thread once
     # the GUI loop owns the main one.
-    def _startup() -> None:
-        # The floating sig bar reopens before the first poll tick, so a
-        # user who left it on sees it come back with the app rather than
-        # three seconds later. Created hidden and revealed on its own
-        # timer -- sigbar.restore holds the flash argument.
-        sigbar.restore(api)
-        api.refresh_auth()
-
-    window_mod.run(_startup)  # Blocks until the window is destroyed.
+    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
 
     icon.stop()
     if scheduler is not None:

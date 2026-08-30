@@ -50,7 +50,9 @@ def _default_placement(scale) -> tuple[int, int]:
     pixels under PROCESS_SYSTEM_DPI_AWARE and pywebview wants LOGICAL, so
     the metrics are divided by the system scale before use.
     """
-    screen_w, screen_h = window_mod._screen_size()
+    # Only the height is used: the bar opens at a fixed left margin, so
+    # the screen width never enters the arithmetic.
+    _screen_w, screen_h = window_mod._screen_size()
     factor = scale() or 1.0
     return (
         DEFAULT_MARGIN,
@@ -73,8 +75,8 @@ def create(api, hidden: bool = True):
     """
     import webview
 
-    section = api._state.settings["sig_bar"]
-    x, y = section["x"], section["y"]
+    section = api._state.settings.get("sig_bar") or {}
+    x, y = section.get("x"), section.get("y")
     if x is None or y is None:
         x, y = _default_placement(window_mod._system_scale)
 
@@ -161,7 +163,11 @@ def restore(api) -> None:
     shown only after the first style render, so the bar never flashes at
     the default placement before its stored style applies.
     """
-    if not api._state.settings["sig_bar"]["enabled"]:
+    # .get, not ["sig_bar"]: the startup tests' settings fake is a partial
+    # dict, and a bar that stays closed is the correct reading of "no
+    # sig_bar section" (missing means off, the shipped default).
+    section = api._state.settings.get("sig_bar") or {}
+    if not section.get("enabled"):
         return
     try:
         bar = create(api, hidden=True)
