@@ -38,6 +38,9 @@
   var MAX_PROBES = 8;
   // Valid scan ranges are powers of two from 0.25 to 32 AU.
   var RANGES = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+  // Screen-reader label for each internal axis letter, matching the column
+  // headers ('West (km)', 'Up (km)', 'North (km)') rather than the raw x/y/z.
+  var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
 
   var state = {
     path: '', name: '', formations: [], selected: 0, dirty: false, busy: false
@@ -362,7 +365,10 @@
         input.className = 'field';
         input.step = 'any';
         input.value = String(p[axis]);
-        input.setAttribute('aria-label', 'Probe ' + (i + 1) + ' ' + axis);
+        input.setAttribute(
+          'aria-label',
+          'Probe ' + (i + 1) + ' ' + AXIS_LABELS[axis] + ' km'
+        );
         // `change`, so a half-typed value never commits: DESIGN.md's rule
         // for free text is Enter or an explicit button, never blur alone,
         // and a number input fires change on both.

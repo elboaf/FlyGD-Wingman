@@ -96,7 +96,7 @@ not a diverse one.
 One new module, `wingman/evesettings/marshal.py`, is **the only thing in Wingman
 that knows a `.dat` has structure**:
 
-```
+```text
 read_document(path) -> dict          # decoded JSON document
 write_document(path, doc, *, backup) # re-encode and publish
 ```
@@ -221,7 +221,7 @@ state (see the FILETIME/scratch note above).
 Formations live in the **account** file under
 `ui → probescanning.customFormations`:
 
-```
+```text
 "bytes:probescanning.customFormations": {"tuple": [<FILETIME>, {
     "int:0": {"tuple": ["utf8:Pinpoint", [        // utf8: for user names; the -4 scratch entry is bytes:
         {"tuple": [{"tuple": [x, y, z]}, range]},   // one per probe, max 8

@@ -318,3 +318,11 @@ def test_write_bytes_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
 ):
     with pytest.raises(ValueError):
         atomicio.write_bytes_atomic(tmp_path / "x.dat", b"x", attempts=0)
+
+
+def test_write_bytes_atomic_accepts_a_str_path(tmp_path):
+    """write_atomic and copy_atomic both coerce str to Path before touching
+    .parent; write_bytes_atomic must match or a str caller hits AttributeError."""
+    target = str(tmp_path / "core_user_1.dat")
+    atomicio.write_bytes_atomic(target, b"data")
+    assert Path(target).read_bytes() == b"data"

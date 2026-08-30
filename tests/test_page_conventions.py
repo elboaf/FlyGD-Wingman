@@ -2334,7 +2334,7 @@ def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
     assert 'data-route="formations"' not in HTML, (
         "the editor is reached from Profiles, not the title bar"
     )
-    routes = re.search(r"WM\.EVE_ROUTES = \[(.*?)\]", app)
+    routes = re.search(r"WM\.EVE_ROUTES = \[([^\]]*)\]", app)
     assert routes and "'formations'" in routes.group(1), (
         "the editor hides with the other EVE destinations"
     )
@@ -2357,6 +2357,10 @@ def test_every_bridge_handler_has_exactly_one_owner():
             owners.setdefault(name, []).append(path.name)
     doubled = {n: o for n, o in owners.items() if len(o) > 1}
     assert not doubled, f"handlers registered twice: {doubled}"
+    assert owners.get("onEveSettingsDone") == ["evesettings.js"], (
+        "Profiles must be the sole owner of onEveSettingsDone -- "
+        "formations.js must not register it"
+    )
     js = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
     assert "WM.formationsDone" in js, (
         "Profiles must forward onEveSettingsDone to the editor, which has "

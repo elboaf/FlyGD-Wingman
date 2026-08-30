@@ -27,8 +27,10 @@ _NO_WINDOW_KWARGS = (
 )
 
 # A settings file is ~150 KB and the codec runs in milliseconds; anything near
-# this is a hung process, not a slow one. The worker holds the EVE mutation
-# lock while waiting, so it must not wait forever.
+# this is a hung process, not a slow one. Applies per codec call --
+# write_document makes two (encode, then a verifying decode) -- so the
+# worker can hold the EVE mutation lock for up to 2x this value while
+# waiting; it must not wait forever.
 CODEC_TIMEOUT_S = 30.0
 
 # TY_SIGNATURE2: every stream the codec writes starts with it (the client's

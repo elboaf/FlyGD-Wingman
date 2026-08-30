@@ -4166,7 +4166,7 @@ class Api:
         except Exception as error:
             logger.exception("formation save failed")
             self._alert(
-                "error", "Formations not saved", evesettings_ops._describe(error)
+                "error", "Formations not saved", evesettings_ops.describe(error)
             )
         finally:
             self._eve_mutation.release()

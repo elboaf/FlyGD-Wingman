@@ -71,6 +71,7 @@ def write_bytes_atomic(
     """
     if attempts < 1:
         raise ValueError("attempts must be at least 1")
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
