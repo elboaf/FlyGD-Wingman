@@ -48,7 +48,9 @@ a = Analysis(
         # binary. Renamed by fetch_autohotkey.py at fetch time (not here --
         # a `datas` tuple's second element is a destination directory, not a
         # filename, so it cannot rename on the way in) so it cannot be
-        # mistaken for a licence covering Wingman, which is MIT.
+        # mistaken for the licence covering Wingman itself, which is
+        # GPL-3.0-only (pyproject.toml) -- a different version of the same
+        # family, and an unrenamed COPYING would misstate which.
         (str(BIN / "AutoHotkey-COPYING.txt"), "."),
         # FFmpeg is GPL v3 where AutoHotkey is v2, so it needs its own
         # copy -- one shared text would misstate the terms for one of them.
