@@ -28,6 +28,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from dataclasses import dataclass, replace
@@ -52,6 +53,8 @@ from .. import settings as settings_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..evesettings import backup as evesettings_backup
+from ..evesettings import codec as evesettings_codec
+from ..evesettings import formations as evesettings_formations
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
 from ..evesettings import tree as evesettings_tree
@@ -3656,6 +3659,11 @@ class Api:
             # this is the same shape, and DESIGN.md's "state that must not
             # be retyped" is the rule it is avoiding.
             "auto_keep": int(section.get("auto_keep", 10)),
+            # Whether the bundled codec sidecar is present, so the page can
+            # hide the formations editor entirely rather than let a click
+            # end in eve_settings_formations's "not available in this
+            # install" error.
+            "formations_available": evesettings_codec.codec_available(),
             "backups": [
                 {
                     "path": str(b.path),
@@ -4071,6 +4079,95 @@ class Api:
         except Exception as error:
             logger.exception("EVE settings backup delete failed")
             self._alert("error", "Delete failed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
+
+    # -- probe formations ---------------------------------------------------
+
+    def _eve_account_file(self, path: str) -> Path:
+        """Containment + kind check shared by the two formation endpoints."""
+        root = self._eve_section().get("root")
+        if not root:
+            raise ValueError("Choose the EVE settings folder first.")
+        resolved = evesettings_tree.require_under(root, path, suffix=".dat")
+        if evesettings_tree.file_kind(resolved) != "account":
+            raise ValueError(
+                "Formations live in an account file, not a character file."
+            )
+        return resolved
+
+    def eve_settings_formations(self, path: str) -> dict:
+        """Decode one account file and return its user formations, in meters.
+
+        Synchronous on purpose: a decode is milliseconds, and the page needs
+        the answer to draw the editor. _eve_hold keeps it from reading a
+        file a copy worker is mid-way through replacing.
+        """
+        with self._eve_hold() as held:
+            if not held:
+                return {
+                    "ok": False,
+                    "error": "Another EVE Settings operation is still running.",
+                }
+            try:
+                target = self._eve_account_file(path)
+                document = evesettings_codec.read_document(target)
+                found = evesettings_formations.read_formations(document.doc)
+            except (ValueError, OSError, evesettings_codec.CodecError) as error:
+                return {"ok": False, "error": str(error)}
+            return {
+                "ok": True,
+                "path": str(target),
+                "name": self._eve_label(str(target)),
+                "formations": evesettings_formations.to_payload(found),
+            }
+
+    def eve_settings_save_formations(self, path: str, formations: list) -> bool:
+        return self._eve_begin(
+            self._eve_save_formations_worker, (path, list(formations or []))
+        )
+
+    def _eve_save_formations_worker(self, path: str, items: list) -> None:
+        ok = False
+        try:
+            target = self._eve_account_file(path)
+            wanted = evesettings_formations.from_payload(items)
+            evesettings_formations.validate(wanted)
+            # Fail closed while a client runs: EVE holds core_*.dat open for
+            # the session and rewrites it on exit, so a write now is either
+            # refused by the sharing violation or silently overwritten
+            # later. Copy merely warns because its targets are usually not
+            # the running character; this always is the running account.
+            if self._eve_client_running():
+                self._alert(
+                    "error",
+                    "Formations not saved",
+                    "The file is in use. Close EVE and retry.",
+                )
+                return
+            document = evesettings_codec.read_document(target)
+            updated = evesettings_formations.write_formations(
+                document.doc, wanted, now=time.time()
+            )
+            evesettings_codec.write_document(
+                target,
+                evesettings_codec.Document(doc=updated, had_crc=document.had_crc),
+                backup=self._eve_auto_backup,
+            )
+            keep = int(self._eve_section().get("auto_keep", 10))
+            evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
+            self._status(
+                f"Saved {len(wanted)} formation(s) to {self._eve_label(str(target))}."
+            )
+            ok = True
+        except (ValueError, evesettings_codec.CodecError) as error:
+            self._alert("error", "Formations not saved", str(error))
+        except Exception as error:
+            logger.exception("formation save failed")
+            self._alert(
+                "error", "Formations not saved", evesettings_ops._describe(error)
+            )
         finally:
             self._eve_mutation.release()
             self._eve_done(ok)
