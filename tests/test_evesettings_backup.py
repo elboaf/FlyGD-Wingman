@@ -137,8 +137,9 @@ def test_prune_keeps_the_newest_auto_backups(tmp_path):
     source = profile / "core_char_98123456.dat"
     for second in range(5):
         backup.create_file_backup(store, source, origin="auto", now=at(second))
-    removed = backup.prune(store, keep=2)
-    assert len(removed) == 3
+    report = backup.prune(store, keep=2)
+    assert len(report.deleted) == 3
+    assert report.failed == ()
     assert len(backup.enumerate_backups(store)[0]) == 2
 
 
@@ -148,8 +149,46 @@ def test_prune_never_touches_manual_backups(tmp_path):
     source = profile / "core_char_98123456.dat"
     for second in range(4):
         backup.create_file_backup(store, source, origin="manual", now=at(second))
-    assert backup.prune(store, keep=1) == []
+    assert backup.prune(store, keep=1) == backup.PruneReport()
     assert len(backup.enumerate_backups(store)[0]) == 4
+
+
+def test_prune_reports_a_file_that_could_not_be_deleted(tmp_path, monkeypatch):
+    profile = profile_with(tmp_path)
+    store = tmp_path / "backups"
+    source = profile / "core_char_98123456.dat"
+    first = backup.create_file_backup(store, source, origin="auto", now=at(0))
+    backup.create_file_backup(store, source, origin="auto", now=at(1))
+    original = backup.Path.unlink
+
+    def refuse(path, *args, **kwargs):
+        if path == first:
+            raise PermissionError("in use")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(backup.Path, "unlink", refuse)
+    report = backup.prune(store, keep=1)
+
+    assert report.deleted == ()
+    assert len(report.failed) == 1
+    assert report.failed[0].path == first
+    assert "in use" in report.failed[0].reason
+
+
+def test_supplied_candidates_are_the_exact_confirmed_prune_set(tmp_path):
+    profile = profile_with(tmp_path)
+    store = tmp_path / "backups"
+    source = profile / "core_char_98123456.dat"
+    first = backup.create_file_backup(store, source, origin="auto", now=at(0))
+    second = backup.create_file_backup(store, source, origin="auto", now=at(1))
+    third = backup.create_file_backup(store, source, origin="auto", now=at(2))
+
+    candidates = backup.prune_candidates(store, keep=1)
+    assert set(candidates) == {first, second}
+    report = backup.prune(store, keep=1, candidates=[first])
+
+    assert report.deleted == (first,)
+    assert second.exists() and third.exists()
 
 
 def test_prune_does_not_cross_profiles_for_the_same_character(tmp_path):
@@ -395,7 +434,7 @@ def test_pruning_an_unreadable_store_deletes_nothing(tmp_path):
             pass
         else:  # pragma: no cover - root, or a filesystem without modes
             pytest.skip("this user can read a mode-000 directory")
-        assert backup.prune(store, 1) == []
+        assert backup.prune(store, 1) == backup.PruneReport()
     finally:
         store.chmod(0o700)
 

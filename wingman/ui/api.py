@@ -55,6 +55,7 @@ from ..alerts import service as alert_service
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import codec as evesettings_codec
 from ..evesettings import formations as evesettings_formations
+from ..evesettings import identity as evesettings_identity
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
 from ..evesettings import selective as evesettings_selective
@@ -372,6 +373,9 @@ class Api:
         # independently -- so two operations approved moments apart could
         # otherwise interleave over the same files.
         self._eve_mutation = threading.Lock()
+        # A snapshot exists only during an explicit identification pass.
+        # Timestamps are evidence for that pass, never durable identity.
+        self._eve_identification = None
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
         # Last known answer for the advisory "EVE running" pill, or None
@@ -3728,24 +3732,51 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
-    def _eve_label(self, path) -> str:
-        """The name the Profiles roster shows for one settings file.
+    def _eve_account_identity(self, account_id: str) -> dict:
+        section = self._eve_section()
+        return evesettings_identity.account_identity(
+            account_id,
+            section.get("account_aliases") or {},
+            section.get("account_characters") or {},
+            lambda character_id: self._eve_names.label(int(character_id)),
+        )
 
-        One producer, because two of them would be free to disagree in the
-        one place that must not: Confirm Copy names the source and the
-        targets, and it has to name them in the words the user just read
-        off the roster. Derived from the path rather than passed in, so the
-        dialog cannot be handed a label the screen never rendered.
-        """
+    def _eve_identity(self, path) -> dict:
+        """One display representation for every Profiles identity surface."""
         kind = evesettings_tree.file_kind(path)
         ident = evesettings_tree.file_id(path)
         if kind == "character" and ident.isdigit():
-            return self._eve_names.label(int(ident))
+            primary = self._eve_names.label(int(ident))
+            return {
+                "primary": primary,
+                "secondary": f"Character {ident}",
+                "option": primary,
+            }
         if kind == "account" and ident:
-            return f"Account {ident}"
-        # discover() only ever yields the two kinds above, so this is the
-        # bridge-reachable case: a path the page was never offered.
-        return Path(path).stem
+            return self._eve_account_identity(ident)
+        primary = Path(path).stem
+        return {"primary": primary, "secondary": "", "option": primary}
+
+    def _eve_label(self, path) -> str:
+        """The compact label shared by pickers, confirmations and status."""
+        return self._eve_identity(path)["option"]
+
+    def _eve_backup_identity(self, item) -> tuple[str, str]:
+        if item.kind in ("character", "account"):
+            prefix = "core_char_" if item.kind == "character" else "core_user_"
+            suffix = item.stem.removeprefix(prefix)
+            if suffix != item.stem and suffix.isascii() and suffix.isdigit():
+                identity = self._eve_identity(f"{item.stem}.dat")
+                metadata = (
+                    f"Account {suffix}"
+                    if item.kind == "account"
+                    else f"Character {suffix}"
+                )
+                return identity["primary"], metadata
+            return item.stem, item.kind.title()
+        if item.kind == "profile":
+            return item.stem.removeprefix("settings_"), "Profile"
+        return item.stem, item.kind.title()
 
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
@@ -3763,10 +3794,33 @@ class Api:
         store = paths.eve_settings_backup_dir()
 
         def describe(record):
-            return {
+            identity = self._eve_identity(record.path)
+            item = {
                 "path": str(record.path),
                 "id": record.file_id,
-                "name": self._eve_label(record.path),
+                "name": identity["option"],
+                "display_name": identity["primary"],
+                "display_meta": identity["secondary"],
+            }
+            if record.kind == "account":
+                item["alias"] = (section.get("account_aliases") or {}).get(
+                    record.file_id, ""
+                )
+                item["character_ids"] = list(
+                    (section.get("account_characters") or {}).get(record.file_id, [])
+                )
+            return item
+
+        def backup_payload(item):
+            display_name, display_meta = self._eve_backup_identity(item)
+            return {
+                "path": str(item.path),
+                "created": item.created,
+                "origin": item.origin,
+                "kind": item.kind,
+                "stem": item.stem,
+                "display_name": display_name,
+                "display_meta": display_meta,
             }
 
         def roster(records):
@@ -3784,9 +3838,9 @@ class Api:
             top-to-bottom, so alphabetical reads down each column.
 
             Case-folded, and the id is the tie-break: an unresolved name
-            degrades to "Character 98123456" (accounts are always
-            "Account <id>"), and two of those must not be free to swap
-            places between two renders of the same folder.
+            degrades to "Character 98123456" (unidentified accounts sort
+            by their explicit ID metadata), and two of those must not be free
+            to swap places between two renders of the same folder.
 
             This reorders on the name push as well as at first render --
             eve_settings_resolve_names makes the page refetch once the
@@ -3800,6 +3854,12 @@ class Api:
 
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         codec_available = evesettings_codec.codec_available()
+        identity_character_ids = {record.file_id for record in found.characters}
+        identity_character_ids.update(
+            character_id
+            for values in (section.get("account_characters") or {}).values()
+            for character_id in values
+        )
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
@@ -3814,12 +3874,23 @@ class Api:
             # _eve_refresh_running: this method is costed as scandir over
             # a few dozen files and must stay that.
             "eve_running": self._eve_running,
+            "identification_active": self._eve_identification is not None,
             "servers": [{"path": str(s.path), "name": s.name} for s in found.servers],
             "profiles": [
                 {"path": str(p.path), "name": p.name, "file_count": p.file_count}
                 for p in found.profiles
             ],
             "characters": roster(found.characters),
+            "identity_characters": sorted(
+                (
+                    {
+                        "id": character_id,
+                        "name": self._eve_names.label(int(character_id)),
+                    }
+                    for character_id in identity_character_ids
+                ),
+                key=lambda item: (item["name"].casefold(), item["id"]),
+            ),
             "accounts": roster(found.accounts),
             # Reported separately from an empty list for the same reason
             # `unreadable` is: "we could not read your backups" and "you
@@ -3843,16 +3914,7 @@ class Api:
                 "characters": evesettings_selective.groups_payload("character"),
                 "accounts": evesettings_selective.groups_payload("account"),
             },
-            "backups": [
-                {
-                    "path": str(b.path),
-                    "created": b.created,
-                    "origin": b.origin,
-                    "kind": b.kind,
-                    "stem": b.stem,
-                }
-                for b in listed
-            ],
+            "backups": [backup_payload(item) for item in listed],
         }
 
     def _eve_client_running(self) -> bool:
@@ -3972,6 +4034,7 @@ class Api:
             picked = str(chosen[0])
             # Selection is cleared, not carried: the old server and profile
             # belong to a tree that is no longer the one on screen.
+            self._eve_identification = None
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4033,6 +4096,7 @@ class Api:
                     f"Already set to the detected folder:\n{found}",
                 )
                 return ""
+            self._eve_identification = None
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4044,12 +4108,164 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return False
+            self._eve_identification = None
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
                 {"server": server or None, "profile": profile or None},
             )
             return True
+
+    def _eve_discover(self):
+        section = self._eve_section()
+        return evesettings_tree.discover(
+            section.get("root"), section.get("server"), section.get("profile")
+        )
+
+    @staticmethod
+    def _eve_decimal_id(value) -> bool:
+        return isinstance(value, str) and value.isascii() and value.isdigit()
+
+    def eve_settings_set_account_alias(self, account_id: str, alias: str) -> dict:
+        if not self._eve_decimal_id(account_id) or not isinstance(alias, str):
+            return self._field_refused("Choose a valid account.")
+        found = self._eve_discover()
+        if account_id not in {item.file_id for item in found.accounts}:
+            return self._field_refused("That account is not in this profile.")
+        cleaned = alias.strip()
+        if len(cleaned) > 80:
+            return self._field_refused("Account names can be up to 80 characters.")
+        aliases = dict(self._eve_section().get("account_aliases") or {})
+        if cleaned:
+            aliases[account_id] = cleaned
+        else:
+            aliases.pop(account_id, None)
+        try:
+            settings_mod.update_section(
+                self._state.settings, "eve_settings", {"account_aliases": aliases}
+            )
+        except OSError:
+            logger.exception("Could not persist EVE account alias")
+            return self._field_refused("Could not save this account name.")
+        return self._field_ok()
+
+    def eve_settings_set_account_characters(
+        self, account_id: str, character_ids: list
+    ) -> dict:
+        if not self._eve_decimal_id(account_id) or not isinstance(character_ids, list):
+            return self._field_refused("Choose a valid account and characters.")
+        found = self._eve_discover()
+        if account_id not in {item.file_id for item in found.accounts}:
+            return self._field_refused("That account is not in this profile.")
+        associations = {
+            key: list(value)
+            for key, value in (
+                self._eve_section().get("account_characters") or {}
+            ).items()
+        }
+        known = {item.file_id for item in found.characters}
+        known.update(value for values in associations.values() for value in values)
+        wanted = []
+        for value in character_ids:
+            if not self._eve_decimal_id(value) or value not in known:
+                return self._field_refused("That character is not known to Wingman.")
+            if value not in wanted:
+                wanted.append(value)
+        for key in list(associations):
+            associations[key] = [
+                value for value in associations[key] if value not in wanted
+            ]
+            if not associations[key]:
+                associations.pop(key)
+        if wanted:
+            associations[account_id] = wanted
+        else:
+            associations.pop(account_id, None)
+        try:
+            settings_mod.update_section(
+                self._state.settings,
+                "eve_settings",
+                {"account_characters": associations},
+            )
+        except OSError:
+            logger.exception("Could not persist EVE account characters")
+            return self._field_refused("Could not save these character links.")
+        return self._field_ok()
+
+    def eve_settings_identification_start(self) -> dict:
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "status": "error",
+                "error": "Another Profiles operation is running.",
+            }
+        try:
+            found = self._eve_discover()
+            snapshot = evesettings_identity.take_snapshot(found)
+            if not found.accounts or not found.characters:
+                raise ValueError(
+                    "This profile needs an account and a character to identify."
+                )
+            self._eve_identification = snapshot
+        except (OSError, ValueError) as error:
+            return {"status": "error", "error": str(error)}
+        finally:
+            self._eve_mutation.release()
+        return {"status": "watching", "error": None}
+
+    def eve_settings_identification_check(self) -> dict:
+        snapshot = self._eve_identification
+        if snapshot is None:
+            return {"status": "error", "error": "Start account identification first."}
+        try:
+            if self._eve_client_running_strict():
+                return {
+                    "status": "watching",
+                    "error": "EVE is still running. Close that client, then check again.",
+                }
+        except Exception:
+            # Fail closed: an unverified running state must not be treated as
+            # the clean shutdown whose file changes identify an account.
+            logger.warning(
+                "Could not verify EVE state during identification", exc_info=True
+            )
+            return {
+                "status": "watching",
+                "error": "Could not confirm that EVE is closed. Close it and try again.",
+            }
+        changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
+        if changed.invalidated:
+            self._eve_identification = None
+            return {
+                "status": "invalidated",
+                "error": "The selected EVE profile changed. Start identification again.",
+            }
+        if len(changed.accounts) > 1:
+            return {
+                "status": "ambiguous",
+                "error": "More than one account changed. Close the other EVE clients and start again.",
+            }
+        if len(changed.accounts) != 1 or not changed.characters:
+            return {
+                "status": "none",
+                "error": "No account and character changes were found. Close the client fully, then check again.",
+            }
+        account_id = changed.accounts[0]
+        return {
+            "status": "candidate",
+            "error": None,
+            "account": {"id": account_id, **self._eve_account_identity(account_id)},
+            "characters": [
+                {
+                    "id": character_id,
+                    "name": self._eve_names.label(int(character_id)),
+                }
+                for character_id in changed.characters
+            ],
+        }
+
+    def eve_settings_identification_cancel(self) -> bool:
+        self._eve_identification = None
+        return True
 
     def eve_settings_resolve_names(self) -> None:
         """Resolve on a background thread, then tell the page to refetch.
@@ -4066,8 +4282,16 @@ class Api:
                     self._eve_section().get("server"),
                     self._eve_section().get("profile"),
                 )
-                ids = [int(c.file_id) for c in found.characters if c.file_id.isdigit()]
-                if self._eve_names.resolve_missing(ids):
+                ids = {int(c.file_id) for c in found.characters if c.file_id.isdigit()}
+                ids.update(
+                    int(character_id)
+                    for values in (
+                        self._eve_section().get("account_characters") or {}
+                    ).values()
+                    for character_id in values
+                    if character_id.isdigit()
+                )
+                if self._eve_names.resolve_missing(sorted(ids)):
                     self._push("onEveSettingsNames", {})
             except Exception:
                 logger.warning("EVE character name lookup failed", exc_info=True)
@@ -4080,6 +4304,13 @@ class Api:
         Refused rather than queued: a queued operation's own confirmation
         would describe state that has since changed.
         """
+        if self._eve_identification is not None:
+            self._alert(
+                "warning",
+                "Account identification active",
+                "Finish or cancel account identification, then try again.",
+            )
+            return False
         if not self._eve_mutation.acquire(blocking=False):
             self._alert(
                 "warning",
@@ -4123,6 +4354,82 @@ class Api:
     def _eve_auto_backup(self, target):
         store = paths.eve_settings_backup_dir()
         evesettings_backup.create_file_backup(store, target, origin="auto")
+
+    def _eve_prune(self, keep: int, *, candidates=None) -> None:
+        store = paths.eve_settings_backup_dir()
+        report = (
+            evesettings_backup.prune(store, keep)
+            if candidates is None
+            else evesettings_backup.prune(store, keep, candidates=candidates)
+        )
+        if report.failed:
+            count = len(report.failed)
+            self._alert(
+                "warning",
+                "Some automatic backups were not removed",
+                f"Could not delete {count} automatic backup"
+                f"{'s' if count != 1 else ''}. Wingman will try again later.",
+            )
+
+    def eve_settings_set_auto_keep(self, value) -> dict:
+        current = int(self._eve_section().get("auto_keep", 10))
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            return {
+                "accepted": False,
+                "value": current,
+                "error": "Enter a number from 1 to 100.",
+            }
+        text = str(value).strip()
+        if not text.isascii() or not text.isdigit():
+            return {
+                "accepted": False,
+                "value": current,
+                "error": "Enter a number from 1 to 100.",
+            }
+        wanted = int(text)
+        if wanted < 1 or wanted > 100:
+            return {
+                "accepted": False,
+                "value": current,
+                "error": "Enter a number from 1 to 100.",
+            }
+        if wanted == current:
+            return {"accepted": False, "value": current, "error": None}
+        accepted = self._eve_begin(self._eve_auto_keep_worker, (wanted, current))
+        return {
+            "accepted": accepted,
+            "value": current,
+            "error": None if accepted else "Another Profiles operation is running.",
+        }
+
+    def _eve_auto_keep_worker(self, wanted: int, previous: int) -> None:
+        ok = False
+        try:
+            store = paths.eve_settings_backup_dir()
+            candidates = evesettings_backup.prune_candidates(store, wanted)
+            if wanted < previous and candidates:
+                count = len(candidates)
+                noun = "backup" if count == 1 else "backups"
+                if not self._eve_confirm(
+                    "Change automatic backup retention",
+                    f"Keep {wanted} automatic backups per item?\n\n"
+                    f"This will permanently delete {count} older automatic {noun}. "
+                    "Manual backups will be kept.",
+                    destructive=True,
+                ):
+                    return
+            settings_mod.update_section(
+                self._state.settings, "eve_settings", {"auto_keep": wanted}
+            )
+            self._eve_prune(wanted, candidates=candidates)
+            self._status(f"Keeping {wanted} automatic backups per item.")
+            ok = True
+        except Exception as error:
+            logger.exception("Could not change EVE backup retention")
+            self._alert("error", "Retention not changed", str(error))
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(ok)
 
     def eve_settings_copy(
         self, source: str, targets: list, groups: list | None = None
@@ -4216,7 +4523,7 @@ class Api:
                     backup=self._eve_auto_backup,
                 )
             keep = int(self._eve_section().get("auto_keep", 10))
-            evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
+            self._eve_prune(keep)
             if report.failed:
                 names = "\n".join(
                     f"  • {Path(o.path).stem}: {o.reason}" for o in report.failed
@@ -4256,14 +4563,15 @@ class Api:
                 raise ValueError("That no longer exists.")
             store = paths.eve_settings_backup_dir()
             if kind == "profile":
-                made = evesettings_backup.create_profile_backup(
-                    store, path, origin="manual"
-                )
+                evesettings_backup.create_profile_backup(store, path, origin="manual")
             else:
-                made = evesettings_backup.create_file_backup(
-                    store, path, origin="manual"
-                )
-            self._status(f"Backed up to {made.name}.")
+                evesettings_backup.create_file_backup(store, path, origin="manual")
+            label = (
+                f"{resolved.name.removeprefix('settings_')} profile"
+                if kind == "profile"
+                else self._eve_label(resolved)
+            )
+            self._status(f"Backed up {label}.")
             ok = True
         except Exception as error:
             logger.exception("EVE settings backup failed")
@@ -4278,9 +4586,22 @@ class Api:
     def _eve_restore_worker(self, archive: str) -> None:
         ok = False
         try:
+            info = evesettings_backup.parse_name(Path(archive).name)
+            target = "this backup"
+            created = ""
+            if info is not None:
+                target = self._eve_backup_identity(info)[0]
+                try:
+                    match = datetime.datetime.strptime(
+                        info.created, "%Y%m%d-%H%M%S"
+                    ).replace(tzinfo=datetime.UTC)
+                except ValueError:
+                    created = f" from {info.created}"
+                else:
+                    created = f" from {match:%Y-%m-%d %H:%M UTC}"
             if not self._eve_confirm(
                 "Confirm Restore",
-                "Restore this backup?\n\nThe current settings are backed "
+                f"Restore {target}{created}?\n\nThe current settings are backed "
                 "up first. For a whole settings set, any file not in the "
                 "backup is removed.",
                 destructive=True,
@@ -4290,7 +4611,7 @@ class Api:
             root = self._eve_section().get("root")
             written = evesettings_backup.restore(store, archive, root)
             keep = int(self._eve_section().get("auto_keep", 10))
-            evesettings_backup.prune(store, keep)
+            self._eve_prune(keep)
             self._status(f"Restored into {written.name}.")
             ok = True
         except Exception as error:
@@ -4405,7 +4726,7 @@ class Api:
                 backup=self._eve_auto_backup,
             )
             keep = int(self._eve_section().get("auto_keep", 10))
-            evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
+            self._eve_prune(keep)
             self._status(
                 f"Saved {len(wanted)} formation(s) to {self._eve_label(str(target))}."
             )

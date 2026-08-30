@@ -283,7 +283,9 @@ def test_partial_structured_copy_reports_counts_and_still_prunes_backups(
     monkeypatch.setattr(
         api_mod.evesettings_backup,
         "prune",
-        lambda store, keep: pruned.append((store, keep)),
+        lambda store, keep: (
+            pruned.append((store, keep)) or api_mod.evesettings_backup.PruneReport()
+        ),
     )
 
     api.eve_settings_copy(
@@ -943,6 +945,218 @@ def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch
     assert api.eve_settings_state()["auto_keep"] == 3
 
 
+def test_account_labels_share_alias_character_summary_and_raw_id(tmp_path, monkeypatch):
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_aliases"] = {"10": "Main multibox"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    api._eve_names.names.update({20: "Aiga Otsolen", 21: "Beta"})
+
+    account = api.eve_settings_state()["accounts"][0]
+
+    assert account["display_name"] == "Main multibox"
+    assert account["display_meta"] == "Aiga Otsolen + 1 · 10"
+    assert account["name"] == "Main multibox · Aiga Otsolen + 1 · 10"
+
+
+def test_backup_rows_resolve_human_targets_without_opening_archives(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_aliases"] = {"10": "Main multibox"}
+    api._eve_names.names[20] = "Aiga Otsolen"
+    store = paths.eve_settings_backup_dir()
+    api_mod.evesettings_backup.create_file_backup(
+        store, profile / "core_user_10.dat", origin="manual"
+    )
+    api_mod.evesettings_backup.create_file_backup(
+        store, profile / "core_char_20.dat", origin="manual"
+    )
+
+    rows = api.eve_settings_state()["backups"]
+
+    assert {(row["display_name"], row["display_meta"]) for row in rows} == {
+        ("Main multibox", "Account 10"),
+        ("Aiga Otsolen", "Character 20"),
+    }
+
+
+def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_characters"] = {"10": ["20", "99"]}
+
+    identities = api.eve_settings_state()["identity_characters"]
+
+    assert {item["id"] for item in identities} == {"20", "99"}
+    assert next(item for item in identities if item["id"] == "99")["name"] == (
+        "Character 99"
+    )
+
+
+def test_account_alias_can_be_saved_and_cleared(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    assert api.eve_settings_set_account_alias("10", " Main ")["applied"] is True
+    assert api._eve_section()["account_aliases"] == {"10": "Main"}
+    assert api.eve_settings_set_account_alias("10", "")["applied"] is True
+    assert api._eve_section()["account_aliases"] == {}
+
+
+def test_associating_a_character_moves_it_from_the_previous_account(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path,
+        files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_characters"] = {"10": ["20"]}
+
+    result = api.eve_settings_set_account_characters("11", ["20"])
+
+    assert result["applied"] is True
+    assert api._eve_section()["account_characters"] == {"11": ["20"]}
+
+
+def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch):
+    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_names.names[20] = "Aiga Otsolen"
+
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    (profile / "core_user_10.dat").write_bytes(b"changed account")
+    (profile / "core_char_20.dat").write_bytes(b"changed character")
+    result = api.eve_settings_identification_check()
+
+    assert result["status"] == "candidate"
+    assert result["account"]["id"] == "10"
+    assert result["characters"] == [{"id": "20", "name": "Aiga Otsolen"}]
+
+
+def test_identification_waits_until_eve_is_closed(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api.eve_settings_identification_start()
+    api._eve_client_running_strict = lambda: True
+
+    result = api.eve_settings_identification_check()
+
+    assert result["status"] == "watching"
+    assert "still running" in result["error"]
+
+
+def test_identification_never_guesses_between_changed_accounts(tmp_path, monkeypatch):
+    profile = eve_tree(
+        tmp_path,
+        files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
+    )
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api.eve_settings_identification_start()
+    for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
+        (profile / name).write_bytes(b"changed with a different size " + name.encode())
+
+    assert api.eve_settings_identification_check()["status"] == "ambiguous"
+
+
+def test_identification_blocks_mutations_until_cancelled(tmp_path, monkeypatch):
+    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api.eve_settings_identification_start()
+
+    assert api.eve_settings_backup(str(profile), "profile") is False
+    assert api.eve_settings_identification_cancel() is True
+    assert api.eve_settings_backup(str(profile), "profile") is True
+
+
+def test_lowering_retention_confirms_exact_count_and_keeps_manual_backups(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    store = paths.eve_settings_backup_dir()
+    source = profile / "core_char_1.dat"
+    for second in range(3):
+        api_mod.evesettings_backup.create_file_backup(
+            store,
+            source,
+            origin="auto",
+            now=api_mod.datetime.datetime(
+                2026, 1, 1, 0, 0, second, tzinfo=api_mod.datetime.UTC
+            ),
+        )
+    manual = api_mod.evesettings_backup.create_file_backup(
+        store,
+        source,
+        origin="manual",
+        now=api_mod.datetime.datetime(2026, 1, 1, 0, 1, tzinfo=api_mod.datetime.UTC),
+    )
+    asked = []
+    api._eve_confirm = lambda title, body, **kwargs: asked.append(body) or True
+
+    result = api.eve_settings_set_auto_keep(1)
+
+    assert result["accepted"] is True
+    assert "delete 2 older automatic backups" in asked[0]
+    assert api._eve_section()["auto_keep"] == 1
+    assert manual.exists()
+
+
+@pytest.mark.parametrize("value", [0, 101, True, 1.5, "1.5", "nope"])
+def test_invalid_retention_is_refused_without_starting_a_worker(
+    tmp_path, monkeypatch, value
+):
+    api = build(tmp_path, monkeypatch)
+    result = api.eve_settings_set_auto_keep(value)
+    assert result == {
+        "accepted": False,
+        "value": 10,
+        "error": "Enter a number from 1 to 100.",
+    }
+
+
+def test_declining_retention_deletion_changes_nothing(tmp_path, monkeypatch):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch, answer=False)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    store = paths.eve_settings_backup_dir()
+    source = profile / "core_char_1.dat"
+    for second in range(2):
+        api_mod.evesettings_backup.create_file_backup(
+            store,
+            source,
+            origin="auto",
+            now=api_mod.datetime.datetime(
+                2026, 1, 1, 0, 0, second, tzinfo=api_mod.datetime.UTC
+            ),
+        )
+
+    api.eve_settings_set_auto_keep(1)
+
+    assert api._eve_section()["auto_keep"] == 10
+    assert len(api.eve_settings_state()["backups"]) == 2
+
+
 # --- detecting the root, the way Folders detects OBS's ----------------------
 #
 # Profiles 4: `Detect` existed in Settings > Folders AND on first run, for a
@@ -1074,7 +1288,7 @@ def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeyp
     _fake_codec(monkeypatch, FORMATION_DOC)
     got = api.eve_settings_formations(str(account))
     assert got["ok"] is True
-    assert got["name"] == "Account 1"
+    assert got["name"] == "1"
     assert got["formations"] == [
         {
             "id": 0,

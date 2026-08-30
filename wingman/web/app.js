@@ -130,15 +130,15 @@
   // is pure client state; Python is not told which route is showing.
 
   // Routes that show no title-bar chrome: no destination buttons, no
-  // gear. Both entries are here because the screen must not be leavable
+  // gear. These entries are here because the screen must not be leavable
   // sideways -- see the block inside WM.route that reads this list.
-  WM.CHROMELESS_ROUTES = ['firstrun', 'formations'];
+  WM.CHROMELESS_ROUTES = ['firstrun', 'formations', 'accountidentity'];
 
   WM.route = function (name) {
     // Bookmarks and Previews are NOT here any more: both are sections of
     // the Settings route, reached through WM.section.
-    // formations is the one route with no title-bar button: it is a
-    // SUB-SCREEN of Profiles, reached from that screen's account card.
+    // formations and accountidentity have no title-bar buttons: both are
+    // focused SUB-SCREENS of Profiles, reached from that destination.
     // DESIGN.md makes title-bar space the scarce resource and the nav
     // already holds two EVE destinations, so the editor gets a route id
     // and nothing in the bar. It goes further than that -- while it is
@@ -147,11 +147,12 @@
                    firstrun: 'route-firstrun',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills',
-                   formations: 'route-formations' };
+                   formations: 'route-formations',
+                   accountidentity: 'route-accountidentity' };
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
-    // Standing in the editor lights PROFILES, because that is where you
+    // Standing in either sub-screen lights PROFILES, because that is where you
     // are: a sub-screen with no button of its own would otherwise darken
     // the whole bar and read as having left the destination entirely.
     // The bar is now hidden on that route (see chromeless below), so this
@@ -159,18 +160,18 @@
     // the answer to "where am I", not "what is on screen": leaving the nav
     // marked on a stale destination while the bar is down would come back
     // wrong the moment the bar's visibility rule is revisited.
-    var lit = name === 'formations' ? 'evesettings' : name;
+    var lit = (name === 'formations' || name === 'accountidentity')
+      ? 'evesettings' : name;
     Array.prototype.forEach.call(
       document.querySelectorAll('.navbtn'), function (btn) {
         btn.classList.toggle('active', btn.dataset.route === lit);
       });
     WM.el('btn-settings').classList.toggle('active', name === 'settings');
-    // Two routes offer no chrome, for the same reason stated twice.
-    //
-    // First run is not dismissable: there is nowhere else to go yet.
-    //
-    // The formation editor holds unsaved edits, and `< Profiles` is the
-    // only exit that asks before discarding them. The nav and the gear
+    // Three routes offer no chrome. First run is not dismissable: there is
+    // nowhere else to go yet. Account identity is a focused setup flow whose
+    // Back control cancels its ephemeral observation. The formation editor
+    // holds unsaved edits, and `< Profiles` is the only exit that asks before
+    // discarding them. The nav and the gear
     // call WM.route straight through and know nothing about the editor's
     // dirty flag, so leaving them up gave the screen five exits of which
     // four threw the edits away in silence -- the next openFormations
@@ -253,12 +254,12 @@
   //
   // With both destinations hidden the nav has one entry left, so it hides
   // altogether -- which is the single-screen app the README describes.
-  // formations has no navbtn to hide, so the first loop below is a no-op
-  // for it. It is listed anyway for the SECOND half: with the gate off,
-  // a user standing in the probe editor has to be moved off it like
+  // The two Profiles sub-screens have no navbtn to hide, so the first loop
+  // below is a no-op for them. They are listed anyway for the SECOND half:
+  // with the gate off, a user standing in either has to be moved off it like
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
-  WM.EVE_ROUTES = ['evesettings', 'skills', 'formations'];
+  WM.EVE_ROUTES = ['evesettings', 'skills', 'formations', 'accountidentity'];
   // Alerts joined this list in round 5 (D1) when it stopped being a card
   // inside Previews and became a section. It is EVE-gated for the same
   // reason the other two are: it reads the EVE gamelogs folder and draws

@@ -26,6 +26,11 @@
   // visits would give that back. There is also nowhere to persist it --
   // no bridge method on this screen carries page state.
   var expanded = false;
+  var identityExpanded = false;
+  var backupVisible = 20;
+  var identifyCandidate = null;
+  var identityComplete = '';
+  var identityRouteOpen = false;
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -71,6 +76,7 @@
     fill('es-server', payload.servers, payload.server, 'No folder chosen');
     fill('es-profile', payload.profiles, payload.profile, 'No folder chosen');
     renderSource();
+    renderIdentity();
     renderCopyGroups();
     renderTargets();
     renderBackups();
@@ -208,6 +214,149 @@
     });
   }
 
+  function accountById(accountId) {
+    return ((state && state.accounts) || []).filter(function (account) {
+      return account.id === accountId;
+    })[0] || null;
+  }
+
+  function characterById(characterId) {
+    return ((state && state.identity_characters) || []).filter(function (character) {
+      return character.id === characterId;
+    })[0] || null;
+  }
+
+  function addCharacterLink(accountId, characterId, done, statusId) {
+    var account = accountById(accountId);
+    var ids = account ? (account.character_ids || []).slice() : [];
+    if (ids.indexOf(characterId) === -1) ids.push(characterId);
+    var save = function () {
+      WM.send('eve_settings_set_account_characters', accountId, ids)
+        .then(function (result) {
+          WM.el(statusId || 'es-identity-status').textContent =
+            result && result.error || '';
+          if (result && result.applied) done();
+        });
+    };
+    var owner = (state.accounts || []).filter(function (other) {
+      return other.id !== accountId
+        && (other.character_ids || []).indexOf(characterId) !== -1;
+    })[0];
+    if (!owner) { save(); return; }
+    var character = characterById(characterId);
+    WM.confirm('Move character?',
+      (character ? character.name : 'This character') + ' is linked to '
+      + owner.display_name + '. Move the link to ' + account.display_name + '?')
+      .then(function (yes) { if (yes) save(); });
+  }
+
+  function renderIdentity() {
+    var accountsMode = kind() === 'accounts';
+    WM.el('es-account-tools').hidden = !accountsMode;
+    if (WM.current_route !== 'accountidentity') return;
+
+    var panel = WM.el('es-identity-panel');
+    WM.el('es-manage-toggle').textContent = identityExpanded
+      ? 'Close names and character links' : 'Manage names and character links…';
+    panel.hidden = !identityExpanded;
+    if (identityExpanded) {
+      var picker = WM.el('es-identity-account');
+      var keep = picker.value;
+      picker.textContent = '';
+      (state.accounts || []).forEach(function (account) {
+        var option = document.createElement('option');
+        option.value = account.id;
+        option.textContent = account.name;
+        picker.appendChild(option);
+      });
+      if (keep && accountById(keep)) picker.value = keep;
+      renderIdentityAccount();
+    }
+    paintIdentification(identityComplete ? 'complete' :
+      (state.identification_active ? 'watching' : 'idle'), identityComplete);
+  }
+
+  function renderIdentityAccount() {
+    var account = accountById(WM.el('es-identity-account').value);
+    WM.el('es-account-alias').value = account ? account.alias : '';
+    var linked = account ? account.character_ids || [] : [];
+    var host = WM.el('es-account-characters');
+    host.textContent = '';
+    linked.forEach(function (characterId) {
+      var character = characterById(characterId);
+      var line = WM.make('div', 'es-linked-character');
+      line.appendChild(WM.make('span', '', character ? character.name :
+        'Character ' + characterId));
+      var remove = WM.make('button', 'linkbtn', 'Remove');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', 'Remove ' + (character
+        ? character.name : 'Character ' + characterId));
+      remove.disabled = busy || !!state.identification_active;
+      remove.addEventListener('click', function () {
+        var remaining = linked.filter(function (id) { return id !== characterId; });
+        WM.send('eve_settings_set_account_characters', account.id, remaining)
+          .then(function (result) {
+            WM.el('es-manage-status').textContent = result && result.error || '';
+            if (result && result.applied) refresh();
+          });
+      });
+      line.appendChild(remove);
+      host.appendChild(line);
+    });
+    if (!host.children.length) {
+      host.appendChild(WM.make('p', 'empty', 'No confirmed characters yet.'));
+    }
+
+    var add = WM.el('es-character-add');
+    add.textContent = '';
+    ((state && state.identity_characters) || []).forEach(function (character) {
+      if (linked.indexOf(character.id) !== -1) return;
+      var option = document.createElement('option');
+      option.value = character.id;
+      option.textContent = character.name;
+      add.appendChild(option);
+    });
+    WM.el('es-character-add-btn').disabled = !account || !add.options.length;
+  }
+
+  function paintIdentification(status, message) {
+    var watching = status === 'watching';
+    var candidate = status === 'candidate';
+    var complete = status === 'complete';
+    WM.el('es-identify-start').hidden = watching || candidate || complete;
+    WM.el('es-identify-check').hidden = !watching;
+    WM.el('es-identify-cancel').hidden = !(watching || candidate);
+    WM.el('ai-complete').hidden = !complete;
+    WM.el('ai-intro').hidden = complete;
+    WM.el('es-identify-start').classList.toggle('acc', !complete);
+    WM.el('ai-complete-back').classList.toggle('acc', complete);
+    if (!candidate) {
+      WM.el('es-identify-candidate').hidden = true;
+      identifyCandidate = null;
+    }
+    var defaultMessage = watching
+      ? 'Launch one character, enter the game, then close that client completely.'
+      : '';
+    WM.el('es-identity-status').textContent = message || defaultMessage;
+  }
+
+  function renderCandidate(payload) {
+    identifyCandidate = payload;
+    var select = WM.el('es-identify-character');
+    select.textContent = '';
+    payload.characters.forEach(function (character) {
+      var option = document.createElement('option');
+      option.value = character.id;
+      option.textContent = character.name;
+      select.appendChild(option);
+    });
+    var message = payload.characters.length === 1
+      ? payload.characters[0].name + ' changed with ' + payload.account.option + '.'
+      : 'Choose which changed character belongs to ' + payload.account.option + '.';
+    paintIdentification('candidate', message);
+    WM.el('es-identify-candidate').hidden = false;
+  }
+
   function renderCopyGroups() {
     var row = WM.el('es-copy-options');
     var host = WM.el('es-copy-groups');
@@ -270,15 +419,24 @@
       // builds the same control and carries the same warning.
       var box = document.createElement('input');
       box.type = 'checkbox';
+      var label = WM.make('label', 'check es-target-choice');
+      var styledBox = WM.make('span', 'box');
+      var text = WM.make('span', 'es-target-text');
       box.value = row.path;
       box.checked = !!selected[row.path];
       box.addEventListener('change', function () {
         selected[row.path] = box.checked;
         paintCommit();
       });
-      var label = WM.make('label', 'check', ' ' + row.name);
-      label.prepend(WM.make('span', 'box'));
-      label.prepend(box);
+      text.appendChild(WM.make('span', 'es-target-name', row.display_name || row.name));
+      if (row.display_meta && kind() === 'accounts') {
+        text.appendChild(WM.make('span', 'es-target-meta', row.display_meta));
+      } else if (row.display_meta) {
+        label.title = row.display_meta;
+      }
+      label.appendChild(box);
+      label.appendChild(styledBox);
+      label.appendChild(text);
       host.appendChild(label);
     });
     // Collapses to ZERO height when nothing matches -- no border, no
@@ -335,66 +493,65 @@
 
   function renderBackups() {
     var host = WM.el('es-backups');
+    var backups = state.backups || [];
     host.innerHTML = '';
+    var profileName = nameOf(state.profiles, state.profile);
+    var backupButton = WM.el('es-backup-profile');
+    backupButton.textContent = profileName
+      ? 'Back up ' + profileName + ' profile'
+      : 'Back up profile';
+    backupButton.disabled = busy || !profileName || !!state.identification_active;
+    var keepInput = WM.el('es-auto-keep');
+    if (document.activeElement !== keepInput) keepInput.value = state.auto_keep;
+
     // The depth comes off the payload, never a literal. Four places once
-    // carried the bookmark-keybind count and three of them drifted, and
-    // this is the same shape: a number the page would have to keep in step
-    // with settings.json by hand. "of each" is load-bearing rather than
-    // padding -- backup.prune keys on (kind, source, stem), so eleven
-    // copies onto eleven different characters prune nothing.
+    // carried the bookmark-keybind count and three of them drifted.
     var note =
       'Every copy backs up what it is about to overwrite. The newest '
       + state.auto_keep + ' automatic backups of each character, account '
-      + 'or profile are kept; the ones you make here stay until you '
-      + 'delete them.';
+      + 'or profile are kept.';
     WM.el('es-backup-note').textContent = note;
-    // Round 6, P1-3: the same sentence, above the button it reassures.
-    // One string, two mount points -- paintPill's pattern, and for the
-    // same reason the note in index.html gives: a second hand-written
-    // copy would be free to drift, and this one carries state.auto_keep,
-    // which is exactly the kind of number that has drifted before.
-    //
-    // Only the first sentence there. The pruning rule matters when you
-    // are looking AT the backups; at the commit it would bury the one
-    // fact that is load-bearing, which is that there will be a backup.
     var commitNote = WM.el('es-copy-backup-note');
-    if (commitNote) {
-      commitNote.textContent = note.split('. ')[0] + '.';
-    }
-    // An empty list means one of two things and only Python knows which.
-    // Saying "No backups yet" about a store we were denied would invite an
-    // overwrite the user believes is protected.
-    if (state.backups_unreadable || !(state.backups || []).length) {
-      var note = document.createElement('p');
-      note.className = 'hint';
-      note.textContent = state.backups_unreadable
+    if (commitNote) commitNote.textContent = note.split('. ')[0] + '.';
+
+    var head = WM.el('es-backup-head');
+    head.hidden = !backups.length || state.backups_unreadable;
+    if (state.backups_unreadable || !backups.length) {
+      var empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = state.backups_unreadable
         ? "Couldn't read the backups folder. Check it is still readable."
         : 'No backups yet.';
-      host.appendChild(note);
-      if (state.backups_unreadable) return;
+      host.appendChild(empty);
     }
-    (state.backups || []).forEach(function (item) {
-      var line = WM.make('div', 'row');
+    backups.slice(0, backupVisible).forEach(function (item) {
+      var line = WM.make('div', 'es-backup-grid es-backup-row');
       line.appendChild(WM.make('span', 'bk-when', whenText(item.created)));
-      line.appendChild(WM.make('span', 'bk-what',
-        item.kind + ' \u00b7 ' + item.stem));
-      // Both origins named in full, rather than a bare "(auto)" on half the
-      // rows and nothing on the other half. The suffix had no key anywhere
-      // in the app; a column that says "manual" too explains it by
-      // contrast, and the note above says what "automatic" costs.
+      var target = WM.make('span', 'bk-what');
+      target.title = item.display_name + ' · ' + item.display_meta;
+      target.appendChild(WM.make('span', 'bk-name', item.display_name));
+      target.appendChild(WM.make('span', 'bk-meta', item.display_meta));
+      line.appendChild(target);
       line.appendChild(WM.make('span', 'bk-origin',
-        item.origin === 'auto' ? 'automatic' : 'manual'));
-      line.appendChild(button('Restore', function () {
+        item.origin === 'auto' ? 'Automatic' : 'Manual'));
+      var actions = WM.make('span', 'bk-actions');
+      actions.appendChild(button('Restore', function () {
         mutate('eve_settings_restore', item.path);
       }));
-      // Deleting a backup is the only irreversible action on this screen
-      // that Restore is not -- and both were the same plain .btn. The
-      // treatment is the one skills.js already uses for Forget character.
-      line.appendChild(button('Delete', function () {
+      actions.appendChild(button('Delete', function () {
         mutate('eve_settings_delete_backup', item.path);
       }, 'danger'));
+      line.appendChild(actions);
       host.appendChild(line);
     });
+    var more = WM.el('es-backups-more');
+    more.hidden = backups.length <= backupVisible;
+    more.disabled = busy || !!state.identification_active;
+    if (!more.hidden) {
+      more.textContent = 'Show ' + Math.min(20, backups.length - backupVisible)
+        + ' older backups';
+    }
+    WM.el('es-auto-keep-apply').disabled = busy || !!state.identification_active;
   }
 
   // The way into the probe formation editor. Accounts only, always: a
@@ -424,14 +581,15 @@
       sel.appendChild(option);
     });
     if (keep) sel.value = keep;
-    WM.setEnabled('es-formations-open', !busy && !!sel.value);
+    WM.setEnabled('es-formations-open', !busy && !!sel.value
+                  && !(state && state.identification_active));
   }
 
   function button(text, handler, extra) {
     var el = document.createElement('button');
     el.className = extra ? 'btn ' + extra : 'btn';
     el.textContent = text;
-    el.disabled = busy;
+    el.disabled = busy || !!(state && state.identification_active);
     el.addEventListener('click', handler);
     return el;
   }
@@ -473,7 +631,8 @@
     // Dimmed, not emptied: a blank slot beside a disabled button reads as a
     // layout gap rather than as the answer to "how many".
     label.classList.toggle('none', !count);
-    WM.setEnabled('es-copy', !busy && count > 0);
+    WM.setEnabled('es-copy', !busy && count > 0
+                  && !(state && state.identification_active));
     // The hazard is about what this button is ABOUT to do, so it appears
     // only while the button can do it: with nothing selected it would say
     // "EVE running" about a copy that cannot happen.
@@ -505,10 +664,24 @@
     // Same reason: the formations card's button is inert while a copy or a
     // restore is in flight, and paintCommit does not own it.
     renderFormationsCard();
-    WM.el('es-backup-profile').disabled = value;
+    var identifying = !!(state && state.identification_active);
+    WM.el('es-backup-profile').disabled = value || identifying
+      || !(state && state.profile);
+    ['es-auto-keep-apply', 'es-formations-open', 'es-backups-more',
+     'es-identify-open', 'es-identify-start', 'es-manage-toggle',
+     'es-alias-apply', 'es-character-add-btn'].forEach(function (id) {
+      WM.el(id).disabled = value || identifying;
+    });
+    ['es-identity-account', 'es-account-alias', 'es-character-add'].forEach(function (id) {
+      WM.el(id).disabled = value;
+    });
     Array.prototype.forEach.call(
       WM.el('es-backups').querySelectorAll('button'), function (el) {
-        el.disabled = value;
+        el.disabled = value || identifying;
+      });
+    Array.prototype.forEach.call(
+      WM.el('es-account-characters').querySelectorAll('button'), function (el) {
+        el.disabled = value || identifying;
       });
   }
 
@@ -581,6 +754,7 @@
         radio.addEventListener('change', function () {
           selected = {};
           renderSource();
+          renderIdentity();
           renderCopyGroups();
           renderTargets();
         });
@@ -597,6 +771,89 @@
     WM.el('es-none').addEventListener('click', function () {
       selected = {};
       renderTargets();
+    });
+
+    WM.el('es-identify-open').addEventListener('click', function () {
+      identityExpanded = false;
+      identityComplete = '';
+      WM.route('accountidentity');
+    });
+
+    WM.el('es-manage-toggle').addEventListener('click', function () {
+      identityExpanded = !identityExpanded;
+      renderIdentity();
+    });
+
+    function backToProfiles() {
+      WM.send('eve_settings_identification_cancel').then(function () {
+        if (state) state.identification_active = false;
+        identityComplete = '';
+        identityRouteOpen = false;
+        WM.route('evesettings');
+      });
+    }
+    WM.el('ai-back').addEventListener('click', backToProfiles);
+    WM.el('ai-complete-back').addEventListener('click', backToProfiles);
+
+    WM.el('es-identity-account').addEventListener('change', renderIdentityAccount);
+
+    WM.el('es-alias-apply').addEventListener('click', function () {
+      var accountId = WM.el('es-identity-account').value;
+      WM.send('eve_settings_set_account_alias', accountId,
+              WM.el('es-account-alias').value).then(function (result) {
+        WM.el('es-manage-status').textContent = result && result.error || '';
+        if (result && result.applied) refresh();
+      });
+    });
+
+    WM.el('es-character-add-btn').addEventListener('click', function () {
+      var accountId = WM.el('es-identity-account').value;
+      var characterId = WM.el('es-character-add').value;
+      if (!accountId || !characterId) return;
+      addCharacterLink(accountId, characterId, refresh, 'es-manage-status');
+    });
+
+    WM.el('es-identify-start').addEventListener('click', function () {
+      WM.send('eve_settings_identification_start').then(function (result) {
+        if (result.status === 'watching') state.identification_active = true;
+        paintIdentification(result.status, result.error);
+        setBusy(busy);
+      });
+    });
+
+    WM.el('es-identify-check').addEventListener('click', function () {
+      WM.send('eve_settings_identification_check').then(function (result) {
+        if (result.status === 'candidate') renderCandidate(result);
+        else paintIdentification(
+          result.status === 'ambiguous' || result.status === 'none'
+            ? 'watching' : result.status,
+          result.error);
+      });
+    });
+
+    WM.el('es-identify-cancel').addEventListener('click', function () {
+      WM.send('eve_settings_identification_cancel').then(function () {
+        if (state) state.identification_active = false;
+        paintIdentification('idle');
+        setBusy(busy);
+      });
+    });
+
+    WM.el('es-identify-link').addEventListener('click', function () {
+      if (!identifyCandidate) return;
+      var accountId = identifyCandidate.account.id;
+      var characterId = WM.el('es-identify-character').value;
+      addCharacterLink(accountId, characterId, function () {
+        WM.send('eve_settings_identification_cancel').then(function () {
+          state.identification_active = false;
+          identifyCandidate = null;
+          setBusy(busy);
+          var character = characterById(characterId);
+          identityComplete = (character ? character.name : 'Character ' + characterId)
+            + ' linked to ' + accountId + '.';
+          refresh();
+        });
+      });
     });
 
     WM.el('es-copy').addEventListener('click', function () {
@@ -626,11 +883,51 @@
       mutate('eve_settings_backup', state.profile, 'profile');
     });
 
+    WM.el('es-auto-keep-apply').addEventListener('click', function () {
+      if (busy) return;
+      WM.el('es-auto-keep-status').textContent = '';
+      setBusy(true);
+      WM.send('eve_settings_set_auto_keep', WM.el('es-auto-keep').value)
+        .then(function (result) {
+          if (result && result.accepted) return;
+          setBusy(false);
+          if (result) WM.el('es-auto-keep').value = result.value;
+          WM.el('es-auto-keep-status').textContent = result && result.error || '';
+        });
+    });
+    WM.el('es-auto-keep').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') WM.el('es-auto-keep-apply').click();
+    });
+
+    WM.el('es-backups-more').addEventListener('click', function () {
+      backupVisible += 20;
+      renderBackups();
+    });
+
     document.addEventListener('wm:route', function (event) {
+      var leavingIdentity = identityRouteOpen
+        && event.detail !== 'accountidentity';
+      identityRouteOpen = event.detail === 'accountidentity';
+      if (identityRouteOpen) {
+        identityExpanded = false;
+        identityComplete = '';
+        refresh();
+        WM.send('eve_settings_resolve_names');
+        return;
+      }
+      // Every route away from the focused identity flow cancels its
+      // ephemeral snapshot. The durable links already confirmed stay.
+      if (leavingIdentity) {
+        WM.send('eve_settings_identification_cancel');
+        if (state) state.identification_active = false;
+      }
       if (event.detail !== 'evesettings') return;
       // Every visit starts collapsed. render() is what repaints it, and it
       // runs off the refresh below.
       expanded = false;
+      identityExpanded = false;
+      identityComplete = '';
+      backupVisible = 20;
       refresh();
       // Names are resolved on first open, never at launch: the tray app
       // starts hidden and must not make a network call nobody asked for.

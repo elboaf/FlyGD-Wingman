@@ -2512,7 +2512,8 @@ button.btn:disabled,
    Left-aligned, the folder card keeps its 620 measure exactly and simply
    shares the copy card's edge. */
 #route-evesettings > .settings > .card { max-width: 620px; margin-inline: 0; }
-#route-evesettings > .settings > .card:has(> .es-roster) { max-width: none; }
+#route-evesettings > .settings > .card:has(> .es-roster),
+#route-evesettings > .settings > .es-backups-card { max-width: none; }
 /* The card grew; its form rows and its prose did not. 586px, not 620:
    inside the card the 620 wrapper only ever gave them 586, and this is
    holding that measure rather than restoring a number from one level up. */
@@ -2520,17 +2521,28 @@ button.btn:disabled,
   max-width: 586px;
 }
 
-/* .list-scroll's `flex: 1; min-height: 0` needs a flex parent to mean
-   anything, and .card is not one -- so the list takes content height and
-   grows the route instead of scrolling. Capped the same way the dialog body
-   is, so a long backup history scrolls inside the card.
+/* Backups use the route scrollbar. Restore is a high-cost choice, so its
+   identity gets the page's width instead of a short nested viewport. */
+.es-backups-card > :not(#es-backups):not(#es-backup-head) { max-width: 586px; }
 
-   Backups only, now. #es-targets used to share this cap and no longer does
-   -- see .es-roster below. The two lists look alike and are not: backups
-   are a history you consult one row of, and the roster is the record of
-   who a single irreversible press is about to overwrite. Capping the
-   second is what put a name half-drawn above the accent button. */
-#es-backups { max-height: 38vh; }
+.es-backup-grid {
+  display: grid;
+  grid-template-columns: 132px minmax(220px, 1fr) 80px 150px;
+  column-gap: 10px;
+  align-items: center;
+}
+.es-backup-head {
+  padding: 0 8px 6px; color: var(--text-dim);
+  font-size: var(--fs-muted); border-bottom: 1px solid var(--panel-border);
+}
+#es-backup-head[hidden], .es-backup-grid[hidden], .es-backup-head[hidden] {
+  display: none;
+}
+.es-backup-row { padding: 7px 8px; border-top: 1px solid var(--border); }
+.es-backup-row:first-child { border-top: 0; }
+.bk-actions { display: flex; justify-content: flex-end; gap: 6px; }
+#es-backups-more { margin-top: 8px; }
+#es-backups-more[hidden] { display: none; }
 
 /* Profiles 2 -- the roster, in columns, uncapped.
 
@@ -2855,6 +2867,58 @@ button.btn:disabled,
    the card. `.settings .row > .field`'s own flex is what a full-measure
    field is; this only stops the select opting out of it. */
 #es-source { flex: 1; }
+#es-formations-account { flex: 1; }
+
+#es-account-tools { width: 100%; }
+#es-account-tools[hidden], #es-identity-panel[hidden], .es-identity[hidden],
+#ai-complete[hidden],
+#es-identify-candidate[hidden], .es-identify-actions > [hidden] {
+  display: none;
+}
+
+#route-accountidentity { overflow-y: auto; padding: 12px; }
+.account-identity-shell {
+  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 620px;
+}
+.account-identity-shell h1 {
+  margin: 2px 0 0; color: var(--text); font-size: 20px; font-weight: 650;
+}
+.account-identity-shell h2 {
+  margin: 0; color: var(--text); font-size: 15px; font-weight: 650;
+}
+#ai-intro { display: flex; flex-direction: column; gap: 12px; }
+#ai-intro[hidden] { display: none; }
+#ai-intro p { margin: 0; max-width: 70ch; }
+.account-identity-shell .row {
+  margin-bottom: 0; flex-wrap: wrap; row-gap: 4px;
+}
+.account-identity-shell .row > .lab {
+  flex: 0 0 100%; color: var(--text-dim); font-size: var(--fs-body);
+}
+.ai-head { flex: none; }
+.ai-status { min-height: 20px; margin: 0; color: var(--text-dim); }
+.ai-manage-toggle { align-self: flex-start; margin-top: 10px; }
+.es-identity {
+  display: flex; flex-direction: column; gap: 10px;
+  padding-top: 14px; border-top: 1px solid var(--border);
+}
+.es-account-characters { width: 100%; }
+.es-linked-character {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 30px; border-bottom: 1px solid var(--border);
+}
+.es-linked-character:last-child { border-bottom: 0; }
+#es-identity-account, #es-character-add { flex: 1; }
+#es-account-alias { flex: 1; }
+.es-identify-actions { margin-top: 4px; }
+
+.es-target-choice { align-items: flex-start; }
+.es-target-text { display: flex; min-width: 0; flex-direction: column; }
+.es-target-name, .es-target-meta {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.es-target-meta { color: var(--text-faint); font-size: var(--fs-muted); }
 
 /* Payload-defined copy groups use the copy card's existing form measure.
    At the 840px window floor CDP measured three roughly 185px columns;
@@ -2898,15 +2962,23 @@ button.btn:disabled,
   color: var(--text-dim);
 }
 #es-backups .bk-what {
-  flex: 1; min-width: 0;
+  min-width: 0; display: flex; flex-direction: column;
+}
+#es-backups .bk-name, #es-backups .bk-meta {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Wide enough for "automatic"; a column rather than a suffix so the two
+#es-backups .bk-meta {
+  color: var(--text-faint); font-size: var(--fs-muted);
+}
+/* Wide enough for "Automatic"; a column rather than a suffix so the two
    origins line up and read as one answer to the same question. */
 #es-backups .bk-origin {
-  flex: none; width: 68px; color: var(--text-faint);
-  font-size: var(--fs-muted);
+  color: var(--text-faint); font-size: var(--fs-muted);
 }
+
+#es-auto-keep { flex: 0 0 84px; }
+#es-auto-keep-status { width: 100%; }
+#es-auto-keep-status:empty { display: none; }
 
 /* Accented, unlike a plain .hint: this warns that two actions share a key
    and AutoHotkey will silently let one win. It shares .bindbtn.clash's

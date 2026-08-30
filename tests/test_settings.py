@@ -99,6 +99,8 @@ def test_defaults_are_the_documented_values():
             "server": None,
             "profile": None,
             "auto_keep": 10,
+            "account_aliases": {},
+            "account_characters": {},
         },
         # Off by default like the other feature flags: it opens a second
         # WebView2 window, which must be asked for.

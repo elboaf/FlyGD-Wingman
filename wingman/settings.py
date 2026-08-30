@@ -214,10 +214,17 @@ def _eve_defaults() -> dict:
 
 def _eve_settings_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global."""
-    # Three remembered paths and the prune depth. Everything else is derived
-    # from disk on each state build, so there is nothing to migrate and
-    # nothing that can drift out of step with reality.
-    return {"root": None, "server": None, "profile": None, "auto_keep": 10}
+    # Paths and file contents remain derived from disk. Account names and
+    # character links cannot be: EVE stores only its numeric account id, so
+    # these two maps are explicitly user-confirmed local metadata.
+    return {
+        "root": None,
+        "server": None,
+        "profile": None,
+        "auto_keep": 10,
+        "account_aliases": {},
+        "account_characters": {},
+    }
 
 
 def _sig_bar_defaults() -> dict:
@@ -492,6 +499,10 @@ def validated_alerts(raw) -> dict:
     return section
 
 
+def _decimal_id(value) -> bool:
+    return isinstance(value, str) and value.isascii() and value.isdigit()
+
+
 def validated_eve_settings(raw) -> dict:
     """Same posture as validated_preview: a malformed section falls back
     whole, and a malformed single value falls back alone."""
@@ -509,6 +520,30 @@ def validated_eve_settings(raw) -> dict:
         # Clamped, not rejected: a depth of zero would delete the backup
         # taken moments earlier, which is the one nobody can afford to lose.
         section["auto_keep"] = max(1, min(100, keep))
+
+    aliases = raw.get("account_aliases")
+    if isinstance(aliases, dict):
+        for account_id, alias in aliases.items():
+            if not _decimal_id(account_id) or not isinstance(alias, str):
+                continue
+            cleaned = alias.strip()[:80]
+            if cleaned:
+                section["account_aliases"][account_id] = cleaned
+
+    associations = raw.get("account_characters")
+    claimed = set()
+    if isinstance(associations, dict):
+        for account_id, character_ids in associations.items():
+            if not _decimal_id(account_id) or not isinstance(character_ids, list):
+                continue
+            valid = []
+            for character_id in character_ids:
+                if not _decimal_id(character_id) or character_id in claimed:
+                    continue
+                claimed.add(character_id)
+                valid.append(character_id)
+            if valid:
+                section["account_characters"][account_id] = valid
     return section
 
 
