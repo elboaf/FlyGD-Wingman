@@ -2341,3 +2341,49 @@ def test_the_formation_editor_converts_units_only_at_the_boundary():
     assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
     assert js.count("* AU") >= 1 and js.count("/ AU") >= 1
     assert "149597870700" in js
+
+
+def test_the_formation_editor_guards_both_of_its_async_windows():
+    """A save is two round trips, and an edit can land in either gap.
+
+    `save()` sends and returns; the answer arrives later as a push. The
+    push then triggers a RE-READ, because Python mints a new formation's
+    id at write time and the page is still holding `null` -- without
+    reading it back the next save mints a second id and drops the first.
+
+    So there are two windows in which the pane is live and an edit can be
+    made: send -> push, and push -> re-read. Both end in code that
+    overwrites what the user is looking at, and both failures are silent:
+    the edit is on screen, then it is not, and nothing is logged. The
+    first window was closed on review; the second was opened by that same
+    fix and closed on the next one.
+
+    This cannot prove the logic -- nothing here executes JavaScript -- so
+    it pins the MECHANISM: each window's handler consults `revision`, the
+    counter every edit bumps. A guard deleted or a third window added
+    without one fails here rather than in a user's settings file.
+    """
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+
+    assert "revision += 1" in js, (
+        "formations.js no longer counts edits, so neither guard below can "
+        "tell an edit from no edit"
+    )
+
+    load = js[js.index("function load(") : js.index("function save(")]
+    assert re.search(r"revision\s*!==\s*\w+", load), (
+        "load()'s reply handler does not compare `revision` against what "
+        "it captured on entry, so a reload after a save paints over an "
+        "edit made while it was in flight"
+    )
+    assert re.search(r"=\s*revision\s*;", load), (
+        "load() never captures `revision` on entry, so the comparison "
+        "above cannot be against the edit count it started with"
+    )
+
+    done = js[js.index("WM.formationsDone") :]
+    done = done[: done.index("\n  };")]
+    assert re.search(r"revision\s*!==\s*savingAt", done), (
+        "the completion push clears `dirty` without checking whether an "
+        "edit landed since the send"
+    )

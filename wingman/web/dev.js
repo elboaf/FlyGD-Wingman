@@ -1106,14 +1106,24 @@
       { x: -11000000, y: -3400000, z: 0, range: 4787715862400 }
     ] }
   ];
+  // Deliberately SLOW, the way eveMutation deliberately is. This is a
+  // read, so the obvious stub resolves at once -- and resolving at once
+  // erases the window formations.js's reload runs in, which is where an
+  // edit can be painted over. A harness that cannot reproduce a race
+  // cannot verify the guard against it, and this one was invisible in
+  // ?dev=1 until the delay went in.
   api.eve_settings_formations = function (path) {
     console.log('DEV api.eve_settings_formations(', path, ')');
     var account = eve.accounts.filter(function (a) {
       return a.path === path;
     })[0];
-    return Promise.resolve({
-      ok: true, path: path, name: account ? account.name : path,
-      formations: JSON.parse(JSON.stringify(devFormations))
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        resolve({
+          ok: true, path: path, name: account ? account.name : path,
+          formations: JSON.parse(JSON.stringify(devFormations))
+        });
+      }, 150);
     });
   };
   // The save MINTS an id for every `id: null`, because write_formations

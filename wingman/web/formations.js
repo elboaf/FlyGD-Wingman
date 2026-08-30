@@ -162,14 +162,46 @@
     }) };
   }
 
-  // keepIndex survives the reload after a save: the list comes back with
-  // Python's minted ids, and dropping the user back on the first
-  // formation would make a save feel like a navigation.
-  function load(path, keepIndex) {
+  // Two optional arguments, both only for the reload after a save.
+  //
+  // keepIndex: the list comes back with Python's minted ids, and dropping
+  // the user back on the first formation would make a save read as a
+  // navigation.
+  //
+  // protect: abandon the answer rather than paint over an edit made while
+  // it was in flight. This is a SECOND async window, and it is not the one
+  // formationsDone's revision check covers -- that one guards send ->
+  // push; this one guards push -> re-read, and the pane stays live through
+  // both. Without it the reload's `.then` overwrites state.formations and
+  // clears dirty unconditionally, which is the same silent loss the reload
+  // itself was added to close, one step later.
+  //
+  // An INITIAL open passes neither: it is a replacement, not a refresh --
+  // the pane is still showing whatever the last account held, and there is
+  // nothing there worth protecting from the file being opened.
+  function load(path, keepIndex, protect) {
+    var startedAt = revision;
     state.busy = true; paintCommit();
     return WM.send('eve_settings_formations', path).then(function (reply) {
       state.busy = false;
       if (!reply || !reply.ok) {
+        // A RELOAD that fails is not a reason to eject. The save itself
+        // succeeded; the formations on screen are the ones just written,
+        // plus any edit made since. Routing away here would discard that
+        // edit without the discard confirm -- the same silent loss as
+        // the clobber below, reached through the error path instead. The
+        // lock is the realistic cause (`Another EVE Settings operation
+        // is still running`), and it clears on its own.
+        //
+        // `dirty` is deliberately not touched: formationsDone cleared it
+        // before calling, and markDirty will have set it again if an edit
+        // landed. Either way it already says the truth.
+        if (protect) {
+          paintCommit();
+          WM.confirm('Formations',
+                     (reply && reply.error) || 'The file could not be re-read.');
+          return;
+        }
         // Back to Profiles FIRST, so the answer is read over the screen
         // that offered the button rather than over an empty editor.
         //
@@ -181,6 +213,17 @@
         WM.route('evesettings');
         WM.confirm('Formations',
                    (reply && reply.error) || 'The file could not be read.');
+        return;
+      }
+      // The edit on screen wins over the answer to a question asked
+      // before it existed. Nothing is written and nothing is discarded:
+      // the list keeps its `id: null` for any new formation, so the next
+      // save re-mints exactly once more and the reload after THAT one
+      // settles the ids. An id churned once is the price of never losing
+      // a keystroke, and it is the same trade formationsDone makes.
+      if (protect && revision !== startedAt) {
+        state.dirty = true;
+        paintCommit();
         return;
       }
       state.path = reply.path;
@@ -236,7 +279,7 @@
     // repoints the client's selectedFormationID at whatever is now the
     // head of the table. That is exactly the churn ids exist to prevent,
     // and this file's header claims not to cause.
-    load(state.path, state.selected);
+    load(state.path, state.selected, true);
   };
 
   /* ---- rendering ---- */
