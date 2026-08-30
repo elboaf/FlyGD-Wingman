@@ -477,6 +477,11 @@ def build_preview_host(state, api_box):
                 state.settings.get("preview", {}).get("lock_aspect", True) is not False
             )
 
+        def selection_color():
+            # Live, same as snap: the picker must recolour an open
+            # preview's ring through _restyle, not on a restart.
+            return state.settings.get("preview", {}).get("selection_color", "#00c8dc")
+
         def lock_default():
             # Live, same as the roster it modifies. False when absent, so a
             # settings file predating the key resolves _is_locked to plain
@@ -524,6 +529,7 @@ def build_preview_host(state, api_box):
             excluded=excluded,
             snap=snap,
             lock_aspect=lock_aspect,
+            selection_color=selection_color,
         )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to

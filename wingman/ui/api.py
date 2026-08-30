@@ -2915,6 +2915,28 @@ class Api:
             return self._field_refused("Could not save this to settings.")
         return self._field_ok()
 
+    def apply_preview_default_size(self) -> dict:
+        """Resize every OPEN preview to the persisted default size.
+
+        The companion to set_preview_default_size, which by design changes
+        only where the NEXT unsaved preview opens. This closes that gap:
+        the field sets the default, this button applies it to what is on
+        screen now.
+
+        No arguments, and no re-validation: the width/height pair is read
+        from settings, which validated_preview has already floored at
+        MIN_SIZE -- accepting a size here that set_preview_default_size
+        would refuse would let the page and the windows disagree.
+        """
+        host = self._preview_host
+        if host is None or not host.is_running:
+            return self._field_refused("Start previews first.")
+        section = self._state.settings.get("preview", {})
+        host.resize_all((section.get("width"), section.get("height")))
+        # The cards show each character's size; every one just changed.
+        self.push_preview_hotkeys()
+        return self._field_ok()
+
     def set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.
 
@@ -3034,6 +3056,20 @@ class Api:
         silently coerced by normalise rather than refused here.
         """
         result = self._write_preview_setting(("opacity",), value)
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_selection_color(self, value) -> dict:
+        """Persist the selection ring's colour, then push it live.
+
+        The hex string is stored verbatim and validated by
+        validated_preview's _HEX_RE screen -- same division of labour as
+        set_preview_opacity: the setter does not re-own the format, and a
+        value the screen rejects falls back to the default colour rather
+        than being refused here.
+        """
+        result = self._write_preview_setting(("selection_color",), str(value))
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result

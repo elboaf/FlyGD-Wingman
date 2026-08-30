@@ -29,7 +29,9 @@ PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 
 MIN_SIZE = (120, 90)
 BORDER = 2
-LABEL_H = 30
+# How far the cursor must travel before a held left button stops being a
+# click and becomes a drag. Pixels, in screen space, radius not components.
+CLICK_PX = 4
 
 
 def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(0, 0)):
@@ -254,6 +256,11 @@ class PreviewWindow:
     # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
     snap = True
     lock_aspect = True
+    # The selection ring's colour, #rrggbb. Class-level for the same
+    # reason; the default is the cyan this module hardcoded until the
+    # setting existed, so a preview created before the first restyle draws
+    # exactly what it always drew.
+    selection_color = "#00c8dc"
 
     def __init__(
         self,
@@ -269,6 +276,8 @@ class PreviewWindow:
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
+        selection_color="#00c8dc",
+        on_resize_all=None,
     ):
         self._libs = libs
         self.client = client
@@ -292,6 +301,10 @@ class PreviewWindow:
         # is sampled -- flipping the setting mid-drag must not change the
         # gesture already in flight under the user's hand.
         self.lock_aspect = lock_aspect
+        # A string, not a tuple: it is the settings representation
+        # verbatim, parsed per redraw (once per repaint, not per
+        # mouse-move) so no second parsed copy can drift from it.
+        self.selection_color = selection_color
         self.selected = False
         # Whether hide-on-lost-focus currently has this window off screen.
         # Not a saved setting and not per character: the host recomputes it
@@ -308,6 +321,12 @@ class PreviewWindow:
         self._chrome_cache_key = None
         self._on_activate = on_activate
         self._on_rect_changed = on_rect_changed
+        # Supplied by the host: called with this window's rect on every
+        # coalesced move of a resize-all chord, so the host can mirror the
+        # size onto every OTHER preview. Runs on the preview thread (this
+        # wndproc's thread), the only thread allowed to touch those
+        # windows -- see the class docstring.
+        self._on_resize_all = on_resize_all
         # Supplied by the host, which is the only thing that knows about
         # sibling previews. Without it snap() sees screen edges only and
         # preview-to-preview snapping silently does nothing.
@@ -317,6 +336,11 @@ class PreviewWindow:
         self._screen = screen
         self.hwnd = None
         self._thumb = None
+        # The character-name overlay window's HWND, or None. See
+        # _ensure_label_overlay for why the name is a window at all.
+        self._label_hwnd = None
+        self._label_img = None
+        self._label_key = None
         # The thumbnail's inset from the window edge. Normally BORDER, but
         # an armed alert widens it to ALERT_BORDER for the duration: the
         # thumbnail overpaints the ring everywhere it covers, so a 6px ring
@@ -348,6 +372,8 @@ class PreviewWindow:
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
+        selection_color="#00c8dc",
+        on_resize_all=None,
     ):
         self = cls(
             libs,
@@ -362,6 +388,8 @@ class PreviewWindow:
             opacity,
             snap,
             lock_aspect,
+            selection_color,
+            on_resize_all,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -390,21 +418,14 @@ class PreviewWindow:
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
             self._thumb.update(
-                geometry.thumbnail_rect(self.rect, self._inset, self._label_h()),
+                geometry.thumbnail_rect(self.rect, self._inset),
                 self.opacity,
             )
+        # After the preview itself exists: the overlay is owned by it.
+        self._ensure_label_overlay()
         return self
 
     # -- rendering -------------------------------------------------------
-    def _label_h(self) -> int:
-        """LABEL_H when labels are on, 0 when off.
-
-        chrome.py needs no change for the off case: its band guard
-        (`band_bottom > border`) is already false when label_h=0, so a
-        bandless tile with no text falls out of the existing render path.
-        """
-        return LABEL_H if self.show_labels else 0
-
     def _source_aspect(self):
         """The client area's width/height, or None if it cannot be read.
 
@@ -431,13 +452,31 @@ class PreviewWindow:
         return (
             self.rect.w,
             self.rect.h,
-            self.client.character or self.client.title,
             self.selected,
-            # Without this, flipping show_labels on an already-open preview
-            # is a no-op: redraw() short-circuits on an unchanged key and
-            # the bitmap never repaints.
-            self.show_labels,
+            # For the same reason as below: without the colour here, a
+            # recolour is a no-op on every already-open preview.
+            self.selection_color,
         )
+
+    def _border_color(self):
+        """The selection ring's RGBA, parsed from the #rrggbb setting.
+
+        Called once per redraw, never per mouse-move. Falls back to the
+        shipped cyan rather than raising: the value arrives from
+        settings, which validated_preview has already screened, so an
+        unparsable string here means a settings file edited by hand --
+        and a ring in the wrong colour beats a preview subsystem that
+        died mid-drag.
+        """
+        try:
+            return (
+                int(self.selection_color[1:3], 16),
+                int(self.selection_color[3:5], 16),
+                int(self.selection_color[5:7], 16),
+                255,
+            )
+        except (TypeError, ValueError):
+            return (0, 200, 220, 255)
 
     def redraw(self, force: bool = False) -> None:
         """Re-render the chrome bitmap and push it to the layered surface.
@@ -450,17 +489,109 @@ class PreviewWindow:
         key = self._chrome_key()
         if not force and key == self._chrome_cache_key:
             return
-        label = self.client.character or self.client.title
         img = chrome.render(
             (self.rect.w, self.rect.h),
-            label,
-            border_color=(0, 200, 220, 255),
+            border_color=self._border_color(),
             border=BORDER,
-            label_h=self._label_h(),
             selected=self.selected,
         )
         layered.push(self._libs, self.hwnd, img, self.rect.x, self.rect.y)
         self._chrome_cache_key = key
+
+    # -- the character-name overlay --------------------------------------
+    #
+    # The name CANNOT be drawn into the chrome bitmap: the DWM thumbnail
+    # composites OVER it, so anything drawn where the video goes is
+    # invisible. The band this replaces had to reserve space at the top
+    # and shrink the picture to make room -- which also bent the locked
+    # aspect, because 30px of chrome is a different fraction of every
+    # height. EVE-O Preview instead overlays the name, and so do we: a
+    # tiny WS_EX_LAYERED|WS_EX_TRANSPARENT window, OWNED by the preview
+    # (an owned window always composites above its owner, so no z-order
+    # work), click-through by style so every mouse gesture reaches the
+    # preview underneath, carrying one small pill bitmap.
+    def _label_text(self) -> str:
+        return self.client.character or self.client.title
+
+    def set_labels(self, shown: bool) -> None:
+        """Show or hide the name overlay. Idempotent, like every setter
+        the host calls per restyle."""
+        self.show_labels = bool(shown)
+        if shown:
+            self._ensure_label_overlay()
+        else:
+            self._destroy_label_overlay()
+
+    def _ensure_label_overlay(self) -> None:
+        if not self.show_labels or self.hwnd is None:
+            return
+        if self._label_hwnd is None:
+            self._label_hwnd = self._libs.user32.CreateWindowExW(
+                win32.WS_EX_LAYERED
+                | win32.WS_EX_TRANSPARENT
+                | win32.WS_EX_TOOLWINDOW
+                | win32.WS_EX_NOACTIVATE,
+                "STATIC",
+                "",
+                win32.WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                # The OWNER, not a parent: this is how the overlay stays
+                # above the preview without ever holding the foreground
+                # or fighting it for z-order.
+                self.hwnd,
+                None,
+                self._libs.kernel32.GetModuleHandleW(None),
+                None,
+            )
+            if not self._label_hwnd:
+                logger.warning("Label overlay window failed for %s", self._label_text())
+                return
+            # WS_POPUP alone creates the window HIDDEN, and the bitmap
+            # push below maps to UpdateLayeredWindow, which does NOT
+            # change visibility -- the chrome window shows itself the same
+            # explicit way. This call is why the pill exists on screen at
+            # all; without it the overlay is a perfectly rendered bitmap
+            # on a window that is never mapped.
+            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_SHOWNOACTIVATE)
+        self._sync_label()
+
+    def _sync_label(self) -> None:
+        """(Re)render, paint and position the overlay. No-op without one.
+
+        Called on every move: the push is an UpdateLayeredWindow on a
+        pill-sized bitmap (a few thousand pixels, against chrome's
+        ~67k), and the render is cache-keyed on the pill's OWN size --
+        measured per move with label_size(), no pixels drawn -- so a
+        drag re-renders only when the width crosses the ellipsize
+        threshold.
+        """
+        if self._label_hwnd is None:
+            return
+        label = self._label_text()
+        max_w = self.rect.w - self._inset * 2
+        size = chrome.label_size(label, max_w)
+        if size != self._label_key:
+            self._label_img = chrome.render_label(label, max_w)
+            self._label_key = size
+        if self._label_img is None:
+            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_HIDE)
+            return
+        layered.push(
+            self._libs,
+            self._label_hwnd,
+            self._label_img,
+            self.rect.x + self._inset,
+            self.rect.y + self._inset,
+        )
+
+    def _destroy_label_overlay(self) -> None:
+        if self._label_hwnd is None:
+            return
+        self._libs.user32.DestroyWindow(self._label_hwnd)
+        self._label_hwnd = None
 
     def set_hidden(self, hidden: bool) -> None:
         """Take this preview off the screen, or put it back.
@@ -500,6 +631,14 @@ class PreviewWindow:
         self._libs.user32.ShowWindow(
             self.hwnd, win32.SW_HIDE if hidden else win32.SW_SHOWNOACTIVATE
         )
+        # The overlay with it: an owned window does not follow the owner
+        # into hiding, so a hidden preview would leave its name floating
+        # over whatever moved into that space.
+        if self._label_hwnd is not None:
+            self._libs.user32.ShowWindow(
+                self._label_hwnd,
+                win32.SW_HIDE if hidden else win32.SW_SHOWNOACTIVATE,
+            )
 
     def set_selected(self, selected: bool) -> None:
         """Draw or drop the ring. Cosmetic only -- see set_focused for the
@@ -546,9 +685,10 @@ class PreviewWindow:
             return
         self._inset = px
         if self._thumb is not None:
-            self._thumb.update(
-                geometry.thumbnail_rect(self.rect, px, self._label_h()), self.opacity
-            )
+            self._thumb.update(geometry.thumbnail_rect(self.rect, px), self.opacity)
+        # The pill rides the inset's inner corner, so an armed alert's
+        # wider ring nudges it in by the same pixels.
+        self._sync_label()
 
     def _rebuild_frames(self) -> None:
         """Drop any cached frames and render the current alert's."""
@@ -561,12 +701,7 @@ class PreviewWindow:
         self._frames = alertframes.FrameCache.build(
             self._libs,
             (self.rect.w, self.rect.h),
-            self.client.character or self.client.title,
             self._alert.color,
-            # Not the constant: labels can be switched off (#87), and a
-            # frame rendered with a band the live chrome does not have
-            # would flash a label into existence for the pulse's duration.
-            self._label_h(),
         )
 
     def _invalidate_frames(self) -> None:
@@ -603,20 +738,15 @@ class PreviewWindow:
             # which is this flag.
             target_is_selected=self.focused,
         )
-        # Size, label and label height as well as colour: the frames ARE a
-        # bitmap, and _chrome_key already treats (w, h, label, show_labels)
-        # as a bitmap's identity. A client that reaches character-select
-        # and then names a character changes its label mid-alert, and
-        # #87's label toggle changes the band height under one. `arm` can
-        # also return the EXISTING alert unchanged (a lower-severity event
-        # extends the expiry without repainting), in which case nothing has
-        # changed and the cache stands.
-        label = self.client.character or self.client.title
+        # Size and colour: the frames ARE a bitmap, keyed the same way
+        # chrome's is. (The label no longer is one of their inputs -- a
+        # frame carries no name, and the overlay rides above the pulses
+        # unchanged.) `arm` can also return the EXISTING alert unchanged
+        # (a lower-severity event extends the expiry without repainting),
+        # in which case nothing has changed and the cache stands.
         stale = self._frames is None or (
             self._frames.colour != self._alert.color
             or self._frames.size != (self.rect.w, self.rect.h)
-            or self._frames.label != label
-            or self._frames.label_h != self._label_h()
         )
         if stale:
             self._rebuild_frames()
@@ -698,13 +828,16 @@ class PreviewWindow:
         self._libs.user32.SetWindowPos(
             self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
         )
+        # The overlay is a separate HWND in SCREEN coordinates, so unlike
+        # the thumbnail it must be re-placed on a pure move too.
+        self._sync_label()
         if resized:
             # The bitmap is sized to the window, so a resize must re-push
             # it or the surface stays at the old dimensions.
             self.redraw()
             if self._thumb is not None:
                 self._thumb.update(
-                    geometry.thumbnail_rect(rect, self._inset, self._label_h()),
+                    geometry.thumbnail_rect(rect, self._inset),
                     self.opacity,
                 )
             # The cached alert frames are sized to the OLD rect, and
@@ -722,43 +855,60 @@ class PreviewWindow:
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):
+        # The button grammar, when previews are NOT locked in place:
+        #
+        #   left click            -> switch to the client (selected ring)
+        #   left drag             -> move this preview
+        #   right drag            -> resize this preview
+        #   left+right drag       -> resize EVERY preview at once
+        #   corner-handle drag    -> resize this preview (kept: it is the
+        #                             one visibly discoverable affordance)
+        #
+        # LOCKED, the grammar collapses to what a lock promises -- nothing
+        # about WHERE a preview sits or HOW BIG it is may change by mouse:
+        # no move, no resize, no chord. The payoff is performance: with
+        # every drag gesture refused outright, a locked left press IS a
+        # click from the first instant, so the switch fires on the way
+        # down (#123's original shape) and no click pays the 60-120ms
+        # classification delay the unlocked grammar needs.
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
+            if self.locked:
+                # A locked left press is a switch and nothing else. A
+                # locked right press is nothing at all.
+                if msg == win32.WM_LBUTTONDOWN:
+                    # Acknowledged BEFORE the handoff, and regardless of
+                    # whether the switch that follows succeeds: Windows
+                    # refuses a foreground change from a process without
+                    # recent input, so acknowledging only on a successful
+                    # swap would leave the ring pulsing forever with
+                    # clicking it doing nothing.
+                    self.acknowledge_alert()
+                    self._on_activate(self.client)
+                return 0
             pt = _lparam_point(lparam)
+            if self._mode is not None:
+                # The SECOND button of the chord. Whichever gesture the
+                # first button armed, both-buttons now means resize-all.
+                # Re-anchoring to the CURRENT rect and cursor is what
+                # keeps the window from jumping: the original anchors
+                # describe a press that happened before this button, and
+                # a resize computed against them teleports the window to
+                # wherever that drag would by now have gone.
+                self._start_rect = self.rect
+                self._start = _cursor_pos(self._libs)
+                self._mode = "resize_all"
+                return 0
             resizing = msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
             )
-            if msg == win32.WM_LBUTTONDOWN and not resizing:
-                # The switch starts HERE, on the way down, not on the
-                # release. A normal click holds the button for 60-120ms
-                # and the old code spent all of it waiting to find out
-                # whether the press was going to become a drag. EVE-O
-                # Preview fires ThumbnailActivated from MouseDown for
-                # the same reason, and that is where the rest of this
-                # button split comes from too: left is focus and nothing
-                # else, right is movement.
-                #
-                # Acknowledged BEFORE the handoff, and regardless of
-                # whether the switch that follows succeeds: Windows
-                # refuses a foreground change from a process without
-                # recent input, so acknowledging only on a successful
-                # swap would leave the ring pulsing forever with
-                # clicking it doing nothing.
-                self.acknowledge_alert()
-                # Classify, then hand off: the window does NOT call
-                # activate() itself. The host owns the switch because it
-                # is the only thing that knows the previous foreground,
-                # the roster and the settings -- and it has to know them
-                # BEFORE the foreground moves.
-                self._on_activate(self.client)
-                return 0
-            if msg == win32.WM_RBUTTONDOWN and self.locked:
-                # The lock's meaning changed with the buttons. It used to
-                # stop a left drag while right-drag stayed as the
-                # deliberate override; now that right-drag is the only
-                # move gesture, honouring that override would leave the
-                # lock controlling nothing at all. EVE-O's
-                # LockThumbnailLocation stops movement outright too.
-                return 0
+            if msg == win32.WM_LBUTTONDOWN:
+                self._mode = "resize" if resizing else "pending_left"
+            else:
+                # Right is resize now, not move: left took over movement
+                # because a move is the gesture you want near the preview
+                # you are looking at, and a resize is the one you want a
+                # deliberate second button for.
+                self._mode = "resize"
             # Client coords are only safe HERE: the window has not moved
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
@@ -772,8 +922,10 @@ class PreviewWindow:
             # unlock reuses it rather than adding a second branch to
             # resize_result. The syscall is skipped entirely when unlocked.
             self._start_aspect = self._source_aspect() if self.lock_aspect else None
-            self._start_chrome = (BORDER * 2, BORDER * 2 + self._label_h())
-            self._mode = "resize" if resizing else "right_drag"
+            # Borders only, never a label term: the name is an overlay
+            # now, so the window's chrome is the same with labels on or
+            # off and a locked resize holds the client's shape exactly.
+            self._start_chrome = (BORDER * 2, BORDER * 2)
             self._libs.user32.SetCapture(self.hwnd)
             if PERF:
                 self._perf = {
@@ -796,7 +948,17 @@ class PreviewWindow:
             # window is moving under the cursor, which is what made this
             # oscillate. Absolute coordinates cannot feed back.
             cur = _cursor_pos(self._libs)
-            if self._mode == "resize":
+            if self._mode == "pending_left":
+                dx, dy = cur[0] - self._start[0], cur[1] - self._start[1]
+                if dx * dx + dy * dy < CLICK_PX * CLICK_PX:
+                    return 0
+                # A drag, not a click -- and the switch that a click would
+                # have earned is now cancelled, deliberately: dragging a
+                # preview around is not a request to bring its client
+                # forward. (A locked preview never reaches this branch at
+                # all: its press switched on the way down.)
+                self._mode = "move"
+            if self._mode in ("resize", "resize_all"):
                 self.move(
                     resize_result(
                         self._start,
@@ -806,6 +968,11 @@ class PreviewWindow:
                         chrome=self._start_chrome,
                     )
                 )
+                if self._mode == "resize_all" and self._on_resize_all is not None:
+                    # The host mirrors the finished size onto every OTHER
+                    # preview; this window has already moved above. Called
+                    # per coalesced move, the same budget dragging spends.
+                    self._on_resize_all(self.rect)
             else:
                 moved = drag_target(self._start, cur, self._start_rect)
                 if self.snap:
@@ -835,6 +1002,22 @@ class PreviewWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
+            if self._mode == "pending_left":
+                # The click that never dragged. Acknowledged BEFORE the
+                # handoff, and regardless of whether the switch that
+                # follows succeeds: Windows refuses a foreground change
+                # from a process without recent input, so acknowledging
+                # only on a successful swap would leave the ring pulsing
+                # forever with clicking it doing nothing.
+                self.acknowledge_alert()
+                # Classify, then hand off: the window does NOT call
+                # activate() itself. The host owns the switch because it
+                # is the only thing that knows the previous foreground,
+                # the roster and the settings -- and it has to know them
+                # BEFORE the foreground moves.
+                self._on_activate(self.client)
+                self._mode = None
+                return 0
             self._mode = None
             self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0
@@ -852,7 +1035,10 @@ class PreviewWindow:
 
     def close(self) -> None:
         """Thumbnail first: its destination is this window, and
-        unregistering after DestroyWindow leaves DWM holding a dead HWND."""
+        unregistering after DestroyWindow leaves DWM holding a dead HWND.
+        The overlay last: it is owned by this window and Windows destroys
+        owned windows with their owner, but doing it explicitly keeps the
+        HWND bookkeeping honest and the destruction order legible."""
         # Before anything is destroyed: a client that quits mid-alert
         # otherwise leaks one DC and up to six DIBs for the life of the
         # process, and a fleet-wide aggression arms every preview at once.
@@ -862,3 +1048,4 @@ class PreviewWindow:
             _WINDOWS.pop(int(self.hwnd), None)
             self._libs.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
+        self._destroy_label_overlay()

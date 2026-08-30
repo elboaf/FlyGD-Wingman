@@ -1654,6 +1654,28 @@ only ever checked by hand.
         These two keys were read once at host construction until this
         change, so a restart-to-apply bug here would look exactly like
         the field working.
+      - `Apply to open previews` (beside the field) resizes every open
+        preview to the pair the field holds, **including previews with a
+        custom size** — that is the point: it is the "make them all this
+        size" action, and honouring per-character exceptions would make
+        it silently skip windows the user sized once and forgot. After
+        applying, `Size…` on one card still overrides that one window.
+        Refused with a sentence while previews are stopped. Check the
+        sizes survive a restart: the apply records layouts like a drag,
+        unlike Reset.
+      - `Selection ring colour` recolours the ring on the preview you
+        last clicked, live, on every open preview at once — no restart,
+        no re-click. Reload Settings: the picker still holds the chosen
+        colour.
+      - The button grammar, with `Lock previews in place` off:
+        a plain left click switches; a left drag moves; a right drag
+        resizes that preview (still works under the lock, like the
+        corner handle); left+right held together and dragged resizes
+        EVERY open preview at once, each keeping its own position. Check
+        the click switch survived the drag move: a left press that
+        wanders a few pixels and releases still switches, and a left
+        drag does NOT switch. A locked left drag neither moves nor
+        switches.
       - `Lock previews in place by default` locks every character whose
         own box in the Lock disclosure directly beneath it you have not
         changed. Tick it with one character already explicitly unlocked:
@@ -1875,6 +1897,23 @@ Enable previews in Settings before starting.
 - [ ] Each preview's label shows the character name, in Inter — not a
       blocky bitmap face. A bitmap face means the bundled font did not
       load; the log says so explicitly.
+- [ ] **The name is an overlay, not a band.** With `Show the character
+      name` on, the pill rides the top-left corner OVER the video and the
+      picture runs the full interior — with labels off, toggle the
+      setting and confirm the video does not move or resize by a single
+      pixel (this is the aspect fix: the old band shrank the picture 30px
+      and bent the locked aspect). Click and drag THROUGH the pill: it
+      must be click-through, so every mouse gesture reaches the preview
+      beneath. Drag and resize the preview and confirm the pill follows
+      and never detaches or overlaps beyond the frame. A client with an
+      armed alert: the pill shifts inward with the ring, and toggling
+      labels off mid-alert removes it while the ring keeps pulsing.
+      **First, the obvious check: the pill is actually visible.** (Its
+      window is created hidden and shown explicitly; the one release
+      where the show call was missing rendered perfect pills onto a
+      window that was never mapped, and the feature looked simply dead.)
+      Also check hide-on-lost-focus takes the pill with the preview, and
+      that quitting Wingman with labels on leaves no orphan pill behind.
 - [ ] Clicking a preview brings that client to the foreground. If nothing
       happens, the log has `Activation of 0x… did not take` at debug.
 - [ ] **The ring marks the client you last used, and stays there.** With
@@ -2002,29 +2041,35 @@ foreground.
 - [ ] Opacity dims the mirrored video and leaves the border and label at
       full strength — drag the slider to its low end and confirm the chrome
       stays crisp while only the video fades.
-- [ ] **LOAD-BEARING: the button split.** Left click switches, right drag
-      moves, the corner resizes — and left-drag now moves NOTHING. Walk all
-      four: (a) click a preview and confirm the client comes forward; (b)
-      press and HOLD the left button on a preview for a second before
-      releasing — the switch must happen on the press, not the release,
-      which is the whole point of the change; (c) left-drag a preview
-      across the screen and confirm it does not move and its saved
-      position is unchanged after a restart; (d) right-drag it and confirm
-      it moves and the new position survives a restart. This is a
-      **breaking change to muscle memory** for anyone who has been
-      left-dragging previews since 3.x, and it is the item most likely to
-      generate "the previews are stuck" reports — matching EVE-O Preview
-      and TriffView is the reason it was chosen.
+- [ ] **LOAD-BEARING: the button grammar.** Left click switches, left
+      drag moves, right drag resizes, left+right drag resizes every
+      preview at once — and the corner handle still resizes alone. Walk
+      all of them: (a) click a preview and confirm the client comes
+      forward **on release** — the switch is deferred past a 4px
+      threshold now, because at press time it is not yet knowable whether
+      the press is a click or a drag-move; (b) press and hold the left
+      button without moving, then release: it still switches; (c) left
+      drag a preview across the screen, confirm it moves and the
+      position survives a restart; (d) right-drag one and confirm it
+      resizes top-left-anchored; (e) press left, add right without
+      releasing, and drag: every open preview resizes together, each
+      keeping its own position. This item is most likely to generate
+      "the previews are stuck" reports — matching EVE-O Preview's
+      gesture set is the reason it was chosen.
 - [ ] Grabbing the bottom-right corner resizes WITHOUT switching to that
-      client. Activation on mouse-down makes this a real hazard: the
-      corner is inside the preview, so a resize that also focused would
-      drag a client to the foreground every time a layout is adjusted.
-- [ ] A locked preview refuses a right drag — the only move gesture there
-      is now — while a left click on it still switches to that client.
-      Check this **on a character who has never dragged their preview**,
-      not just one that already has a saved position — that is the case
-      the lock's own storage list exists for, since `locked` cannot ride
-      in `preview.layouts` without a saved rect.
+      client. The corner is inside the preview, so a resize that also
+      focused would drag a client to the foreground every time a layout
+      is adjusted.
+- [ ] A locked preview is FULLY inert to mouse gestures — no left-drag
+      move, no right-drag resize, no corner resize, no left+right
+      resize-all — while a left click on it still switches, **on the way
+      down** (press-and-hold without moving: the switch happens during
+      the hold, since a locked press can be nothing but a click and pays
+      no classification delay). Check this **on a character who has
+      never dragged their preview**, not just one that already has a
+      saved position — that is the case the lock's own storage list
+      exists for, since `locked` cannot ride in `preview.layouts`
+      without a saved rect.
 - [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
       Activation ownership moved from the preview window into the host as
       part of this slice; this is a pure regression check on the

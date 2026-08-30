@@ -64,7 +64,13 @@
    'set_preview_hide_on_lost_focus',
    // The floating sig bar's writer. Same shape: settings.js reverts the
    // checkbox on anything that is not `applied`, like every entry above.
-   'toggle_sig_bar'
+   'toggle_sig_bar',
+   // The selection ring's colour picker. Same shape; settings.js reports
+   // the error string on anything that is not `applied`.
+   'set_preview_selection_color',
+   // The apply-to-open-previews action. Same shape; there is no control
+   // state to revert, only a status line to fill.
+   'apply_preview_default_size'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -452,6 +458,7 @@
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
             show_labels: true, opacity: 255, snap: true, lock_aspect: true,
+            selection_color: '#ff5a00',
             // The global default size. Present because the real payload
             // always carries it -- get_settings ships `dict(cfg)` whole --
             // and without it the Default preview size field renders EMPTY

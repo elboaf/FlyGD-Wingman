@@ -92,6 +92,7 @@ def test_defaults_are_the_documented_values():
             "lock_default": False,
             "snap": True,
             "lock_aspect": True,
+            "selection_color": "#00c8dc",
         },
         "eve_settings": {
             "root": None,
@@ -485,3 +486,13 @@ def test_preview_lock_default_is_off_and_needs_no_migration(tmp_path):
 def test_preview_lock_default_ignores_a_non_bool(tmp_path):
     section = settings.validated_preview({"lock_default": "yes"})
     assert section["lock_default"] is False
+
+
+def test_validated_preview_takes_a_good_selection_colour_and_drops_a_bad_one():
+    """Same per-value posture as the rest of the section: a #rrggbb string
+    is kept, anything else falls back to the shipped cyan alone."""
+    good = settings.validated_preview({"selection_color": "#FF5A00"})
+    assert good["selection_color"] == "#FF5A00"
+    for bad in ("purple", "00c8dc", "#00c8d", 42, None):
+        section = settings.validated_preview({"selection_color": bad})
+        assert section["selection_color"] == "#00c8dc"

@@ -1577,6 +1577,9 @@ class _VisibilityWindow:
     def redraw(self, force=False):
         pass
 
+    def set_labels(self, shown):
+        self.show_labels = shown
+
     def set_selected(self, selected):
         pass
 
@@ -1982,8 +1985,8 @@ class _FakeRestyleThumb:
 
 class _RestyleWindow:
     """Duck-types just what _restyle touches: public chrome attributes,
-    redraw(), and a thumbnail. Not a real PreviewWindow -- that needs an
-    HWND, which is out of reach here."""
+    set_labels(), redraw(), and a thumbnail. Not a real PreviewWindow --
+    that needs an HWND, which is out of reach here."""
 
     def __init__(self, rect, show_labels=True, opacity=255, locked=False, inset=None):
         self.rect = rect
@@ -1991,10 +1994,15 @@ class _RestyleWindow:
         self.opacity = opacity
         self.locked = locked
         self.redraws = 0
+        self.label_calls = []
         # The real PreviewWindow widens this to ALERT_BORDER for the
         # duration of an alert, so _restyle cannot assume BORDER.
         self._inset = host.window_mod.BORDER if inset is None else inset
         self._thumb = _FakeRestyleThumb()
+
+    def set_labels(self, shown):
+        self.label_calls.append(shown)
+        self.show_labels = shown
 
     def redraw(self, force=False):
         self.redraws += 1
@@ -2018,21 +2026,21 @@ def test_restyle_updates_every_open_window(monkeypatch):
 
     h._restyle()
 
-    assert alice.show_labels is False
+    assert alice.show_labels is False and alice.label_calls == [False]
     assert alice.opacity == 180
     assert alice.locked is True
     assert bravo.locked is False
     assert alice.redraws == 1 and bravo.redraws == 1
     assert alice._thumb.calls == [
-        (geometry.thumbnail_rect(alice.rect, host.window_mod.BORDER, 0), 180)
+        (geometry.thumbnail_rect(alice.rect, host.window_mod.BORDER), 180)
     ]
 
 
-def test_restyle_reclaims_the_thumbnail_band_when_labels_are_off():
-    """The thumbnail must be re-inset with the CURRENT label height, not
-    the one the window was created with -- reverting to LABEL_H
-    unconditionally here would leave the mirrored video sitting behind a
-    band the chrome no longer draws once labels are turned off."""
+def test_restyle_leaves_the_thumbnail_at_the_full_interior_either_way():
+    """There is no label term left to get stale: the name is an overlay
+    window, so the thumbnail rect is border-only whatever the flag says,
+    and a restyle must not reintroduce a band the picture has to shrink
+    around."""
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None, show_labels=lambda: True, opacity=lambda: 255
     )
@@ -2042,13 +2050,9 @@ def test_restyle_reclaims_the_thumbnail_band_when_labels_are_off():
     h._restyle()
 
     assert win._thumb.calls == [
-        (
-            geometry.thumbnail_rect(
-                win.rect, host.window_mod.BORDER, host.window_mod.LABEL_H
-            ),
-            255,
-        )
+        (geometry.thumbnail_rect(win.rect, host.window_mod.BORDER), 255)
     ]
+    assert win._thumb.calls[0][0].h == win.rect.h - host.window_mod.BORDER * 2
 
 
 def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
@@ -2101,12 +2105,7 @@ def test_restyle_keeps_a_widened_alert_inset():
     h._restyle()
 
     assert win._thumb.calls == [
-        (
-            geometry.thumbnail_rect(
-                win.rect, alertframes.ALERT_BORDER, host.window_mod.LABEL_H
-            ),
-            255,
-        )
+        (geometry.thumbnail_rect(win.rect, alertframes.ALERT_BORDER), 255)
     ]
 
 
@@ -2661,6 +2660,90 @@ def test_apply_resizes_moves_the_window_and_records_it_like_a_drag(monkeypatch):
     assert win.rect == expected
     assert h._saved["Alice"] == layout.Entry(expected, False)
     assert recorded == [("Alice", expected, False)]
+
+
+# --- resize_all(): the apply-to-open-previews action ------------------------
+
+
+def test_resize_all_stashes_one_size_and_posts_only_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so the bulk size travels the
+    same way a per-key one does -- a field under the lock, a signal out."""
+    h = _placement_host(monkeypatch)
+    h.resize_all((640, 392))
+    assert h._pending_resize_all == (640, 392)
+
+
+def test_apply_resize_all_moves_every_window_and_records_like_a_drag(monkeypatch):
+    """Unlike _reset_layouts (whose result is defaults and is deliberately
+    NOT recorded), an applied size IS the user's choice, so it must survive
+    a restart. Position is kept per window; only w/h change."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    alice = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    bravo = _MovableWindow(geometry.Rect(400, 500, 500, 300), locked=True)
+    h._windows = {"Alice": alice, "Bravo": bravo}
+
+    h.resize_all((640, 392))
+    h._apply_resize_all()
+
+    assert alice.rect == geometry.Rect(10, 20, 640, 392)
+    assert bravo.rect == geometry.Rect(400, 500, 640, 392)
+    assert h._saved["Alice"] == layout.Entry(geometry.Rect(10, 20, 640, 392), False)
+    assert h._saved["Bravo"] == layout.Entry(geometry.Rect(400, 500, 640, 392), True)
+    assert recorded == [
+        ("Alice", geometry.Rect(10, 20, 640, 392), False),
+        ("Bravo", geometry.Rect(400, 500, 640, 392), True),
+    ]
+
+
+def test_apply_resize_all_without_a_pending_size_is_a_no_op(monkeypatch):
+    """The signal can arrive with nothing queued (a posted message is not
+    cancellable); draining must not invent a size."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    win = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    h._windows = {"Alice": win}
+    h._apply_resize_all()
+    assert win.rect == geometry.Rect(10, 20, 320, 210)
+    assert h._saved == {}
+
+
+def test_the_mirror_copies_the_size_to_every_other_window(monkeypatch):
+    """The resize-all CHORD's engine: the dragged window drives, and this
+    copies its finished size onto everyone else -- positions untouched,
+    because the chord says how big, not where."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    alice = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    bravo = _MovableWindow(geometry.Rect(400, 500, 500, 300))
+    cleo = _MovableWindow(geometry.Rect(700, 800, 200, 150), locked=True)
+    h._windows = {"Alice": alice, "Bravo": bravo, "Cleo": cleo}
+
+    h._mirror_resize("Alice", geometry.Rect(10, 20, 640, 392))
+
+    assert alice.rect == geometry.Rect(10, 20, 320, 210)  # untouched: the driver
+    assert bravo.rect == geometry.Rect(400, 500, 640, 392)
+    assert cleo.rect == geometry.Rect(700, 800, 640, 392)
+    assert recorded == [
+        ("Bravo", geometry.Rect(400, 500, 640, 392), False),
+        ("Cleo", geometry.Rect(700, 800, 640, 392), True),
+    ]
+
+
+def test_the_selection_ring_colour_is_read_live_and_falls_back():
+    """A wired callable is read per use (a picker change must reach open
+    previews through _restyle without a restart); an unwired or raising
+    one falls back to the cyan that was hardcoded before the setting."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._selection_ring_color() == "#00c8dc"
+    wired = host.PreviewHost(
+        on_layout_changed=lambda *a: None, selection_color=lambda: "#ff5a00"
+    )
+    assert wired._selection_ring_color() == "#ff5a00"
+    broken = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        selection_color=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert broken._selection_ring_color() == "#00c8dc"
 
 
 def test_record_client_sizes_samples_a_real_rect_and_skips_a_failed_probe():

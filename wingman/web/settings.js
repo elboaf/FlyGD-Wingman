@@ -1061,7 +1061,14 @@
   if (!field || !status) { return; }
 
   var DEFAULT_HINT = status.textContent;
-  function say(text) { status.textContent = text || DEFAULT_HINT; }
+  // The undistorted-size sentence, same helper text the per-character
+  // Size... dialog shows, carried onto the global field. Built from the
+  // ONE-SHOT hotkey-state read below: client sizes are live host data,
+  // not persisted settings, so wm:settings never carries them.
+  var clientHint = '';
+  function say(text) {
+    status.textContent = text || (DEFAULT_HINT + clientHint);
+  }
 
   // Set from the payload, and compared against on commit so re-entering
   // the same value is a no-op rather than a write. Also what a refusal
@@ -1090,6 +1097,7 @@
             return;
           }
           applied = parsed.w + 'x' + parsed.h;
+          appliedW = parsed.w;
           field.value = applied;
           // Three outcomes, not two (DESIGN.md): applied-but-not-persisted
           // leaves the control alone and warns that it will not survive a
@@ -1106,15 +1114,104 @@
     if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
   });
 
+  // The hint's undistorted half: for the first running client, the height
+  // the current default width would need. Refreshed when the payload (or
+  // a commit) changes the width, because the sentence quotes it.
+  function rebuildClientHint() {
+    if (!clientHintState) { return; }
+    var name = Object.keys(clientHintState)[0];
+    var client = name && clientHintState[name];
+    if (!client) { clientHint = ''; return; }
+    // Chrome is BORDER*2 across and down and nothing else -- the name is
+    // an overlay above the video, not a band the picture shrinks for.
+    // appliedW is the payload's own number, never re-parsed from text:
+    // geometry.py owns what a size is, and this page never parses one.
+    var width = appliedW || 320;
+    var tall = Math.round((width - 4) * client[1] / client[0]) + 4;
+    clientHint = ' ' + name + "'s client is " + client[0] + 'x' + client[1]
+               + '; at ' + width + ' wide an undistorted preview is '
+               + width + 'x' + tall + '.';
+  }
+
+  var clientHintState = null;
+  var appliedW = 0;
+  WM.send('get_preview_hotkey_state').then(function (payload) {
+    clientHintState = (payload && payload.client_sizes) || null;
+    rebuildClientHint();
+    // Repaint only if no action message is showing; an outcome sentence
+    // the user just earned outranks evergreen guidance.
+    if (status.textContent === DEFAULT_HINT) { say(''); }
+  });
+
   document.addEventListener('wm:settings', function (ev) {
     var s = (ev.detail || {}).settings || {};
     var p = s.preview || {};
     if (p.width && p.height) {
       applied = p.width + 'x' + p.height;
+      appliedW = p.width;
       // Never while the user is mid-type: this fires on every per-field
       // write anywhere in Settings, and rewriting a focused field is what
       // the whole-document push used to do.
       if (document.activeElement !== field) { field.value = applied; }
+      rebuildClientHint();
+    }
+  });
+}());
+
+// ---- Apply the default size to open previews ----------------------------
+// The button half of the default-size field: Enter decides where the NEXT
+// preview opens, this one resizes what is on screen now. Deliberately a
+// separate action rather than a side effect of the commit -- a field that
+// rearranges the screen every time it is saved is a field you save once
+// and then never touch again.
+(function () {
+  var btn = WM.el('btn-preview-apply-size');
+  var status = WM.el('preview-apply-size-status');
+  if (!btn || !status) { return; }
+
+  function say(text) { status.textContent = text || ''; }
+
+  btn.addEventListener('click', function () {
+    WM.send('apply_preview_default_size').then(function (res) {
+      // A null reply is a bridge failure; anything else carries the
+      // applied/error pair every field writer here uses.
+      if (!res) { say('Could not resize the previews.'); return; }
+      say(res.applied ? 'Resized every open preview.'
+                      : (res.error || 'Could not resize the previews.'));
+    });
+  });
+}());
+
+// ---- Selection ring colour ----------------------------------------------
+// A color input, so it commits on change -- DESIGN.md's discrete-control
+// rule; there is no half-typed state to protect. The #rrggbb string is
+// shipped verbatim and never unpacked here: Python owns the format, the
+// same division the size field keeps with parse_preview_size.
+(function () {
+  var picker = WM.el('preview-selection-color');
+  var status = WM.el('preview-selection-color-status');
+  if (!picker || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  picker.addEventListener('change', function () {
+    WM.send('set_preview_selection_color', picker.value).then(function (res) {
+      if (!res || !res.applied) {
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      if (!res.persisted) { say('Applied for this session only — settings could not be written.'); }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var p = ((ev.detail || {}).settings || {}).preview || {};
+    // Never while the picker is open: the native colour dialog holds the
+    // focus, and rewriting a focused control mid-choose is what the
+    // field rules above all exist to prevent.
+    if (p.selection_color && document.activeElement !== picker) {
+      picker.value = p.selection_color;
     }
   });
 }());

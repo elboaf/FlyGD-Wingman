@@ -14,7 +14,7 @@ CYAN = (0, 200, 220, 255)
 def test_border_is_drawn_in_the_requested_colour():
     """Only when selected -- the ring is now conditional; see the
     selected/unselected tests below."""
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN, selected=True)
+    img = chrome.render((320, 210), border_color=CYAN, selected=True)
     assert img.getpixel((0, 0)) == CYAN
     assert img.getpixel((319, 209)) == CYAN
 
@@ -29,7 +29,7 @@ def test_no_pixel_is_fully_transparent_so_the_window_is_clickable():
     looked right and was click-through everywhere except its 5px border
     and label band, and clicks landed in the browser behind it.
     """
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN)
+    img = chrome.render((320, 210), border_color=CYAN)
     alphas = {px[3] for px in img.get_flattened_data()}
     assert 0 not in alphas, "transparent pixels are click-through"
 
@@ -37,47 +37,55 @@ def test_no_pixel_is_fully_transparent_so_the_window_is_clickable():
 def test_a_degenerate_size_is_still_clickable():
     """Resize passes through tiny sizes; a transparent frame there would
     briefly make the preview unclickable mid-drag."""
-    img = chrome.render((6, 6), "P", border_color=CYAN)
+    img = chrome.render((6, 6), border_color=CYAN)
     assert 0 not in {px[3] for px in img.get_flattened_data()}
 
 
-def test_label_band_is_opaque_and_the_right_height():
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=5, label_h=30)
-    assert img.getpixel((160, 6))[3] > 200  # inside the band
-    # Below the band is the thumbnail area, which is deliberately NOT
-    # opaque -- see the thumbnail-hole tests below. The band has to stand
-    # apart from it either way.
-    assert img.getpixel((160, 40))[3] == chrome.THUMBNAIL_ALPHA
-    assert img.getpixel((160, 6))[3] > img.getpixel((160, 40))[3]
+def test_the_label_pill_fits_its_text_and_holds_the_band_palette():
+    """The overlay pill replaces the band: sized to the text, in the band's
+    colours, rounded, transparent outside the pill so the video shows
+    around it.
+
+    The palette is asserted at (2, mid-height): on the pill's straight
+    left edge inside the corner radius, which is padding by construction.
+    The centre pixel is NOT safe for this -- whether it lands on a glyph
+    stroke or between glyphs depends on the platform's FreeType metrics
+    (observed: same font, same Pillow, different pixel on ubuntu)."""
+    img = chrome.render_label("Pilot", 300)
+    assert img is not None
+    assert 20 < img.width < 300  # fitted to the text, not the preview
+    assert 18 < img.height < 40
+    edge = img.getpixel((2, img.height // 2))
+    assert edge[3] > 200  # opaque band, readable over bright video
+    assert edge[:3] == chrome.LABEL_BG[:3]
 
 
-def test_label_text_is_actually_drawn():
-    blank = chrome.render((320, 210), "", border_color=CYAN)
-    named = chrome.render((320, 210), "Pilot", border_color=CYAN)
-    assert blank.tobytes() != named.tobytes()
+def test_long_labels_ellipsize_against_the_preview_width():
+    """The overlay must never be wider than its preview."""
+    img = chrome.render_label("X" * 60, 120)
+    assert img is not None
+    assert img.width <= 120
 
 
-def test_long_labels_do_not_overflow_the_band():
-    """A 40-character character name must not paint over the thumbnail."""
-    img = chrome.render((320, 210), "X" * 60, border_color=CYAN, border=5, label_h=30)
-    band = chrome.render((320, 210), "", border_color=CYAN, border=5, label_h=30)
-    # Below the band must be untouched interior, identical to the
-    # unlabelled render.
-    assert img.getpixel((160, 40)) == band.getpixel((160, 40))
+def test_an_empty_label_renders_no_window():
+    """A client with no readable name gets no pill -- an empty rounded
+    rectangle floating over the video would be pure noise."""
+    assert chrome.render_label("", 300) is None
+    assert chrome.render_label(None, 300) is None
 
 
 def test_an_unselected_preview_draws_no_ring():
     """The alert ring is then the only coloured ring on screen, which is
     what makes it legible on a small tile."""
     img = chrome.render(
-        (200, 150), "Alice", border_color=(0, 200, 220, 255), border=2, selected=False
+        (200, 150), border_color=(0, 200, 220, 255), border=2, selected=False
     )
     assert img.getpixel((0, 100))[:3] != (0, 200, 220)
 
 
 def test_the_selected_preview_draws_its_ring():
     img = chrome.render(
-        (200, 150), "Alice", border_color=(0, 200, 220, 255), border=2, selected=True
+        (200, 150), border_color=(0, 200, 220, 255), border=2, selected=True
     )
     assert img.getpixel((0, 100))[:3] == (0, 200, 220)
 
@@ -96,7 +104,6 @@ def test_the_interior_stays_clickable_either_way():
     for selected in (True, False):
         img = chrome.render(
             (200, 150),
-            "Alice",
             border_color=(0, 200, 220, 255),
             border=2,
             selected=selected,
@@ -106,7 +113,7 @@ def test_the_interior_stays_clickable_either_way():
 
 def test_degenerate_size_does_not_raise():
     """Resize can transiently produce a rect smaller than the chrome."""
-    chrome.render((4, 4), "P", border_color=CYAN)
+    chrome.render((4, 4), border_color=CYAN)
 
 
 def test_font_path_prefers_the_frozen_location(monkeypatch, tmp_path):
@@ -149,7 +156,9 @@ def test_missing_font_is_logged_not_swallowed(monkeypatch, caplog):
     chrome._font.cache_clear()
     monkeypatch.setattr(chrome, "FONT_PATH", Path("/nonexistent.ttf"))
     with caplog.at_level("WARNING"):
-        chrome.render((320, 210), "Pilot", border_color=CYAN)
+        # render_label, not render: the name moved to the overlay pill,
+        # and chrome.render no longer loads a font at all.
+        chrome.render_label("Pilot", 300)
     chrome._font.cache_clear()
     assert any("font" in r.message.lower() for r in caplog.records)
 
@@ -163,7 +172,7 @@ def test_missing_font_is_logged_not_swallowed(monkeypatch, caplog):
 
 
 def test_the_thumbnail_region_is_transparent_so_opacity_reveals_the_desktop():
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=2, label_h=0)
+    img = chrome.render((320, 210), border_color=CYAN, border=2)
     assert img.getpixel((160, 105))[3] == chrome.THUMBNAIL_ALPHA
     assert chrome.THUMBNAIL_ALPHA < 255, "an opaque fill dims instead of revealing"
 
@@ -183,11 +192,9 @@ def test_the_thumbnail_hole_matches_the_rect_the_thumbnail_is_drawn_into():
     """Derived from geometry, never retyped: the hole and the DWM
     destination rect must be the same rectangle, or the seam shows as a
     ring of near-black the thumbnail does not cover."""
-    w, h, border, label_h = 320, 210, 2, 30
-    img = chrome.render(
-        (w, h), "Pilot", border_color=CYAN, border=border, label_h=label_h
-    )
-    thumb = geometry.thumbnail_rect(geometry.Rect(0, 0, w, h), border, label_h)
+    w, h, border = 320, 210, 2
+    img = chrome.render((w, h), border_color=CYAN, border=border)
+    thumb = geometry.thumbnail_rect(geometry.Rect(0, 0, w, h), border)
     for x, y in (
         (thumb.x, thumb.y),
         (thumb.right - 1, thumb.bottom - 1),
@@ -204,7 +211,7 @@ def test_the_unselected_edge_stays_opaque():
     instead of a ring. Punching the thumbnail hole must not take that
     edge with it -- it is the only thing separating two stacked previews
     when neither is selected."""
-    img = chrome.render((320, 210), "Pilot", border_color=CYAN, border=2, label_h=0)
+    img = chrome.render((320, 210), border_color=CYAN, border=2)
     assert img.getpixel((0, 0))[3] == 255
     assert img.getpixel((1, 1))[3] == 255
     assert img.getpixel((319, 209))[3] == 255
@@ -214,7 +221,5 @@ def test_the_alert_ring_is_drawn_over_the_hole_not_under_it():
     """Alert frames render at ALERT_BORDER, and window.py widens the
     thumbnail inset to match. The ring must survive the punch or an armed
     alert draws nothing."""
-    img = chrome.render(
-        (320, 210), "Pilot", border_color=CYAN, border=6, label_h=0, selected=True
-    )
+    img = chrome.render((320, 210), border_color=CYAN, border=6, selected=True)
     assert img.getpixel((160, 3)) == CYAN

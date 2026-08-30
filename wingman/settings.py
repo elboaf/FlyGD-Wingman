@@ -195,6 +195,11 @@ def _preview_defaults() -> dict:
         # of False would silently restyle every existing install's
         # previews on upgrade.
         "lock_aspect": True,
+        # The selection ring's colour, as #rrggbb. The default is the cyan
+        # PreviewWindow hardcoded from its first release, so the upgrade
+        # changes nothing for anyone who never opens the picker. Validated
+        # against _HEX_RE like every other colour in this file.
+        "selection_color": "#00c8dc",
     }
 
 
@@ -327,6 +332,9 @@ def validated_preview(raw) -> dict:
         section["snap"] = raw["snap"]
     if isinstance(raw.get("lock_aspect"), bool):
         section["lock_aspect"] = raw["lock_aspect"]
+    colour = raw.get("selection_color")
+    if isinstance(colour, str) and _HEX_RE.match(colour):
+        section["selection_color"] = colour
     if isinstance(raw.get("lock_default"), bool):
         section["lock_default"] = raw["lock_default"]
     for key, floor in (("width", 120), ("height", 90)):

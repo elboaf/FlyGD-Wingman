@@ -479,12 +479,10 @@
     // default -- is kept only as a defensive fallback, not because this
     // path is expected to run.
     var width = size ? size[0] : 320;
-    // Chrome: BORDER*2 across, BORDER*2 + the label band down. The band is
-    // 30px or 0 depending on the labels setting, which is why the number
-    // is computed rather than baked in. showLabels comes off the SETTINGS
-    // payload, not the hotkey-state one -- same route and same reason as
-    // minimizeInactive above: it lives in Settings' own Previews card.
-    var dw = 4, dh = 4 + (showLabels ? 30 : 0);
+    // Chrome: BORDER*2 across and down, and nothing else -- the character
+    // name is an overlay window riding above the video now, so the window
+    // is picture plus 2px on each side whether labels are on or off.
+    var dw = 4, dh = 4;
     var tall = Math.round((width - dw) * client[1] / client[0]) + dh;
     return 'Your client is ' + client[0] + 'x' + client[1] + '. At this width '
          + 'an undistorted preview is ' + width + 'x' + tall

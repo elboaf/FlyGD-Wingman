@@ -103,7 +103,7 @@ def _ellipsize(draw, text, font, max_w):
     return text + ell
 
 
-def _punch_thumbnail_hole(d, w, h, border, label_h) -> None:
+def _punch_thumbnail_hole(d, w, h, border) -> None:
     """Clear the rect the DWM thumbnail is drawn into to THUMBNAIL_ALPHA.
 
     Derived from geometry.thumbnail_rect, the same function window.py
@@ -115,7 +115,7 @@ def _punch_thumbnail_hole(d, w, h, border, label_h) -> None:
     preview dragged smaller than its own chrome clamps to a zero-area
     rect, and Pillow would draw a 1px line for it.
     """
-    thumb = geometry.thumbnail_rect(geometry.Rect(0, 0, w, h), border, label_h)
+    thumb = geometry.thumbnail_rect(geometry.Rect(0, 0, w, h), border)
     if thumb.w <= 0 or thumb.h <= 0:
         return
     d.rectangle(
@@ -124,9 +124,7 @@ def _punch_thumbnail_hole(d, w, h, border, label_h) -> None:
     )
 
 
-def render(
-    size, label, *, border_color, border=5, label_h=30, selected=False, font_size=17
-):
+def render(size, *, border_color, border=5, selected=False):
     """Render one preview's chrome.
 
     Every pixel is clickable and none is fully transparent, which is not
@@ -140,14 +138,21 @@ def render(
     BORDER normally, ALERT_BORDER while an alert is armed. Both call
     sites (window.redraw and alertframes.build) already pass exactly
     that, and the hole is derived from it rather than restated.
+
+    No label here. The name is drawn by render_label into its own
+    click-through overlay window -- the DWM thumbnail composites OVER
+    this bitmap, so anything drawn where the video goes is invisible,
+    which is why the band this function used to draw had to reserve
+    space the thumbnail then left empty. The overlay needs no reserved
+    space and the picture keeps the client's shape at every size.
     """
     w, h = max(1, size[0]), max(1, size[1])
     img = Image.new("RGBA", (w, h), INTERIOR_BG)
     d = ImageDraw.Draw(img)
-    # Before the ring and band, so chrome always paints over the hole
-    # rather than being eaten by it -- an alert ring is wider than the
-    # inset it is drawn at, and the band's last row abuts the hole.
-    _punch_thumbnail_hole(d, w, h, border, label_h)
+    # Before the ring, so chrome always paints over the hole rather than
+    # being eaten by it -- an alert ring is wider than the inset it is
+    # drawn at.
+    _punch_thumbnail_hole(d, w, h, border)
 
     # Only the selected preview carries a ring. An unselected one shows the
     # interior fill at the inset width instead -- near-black, which reads as
@@ -155,16 +160,59 @@ def render(
     # content. That is the intended look; see the design's Outcome section.
     if selected:
         d.rectangle([0, 0, w - 1, h - 1], outline=border_color, width=border)
+    return img
 
-    # -1 because Pillow's rectangle is inclusive: without it the band's
-    # last row lands on the thumbnail's first one. That overlap was
-    # invisible while the thumbnail covered an opaque fill, and shows as
-    # a 1px dark seam across the top of a translucent preview.
-    band_bottom = min(h - 1, border + label_h - 1)
-    if band_bottom > border:
-        d.rectangle([border, border, w - border - 1, band_bottom], fill=LABEL_BG)
-        font = _font(font_size)
-        text = _ellipsize(d, label, font, max_w=w - border * 2 - 12)
-        if text:
-            d.text((border + 6, border + 4), text, font=font, fill=LABEL_FG)
+
+# The overlay pill's shape. Padding around the text; the height follows
+# from the font size plus the vertical padding, and the width fits the
+# text (see render_label) rather than the preview's.
+LABEL_PAD_X = 8
+LABEL_PAD_Y = 5
+LABEL_FONT = 17
+
+
+def label_size(label, max_w, font_size=LABEL_FONT):
+    """The (w, h) render_label would draw, or None for no pill.
+
+    Text measurement against the cached font, no pixels drawn -- cheap
+    enough to call per mouse-move, which is how the overlay's render
+    cache keys itself: the pill's OWN width, not the preview's, because
+    every width the text already fits inside produces the same image.
+    """
+    if not label:
+        return None
+    font = _font(font_size)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2)
+    if not text:
+        return None
+    return (
+        int(probe.textlength(text, font=font)) + LABEL_PAD_X * 2,
+        font_size + LABEL_PAD_Y * 2 + 4,
+    )
+
+
+def render_label(label, max_w, font_size=LABEL_FONT):
+    """Render the character-name pill for the overlay window.
+
+    Sized to the text, not the preview: EVE-O Preview's overlay is a
+    compact label riding the top-left of the video, and that is the
+    shape asked for. Ellipsized against *max_w* -- the overlay window
+    must never be wider than its preview.
+
+    The pill is opaque: this window is WS_EX_TRANSPARENT, so it is
+    click-through by style whatever the alpha says, and the label has
+    the same readability over bright game content the old band had.
+    """
+    size = label_size(label, max_w, font_size)
+    if size is None:
+        return None
+    w, h = size
+    font = _font(font_size)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=6, fill=LABEL_BG)
+    d.text((LABEL_PAD_X, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
     return img

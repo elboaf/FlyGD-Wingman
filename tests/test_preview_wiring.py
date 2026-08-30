@@ -39,6 +39,19 @@ class FakeHost:
     def restyle(self):
         self.restyles += 1
 
+    def resize_all(self, size):
+        self.bulk_sizes = getattr(self, "bulk_sizes", [])
+        self.bulk_sizes.append(tuple(size))
+
+    def characters(self):
+        return []
+
+    def hotkey_status(self):
+        return {}
+
+    def client_sizes(self):
+        return {}
+
     @property
     def is_running(self):
         return self.started > self.stopped
@@ -1283,3 +1296,69 @@ def test_get_preview_hotkey_state_reports_disabled(tmp_path):
     assert api.get_preview_hotkey_state()["excluded"] == ["Aiga Otsolen"]
     api._state.settings["preview"] = {}
     assert api.get_preview_hotkey_state()["excluded"] == []
+
+
+# --- apply_preview_default_size(): the apply-to-open-previews button --------
+
+
+def test_apply_preview_default_size_resizes_every_open_preview(tmp_path):
+    """The button half of the default-size field: the persisted pair, read
+    back from settings (never re-validated in the endpoint -- the file
+    already owns the MIN_SIZE floor), pushed at the host as one bulk job."""
+    host = FakeHost()
+    host.started = 1  # is_running
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"width": 640, "height": 392}
+
+    assert api.apply_preview_default_size() == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert host.bulk_sizes == [(640, 392)]
+    # The cards show each character's size; every one just changed, so the
+    # push that repaints them fires from here rather than waiting a sweep.
+    pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
+    assert len(pushes) == 1
+
+
+def test_apply_preview_default_size_is_refused_while_previews_are_stopped(tmp_path):
+    """Applying with nothing open would report success for a no-op the
+    user cannot see -- the same refusal shape the field writers use."""
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"width": 640, "height": 392}
+
+    result = api.apply_preview_default_size()
+    assert result["applied"] is False
+    assert result["error"]
+    assert getattr(host, "bulk_sizes", None) is None
+
+
+# --- set_preview_selection_color(): the ring colour picker ------------------
+
+
+def test_set_preview_selection_color_persists_and_restyles(tmp_path, monkeypatch):
+    """The #rrggbb string travels verbatim -- the endpoint str()s it and
+    stores; validated_preview owns the format, exactly the division
+    set_preview_opacity keeps with its range."""
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"selection_color": "#00c8dc"}
+    assert api.set_preview_selection_color("#ff5a00") == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["selection_color"] == "#ff5a00"
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_selection_color_works_without_a_host(tmp_path, monkeypatch):
+    """Same no-host tolerance as every other preview writer: the colour is
+    still persisted, so it is waiting for the next start."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    assert api.set_preview_selection_color("#ff5a00")["applied"] is True

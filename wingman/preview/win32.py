@@ -26,6 +26,10 @@ WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
+# The name overlay only. Hit-testing on a layered window with this style
+# skips the window entirely -- exactly what a label riding above the
+# video wants, so every mouse gesture passes through it to the preview.
+WS_EX_TRANSPARENT = 0x00000020
 
 SW_HIDE = 0
 SW_SHOWNOACTIVATE = 8
@@ -84,6 +88,7 @@ WM_APP_ALERT = WM_APP + 4
 WM_APP_RESTYLE = WM_APP + 5
 WM_APP_RESET_LAYOUTS = WM_APP + 6
 WM_APP_RESIZE_ONE = WM_APP + 7
+WM_APP_RESIZE_ALL = WM_APP + 8
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02
