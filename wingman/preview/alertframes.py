@@ -94,28 +94,22 @@ class FrameCache:
     everything else that touches this window's HWND.
     """
 
-    def __init__(self, size, colour, label, label_h):
+    def __init__(self, size, colour):
         self.size = size
         self.colour = colour
-        self.label = label
-        self.label_h = label_h
         self._dc = None
         self._old = None
         self._dibs = []
 
     @classmethod
-    def build(cls, libs, size, label, colour, label_h: int):
+    def build(cls, libs, size, colour):
         """Render every phase once.
-
-        `label_h` is passed in rather than imported: it lives in window.py,
-        which imports this module, and reaching back for it would be a
-        cycle.
 
         Every frame is rendered `selected=True` -- an alert draws its ring
         whether or not the client is the selected one, which is the whole
         point of alerting on a preview you are not looking at.
         """
-        self = cls(size, colour, label, label_h)
+        self = cls(size, colour)
         w, h = size
         bmi = win32.BITMAPINFO()
         bmi.bmiHeader.biSize = ctypes.sizeof(win32.BITMAPINFOHEADER)
@@ -131,10 +125,8 @@ class FrameCache:
             for alpha in alphas_for(size):
                 img = chrome.render(
                     size,
-                    label,
                     border_color=_with_alpha(colour, alpha),
                     border=ALERT_BORDER,
-                    label_h=label_h,
                     selected=True,
                 )
                 data = layered.to_premultiplied_bgra(img)

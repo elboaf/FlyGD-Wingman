@@ -60,17 +60,20 @@ def test_hit_resize_handle_is_the_bottom_right_corner():
     assert not g.hit_resize_handle(r, r.x + 4, r.y + 4)
 
 
-def test_thumbnail_rect_insets_by_border_and_label():
+def test_thumbnail_rect_insets_by_border_only():
+    """No label term: the name is an overlay window above the video, so
+    the picture runs the full interior and keeps the client's shape at
+    every size -- the whole reason the overlay exists."""
     r = g.Rect(0, 0, 320, 210)
-    t = g.thumbnail_rect(r, border=5, label_h=30)
-    assert t == g.Rect(5, 35, 310, 170)
+    t = g.thumbnail_rect(r, border=5)
+    assert t == g.Rect(5, 5, 310, 200)
 
 
 @pytest.mark.parametrize("w,h", [(0, 0), (4, 4)])
 def test_thumbnail_rect_never_goes_negative(w, h):
     """A preview dragged smaller than its own chrome must clamp, not hand
     DwmUpdateThumbnailProperties an inverted rect."""
-    t = g.thumbnail_rect(g.Rect(0, 0, w, h), border=5, label_h=30)
+    t = g.thumbnail_rect(g.Rect(0, 0, w, h), border=5)
     assert t.w >= 0 and t.h >= 0
 
 

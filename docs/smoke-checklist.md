@@ -1897,6 +1897,17 @@ Enable previews in Settings before starting.
 - [ ] Each preview's label shows the character name, in Inter — not a
       blocky bitmap face. A bitmap face means the bundled font did not
       load; the log says so explicitly.
+- [ ] **The name is an overlay, not a band.** With `Show the character
+      name` on, the pill rides the top-left corner OVER the video and the
+      picture runs the full interior — with labels off, toggle the
+      setting and confirm the video does not move or resize by a single
+      pixel (this is the aspect fix: the old band shrank the picture 30px
+      and bent the locked aspect). Click and drag THROUGH the pill: it
+      must be click-through, so every mouse gesture reaches the preview
+      beneath. Drag and resize the preview and confirm the pill follows
+      and never detaches or overlaps beyond the frame. A client with an
+      armed alert: the pill shifts inward with the ring, and toggling
+      labels off mid-alert removes it while the ring keeps pulsing.
 - [ ] Clicking a preview brings that client to the foreground. If nothing
       happens, the log has `Activation of 0x… did not take` at debug.
 - [ ] **The ring marks the client you last used, and stays there.** With

@@ -1792,9 +1792,11 @@ class PreviewHost:
         """
         show_labels = self._labels_shown()
         opacity = self._current_opacity()
-        label_h = window_mod.LABEL_H if show_labels else 0
         for key, win in self._windows.items():
-            win.show_labels = show_labels
+            # set_labels, not an attribute write: the label is a window
+            # now (see PreviewWindow._ensure_label_overlay), so showing
+            # or hiding it is the method's whole job.
+            win.set_labels(show_labels)
             win.opacity = opacity
             win.locked = self._is_locked(key)
             win.snap = self._snapping()
@@ -1812,9 +1814,8 @@ class PreviewHost:
                     # here would snap the video back over the ring the
                     # moment any live setting changed under fire -- the
                     # ring left showing as corner brackets until the alert
-                    # cleared, with nothing to explain it. Same reasoning
-                    # as label_h just above: read the live value.
-                    geometry.thumbnail_rect(win.rect, win._inset, label_h),
+                    # cleared, with nothing to explain it.
+                    geometry.thumbnail_rect(win.rect, win._inset),
                     win.opacity,
                 )
 

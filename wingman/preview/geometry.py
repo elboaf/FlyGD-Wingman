@@ -76,17 +76,22 @@ def hit_resize_handle(
     )
 
 
-def thumbnail_rect(rect: Rect, border: int, label_h: int) -> Rect:
+def thumbnail_rect(rect: Rect, border: int) -> Rect:
     """The client-coordinate rect the DWM thumbnail is drawn into.
 
     Clamped at zero: a preview dragged smaller than its own chrome would
     otherwise produce an inverted rect, which DWM rejects.
+
+    No label term: the character name is an overlay window riding above
+    the video (see chrome.render_label), not a band the picture must
+    shrink to make room for, so the thumbnail runs the full interior at
+    every size.
     """
     return Rect(
         border,
-        border + label_h,
+        border,
         max(0, rect.w - border * 2),
-        max(0, rect.h - border - border - label_h),
+        max(0, rect.h - border * 2),
     )
 
 
@@ -222,11 +227,12 @@ def parse_size(text):
 def lock_to_aspect(w, h, aspect, chrome, min_size, drive="w"):
     """The nearest window size whose PICTURE is *aspect* wide per unit tall.
 
-    *chrome* is (dw, dh): the pixels the window spends on border and label
-    band. It is a parameter and not a constant because the band is
-    LABEL_H tall or zero depending on a live setting -- a fixed value
-    distorts the picture for everyone who turned labels off, silently,
-    while the control reports success.
+    *chrome* is (dw, dh): the pixels the window spends on its border. It
+    is a parameter and not a constant because the caller owns the
+    border's value; today every caller passes (BORDER*2, BORDER*2), since
+    the character name became an overlay that reserves no space -- the
+    parameter stays because "the window is not all picture" is the
+    function's contract, not an implementation detail of one caller.
 
     *drive* names the axis to believe, "w" or "h"; the other is derived.
     It is the caller's job to decide, because only the caller knows which

@@ -26,6 +26,10 @@ WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
+# The name overlay only. Hit-testing on a layered window with this style
+# skips the window entirely -- exactly what a label riding above the
+# video wants, so every mouse gesture passes through it to the preview.
+WS_EX_TRANSPARENT = 0x00000020
 
 SW_HIDE = 0
 SW_SHOWNOACTIVATE = 8
