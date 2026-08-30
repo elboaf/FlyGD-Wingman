@@ -13,6 +13,7 @@ from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
 from .ui import api as api_mod
 from .ui import preflight
+from .ui import sigbar
 from .ui import window as window_mod
 from .ui.scheduler import Scheduler
 
@@ -798,7 +799,15 @@ def main() -> int:
     # every launch, and the push lost to _push's bare except when the
     # timeout finally raises. pywebview runs this on its own thread once
     # the GUI loop owns the main one.
-    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
+    def _startup() -> None:
+        # The floating sig bar reopens before the first poll tick, so a
+        # user who left it on sees it come back with the app rather than
+        # three seconds later. Created hidden and revealed on its own
+        # timer -- sigbar.restore holds the flash argument.
+        sigbar.restore(api)
+        api.refresh_auth()
+
+    window_mod.run(_startup)  # Blocks until the window is destroyed.
 
     icon.stop()
     if scheduler is not None:

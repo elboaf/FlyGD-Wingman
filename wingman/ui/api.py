@@ -347,6 +347,13 @@ class Api:
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
+        # Assigned by ui.sigbar.create(), same underscore-only rule as
+        # _window above: a public attribute here reaches the js_api proxy
+        # walk and the same RecursionError follows.
+        self._sigbar_window = None
+        # The debounce timer sigbar.on_moved re-arms; named so the next
+        # fire can cancel the pending one.
+        self._sigbar_pos_timer: threading.Timer | None = None
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -482,6 +489,14 @@ class Api:
             self._window.evaluate_js(script)
         except Exception:
             logger.debug("Push of %s failed", handler, exc_info=True)
+        # The floating sig bar is a second page fed from the same pushes --
+        # one timer, one reader of the engine's status file, two renderers.
+        # Its failures cost the same nothing the main window's do.
+        if self._sigbar_window is not None:
+            try:
+                self._sigbar_window.evaluate_js(script)
+            except Exception:
+                logger.debug("Sig bar push of %s failed", handler, exc_info=True)
 
     def _push_skills(self, handler: str, payload) -> None:
         """The skills subsystem's push, with presentation labels added.
@@ -2147,6 +2162,114 @@ class Api:
                     "switch them off."
                 )
         return self._write_setting("show_eve_tools", enabled)
+
+    # ----- floating sig bar ---------------------------------------------
+
+    def sig_bar_settings(self) -> dict:
+        """The sig_bar section, for the bar page's one startup read.
+
+        A copy, not the live dict: this crosses to JS, where a concurrent
+        update_section rebuilding the section must not be observed
+        half-written.
+        """
+        return dict(self._state.settings.get("sig_bar") or {})
+
+    def _push_sig_bar_state(self) -> None:
+        """Publish the whole sig_bar section after any change to it.
+
+        The section, not a delta: the bar page restyles from it and the
+        main page lights its toggle from `enabled`, and both are cheap.
+        Fan-out through _push means no page is named here.
+        """
+        self._push("onSigBarState", self.sig_bar_settings())
+
+    def toggle_sig_bar(self, on) -> dict:
+        """Show or hide the floating sig bar, persisting the choice.
+
+        The window is created on first enable and kept hidden afterwards
+        (ui/sigbar.py's docstring holds the cost argument), so this only
+        ever shows or hides -- except the first time, which builds it.
+        """
+        from wingman.ui import sigbar
+
+        on = bool(on)
+        settings_mod.update_section(self._state.settings, "sig_bar", {"enabled": on})
+        bar = self._sigbar_window
+        try:
+            if on:
+                if bar is None:
+                    sigbar.create(self, hidden=False)
+                else:
+                    bar.show()
+            elif bar is not None:
+                bar.hide()
+        except Exception:
+            # A bar that cannot appear is degraded chrome, not a failed
+            # setting: the persisted choice stands and the next toggle
+            # retries the window.
+            logger.exception("sig bar window toggle failed")
+        self._push_sig_bar_state()
+        return self._field_ok()
+
+    def set_sig_bar_style(self, bg_color, opacity) -> dict:
+        """Persist the bar's background colour and opacity, live.
+
+        Validated here rather than left to validated_sig_bar: this is a
+        bridge entry point, so a page bug must not have to wait for the
+        next load() to be cleaned up. The colour is rejected (not coerced)
+        on the same reasoning as the alert-event colour -- a silent
+        fallback would look like the user's choice not taking.
+        """
+        if not isinstance(bg_color, str) or not settings_mod._HEX_RE.match(bg_color):
+            return self._field_refused("Pick a colour from the picker.")
+        try:
+            opacity = int(opacity)
+        except (TypeError, ValueError):
+            return self._field_refused("Opacity must be a number.")
+        opacity = max(0, min(100, opacity))
+        settings_mod.update_section(
+            self._state.settings,
+            "sig_bar",
+            {"bg_color": bg_color, "opacity": opacity},
+        )
+        self._push_sig_bar_state()
+        return self._field_ok()
+
+    def save_sig_bar_pos(self, x, y) -> None:
+        """Persist the bar's last drag position. Fire-and-forget from JS.
+
+        Called from the debounced moved handler in ui/sigbar.py, so this
+        runs at most twice a second even across a long drag. No push: the
+        bar is where it is, and the main page does not care.
+        """
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        settings_mod.update_section(self._state.settings, "sig_bar", {"x": x, "y": y})
+
+    def fit_sig_bar(self, width, height) -> None:
+        """Resize the bar window to its content, as measured by the page.
+
+        The page measures in CSS pixels and pywebview resizes in logical
+        units -- the same units (see ui/window.py's placement notes), so
+        the values are handed through unscaled.
+        """
+        bar = self._sigbar_window
+        if bar is None:
+            return
+        try:
+            width, height = int(width), int(height)
+        except (TypeError, ValueError):
+            return
+        if width <= 0 or height <= 0:
+            return
+        try:
+            bar.resize(width, height)
+        except Exception:
+            # Before `shown`, resize can raise; the page re-fits on every
+            # render, so dropping this one costs nothing.
+            logger.debug("sig bar resize failed", exc_info=True)
 
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.

@@ -215,6 +215,25 @@ def _eve_settings_defaults() -> dict:
     return {"root": None, "server": None, "profile": None, "auto_keep": 10}
 
 
+def _sig_bar_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Off by default: enabling costs a second WebView2 window, which an
+    # upgrading user has to ask for rather than be given.
+    #
+    # bg_color/opacity style the PAGE background as rgba, not the window:
+    # window-level alpha dims the text along with it, and the bar's whole
+    # point is legible text over whatever sits underneath. x/y are the last
+    # drag position (None = default placement), so the bar reopens where
+    # it was left.
+    return {
+        "enabled": False,
+        "bg_color": "#14101c",
+        "opacity": 90,
+        "x": None,
+        "y": None,
+    }
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -278,6 +297,9 @@ DEFAULTS = {
     # Same reasoning as eve_bookmarks and preview above: built by
     # _eve_settings_defaults() so callers never share one nested dict.
     "eve_settings": _eve_settings_defaults(),
+    # The floating sig bar's section: built by _sig_bar_defaults() for the
+    # same fresh-dict-every-call reason as the three sections above.
+    "sig_bar": _sig_bar_defaults(),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -290,6 +312,7 @@ def _fresh_defaults() -> dict:
     data["eve_bookmarks"] = _eve_defaults()
     data["preview"] = _preview_defaults()
     data["eve_settings"] = _eve_settings_defaults()
+    data["sig_bar"] = _sig_bar_defaults()
     return data
 
 
@@ -484,6 +507,34 @@ def validated_eve_settings(raw) -> dict:
     return section
 
 
+def validated_sig_bar(raw) -> dict:
+    """Same posture as validated_eve_settings: a malformed section falls
+    back whole, a malformed single value falls back alone."""
+    section = _sig_bar_defaults()
+    if not isinstance(raw, dict):
+        return section
+    if isinstance(raw.get("enabled"), bool):
+        section["enabled"] = raw["enabled"]
+    colour = raw.get("bg_color")
+    if isinstance(colour, str) and _HEX_RE.match(colour):
+        section["bg_color"] = colour
+    opacity = raw.get("opacity")
+    if isinstance(opacity, int) and not isinstance(opacity, bool):
+        # Clamped, not rejected: the slider's floor is 0 (fully
+        # transparent background), and the text is styled separately at
+        # full opacity, so 0 is a legitimate look rather than a broken one.
+        section["opacity"] = max(0, min(100, opacity))
+    for key in ("x", "y"):
+        value = raw.get(key)
+        # None means "default placement"; anything non-int non-None from a
+        # hand-edited file falls back to that rather than reaching pywebview.
+        if isinstance(value, int) and not isinstance(value, bool):
+            section[key] = value
+        else:
+            section[key] = None
+    return section
+
+
 def validated_eve(raw) -> dict:
     section = _eve_defaults()
     if not isinstance(raw, dict):
@@ -577,6 +628,7 @@ def _normalize(data: dict) -> dict:
     data["eve_bookmarks"] = validated_eve(data.get("eve_bookmarks"))
     data["preview"] = validated_preview(data.get("preview"))
     data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
+    data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
     return data
 
 

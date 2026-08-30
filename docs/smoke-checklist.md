@@ -2270,6 +2270,35 @@ pytest.
   forward. Expected: both rows go red and the tooltip says the cycle keybind
   is the one that loses — those two cannot share a registration.
 
+## The floating sig bar
+
+Nothing in the suite can open a second window, so every item here is a
+manual check by construction.
+
+- [ ] **The bar opens, floats, and stays on top.** Click the `⌒`-style
+      toggle at the right end of the status strip with the bookmark engine
+      running. Expected: a small bar reading `SIG ... ROOT ... NEXT ...`
+      appears near the bottom-left of the screen and stays visible over
+      OBS and over an EVE client, not just over Wingman.
+- [ ] **The width hugs the text.** Let the engine tick into a new root or
+      NEXT value. Expected: the bar re-fits to the new text with no dead
+      space to its right and no clipped digits, at 100% and at 150%
+      scaling.
+- [ ] **Drag it and restart.** Drag the bar somewhere deliberate, quit
+      Wingman, relaunch. Expected: the bar reopens exactly where it was
+      left, and the status-strip toggle shows active on load without a
+      click.
+- [ ] **Degraded states read as degraded.** Stop the engine (untick
+      Register keybinds in EVE). Expected: the bar shows em-dashes in the
+      muted colour, never a stale root system that looks live.
+- [ ] **Only the background fades.** Settings › Bookmarks ›
+      Floating sig bar: drag Opacity to 0. Expected: the background
+      disappears entirely while the text stays at full strength —
+      the alpha lives on the page background, never on the window.
+- [ ] **Colour and opacity persist.** Pick a background colour, reload the
+      Settings page. Expected: the picker hydrates to the stored colour,
+      and the bar wears it live without a restart.
+
 ## EVE preview alerts
 
 When a player shoots, scrambles or decloaks one of your logged-in

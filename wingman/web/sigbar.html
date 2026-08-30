@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Wingman sig bar</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- The bar is a page of its own, not a route of index.html: it must
+       outlive the main window's size and chrome. style.css is linked for
+       the token block and the .evestat rules it already carries, so the
+       bar's typography is BY CONSTRUCTION the status strip's rather than
+       a hand-kept copy of it. The rules below only size the page and
+       apply the user's stored background; no colour is decided here. -->
+  <style>
+    html, body {
+      /* overflow hidden, not the page's scrollbars: a frameless window
+         has no chrome to scroll with. */
+      overflow: hidden;
+      background: transparent;
+    }
+    body {
+      /* Measured by sigbar.js after every render and pushed back through
+         fit_sig_bar, so the window hugs its text in BOTH axes and the
+         width is never a Python-side guess about font metrics. */
+      width: max-content;
+      /* The drag surface is the whole bar: nothing on it is clickable, so
+         easy_drag=False plus one full-body region is honest (the sibling
+         note in index.html's titlebar explains why buttons and drag
+         regions must not nest). */
+      cursor: default;
+    }
+    .statusbar {
+      /* The strip is a page here, not a footer: no border-top, no flex
+         grow, and the padding is the whole visual. */
+      border-top: none;
+      display: inline-flex;
+      padding: 6px 12px;
+      /* Set from settings by sigbar.js as an rgba(): the ALPHA lives on
+         the page background, never on the window, because window-level
+         alpha dims the text with it and the bar exists for legible text.
+         --sigbar-bg is a channel triplet like --brand-rgb, written by JS. */
+      background: rgb(var(--sigbar-bg) / var(--sigbar-alpha, 0.9));
+    }
+    .evestat {
+      flex: 0 0 auto;
+      overflow: visible;
+      /* Full opacity text is the invariant the window alpha cannot be
+         allowed to break; .evelabel/.evestat children carry no opacity of
+         their own, and .degraded only steps between text TOKENS. */
+    }
+  </style>
+</head>
+<body class="pywebview-drag-region">
+  <!-- Same segment, same ids-in-spirit as index.html's #evestat. Ids are
+       NOT shared verbatim: this page has no #eve-warn and no engine-state
+       line -- those belong to the full app, and a bar that flashes a
+       warning glyph nobody can click to is worse than one that shows only
+       what it can show. -->
+  <div class="statusbar">
+    <span class="evestat" id="sigbar-stat" hidden>
+      <span class="evelabel">SIG</span><span id="bar-sig">&mdash;</span>
+      <span class="evelabel">ROOT</span><span id="bar-root">&mdash;</span>
+      <span class="evelabel">NEXT</span><span id="bar-next">&mdash;</span>
+    </span>
+  </div>
+  <script src="sigbar.js"></script>
+</body>
+</html>

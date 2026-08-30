@@ -61,7 +61,11 @@
    // And again. The harness cannot show what this one DOES -- hiding
    // happens in the preview host, which ?dev=1 has none of -- only that
    // the checkbox renders, commits and reports.
-   'set_preview_hide_on_lost_focus'
+   'set_preview_hide_on_lost_focus',
+   // The floating sig bar's two writers. Same shape: settings.js
+   // reverts the checkbox and the slider on anything that is not
+   // `applied`, like every entry above.
+   'toggle_sig_bar', 'set_sig_bar_style'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -484,7 +488,14 @@
                   pulses: 3, color: '#4dd2ff', sound: 'notify' }
               }
             }
-          }
+          },
+          // The floating sig bar's section, present because the real
+          // payload ships `dict(cfg)` whole. ON against a shipped default
+          // of off, for the same reason hide_on_lost_focus is: the
+          // harness is where the card's controls are eyeballed, and a
+          // default-valued fixture cannot show they read the payload.
+          sig_bar: { enabled: true, bg_color: '#1d1030', opacity: 75,
+            x: null, y: null }
         }, patch || {}),
       // discord.describe()'s shape for the fake webhook stored above, not
       // a prose invention: it is host/api/webhooks/<id>… by construction,
@@ -520,6 +531,14 @@
       start_on_login: false
     };
   }
+
+  // The bar page pulls its section once at load; so does bookmarks.js
+  // for the toggle's initial paint. Returns the same object the payload
+  // above carries, so the two doubles cannot disagree.
+  api.sig_bar_settings = function () {
+    console.log('DEV api.sig_bar_settings()');
+    return Promise.resolve(settingsPayload().settings.sig_bar);
+  };
 
   // A RETURN, not a push, because that is what the bridge does. The first
   // version of this file pushed onSettings from the list_rows stub, which

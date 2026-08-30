@@ -1217,4 +1217,67 @@
     // client window must be asked for, never assumed on upgrade.
     box.checked = !!(s.preview && s.preview.minimize_inactive_clients);
   });
+
+  // ---- floating sig bar ----------------------------------------------
+  // Self-contained block on the preview-opacity pattern: hydrate from the
+  // wm:settings payload, commit per field through its own endpoint, and
+  // never write local state on success -- onSigBarState is the state, and
+  // it repaints the status-strip button too (bookmarks.js).
+  (function () {
+    var check = WM.el('sigbar-enabled');
+    var bg = WM.el('sigbar-bg');
+    var box = WM.el('sigbar-opacity');
+    var readout = WM.el('sigbar-opacity-value');
+    var enabledStatus = WM.el('sigbar-enabled-status');
+    var bgStatus = WM.el('sigbar-bg-status');
+    var opacityStatus = WM.el('sigbar-opacity-status');
+    var lastBg = null;
+    var lastOpacity = null;
+
+    function show() { readout.textContent = box.value + '%'; }
+
+    function say(slot, text, tone) {
+      var el = slot;
+      if (!el) { return; }
+      el.textContent = text || '';
+      el.hidden = !text;
+    }
+
+    document.addEventListener('wm:settings', function (ev) {
+      var section = (ev.detail || {}).settings
+        && (ev.detail || {}).settings.sig_bar;
+      if (!section) { return; }
+      lastBg = section.bg_color || '#14101c';
+      lastOpacity = section.opacity;
+      // activeElement guards as everywhere above: a control the user is
+      // mid-drag on holds the more recent value by definition.
+      if (check !== document.activeElement) { check.checked = !!section.enabled; }
+      if (bg !== document.activeElement) { bg.value = lastBg; }
+      if (box !== document.activeElement) { box.value = lastOpacity; }
+      show();
+    });
+
+    check.addEventListener('change', function () {
+      commit(enabledStatus, ['toggle_sig_bar', check.checked], null);
+    });
+
+    box.addEventListener('input', show);
+    box.addEventListener('change', function () {
+      var wanted = parseInt(box.value, 10);
+      commit(opacityStatus,
+             ['set_sig_bar_style', bg.value, wanted],
+             function () { box.value = lastOpacity; show(); },
+             function () { lastOpacity = wanted; });
+    });
+    // `lastBg` records through onOk rather than optimistically: a refused
+    // colour must revert to the last ACCEPTED one, which a pre-assign
+    // would already have clobbered.
+    var origBg = bg.value;
+    bg.addEventListener('change', function () {
+      var wanted = bg.value;
+      commit(bgStatus, ['set_sig_bar_style', wanted, lastOpacity],
+             function () { bg.value = lastBg || origBg; },
+             function () { lastBg = wanted; });
+    });
+  }());
 }());

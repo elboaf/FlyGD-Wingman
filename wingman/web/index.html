@@ -565,6 +565,45 @@
           <button class="btn" id="eve-refresh-windows">Refresh</button></div>
         <div id="eve-windows"></div>
       </section>
+
+      <section class="card">
+        <h2>Floating sig bar</h2>
+        <!-- A third card in the Bookmarks section, because the bar is the
+             same engine's readout: it renders what the keybinds' status
+             line pushes, so a reader looking for it looks here first. -->
+        <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
+          readout that floats over other windows &mdash; drag it anywhere
+          on screen. Its width hugs the text, and it remembers where you
+          left it.</p>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
+            Show the floating sig bar
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="sigbar-enabled-status"></span></div>
+        <div class="row">
+          <label class="lab" for="sigbar-bg">Background</label>
+          <input type="color" id="sigbar-bg" value="#14101c">
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="sigbar-bg-status"></span></div>
+        <div class="row">
+          <label class="lab" for="sigbar-opacity">Opacity</label>
+          <!-- 0 is legal here, unlike the previews slider: the alpha is on
+               the page background, and the text is styled separately at
+               full strength, so a transparent bar over a bright scene is
+               a look, not a bug. -->
+          <input type="range" id="sigbar-opacity" min="0" max="100">
+          <span class="range-value" id="sigbar-opacity-value"></span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint">Only the background fades &mdash; the text
+            always stays at full strength.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="sigbar-opacity-status"></span></div>
+      </section>
     </div>
 
         <!-- Same reasoning as Bookmarks above: this configures floating
@@ -1584,6 +1623,14 @@
            enough here and no override is needed. -->
       <div class="track" id="track" hidden><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
+      <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
+           .winbtn, not a .btn: it is chrome that lives beside chrome, and
+           the 44px square keeps the strip's height unchanged. `.active`
+           styling is shared with .winbtn.gear.active's treatment -- see
+           style.css, which colours the glyph and not the fill, so the
+           accent stays the strip's scarcity. -->
+      <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
+              aria-pressed="false">&#8982;</button>
     </div>
   </div>
 

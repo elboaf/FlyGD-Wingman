@@ -99,6 +99,15 @@ def test_defaults_are_the_documented_values():
             "profile": None,
             "auto_keep": 10,
         },
+        # Off by default like the other feature flags: it opens a second
+        # WebView2 window, which must be asked for.
+        "sig_bar": {
+            "enabled": False,
+            "bg_color": "#14101c",
+            "opacity": 90,
+            "x": None,
+            "y": None,
+        },
     }
 
 

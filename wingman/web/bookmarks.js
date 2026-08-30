@@ -536,6 +536,45 @@
     host.classList.toggle('degraded', !live);
   });
 
+  // ---- floating sig bar ----------------------------------------------
+  // The status-strip button and the Settings card are two views of ONE
+  // persisted choice, and onSigBarState is what keeps them from lying to
+  // each other: whichever control was used, the push lands on both and
+  // each repaints from the section. Nothing here writes its own state --
+  // the push is the state. (toggle_sig_bar always answers applied, so
+  // there is no refusal branch; a null from WM.send means the bridge
+  // never landed, and the push that follows nothing leaves both controls
+  // honestly where they were.)
+  var sigBtn = WM.el('btn-sigbar');
+  var sigCheck = WM.el('sigbar-enabled');
+
+  function renderSigBar(section) {
+    var on = !!(section && section.enabled);
+    if (sigBtn) {
+      sigBtn.classList.toggle('active', on);
+      sigBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    if (sigCheck && sigCheck !== document.activeElement) {
+      sigCheck.checked = on;
+    }
+  }
+
+  WM.handle('onSigBarState', renderSigBar);
+
+  if (sigBtn) {
+    sigBtn.addEventListener('click', function () {
+      WM.send('toggle_sig_bar', !sigBtn.classList.contains('active'));
+    });
+  }
+  if (sigCheck) {
+    sigCheck.addEventListener('change', function () {
+      WM.send('toggle_sig_bar', sigCheck.checked);
+    });
+  }
+  // Initial paint. A push follows every change, but nothing pushes at
+  // load -- the bar page pulls its section the same way.
+  WM.send('sig_bar_settings').then(renderSigBar);
+
   // wm:section, not wm:route: this is a section of the Settings route now,
   // so switching to Folders is a leave and fires no route change at all.
   // WM.route dispatches wm:section('') whenever it leaves Settings, so one

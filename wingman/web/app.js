@@ -55,6 +55,7 @@
                  'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
+                 'onSigBarState',
                  'onSkills', 'onSkillsProgress'];
 
   WM.handle = function (name, fn) {
