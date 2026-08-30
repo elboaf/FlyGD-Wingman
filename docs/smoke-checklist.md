@@ -2575,7 +2575,7 @@ Needs a real install and every EVE client closed for the write lines.
 
 - [ ] The card is present when the codec is bundled and absent (not broken) when `bin/wingman-settings-codec.exe` is removed from the install; Copy and Backups still work in both cases.
 - [ ] Open an account with a formation created in-game: it lists with the right name and probe count; ranges read as AU powers of two.
-- [ ] **Version gate:** Save with no edits, then launch the client on that account. UI layout, overview, and the formation are all intact. (The client wrote version 0; Wingman writes version 1. This line is the only proof the client reads it.)
+- [ ] **Version gate:** Save with no edits, then launch the client on that account. UI layout, overview, and the formation are all intact. (The client writes version 0; Wingman writes version 1. Proven once on 2026-08-29 — design doc finding 10 — and re-walked here so a client update that changes the answer is caught before a user meets it.)
 - [ ] Edit a formation, save, launch the client: the probe scanner shows the edit; the client's selected formation is unchanged.
 - [ ] Save with a client running: refused with "The file is in use. Close EVE and retry."; file bytes unchanged.
 - [ ] Restore the pre-edit auto backup from the Backups card: the old formation returns.
