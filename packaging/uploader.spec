@@ -54,9 +54,14 @@ a = Analysis(
         # copy -- one shared text would misstate the terms for one of them.
         # Also renamed at fetch time by fetch_ffmpeg.py, for the same reason.
         (str(BIN / "ffmpeg-COPYING.txt"), "."),
-        # blue-marshal is MIT, so it needs its own licence text beside the
-        # two GPL ones above -- one shared text would misstate the terms.
-        (str(BIN / "blue-marshal-COPYING.txt"), "."),
+        # The settings codec is MIT/Apache-2.0 throughout, so it needs its
+        # own licence text beside the two GPL ones above -- one shared text
+        # would misstate the terms. ONE file for the whole static link
+        # rather than one per crate: it is a single executable with about
+        # twenty crates compiled into it, and MIT asks that the notice
+        # travel with the binary. Generated from Cargo.lock at build time
+        # by packaging/settings-codec/collect_licenses.py.
+        (str(BIN / "settings-codec-COPYING.txt"), "."),
         # The engine is data, not code -- modulegraph cannot see it, and
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green

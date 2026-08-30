@@ -130,18 +130,25 @@ def test_every_allowlisted_packaging_script_is_stdlib_only():
     the check precisely because the allowlist had not been told about it.
     """
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    pattern = re.search(r"grep -vE 'python packaging/\(([^)]*\))?([^']*)'", workflow)
+    pattern = re.search(r"grep -vE 'python packaging/\(([^)]*)\)\\\.py'", workflow)
     assert pattern is not None, (
         "could not find the bare-python allowlist in ci.yml -- if the check "
         "was restructured, update this test with it"
     )
 
-    names = set(re.findall(r"[a-z_]+(?:_[a-z0-9]+)*", pattern.group(0)))
-    scripts = [
-        path
-        for path in (ROOT / "packaging").glob("*.py")
-        if any(part in path.stem for part in ("fetch_", "write_version"))
-    ]
+    # The allowlist is a flat alternation of paths relative to packaging/,
+    # deliberately: it used to nest one group (`fetch_(a|b|c)`) and this
+    # test could then only guess at the names it spelled, so it fell back
+    # to a stem filter over packaging/*.py -- which silently exempted every
+    # script in a SUBDIRECTORY. settings-codec/collect_licenses.py is one.
+    names = pattern.group(1).split("|")
+    scripts = [ROOT / "packaging" / f"{name}.py" for name in names]
+    for script in scripts:
+        assert script.is_file(), (
+            f"ci.yml's bare-python allowlist names {script}, which does not "
+            "exist -- the exclusion is dead and a real bypass could hide "
+            "behind that name"
+        )
     assert scripts, "no packaging scripts found to check"
 
     stdlib = sys.stdlib_module_names

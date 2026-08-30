@@ -31,7 +31,14 @@ for his code to be used in Wingman.**
 `blue-marshal` itself is **MIT**, published on crates.io by TrueBrain
 (<https://crates.io/crates/blue-marshal>, repo
 <https://github.com/TrueBrain/blue-marshal-rs>). Same treatment in
-`THIRD-PARTY-NOTICES.md`.
+`THIRD-PARTY-NOTICES.md` — but for the whole static link, not for
+`blue-marshal` alone: the sidecar compiles about twenty MIT/Apache-2.0
+crates into one executable, and MIT's condition is that the notice travels
+with the binary. `packaging/settings-codec/collect_licenses.py` reads
+`Cargo.lock`, finds each crate's vendored source, and concatenates every
+licence text it ships into a single `settings-codec-COPYING.txt` installed
+beside the application. It fails the build rather than skipping a crate it
+cannot account for.
 
 ## Why the exclusion no longer holds
 

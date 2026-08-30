@@ -23,16 +23,32 @@ Licence: GNU General Public License v2 or later
 Source: https://github.com/AutoHotkey/AutoHotkey/releases/tag/v1.1.37.02
 Licence text: `AutoHotkey-COPYING.txt`, installed beside the application.
 
-## blue-marshal
+## Settings codec (blue-marshal and its dependencies)
 
-Version: 1.0.1
+`wingman-settings-codec.exe` is Wingman's own wrapper (source in
+`packaging/settings-codec/`, covered by Wingman's own GPL-3.0-only licence)
+around blue-marshal, and it reads and writes EVE settings files. The
+approach and format notes follow eve-wrench (Tim Kunze), used with the
+author's consent.
+
+It is a **statically linked** binary, so every crate below is compiled into
+it and its licence travels with it. All are MIT or Apache-2.0 dual-licensed;
+unicode-ident additionally carries Unicode-3.0.
+
+Version: 1.0.1 (blue-marshal, pinned `=1.0.1` in
+`packaging/settings-codec/Cargo.toml`)
 Licence: MIT
 Source: https://github.com/TrueBrain/blue-marshal-rs
-Licence text: `blue-marshal-COPYING.txt`, installed beside the application.
-Used by: `wingman-settings-codec.exe`, Wingman's own wrapper (source in
-`packaging/settings-codec/`), which reads and writes EVE settings files.
-The approach and format notes follow eve-wrench (Tim Kunze), used with the
-author's consent.
+Licence text: `settings-codec-COPYING.txt`, installed beside the
+application. One combined file rather than one per crate, generated from
+`packaging/settings-codec/Cargo.lock` at build time by
+`packaging/settings-codec/collect_licenses.py` — so it cannot drift from
+what the release actually links.
+
+Crates linked in, from that lock file: autocfg, base64, blue-marshal,
+equivalent, hashbrown, indexmap, itoa, memchr, num-bigint, num-integer,
+num-traits, proc-macro2, quote, serde, serde_core, serde_derive,
+serde_json, syn, unicode-ident, zmij.
 
 ## Fonts
 
