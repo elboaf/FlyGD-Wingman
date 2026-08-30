@@ -1302,6 +1302,26 @@ def test_identification_start_replaces_an_old_candidate_and_check_records_latest
     assert api._eve_identification_candidate == ("10", ("20",))
 
 
+def test_identification_start_and_check_report_busy_with_stable_status(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_mutation.acquire()
+    try:
+        start = api.eve_settings_identification_start()
+        check = api.eve_settings_identification_check()
+    finally:
+        api._eve_mutation.release()
+
+    assert start == {
+        "status": "busy",
+        "error": "Another Profiles operation is running.",
+    }
+    assert check == start
+
+
 def test_identification_check_clears_obsolete_candidate_on_no_change(
     tmp_path, monkeypatch
 ):

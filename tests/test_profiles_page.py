@@ -770,7 +770,8 @@ def test_identification_uses_atomic_confirmation_and_bounded_roster():
     assert "ai-identify-another" in CODE and "paintIdentification('idle')" in CODE
     assert "result.status === 'invalidated'" in CODE
     assert "result.status === 'error'" in CODE
-    assert "Another Profiles operation is running." in CODE
+    assert "result.status === 'busy'" in CODE
+    assert "result.error === 'Another Profiles operation is running.'" not in CODE
     assert "filter(function (account) { return account.account_name; }).length" in CODE
     assert "linked.length >= 3 || !add.options.length" in CODE
     assert "WM.confirm('Move character?'" in CODE

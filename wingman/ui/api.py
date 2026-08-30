@@ -4272,7 +4272,7 @@ class Api:
     def eve_settings_identification_start(self) -> dict:
         if not self._eve_mutation.acquire(blocking=False):
             return {
-                "status": "error",
+                "status": "busy",
                 "error": "Another Profiles operation is running.",
             }
         try:
@@ -4295,7 +4295,7 @@ class Api:
         # Refusing preserves the bridge thread that must deliver that answer.
         if not self._eve_mutation.acquire(blocking=False):
             return {
-                "status": "error",
+                "status": "busy",
                 "error": "Another Profiles operation is running.",
             }
         try:

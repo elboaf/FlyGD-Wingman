@@ -928,10 +928,9 @@
           if (state) state.identification_active = true;
           renderCandidate(result);
         } else {
-          var busyError = result && result.status === 'error'
-            && result.error === 'Another Profiles operation is running.';
+          var busyError = result && result.status === 'busy';
           var restart = result && (result.status === 'invalidated'
-            || (result.status === 'error' && !busyError));
+            || result.status === 'error');
           if (restart) {
             if (state) state.identification_active = false;
             clearIdentification();
