@@ -77,6 +77,30 @@ def test_state_labels_unresolved_characters_with_their_id(tmp_path, monkeypatch)
     assert state["characters"][0]["name"] == "Character 1"
 
 
+def test_state_exposes_the_canonical_selective_copy_groups_and_availability(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_mod.evesettings_codec, "codec_available", lambda: True)
+
+    state = api.eve_settings_state()
+
+    assert state["selective_copy_available"] is True
+    assert state["copy_groups"] == {
+        "characters": api_mod.evesettings_selective.groups_payload("character"),
+        "accounts": api_mod.evesettings_selective.groups_payload("account"),
+    }
+    assert [
+        group for group in state["copy_groups"]["characters"] if not group["default_on"]
+    ] == [
+        {
+            "id": "search_history",
+            "label": "Search history & suggestions",
+            "default_on": False,
+        }
+    ]
+
+
 def test_state_reports_an_unreadable_folder(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
@@ -97,6 +121,179 @@ def test_copy_writes_every_target(tmp_path, monkeypatch):
         str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
     )
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_1.dat"
+
+
+def test_plain_copy_keeps_the_two_argument_byte_copy_path(tmp_path, monkeypatch):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_client_running = lambda: False
+    called = []
+
+    def plain(source, targets, **kwargs):
+        called.append((source, targets, kwargs))
+        return api_mod.evesettings_ops.CopyReport(
+            [api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
+        )
+
+    monkeypatch.setattr(api_mod.evesettings_ops, "copy_to_targets", plain)
+    monkeypatch.setattr(
+        api_mod.evesettings_ops,
+        "copy_selected_to_targets",
+        lambda *args, **kwargs: pytest.fail("structured copy must not run"),
+    )
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
+    )
+
+    assert len(called) == 1
+
+
+def test_structured_copy_delegates_selected_groups_unchanged(tmp_path, monkeypatch):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    groups = ["windows", "chat"]
+    called = []
+
+    def selected(source, targets, **kwargs):
+        called.append(kwargs["selected_groups"])
+        return api_mod.evesettings_ops.CopyReport(
+            [api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
+        )
+
+    monkeypatch.setattr(api_mod.evesettings_ops, "copy_selected_to_targets", selected)
+    monkeypatch.setattr(
+        api_mod.evesettings_ops,
+        "copy_to_targets",
+        lambda *args, **kwargs: pytest.fail("plain copy must not run"),
+    )
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"),
+        [str(profile / "core_char_2.dat")],
+        groups,
+    )
+
+    assert called == [groups]
+
+
+@pytest.mark.parametrize("probe_result", [True, OSError("window station unavailable")])
+def test_structured_copy_refuses_when_eve_is_running_or_the_probe_fails(
+    tmp_path, monkeypatch, probe_result
+):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._alert = fakes.Alerts()
+    confirms = []
+    api._eve_confirm = lambda *args, **kwargs: confirms.append(args) or True
+
+    def probe():
+        if isinstance(probe_result, BaseException):
+            raise probe_result
+        return probe_result
+
+    api._eve_client_running_strict = probe
+    monkeypatch.setattr(
+        api_mod.evesettings_ops,
+        "copy_selected_to_targets",
+        lambda *args, **kwargs: pytest.fail("copy must not run"),
+    )
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"),
+        [str(profile / "core_char_2.dat")],
+        ["windows"],
+    )
+
+    assert confirms == []
+    assert len(api._alert.raised) == 1
+    assert "Close EVE" in api._alert.raised[0][2]
+    assert any(
+        "onEveSettingsDone" in js and '"ok": false' in js for js in api._window.calls
+    )
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_structured_confirmation_derives_preserved_labels_from_the_kind_table(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    asked = confirms(api)
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"),
+        [str(profile / "core_char_2.dat")],
+        ["windows", "neocom", "infopanels", "dockpanels", "search_history"],
+    )
+
+    ((_title, body),) = asked
+    assert "Preserved in each target: Chat channels." in body
+
+
+def test_invalid_selective_groups_are_rejected_before_confirmation(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    asked = []
+    api._eve_confirm = lambda *args, **kwargs: asked.append(args) or True
+    api._eve_client_running_strict = lambda: False
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"),
+        [str(profile / "core_char_2.dat")],
+        ["overview"],
+    )
+
+    assert asked == []
+
+
+def test_partial_structured_copy_reports_counts_and_still_prunes_backups(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(
+        tmp_path,
+        files=("core_char_1.dat", "core_char_2.dat", "core_char_3.dat"),
+    )
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    api._alert = fakes.Alerts()
+    pruned = []
+    outcomes = [
+        api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True),
+        api_mod.evesettings_ops.TargetOutcome(
+            profile / "core_char_3.dat", False, "bad target"
+        ),
+    ]
+    monkeypatch.setattr(
+        api_mod.evesettings_ops,
+        "copy_selected_to_targets",
+        lambda *args, **kwargs: api_mod.evesettings_ops.CopyReport(outcomes),
+    )
+    monkeypatch.setattr(
+        api_mod.evesettings_backup,
+        "prune",
+        lambda store, keep: pruned.append((store, keep)),
+    )
+
+    api.eve_settings_copy(
+        str(profile / "core_char_1.dat"),
+        [str(profile / "core_char_2.dat"), str(profile / "core_char_3.dat")],
+        ["windows"],
+    )
+
+    assert "Copied to 1 of 2" in api._alert.raised[0][2]
+    assert len(pruned) == 1
 
 
 def test_copy_takes_a_backup_of_each_target(tmp_path, monkeypatch):
@@ -483,6 +680,21 @@ def test_state_reads_the_running_pill_from_cache_not_a_fresh_probe(
     assert calls == [1]
 
 
+def test_the_strict_running_probe_opts_in_at_the_discovery_boundary(
+    tmp_path, monkeypatch
+):
+    from wingman.preview import discovery
+
+    api = build(tmp_path, monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        discovery, "list_clients", lambda **kwargs: seen.append(kwargs) or []
+    )
+
+    assert api._eve_client_running_strict() is False
+    assert seen == [{"strict": True}]
+
+
 def test_the_running_probe_pushes_only_when_the_answer_changes(tmp_path, monkeypatch):
     """One push per change, not per refresh: the page has nothing to
     redraw when the pill still says what it already said."""
@@ -848,9 +1060,13 @@ FORMATION_DOC = {
 def test_state_reports_whether_formations_are_available(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     _fake_codec(monkeypatch, {}, available=False)
-    assert api.eve_settings_state()["formations_available"] is False
+    state = api.eve_settings_state()
+    assert state["formations_available"] is False
+    assert state["selective_copy_available"] is False
     _fake_codec(monkeypatch, {}, available=True)
-    assert api.eve_settings_state()["formations_available"] is True
+    state = api.eve_settings_state()
+    assert state["formations_available"] is True
+    assert state["selective_copy_available"] is True
 
 
 def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeypatch):
@@ -941,10 +1157,28 @@ def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
     )
 
 
+def test_save_is_refused_when_the_strict_running_probe_fails(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    store = _fake_codec(monkeypatch, FORMATION_DOC)
+    api._alert = fakes.Alerts()
+    backups = []
+    api._eve_auto_backup = lambda path: backups.append(path)
+
+    def boom():
+        raise OSError("window station unavailable")
+
+    api._eve_client_running_strict = boom
+    api.eve_settings_save_formations(str(account), [])
+
+    assert store["written"] == [] and backups == []
+    assert len(api._alert.raised) == 1
+    assert "Close EVE" in api._alert.raised[0][2]
+
+
 def test_save_is_refused_while_an_eve_client_is_running(tmp_path, monkeypatch):
     api, account = account_setup(tmp_path, monkeypatch)
     store = _fake_codec(monkeypatch, FORMATION_DOC)
-    api._eve_client_running = lambda: True
+    api._eve_client_running_strict = lambda: True
     api.eve_settings_save_formations(str(account), [])
     assert store["written"] == []
     assert any("Close EVE" in js for js in api._window.calls)

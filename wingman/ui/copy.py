@@ -499,6 +499,7 @@ def format_eve_copy_confirm(
     kind: str | None,
     eve_running: bool,
     source_name: str = "",
+    preserved_groups: list[str] | None = None,
 ) -> str:
     """The confirm shown before one profile's settings overwrite others.
 
@@ -562,9 +563,14 @@ def format_eve_copy_confirm(
         joined = ", ".join(shown)
         listed = f"{joined}, and {rest} more.\n\n" if rest > 0 else f"{joined}.\n\n"
 
+    preserved = ""
+    if preserved_groups:
+        preserved = f"Preserved in each target: {', '.join(preserved_groups)}.\n\n"
+
     return (
         f"Copy {what} onto {count} other {_copy_noun(count, kind)}?\n\n"
         f"{listed}"
+        f"{preserved}"
         f"Each one is backed up first.\n\n"
         f"{running}"
         "This cannot be undone except by restoring a backup."

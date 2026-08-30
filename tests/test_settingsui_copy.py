@@ -9,6 +9,38 @@ import datetime
 
 from wingman.ui import copy as copy_mod
 
+# --- EVE selective-copy confirmation --------------------------------------
+
+
+def test_selective_copy_names_what_each_target_keeps_before_the_backup_promise():
+    body = copy_mod.format_eve_copy_confirm(
+        ["Target"],
+        "character",
+        eve_running=False,
+        source_name="Source",
+        preserved_groups=["Search history & suggestions", "Chat channels"],
+    )
+    preserved = "Search history & suggestions, Chat channels"
+    assert preserved in body
+    assert body.index(preserved) < body.index("backed up first")
+
+
+def test_plain_copy_confirmation_output_is_unchanged_when_groups_are_unspecified():
+    expected = copy_mod.format_eve_copy_confirm(
+        ["Target"], "character", False, source_name="Source"
+    )
+    assert (
+        copy_mod.format_eve_copy_confirm(
+            ["Target"],
+            "character",
+            False,
+            source_name="Source",
+            preserved_groups=None,
+        )
+        == expected
+    )
+
+
 # --- webhook_status --------------------------------------------------------
 
 
