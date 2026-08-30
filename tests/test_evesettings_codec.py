@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -178,11 +179,19 @@ def test_write_document_really_publishes_atomically(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["core_user_1.dat"]
 
 
+# The same platform branch test_packaging_completeness.py uses. Without it
+# this path omits .exe, so on Windows -- the only platform that ships the
+# codec -- the skipif always fires and the one test that exercises the real
+# binary silently never runs.
 CODEC = (
     Path(__file__).resolve().parent.parent
     / "packaging"
     / "bin"
-    / "wingman-settings-codec"
+    / (
+        "wingman-settings-codec.exe"
+        if sys.platform == "win32"
+        else "wingman-settings-codec"
+    )
 )
 
 
