@@ -38,11 +38,10 @@
       display: flex;
       width: max-content;
       padding: 6px 12px;
-      /* Set from settings by sigbar.js as an rgba(): the ALPHA lives on
-         the page background, never on the window, because window-level
-         alpha dims the text with it and the bar exists for legible text.
-         --sigbar-bg is a channel triplet like --brand-rgb, written by JS. */
-      background: rgb(var(--sigbar-bg) / var(--sigbar-alpha, 0.9));
+      /* Fixed, deliberately: the colour/opacity preferences were scrapped
+         for simplicity. Opaque-ish dark over whatever is underneath; the
+         text is a child of this box and always full strength. */
+      background: rgb(20 16 28 / 0.9);
     }
     /* style.css hides .evestat below a 720px viewport -- a rule for the
        MAIN window's narrow floor, which this bar NEVER exceeds. Without
@@ -60,7 +59,7 @@
     }
   </style>
 </head>
-<body class="pywebview-drag-region">
+<body>
   <!-- Same segment, same ids-in-spirit as index.html's #evestat. Ids are
        NOT shared verbatim: this page has no #eve-warn and no engine-state
        line -- those belong to the full app, and a bar that flashes a
@@ -68,7 +67,12 @@
        what it can show. Never hidden: an empty floating pill is worse
        than a row of placeholders, and a stable row keeps the bar's
        width from jumping when the engine starts and stops. -->
-  <div class="statusbar">
+  <!-- The drag region is .statusbar, NOT body: pywebview's mousedown walk
+       climbs from the click target and stops AT body without ever testing
+       it, so a region on body can never match -- and every pixel of this
+       window is covered by .statusbar and its children. Same shape as the
+       main window's titlebar, which has shipped for years. -->
+  <div class="statusbar pywebview-drag-region">
     <span class="evestat" id="sigbar-stat">
       <span class="evelabel">SIG</span><span id="bar-sig">&mdash;</span>
       <span class="evelabel">ROOT</span><span id="bar-root">&mdash;</span>

@@ -62,10 +62,9 @@
    // happens in the preview host, which ?dev=1 has none of -- only that
    // the checkbox renders, commits and reports.
    'set_preview_hide_on_lost_focus',
-   // The floating sig bar's two writers. Same shape: settings.js
-   // reverts the checkbox and the slider on anything that is not
-   // `applied`, like every entry above.
-   'toggle_sig_bar', 'set_sig_bar_style'
+   // The floating sig bar's writer. Same shape: settings.js reverts the
+   // checkbox on anything that is not `applied`, like every entry above.
+   'toggle_sig_bar'
   ].forEach(function (name) {
     api[name] = function (value) {
       console.log('DEV api.' + name + '(', value, ')');
@@ -494,8 +493,7 @@
           // of off, for the same reason hide_on_lost_focus is: the
           // harness is where the card's controls are eyeballed, and a
           // default-valued fixture cannot show they read the payload.
-          sig_bar: { enabled: true, bg_color: '#1d1030', opacity: 75,
-            x: null, y: null }
+          sig_bar: { enabled: true, x: null, y: null }
         }, patch || {}),
       // discord.describe()'s shape for the fake webhook stored above, not
       // a prose invention: it is host/api/webhooks/<id>… by construction,

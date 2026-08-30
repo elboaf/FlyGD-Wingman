@@ -220,15 +220,12 @@ def _sig_bar_defaults() -> dict:
     # Off by default: enabling costs a second WebView2 window, which an
     # upgrading user has to ask for rather than be given.
     #
-    # bg_color/opacity style the PAGE background as rgba, not the window:
-    # window-level alpha dims the text along with it, and the bar's whole
-    # point is legible text over whatever sits underneath. x/y are the last
-    # drag position (None = default placement), so the bar reopens where
-    # it was left.
+    # x/y are the last drag position (None = default placement), so the
+    # bar reopens where it was left. The background look is fixed in
+    # sigbar.html -- colour/opacity preferences were scrapped for
+    # simplicity after a round of user testing.
     return {
         "enabled": False,
-        "bg_color": "#14101c",
-        "opacity": 90,
         "x": None,
         "y": None,
     }
@@ -515,15 +512,6 @@ def validated_sig_bar(raw) -> dict:
         return section
     if isinstance(raw.get("enabled"), bool):
         section["enabled"] = raw["enabled"]
-    colour = raw.get("bg_color")
-    if isinstance(colour, str) and _HEX_RE.match(colour):
-        section["bg_color"] = colour
-    opacity = raw.get("opacity")
-    if isinstance(opacity, int) and not isinstance(opacity, bool):
-        # Clamped, not rejected: the slider's floor is 0 (fully
-        # transparent background), and the text is styled separately at
-        # full opacity, so 0 is a legitimate look rather than a broken one.
-        section["opacity"] = max(0, min(100, opacity))
     for key in ("x", "y"):
         value = raw.get(key)
         # None means "default placement"; anything non-int non-None from a

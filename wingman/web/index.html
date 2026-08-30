@@ -572,9 +572,9 @@
              same engine's readout: it renders what the keybinds' status
              line pushes, so a reader looking for it looks here first. -->
         <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
-          readout that floats over other windows &mdash; drag it anywhere
-          on screen. Its width hugs the text, and it remembers where you
-          left it.</p>
+          readout that floats over other windows. Drag it anywhere on
+          screen; it remembers where you left it. Its toggle also lives at
+          the right end of the status strip.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
@@ -583,26 +583,6 @@
         </div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="sigbar-enabled-status"></span></div>
-        <div class="row">
-          <label class="lab" for="sigbar-bg">Background</label>
-          <input type="color" id="sigbar-bg" value="#14101c">
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="sigbar-bg-status"></span></div>
-        <div class="row">
-          <label class="lab" for="sigbar-opacity">Opacity</label>
-          <!-- 0 is legal here, unlike the previews slider: the alpha is on
-               the page background, and the text is styled separately at
-               full strength, so a transparent bar over a bright scene is
-               a look, not a bug. -->
-          <input type="range" id="sigbar-opacity" min="0" max="100">
-          <span class="range-value" id="sigbar-opacity-value"></span>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint">Only the background fades &mdash; the text
-            always stays at full strength.</span></div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="sigbar-opacity-status"></span></div>
       </section>
     </div>
 

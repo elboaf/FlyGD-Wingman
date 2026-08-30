@@ -2193,6 +2193,11 @@ class Api:
         on = bool(on)
         settings_mod.update_section(self._state.settings, "sig_bar", {"enabled": on})
         bar = self._sigbar_window
+        logger.info(
+            "Sig bar toggle: requested %s, window %s.",
+            on,
+            "exists" if bar is not None else "not built yet",
+        )
         try:
             if on:
                 if bar is None:
@@ -2210,32 +2215,20 @@ class Api:
             # setting: the persisted choice stands and the next toggle
             # retries the window.
             logger.exception("sig bar window toggle failed")
-        self._push_sig_bar_state()
-        return self._field_ok()
-
-    def set_sig_bar_style(self, bg_color, opacity) -> dict:
-        """Persist the bar's background colour and opacity, live.
-
-        Validated here rather than left to validated_sig_bar: this is a
-        bridge entry point, so a page bug must not have to wait for the
-        next load() to be cleaned up. The colour is rejected (not coerced)
-        on the same reasoning as the alert-event colour -- a silent
-        fallback would look like the user's choice not taking.
-        """
-        if not isinstance(bg_color, str) or not settings_mod._HEX_RE.match(bg_color):
-            return self._field_refused("Pick a colour from the picker.")
-        try:
-            opacity = int(opacity)
-        except (TypeError, ValueError):
-            return self._field_refused("Opacity must be a number.")
-        opacity = max(0, min(100, opacity))
-        settings_mod.update_section(
-            self._state.settings,
-            "sig_bar",
-            {"bg_color": bg_color, "opacity": opacity},
+        logger.info(
+            "Sig bar toggle done: enabled=%s, visible=%s.",
+            self._state.settings["sig_bar"]["enabled"],
+            self._sig_bar_visible(),
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    def _sig_bar_visible(self):
+        """Best-effort visibility readback, for the toggle log line only."""
+        try:
+            return bool(self._sigbar_window.native.Visible)
+        except Exception:  # noqa: BLE001 -- logging only; any failure renders the same "unknown".
+            return "unknown"
 
     def save_sig_bar_pos(self, x, y) -> None:
         """Persist the bar's last drag position. Fire-and-forget from JS.

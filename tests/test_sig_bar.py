@@ -62,8 +62,6 @@ def test_defaults_carry_the_sig_bar_section(tmp_path):
     data = settings.load(tmp_path / "s.json")  # absent file -> fresh defaults
     assert data["sig_bar"] == {
         "enabled": False,
-        "bg_color": "#14101c",
-        "opacity": 90,
         "x": None,
         "y": None,
     }
@@ -91,15 +89,11 @@ def test_validated_sig_bar_falls_back_whole_on_a_malformed_section():
 def test_validated_sig_bar_falls_back_alone_per_value():
     raw = {
         "enabled": "yes",  # not a bool -> default
-        "bg_color": "purple",  # not #rrggbb -> default
-        "opacity": 500,  # clamped, not rejected
         "x": "120",  # a string coordinate -> None (default placement)
         "y": True,  # bool is an int; must not become a coordinate
     }
     got = settings.validated_sig_bar(raw)
     assert got["enabled"] is False
-    assert got["bg_color"] == "#14101c"
-    assert got["opacity"] == 100
     assert got["x"] is None
     assert got["y"] is None
 
@@ -107,8 +101,6 @@ def test_validated_sig_bar_falls_back_alone_per_value():
 def test_validated_sig_bar_accepts_a_good_document():
     raw = {
         "enabled": True,
-        "bg_color": "#1D1030",
-        "opacity": 0,
         "x": -8,  # a negative position is legal on Windows
         "y": 40,
     }
@@ -155,25 +147,6 @@ def test_toggle_pushes_state_to_both_pages(api):
     api.toggle_sig_bar(True)
     assert len(state_pushes(api._window)) == 1
     assert len(state_pushes(api._sigbar_window)) == 1
-
-
-def test_set_sig_bar_style_rejects_a_non_colour(api):
-    before = dict(api._state.settings["sig_bar"])
-    res = api.set_sig_bar_style("purple", 50)
-    assert res["applied"] is False
-    assert api._state.settings["sig_bar"] == before
-    assert state_pushes(api._window) == []
-
-
-def test_set_sig_bar_style_clamps_and_persists(api):
-    res = api.set_sig_bar_style("#1d1030", 140)
-    assert res["applied"] is True
-    section = api._state.settings["sig_bar"]
-    assert section["bg_color"] == "#1d1030"
-    assert section["opacity"] == 100
-    payload = json.loads(state_pushes(api._window)[-1].split("(", 1)[1].rstrip(")"))
-    assert payload["bg_color"] == "#1d1030"
-    assert payload["opacity"] == 100
 
 
 def test_save_sig_bar_persists_ints_and_ignores_junk(api):

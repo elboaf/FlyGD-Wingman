@@ -103,8 +103,6 @@ def test_defaults_are_the_documented_values():
         # WebView2 window, which must be asked for.
         "sig_bar": {
             "enabled": False,
-            "bg_color": "#14101c",
-            "opacity": 90,
             "x": None,
             "y": None,
         },
