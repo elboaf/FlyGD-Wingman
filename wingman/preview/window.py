@@ -549,6 +549,13 @@ class PreviewWindow:
             if not self._label_hwnd:
                 logger.warning("Label overlay window failed for %s", self._label_text())
                 return
+            # WS_POPUP alone creates the window HIDDEN, and the bitmap
+            # push below maps to UpdateLayeredWindow, which does NOT
+            # change visibility -- the chrome window shows itself the same
+            # explicit way. This call is why the pill exists on screen at
+            # all; without it the overlay is a perfectly rendered bitmap
+            # on a window that is never mapped.
+            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_SHOWNOACTIVATE)
         self._sync_label()
 
     def _sync_label(self) -> None:
@@ -579,10 +586,6 @@ class PreviewWindow:
             self.rect.x + self._inset,
             self.rect.y + self._inset,
         )
-        if self.hidden:
-            # layered.push maps to UpdateLayeredWindow, which shows a
-            # hidden layered window -- re-assert ours.
-            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_HIDE)
 
     def _destroy_label_overlay(self) -> None:
         if self._label_hwnd is None:
@@ -861,18 +864,27 @@ class PreviewWindow:
         #   corner-handle drag    -> resize this preview (kept: it is the
         #                             one visibly discoverable affordance)
         #
-        # Locked refuses the MOVE and nothing else, matching the old
-        # behaviour where the corner resize survived the lock: a lock is
-        # about WHERE the previews sit, not how big they are.
-        #
-        # The cost of "left drag moves" is that a left press can no longer
-        # switch on the way down (#123): at button-down time it is not yet
-        # knowable whether the press is a click or a drag. The switch now
-        # fires at button-up for a press that never crossed CLICK_PX --
-        # which restores the 60-120ms of latency #123 removed for plain
-        # clicks and spends it deciding the question. EVE-O Preview makes
-        # the same trade for the same gesture set.
+        # LOCKED, the grammar collapses to what a lock promises -- nothing
+        # about WHERE a preview sits or HOW BIG it is may change by mouse:
+        # no move, no resize, no chord. The payoff is performance: with
+        # every drag gesture refused outright, a locked left press IS a
+        # click from the first instant, so the switch fires on the way
+        # down (#123's original shape) and no click pays the 60-120ms
+        # classification delay the unlocked grammar needs.
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
+            if self.locked:
+                # A locked left press is a switch and nothing else. A
+                # locked right press is nothing at all.
+                if msg == win32.WM_LBUTTONDOWN:
+                    # Acknowledged BEFORE the handoff, and regardless of
+                    # whether the switch that follows succeeds: Windows
+                    # refuses a foreground change from a process without
+                    # recent input, so acknowledging only on a successful
+                    # swap would leave the ring pulsing forever with
+                    # clicking it doing nothing.
+                    self.acknowledge_alert()
+                    self._on_activate(self.client)
+                return 0
             pt = _lparam_point(lparam)
             if self._mode is not None:
                 # The SECOND button of the chord. Whichever gesture the
@@ -895,8 +907,7 @@ class PreviewWindow:
                 # Right is resize now, not move: left took over movement
                 # because a move is the gesture you want near the preview
                 # you are looking at, and a resize is the one you want a
-                # deliberate second button for. Allowed under the lock,
-                # like the corner handle above.
+                # deliberate second button for.
                 self._mode = "resize"
             # Client coords are only safe HERE: the window has not moved
             # yet, so they still describe the point that was clicked.
@@ -932,11 +943,6 @@ class PreviewWindow:
                 p = self._perf
                 p["gap"] = max(p["gap"], t0 - p["last"])
                 p["n"] += 1
-            if self._mode == "dead":
-                # A locked left-drag that crossed the threshold. Swallow
-                # the moves so the up-handler still sees a mode and can
-                # release the capture it took at button-down.
-                return 0
             coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)
             # GetCursorPos, not lParam: lParam is client-relative and the
             # window is moving under the cursor, which is what made this
@@ -949,10 +955,9 @@ class PreviewWindow:
                 # A drag, not a click -- and the switch that a click would
                 # have earned is now cancelled, deliberately: dragging a
                 # preview around is not a request to bring its client
-                # forward.
-                self._mode = "dead" if self.locked else "move"
-                if self._mode == "dead":
-                    return 0
+                # forward. (A locked preview never reaches this branch at
+                # all: its press switched on the way down.)
+                self._mode = "move"
             if self._mode in ("resize", "resize_all"):
                 self.move(
                     resize_result(

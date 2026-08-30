@@ -539,12 +539,10 @@ def test_a_right_drag_release_reports_the_new_rect():
 
 
 def test_a_locked_preview_refuses_the_left_drag(monkeypatch):
-    """The lock stops movement, which is now the left drag. A locked
-    left-drag is dead: no move, and no click either -- the press crossed
-    the threshold, so it declared itself a drag, and a refused drag must
-    not fall back to switching or the lock would click you into EVE every
-    time you tried to move a locked preview. Unticking Lock is the way to
-    move one again."""
+    """A lock means nothing about the preview may change by mouse. The
+    locked left press switches immediately -- there is no drag gesture
+    left for it to become -- so this press activated on the way DOWN and
+    the subsequent move is arriving at a window with no armed gesture."""
     monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
     activated = []
     w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
@@ -556,37 +554,75 @@ def test_a_locked_preview_refuses_the_left_drag(monkeypatch):
     w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
 
     assert w.rect == Rect(100, 100, 320, 210)
-    assert activated == []
+    assert activated == [w.client]
 
 
-def test_a_locked_preview_still_resizes_on_the_right_drag():
-    """The lock stops movement, never sizing -- same as it always was for
-    the corner handle, which a lock has never refused."""
+def test_a_locked_preview_refuses_the_right_drag_resize():
+    """A lock stops SIZING too, not just movement: right-drag resize is
+    refused outright while locked. Unticking Lock is the way to resize."""
     w, libs = _window_for_gestures(locked=True)
-    # Freeform: the locked aspect would re-shape the result away
-    # from the pointer deltas these tests assert on.
     w.lock_aspect = False
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
     libs.cursor = (250, 260)
     w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
+    w._on_message(window.win32.WM_RBUTTONUP, 2, 0)
 
-    assert w.rect == Rect(100, 100, 370, 270)
+    assert w.rect == Rect(100, 100, 320, 210)
 
 
-def test_a_locked_preview_still_focuses_its_client(monkeypatch):
-    """A lock stops movement, never focus switching. That survived both
-    button reshuffles intact."""
+def test_a_locked_preview_refuses_the_resize_all_chord(monkeypatch):
+    """Left+right is a resize gesture like any other; the lock refuses
+    it. The chord never arms at all: the first (left) press already
+    switched, and the second (right) press arrives on a locked window
+    with no gesture in flight."""
+    mirrored = []
+    activated = []
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    w, libs = _window_for_gestures(
+        locked=True, on_activate=activated.append, on_resize_all=mirrored.append
+    )
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
+    libs.cursor = (250, 260)
+    w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
+
+    assert w.rect == Rect(100, 100, 320, 210)
+    assert mirrored == []
+
+
+def test_a_locked_preview_still_focuses_its_client_on_the_way_down(monkeypatch):
+    """A lock stops gesture handling, never focus switching -- and with
+    every drag refused, the locked switch is free to fire on WM_LBUTTONDOWN
+    again (#123's shape): no classification delay is needed when no press
+    can become anything but a click."""
     monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
     activated = []
     w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
 
     assert activated == [w.client]
+
+
+def test_a_locked_left_press_on_the_resize_corner_still_switches(monkeypatch):
+    """The lock refuses sizing by ANY route, the corner handle included --
+    so a locked press there is just a click, and a click switches. The
+    unlocked corner test below pins the opposite for the same reason."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
+
+    corner = (319 & 0xFFFF) | ((209 & 0xFFFF) << 16)
+    libs.cursor = (419, 309)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, corner)
+
+    assert activated == [w.client]
+    assert w._mode is None
 
 
 def test_the_resize_corner_does_not_activate(monkeypatch):

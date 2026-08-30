@@ -1908,6 +1908,12 @@ Enable previews in Settings before starting.
       and never detaches or overlaps beyond the frame. A client with an
       armed alert: the pill shifts inward with the ring, and toggling
       labels off mid-alert removes it while the ring keeps pulsing.
+      **First, the obvious check: the pill is actually visible.** (Its
+      window is created hidden and shown explicitly; the one release
+      where the show call was missing rendered perfect pills onto a
+      window that was never mapped, and the feature looked simply dead.)
+      Also check hide-on-lost-focus takes the pill with the preview, and
+      that quitting Wingman with labels on leaves no orphan pill behind.
 - [ ] Clicking a preview brings that client to the foreground. If nothing
       happens, the log has `Activation of 0x… did not take` at debug.
 - [ ] **The ring marks the client you last used, and stays there.** With
@@ -2054,16 +2060,16 @@ foreground.
       client. The corner is inside the preview, so a resize that also
       focused would drag a client to the foreground every time a layout
       is adjusted.
-- [ ] A locked preview refuses a left drag — the only move gesture —
-      while a left click on it still switches and a right-drag resize
-      still works (a lock has never refused sizing). A locked left drag
-      must not switch either: the press declared itself a drag, and a
-      refused drag that clicked you into EVE would make every attempt to
-      move a locked preview switch clients.
-      Check this **on a character who has never dragged their preview**,
-      not just one that already has a saved position — that is the case
-      the lock's own storage list exists for, since `locked` cannot ride
-      in `preview.layouts` without a saved rect.
+- [ ] A locked preview is FULLY inert to mouse gestures — no left-drag
+      move, no right-drag resize, no corner resize, no left+right
+      resize-all — while a left click on it still switches, **on the way
+      down** (press-and-hold without moving: the switch happens during
+      the hold, since a locked press can be nothing but a click and pays
+      no classification delay). Check this **on a character who has
+      never dragged their preview**, not just one that already has a
+      saved position — that is the case the lock's own storage list
+      exists for, since `locked` cannot ride in `preview.layouts`
+      without a saved rect.
 - [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
       Activation ownership moved from the preview window into the host as
       part of this slice; this is a pure regression check on the
