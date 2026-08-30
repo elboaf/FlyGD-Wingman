@@ -1449,26 +1449,53 @@
         <button class="btn" id="ai-back" type="button">&lsaquo; Profiles</button>
       </div>
       <h1>Identify accounts</h1>
-      <div id="ai-intro">
+      <section id="ai-intro">
+        <h2 id="ai-intro-heading" tabindex="-1">Match an account</h2>
         <p>EVE stores account settings under a number, not a name. Wingman can match that number to a character by watching which settings change together.</p>
         <p class="hint">Close every EVE client. You will launch one character after identification starts.</p>
-      </div>
+      </section>
       <p id="es-identity-status" class="ai-status" role="status"></p>
       <div class="row es-identify-actions">
         <button id="es-identify-start" class="btn acc" type="button">Start identification</button>
         <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
         <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
       </div>
-      <div id="es-identify-candidate" hidden>
+      <section id="es-identify-candidate" hidden>
+        <h2 id="es-identify-candidate-heading" tabindex="-1">Confirm changed character</h2>
         <div class="row">
           <label class="lab" for="es-identify-character">Changed character</label>
           <select id="es-identify-character" class="field"></select>
           <button id="es-identify-link" class="btn" type="button">Link character</button>
         </div>
-      </div>
-      <div id="ai-complete" hidden>
-        <button id="ai-complete-back" class="btn" type="button">Back to Profiles</button>
-      </div>
+      </section>
+      <section id="ai-name-step" hidden>
+        <h2 id="ai-name-heading" tabindex="-1">Account name</h2>
+        <p id="ai-name-match" class="hint"></p>
+        <div class="row">
+          <label class="lab" for="es-account-name">Account name</label>
+          <input id="es-account-name" class="field" maxlength="80" aria-describedby="ai-name-hint ai-name-status">
+          <button id="es-account-name-save" class="btn" type="button">Save and continue</button>
+        </div>
+        <p id="ai-name-hint" class="hint">Use the username you sign in to EVE Online with. Stored only on this computer.</p>
+        <p id="ai-name-status" class="hint" role="status"></p>
+      </section>
+      <section id="ai-roster-step" hidden>
+        <h2 id="ai-roster-heading" tabindex="-1"></h2>
+        <p id="ai-roster-count" class="ai-status" role="status"></p>
+        <p id="ai-roster-identified" class="hint" role="status"></p>
+        <p class="hint">Check this account in the EVE launcher, then add any other characters shown there.</p>
+        <div id="ai-roster-characters" class="es-account-characters"></div>
+        <div id="ai-roster-add-row" class="row">
+          <label class="lab" for="ai-roster-character">Add character</label>
+          <select id="ai-roster-character" class="field"></select>
+          <button id="ai-roster-add" class="btn" type="button">Add character</button>
+        </div>
+        <p id="ai-roster-empty" class="hint" role="status"></p>
+        <div class="row es-identify-actions">
+          <button id="ai-roster-done" class="btn" type="button">Done</button>
+          <button id="ai-identify-another" class="linkbtn" type="button">Identify another account</button>
+        </div>
+      </section>
 
       <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage names and character links…</button>
       <section id="es-identity-panel" class="es-identity" hidden>
@@ -1478,15 +1505,15 @@
           <select id="es-identity-account" class="field"></select>
         </div>
         <div class="row">
-          <label class="lab" for="es-account-alias">Name</label>
-          <input id="es-account-alias" class="field" maxlength="80" placeholder="Optional account name">
-          <button id="es-alias-apply" class="btn" type="button">Apply</button>
+          <label class="lab" for="es-manage-account-name">Account name</label>
+          <input id="es-manage-account-name" class="field" maxlength="80">
+          <button id="es-account-name-apply" class="btn" type="button">Apply</button>
         </div>
         <div class="row">
           <span class="lab">Confirmed characters</span>
           <div id="es-account-characters" class="es-account-characters"></div>
         </div>
-        <div class="row">
+        <div id="es-character-add-row" class="row">
           <label class="lab" for="es-character-add">Add character</label>
           <select id="es-character-add" class="field"></select>
           <button id="es-character-add-btn" class="btn" type="button">Add</button>

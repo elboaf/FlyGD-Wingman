@@ -2871,10 +2871,9 @@ button.btn:disabled,
 
 #es-account-tools { width: 100%; }
 #es-account-tools[hidden], #es-identity-panel[hidden], .es-identity[hidden],
-#ai-complete[hidden],
-#es-identify-candidate[hidden], .es-identify-actions > [hidden] {
-  display: none;
-}
+#es-identify-candidate[hidden], #ai-name-step[hidden], #ai-roster-step[hidden],
+#ai-roster-add-row[hidden], #es-character-add-row[hidden],
+.es-identify-actions > [hidden] { display: none; }
 
 #route-accountidentity { overflow-y: auto; padding: 12px; }
 .account-identity-shell {
@@ -2887,9 +2886,12 @@ button.btn:disabled,
 .account-identity-shell h2 {
   margin: 0; color: var(--text); font-size: 15px; font-weight: 650;
 }
-#ai-intro { display: flex; flex-direction: column; gap: 12px; }
-#ai-intro[hidden] { display: none; }
-#ai-intro p { margin: 0; max-width: 70ch; }
+#ai-intro, #es-identify-candidate, #ai-name-step, #ai-roster-step {
+  display: flex; flex-direction: column; gap: 12px;
+}
+#ai-intro[hidden], #es-identify-candidate[hidden], #ai-name-step[hidden],
+#ai-roster-step[hidden] { display: none; }
+#ai-intro p, #ai-name-step p, #ai-roster-step p { margin: 0; max-width: 70ch; }
 .account-identity-shell .row {
   margin-bottom: 0; flex-wrap: wrap; row-gap: 4px;
 }
@@ -2909,8 +2911,8 @@ button.btn:disabled,
   min-height: 30px; border-bottom: 1px solid var(--border);
 }
 .es-linked-character:last-child { border-bottom: 0; }
-#es-identity-account, #es-character-add { flex: 1; }
-#es-account-alias { flex: 1; }
+#es-identity-account, #es-character-add, #ai-roster-character { flex: 1; }
+#es-manage-account-name, #es-account-name { flex: 1; }
 .es-identify-actions { margin-top: 4px; }
 
 .es-target-choice { align-items: flex-start; }
