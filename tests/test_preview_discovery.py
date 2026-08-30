@@ -72,6 +72,15 @@ def test_access_denied_on_image_name_drops_the_window():
     assert out == []
 
 
+def test_image_name_failure_is_skipped_by_default_but_strict_propagates():
+    def image_name(pid):
+        raise OSError("process disappeared")
+
+    assert _list(image_name=image_name) == []
+    with pytest.raises(OSError, match="process disappeared"):
+        _list(image_name=image_name, strict=True)
+
+
 def test_enumerator_failure_is_survivable():
     def boom():
         raise OSError("no window station")

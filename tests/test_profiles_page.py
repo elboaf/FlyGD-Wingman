@@ -553,6 +553,13 @@ def test_copy_group_rendering_uses_kind_payload_and_remembers_seen_ids():
     render = re.search(r"function renderCopyGroups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert render, "copy groups are not rendered"
     block = render.group(1)
+    null_guard = block.index("if (!state) return;")
+    availability_read = block.index("state.selective_copy_available")
+    assert null_guard < availability_read, (
+        "renderCopyGroups must guard null state before reading availability"
+    )
+    assert block.index("row.hidden = true;") < null_guard
+    assert block.index("host.innerHTML = '';") < null_guard
     assert "var choices = copyGroupSelections[currentKind];" in block
     assert re.search(
         r"var groups = \(state\.copy_groups &&\s*"

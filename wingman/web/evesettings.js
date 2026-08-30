@@ -211,9 +211,12 @@
   function renderCopyGroups() {
     var row = WM.el('es-copy-options');
     var host = WM.el('es-copy-groups');
+    row.hidden = true;
+    host.innerHTML = '';
+    if (!state) return;
+
     var available = !!state.selective_copy_available;
     row.hidden = !available;
-    host.innerHTML = '';
     if (!available) return;
 
     var currentKind = kind();

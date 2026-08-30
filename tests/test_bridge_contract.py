@@ -29,6 +29,7 @@ Purely lexical, and only as good as the spellings it watches:
   be pushed from somewhere other than ui/api.py.
 """
 
+import inspect
 import re
 from pathlib import Path
 
@@ -116,6 +117,9 @@ def test_selective_copy_reuses_the_existing_bridge_contract():
     from wingman.ui.api import Api
 
     assert callable(getattr(Api, "eve_settings_copy", None))
+    parameters = inspect.signature(Api.eve_settings_copy).parameters
+    assert "groups" in parameters
+    assert parameters["groups"].default is None
     registered = registered_names()
     assert set(registered) & {
         "onEveSettingsNames",

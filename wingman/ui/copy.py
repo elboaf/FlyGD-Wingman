@@ -523,16 +523,16 @@ def format_eve_copy_confirm(
     same reason: a separately-passed count could disagree with the names
     printed under it.
 
-    It repeats the running-client hazard. The screen already renders a
-    warn-toned "EVE running" pill precisely because EVE rewrites its own
-    settings on exit and will overwrite whatever was copied underneath it
-    -- but the pill is advisory and easy to miss, and this dialog is modal
-    and unmissable. The warning was on the wrong one of the two.
+    It repeats the running-client hazard for the legacy plain-copy path.
+    The screen already renders a warn-toned "EVE running" pill precisely
+    because EVE rewrites its own settings on exit and will overwrite whatever
+    was copied underneath it -- but the pill is advisory and easy to miss,
+    and this dialog is modal and unmissable. Plain copy keeps that warning
+    advisory because its probe is best-effort.
 
-    It stays advisory here as well: nothing is blocked, because the probe
-    is best-effort (Api._eve_client_running swallows its own failures) and
-    a false positive must not be able to lock a user out of their own
-    profiles.
+    Structured copy performs strict discovery and refuses a running client
+    before calling this formatter. That safety decision belongs to the copy
+    path and does not depend on this function's optional formatting inputs.
     """
     names = [n for n in (target_names or []) if n]
     count = len(target_names or [])
