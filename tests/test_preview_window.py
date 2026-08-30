@@ -1,37 +1,17 @@
 """Only the gesture arithmetic is tested here -- window creation needs a
 desktop and lives in the smoke checklist.
 
-Click-versus-drag is where this goes subtly wrong: a click that moves one
-pixel must still focus the client, and a locked preview must never move
-but must still activate on release."""
+The button split is where this goes subtly wrong. Left is focus and
+nothing else, and it fires on the way DOWN so the switch does not wait
+for the button to come back up; right is movement; the corner is resize
+and must not steal focus on the way past. There is no click-versus-drag
+classification any more -- the thing that used to make a one-pixel
+wobble still count as a click."""
 
 from wingman.preview import window
 from wingman.preview.geometry import Rect
 
 R = Rect(100, 100, 320, 210)
-
-
-def test_a_still_press_is_a_click():
-    action, rect = window.drag_result((10, 10), (10, 10), R, locked=False, drag_min=4)
-    assert action == "activate" and rect == R
-
-
-def test_movement_within_the_drag_threshold_is_still_a_click():
-    action, _ = window.drag_result((10, 10), (12, 11), R, locked=False, drag_min=4)
-    assert action == "activate"
-
-
-def test_movement_past_the_threshold_is_a_drag():
-    action, rect = window.drag_result((10, 10), (60, 40), R, locked=False, drag_min=4)
-    assert action == "move"
-    assert rect == Rect(150, 130, 320, 210)
-
-
-def test_a_locked_preview_never_moves_but_still_activates():
-    """Locking exists so a carefully placed layout survives a stray drag.
-    It must not also break click-to-focus."""
-    action, rect = window.drag_result((10, 10), (200, 200), R, locked=True, drag_min=4)
-    assert action == "activate" and rect == R
 
 
 def test_resize_result_floors_at_the_minimum_size():
@@ -486,22 +466,55 @@ def _window_for_gestures(locked, on_activate=lambda c: None):
     return w, libs
 
 
-def test_a_locked_preview_ignores_a_left_drag():
-    """That is what the lock is for: a carefully placed layout should
-    survive a stray drag."""
-    w, libs = _window_for_gestures(locked=True)
+def test_a_left_press_activates_on_the_way_down(monkeypatch):
+    """The point of the change: the switch starts on WM_LBUTTONDOWN, so
+    it no longer waits out however long the button is held (60-120ms of
+    a normal click). EVE-O Preview fires its ThumbnailActivated from
+    MouseDown for the same reason."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    libs.cursor = (400, 300)
+
+    assert activated == [w.client]
+
+
+def test_the_left_release_does_not_activate_a_second_time(monkeypatch):
+    """The press already switched. A release that switched again would
+    run the whole minimize/activate sequence twice per click."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
+    assert activated == [w.client]
+
+
+def test_a_left_drag_no_longer_moves_the_preview(monkeypatch):
+    """The breaking half of EVE-O parity. Left is focus only; movement
+    moved to the right button, which is where EVE-O and TriffView have
+    always had it. Dragging left now just leaves the preview where it
+    is, having focused its client."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    w, libs = _window_for_gestures(locked=False)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
+    libs.cursor = (250, 260)
     w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
+
     assert w.rect == Rect(100, 100, 320, 210)
 
 
-def test_a_locked_preview_still_moves_on_a_right_drag():
-    """The documented override: a lock stops accidental movement, not
-    deliberate movement. Both buttons shared one 'drag' mode, so the lock
-    suppressed the override too and it silently did nothing."""
-    w, libs = _window_for_gestures(locked=True)
+def test_a_right_drag_moves_the_preview():
+    """Right-drag is now the ONLY way to move one."""
+    w, libs = _window_for_gestures(locked=False)
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
     libs.cursor = (250, 260)
@@ -509,16 +522,71 @@ def test_a_locked_preview_still_moves_on_a_right_drag():
     assert w.rect == Rect(150, 160, 320, 210)
 
 
-def test_an_unlocked_left_drag_still_moves():
+def test_a_right_drag_release_reports_the_new_rect():
+    """The layout is only persisted from the rect reported on release."""
     w, libs = _window_for_gestures(locked=False)
+    reported = []
+    w._on_rect_changed = lambda *a: reported.append(a)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
+    libs.cursor = (250, 260)
+    w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
+    w._on_message(window.win32.WM_RBUTTONUP, 2, 0)
+
+    assert reported == [("Pilot", Rect(150, 160, 320, 210), False)]
+
+
+def test_a_locked_preview_refuses_the_right_drag_too(monkeypatch):
+    """The lock's meaning had to change with the buttons. It used to stop
+    a left drag while right-drag stayed as the deliberate override -- but
+    now that right-drag is the only move gesture, honouring the override
+    would leave the lock controlling nothing at all. So a lock stops
+    movement outright, which is also what EVE-O's LockThumbnailLocation
+    does. Unticking Lock is the way to move one again."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    w, libs = _window_for_gestures(locked=True)
+
+    libs.cursor = (200, 200)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
+    libs.cursor = (250, 260)
+    w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
+
+    assert w.rect == Rect(100, 100, 320, 210)
+
+
+def test_a_locked_preview_still_focuses_its_client(monkeypatch):
+    """A lock stops movement, never focus switching. That survived the
+    button split intact."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
+
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    libs.cursor = (250, 260)
-    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
-    assert w.rect == Rect(150, 160, 320, 210)
+
+    assert activated == [w.client]
 
 
-def test_a_click_hands_the_switch_to_the_host_exactly_once(monkeypatch):
+def test_the_resize_corner_does_not_activate(monkeypatch):
+    """Grabbing the handle is a resize, not a switch. Activating there
+    would drag the client to the foreground every time the user adjusted
+    a preview's size."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
+    # Bottom-right corner of a 320x210 window at the origin, in client
+    # coordinates: geometry.hit_resize_handle's own frame.
+    corner = (319 & 0xFFFF) | ((209 & 0xFFFF) << 16)
+    libs.cursor = (419, 309)
+    w._on_message(window.win32.WM_LBUTTONDOWN, 1, corner)
+
+    assert activated == []
+    assert w._mode == "resize"
+
+
+def test_the_switch_is_handed_to_the_host_not_performed_here(monkeypatch):
     """The window classifies the gesture; the host performs the switch.
 
     Both halves matter and both are plausible ways to break this. If the
@@ -535,44 +603,9 @@ def test_a_click_hands_the_switch_to_the_host_exactly_once(monkeypatch):
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
 
     assert activated == [w.client]
     assert activate_calls == []
-
-
-def test_a_click_on_a_locked_preview_still_reaches_the_host(monkeypatch):
-    """A lock stops movement, not focus switching -- drag_result() says so
-    and the delegation must not quietly change that."""
-    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
-    activated = []
-    w, libs = _window_for_gestures(locked=True, on_activate=activated.append)
-
-    libs.cursor = (200, 200)
-    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    libs.cursor = (400, 300)  # past DRAG_MIN: locked, so still a click
-    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
-
-    assert activated == [w.client]
-
-
-def test_a_real_drag_release_reports_the_rect_instead_of_activating(monkeypatch):
-    """The other side of the classification: a moved preview must not also
-    steal the foreground on release."""
-    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
-    activated = []
-    w, libs = _window_for_gestures(locked=False, on_activate=activated.append)
-    reported = []
-    w._on_rect_changed = lambda *a: reported.append(a)
-
-    libs.cursor = (200, 200)
-    w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
-    libs.cursor = (400, 300)
-    w._on_message(window.win32.WM_MOUSEMOVE, 1, 0)
-    w._on_message(window.win32.WM_LBUTTONUP, 1, 0)
-
-    assert activated == []
-    assert len(reported) == 1
 
 
 # --- the ring and the foreground are separate flags --------------------------

@@ -1658,7 +1658,9 @@ only ever checked by hand.
         own box in the Lock disclosure directly beneath it you have not
         changed. Tick it with one character already explicitly unlocked:
         that character stays draggable and every other preview stops
-        moving on a left drag (right drag still moves them, as always).
+        moving on a right drag — which is now the only move gesture, so a
+        locked preview cannot be moved by mouse at all until it is
+        unlocked.
         Untick it without touching anything else: the arrangement that
         preceded the tick comes back. Nothing is migrated and the roster
         is not rewritten — `preview.locked` keeps meaning "these differ
@@ -2000,11 +2002,29 @@ foreground.
 - [ ] Opacity dims the mirrored video and leaves the border and label at
       full strength — drag the slider to its low end and confirm the chrome
       stays crisp while only the video fades.
-- [ ] A locked preview refuses a left drag and accepts a right drag. Check
-      this **on a character who has never dragged their preview**, not just
-      one that already has a saved position — that is the case the lock's
-      own storage list exists for, since `locked` cannot ride in
-      `preview.layouts` without a saved rect.
+- [ ] **LOAD-BEARING: the button split.** Left click switches, right drag
+      moves, the corner resizes — and left-drag now moves NOTHING. Walk all
+      four: (a) click a preview and confirm the client comes forward; (b)
+      press and HOLD the left button on a preview for a second before
+      releasing — the switch must happen on the press, not the release,
+      which is the whole point of the change; (c) left-drag a preview
+      across the screen and confirm it does not move and its saved
+      position is unchanged after a restart; (d) right-drag it and confirm
+      it moves and the new position survives a restart. This is a
+      **breaking change to muscle memory** for anyone who has been
+      left-dragging previews since 3.x, and it is the item most likely to
+      generate "the previews are stuck" reports — matching EVE-O Preview
+      and TriffView is the reason it was chosen.
+- [ ] Grabbing the bottom-right corner resizes WITHOUT switching to that
+      client. Activation on mouse-down makes this a real hazard: the
+      corner is inside the preview, so a resize that also focused would
+      drag a client to the foreground every time a layout is adjusted.
+- [ ] A locked preview refuses a right drag — the only move gesture there
+      is now — while a left click on it still switches to that client.
+      Check this **on a character who has never dragged their preview**,
+      not just one that already has a saved position — that is the case
+      the lock's own storage list exists for, since `locked` cannot ride
+      in `preview.layouts` without a saved rect.
 - [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
       Activation ownership moved from the preview window into the host as
       part of this slice; this is a pure regression check on the

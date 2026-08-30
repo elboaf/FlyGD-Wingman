@@ -545,8 +545,9 @@
     // failure WCAG 2.5.3 names. What the tick MEANS reaches the reader
     // through the group's aria-labelledby, once, not per row.
     var label = WM.make('label', 'check', name);
-    label.title = 'Stops this preview being moved by a left drag. A right '
-                + 'drag still moves it.';
+    label.title = 'Stops this preview being moved. Right-drag is the only '
+                + 'move gesture, and a lock blocks it; a left click still '
+                + 'switches to the client.';
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
