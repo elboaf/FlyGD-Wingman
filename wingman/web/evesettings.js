@@ -281,11 +281,9 @@
       if (keep && accountById(keep)) picker.value = keep;
       renderIdentityAccount();
     }
-    if (identityStep === 'idle' && state.identification_active) {
-      identityStep = 'watching';
-    }
+    var step = identityStep === 'idle' && state.identification_active ? 'watching' : identityStep;
     renderRoster();
-    paintIdentification(identityStep, identityMessage);
+    paintIdentification(step, identityMessage);
   }
 
   function renderIdentityAccount() {
@@ -375,6 +373,7 @@
     identityStep = step;
     identityMessage = message || '';
     WM.el('ai-intro').hidden = watching || candidate || name || roster;
+    WM.el('ai-watching-step').hidden = !watching;
     WM.el('es-identify-candidate').hidden = !candidate;
     WM.el('ai-name-step').hidden = !name;
     WM.el('ai-roster-step').hidden = !roster;
@@ -392,7 +391,8 @@
       : '';
     WM.el('es-identity-status').textContent = message || defaultMessage;
     if (previous !== step) {
-      var heading = WM.el(step === 'candidate' ? 'es-identify-candidate-heading'
+      var heading = WM.el(step === 'watching' ? 'ai-watching-heading'
+        : step === 'candidate' ? 'es-identify-candidate-heading'
         : step === 'name' ? 'ai-name-heading'
         : step === 'roster' ? 'ai-roster-heading' : 'ai-intro-heading');
       heading.focus();
@@ -734,6 +734,7 @@
      'ai-roster-add', 'ai-roster-done', 'ai-identify-another'].forEach(function (id) {
       WM.el(id).disabled = value;
     });
+    WM.el('es-account-name').disabled = value;
     ['es-identity-account', 'es-manage-account-name', 'es-character-add'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
     });
@@ -936,8 +937,7 @@
       pendingCharacterId = '';
       identifyCandidate = null;
       identityMessage = '';
-      identityStep = 'roster';
-      refresh().then(function () { setBusy(busy); });
+      refresh().then(function () { paintIdentification('roster'); setBusy(busy); });
     }
 
     function confirmIdentification(accountId, characterId, accountName) {

@@ -774,9 +774,32 @@ def test_identification_uses_atomic_confirmation_and_bounded_roster():
     assert "owner.display_name" in CODE and "account.display_name" in CODE
 
 
+def test_watching_has_a_visible_focusable_step_heading():
+    heading = re.search(r'<h2[^>]*id="ai-watching-heading"[^>]*>', ACCOUNT_ROUTE)
+    assert heading and 'tabindex="-1"' in heading.group(0)
+    paint = re.search(
+        r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert paint
+    assert "WM.el('ai-watching-step').hidden = !watching;" in paint.group(1)
+    assert "step === 'watching' ? 'ai-watching-heading'" in paint.group(1)
+
+
+def test_state_repaint_transitions_from_idle_to_watching_through_the_focus_path():
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "identityStep = 'watching';" not in render.group(1)
+    assert (
+        "identityStep === 'idle' && state.identification_active ? 'watching' : identityStep"
+        in render.group(1)
+    )
+    assert "paintIdentification(step, identityMessage);" in render.group(1)
+
+
 def test_identification_steps_are_focused_and_have_one_primary_action():
     for ident in (
         "ai-intro-heading",
+        "ai-watching-heading",
         "es-identify-candidate-heading",
         "ai-name-heading",
         "ai-roster-heading",
@@ -810,6 +833,18 @@ def test_identification_steps_are_focused_and_have_one_primary_action():
     )
 
 
+def test_open_roster_changes_step_after_refresh_so_the_roster_heading_receives_focus():
+    open_roster = re.search(
+        r"function openRoster\(accountId\) \{(.*?)\n    \}", CODE, re.DOTALL
+    )
+    assert open_roster
+    assert "identityStep = 'roster';" not in open_roster.group(1)
+    assert (
+        "refresh().then(function () { paintIdentification('roster');"
+        in open_roster.group(1)
+    )
+
+
 def test_account_identity_actions_follow_the_profiles_busy_state():
     busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert busy
@@ -819,10 +854,12 @@ def test_account_identity_actions_follow_the_profiles_busy_state():
         "ai-roster-add",
         "es-character-add-btn",
         "es-identity-account",
-        "es-account-name",
         "es-character-add",
     ):
         assert ident in busy.group(1), f"{ident} remains interactive during a mutation"
+    assert re.search(
+        r"WM\.el\('es-account-name'\)\.disabled = value;", busy.group(1)
+    ), "the guided account-name field remains editable during a mutation"
     assert "setBusy(busy)" in CODE, (
         "an identification refusal must not clear an existing mutation's busy state"
     )
