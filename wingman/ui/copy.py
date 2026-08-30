@@ -499,6 +499,7 @@ def format_eve_copy_confirm(
     kind: str | None,
     eve_running: bool,
     source_name: str = "",
+    preserved_groups: list[str] | None = None,
 ) -> str:
     """The confirm shown before one profile's settings overwrite others.
 
@@ -522,16 +523,16 @@ def format_eve_copy_confirm(
     same reason: a separately-passed count could disagree with the names
     printed under it.
 
-    It repeats the running-client hazard. The screen already renders a
-    warn-toned "EVE running" pill precisely because EVE rewrites its own
-    settings on exit and will overwrite whatever was copied underneath it
-    -- but the pill is advisory and easy to miss, and this dialog is modal
-    and unmissable. The warning was on the wrong one of the two.
+    It repeats the running-client hazard for the legacy plain-copy path.
+    The screen already renders a warn-toned "EVE running" pill precisely
+    because EVE rewrites its own settings on exit and will overwrite whatever
+    was copied underneath it -- but the pill is advisory and easy to miss,
+    and this dialog is modal and unmissable. Plain copy keeps that warning
+    advisory because its probe is best-effort.
 
-    It stays advisory here as well: nothing is blocked, because the probe
-    is best-effort (Api._eve_client_running swallows its own failures) and
-    a false positive must not be able to lock a user out of their own
-    profiles.
+    Structured copy performs strict discovery and refuses a running client
+    before calling this formatter. That safety decision belongs to the copy
+    path and does not depend on this function's optional formatting inputs.
     """
     names = [n for n in (target_names or []) if n]
     count = len(target_names or [])
@@ -562,9 +563,14 @@ def format_eve_copy_confirm(
         joined = ", ".join(shown)
         listed = f"{joined}, and {rest} more.\n\n" if rest > 0 else f"{joined}.\n\n"
 
+    preserved = ""
+    if preserved_groups:
+        preserved = f"Preserved in each target: {', '.join(preserved_groups)}.\n\n"
+
     return (
         f"Copy {what} onto {count} other {_copy_noun(count, kind)}?\n\n"
         f"{listed}"
+        f"{preserved}"
         f"Each one is backed up first.\n\n"
         f"{running}"
         "This cannot be undone except by restoring a backup."

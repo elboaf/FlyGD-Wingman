@@ -1,6 +1,8 @@
 """Client discovery. Every collaborator is injected so identity and
 filtering logic is testable off Windows."""
 
+import pytest
+
 from wingman.preview import discovery
 
 WINDOWS = [(0x10, "EVE - Pilot One"), (0x20, "Firefox"), (0x30, "EVE - Pilot Two")]
@@ -70,8 +72,40 @@ def test_access_denied_on_image_name_drops_the_window():
     assert out == []
 
 
+def test_image_name_failure_is_skipped_by_default_but_strict_propagates():
+    def image_name(pid):
+        raise OSError("process disappeared")
+
+    assert _list(image_name=image_name) == []
+    with pytest.raises(OSError, match="process disappeared"):
+        _list(image_name=image_name, strict=True)
+
+
 def test_enumerator_failure_is_survivable():
     def boom():
         raise OSError("no window station")
 
     assert _list(enumerator=boom) == []
+
+
+def test_strict_discovery_propagates_an_enumerator_failure():
+    def boom():
+        raise OSError("no window station")
+
+    with pytest.raises(OSError, match="no window station"):
+        _list(enumerator=boom, strict=True)
+
+
+def test_window_inspection_failure_is_skipped_by_default_but_strict_propagates():
+    def pids(hwnd):
+        if hwnd == 0x10:
+            raise OSError("window disappeared")
+        return PIDS.get(hwnd)
+
+    assert [client.character for client in _list(pids=pids)] == ["Pilot Two"]
+    with pytest.raises(OSError, match="window disappeared"):
+        _list(pids=pids, strict=True)
+
+
+def test_strict_discovery_still_skips_an_inaccessible_process():
+    assert _list(image_name=lambda pid: None, strict=True) == []

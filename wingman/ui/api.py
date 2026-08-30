@@ -57,6 +57,7 @@ from ..evesettings import codec as evesettings_codec
 from ..evesettings import formations as evesettings_formations
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
+from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
@@ -3798,6 +3799,7 @@ class Api:
             )
 
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
+        codec_available = evesettings_codec.codec_available()
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
@@ -3835,7 +3837,12 @@ class Api:
             # hide the formations editor entirely rather than let a click
             # end in eve_settings_formations's "not available in this
             # install" error.
-            "formations_available": evesettings_codec.codec_available(),
+            "formations_available": codec_available,
+            "selective_copy_available": codec_available,
+            "copy_groups": {
+                "characters": evesettings_selective.groups_payload("character"),
+                "accounts": evesettings_selective.groups_payload("account"),
+            },
             "backups": [
                 {
                     "path": str(b.path),
@@ -3859,6 +3866,12 @@ class Api:
         except Exception:
             logger.debug("Could not check for a running EVE client", exc_info=True)
             return False
+
+    def _eve_client_running_strict(self) -> bool:
+        """Fresh fail-closed probe for writes that require EVE to be closed."""
+        from ..preview import discovery
+
+        return bool(discovery.list_clients(strict=True))
 
     def _eve_refresh_running(self) -> None:
         """Re-probe for a running client, off the bridge thread.
@@ -4111,43 +4124,97 @@ class Api:
         store = paths.eve_settings_backup_dir()
         evesettings_backup.create_file_backup(store, target, origin="auto")
 
-    def eve_settings_copy(self, source: str, targets: list) -> bool:
+    def eve_settings_copy(
+        self, source: str, targets: list, groups: list | None = None
+    ) -> bool:
         return self._eve_begin(
-            self._eve_copy_worker, (source, [str(t) for t in targets or []])
+            self._eve_copy_worker,
+            (source, [str(t) for t in targets or []], groups),
         )
 
-    def _eve_copy_worker(self, source: str, targets: list) -> None:
+    def _eve_copy_worker(
+        self, source: str, targets: list, groups: list | None = None
+    ) -> None:
         ok = False
         try:
-            # Derived from the targets, not passed by the page: the
-            # Characters / Accounts switch already decides which files are
-            # offered, so a mode argument on the bridge would be the same
-            # fact written twice and free to disagree. A mixed set (which
-            # the page cannot produce, but the bridge does not forbid)
-            # resolves to None and falls back to naming files.
-            kinds = {evesettings_tree.file_kind(t) for t in targets}
-            kind = next(iter(kinds)) if len(kinds) == 1 else None
-            # Probed fresh rather than read from self._eve_running. That
-            # cache exists so eve_settings_state stays cheap on the bridge
-            # thread; this is a worker, and the sentence is about what is
-            # true at the moment the user is asked to commit.
+            # None alone means the legacy byte-copy path. An empty list is
+            # still a deliberate structured copy that preserves every
+            # offered group from each target.
+            if groups is None:
+                # Derived from the targets, not passed by the page: the
+                # Characters / Accounts switch already decides which files are
+                # offered, so a mode argument on the bridge would be the same
+                # fact written twice and free to disagree. A mixed set (which
+                # the page cannot produce, but the bridge does not forbid)
+                # resolves to None and falls back to naming files.
+                kinds = {evesettings_tree.file_kind(t) for t in targets}
+                kind = next(iter(kinds)) if len(kinds) == 1 else None
+                # Plain copy remains advisory and best-effort for backwards
+                # compatibility: a positive result warns in the confirmation.
+                running = self._eve_client_running()
+                preserved_labels = None
+            else:
+                kind = evesettings_tree.file_kind(source)
+                offered = evesettings_selective.groups_for_kind(kind)
+                valid_ids = {group.id for group in offered}
+                if (
+                    not isinstance(groups, list)
+                    or any(not isinstance(group_id, str) for group_id in groups)
+                    or len(set(groups)) != len(groups)
+                    or not set(groups) <= valid_ids
+                ):
+                    raise ValueError(
+                        "Selected groups must be a unique list offered for this file kind."
+                    )
+                preserved_labels = [
+                    group.label for group in offered if group.id not in set(groups)
+                ]
+                try:
+                    running = self._eve_client_running_strict()
+                except Exception:
+                    logger.exception("Could not verify that EVE is closed")
+                    self._alert(
+                        "error",
+                        "Copy not started",
+                        "Wingman could not verify that EVE is closed. "
+                        "Close EVE and retry.",
+                    )
+                    return
+                if running:
+                    self._alert(
+                        "error",
+                        "Copy not started",
+                        "EVE is running. Close EVE and retry.",
+                    )
+                    return
+
             if not self._eve_confirm(
                 "Confirm Copy",
                 copy_mod.format_eve_copy_confirm(
                     [self._eve_label(t) for t in targets],
                     kind,
-                    self._eve_client_running(),
+                    running,
                     source_name=self._eve_label(source),
+                    preserved_groups=preserved_labels,
                 ),
                 destructive=True,
             ):
                 return
-            report = evesettings_ops.copy_to_targets(
-                source,
-                targets,
-                root=self._eve_section().get("root"),
-                backup=self._eve_auto_backup,
-            )
+            if groups is None:
+                report = evesettings_ops.copy_to_targets(
+                    source,
+                    targets,
+                    root=self._eve_section().get("root"),
+                    backup=self._eve_auto_backup,
+                )
+            else:
+                report = evesettings_ops.copy_selected_to_targets(
+                    source,
+                    targets,
+                    selected_groups=groups,
+                    root=self._eve_section().get("root"),
+                    backup=self._eve_auto_backup,
+                )
             keep = int(self._eve_section().get("auto_keep", 10))
             evesettings_backup.prune(paths.eve_settings_backup_dir(), keep)
             if report.failed:
@@ -4311,7 +4378,17 @@ class Api:
             # refused by the sharing violation or silently overwritten
             # later. Copy merely warns because its targets are usually not
             # the running character; this always is the running account.
-            if self._eve_client_running():
+            try:
+                running = self._eve_client_running_strict()
+            except Exception:
+                logger.exception("Could not verify that EVE is closed")
+                self._alert(
+                    "error",
+                    "Formations not saved",
+                    "Wingman could not verify that EVE is closed. Close EVE and retry.",
+                )
+                return
+            if running:
                 self._alert(
                     "error",
                     "Formations not saved",

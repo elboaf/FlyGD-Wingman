@@ -3,7 +3,7 @@ every failure path is reachable without a real filesystem fault."""
 
 import pytest
 
-from wingman.evesettings import ops
+from wingman.evesettings import codec, ops
 
 
 def make(tmp_path, name, body=b"payload"):
@@ -212,6 +212,233 @@ def test_duplicates_collapse_and_the_source_is_excluded(tmp_path):
         backup=lambda _p: None,
     )
     assert [o.path for o in report.outcomes] == [other]
+
+
+def test_selective_copy_reads_source_once_and_each_target_once(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    first = make(tmp_path, "core_char_2.dat")
+    second = make(tmp_path, "core_char_3.dat")
+    documents = {
+        source: codec.Document(
+            doc={"bytes:windows": {"tuple": ["source"]}, "bytes:ui": {}},
+            had_crc=False,
+        ),
+        first: codec.Document(
+            doc={"bytes:windows": {"tuple": ["first"]}, "bytes:ui": {}},
+            had_crc=True,
+        ),
+        second: codec.Document(
+            doc={"bytes:windows": {"tuple": ["second"]}, "bytes:ui": {}},
+            had_crc=False,
+        ),
+    }
+    reads = []
+    writes = []
+    backup = object()
+
+    def read(path):
+        reads.append(path)
+        return documents[path]
+
+    def write(path, document, **kwargs):
+        writes.append((path, document, kwargs))
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [first, second],
+        selected_groups=["windows"],
+        root=tmp_path,
+        backup=backup,
+        read=read,
+        write=write,
+    )
+
+    assert reads == [source, first, second]
+    assert [o.path for o in report.succeeded] == [first, second]
+    assert report.failed == []
+    assert writes == [
+        (
+            first,
+            codec.Document(doc=documents[source].doc, had_crc=True),
+            {"backup": backup},
+        ),
+        (
+            second,
+            codec.Document(doc=documents[source].doc, had_crc=False),
+            {"backup": backup},
+        ),
+    ]
+    assert writes[0][1].had_crc is documents[first].had_crc
+    assert writes[1][1].had_crc is documents[second].had_crc
+
+
+def test_selective_copy_filters_targets_like_plain_copy(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    good_target = make(tmp_path, "core_char_2.dat")
+    wrong_kind = make(tmp_path, "core_user_3.dat")
+    outside = make(tmp_path.parent, "core_char_4.dat")
+    documents = {
+        source: codec.Document(doc={"bytes:ui": {}}, had_crc=False),
+        good_target: codec.Document(doc={"bytes:ui": {}}, had_crc=True),
+    }
+    reads = []
+    writes = []
+
+    def read(path):
+        reads.append(path)
+        return documents[path]
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [source, good_target, str(good_target), wrong_kind, outside],
+        selected_groups=[],
+        root=tmp_path,
+        backup=lambda _path: None,
+        read=read,
+        write=lambda path, document, **kwargs: writes.append(path),
+    )
+
+    assert reads == [source, good_target]
+    assert writes == [good_target]
+    assert [o.path for o in report.succeeded] == [good_target]
+    assert [o.path for o in report.failed] == [wrong_kind, outside]
+
+
+def test_selective_copy_reports_unreadable_target_and_continues(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    bad_target = make(tmp_path, "core_char_2.dat")
+    good_target = make(tmp_path, "core_char_3.dat")
+    target_documents = {good_target: codec.Document(doc={"bytes:ui": {}}, had_crc=True)}
+    writes = []
+
+    def read(path):
+        if path == source:
+            return codec.Document(doc={"bytes:ui": {}}, had_crc=False)
+        if path == bad_target:
+            raise codec.CodecError("cannot decode")
+        return target_documents[path]
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [bad_target, good_target],
+        selected_groups=[],
+        root=tmp_path,
+        backup=lambda _path: None,
+        read=read,
+        write=lambda path, document, **kwargs: writes.append((path, document)),
+    )
+
+    assert [o.path for o in report.failed] == [bad_target]
+    assert [o.path for o in report.succeeded] == [good_target]
+    assert writes[0][1].had_crc is target_documents[good_target].had_crc
+
+
+def test_selective_copy_requires_each_target_to_exist(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    missing = tmp_path / "core_char_2.dat"
+    good_target = make(tmp_path, "core_char_3.dat")
+    reads = []
+    writes = []
+
+    def read(path):
+        reads.append(path)
+        return codec.Document(doc={"bytes:ui": {}}, had_crc=False)
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [missing, good_target],
+        selected_groups=[],
+        root=tmp_path,
+        backup=lambda _path: None,
+        read=read,
+        write=lambda path, document, **kwargs: writes.append(path),
+    )
+
+    assert reads == [source, good_target]
+    assert [o.path for o in report.failed] == [missing]
+    assert [o.path for o in report.succeeded] == [good_target]
+    assert writes == [good_target]
+
+
+def test_selective_copy_reports_transform_failure_per_target(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    malformed = make(tmp_path, "core_char_2.dat")
+    good_target = make(tmp_path, "core_char_3.dat")
+    documents = {
+        source: codec.Document(doc={"bytes:ui": {}}, had_crc=False),
+        malformed: codec.Document(doc={"bytes:ui": []}, had_crc=False),
+        good_target: codec.Document(doc={"bytes:ui": {}}, had_crc=True),
+    }
+    writes = []
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [malformed, good_target],
+        selected_groups=[],
+        root=tmp_path,
+        backup=lambda _path: None,
+        read=documents.__getitem__,
+        write=lambda path, document, **kwargs: writes.append(path),
+    )
+
+    assert [o.path for o in report.failed] == [malformed]
+    assert [o.path for o in report.succeeded] == [good_target]
+    assert writes == [good_target]
+
+
+def test_selective_copy_reports_write_failure_and_delegates_backup(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    bad_target = make(tmp_path, "core_char_2.dat")
+    good_target = make(tmp_path, "core_char_3.dat")
+    backup = object()
+    calls = []
+
+    def read(path):
+        return codec.Document(doc={"bytes:ui": {}}, had_crc=False)
+
+    def write(path, document, **kwargs):
+        calls.append((path, kwargs))
+        if path == bad_target:
+            raise OSError("backup failed")
+
+    report = ops.copy_selected_to_targets(
+        source,
+        [bad_target, good_target],
+        selected_groups=[],
+        root=tmp_path,
+        backup=backup,
+        read=read,
+        write=write,
+    )
+
+    assert [o.path for o in report.failed] == [bad_target]
+    assert [o.path for o in report.succeeded] == [good_target]
+    assert calls == [
+        (bad_target, {"backup": backup}),
+        (good_target, {"backup": backup}),
+    ]
+
+
+def test_selective_copy_source_decode_failure_raises_before_writes(tmp_path):
+    source = make(tmp_path, "core_char_1.dat")
+    target = make(tmp_path, "core_char_2.dat")
+    writes = []
+
+    def unreadable(_path):
+        raise codec.CodecError("source cannot decode")
+
+    with pytest.raises(codec.CodecError, match="source cannot decode"):
+        ops.copy_selected_to_targets(
+            source,
+            [target],
+            selected_groups=[],
+            root=tmp_path,
+            backup=lambda _path: None,
+            read=unreadable,
+            write=lambda path, document, **kwargs: writes.append(path),
+        )
+
+    assert writes == []
 
 
 def test_copies_onto_a_target_that_does_not_exist_yet(tmp_path):

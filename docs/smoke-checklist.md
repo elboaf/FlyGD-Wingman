@@ -2564,6 +2564,28 @@ so these are the checks that matter and only a Windows machine can run them.
       it, which shares its row with `Select all` and `Clear`. It decides
       what content overwrites every ticked character, and it used to be the
       narrowest control on the screen.
+- [ ] **Selective copy groups follow the active kind.** Characters shows six
+      groups, with only `Search history & suggestions` off by default. Accounts
+      shows nine, with `Module slot layout` and `Search history & suggestions`
+      off. Toggle one in each kind, switch back and forth, change the source,
+      filter targets, and let a state refresh land; each kind keeps its choices.
+- [ ] Copy with one or more groups unchecked. Each target keeps its own values
+      for those groups while checked groups take the source values.
+- [ ] Put an unknown key in the decoded source document and copy selectively.
+      The unknown key travels to every target; selective copy must not discard
+      settings it does not yet recognize.
+- [ ] Include one target whose `.dat` cannot be decoded. The other targets still
+      copy, and the result reports that target's failure rather than aborting the
+      loop.
+- [ ] Start EVE and attempt a selective copy. The copy is refused and every
+      target file remains byte-for-byte intact.
+- [ ] Restore an automatic backup made by selective copy. The target returns to
+      its complete pre-copy state, including groups that were selected.
+- [ ] Turn every group on and copy. The result matches a full structured copy;
+      no recognized source setting is left behind.
+- [ ] Remove the codec sidecar and reopen Profiles. `What to copy` is hidden,
+      the existing Copy action remains available, and a copy uses the plain
+      whole-file two-argument fallback.
 - [ ] **Widening the window adds roster columns, not gutter.** With a folder
       chosen and a few dozen characters, put the window at the floor and note
       how many columns of names the target list has and where `Copy to

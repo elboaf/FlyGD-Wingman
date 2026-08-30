@@ -983,6 +983,10 @@
       eve.characters = []; eve.accounts = [];
       window.onEveSettingsNames();
     },
+    eveSelectiveAvailable: function (available) {
+      eve.selective_copy_available = !!available;
+      window.onEveSettingsNames();
+    },
     skillsEmpty: function () {
       skills.characters = [];
       skills.plans = [];
@@ -1014,6 +1018,32 @@
     'Corr Sevaine', 'Dain Holloway', 'Eir Sandvik'
   ];
 
+  // Exact Python payload shape, asserted against selective.groups_payload
+  // so this visual fixture cannot drift from the decoder's public groups.
+  var selective = {
+    groups_payload: {
+      characters: [
+        { id: 'windows', label: 'Window layout', default_on: true },
+        { id: 'neocom', label: 'Neocom sidebar', default_on: true },
+        { id: 'chat', label: 'Chat channels', default_on: true },
+        { id: 'infopanels', label: 'Info panels', default_on: true },
+        { id: 'dockpanels', label: 'Docked panels', default_on: true },
+        { id: 'search_history', label: 'Search history & suggestions', default_on: false }
+      ],
+      accounts: [
+        { id: 'overview', label: 'Overview profiles', default_on: true },
+        { id: 'probes', label: 'Probe formations', default_on: true },
+        { id: 'suppress', label: 'Suppressed dialogs', default_on: true },
+        { id: 'audio', label: 'Audio settings', default_on: true },
+        { id: 'camera_graphics', label: 'Camera & graphics', default_on: true },
+        { id: 'market', label: 'Market & contracts', default_on: true },
+        { id: 'slots', label: 'Module slot layout', default_on: false },
+        { id: 'tabgroups', label: 'Window tab groups', default_on: true },
+        { id: 'search_history', label: 'Search history & suggestions', default_on: false }
+      ]
+    }
+  };
+
   var eve = {
     root: 'C:\\Users\\tng\\AppData\\Local\\CCP\\EVE',
     default_root: 'C:\\Users\\tng\\AppData\\Local\\CCP\\EVE',
@@ -1023,6 +1053,8 @@
     // has already been returned, and the pill's "Checking for EVE..." face
     // is the one a stub that guessed `false` would never show.
     eve_running: null,
+    selective_copy_available: true,
+    copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
     profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
     // Name-ordered, because the payload is: R1/D4 moved the roster's sort

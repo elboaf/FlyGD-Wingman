@@ -2856,6 +2856,15 @@ button.btn:disabled,
    field is; this only stops the select opting out of it. */
 #es-source { flex: 1; }
 
+/* Payload-defined copy groups use the copy card's existing form measure.
+   At the 840px window floor CDP measured three roughly 185px columns;
+   auto-fit adds columns only when the form measure grows, with no inner scroller. */
+.es-copy-groups {
+  display: grid; width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 16px;
+}
+
 /* Profiles 6 -- an empty Server or Profile rendered exactly like a working
    one: blank, un-placeholdered and undimmed before a folder exists, so it
    read as broken rather than as not-yet-applicable. evesettings.js disables
