@@ -120,7 +120,7 @@ def test_no_checkbox_or_radio_renders_as_a_native_control():
 
 
 def test_profiles_generated_copy_checkbox_wraps_before_listeners():
-    """The dark wrapper is constructed immediately after the input type."""
+    """The input and adjacent dark box enter one .check before behavior."""
     src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
     match = re.search(
         r"groupBox\.type\s*=\s*'checkbox';(.*?)groupBox\.addEventListener",
@@ -128,7 +128,17 @@ def test_profiles_generated_copy_checkbox_wraps_before_listeners():
         re.DOTALL,
     )
     assert match, "Profiles copy-group checkbox or its listener is missing"
-    assert "'check'" in match.group(1) and "'box'" in match.group(1)
+    construction = match.group(1)
+    assert re.search(
+        r"var groupLabel = WM\.make\('label', 'check',.*?\);\s*"
+        r"groupLabel\.prepend\(WM\.make\('span', 'box'\)\);\s*"
+        r"groupLabel\.prepend\(groupBox\);",
+        construction,
+        re.DOTALL,
+    ), (
+        "before listener registration, the checkbox must be prepended into "
+        "a .check label beside the prepended .box visual"
+    )
 
 
 def test_generated_controls_use_the_wrapper_too():

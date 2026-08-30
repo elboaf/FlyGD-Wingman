@@ -202,6 +202,27 @@ def test_profiles_group_fixture_matches_the_python_payload():
     assert "copy_groups: selective.groups_payload" in DEV_JS
 
 
+def test_profiles_delayed_mutation_logs_every_received_argument():
+    """The generic callback must retain group ids instead of truncating at targets."""
+    block = DEV_JS[
+        DEV_JS.index("function eveMutation(name) {") : DEV_JS.index(
+            "  ['eve_settings_copy'", DEV_JS.index("function eveMutation(name) {")
+        )
+    ]
+    assert re.search(r"return function \(\) \{", block), (
+        "the delayed mutation must accept the endpoint's complete argument list"
+    )
+    assert re.search(
+        r"console\.log\('DEV api\.' \+ name \+ '\(',\s*"
+        r"Array\.prototype\.slice\.call\(arguments\), '\)'\);",
+        block,
+        re.DOTALL,
+    ), (
+        "the delayed mutation must preserve and log all arguments, including "
+        "eve_settings_copy's third group-id argument"
+    )
+
+
 def test_the_preview_fixture_uses_real_gesture_strings():
     """Previews store `preview/gestures.py` display strings
     ("Ctrl+Alt+Right"), NOT the AHK that Bookmarks stores ("^!Right"). The

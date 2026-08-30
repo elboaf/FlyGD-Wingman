@@ -519,37 +519,88 @@ def test_change_is_a_button_not_a_link():
 # ---- X1's execution on this route --------------------------------------
 
 
-def test_selective_copy_controls_follow_the_payload_and_keep_plain_fallback():
-    """Structured copy extends the existing card without changing fallback."""
-    source_at = BODY.index('id="es-source"')
-    options_at = BODY.index('id="es-copy-options"')
-    filter_at = BODY.index('id="es-filter"')
-    assert source_at < options_at < filter_at
+def test_selective_copy_controls_are_inside_the_copy_card_in_action_order():
+    """The new choice belongs between its source and target controls."""
+    card = re.search(
+        r'<section class="card">\s*<h2>Copy EVE settings</h2>(.*?)</section>',
+        BODY,
+        re.DOTALL,
+    )
+    assert card, "the existing Copy EVE settings card is missing"
+    copy_body = card.group(1)
+    source_at = copy_body.index('id="es-source"')
+    options_at = copy_body.index('id="es-copy-options"')
+    filter_at = copy_body.index('id="es-filter"')
+    assert source_at < options_at < filter_at, (
+        "What to copy must follow Copy from and precede the target filter"
+    )
+    assert BODY.count('id="es-copy-options"') == 1, (
+        "the copy options must not also be mounted outside the copy card"
+    )
     assert (
         "Unchecked groups keep each target\u2019s own settings. Everything else is copied."
-        in BODY
+        in copy_body
     )
 
+
+def test_copy_group_rendering_uses_kind_payload_and_remembers_seen_ids():
+    """Payload groups and per-kind choices survive repaints without reset."""
+    assert re.search(
+        r"var copyGroupSelections\s*=\s*\{\s*characters:\s*\{\},\s*"
+        r"accounts:\s*\{\}\s*\}",
+        CODE,
+    ), "the independent per-kind selection store is missing"
     render = re.search(r"function renderCopyGroups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert render, "copy groups are not rendered"
     block = render.group(1)
-    assert "state.copy_groups" in block
-    assert "default_on" in block
-    assert "copyGroupSelections" in block
-    assert "addEventListener" in block
+    assert "var choices = copyGroupSelections[currentKind];" in block
+    assert re.search(
+        r"var groups = \(state\.copy_groups &&\s*"
+        r"state\.copy_groups\[currentKind\]\) \|\| \[\];",
+        block,
+    ), "the visible kind must index the payload rather than a page-owned table"
+    assert re.search(
+        r"if \(!Object\.prototype\.hasOwnProperty\.call\(choices, group\.id\)\) "
+        r"\{\s*choices\[group\.id\] = !!group\.default_on;\s*\}",
+        block,
+        re.DOTALL,
+    ), "default_on must initialize only an id the user has not seen before"
 
+
+def test_switching_copy_kind_redraws_its_groups():
+    switch = re.search(
+        r"document\.querySelectorAll\('input\[name=\"es-kind\"\]'\).*?"
+        r"radio\.addEventListener\('change', function \(\) \{(.*?)\n        \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert switch, "the Characters/Accounts change handler is missing"
+    assert "renderCopyGroups();" in switch.group(1), (
+        "switching kind must redraw the kind-indexed copy groups"
+    )
+
+
+def test_copy_click_sends_groups_only_on_the_structured_path():
+    """Available copy gets the selected ids as arg three; fallback stays plain."""
     click = re.search(
         r"WM\.el\('es-copy'\)\.addEventListener\('click'.*?\n    \}\);",
         CODE,
         re.DOTALL,
     )
-    assert click
-    assert "state.selective_copy_available" in click.group(0)
-    assert "selectedGroupIds()" in click.group(0)
+    assert click, "the copy click handler is missing"
     assert re.search(
-        r"mutate\('eve_settings_copy',\s*WM\.el\('es-source'\)\.value,\s*targets\);",
+        r"if \(state\.selective_copy_available\) \{\s*"
+        r"mutate\('eve_settings_copy',\s*WM\.el\('es-source'\)\.value,\s*"
+        r"targets,\s*selectedGroupIds\(\)\);\s*"
+        r"\} else \{\s*"
+        r"mutate\('eve_settings_copy',\s*WM\.el\('es-source'\)\.value,\s*"
+        r"targets\);\s*\}",
         click.group(0),
-    ), "codec fallback must preserve the two-argument call"
+        re.DOTALL,
+    ), (
+        "structured copy must pass selectedGroupIds() as mutate arg three, "
+        "while fallback passes only source and targets"
+    )
 
 
 def test_profiles_keeps_one_existing_primary_action():

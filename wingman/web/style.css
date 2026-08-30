@@ -2854,8 +2854,8 @@ button.btn:disabled,
 #es-source { flex: 1; }
 
 /* Payload-defined copy groups use the copy card's existing form measure.
-   Auto-fit makes two readable columns at the 840px window floor and adds
-   columns only when the form measure grows; there is no inner scroller. */
+   At the 840px window floor CDP measured three roughly 185px columns;
+   auto-fit adds columns only when the form measure grows, with no inner scroller. */
 .es-copy-groups {
   display: grid; width: 100%;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
