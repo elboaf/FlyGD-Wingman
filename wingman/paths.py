@@ -261,6 +261,28 @@ def engine_exe() -> str | None:
     return None
 
 
+CODEC_NAME = "wingman-settings-codec"
+
+
+def codec_exe() -> str | None:
+    """Path to the bundled EVE settings codec, or None when it is not bundled.
+
+    Same shape as engine_exe(), and for the same reason NOT resolve_binary():
+    its shutil.which() fallback would let an unrelated program of the same
+    name on PATH rewrite a user's settings file. Absent here means the
+    formation editor hides itself; nothing else in Profiles depends on it.
+    """
+    exe = CODEC_NAME + (".exe" if sys.platform == "win32" else "")
+    frozen = bundle_dir() / "bin" / exe
+    if frozen.is_file():
+        return str(frozen)
+    if not hasattr(sys, "_MEIPASS"):
+        dev = bundle_dir() / "packaging" / "bin" / exe
+        if dev.is_file():
+            return str(dev)
+    return None
+
+
 def ensure_dirs() -> None:
     for d in (state_dir(), log_dir(), tmp_dir()):
         d.mkdir(parents=True, exist_ok=True)

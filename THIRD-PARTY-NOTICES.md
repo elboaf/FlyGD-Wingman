@@ -23,6 +23,17 @@ Licence: GNU General Public License v2 or later
 Source: https://github.com/AutoHotkey/AutoHotkey/releases/tag/v1.1.37.02
 Licence text: `AutoHotkey-COPYING.txt`, installed beside the application.
 
+## blue-marshal
+
+Version: 1.0.1
+Licence: MIT
+Source: https://github.com/TrueBrain/blue-marshal-rs
+Licence text: `blue-marshal-COPYING.txt`, installed beside the application.
+Used by: `wingman-settings-codec.exe`, Wingman's own wrapper (source in
+`packaging/settings-codec/`), which reads and writes EVE settings files.
+The approach and format notes follow eve-wrench (Tim Kunze), used with the
+author's consent.
+
 ## Fonts
 
 Both are SIL Open Font License 1.1, which is not GPL and imposes no

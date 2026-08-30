@@ -194,6 +194,21 @@ runs:
     # only integrity guarantee for this binary. Revisit if upstream starts
     # signing.
 
+    - name: Install the Rust toolchain for the settings codec
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build the settings codec
+      # Our own ~50-line crate over the MIT blue-marshal library. Built here
+      # rather than fetched because upstream ships no stdin/stdout binary
+      # and its CLI always appends a checksum, which would grow one onto
+      # files that never had it. --locked makes the release reproducible
+      # from packaging/settings-codec/Cargo.lock.
+      shell: pwsh
+      run: |
+        cargo build --release --locked --manifest-path packaging/settings-codec/Cargo.toml
+        Copy-Item packaging/settings-codec/target/release/wingman-settings-codec.exe packaging/bin/
+        Copy-Item packaging/settings-codec/LICENSE-blue-marshal.txt packaging/bin/blue-marshal-COPYING.txt
+
     - name: Fetch the WebView2 bootstrapper
       shell: pwsh
       run: python packaging/fetch_webview2.py
@@ -245,7 +260,7 @@ runs:
           throw "Bundled ffmpeg not found at $bin - resolve_binary() would fall back to PATH and stitching would be silently unavailable"
         }
         Get-ChildItem $bin
-        foreach ($exe in @("ffmpeg.exe", "ffprobe.exe")) {
+        foreach ($exe in @("ffmpeg.exe", "ffprobe.exe", "wingman-settings-codec.exe")) {
           if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
         }
 
@@ -368,7 +383,7 @@ runs:
       shell: pwsh
       run: |
         $root = "dist\Wingman\_internal"
-        foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
+        foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt", "blue-marshal-COPYING.txt")) {
           $path = Join-Path $root $file
           if (-not (Test-Path $path -PathType Leaf)) {
             throw "$file not found at $path - the corresponding datas entry in uploader.spec did not resolve, and the shipped installer would omit a GPL-required licence text or the written offer of source"

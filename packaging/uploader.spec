@@ -20,6 +20,10 @@ a = Analysis(
         # AutoHotkey v2 handed a v1 script fails with parse errors that
         # read like a bug in the script.
         (str(BIN / "AutoHotkeyU64.exe"), "bin"),
+        # Our own sidecar over blue-marshal, decoding/encoding EVE's
+        # settings .dat files. paths.codec_exe() looks here, bundled-only
+        # like AutoHotkey above and for the same reason.
+        (str(BIN / "wingman-settings-codec.exe"), "bin"),
     ],
     datas=[
         # The page is data, not code: modulegraph only follows Python
@@ -50,6 +54,9 @@ a = Analysis(
         # copy -- one shared text would misstate the terms for one of them.
         # Also renamed at fetch time by fetch_ffmpeg.py, for the same reason.
         (str(BIN / "ffmpeg-COPYING.txt"), "."),
+        # blue-marshal is MIT, so it needs its own licence text beside the
+        # two GPL ones above -- one shared text would misstate the terms.
+        (str(BIN / "blue-marshal-COPYING.txt"), "."),
         # The engine is data, not code -- modulegraph cannot see it, and
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green
