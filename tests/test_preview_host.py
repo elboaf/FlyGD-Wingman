@@ -2277,14 +2277,17 @@ def test_the_switch_reads_the_foreground_minimizes_then_activates(monkeypatch):
     (ThumbnailManager.SwitchActiveClient: MinimizeWindow, then
     ActivateWindow), not TriffView's activate-settle-minimize-reactivate.
 
-    Minimizing the outgoing client while it still HAS the foreground is
-    the fast case (6-9ms measured); the old sequence sent the same message
-    10ms after the window lost the foreground, mid-deactivation, and in
-    the field that send timed out on every switch (166 consecutive
-    timeouts in one session's log). And with nothing minimized after the
-    activate, there is no foreground theft to undo, so the settle and the
-    second activation are gone with it -- the switch no longer sleeps on
-    the preview thread at all.
+    Minimizing the outgoing client while it still holds the foreground is
+    not measurably faster in itself -- both orders run well inside the
+    budget on quiet clients. What the order buys is the slow case: a
+    timed-out send is still delivered later, and minimizing BEFORE the
+    activation means that late minimize lands on a window that is no
+    longer the foreground, so it cannot take focus off the client the
+    user just asked for. With nothing minimized after the activate there
+    is no foreground theft to undo either, so the settle and the second
+    activation are gone with it -- the switch no longer sleeps on the
+    preview thread at all. See _activate_client's docstring for the
+    measurements, and for what the field log does and does not say.
 
     The animation is turned off around the whole sequence and restored
     after it. That is a purely VISIBLE saving -- measured, it costs the

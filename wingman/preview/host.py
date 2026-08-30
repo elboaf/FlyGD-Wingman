@@ -1099,14 +1099,33 @@ class PreviewHost:
         MinimizeWindow, then ActivateWindow), and it replaced TriffView's
         activate / settle 10ms / minimize / re-activate:
 
-        - The minimize goes to a client that still HAS the foreground,
-          which is the fast case: 6-9ms measured. The old sequence sent
-          it 10ms after the window lost the foreground, mid-deactivation,
-          and on a live install that send timed out for its full budget
-          on every switch (166 consecutive timeouts in one session's
-          log) -- and a timed-out send is still delivered later, so the
-          client minimized AFTER the switch, Windows handed the foreground
-          to whatever it picked next, and the user landed on the desktop.
+        - The minimize goes to a client that still HAS the foreground.
+          It does NOT make the send reliably faster: measured on two
+          live clients 2026-08-30, both orders are quick when the
+          clients are quiet -- old order median 29.6ms, new order
+          40.0ms, and with this thread owning a DWM thumbnail of the
+          target (the app's real shape) the old order ran 9.1ms. None
+          of 26 probe sends came near the budget.
+
+          What it does buy is what happens when the send DOES exceed
+          the budget: a timed-out send is still delivered later, and in
+          the old order that late minimize landed on the window the
+          switch had just left, which is where the compensating
+          re-activation came from. Minimizing before the activation
+          means a late minimize lands on a window that is no longer
+          the foreground, so it cannot take focus off the client the
+          user just asked for.
+
+          An earlier version of this comment said the old send "timed
+          out for its full budget on every switch (166 consecutive
+          timeouts)". That is not supported: the code logs only the
+          FAILURES, never the successes, so the field log's 223 lines
+          have no denominator. The 44 of them that carry an elapsed
+          time are real waits clipped at the budget (min 102ms, median
+          114ms, max 231ms), spread across normal play, and no probe
+          has reproduced one -- the remaining candidate is the client's
+          own message-pump latency during a busy moment (grid load, a
+          jump, a session change), which is EVE-side and not ordering.
         - Nothing is minimized after the activate, so there is no
           foreground theft to undo: the settle and the second activation
           are gone. This function no longer sleeps on the preview thread

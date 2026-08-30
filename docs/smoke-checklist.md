@@ -2055,12 +2055,21 @@ foreground.
       so that scene cannot tell you which one you saw. This is the check
       that decides whether minimize-inactive is compatible with the
       previews it sits beside.
-- [ ] Watch the log for `Minimize of 0x... did not complete`. The old
-      sequence logged it on every switch (166 in one session) because the
-      send went to a window mid-deactivation; the send now goes to the
-      foreground window, measured at 6-9 ms. A line here after this change
-      is a finding, and its elapsed-time figure says whether the client
-      timed out or refused outright.
+- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
+      do **not** treat one as a defect on its own. Only failures are
+      logged — a successful minimize writes nothing — so those lines have
+      no denominator and never showed the rate anyone read into them. The
+      44 that carry an elapsed time are real waits clipped at the budget
+      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
+      have failed to reproduce one: quiet clients answer in 7–57 ms in
+      both orders, including with the sending thread owning a DWM
+      thumbnail of the target. The open candidate is the client's own
+      message pump during a busy moment (grid load, a jump, a session
+      change), which no ordering change here can fix. What IS worth
+      filing: the elapsed figure separates a real wait from an instant
+      refusal, so a line reading well under a millisecond means something
+      new. The reorder's payoff is that a late-landing minimize can no
+      longer drop focus, so watch for THAT instead — see the item above.
 - [ ] Reader's note, not a defect to file on its own: the never-minimize
       COLUMN sits in the card headed "Global keybinds" — right for its
       adjacency to the character rows, but that card's intro tells the
