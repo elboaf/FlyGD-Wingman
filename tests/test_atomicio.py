@@ -285,3 +285,44 @@ def test_copy_atomic_closes_the_temp_descriptor_when_the_source_fails(tmp_path):
 
     assert len(wrapped) == 1
     assert wrapped[0].closed
+
+
+def test_write_bytes_atomic_replaces_the_target(tmp_path):
+    target = tmp_path / "core_user_1.dat"
+    target.write_bytes(b"old")
+    atomicio.write_bytes_atomic(target, b"\x7d\x01new")
+    assert target.read_bytes() == b"\x7d\x01new"
+    assert [p.name for p in tmp_path.iterdir()] == ["core_user_1.dat"]
+
+
+def test_write_bytes_atomic_leaves_the_old_file_when_the_replace_fails(tmp_path):
+    target = tmp_path / "core_user_1.dat"
+    target.write_bytes(b"old")
+    real = atomicio.os.replace
+
+    def refuse(src, dst):
+        raise PermissionError("sharing violation")
+
+    atomicio.os.replace = refuse
+    try:
+        with pytest.raises(PermissionError):
+            atomicio.write_bytes_atomic(target, b"new", sleep=lambda _s: None)
+    finally:
+        atomicio.os.replace = real
+    assert target.read_bytes() == b"old"
+    assert [p.name for p in tmp_path.iterdir()] == ["core_user_1.dat"]
+
+
+def test_write_bytes_atomic_rejects_zero_attempts_instead_of_silently_no_opping(
+    tmp_path,
+):
+    with pytest.raises(ValueError):
+        atomicio.write_bytes_atomic(tmp_path / "x.dat", b"x", attempts=0)
+
+
+def test_write_bytes_atomic_accepts_a_str_path(tmp_path):
+    """write_atomic and copy_atomic both coerce str to Path before touching
+    .parent; write_bytes_atomic must match or a str caller hits AttributeError."""
+    target = str(tmp_path / "core_user_1.dat")
+    atomicio.write_bytes_atomic(target, b"data")
+    assert Path(target).read_bytes() == b"data"

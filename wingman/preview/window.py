@@ -30,20 +30,6 @@ PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 MIN_SIZE = (120, 90)
 BORDER = 2
 LABEL_H = 30
-DRAG_MIN = 4
-
-
-def drag_result(start, current, rect, locked: bool, drag_min: int = DRAG_MIN):
-    """Classify a completed pointer gesture.
-
-    Returns ("activate", unchanged_rect) or ("move", new_rect). A locked
-    preview always reports "activate": the lock stops movement, not focus
-    switching.
-    """
-    dx, dy = current[0] - start[0], current[1] - start[1]
-    if locked or (abs(dx) <= drag_min and abs(dy) <= drag_min):
-        return "activate", rect
-    return "move", rect._replace(x=rect.x + dx, y=rect.y + dy)
 
 
 def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(0, 0)):
@@ -738,6 +724,41 @@ class PreviewWindow:
     def _on_message(self, msg, wparam, lparam):
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
             pt = _lparam_point(lparam)
+            resizing = msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
+                geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
+            )
+            if msg == win32.WM_LBUTTONDOWN and not resizing:
+                # The switch starts HERE, on the way down, not on the
+                # release. A normal click holds the button for 60-120ms
+                # and the old code spent all of it waiting to find out
+                # whether the press was going to become a drag. EVE-O
+                # Preview fires ThumbnailActivated from MouseDown for
+                # the same reason, and that is where the rest of this
+                # button split comes from too: left is focus and nothing
+                # else, right is movement.
+                #
+                # Acknowledged BEFORE the handoff, and regardless of
+                # whether the switch that follows succeeds: Windows
+                # refuses a foreground change from a process without
+                # recent input, so acknowledging only on a successful
+                # swap would leave the ring pulsing forever with
+                # clicking it doing nothing.
+                self.acknowledge_alert()
+                # Classify, then hand off: the window does NOT call
+                # activate() itself. The host owns the switch because it
+                # is the only thing that knows the previous foreground,
+                # the roster and the settings -- and it has to know them
+                # BEFORE the foreground moves.
+                self._on_activate(self.client)
+                return 0
+            if msg == win32.WM_RBUTTONDOWN and self.locked:
+                # The lock's meaning changed with the buttons. It used to
+                # stop a left drag while right-drag stayed as the
+                # deliberate override; now that right-drag is the only
+                # move gesture, honouring that override would leave the
+                # lock controlling nothing at all. EVE-O's
+                # LockThumbnailLocation stops movement outright too.
+                return 0
             # Client coords are only safe HERE: the window has not moved
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
@@ -752,18 +773,7 @@ class PreviewWindow:
             # resize_result. The syscall is skipped entirely when unlocked.
             self._start_aspect = self._source_aspect() if self.lock_aspect else None
             self._start_chrome = (BORDER * 2, BORDER * 2 + self._label_h())
-            if msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
-                geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
-            ):
-                self._mode = "resize"
-            elif msg == win32.WM_RBUTTONDOWN:
-                # Tracked separately from a left drag: right-drag is the
-                # override that moves a LOCKED preview. Collapsing both
-                # into one "drag" mode made the lock suppress it too, so
-                # the override documented alongside it did nothing.
-                self._mode = "right_drag"
-            else:
-                self._mode = "drag"
+            self._mode = "resize" if resizing else "right_drag"
             self._libs.user32.SetCapture(self.hwnd)
             if PERF:
                 self._perf = {
@@ -776,11 +786,6 @@ class PreviewWindow:
             return 0
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
-            if self.locked and self._mode == "drag":
-                # Left drag only. A lock stops accidental movement; the
-                # right-drag override is how a locked preview is moved
-                # deliberately.
-                return 0
             if PERF:
                 t0 = time.perf_counter()
                 p = self._perf
@@ -830,30 +835,7 @@ class PreviewWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
-            mode, self._mode = self._mode, None
-            if mode == "drag" and msg == win32.WM_LBUTTONUP:
-                # Only a left click activates. A right-drag release falls
-                # through to reporting the new rect.
-                action, _ = drag_result(
-                    self._start, _cursor_pos(self._libs), self._start_rect, self.locked
-                )
-                if action == "activate":
-                    # Acknowledged BEFORE the handoff, and regardless of
-                    # whether the switch that follows succeeds: Windows
-                    # refuses a foreground change from a process without
-                    # recent input, so acknowledging only on a successful
-                    # swap would leave the ring pulsing forever with
-                    # clicking it doing nothing.
-                    self.acknowledge_alert()
-                    # Classify, then hand off: the window does NOT call
-                    # activate() itself. The host owns the switch because
-                    # it is the only thing that knows the previous
-                    # foreground, the roster and the settings -- and it
-                    # has to know them BEFORE the foreground moves. When
-                    # both owned it, the host learned of a click only
-                    # after the switch was already over.
-                    self._on_activate(self.client)
-                    return 0
+            self._mode = None
             self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0
 

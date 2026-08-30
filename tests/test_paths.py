@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from wingman import paths
@@ -147,3 +148,34 @@ def test_resolve_binary_falls_back_to_path(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod.shutil, "which", lambda name: "/usr/bin/" + name)
 
     assert paths_mod.resolve_binary("ffmpeg") == "/usr/bin/ffmpeg"
+
+
+def _codec_name():
+    return (
+        "wingman-settings-codec.exe"
+        if sys.platform == "win32"
+        else "wingman-settings-codec"
+    )
+
+
+def test_codec_exe_finds_the_frozen_copy(tmp_path, monkeypatch):
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / _codec_name()).write_bytes(b"")
+    monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert paths.codec_exe() == str(tmp_path / "bin" / _codec_name())
+
+
+def test_codec_exe_finds_the_source_checkout_copy(tmp_path, monkeypatch):
+    (tmp_path / "packaging" / "bin").mkdir(parents=True)
+    (tmp_path / "packaging" / "bin" / _codec_name()).write_bytes(b"")
+    monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    assert paths.codec_exe() == str(tmp_path / "packaging" / "bin" / _codec_name())
+
+
+def test_codec_exe_never_falls_back_to_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(paths.shutil, "which", lambda name: "/usr/bin/" + name)
+    assert paths.codec_exe() is None

@@ -1658,7 +1658,9 @@ only ever checked by hand.
         own box in the Lock disclosure directly beneath it you have not
         changed. Tick it with one character already explicitly unlocked:
         that character stays draggable and every other preview stops
-        moving on a left drag (right drag still moves them, as always).
+        moving on a right drag — which is now the only move gesture, so a
+        locked preview cannot be moved by mouse at all until it is
+        unlocked.
         Untick it without touching anything else: the arrangement that
         preceded the tick comes back. Nothing is migrated and the roster
         is not rewritten — `preview.locked` keeps meaning "these differ
@@ -2000,11 +2002,29 @@ foreground.
 - [ ] Opacity dims the mirrored video and leaves the border and label at
       full strength — drag the slider to its low end and confirm the chrome
       stays crisp while only the video fades.
-- [ ] A locked preview refuses a left drag and accepts a right drag. Check
-      this **on a character who has never dragged their preview**, not just
-      one that already has a saved position — that is the case the lock's
-      own storage list exists for, since `locked` cannot ride in
-      `preview.layouts` without a saved rect.
+- [ ] **LOAD-BEARING: the button split.** Left click switches, right drag
+      moves, the corner resizes — and left-drag now moves NOTHING. Walk all
+      four: (a) click a preview and confirm the client comes forward; (b)
+      press and HOLD the left button on a preview for a second before
+      releasing — the switch must happen on the press, not the release,
+      which is the whole point of the change; (c) left-drag a preview
+      across the screen and confirm it does not move and its saved
+      position is unchanged after a restart; (d) right-drag it and confirm
+      it moves and the new position survives a restart. This is a
+      **breaking change to muscle memory** for anyone who has been
+      left-dragging previews since 3.x, and it is the item most likely to
+      generate "the previews are stuck" reports — matching EVE-O Preview
+      and TriffView is the reason it was chosen.
+- [ ] Grabbing the bottom-right corner resizes WITHOUT switching to that
+      client. Activation on mouse-down makes this a real hazard: the
+      corner is inside the preview, so a resize that also focused would
+      drag a client to the foreground every time a layout is adjusted.
+- [ ] A locked preview refuses a right drag — the only move gesture there
+      is now — while a left click on it still switches to that client.
+      Check this **on a character who has never dragged their preview**,
+      not just one that already has a saved position — that is the case
+      the lock's own storage list exists for, since `locked` cannot ride
+      in `preview.layouts` without a saved rect.
 - [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
       Activation ownership moved from the preview window into the host as
       part of this slice; this is a pure regression check on the
@@ -2017,16 +2037,37 @@ foreground.
 - [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
       Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
       outgoing client minimizes EVERY time. A single successful switch does
-      not satisfy this item. `activate()` restores a minimized window with
-      `ShowWindowAsync` — asynchronous — and then reads its verdict from
-      `GetForegroundWindow()` a few instructions later; a False `ok`
-      correctly skips the minimize, so switching BACK to a client this
-      feature just minimized is exactly where the race lands. The
-      user-visible shape is "works the first time, then intermittently",
-      which the single-switch item above passes straight through.
-- [ ] A failed activation leaves both clients exactly where they were — no
-      minimize happens. Hard to force deliberately; watch for it rather than
-      staging it.
+      not satisfy this item. The switch is minimize-first (EVE-O Preview's
+      order): the outgoing client is minimized while it still holds the
+      foreground, THEN the target is activated. Switching BACK to a client
+      this feature just minimized goes through `activate()`'s
+      `ShowWindowAsync(SW_RESTORE)`, which is asynchronous; the
+      `GetForegroundWindow()` verdict is read a few instructions later.
+      The user-visible shape of a problem there is "works the first time,
+      then intermittently", which the single-switch item above passes
+      straight through.
+- [ ] **No minimize/restore animation during the switch, and the user's
+      setting survives it.** The outgoing client should vanish and the
+      target should appear with no window-zoom. Note what this is and is
+      not: the animation is composited by DWM and blocks nothing —
+      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
+      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
+      not about the switch finishing sooner. **This machine's own desktop
+      has the animation off (`iMinAnimate=0`), so the code path
+      early-returns here and the item cannot be walked without turning it
+      on first.** Windows' default is on, which is who it is for. Turn it
+      on under System > Accessibility > Visual effects (or
+      SystemPropertiesPerformance: "Animate windows when minimizing and
+      maximizing"), walk the switch, then confirm the setting is still on
+      afterwards — the switch toggles the LIVE value only, with
+      `fWinIni=0`, and puts it back in a `finally`.
+- [ ] A refused activation brings the outgoing client BACK. Windows refuses
+      a foreground change from a process without recent input; with
+      minimize-first the outgoing client is already down when that refusal
+      is learned, so the host re-activates it (`switching.should_restore`).
+      The visible shape of a failure is the old TriffView complaint: an
+      empty desktop with nothing focused. Hard to force deliberately; watch
+      for it rather than staging it.
 - [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
       a client with visible motion — undocked, drones out, or the camera
       spinning. Do NOT use a docked ship on a static scene: it looks
@@ -2034,15 +2075,21 @@ foreground.
       so that scene cannot tell you which one you saw. This is the check
       that decides whether minimize-inactive is compatible with the
       previews it sits beside.
-- [ ] Watch whether the 10 ms settle before the minimize, and the 100 ms
-      `SendMessageTimeoutW` ceiling, are enough on a real, possibly loaded
-      client — both are ported constants that have never run outside this
-      pass.
-- [ ] Watch for a failed SECOND activation: the minimize succeeds but the
-      re-activation after it is refused, leaving you on whatever Windows
-      picked instead of the client you switched to. This is silent by
-      design — there is no clean recovery — but should be observed rather
-      than assumed absent.
+- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
+      do **not** treat one as a defect on its own. Only failures are
+      logged — a successful minimize writes nothing — so those lines have
+      no denominator and never showed the rate anyone read into them. The
+      44 that carry an elapsed time are real waits clipped at the budget
+      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
+      have failed to reproduce one: quiet clients answer in 7–57 ms in
+      both orders, including with the sending thread owning a DWM
+      thumbnail of the target. The open candidate is the client's own
+      message pump during a busy moment (grid load, a jump, a session
+      change), which no ordering change here can fix. What IS worth
+      filing: the elapsed figure separates a real wait from an instant
+      refusal, so a line reading well under a millisecond means something
+      new. The reorder's payoff is that a late-landing minimize can no
+      longer drop focus, so watch for THAT instead — see the item above.
 - [ ] Reader's note, not a defect to file on its own: the never-minimize
       COLUMN sits in the card headed "Global keybinds" — right for its
       adjacency to the character rows, but that card's intro tells the
@@ -2597,6 +2644,22 @@ so these are the checks that matter and only a Windows machine can run them.
       the other half.
 - [ ] Check the packaged build: the Profiles route appears and the
       folder picker opens.
+
+## Probe formations (Profiles → Probe formations)
+
+Needs a real install and every EVE client closed for the write lines.
+
+- [ ] The card is present when the codec is bundled and absent (not broken) when `bin/wingman-settings-codec.exe` is removed from the install; Copy and Backups still work in both cases.
+- [ ] Open an account with a formation created in-game: it lists with the right name and probe count; ranges read as AU powers of two.
+- [ ] **Version gate:** Save with no edits, then launch the client on that account. UI layout, overview, and the formation are all intact. (The client writes version 0; Wingman writes version 1. Proven once on 2026-08-29 — design doc finding 10 — and re-walked here so a client update that changes the answer is caught before a user meets it.)
+- [ ] Edit a formation, save, launch the client: the probe scanner shows the edit; the client's selected formation is unchanged.
+- [ ] Save with a client running: refused with "The file is in use. Close EVE and retry."; file bytes unchanged.
+- [ ] Restore the pre-edit auto backup from the Backups card: the old formation returns.
+- [ ] Reorder by deleting and re-adding: the client's selected formation still points at the same formation, not the same slot.
+- [ ] Save a formation in Wingman, edit it in the client (move a probe, rename), close the client, reopen in Wingman: the client's edit is what Wingman shows, and Save then round-trips it again.
+- [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
+- [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
+- [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
 
 ## EVE skill plan readiness
 

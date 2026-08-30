@@ -20,6 +20,10 @@ a = Analysis(
         # AutoHotkey v2 handed a v1 script fails with parse errors that
         # read like a bug in the script.
         (str(BIN / "AutoHotkeyU64.exe"), "bin"),
+        # Our own sidecar over blue-marshal, decoding/encoding EVE's
+        # settings .dat files. paths.codec_exe() looks here, bundled-only
+        # like AutoHotkey above and for the same reason.
+        (str(BIN / "wingman-settings-codec.exe"), "bin"),
     ],
     datas=[
         # The page is data, not code: modulegraph only follows Python
@@ -44,12 +48,25 @@ a = Analysis(
         # binary. Renamed by fetch_autohotkey.py at fetch time (not here --
         # a `datas` tuple's second element is a destination directory, not a
         # filename, so it cannot rename on the way in) so it cannot be
-        # mistaken for a licence covering Wingman, which is MIT.
+        # mistaken for the licence covering Wingman itself, which is
+        # GPL-3.0-only (pyproject.toml) -- a different version of the same
+        # family, and an unrenamed COPYING would misstate which.
         (str(BIN / "AutoHotkey-COPYING.txt"), "."),
         # FFmpeg is GPL v3 where AutoHotkey is v2, so it needs its own
         # copy -- one shared text would misstate the terms for one of them.
         # Also renamed at fetch time by fetch_ffmpeg.py, for the same reason.
         (str(BIN / "ffmpeg-COPYING.txt"), "."),
+        # The settings codec's own wrapper code is GPL-3.0-only like the rest
+        # of Wingman; what needs its own notice here is the MIT/Apache-2.0
+        # third-party crates it statically links, which ask that their
+        # licence text travel with the binary. ONE file for the whole static
+        # link rather than one per crate: it is a single executable with
+        # about twenty such crates compiled into it. Generated from
+        # Cargo.lock at build time by
+        # packaging/settings-codec/collect_licenses.py, and sits beside the
+        # two GPL COPYING files above -- one shared text would misstate the
+        # terms for all three.
+        (str(BIN / "settings-codec-COPYING.txt"), "."),
         # The engine is data, not code -- modulegraph cannot see it, and
         # PyInstaller exits 0 when a datas entry fails to collect. Without
         # the post-build assertion below, a missing script produces a green

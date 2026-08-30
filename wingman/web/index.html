@@ -621,7 +621,7 @@
           </div>
           <div class="row"><span class="lab"></span>
             <span class="hint">Click a preview to switch to that client.
-              Drag to move it, drag the bottom-right corner to resize.
+              Right-drag to move it, drag the bottom-right corner to resize.
               Positions are remembered per character.</span></div>
           <!-- ONE line for the whole block, not one per control. Alerts
                already does this (alerts.js's DEPENDS): twelve controls under
@@ -1377,6 +1377,92 @@
         <p id="es-backup-note" class="hint"></p>
         <div id="es-backups" class="list-scroll"></div>
       </section>
+
+      <!-- The way into the probe formation editor, and the only one.
+           Formations live in the ACCOUNT file (core_user_*.dat), so this
+           card offers accounts and never characters -- which is also why
+           it is a card of its own rather than a control on the copy card,
+           whose Characters/Accounts switch would otherwise decide whether
+           the entry point exists.
+
+           Hidden outright when the decoder is not present, rather than
+           offered and then refused: eve_settings_formations answers "not
+           available in this installation", and a control whose only
+           possible outcome is that sentence is worse than no control.
+           evesettings.js reads formations_available off the state
+           payload. -->
+      <section class="card" id="es-formations-card" hidden>
+        <h2>Probe formations</h2>
+        <div class="row">
+          <label class="lab" for="es-formations-account">Account</label>
+          <select id="es-formations-account" class="field"></select>
+          <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
+        </div>
+        <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- A SUB-SCREEN of Profiles, on a route id the title bar never shows.
+       DESIGN.md makes title-bar space the scarce resource and the nav
+       already carries two EVE destinations; the design doc
+       (docs/eve-settings-decode-design.md, "Where it lands in the UI")
+       settles the rest -- it is a destination by PRODUCT.md's rule, so it
+       is not a section, but it may not spend the scarce thing. app.js
+       keeps the Profiles button lit while you stand here, and
+       WM.last_destination deliberately never becomes `formations`, so the
+       gear returns to Profiles.
+
+       Rail + pane like Skills, not the .settings/.card form wrapper: the
+       probe table and the preview are a workspace. -->
+  <div class="route" id="route-formations">
+    <div class="fm-rail">
+      <div class="row fm-rail-head">
+        <button class="btn" id="fm-back" type="button">&lsaquo; Profiles</button>
+        <span class="fm-account" id="fm-account"></span>
+      </div>
+      <div class="list-scroll" id="fm-list"></div>
+      <div class="row fm-rail-add">
+        <button class="btn" id="fm-add" type="button">New formation</button>
+        <select id="fm-preset" class="field" aria-label="Preset for a new formation"></select>
+      </div>
+    </div>
+    <div class="fm-pane">
+      <!-- The scrolling half. The commit row is deliberately its SIBLING
+           rather than its last child: with eight probes at the 840x625
+           floor the pane is 605px of content in 521px, which put
+           `Save formations` below the viewport -- the same state P10 found
+           `Copy to selected` in one route away, where widening the window
+           could not help either. Outside the scroller it cannot fall off,
+           and nothing needs a sticky bar painted over the page wash. -->
+      <div class="fm-work">
+        <div class="row">
+          <label class="lab" for="fm-name">Name</label>
+          <input id="fm-name" class="field" type="text" maxlength="40">
+          <button class="btn danger" id="fm-delete" type="button">Delete</button>
+        </div>
+        <div class="fm-grid" id="fm-probes"></div>
+        <div class="row">
+          <button class="btn" id="fm-add-probe" type="button">Add probe</button>
+          <select id="fm-all-range" class="field" aria-label="Set every range"></select>
+          <button class="btn" id="fm-balance" type="button">Balance</button>
+          <span class="hint" id="fm-balance-note"></span>
+        </div>
+        <!-- The first SVG in the app. Every stroke and fill comes from a
+             :root token through a class, never from a presentation
+             attribute, so the colour guard covers it like everything
+             else.
+
+             The viewBox here is only what the element carries before the
+             first draw: formations.js rewrites it to the element's own
+             CSS pixel size every time, so one user unit is one pixel and
+             stroke widths, radii and label type all mean what they say. -->
+        <svg id="fm-preview" viewBox="0 0 100 100" role="img" aria-label="Formation preview"></svg>
+      </div>
+      <div class="row" id="fm-commit">
+        <button class="btn acc" id="fm-save" type="button">Save formations</button>
+        <span class="hint" id="fm-dirty"></span>
+      </div>
     </div>
   </div>
 
@@ -1638,6 +1724,7 @@
   <script src="previews.js"></script>
   <script src="alerts.js"></script>
   <script src="evesettings.js"></script>
+  <script src="formations.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>

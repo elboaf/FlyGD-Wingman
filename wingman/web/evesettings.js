@@ -69,6 +69,7 @@
     renderSource();
     renderTargets();
     renderBackups();
+    renderFormationsCard();
   }
 
   // No root, or a folder Python could not read through: there is nothing
@@ -347,6 +348,36 @@
     });
   }
 
+  // The way into the probe formation editor. Accounts only, always: a
+  // formation lives in the account file, so the Characters/Accounts switch
+  // above deliberately does NOT reach this card -- it would otherwise
+  // decide whether the entry point exists at all.
+  //
+  // The whole card is hidden when Python reports no decoder, rather than
+  // shown and then refused: eve_settings_formations' answer in that state
+  // is a sentence, and a control whose only outcome is that sentence is
+  // worse than no control.
+  function renderFormationsCard() {
+    var card = WM.el('es-formations-card');
+    var sel = WM.el('es-formations-account');
+    card.hidden = !(state && state.formations_available
+                    && state.accounts && state.accounts.length);
+    if (card.hidden) return;
+    // The chosen account survives a refresh: onEveSettingsDone refreshes
+    // after every mutation, and rebuilding the list would silently reset
+    // the pick back to the first account between two clicks.
+    var keep = sel.value;
+    sel.textContent = '';
+    state.accounts.forEach(function (account) {
+      var option = document.createElement('option');
+      option.value = account.path;
+      option.textContent = account.name;
+      sel.appendChild(option);
+    });
+    if (keep) sel.value = keep;
+    WM.setEnabled('es-formations-open', !busy && !!sel.value);
+  }
+
   function button(text, handler, extra) {
     var el = document.createElement('button');
     el.className = extra ? 'btn ' + extra : 'btn';
@@ -422,6 +453,9 @@
     // owns the whole of it, so a copy that finishes cannot re-enable a
     // button whose selection was cleared by the same push.
     paintCommit();
+    // Same reason: the formations card's button is inert while a copy or a
+    // restore is in flight, and paintCommit does not own it.
+    renderFormationsCard();
     WM.el('es-backup-profile').disabled = value;
     Array.prototype.forEach.call(
       WM.el('es-backups').querySelectorAll('button'), function (el) {
@@ -521,6 +555,14 @@
       mutate('eve_settings_copy', WM.el('es-source').value, targets);
     });
 
+    WM.el('es-formations-open').addEventListener('click', function () {
+      var path = WM.el('es-formations-account').value;
+      // Guarded on WM.openFormations rather than assumed: formations.js
+      // loads after this file, and a page that lost the script tag would
+      // otherwise throw inside a click handler where nothing reports it.
+      if (path && WM.openFormations) WM.openFormations(path);
+    });
+
     WM.el('es-backup-profile').addEventListener('click', function () {
       // Saves a pointless round trip. It is NOT the guard: _eve_backup_worker
       // rejects an empty or missing path itself, because this file cannot be
@@ -555,7 +597,16 @@
   // The completion signal for every mutation. It replaces a setTimeout that
   // fired 250ms into a copy the worker had barely started, and it is what
   // re-enables the buttons disabled on send.
+  //
+  // It is also the formation editor's completion signal, and this is the
+  // only registration of it. WM.handle assigns window[name] outright, so a
+  // second WM.handle('onEveSettingsDone') in formations.js would replace
+  // this one and leave copy, backup and restore stuck busy for the rest of
+  // the session, with nothing in the console to say so. The push is
+  // forwarded instead; formations.js exposes WM.formationsDone and ignores
+  // anything that arrives while its route is not showing.
   WM.handle('onEveSettingsDone', function (payload) {
+    if (WM.formationsDone) WM.formationsDone(payload);
     if (payload.ok) selected = {};
     setBusy(false);
     refresh();

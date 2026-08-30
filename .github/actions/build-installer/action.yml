@@ -194,6 +194,43 @@ runs:
     # only integrity guarantee for this binary. Revisit if upstream starts
     # signing.
 
+    - name: Install the Rust toolchain for the settings codec
+      # Pinned to a commit like every other action here: `@stable` is a
+      # moving BRANCH of this repository, so it is upstream's HEAD running
+      # with our secrets on the release path, not a version we chose.
+      # 6c977a6 is the v1 tag (also master's head at the time of pinning).
+      #
+      # Two different "stable"s, and only one of them is now pinned: the
+      # ACTION is fixed at v1, while the `toolchain: stable` input below
+      # still floats to whatever rustc is current on the day of the build.
+      # That is deliberate -- the crates are pinned by Cargo.lock and built
+      # `--locked`, so the compiler is the one input we do want fresh, and
+      # a pinned rustc would quietly rot instead. The v1 action requires
+      # `toolchain` explicitly; only the branch form defaulted it.
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # v1
+      with:
+        toolchain: stable
+
+    - name: Build the settings codec
+      # Our own ~50-line crate over the MIT blue-marshal library. Built here
+      # rather than fetched because upstream ships no stdin/stdout binary
+      # and its CLI always appends a checksum, which would grow one onto
+      # files that never had it. --locked makes the release reproducible
+      # from packaging/settings-codec/Cargo.lock.
+      #
+      # The licence step runs AFTER the build, not before: it reads the
+      # crate sources cargo vendors under ~/.cargo/registry/src, which do
+      # not exist until something has fetched them. It covers blue-marshal
+      # AND everything statically linked under it -- about twenty crates,
+      # all MIT/Apache-2.0 -- because MIT's condition is that the notice
+      # travels with the binary, and the binary contains all of them.
+      # Shipping blue-marshal's text alone covered one crate in eighteen.
+      shell: pwsh
+      run: |
+        cargo build --release --locked --manifest-path packaging/settings-codec/Cargo.toml
+        Copy-Item packaging/settings-codec/target/release/wingman-settings-codec.exe packaging/bin/
+        python packaging/settings-codec/collect_licenses.py
+
     - name: Fetch the WebView2 bootstrapper
       shell: pwsh
       run: python packaging/fetch_webview2.py
@@ -245,7 +282,7 @@ runs:
           throw "Bundled ffmpeg not found at $bin - resolve_binary() would fall back to PATH and stitching would be silently unavailable"
         }
         Get-ChildItem $bin
-        foreach ($exe in @("ffmpeg.exe", "ffprobe.exe")) {
+        foreach ($exe in @("ffmpeg.exe", "ffprobe.exe", "wingman-settings-codec.exe")) {
           if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe missing from the bundle" }
         }
 
@@ -353,10 +390,15 @@ runs:
     - name: Verify the GPL notices are bundled
       # Same silent-datas-failure shape as the checks above, but the
       # consequence here is legal rather than functional: the app would
-      # still run fine with these three files missing, which is exactly
+      # still run fine with these files missing, which is exactly
       # why a build-time assertion is the only thing that would catch it.
-      # These three are what THIRD-PARTY-NOTICES.md's written offer
+      # These are what THIRD-PARTY-NOTICES.md's written offer
       # depends on actually installing them beside the binaries.
+      #
+      # settings-codec-COPYING.txt is one file covering ~20 statically
+      # linked crates rather than one file per dependency: the shape used
+      # for the two GPL executables does not scale to a static link, and
+      # the whole set is generated from Cargo.lock by collect_licenses.py.
       #
       # -PathType Leaf, not a bare Test-Path: uploader.spec's `datas`
       # entries name a destination *directory*, so a rename attempted
@@ -368,7 +410,7 @@ runs:
       shell: pwsh
       run: |
         $root = "dist\Wingman\_internal"
-        foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt")) {
+        foreach ($file in @("THIRD-PARTY-NOTICES.md", "AutoHotkey-COPYING.txt", "ffmpeg-COPYING.txt", "settings-codec-COPYING.txt")) {
           $path = Join-Path $root $file
           if (-not (Test-Path $path -PathType Leaf)) {
             throw "$file not found at $path - the corresponding datas entry in uploader.spec did not resolve, and the shipped installer would omit a GPL-required licence text or the written offer of source"
