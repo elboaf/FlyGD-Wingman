@@ -1036,8 +1036,8 @@
         detail: { enabled: wanted }
       }));
       say(wanted
-        ? 'New previews open locked. A right drag still moves one.'
-        : 'New previews can be dragged freely.');
+        ? 'New previews open locked. Untick a preview\'s Lock to move it.'
+        : 'New previews can be right-dragged to move.');
     });
   });
 
