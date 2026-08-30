@@ -181,6 +181,35 @@ def test_clone_source_then_restore_excluded_keeps_unmapped_source_values(
     )
 
 
+def test_excluding_ui_group_preserves_source_when_neither_document_has_ui():
+    source = {"bytes:wingmanUnmappedSection": {"tuple": ["source"]}}
+    target = {"bytes:wingmanUnmappedSection": {"tuple": ["target"]}}
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account", without={"market"}),
+    )
+
+    assert result == source
+
+
+def test_type_prefix_is_split_once_when_setting_name_contains_colon():
+    key = "bytes:market_:nested"
+    source = {"bytes:ui": {key: {"tuple": ["source"]}}}
+    target = {"bytes:ui": {key: {"tuple": ["target"]}}}
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account", without={"market"}),
+    )
+
+    assert result["bytes:ui"][key] == {"tuple": ["target"]}
+
+
 def test_excluded_group_restores_target_keys_missing_from_source(account_fixture):
     result = copy_selected(
         account_fixture["source"],

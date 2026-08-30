@@ -208,7 +208,19 @@ def copy_selected(
                     result[target_key] = copy.deepcopy(target[target_key])
             continue
 
-        result_ui_key = source_ui_key or target_ui_key or "bytes:ui"
+        target_matches = (
+            [
+                (key, value)
+                for key, value in target_ui.items()
+                if _matches(key, rule.names)
+            ]
+            if target_ui is not None
+            else []
+        )
+        if source_ui_key is None and not target_matches:
+            continue
+
+        result_ui_key = source_ui_key or target_ui_key
         result_ui = result.get(result_ui_key)
         if result_ui is None:
             result_ui = {}
@@ -216,9 +228,7 @@ def copy_selected(
         for key in list(result_ui):
             if _matches(key, rule.names):
                 del result_ui[key]
-        if target_ui is not None:
-            for key, value in target_ui.items():
-                if _matches(key, rule.names):
-                    result_ui[key] = copy.deepcopy(value)
+        for key, value in target_matches:
+            result_ui[key] = copy.deepcopy(value)
 
     return result
