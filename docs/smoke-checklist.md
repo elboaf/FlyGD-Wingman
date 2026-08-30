@@ -2582,6 +2582,8 @@ Needs a real install and every EVE client closed for the write lines.
 - [ ] Reorder by deleting and re-adding: the client's selected formation still points at the same formation, not the same slot.
 - [ ] Save a formation in Wingman, edit it in the client (move a probe, rename), close the client, reopen in Wingman: the client's edit is what Wingman shows, and Save then round-trips it again.
 - [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
+- [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
+- [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
 
 ## EVE skill plan readiness
 

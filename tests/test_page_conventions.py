@@ -483,6 +483,40 @@ def test_every_destination_and_section_is_reachable_and_exists():
     )
 
 
+def test_the_formation_editor_offers_no_other_exit_while_editing():
+    """The editor's own back button must be the ONLY way off #route-formations.
+
+    The editor holds unsaved edits and confirms before discarding them --
+    but only on its own back button. #routenav and the gear are chrome:
+    they sit above every route, call WM.route directly, and know nothing
+    about `state.dirty`. So with the nav visible there were five exits and
+    four of them threw the edits away in silence, the next
+    WM.openFormations reloading over them with no `protect`.
+
+    The remedy is one place, in WM.route: decide the chrome's visibility
+    per route, and hide it on `formations` exactly as `firstrun` already
+    does (which is nothing more than the same rule -- a screen you cannot
+    leave sideways). Pinned here because the two lines are three words
+    apart and a later route added to one is easily left out of the other.
+    """
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    declared = re.search(r"WM\.CHROMELESS_ROUTES = \[([^\]]*)\]", app)
+    assert declared, "app.js no longer declares WM.CHROMELESS_ROUTES"
+    chromeless = set(re.findall(r"'([\w-]+)'", declared.group(1)))
+    assert {"firstrun", "formations"} <= chromeless, (
+        "chrome stays up on "
+        f"{sorted({'firstrun', 'formations'} - chromeless)} -- a route you must "
+        "not leave sideways cannot offer buttons that leave it"
+    )
+    # Both exits, decided from the one list. A gear hidden while the nav
+    # stayed up would still leak four destinations.
+    for element in ("btn-settings", "routenav"):
+        assert f"WM.el('{element}').hidden = chromeless;" in app, (
+            f"#{element}'s visibility no longer follows WM.CHROMELESS_ROUTES"
+        )
+
+
 def test_the_landing_section_is_one_fact_not_three():
     """`WM.current_section` and the visibly active section must agree.
 
