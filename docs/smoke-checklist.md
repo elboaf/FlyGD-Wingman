@@ -1654,6 +1654,28 @@ only ever checked by hand.
         These two keys were read once at host construction until this
         change, so a restart-to-apply bug here would look exactly like
         the field working.
+      - `Apply to open previews` (beside the field) resizes every open
+        preview to the pair the field holds, **including previews with a
+        custom size** — that is the point: it is the "make them all this
+        size" action, and honouring per-character exceptions would make
+        it silently skip windows the user sized once and forgot. After
+        applying, `Size…` on one card still overrides that one window.
+        Refused with a sentence while previews are stopped. Check the
+        sizes survive a restart: the apply records layouts like a drag,
+        unlike Reset.
+      - `Selection ring colour` recolours the ring on the preview you
+        last clicked, live, on every open preview at once — no restart,
+        no re-click. Reload Settings: the picker still holds the chosen
+        colour.
+      - The button grammar, with `Lock previews in place` off:
+        a plain left click switches; a left drag moves; a right drag
+        resizes that preview (still works under the lock, like the
+        corner handle); left+right held together and dragged resizes
+        EVERY open preview at once, each keeping its own position. Check
+        the click switch survived the drag move: a left press that
+        wanders a few pixels and releases still switches, and a left
+        drag does NOT switch. A locked left drag neither moves nor
+        switches.
       - `Lock previews in place by default` locks every character whose
         own box in the Lock disclosure directly beneath it you have not
         changed. Tick it with one character already explicitly unlocked:
@@ -2002,25 +2024,31 @@ foreground.
 - [ ] Opacity dims the mirrored video and leaves the border and label at
       full strength — drag the slider to its low end and confirm the chrome
       stays crisp while only the video fades.
-- [ ] **LOAD-BEARING: the button split.** Left click switches, right drag
-      moves, the corner resizes — and left-drag now moves NOTHING. Walk all
-      four: (a) click a preview and confirm the client comes forward; (b)
-      press and HOLD the left button on a preview for a second before
-      releasing — the switch must happen on the press, not the release,
-      which is the whole point of the change; (c) left-drag a preview
-      across the screen and confirm it does not move and its saved
-      position is unchanged after a restart; (d) right-drag it and confirm
-      it moves and the new position survives a restart. This is a
-      **breaking change to muscle memory** for anyone who has been
-      left-dragging previews since 3.x, and it is the item most likely to
-      generate "the previews are stuck" reports — matching EVE-O Preview
-      and TriffView is the reason it was chosen.
+- [ ] **LOAD-BEARING: the button grammar.** Left click switches, left
+      drag moves, right drag resizes, left+right drag resizes every
+      preview at once — and the corner handle still resizes alone. Walk
+      all of them: (a) click a preview and confirm the client comes
+      forward **on release** — the switch is deferred past a 4px
+      threshold now, because at press time it is not yet knowable whether
+      the press is a click or a drag-move; (b) press and hold the left
+      button without moving, then release: it still switches; (c) left
+      drag a preview across the screen, confirm it moves and the
+      position survives a restart; (d) right-drag one and confirm it
+      resizes top-left-anchored; (e) press left, add right without
+      releasing, and drag: every open preview resizes together, each
+      keeping its own position. This item is most likely to generate
+      "the previews are stuck" reports — matching EVE-O Preview's
+      gesture set is the reason it was chosen.
 - [ ] Grabbing the bottom-right corner resizes WITHOUT switching to that
-      client. Activation on mouse-down makes this a real hazard: the
-      corner is inside the preview, so a resize that also focused would
-      drag a client to the foreground every time a layout is adjusted.
-- [ ] A locked preview refuses a right drag — the only move gesture there
-      is now — while a left click on it still switches to that client.
+      client. The corner is inside the preview, so a resize that also
+      focused would drag a client to the foreground every time a layout
+      is adjusted.
+- [ ] A locked preview refuses a left drag — the only move gesture —
+      while a left click on it still switches and a right-drag resize
+      still works (a lock has never refused sizing). A locked left drag
+      must not switch either: the press declared itself a drag, and a
+      refused drag that clicked you into EVE would make every attempt to
+      move a locked preview switch clients.
       Check this **on a character who has never dragged their preview**,
       not just one that already has a saved position — that is the case
       the lock's own storage list exists for, since `locked` cannot ride

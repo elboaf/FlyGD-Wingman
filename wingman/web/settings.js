@@ -1119,6 +1119,64 @@
   });
 }());
 
+// ---- Apply the default size to open previews ----------------------------
+// The button half of the default-size field: Enter decides where the NEXT
+// preview opens, this one resizes what is on screen now. Deliberately a
+// separate action rather than a side effect of the commit -- a field that
+// rearranges the screen every time it is saved is a field you save once
+// and then never touch again.
+(function () {
+  var btn = WM.el('btn-preview-apply-size');
+  var status = WM.el('preview-apply-size-status');
+  if (!btn || !status) { return; }
+
+  function say(text) { status.textContent = text || ''; }
+
+  btn.addEventListener('click', function () {
+    WM.send('apply_preview_default_size').then(function (res) {
+      // A null reply is a bridge failure; anything else carries the
+      // applied/error pair every field writer here uses.
+      if (!res) { say('Could not resize the previews.'); return; }
+      say(res.applied ? 'Resized every open preview.'
+                      : (res.error || 'Could not resize the previews.'));
+    });
+  });
+}());
+
+// ---- Selection ring colour ----------------------------------------------
+// A color input, so it commits on change -- DESIGN.md's discrete-control
+// rule; there is no half-typed state to protect. The #rrggbb string is
+// shipped verbatim and never unpacked here: Python owns the format, the
+// same division the size field keeps with parse_preview_size.
+(function () {
+  var picker = WM.el('preview-selection-color');
+  var status = WM.el('preview-selection-color-status');
+  if (!picker || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  picker.addEventListener('change', function () {
+    WM.send('set_preview_selection_color', picker.value).then(function (res) {
+      if (!res || !res.applied) {
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
+      if (!res.persisted) { say('Applied for this session only — settings could not be written.'); }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var p = ((ev.detail || {}).settings || {}).preview || {};
+    // Never while the picker is open: the native colour dialog holds the
+    // focus, and rewriting a focused control mid-choose is what the
+    // field rules above all exist to prevent.
+    if (p.selection_color && document.activeElement !== picker) {
+      picker.value = p.selection_color;
+    }
+  });
+}());
+
 // ---- Reset previews to defaults ----------------------------------------
 // A one-shot action, not a persistent field: there is nothing to revert
 // on refusal and nothing to read back from wm:settings. WM.confirm's

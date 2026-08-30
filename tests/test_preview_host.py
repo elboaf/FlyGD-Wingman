@@ -2663,6 +2663,90 @@ def test_apply_resizes_moves_the_window_and_records_it_like_a_drag(monkeypatch):
     assert recorded == [("Alice", expected, False)]
 
 
+# --- resize_all(): the apply-to-open-previews action ------------------------
+
+
+def test_resize_all_stashes_one_size_and_posts_only_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so the bulk size travels the
+    same way a per-key one does -- a field under the lock, a signal out."""
+    h = _placement_host(monkeypatch)
+    h.resize_all((640, 392))
+    assert h._pending_resize_all == (640, 392)
+
+
+def test_apply_resize_all_moves_every_window_and_records_like_a_drag(monkeypatch):
+    """Unlike _reset_layouts (whose result is defaults and is deliberately
+    NOT recorded), an applied size IS the user's choice, so it must survive
+    a restart. Position is kept per window; only w/h change."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    alice = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    bravo = _MovableWindow(geometry.Rect(400, 500, 500, 300), locked=True)
+    h._windows = {"Alice": alice, "Bravo": bravo}
+
+    h.resize_all((640, 392))
+    h._apply_resize_all()
+
+    assert alice.rect == geometry.Rect(10, 20, 640, 392)
+    assert bravo.rect == geometry.Rect(400, 500, 640, 392)
+    assert h._saved["Alice"] == layout.Entry(geometry.Rect(10, 20, 640, 392), False)
+    assert h._saved["Bravo"] == layout.Entry(geometry.Rect(400, 500, 640, 392), True)
+    assert recorded == [
+        ("Alice", geometry.Rect(10, 20, 640, 392), False),
+        ("Bravo", geometry.Rect(400, 500, 640, 392), True),
+    ]
+
+
+def test_apply_resize_all_without_a_pending_size_is_a_no_op(monkeypatch):
+    """The signal can arrive with nothing queued (a posted message is not
+    cancellable); draining must not invent a size."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    win = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    h._windows = {"Alice": win}
+    h._apply_resize_all()
+    assert win.rect == geometry.Rect(10, 20, 320, 210)
+    assert h._saved == {}
+
+
+def test_the_mirror_copies_the_size_to_every_other_window(monkeypatch):
+    """The resize-all CHORD's engine: the dragged window drives, and this
+    copies its finished size onto everyone else -- positions untouched,
+    because the chord says how big, not where."""
+    recorded = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: recorded.append(a))
+    alice = _MovableWindow(geometry.Rect(10, 20, 320, 210))
+    bravo = _MovableWindow(geometry.Rect(400, 500, 500, 300))
+    cleo = _MovableWindow(geometry.Rect(700, 800, 200, 150), locked=True)
+    h._windows = {"Alice": alice, "Bravo": bravo, "Cleo": cleo}
+
+    h._mirror_resize("Alice", geometry.Rect(10, 20, 640, 392))
+
+    assert alice.rect == geometry.Rect(10, 20, 320, 210)  # untouched: the driver
+    assert bravo.rect == geometry.Rect(400, 500, 640, 392)
+    assert cleo.rect == geometry.Rect(700, 800, 640, 392)
+    assert recorded == [
+        ("Bravo", geometry.Rect(400, 500, 640, 392), False),
+        ("Cleo", geometry.Rect(700, 800, 640, 392), True),
+    ]
+
+
+def test_the_selection_ring_colour_is_read_live_and_falls_back():
+    """A wired callable is read per use (a picker change must reach open
+    previews through _restyle without a restart); an unwired or raising
+    one falls back to the cyan that was hardcoded before the setting."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._selection_ring_color() == "#00c8dc"
+    wired = host.PreviewHost(
+        on_layout_changed=lambda *a: None, selection_color=lambda: "#ff5a00"
+    )
+    assert wired._selection_ring_color() == "#ff5a00"
+    broken = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        selection_color=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert broken._selection_ring_color() == "#00c8dc"
+
+
 def test_record_client_sizes_samples_a_real_rect_and_skips_a_failed_probe():
     """The one branch of _record_client_sizes that has never run: every
     GetClientRect fake in this suite (including the module-level

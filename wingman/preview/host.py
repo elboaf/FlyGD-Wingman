@@ -235,6 +235,7 @@ class PreviewHost:
         excluded=None,
         snap=None,
         lock_aspect=None,
+        selection_color=None,
         clear_layouts=None,
         hide_on_lost_focus=None,
     ):
@@ -307,6 +308,9 @@ class PreviewHost:
         # drag begins, so the Settings checkbox must reach an already-open
         # preview without a restart.
         self._lock_aspect = lock_aspect
+        # Same live-read contract as _snap: the Settings colour picker must
+        # recolour already-open previews through _restyle, not on a restart.
+        self._selection_color = selection_color
         # A pair, or a callable returning one. Every other setting here is
         # live and this one was not: it was sampled once at construction,
         # so preview.width/height could only take effect on a restart --
@@ -366,6 +370,11 @@ class PreviewHost:
         # the lock and only the signal is posted. A dict, keyed by stable
         # key, because more than one resize can be requested between ticks.
         self._pending_resize = {}
+        # The "apply to open previews" size, or None. A scalar, not a dict:
+        # the request is always "every window, one size", and unlike
+        # _pending_resize there is no keying to do. Swapped to None under
+        # the lock when drained, same as the dict above.
+        self._pending_resize_all = None
         # Last sampled client-area size per character, refreshed every
         # sweep by _record_client_sizes. Read from the UI thread through
         # client_sizes(), like hotkey_status() below.
@@ -548,6 +557,38 @@ class PreviewHost:
             self._pending_resize[stable_key] = (int(size[0]), int(size[1]))
         self._post(win32.WM_APP_RESIZE_ONE)
 
+    def resize_all(self, size) -> None:
+        """Set EVERY open preview's size. Safe from any thread.
+
+        Deliberately overrides custom sizes: this is the "make them all
+        this size" action, and honouring per-window exceptions would make
+        it silently skip windows the user sized once and forgot. A window
+        sized individually afterwards simply overwrites its entry again.
+        """
+        with self._lock:
+            self._pending_resize_all = (int(size[0]), int(size[1]))
+        self._post(win32.WM_APP_RESIZE_ALL)
+
+    def _mirror_resize(self, driver_key: str, rect) -> None:
+        """Copy a resize-all chord's size onto every OTHER open preview.
+
+        Runs on the preview thread -- called from a PreviewWindow wndproc
+        (see the thread-affinity note on PreviewWindow) -- so it may touch
+        the windows directly. Recorded on every coalesced move like the
+        drags are: _layout_changed updates in-memory state cheaply and the
+        store debounces the disk write, so per-move recording costs
+        nothing and means the chord's result survives a quit mid-drag.
+
+        Size only, never position: the chord says how big, and re-flowing
+        where every preview sits would both overlap them all and fight the
+        layout the user arranged.
+        """
+        for key, win in self._windows.items():
+            if key == driver_key:
+                continue
+            win.move(win.rect._replace(w=rect.w, h=rect.h))
+            self._layout_changed(key, win.rect, win.locked)
+
     def reset_layouts(self) -> None:
         """Forget every saved position and re-place. Safe from any thread."""
         self._post(win32.WM_APP_RESET_LAYOUTS)
@@ -672,6 +713,9 @@ class PreviewHost:
         if msg == win32.WM_APP_RESIZE_ONE:
             self._apply_resizes()
             return 0
+        if msg == win32.WM_APP_RESIZE_ALL:
+            self._apply_resize_all()
+            return 0
         if msg == win32.WM_APP_RESET_LAYOUTS:
             self._reset_layouts()
             return 0
@@ -775,6 +819,11 @@ class PreviewHost:
                 opacity=self._current_opacity(),
                 snap=self._snapping(),
                 lock_aspect=self._locking_aspect(),
+                selection_color=self._selection_ring_color(),
+                # Bound per window: the mirror must skip the very window
+                # that is driving the drag, and the key is only known
+                # here, at creation.
+                on_resize_all=lambda rect, k=key: self._mirror_resize(k, rect),
             )
             if win is not None:
                 self._windows[key] = win
@@ -1531,6 +1580,24 @@ class PreviewHost:
             )
             return True
 
+    def _selection_ring_color(self) -> str:
+        """The selection ring's #rrggbb, read live.
+
+        Same posture as _snapping(): runs on the preview thread inside the
+        pump, so a callable that raises must not kill it. Falls back to the
+        cyan PreviewWindow hardcoded until the setting existed, so a
+        failing read changes nothing the user can see.
+        """
+        if self._selection_color is None:
+            return "#00c8dc"
+        try:
+            return str(self._selection_color())
+        except Exception:
+            logger.exception(
+                "Could not read preview.selection_color; using the default ring colour"
+            )
+            return "#00c8dc"
+
     def _labels_shown(self) -> bool:
         """Whether preview chrome draws a label band, read live.
 
@@ -1732,6 +1799,7 @@ class PreviewHost:
             win.locked = self._is_locked(key)
             win.snap = self._snapping()
             win.lock_aspect = self._locking_aspect()
+            win.selection_color = self._selection_ring_color()
             win.redraw()
             # Mirrors PreviewWindow.create/.move: opacity is a DWM
             # thumbnail property, not a chrome pixel, so it needs its own
@@ -1775,6 +1843,24 @@ class PreviewHost:
             win.move(win.rect._replace(w=w, h=h))
             # Recorded like a drag: a typed size is the user's choice and
             # must survive a restart exactly as a dragged position does.
+            self._layout_changed(key, win.rect, win.locked)
+
+    def _apply_resize_all(self) -> None:
+        """Apply the pending bulk size to every open window.
+
+        Recorded, unlike _reset_layouts: these sizes ARE the user's
+        choice, and leaving them unrecorded would make the next launch
+        re-place every window at the old default -- an apply that visibly
+        undid itself on restart. Position (x, y) is kept per window; only
+        w and h change.
+        """
+        with self._lock:
+            size, self._pending_resize_all = self._pending_resize_all, None
+        if size is None:
+            return
+        w, h = size
+        for key, win in self._windows.items():
+            win.move(win.rect._replace(w=w, h=h))
             self._layout_changed(key, win.rect, win.locked)
 
     def _reset_layouts(self) -> None:

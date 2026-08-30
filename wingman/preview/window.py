@@ -30,6 +30,9 @@ PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 MIN_SIZE = (120, 90)
 BORDER = 2
 LABEL_H = 30
+# How far the cursor must travel before a held left button stops being a
+# click and becomes a drag. Pixels, in screen space, radius not components.
+CLICK_PX = 4
 
 
 def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(0, 0)):
@@ -254,6 +257,11 @@ class PreviewWindow:
     # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
     snap = True
     lock_aspect = True
+    # The selection ring's colour, #rrggbb. Class-level for the same
+    # reason; the default is the cyan this module hardcoded until the
+    # setting existed, so a preview created before the first restyle draws
+    # exactly what it always drew.
+    selection_color = "#00c8dc"
 
     def __init__(
         self,
@@ -269,6 +277,8 @@ class PreviewWindow:
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
+        selection_color="#00c8dc",
+        on_resize_all=None,
     ):
         self._libs = libs
         self.client = client
@@ -292,6 +302,10 @@ class PreviewWindow:
         # is sampled -- flipping the setting mid-drag must not change the
         # gesture already in flight under the user's hand.
         self.lock_aspect = lock_aspect
+        # A string, not a tuple: it is the settings representation
+        # verbatim, parsed per redraw (once per repaint, not per
+        # mouse-move) so no second parsed copy can drift from it.
+        self.selection_color = selection_color
         self.selected = False
         # Whether hide-on-lost-focus currently has this window off screen.
         # Not a saved setting and not per character: the host recomputes it
@@ -308,6 +322,12 @@ class PreviewWindow:
         self._chrome_cache_key = None
         self._on_activate = on_activate
         self._on_rect_changed = on_rect_changed
+        # Supplied by the host: called with this window's rect on every
+        # coalesced move of a resize-all chord, so the host can mirror the
+        # size onto every OTHER preview. Runs on the preview thread (this
+        # wndproc's thread), the only thread allowed to touch those
+        # windows -- see the class docstring.
+        self._on_resize_all = on_resize_all
         # Supplied by the host, which is the only thing that knows about
         # sibling previews. Without it snap() sees screen edges only and
         # preview-to-preview snapping silently does nothing.
@@ -348,6 +368,8 @@ class PreviewWindow:
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
+        selection_color="#00c8dc",
+        on_resize_all=None,
     ):
         self = cls(
             libs,
@@ -362,6 +384,8 @@ class PreviewWindow:
             opacity,
             snap,
             lock_aspect,
+            selection_color,
+            on_resize_all,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -437,7 +461,30 @@ class PreviewWindow:
             # is a no-op: redraw() short-circuits on an unchanged key and
             # the bitmap never repaints.
             self.show_labels,
+            # For the same reason: without the colour here, a recolour is
+            # a no-op on every already-open preview.
+            self.selection_color,
         )
+
+    def _border_color(self):
+        """The selection ring's RGBA, parsed from the #rrggbb setting.
+
+        Called once per redraw, never per mouse-move. Falls back to the
+        shipped cyan rather than raising: the value arrives from
+        settings, which validated_preview has already screened, so an
+        unparsable string here means a settings file edited by hand --
+        and a ring in the wrong colour beats a preview subsystem that
+        died mid-drag.
+        """
+        try:
+            return (
+                int(self.selection_color[1:3], 16),
+                int(self.selection_color[3:5], 16),
+                int(self.selection_color[5:7], 16),
+                255,
+            )
+        except (TypeError, ValueError):
+            return (0, 200, 220, 255)
 
     def redraw(self, force: bool = False) -> None:
         """Re-render the chrome bitmap and push it to the layered surface.
@@ -454,7 +501,7 @@ class PreviewWindow:
         img = chrome.render(
             (self.rect.w, self.rect.h),
             label,
-            border_color=(0, 200, 220, 255),
+            border_color=self._border_color(),
             border=BORDER,
             label_h=self._label_h(),
             selected=self.selected,
@@ -722,43 +769,52 @@ class PreviewWindow:
 
     # -- input -----------------------------------------------------------
     def _on_message(self, msg, wparam, lparam):
+        # The button grammar, when previews are NOT locked in place:
+        #
+        #   left click            -> switch to the client (selected ring)
+        #   left drag             -> move this preview
+        #   right drag            -> resize this preview
+        #   left+right drag       -> resize EVERY preview at once
+        #   corner-handle drag    -> resize this preview (kept: it is the
+        #                             one visibly discoverable affordance)
+        #
+        # Locked refuses the MOVE and nothing else, matching the old
+        # behaviour where the corner resize survived the lock: a lock is
+        # about WHERE the previews sit, not how big they are.
+        #
+        # The cost of "left drag moves" is that a left press can no longer
+        # switch on the way down (#123): at button-down time it is not yet
+        # knowable whether the press is a click or a drag. The switch now
+        # fires at button-up for a press that never crossed CLICK_PX --
+        # which restores the 60-120ms of latency #123 removed for plain
+        # clicks and spends it deciding the question. EVE-O Preview makes
+        # the same trade for the same gesture set.
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
             pt = _lparam_point(lparam)
+            if self._mode is not None:
+                # The SECOND button of the chord. Whichever gesture the
+                # first button armed, both-buttons now means resize-all.
+                # Re-anchoring to the CURRENT rect and cursor is what
+                # keeps the window from jumping: the original anchors
+                # describe a press that happened before this button, and
+                # a resize computed against them teleports the window to
+                # wherever that drag would by now have gone.
+                self._start_rect = self.rect
+                self._start = _cursor_pos(self._libs)
+                self._mode = "resize_all"
+                return 0
             resizing = msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
             )
-            if msg == win32.WM_LBUTTONDOWN and not resizing:
-                # The switch starts HERE, on the way down, not on the
-                # release. A normal click holds the button for 60-120ms
-                # and the old code spent all of it waiting to find out
-                # whether the press was going to become a drag. EVE-O
-                # Preview fires ThumbnailActivated from MouseDown for
-                # the same reason, and that is where the rest of this
-                # button split comes from too: left is focus and nothing
-                # else, right is movement.
-                #
-                # Acknowledged BEFORE the handoff, and regardless of
-                # whether the switch that follows succeeds: Windows
-                # refuses a foreground change from a process without
-                # recent input, so acknowledging only on a successful
-                # swap would leave the ring pulsing forever with
-                # clicking it doing nothing.
-                self.acknowledge_alert()
-                # Classify, then hand off: the window does NOT call
-                # activate() itself. The host owns the switch because it
-                # is the only thing that knows the previous foreground,
-                # the roster and the settings -- and it has to know them
-                # BEFORE the foreground moves.
-                self._on_activate(self.client)
-                return 0
-            if msg == win32.WM_RBUTTONDOWN and self.locked:
-                # The lock's meaning changed with the buttons. It used to
-                # stop a left drag while right-drag stayed as the
-                # deliberate override; now that right-drag is the only
-                # move gesture, honouring that override would leave the
-                # lock controlling nothing at all. EVE-O's
-                # LockThumbnailLocation stops movement outright too.
-                return 0
+            if msg == win32.WM_LBUTTONDOWN:
+                self._mode = "resize" if resizing else "pending_left"
+            else:
+                # Right is resize now, not move: left took over movement
+                # because a move is the gesture you want near the preview
+                # you are looking at, and a resize is the one you want a
+                # deliberate second button for. Allowed under the lock,
+                # like the corner handle above.
+                self._mode = "resize"
             # Client coords are only safe HERE: the window has not moved
             # yet, so they still describe the point that was clicked.
             self._start_rect = self.rect
@@ -773,7 +829,6 @@ class PreviewWindow:
             # resize_result. The syscall is skipped entirely when unlocked.
             self._start_aspect = self._source_aspect() if self.lock_aspect else None
             self._start_chrome = (BORDER * 2, BORDER * 2 + self._label_h())
-            self._mode = "resize" if resizing else "right_drag"
             self._libs.user32.SetCapture(self.hwnd)
             if PERF:
                 self._perf = {
@@ -791,12 +846,28 @@ class PreviewWindow:
                 p = self._perf
                 p["gap"] = max(p["gap"], t0 - p["last"])
                 p["n"] += 1
+            if self._mode == "dead":
+                # A locked left-drag that crossed the threshold. Swallow
+                # the moves so the up-handler still sees a mode and can
+                # release the capture it took at button-down.
+                return 0
             coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)
             # GetCursorPos, not lParam: lParam is client-relative and the
             # window is moving under the cursor, which is what made this
             # oscillate. Absolute coordinates cannot feed back.
             cur = _cursor_pos(self._libs)
-            if self._mode == "resize":
+            if self._mode == "pending_left":
+                dx, dy = cur[0] - self._start[0], cur[1] - self._start[1]
+                if dx * dx + dy * dy < CLICK_PX * CLICK_PX:
+                    return 0
+                # A drag, not a click -- and the switch that a click would
+                # have earned is now cancelled, deliberately: dragging a
+                # preview around is not a request to bring its client
+                # forward.
+                self._mode = "dead" if self.locked else "move"
+                if self._mode == "dead":
+                    return 0
+            if self._mode in ("resize", "resize_all"):
                 self.move(
                     resize_result(
                         self._start,
@@ -806,6 +877,11 @@ class PreviewWindow:
                         chrome=self._start_chrome,
                     )
                 )
+                if self._mode == "resize_all" and self._on_resize_all is not None:
+                    # The host mirrors the finished size onto every OTHER
+                    # preview; this window has already moved above. Called
+                    # per coalesced move, the same budget dragging spends.
+                    self._on_resize_all(self.rect)
             else:
                 moved = drag_target(self._start, cur, self._start_rect)
                 if self.snap:
@@ -835,6 +911,22 @@ class PreviewWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
+            if self._mode == "pending_left":
+                # The click that never dragged. Acknowledged BEFORE the
+                # handoff, and regardless of whether the switch that
+                # follows succeeds: Windows refuses a foreground change
+                # from a process without recent input, so acknowledging
+                # only on a successful swap would leave the ring pulsing
+                # forever with clicking it doing nothing.
+                self.acknowledge_alert()
+                # Classify, then hand off: the window does NOT call
+                # activate() itself. The host owns the switch because it
+                # is the only thing that knows the previous foreground,
+                # the roster and the settings -- and it has to know them
+                # BEFORE the foreground moves.
+                self._on_activate(self.client)
+                self._mode = None
+                return 0
             self._mode = None
             self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0

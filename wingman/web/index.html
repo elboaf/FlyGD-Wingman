@@ -748,6 +748,24 @@
           <span class="hint" id="preview-default-size-status">Where a
             preview opens before you have moved it. Press Enter to
             save.</span></div>
+        <div class="row"><span class="lab"></span>
+          <!-- An action, not the field's commit: Enter changes where the
+               NEXT preview opens, this changes what is on screen now.
+               Splitting them is the point -- the field used to be the
+               only interface to the size, which is why it looked broken
+               to anything already open. Overrides every custom size,
+               including per-character ones set through Size... . -->
+          <button class="btn" id="btn-preview-apply-size">Apply to open
+            previews</button>
+          <span class="hint" id="preview-apply-size-status"></span></div>
+        <div class="row">
+          <!-- The ring a selected preview wears. #rrggbb in and out; the
+               page never unpacks the string, Python owns the format. -->
+          <label class="lab" for="preview-selection-color">Selection ring
+            colour</label>
+          <input type="color" id="preview-selection-color">
+          <span class="hint" id="preview-selection-color-status">The ring
+            on the preview you last clicked.</span></div>
 
         <!-- The one group that reaches through the mirror to the REAL EVE
              window, which is why it is a group and why it is last. Every
