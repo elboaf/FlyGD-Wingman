@@ -47,11 +47,26 @@ def _strip_prefix(text: str) -> str:
 
 
 def _entries(doc: dict) -> dict:
-    try:
-        entries = doc[UI_KEY][FORMATIONS_KEY]["tuple"][1]
-    except (KeyError, IndexError, TypeError):
+    # An absent bytes:ui or absent customFormations key is legitimately "no
+    # formations" (a file the client has never touched). A *present* value
+    # in an unrecognised shape is different: silently treating it as empty
+    # would make read_formations report "no formations" with no error, and
+    # write_formations would then rebuild the key as {} on the next save,
+    # discarding whatever was actually there. Refuse instead.
+    ui = doc.get(UI_KEY)
+    if not isinstance(ui, dict) or FORMATIONS_KEY not in ui:
         return {}
-    return entries if isinstance(entries, dict) else {}
+    value = ui[FORMATIONS_KEY]
+    tuple_ = value.get("tuple") if isinstance(value, dict) else None
+    if (
+        not isinstance(tuple_, list)
+        or len(tuple_) != 2
+        or not isinstance(tuple_[1], dict)
+    ):
+        raise ValueError(
+            "This file has a customFormations entry Wingman does not understand."
+        )
+    return tuple_[1]
 
 
 def _entry_id(key: str) -> int | None:
@@ -187,6 +202,12 @@ def from_payload(items) -> list[Formation]:
             isinstance(ident, bool) or not isinstance(ident, int)
         ):
             raise ValueError("A formation id must be a whole number.")
+        # Negative ids are client scratch state (e.g. -4 is tempFormation),
+        # carried through write_formations untouched. A page-supplied
+        # negative id must never reach that path, or a save would overwrite
+        # scratch state the client itself owns.
+        if isinstance(ident, int) and ident < 0:
+            raise ValueError("A formation id cannot be negative.")
         probes = item.get("probes")
         if not isinstance(probes, list):
             raise ValueError("A formation needs a probe list.")

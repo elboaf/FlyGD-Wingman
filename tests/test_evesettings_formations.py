@@ -88,6 +88,28 @@ def test_read_refuses_a_file_it_does_not_fully_understand(entries):
         fm.read_formations(doc_with(entries))
 
 
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        "not a dict",
+        {"nope": "no tuple key"},
+        {"tuple": ["long:1"]},
+        {"tuple": ["long:1", "not a dict", "extra"]},
+        {"tuple": ["long:1", ["not", "a", "dict"]]},
+    ],
+)
+def test_read_refuses_a_present_but_malformed_customformations_container(bad_value):
+    """A present customFormations value that isn't {"tuple": [stamp, dict]}
+    must refuse rather than be silently treated as empty — otherwise
+    read_formations reports "no formations" with no error, and the next
+    write_formations rebuilds the key as {}, discarding what was there."""
+    doc = {fm.UI_KEY: {fm.FORMATIONS_KEY: bad_value}}
+    with pytest.raises(ValueError, match="not understand"):
+        fm.read_formations(doc)
+    with pytest.raises(ValueError, match="not understand"):
+        fm.write_formations(doc, [], now=0.0)
+
+
 def test_write_replaces_only_the_formations_key_and_restamps_both_keys():
     before = copy.deepcopy(REAL)
     new = [fm.Formation(id=0, name="Renamed", probes=(fm.Probe(1.0, 2.0, 3.0, 4.0),))]
@@ -245,3 +267,12 @@ def test_payload_round_trip():
 def test_from_payload_rejects_malformed_input(bad):
     with pytest.raises(ValueError):
         fm.from_payload(bad)
+
+
+def test_from_payload_rejects_a_negative_id():
+    """The design treats negative ids as client scratch state carried
+    through write_formations untouched (e.g. -4 is tempFormation); a
+    page-supplied negative id must never reach that path or a save would
+    overwrite scratch state the client itself owns."""
+    with pytest.raises(ValueError, match="cannot be negative"):
+        fm.from_payload([{"id": -4, "name": "A", "probes": []}])
