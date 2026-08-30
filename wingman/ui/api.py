@@ -376,6 +376,9 @@ class Api:
         # A snapshot exists only during an explicit identification pass.
         # Timestamps are evidence for that pass, never durable identity.
         self._eve_identification = None
+        # The latest observed account and the characters it offered. This is
+        # ephemeral authorization for confirmation, not persisted identity.
+        self._eve_identification_candidate: tuple[str, tuple[str, ...]] | None = None
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
         # Last known answer for the advisory "EVE running" pill, or None
@@ -3732,6 +3735,11 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
+    def _eve_clear_identification(self) -> None:
+        """Discard the observation and any pair it authorized."""
+        self._eve_identification = None
+        self._eve_identification_candidate = None
+
     def _eve_account_identity(self, account_id: str) -> dict:
         section = self._eve_section()
         return evesettings_identity.account_identity(
@@ -4034,7 +4042,7 @@ class Api:
             picked = str(chosen[0])
             # Selection is cleared, not carried: the old server and profile
             # belong to a tree that is no longer the one on screen.
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4096,7 +4104,7 @@ class Api:
                     f"Already set to the detected folder:\n{found}",
                 )
                 return ""
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4108,7 +4116,7 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return False
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4211,6 +4219,7 @@ class Api:
                 "error": "Another Profiles operation is running.",
             }
         try:
+            self._eve_clear_identification()
             found = self._eve_discover()
             snapshot = evesettings_identity.take_snapshot(found)
             if not found.accounts or not found.characters:
@@ -4225,58 +4234,158 @@ class Api:
         return {"status": "watching", "error": None}
 
     def eve_settings_identification_check(self) -> dict:
-        snapshot = self._eve_identification
-        if snapshot is None:
-            return {"status": "error", "error": "Start account identification first."}
+        # A worker can hold this lock while parked on a bridge confirmation.
+        # Refusing preserves the bridge thread that must deliver that answer.
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "status": "error",
+                "error": "Another Profiles operation is running.",
+            }
         try:
-            if self._eve_client_running_strict():
+            snapshot = self._eve_identification
+            if snapshot is None:
+                return {
+                    "status": "error",
+                    "error": "Start account identification first.",
+                }
+            # A new check supersedes every former offer, including one that
+            # cannot compare because EVE has not closed yet.
+            self._eve_identification_candidate = None
+            try:
+                if self._eve_client_running_strict():
+                    return {
+                        "status": "watching",
+                        "error": "EVE is still running. Close that client, then check again.",
+                    }
+            except Exception:
+                # Fail closed: an unverified running state must not be treated as
+                # the clean shutdown whose file changes identify an account.
+                logger.warning(
+                    "Could not verify EVE state during identification", exc_info=True
+                )
                 return {
                     "status": "watching",
-                    "error": "EVE is still running. Close that client, then check again.",
+                    "error": "Could not confirm that EVE is closed. Close it and try again.",
                 }
-        except Exception:
-            # Fail closed: an unverified running state must not be treated as
-            # the clean shutdown whose file changes identify an account.
-            logger.warning(
-                "Could not verify EVE state during identification", exc_info=True
-            )
-            return {
-                "status": "watching",
-                "error": "Could not confirm that EVE is closed. Close it and try again.",
-            }
-        changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
-        if changed.invalidated:
-            self._eve_identification = None
-            return {
-                "status": "invalidated",
-                "error": "The selected EVE profile changed. Start identification again.",
-            }
-        if len(changed.accounts) > 1:
-            return {
-                "status": "ambiguous",
-                "error": "More than one account changed. Close the other EVE clients and start again.",
-            }
-        if len(changed.accounts) != 1 or not changed.characters:
-            return {
-                "status": "none",
-                "error": "No account and character changes were found. Close the client fully, then check again.",
-            }
-        account_id = changed.accounts[0]
-        return {
-            "status": "candidate",
-            "error": None,
-            "account": {"id": account_id, **self._eve_account_identity(account_id)},
-            "characters": [
-                {
-                    "id": character_id,
-                    "name": self._eve_names.label(int(character_id)),
+            changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
+            if changed.invalidated:
+                self._eve_clear_identification()
+                return {
+                    "status": "invalidated",
+                    "error": "The selected EVE profile changed. Start identification again.",
                 }
-                for character_id in changed.characters
-            ],
-        }
+            if len(changed.accounts) > 1:
+                return {
+                    "status": "ambiguous",
+                    "error": "More than one account changed. Close the other EVE clients and start again.",
+                }
+            if len(changed.accounts) != 1 or not changed.characters:
+                return {
+                    "status": "none",
+                    "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+                }
+            account_id = changed.accounts[0]
+            self._eve_identification_candidate = (account_id, tuple(changed.characters))
+            return {
+                "status": "candidate",
+                "error": None,
+                "account": {"id": account_id, **self._eve_account_identity(account_id)},
+                "characters": [
+                    {
+                        "id": character_id,
+                        "name": self._eve_names.label(int(character_id)),
+                    }
+                    for character_id in changed.characters
+                ],
+            }
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_identification_confirm(
+        self, account_id: str, character_id: str, account_name: str
+    ) -> dict:
+        """Persist one offered account/character pair as one settings update."""
+        if not self._eve_mutation.acquire(blocking=False):
+            return self._field_refused("Another Profiles operation is running.")
+        try:
+            candidate = self._eve_identification_candidate
+            if candidate is None:
+                return self._field_refused("Start account identification again.")
+            candidate_account, candidate_characters = candidate
+            if (
+                account_id != candidate_account
+                or character_id not in candidate_characters
+            ):
+                return self._field_refused("That account match is no longer available.")
+            if not isinstance(account_name, str):
+                return self._field_refused("Enter an EVE Online username.")
+            cleaned_name = account_name.strip()
+            if not cleaned_name:
+                return self._field_refused("Enter an EVE Online username.")
+            if len(cleaned_name) > 80:
+                return self._field_refused("Account names can be up to 80 characters.")
+
+            section = self._eve_section()
+            names = dict(section.get("account_names") or {})
+            folded_name = cleaned_name.casefold()
+            if any(
+                other_id != account_id
+                and str(other_name).strip().casefold() == folded_name
+                for other_id, other_name in names.items()
+            ):
+                return self._field_refused(
+                    "That EVE Online username is already assigned to another account."
+                )
+            associations = {
+                saved_account: list(character_ids)
+                for saved_account, character_ids in (
+                    section.get("account_characters") or {}
+                ).items()
+            }
+            destination = associations.get(account_id, [])
+            if character_id not in destination and len(set(destination)) >= 3:
+                return self._field_refused(
+                    "An EVE account can have up to three characters."
+                )
+
+            final_names = {**names, account_id: cleaned_name}
+            final_associations = {
+                saved_account: list(character_ids)
+                for saved_account, character_ids in associations.items()
+            }
+            if character_id not in destination:
+                for saved_account in list(final_associations):
+                    final_associations[saved_account] = [
+                        saved_character
+                        for saved_character in final_associations[saved_account]
+                        if saved_character != character_id
+                    ]
+                    if not final_associations[saved_account]:
+                        final_associations.pop(saved_account)
+                final_associations.setdefault(account_id, []).append(character_id)
+
+            if final_names != names or final_associations != associations:
+                try:
+                    settings_mod.update_section(
+                        self._state.settings,
+                        "eve_settings",
+                        {
+                            "account_names": final_names,
+                            "account_characters": final_associations,
+                        },
+                    )
+                except OSError:
+                    # Account names are private local metadata; never include the
+                    # supplied username in diagnostics.
+                    logger.exception("Could not persist identified EVE account")
+                    return self._field_refused("Could not save this account name.")
+            self._eve_clear_identification()
+            return self._field_ok()
+        finally:
+            self._eve_mutation.release()
 
     def eve_settings_identification_cancel(self) -> bool:
-        self._eve_identification = None
+        self._eve_clear_identification()
         return True
 
     def eve_settings_resolve_names(self) -> None:
