@@ -166,4 +166,15 @@ jobs:
         # a stale lockfile silently.
         run: uv sync --locked --extra dev
       - name: Test
-        run: uv run --no-sync python -m pytest tests/ -v
+        # tee + re-exit: the exit code must stay pytest's, but the FAILED
+        # lines are re-emitted as ::error:: annotations so they are readable
+        # from the API without an authenticated log fetch -- which is the
+        # only way to see them when no human is signed in.
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m pytest tests/ -v 2>&1 | tee pytest.log
+          code=$?
+          grep -E "^(FAILED|ERROR)" pytest.log | head -20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $code
