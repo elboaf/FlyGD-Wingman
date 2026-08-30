@@ -1033,6 +1033,27 @@ def test_account_name_is_trimmed_and_cannot_be_cleared(tmp_path, monkeypatch):
     assert api._eve_section()["account_names"] == {"10": "LoginName"}
 
 
+def test_account_identity_helpers_preserve_shared_validation_and_relinking_rules(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+
+    assert api._eve_validate_account_name("10", " Login ", {"11": "Other"}) == (
+        "Login",
+        None,
+    )
+    assert api._eve_validate_account_name("10", "other", {"11": "Other"}) == (
+        None,
+        "That EVE Online username is already assigned to another account.",
+    )
+    assert api._eve_relink_account_characters(
+        {"10": ["21"], "11": ["20"]}, "10", ["20"], ["21", "20"]
+    ) == ({"10": ["21", "20"]}, None)
+    assert api._eve_relink_account_characters(
+        {"10": ["21", "22", "23"]}, "10", ["20"], ["21", "22", "23", "20"]
+    ) == (None, "An EVE account can have up to three characters.")
+
+
 def test_account_name_is_unique_case_insensitively_except_for_itself(
     tmp_path, monkeypatch
 ):
@@ -1361,8 +1382,11 @@ def test_identification_confirmation_retains_candidate_when_atomic_write_fails(
 
     result = api.eve_settings_identification_confirm("10", "20", "Login")
 
-    assert result["applied"] is False
-    assert result["persisted"] is False
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Could not save this account identity.",
+    }
     assert api._eve_section()["account_names"] == {}
     assert api._eve_section()["account_characters"] == {}
     assert api._eve_identification is not None

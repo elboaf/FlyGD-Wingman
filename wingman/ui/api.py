@@ -4134,26 +4134,64 @@ class Api:
     def _eve_decimal_id(value) -> bool:
         return isinstance(value, str) and value.isascii() and value.isdigit()
 
+    @staticmethod
+    def _eve_validate_account_name(
+        account_id: str, name: str, names: dict
+    ) -> tuple[str | None, str | None]:
+        cleaned = name.strip()
+        if not cleaned:
+            return None, "Enter an EVE Online username."
+        if len(cleaned) > 80:
+            return None, "Account names can be up to 80 characters."
+        folded = cleaned.casefold()
+        if any(
+            other_id != account_id and str(other_name).strip().casefold() == folded
+            for other_id, other_name in names.items()
+        ):
+            return (
+                None,
+                "That EVE Online username is already assigned to another account.",
+            )
+        return cleaned, None
+
+    @staticmethod
+    def _eve_relink_account_characters(
+        associations: dict,
+        account_id: str,
+        remove_character_ids: list[str],
+        account_characters: list[str],
+    ) -> tuple[dict | None, str | None]:
+        if len(set(account_characters)) > 3:
+            return None, "An EVE account can have up to three characters."
+        updated = {
+            saved_account: [
+                saved_character
+                for saved_character in saved_characters
+                if saved_character not in remove_character_ids
+            ]
+            for saved_account, saved_characters in associations.items()
+        }
+        updated = {
+            saved_account: saved_characters
+            for saved_account, saved_characters in updated.items()
+            if saved_characters
+        }
+        if account_characters:
+            updated[account_id] = account_characters
+        else:
+            updated.pop(account_id, None)
+        return updated, None
+
     def eve_settings_set_account_name(self, account_id: str, name: str) -> dict:
         if not self._eve_decimal_id(account_id) or not isinstance(name, str):
             return self._field_refused("Choose a valid account.")
         found = self._eve_discover()
         if account_id not in {item.file_id for item in found.accounts}:
             return self._field_refused("That account is not in this profile.")
-        cleaned = name.strip()
-        if not cleaned:
-            return self._field_refused("Enter an EVE Online username.")
-        if len(cleaned) > 80:
-            return self._field_refused("Account names can be up to 80 characters.")
         names = dict(self._eve_section().get("account_names") or {})
-        folded = cleaned.casefold()
-        if any(
-            other_id != account_id and str(other_name).strip().casefold() == folded
-            for other_id, other_name in names.items()
-        ):
-            return self._field_refused(
-                "That EVE Online username is already assigned to another account."
-            )
+        cleaned, error = self._eve_validate_account_name(account_id, name, names)
+        if error:
+            return self._field_refused(error)
         names[account_id] = cleaned
         try:
             settings_mod.update_section(
@@ -4187,20 +4225,11 @@ class Api:
                 return self._field_refused("That character is not known to Wingman.")
             if value not in wanted:
                 wanted.append(value)
-        if len(wanted) > 3:
-            return self._field_refused(
-                "An EVE account can have up to three characters."
-            )
-        for key in list(associations):
-            associations[key] = [
-                value for value in associations[key] if value not in wanted
-            ]
-            if not associations[key]:
-                associations.pop(key)
-        if wanted:
-            associations[account_id] = wanted
-        else:
-            associations.pop(account_id, None)
+        associations, error = self._eve_relink_account_characters(
+            associations, account_id, wanted, wanted
+        )
+        if error:
+            return self._field_refused(error)
         try:
             settings_mod.update_section(
                 self._state.settings,
@@ -4319,23 +4348,14 @@ class Api:
                 return self._field_refused("That account match is no longer available.")
             if not isinstance(account_name, str):
                 return self._field_refused("Enter an EVE Online username.")
-            cleaned_name = account_name.strip()
-            if not cleaned_name:
-                return self._field_refused("Enter an EVE Online username.")
-            if len(cleaned_name) > 80:
-                return self._field_refused("Account names can be up to 80 characters.")
 
             section = self._eve_section()
             names = dict(section.get("account_names") or {})
-            folded_name = cleaned_name.casefold()
-            if any(
-                other_id != account_id
-                and str(other_name).strip().casefold() == folded_name
-                for other_id, other_name in names.items()
-            ):
-                return self._field_refused(
-                    "That EVE Online username is already assigned to another account."
-                )
+            cleaned_name, error = self._eve_validate_account_name(
+                account_id, account_name, names
+            )
+            if error:
+                return self._field_refused(error)
             associations = {
                 saved_account: list(character_ids)
                 for saved_account, character_ids in (
@@ -4343,26 +4363,18 @@ class Api:
                 ).items()
             }
             destination = associations.get(account_id, [])
-            if character_id not in destination and len(set(destination)) >= 3:
-                return self._field_refused(
-                    "An EVE account can have up to three characters."
-                )
 
             final_names = {**names, account_id: cleaned_name}
-            final_associations = {
-                saved_account: list(character_ids)
-                for saved_account, character_ids in associations.items()
-            }
+            final_associations = associations
             if character_id not in destination:
-                for saved_account in list(final_associations):
-                    final_associations[saved_account] = [
-                        saved_character
-                        for saved_character in final_associations[saved_account]
-                        if saved_character != character_id
-                    ]
-                    if not final_associations[saved_account]:
-                        final_associations.pop(saved_account)
-                final_associations.setdefault(account_id, []).append(character_id)
+                final_associations, error = self._eve_relink_account_characters(
+                    associations,
+                    account_id,
+                    [character_id],
+                    [*destination, character_id],
+                )
+                if error:
+                    return self._field_refused(error)
 
             if final_names != names or final_associations != associations:
                 try:
@@ -4378,7 +4390,7 @@ class Api:
                     # Account names are private local metadata; never include the
                     # supplied username in diagnostics.
                     logger.exception("Could not persist identified EVE account")
-                    return self._field_refused("Could not save this account name.")
+                    return self._field_refused("Could not save this account identity.")
             self._eve_clear_identification()
             return self._field_ok()
         finally:
