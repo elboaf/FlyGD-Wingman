@@ -65,6 +65,17 @@ SC_MINIMIZE = 0xF020
 # client can't stall the send.
 SMTO_ABORTIFHUNG = 0x0002
 
+# SystemParametersInfo actions for the minimize/restore animation. The
+# switch turns it off for its own duration and puts it back (host.py,
+# _animation_off): a minimize plus a restore is ~200-250ms of window-zoom
+# with it on, which is the bulk of the visible lag between clicking a
+# preview and seeing the client -- EVE-O Preview does the same, and
+# defaults to it (ThumbnailConfiguration.WindowsAnimationStyle). fWinIni
+# is always 0 so the user's own preference is never written to the
+# registry; it is only the live value that is toggled.
+SPI_GETANIMATION = 0x0048
+SPI_SETANIMATION = 0x0049
+
 # Host commands, marshalled in from other threads.
 WM_APP_SHUTDOWN = WM_APP + 1
 WM_APP_SWEEP_NOW = WM_APP + 2
@@ -161,6 +172,13 @@ class DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
 
 
 RECT = wintypes.RECT
+
+
+class ANIMATIONINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("iMinAnimate", ctypes.c_int),
+    ]
 
 
 class MONITORINFO(ctypes.Structure):
@@ -370,6 +388,15 @@ def bind() -> Libs:
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
         (user32, "GetWindowThreadProcessId", DWORD, [HWND, ctypes.POINTER(DWORD)]),
+        # The two animation actions only (see the constants). The pvParam is
+        # declared void* rather than POINTER(ANIMATIONINFO) because the
+        # function is generic; the host passes byref(ANIMATIONINFO).
+        (
+            user32,
+            "SystemParametersInfoW",
+            BOOL,
+            [UINT, UINT, ctypes.c_void_p, UINT],
+        ),
         # --- hook, hotkeys, DPI
         (
             user32,

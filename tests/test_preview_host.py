@@ -426,6 +426,13 @@ class _FakeUser32:
         # foreground hwnd for this sweep (see _swept_host below).
         self._foreground = foreground
 
+    def SystemParametersInfoW(self, action, size, info, winini):
+        # "Could not read the animation setting": _animation_off then
+        # leaves it alone, so the hosts built on this fake switch without
+        # the toggle showing up anywhere. _SwitchUser32 models the real
+        # thing for the tests that are about the toggle.
+        return False
+
     def RegisterHotKey(self, hwnd, ident, mods, vk):
         self.calls.append(("register", ident))
         if (mods, vk) in self._refuse:
@@ -2182,14 +2189,15 @@ class _RingWindow:
 
 
 class _SwitchUser32(_FakeUser32):
-    """Records the foreground reads and the minimize sends into a shared
-    order log, so a test can assert the SEQUENCE and not just the calls --
-    the ordering is the whole feature here."""
+    """Records the foreground reads, the minimize sends and the animation
+    toggles into a shared order log, so a test can assert the SEQUENCE and
+    not just the calls -- the ordering is the whole feature here."""
 
-    def __init__(self, order, foreground=0, send_result=1):
+    def __init__(self, order, foreground=0, send_result=1, animation=1):
         super().__init__(foreground=foreground)
         self._order = order
         self._send_result = send_result
+        self.animation = animation
 
     def GetForegroundWindow(self):
         self._order.append(("foreground", self._foreground))
@@ -2198,6 +2206,20 @@ class _SwitchUser32(_FakeUser32):
     def SendMessageTimeoutW(self, hwnd, msg, wparam, lparam, flags, timeout, result):
         self._order.append(("send", hwnd, msg, wparam, lparam, flags, timeout))
         return self._send_result
+
+    def SystemParametersInfoW(self, action, size, info, winini):
+        # SPI_GETANIMATION fills the struct; SPI_SETANIMATION reads it. The
+        # winini flag is asserted here rather than logged: writing the
+        # user's animation preference to the registry would be a bug on
+        # every switch, not a sequencing detail.
+        assert winini == 0
+        assert size == ctypes.sizeof(host.win32.ANIMATIONINFO)
+        if action == host.win32.SPI_GETANIMATION:
+            info.contents.iMinAnimate = self.animation
+        else:
+            self.animation = info.contents.iMinAnimate
+            self._order.append(("animation", self.animation))
+        return True
 
 
 def _switching_host(
@@ -2208,9 +2230,11 @@ def _switching_host(
     send_result=1,
     minimize=True,
     never=(),
+    animation=1,
 ):
     """A host with two clients, Alice on 0x1111 and Bravo on 0x2222, whose
-    activation, sleep and minimize send are all recorded in one log."""
+    activation, minimize send and animation toggles are all recorded in
+    one log."""
     order = []
     monkeypatch.setattr(
         host.window_mod,
@@ -2218,7 +2242,9 @@ def _switching_host(
         lambda libs, hwnd: order.append(("activate", hwnd)) or activated,
     )
     monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
-    user32 = _SwitchUser32(order, foreground=foreground, send_result=send_result)
+    user32 = _SwitchUser32(
+        order, foreground=foreground, send_result=send_result, animation=animation
+    )
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None,
         minimize_inactive_clients=lambda: minimize,
@@ -2235,54 +2261,96 @@ def _switching_host(
     return h, _FakeLibs(user32), order
 
 
-def test_the_switch_reads_the_foreground_activates_settles_minimizes_reactivates(
-    monkeypatch,
-):
-    """The order is the feature. Reading the foreground after activating
-    identifies the wrong client; minimizing before the settle races the
-    switch; and skipping the second activation hands the foreground to
-    whatever Windows picks after the minimize."""
+MINIMIZE_ALICE = (
+    "send",
+    0x1111,
+    host.win32.WM_SYSCOMMAND,
+    host.win32.SC_MINIMIZE,
+    0,
+    host.win32.SMTO_ABORTIFHUNG,
+    host.MINIMIZE_TIMEOUT_MS,
+)
+
+
+def test_the_switch_reads_the_foreground_minimizes_then_activates(monkeypatch):
+    """The order is the feature, and it is EVE-O Preview's order
+    (ThumbnailManager.SwitchActiveClient: MinimizeWindow, then
+    ActivateWindow), not TriffView's activate-settle-minimize-reactivate.
+
+    Minimizing the outgoing client while it still HAS the foreground is
+    the fast case (6-9ms measured); the old sequence sent the same message
+    10ms after the window lost the foreground, mid-deactivation, and in
+    the field that send timed out on every switch (166 consecutive
+    timeouts in one session's log). And with nothing minimized after the
+    activate, there is no foreground theft to undo, so the settle and the
+    second activation are gone with it -- the switch no longer sleeps on
+    the preview thread at all.
+
+    The animation is turned off around the whole sequence and restored
+    after it: a minimize plus a restore is ~200-250ms of window-zoom with
+    it on, which was the single most visible difference between the two
+    apps when cycling.
+    """
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     assert order == [
         ("foreground", 0x1111),
+        ("animation", 0),
+        MINIMIZE_ALICE,
         ("activate", 0x2222),
-        # Ahead of the settle, not after it -- see
-        # test_the_ring_moves_before_the_settle_and_the_minimize.
         ("ring", "Bravo", True),
-        ("sleep", host.SWITCH_SETTLE_MS / 1000.0),
-        (
-            "send",
-            0x1111,
-            host.win32.WM_SYSCOMMAND,
-            host.win32.SC_MINIMIZE,
-            0,
-            host.win32.SMTO_ABORTIFHUNG,
-            host.MINIMIZE_TIMEOUT_MS,
-        ),
-        ("activate", 0x2222),
+        ("animation", 1),
     ]
+    assert libs.user32.animation == 1
 
 
-def test_the_ring_moves_before_the_settle_and_the_minimize(monkeypatch):
+def test_the_switch_never_sleeps(monkeypatch):
+    """SWITCH_SETTLE_MS is gone, and it must stay gone: the sleep ran on
+    the thread that pumps hotkeys, alerts, the sweep and every preview's
+    mouse messages, and it only ever existed to separate the minimize
+    from an activation it now follows."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+
+    h._activate_client(libs, h._clients["Bravo"])
+
+    assert [e for e in order if e[0] == "sleep"] == []
+    assert not hasattr(host, "SWITCH_SETTLE_MS")
+
+
+def test_an_animation_already_off_is_left_alone(monkeypatch):
+    """Nothing to turn off, so nothing is written -- and nothing is
+    'restored' to a value the user never had."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, animation=0)
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert [e for e in order if e[0] == "animation"] == []
+    assert libs.user32.animation == 0
+
+
+def test_the_animation_comes_back_even_when_activation_raises(monkeypatch):
+    """A leaked animation-off is a change to the user's whole desktop that
+    outlives the switch. The restore is a finally, not a tail."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+
+    def boom(libs, hwnd):
+        raise RuntimeError("activation exploded")
+
+    monkeypatch.setattr(host.window_mod, "activate", boom)
+
+    with pytest.raises(RuntimeError):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert libs.user32.animation == 1
+
+
+def test_the_ring_moves_inline_the_instant_the_switch_takes(monkeypatch):
     """The ring is applied inline, the instant activate() reports the
     foreground moved -- not on the sweep the foreground hook will ask for.
-
-    Measured on a live install: the minimize send times out for its full
-    MINIMIZE_TIMEOUT_MS on every switch (166 consecutive timeouts in one
-    session's log, every client, no successes), and it blocks the preview
-    thread. Everything queued behind it waits -- including the
-    EVENT_SYSTEM_FOREGROUND event and the WM_APP_SWEEP_NOW it posts, which
-    is what used to move the ring. So the client came forward and its
-    preview stayed unhighlighted for SWITCH_SETTLE_MS + MINIMIZE_TIMEOUT_MS
-    on a good run, and until the 700ms sweep on a run where the queued
-    WinEvent was dropped.
-
-    TriffView marks the highlight in the same place, ahead of its own
-    settle and minimize (TriffViewSubsystem.cs, TryActivateClient).
-    """
+    TriffView marks the highlight in the same place (TriffViewSubsystem.cs,
+    TryActivateClient)."""
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
     h._selected_key = "Alice"
     h._windows["Alice"].selected = True
@@ -2290,8 +2358,7 @@ def test_the_ring_moves_before_the_settle_and_the_minimize(monkeypatch):
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     kinds = [entry[0] for entry in order]
-    assert kinds.index("ring") < kinds.index("sleep")
-    assert kinds.index("ring") < kinds.index("send")
+    assert kinds.index("activate") + 1 == kinds.index("ring")
     assert ("ring", "Bravo", True) in order
     assert ("ring", "Alice", False) in order
 
@@ -2328,28 +2395,48 @@ def test_a_refused_switch_leaves_the_ring_where_it_was(monkeypatch):
     assert h._selected_key == "Alice"
 
 
-def test_a_refused_switch_minimizes_nothing(monkeypatch):
-    """The safety property, ported from TriffView. Minimizing after an
-    activation that did not take leaves the user on an empty desktop with
-    nothing focused -- their old client gone and the new one never
-    arrived, which is strictly worse than the switch failing quietly."""
+def test_a_refused_switch_brings_the_minimized_client_back(monkeypatch):
+    """The safety property, in the shape minimize-first forces on it.
+    TriffView's version was 'a refused switch minimizes nothing'; here the
+    outgoing client is already minimized when the refusal is learned, so
+    the refusal restores it -- otherwise the user's old client is gone and
+    the new one never arrived: an empty desktop with nothing focused."""
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is False
 
-    assert order == [("foreground", 0x1111), ("activate", 0x2222)]
+    assert order == [
+        ("foreground", 0x1111),
+        ("animation", 0),
+        MINIMIZE_ALICE,
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+        ("animation", 1),
+    ]
 
 
-def test_a_timed_out_minimize_does_not_reactivate(monkeypatch):
-    """A zero return means the client never processed the message, so it
-    is still exactly where it was. There is no foreground theft to undo,
-    and a second activation would be an unexplained focus change."""
+def test_a_refused_switch_after_a_failed_minimize_restores_nothing(monkeypatch):
+    """A zero send means the client never processed the message and is
+    still where it was. Nothing to bring back; a restore would be a second
+    unexplained foreground change."""
+    h, libs, order = _switching_host(
+        monkeypatch, foreground=0x1111, activated=False, send_result=0
+    )
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is False
+
+    assert [e for e in order if e[0] == "activate"] == [("activate", 0x2222)]
+
+
+def test_a_failed_minimize_still_activates(monkeypatch):
+    """The minimize is a side effect of the switch, not a precondition:
+    a client slow to minimize must not cost the user the switch itself."""
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     kinds = [entry[0] for entry in order]
-    assert kinds == ["foreground", "activate", "ring", "sleep", "send"]
+    assert kinds == ["foreground", "animation", "send", "activate", "ring", "animation"]
 
 
 def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog):
@@ -2360,7 +2447,6 @@ def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog)
     which is how a live install logged 166 of them in one session and left
     the cause open."""
     h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
-    monkeypatch.setattr(host.time, "sleep", lambda s: None)
 
     with caplog.at_level("INFO", logger="wingman.preview.host"):
         assert h._activate_client(libs, h._clients["Bravo"]) is True
@@ -2371,6 +2457,14 @@ def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog)
     assert "did not complete" in line
 
 
+NO_MINIMIZE = [
+    ("animation", 0),
+    ("activate", 0x2222),
+    ("ring", "Bravo", True),
+    ("animation", 1),
+]
+
+
 def test_a_never_minimize_character_is_left_alone(monkeypatch):
     """The roster names the client being switched AWAY from -- the one
     that would be minimized."""
@@ -2378,11 +2472,7 @@ def test_a_never_minimize_character_is_left_alone(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [
-        ("foreground", 0x1111),
-        ("activate", 0x2222),
-        ("ring", "Bravo", True),
-    ]
+    assert order == [("foreground", 0x1111), *NO_MINIMIZE]
 
 
 def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
@@ -2390,40 +2480,20 @@ def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [
-        ("foreground", 0x1111),
-        ("activate", 0x2222),
-        ("ring", "Bravo", True),
-    ]
+    assert order == [("foreground", 0x1111), *NO_MINIMIZE]
 
 
 def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
     monkeypatch,
 ):
-    """window_mod.activate returns True EARLY when the target is already
-    foreground, without touching anything -- so this arrives here as a
-    successful activation whose previous and next client are the same.
-    Minimizing on it would minimize the very client just clicked."""
+    """Previous and next are the same client. Minimizing on it would
+    minimize the very client just clicked -- and with minimize-first,
+    before the activate() early-return that used to catch this."""
     h, libs, order = _switching_host(monkeypatch, foreground=0x2222)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [
-        ("foreground", 0x2222),
-        ("activate", 0x2222),
-        ("ring", "Bravo", True),
-    ]
-
-
-def test_the_switch_reports_the_activation_verdict_even_when_it_minimizes(monkeypatch):
-    """The bool is window_mod.activate's, not the minimize send's: the
-    minimize is a side effect, and a caller asking whether the switch took
-    must not be told 'no' because a client was slow to minimize."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
+    assert order == [("foreground", 0x2222), *NO_MINIMIZE]
 
 
 def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
@@ -2435,11 +2505,17 @@ def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [
-        ("foreground", 0xDEAD),
-        ("activate", 0x2222),
-        ("ring", "Bravo", True),
-    ]
+    assert order == [("foreground", 0xDEAD), *NO_MINIMIZE]
+
+
+def test_switching_without_libs_touches_no_animation(monkeypatch):
+    """Tests drive _activate_client with libs=None to exercise the
+    decisions without the Win32 surface; the animation toggle is Win32."""
+    h, _, order = _switching_host(monkeypatch, foreground=0x1111)
+
+    assert h._activate_client(None, h._clients["Bravo"]) is True
+
+    assert [e for e in order if e[0] == "animation"] == []
 
 
 # --- resize_preview()/reset_layouts(): on-demand sizing ---------------------

@@ -11,6 +11,7 @@ records the identical discovery about webview.start() carrying none of
 the old event loop, and answers it with an owned loop.
 """
 
+import contextlib
 import ctypes
 import logging
 import threading
@@ -32,14 +33,12 @@ from .window import PreviewWindow
 logger = logging.getLogger(__name__)
 
 SWEEP_MS = 700  # TriffView uses the same interval
-# Between activating the next client and minimizing the previous one.
-# TriffView's own constant, kept at its value: the minimize is a message
-# to another process's queue, and sending it the instant the foreground
-# moved raced the switch often enough that TriffView tuned this in.
-SWITCH_SETTLE_MS = 10
 # Upper bound on the minimize send. With SMTO_ABORTIFHUNG this is what
 # keeps a still-loading EVE client from stalling the preview thread --
-# see the SendMessageTimeoutW bind comment in win32.py.
+# see the SendMessageTimeoutW bind comment in win32.py. The send now goes
+# to a client that still holds the foreground (see _activate_client), the
+# case measured at 6-9ms; the budget is a ceiling for a hung one, not the
+# expected wait.
 MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 # How long an armed bind capture survives without being disarmed. Long
@@ -58,6 +57,54 @@ DEFAULT_SIZE = (320, 210)
 # a lot of characters are in a fight at once -- raise_alert's docstring
 # has the reasoning.
 PENDING_ALERTS_MAX = 10
+
+
+@contextlib.contextmanager
+def _animation_off(libs):
+    """Suspend the minimize/restore window animation for the block.
+
+    Ported from EVE-O Preview (WindowManager.TurnOffAnimation /
+    RestoreAnimation), where it is the default: with the animation on, a
+    minimize plus a restore is ~200-250ms of window-zoom, and that is
+    the bulk of the visible lag between clicking a preview and seeing the
+    client. Toggled for the switch only and put back in a finally, so a
+    refused activation or an exception cannot leave the user's desktop
+    without its animation. Left alone when it is already off: nothing to
+    write, and nothing to "restore" to a value the user never had.
+
+    fWinIni is 0 on both calls -- the live value changes, the user's
+    registry preference does not.
+
+    The restore of a target that was itself minimized is asynchronous
+    (ShowWindowAsync in window.activate), so the animation can come back
+    before the client processes it. EVE-O Preview carries the same race
+    and it is not visible in practice; a synchronous ShowWindow would
+    close it at the cost of blocking on a loading client, which is the
+    stall SendMessageTimeoutW exists to avoid.
+    """
+    if libs is None:
+        yield
+        return
+    info = win32.ANIMATIONINFO()
+    info.cbSize = ctypes.sizeof(info)
+    size = ctypes.sizeof(info)
+    got = libs.user32.SystemParametersInfoW(
+        win32.SPI_GETANIMATION, size, ctypes.pointer(info), 0
+    )
+    if not got or not info.iMinAnimate:
+        yield
+        return
+    info.iMinAnimate = 0
+    libs.user32.SystemParametersInfoW(
+        win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
+    )
+    try:
+        yield
+    finally:
+        info.iMinAnimate = 1
+        libs.user32.SystemParametersInfoW(
+            win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
+        )
 
 
 def reconcile(current: set, desired: set):
@@ -1017,88 +1064,89 @@ class PreviewHost:
         GetForegroundWindow -- callers that do more work after the switch
         need to know it actually happened.
 
-        The whole sequence runs synchronously on the preview thread --
-        the same thread that pumps hotkeys, alerts and the sweep -- and
-        it is the one place that blocks it: SWITCH_SETTLE_MS of sleep
-        plus up to MINIMIZE_TIMEOUT_MS waiting on another process's
-        message queue, so ~110ms worst case with nothing else dispatched.
-        That is per switch, never per sweep, and SMTO_ABORTIFHUNG is what
-        bounds the second half; a bare SendMessageW there would not be
-        bounded at all (win32.py records why it is not bound).
+        The order is EVE-O Preview's (ThumbnailManager.SwitchActiveClient:
+        MinimizeWindow, then ActivateWindow), and it replaced TriffView's
+        activate / settle 10ms / minimize / re-activate:
+
+        - The minimize goes to a client that still HAS the foreground,
+          which is the fast case: 6-9ms measured. The old sequence sent
+          it 10ms after the window lost the foreground, mid-deactivation,
+          and on a live install that send timed out for its full budget
+          on every switch (166 consecutive timeouts in one session's
+          log) -- and a timed-out send is still delivered later, so the
+          client minimized AFTER the switch, Windows handed the foreground
+          to whatever it picked next, and the user landed on the desktop.
+        - Nothing is minimized after the activate, so there is no
+          foreground theft to undo: the settle and the second activation
+          are gone. This function no longer sleeps on the preview thread
+          -- the thread that also pumps hotkeys, alerts, the sweep and
+          every preview's mouse messages.
+        - A refused activation now has to bring the outgoing client back
+          (switching.should_restore); that is the old "never minimize
+          after a refused switch" safety property in the only shape
+          minimize-first allows.
+
+        Every decision about *whether* to minimize or restore lives in
+        switching.py so it can be tested off Windows; this function owns
+        only the Win32 calls and their order.
         """
-        # Read BEFORE activating: once the foreground has moved there is
-        # nothing left to identify the outgoing client by. This ordering
-        # is the reason the switch has a single owner -- the click path
-        # used to activate inside window.py and tell the host afterwards,
-        # by which point this read was already too late.
+        # Read BEFORE anything moves: once the foreground has changed
+        # there is nothing left to identify the outgoing client by. This
+        # ordering is the reason the switch has a single owner -- the
+        # click path used to activate inside window.py and tell the host
+        # afterwards, by which point this read was already too late.
         previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
         previous_key, previous = next(
             ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
             (None, None),
         )
 
-        ok = window_mod.activate(libs, client.hwnd)
-
-        if ok:
-            # The ring moves HERE, inline, the instant the switch is known
-            # to have taken -- it does NOT wait for the foreground hook and
-            # the sweep it asks for, which is what used to move it.
-            #
-            # Everything below this line blocks the preview thread:
-            # SWITCH_SETTLE_MS of sleep plus up to MINIMIZE_TIMEOUT_MS on
-            # another process's queue. The EVENT_SYSTEM_FOREGROUND event
-            # and the WM_APP_SWEEP_NOW its callback posts are both queued
-            # behind that block, so the client came forward and its preview
-            # stayed unhighlighted for the whole ~110ms -- and for up to the
-            # 700ms sweep on a run where the queued WinEvent was dropped.
-            # Measured on a live install: the minimize send times out for
-            # its full budget on EVERY switch (166 consecutive timeouts in
-            # one session's log), so that block is not a rare worst case,
-            # it is the normal path.
-            #
-            # The hook and the sweep stay exactly as they were: they are
-            # still the only thing that catches alt-tab, and the only thing
-            # that moves the ring off a client the user left by any route
-            # other than a switch Wingman performed itself.
-            #
-            # TriffView marks its highlight in the same place, ahead of its
-            # own settle and minimize (TriffViewSubsystem.cs,
-            # TryActivateClient) -- the port dropped that ordering.
-            #
-            # Assigned rather than left for the hook to report: activate()
-            # read GetForegroundWindow to reach `ok`, so this IS the live
-            # foreground, and _apply_selection prefers _foreground over a
-            # syscall of its own. Leaving it stale would make the line below
-            # re-apply the OUTGOING client's ring.
-            self._foreground = client.hwnd
-            self._apply_selection(libs)
-
-        # Every decision about *whether* to minimize lives in switching.py
-        # so it can be tested off Windows; this function owns only the
-        # Win32 calls and their order.
-        #
-        # `activated=ok` is the safety property, ported from TriffView,
-        # which returns early on the same condition: minimizing after a
-        # refused switch takes away the client the user was looking at
-        # and gives them nothing in return -- an empty desktop with no
-        # window focused, strictly worse than the switch simply not
-        # working.
-        if not switching.should_minimize(
+        minimize = switching.should_minimize(
             enabled=self._minimizing_inactive(),
-            activated=ok,
             previous_key=previous_key,
             next_key=client.stable_key,
             # should_minimize only asks whether previous_key is in the
             # roster, so the guarded per-key reader answers it exactly;
             # there is no guarded reader for the whole list.
             never=[previous_key] if self._is_never_minimize(previous_key) else [],
-        ):
-            return ok
+        )
 
-        time.sleep(SWITCH_SETTLE_MS / 1000.0)
+        with _animation_off(libs):
+            minimized = minimize and self._minimize(libs, previous.hwnd)
+            ok = window_mod.activate(libs, client.hwnd)
+            if ok:
+                # The ring moves HERE, inline, the instant the switch is
+                # known to have taken -- not on the sweep the foreground
+                # hook asks for. The hook and the sweep stay exactly as
+                # they were: they are still the only thing that catches
+                # alt-tab, and the only thing that moves the ring off a
+                # client the user left by any route other than a switch
+                # Wingman performed itself. TriffView marks its highlight
+                # in the same place (TriffViewSubsystem.cs,
+                # TryActivateClient).
+                #
+                # Assigned rather than left for the hook to report:
+                # activate() read GetForegroundWindow to reach `ok`, so
+                # this IS the live foreground, and _apply_selection
+                # prefers _foreground over a syscall of its own. Leaving
+                # it stale would make the line below re-apply the
+                # OUTGOING client's ring.
+                self._foreground = client.hwnd
+                self._apply_selection(libs)
+            elif switching.should_restore(activated=ok, minimized=minimized):
+                # activate() restores an iconic window before raising it,
+                # so this one call undoes the minimize AND hands the
+                # foreground back. Its verdict is deliberately not read:
+                # the switch already failed, and the caller's bool is
+                # about the client they asked for.
+                window_mod.activate(libs, previous.hwnd)
+        return ok
+
+    def _minimize(self, libs, hwnd) -> bool:
+        """Send SC_MINIMIZE to *hwnd*; True only if the client processed it."""
         started = time.perf_counter()
         sent = libs.user32.SendMessageTimeoutW(
-            previous.hwnd,
+            hwnd,
             win32.WM_SYSCOMMAND,
             win32.SC_MINIMIZE,
             0,
@@ -1106,47 +1154,33 @@ class PreviewHost:
             MINIMIZE_TIMEOUT_MS,
             None,
         )
-        if not sent:
-            # Zero covers three cases the API does not separate: the send
-            # timed out, it was abandoned because the client was hung
-            # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
-            # client that exited during the settle above. In all of them
-            # the client never processed the message and is still where it
-            # was. Nothing to re-activate around, and re-activating anyway
-            # would just be a second unexplained foreground change.
-            # INFO for the same reason window.py logs a refused activation
-            # at INFO: the root logger runs at INFO, and this is what
-            # "minimize sometimes does nothing" looks like in a user's log.
-            #
-            # The elapsed time is what separates those three, and it is the
-            # only one of them a user's log can ever tell us: a send that
-            # spent the whole budget waiting really did time out, while one
-            # that came back in under a millisecond was refused outright
-            # and never waited for anything. Without it the line reads
-            # identically either way -- which is how a live install could
-            # log 166 of these in a session and still leave the cause open.
-            # Every mechanism reproducible off a loaded client is fast: a
-            # WM_NULL round trip is 1-50ms, a real SC_MINIMIZE to a quiet
-            # client is 6-9ms, and the same send on the live switch path,
-            # 10ms after the window lost the foreground, is 32-40ms.
-            logger.info(
-                "Minimize of 0x%x did not complete (timeout or abandoned) "
-                "after %.0fms of a %dms budget; leaving it as it is",
-                previous.hwnd,
-                (time.perf_counter() - started) * 1000,
-                MINIMIZE_TIMEOUT_MS,
-            )
-            return ok
-
-        # Re-activate. Minimizing the outgoing window makes Windows hand
-        # the foreground to whatever it picks next, which is not the
-        # client just switched to -- without this line the minimize
-        # steals focus straight back off the target and the switch looks
-        # like it half-worked. TriffView's README calls the tuned result
-        # "no more dropping to desktop or lagging when cycling"; both
-        # halves of that sentence are load-bearing lines here.
-        window_mod.activate(libs, client.hwnd)
-        return ok
+        if sent:
+            return True
+        # Zero covers three cases the API does not separate: the send
+        # timed out, it was abandoned because the client was hung
+        # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
+        # client that exited between the foreground read and here. In
+        # all of them the client never processed the message and is
+        # still where it was; the switch goes ahead without it. INFO for
+        # the same reason window.py logs a refused activation at INFO:
+        # the root logger runs at INFO, and this is what "minimize
+        # sometimes does nothing" looks like in a user's log.
+        #
+        # The elapsed time is what separates those three, and it is the
+        # only one of them a user's log can ever tell us: a send that
+        # spent the whole budget waiting really did time out, while one
+        # that came back in under a millisecond was refused outright and
+        # never waited for anything. Without it the line reads
+        # identically either way -- which is how a live install could
+        # log 166 of these in a session and still leave the cause open.
+        logger.info(
+            "Minimize of 0x%x did not complete (timeout or abandoned) "
+            "after %.0fms of a %dms budget; leaving it as it is",
+            hwnd,
+            (time.perf_counter() - started) * 1000,
+            MINIMIZE_TIMEOUT_MS,
+        )
+        return False
 
     def _apply_alerts(self, libs, pending) -> None:
         """Arm the preview each event names, then make sure the tick timer
