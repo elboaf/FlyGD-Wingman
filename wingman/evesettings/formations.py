@@ -53,7 +53,15 @@ def _entries(doc: dict) -> dict:
     # would make read_formations report "no formations" with no error, and
     # write_formations would then rebuild the key as {} on the next save,
     # discarding whatever was actually there. Refuse instead.
+    #
+    # A present-but-non-dict bytes:ui is the same class of problem as an
+    # unrecognised customFormations value, one level out: read reported "no
+    # formations", the editor opened empty, and the save then died deep in
+    # write_formations on a stdlib TypeError whose message the page shows
+    # verbatim. Refuse here, with the sentence the user can act on.
     ui = doc.get(UI_KEY)
+    if UI_KEY in doc and not isinstance(ui, dict):
+        raise ValueError("This file has a ui entry Wingman does not understand.")
     if not isinstance(ui, dict) or FORMATIONS_KEY not in ui:
         return {}
     value = ui[FORMATIONS_KEY]
@@ -124,7 +132,16 @@ def read_formations(doc: dict) -> list[Formation]:
 
 def validate(formations: list[Formation]) -> None:
     seen = set()
+    seen_ids = set()
     for f in formations:
+        # write_formations keys entries by id, so two formations sharing one
+        # collapse to whichever the loop writes last -- a save that reports
+        # success and silently drops a formation. None is "not in the file
+        # yet" rather than an id, and write mints a distinct one for each.
+        if f.id is not None:
+            if f.id in seen_ids:
+                raise ValueError(f"Two formations share the id {f.id}.")
+            seen_ids.add(f.id)
         if not f.name.strip():
             raise ValueError("Every formation needs a name.")
         # Not a file-format rule (the client keys on id, not name) but the
@@ -157,7 +174,15 @@ def write_formations(doc: dict, formations: list[Formation], *, now: float) -> d
     when it creates a formation.
     """
     existing = _entries(doc)
-    entries: dict = {k: v for k, v in existing.items() if (_entry_id(k) or 0) < 0}
+    # Spelled out rather than `(_entry_id(k) or 0) < 0`: that idiom folds an
+    # unparseable key and the id 0 into the same falsy branch, which reads as
+    # a deliberate rule and is not one. (read_formations below refuses an
+    # unparseable key outright, so neither case actually survives here.)
+    entries: dict = {
+        k: v
+        for k, v in existing.items()
+        if (ident := _entry_id(k)) is not None and ident < 0
+    }
     read_formations(doc)  # refuse to rebuild a key we could not fully read
     taken = [i for i in map(_entry_id, existing) if i is not None]
     taken += [f.id for f in formations if f.id is not None]

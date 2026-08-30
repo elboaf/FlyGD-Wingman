@@ -110,6 +110,30 @@ def test_read_refuses_a_present_but_malformed_customformations_container(bad_val
         fm.write_formations(doc, [], now=0.0)
 
 
+@pytest.mark.parametrize("bad_ui", ["not a dict", ["a", "list"], 7])
+def test_read_refuses_a_present_but_non_dict_ui_key(bad_ui):
+    """Same argument as the container check above, one level out. Treating a
+    present-but-unrecognised bytes:ui as absent made read report "no
+    formations" and let the save through, where it died on a stdlib
+    TypeError whose message the page shows the user verbatim."""
+    doc = {fm.UI_KEY: bad_ui}
+    with pytest.raises(ValueError, match="not understand"):
+        fm.read_formations(doc)
+    with pytest.raises(ValueError, match="not understand"):
+        fm.write_formations(doc, [], now=0.0)
+
+
+def test_validate_accepts_several_new_formations_with_no_id_yet():
+    """None is "not in the file yet", not an id: write mints one for each,
+    so the duplicate-id rule must not fire on a list of new formations."""
+    fm.validate(
+        [
+            fm.Formation(None, "A", (fm.Probe(0, 0, 0, 1.0),)),
+            fm.Formation(None, "B", (fm.Probe(0, 0, 0, 1.0),)),
+        ]
+    )
+
+
 def test_write_replaces_only_the_formations_key_and_restamps_both_keys():
     before = copy.deepcopy(REAL)
     new = [fm.Formation(id=0, name="Renamed", probes=(fm.Probe(1.0, 2.0, 3.0, 4.0),))]
@@ -223,6 +247,16 @@ def test_write_creates_the_keys_when_the_file_never_had_them():
                 fm.Formation(None, "A", (fm.Probe(0, 0, 0, 1.0),)),
             ],
             "twice",
+        ),
+        # write_formations keys entries by id, so two formations sharing one
+        # collapse to whichever the loop writes last: the save reports
+        # success and one formation is gone.
+        (
+            [
+                fm.Formation(2, "A", (fm.Probe(0, 0, 0, 1.0),)),
+                fm.Formation(2, "B", (fm.Probe(0, 0, 0, 1.0),)),
+            ],
+            "share the id 2",
         ),
     ],
 )
