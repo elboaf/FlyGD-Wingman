@@ -483,6 +483,40 @@ def test_every_destination_and_section_is_reachable_and_exists():
     )
 
 
+def test_the_formation_editor_offers_no_other_exit_while_editing():
+    """The editor's own back button must be the ONLY way off #route-formations.
+
+    The editor holds unsaved edits and confirms before discarding them --
+    but only on its own back button. #routenav and the gear are chrome:
+    they sit above every route, call WM.route directly, and know nothing
+    about `state.dirty`. So with the nav visible there were five exits and
+    four of them threw the edits away in silence, the next
+    WM.openFormations reloading over them with no `protect`.
+
+    The remedy is one place, in WM.route: decide the chrome's visibility
+    per route, and hide it on `formations` exactly as `firstrun` already
+    does (which is nothing more than the same rule -- a screen you cannot
+    leave sideways). Pinned here because the two lines are three words
+    apart and a later route added to one is easily left out of the other.
+    """
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    declared = re.search(r"WM\.CHROMELESS_ROUTES = \[([^\]]*)\]", app)
+    assert declared, "app.js no longer declares WM.CHROMELESS_ROUTES"
+    chromeless = set(re.findall(r"'([\w-]+)'", declared.group(1)))
+    assert {"firstrun", "formations"} <= chromeless, (
+        "chrome stays up on "
+        f"{sorted({'firstrun', 'formations'} - chromeless)} -- a route you must "
+        "not leave sideways cannot offer buttons that leave it"
+    )
+    # Both exits, decided from the one list. A gear hidden while the nav
+    # stayed up would still leak four destinations.
+    for element in ("btn-settings", "routenav"):
+        assert f"WM.el('{element}').hidden = chromeless;" in app, (
+            f"#{element}'s visibility no longer follows WM.CHROMELESS_ROUTES"
+        )
+
+
 def test_the_landing_section_is_one_fact_not_three():
     """`WM.current_section` and the visibly active section must agree.
 
@@ -879,6 +913,7 @@ def test_nothing_hides_itself_with_an_inline_display_style():
         "app.js",
         "firstrun.js",
         "evesettings.js",
+        "formations.js",
     ):
         src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
         assert ".style.display" not in src, (
@@ -2275,4 +2310,118 @@ def test_hide_on_lost_focus_is_wired_end_to_end():
     assert "hide_on_lost_focus === true" in body, (
         "the wm:settings read must treat an absent key as off; "
         "`!== false` would hide previews on every upgrading install"
+    )
+
+
+# ---- the probe formation editor ----------------------------------------
+
+
+def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
+    """A sub-screen of Profiles, implemented as a route of its own.
+
+    DESIGN.md makes title-bar space the scarce resource and WM.EVE_ROUTES
+    already holds two entries, so the editor gets a route id and no nav
+    button: it is reached from the Profiles account card. The two halves
+    that would silently break it are a missing entry in WM.route's map (the
+    route element never gets `active`, so the screen is blank) and a
+    missing entry in WM.EVE_ROUTES (with the EVE gate off you could still
+    be standing on it, with the nav hidden and no way out -- the exact bug
+    app.js's last_destination comment records).
+    """
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    assert 'id="route-formations"' in HTML
+    assert "formations: 'route-formations'" in app
+    assert 'data-route="formations"' not in HTML, (
+        "the editor is reached from Profiles, not the title bar"
+    )
+    routes = re.search(r"WM\.EVE_ROUTES = \[([^\]]*)\]", app)
+    assert routes and "'formations'" in routes.group(1), (
+        "the editor hides with the other EVE destinations"
+    )
+
+
+def test_every_bridge_handler_has_exactly_one_owner():
+    """WM.handle assigns window[name]; a second registration silently wins.
+
+    formations.js must NOT register onEveSettingsDone -- Profiles owns it,
+    and a second registration would replace the Profiles handler outright,
+    leaving copy, backup and restore stuck busy for the rest of the
+    session with nothing in the console to say so.
+    """
+    owners: dict[str, list[str]] = {}
+    for path in sorted(WEB.glob("*.js")):
+        if path.name == "dev.js":
+            continue
+        text = _strip_js_comments(path.read_text(encoding="utf-8"))
+        for name in re.findall(r"WM\.handle\('([A-Za-z0-9_]+)'", text):
+            owners.setdefault(name, []).append(path.name)
+    doubled = {n: o for n, o in owners.items() if len(o) > 1}
+    assert not doubled, f"handlers registered twice: {doubled}"
+    assert owners.get("onEveSettingsDone") == ["evesettings.js"], (
+        "Profiles must be the sole owner of onEveSettingsDone -- "
+        "formations.js must not register it"
+    )
+    js = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "WM.formationsDone" in js, (
+        "Profiles must forward onEveSettingsDone to the editor, which has "
+        "no handler of its own"
+    )
+
+
+def test_the_formation_editor_converts_units_only_at_the_boundary():
+    """The bridge speaks meters; the editor's fields are km and AU.
+
+    Both conversions live in load() and save(), so a third one anywhere
+    else is a double conversion -- and the failure is silent, because a
+    formation that comes back 1000x out still renders as a formation.
+    """
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+    assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
+    assert js.count("* AU") >= 1 and js.count("/ AU") >= 1
+    assert "149597870700" in js
+
+
+def test_the_formation_editor_guards_both_of_its_async_windows():
+    """A save is two round trips, and an edit can land in either gap.
+
+    `save()` sends and returns; the answer arrives later as a push. The
+    push then triggers a RE-READ, because Python mints a new formation's
+    id at write time and the page is still holding `null` -- without
+    reading it back the next save mints a second id and drops the first.
+
+    So there are two windows in which the pane is live and an edit can be
+    made: send -> push, and push -> re-read. Both end in code that
+    overwrites what the user is looking at, and both failures are silent:
+    the edit is on screen, then it is not, and nothing is logged. The
+    first window was closed on review; the second was opened by that same
+    fix and closed on the next one.
+
+    This cannot prove the logic -- nothing here executes JavaScript -- so
+    it pins the MECHANISM: each window's handler consults `revision`, the
+    counter every edit bumps. A guard deleted or a third window added
+    without one fails here rather than in a user's settings file.
+    """
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+
+    assert "revision += 1" in js, (
+        "formations.js no longer counts edits, so neither guard below can "
+        "tell an edit from no edit"
+    )
+
+    load = js[js.index("function load(") : js.index("function save(")]
+    assert re.search(r"revision\s*!==\s*\w+", load), (
+        "load()'s reply handler does not compare `revision` against what "
+        "it captured on entry, so a reload after a save paints over an "
+        "edit made while it was in flight"
+    )
+    assert re.search(r"=\s*revision\s*;", load), (
+        "load() never captures `revision` on entry, so the comparison "
+        "above cannot be against the edit count it started with"
+    )
+
+    done = js[js.index("WM.formationsDone") :]
+    done = done[: done.index("\n  };")]
+    assert re.search(r"revision\s*!==\s*savingAt", done), (
+        "the completion push clears `dirty` without checking whether an "
+        "edit landed since the send"
     )

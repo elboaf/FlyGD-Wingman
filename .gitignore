@@ -5,6 +5,7 @@ wingman/credentials_real.py
 build/
 dist/
 packaging/bin/
+packaging/settings-codec/target/
 *.egg-info/
 __pycache__/
 

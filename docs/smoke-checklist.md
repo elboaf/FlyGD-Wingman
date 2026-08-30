@@ -2616,6 +2616,22 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Check the packaged build: the Profiles route appears and the
       folder picker opens.
 
+## Probe formations (Profiles → Probe formations)
+
+Needs a real install and every EVE client closed for the write lines.
+
+- [ ] The card is present when the codec is bundled and absent (not broken) when `bin/wingman-settings-codec.exe` is removed from the install; Copy and Backups still work in both cases.
+- [ ] Open an account with a formation created in-game: it lists with the right name and probe count; ranges read as AU powers of two.
+- [ ] **Version gate:** Save with no edits, then launch the client on that account. UI layout, overview, and the formation are all intact. (The client writes version 0; Wingman writes version 1. Proven once on 2026-08-29 — design doc finding 10 — and re-walked here so a client update that changes the answer is caught before a user meets it.)
+- [ ] Edit a formation, save, launch the client: the probe scanner shows the edit; the client's selected formation is unchanged.
+- [ ] Save with a client running: refused with "The file is in use. Close EVE and retry."; file bytes unchanged.
+- [ ] Restore the pre-edit auto backup from the Backups card: the old formation returns.
+- [ ] Reorder by deleting and re-adding: the client's selected formation still points at the same formation, not the same slot.
+- [ ] Save a formation in Wingman, edit it in the client (move a probe, rename), close the client, reopen in Wingman: the client's edit is what Wingman shows, and Save then round-trips it again.
+- [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
+- [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
+- [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
+
 ## EVE skill plan readiness
 
 Requires a Windows machine, a real EVE account, and a registered EVE

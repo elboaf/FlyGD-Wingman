@@ -157,7 +157,44 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     app = (web / "app.js").read_text(encoding="utf-8")
     html = (web / "index.html").read_text(encoding="utf-8")
 
-    assert "WM.EVE_ROUTES = ['evesettings', 'skills']" in app
+    # Derived rather than a literal list, and this is the second half of
+    # the same rule the sections below already follow. It used to read
+    # `"WM.EVE_ROUTES = ['evesettings', 'skills']" in app`, which pinned
+    # the whole list -- so the probe formation editor, a sub-screen of
+    # Profiles with a route id and deliberately NO navbtn, could not join
+    # the list without failing a test whose subject is the title bar.
+    #
+    # What has to hold is: every EVE-only destination the bar offers is
+    # gated. An entry with no button of its own is gated for the other
+    # half of apply_eve_gate -- a user standing on a hidden route is moved
+    # off it -- and it is checked here only for existing.
+    routes = re.search(r"WM\.EVE_ROUTES = \[([^\]]*)\]", app)
+    assert routes, "app.js no longer declares WM.EVE_ROUTES"
+    gated_routes = set(re.findall(r"'([\w-]+)'", routes.group(1)))
+    nav_routes = set(re.findall(r'class="navbtn[^"]*"[^>]*data-route="([\w-]+)"', html))
+    # The mirror of the sections half's `assert rail`. Without it an
+    # attribute order this regex does not expect (data-route before class)
+    # empties the set, and the subset check below then passes over nothing
+    # -- which is how a derived assertion rots silently.
+    assert nav_routes, "index.html no longer carries any title-bar nav buttons"
+    assert nav_routes - {"main"} <= gated_routes, (
+        "a destination in the title bar is not gated, so it stays visible "
+        f"with the EVE tools hidden: {sorted(nav_routes - {'main'} - gated_routes)}"
+    )
+    # OVER-gating, which the literal this replaced also caught. Uploader is
+    # the half of the product that owes EVE nothing (PRODUCT.md), so gating
+    # it would hide the one destination left and strand the user on an
+    # empty nav -- the same shape as the last_destination bug app.js's own
+    # comment records.
+    assert "main" not in gated_routes, (
+        "the Uploader is in WM.EVE_ROUTES, so turning the EVE tools off "
+        "would hide the one destination that does not need EVE"
+    )
+    page_routes = set(re.findall(r'id="route-([\w-]+)"', html))
+    assert gated_routes <= page_routes, (
+        "WM.EVE_ROUTES names routes the page does not have: "
+        f"{sorted(gated_routes - page_routes)}"
+    )
 
     declared = re.search(r"WM\.EVE_SECTIONS = \[([^\]]*)\]", app)
     assert declared, "app.js no longer declares WM.EVE_SECTIONS"

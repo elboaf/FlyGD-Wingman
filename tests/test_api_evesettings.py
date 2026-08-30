@@ -47,6 +47,13 @@ def eve_tree(tmp_path, files=("core_char_1.dat", "core_char_2.dat")):
     return profile
 
 
+def account_setup(tmp_path, monkeypatch, name="core_user_1.dat"):
+    profile = eve_tree(tmp_path, files=(name,))
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    return api, profile / name
+
+
 def test_state_is_empty_before_a_root_is_chosen(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     state = api.eve_settings_state()
@@ -793,3 +800,178 @@ def test_detect_root_reports_agreement_rather_than_rewriting_the_selection(
     section = api._state.settings["eve_settings"]
     assert section["server"] == "tranquility"
     assert section["profile"] == "Default"
+
+
+def _fake_codec(monkeypatch, doc, *, available=True):
+    """Route the seam at codec.read_document/write_document to an in-memory doc."""
+    from wingman.evesettings import codec as codec_mod
+    from wingman.ui import api as api_mod
+
+    store = {"doc": doc, "written": []}
+
+    def read_document(path, **kw):
+        return codec_mod.Document(doc=store["doc"], had_crc=False)
+
+    def write_document(path, document, *, backup, **kw):
+        backup(path)
+        store["written"].append((path, document))
+
+    monkeypatch.setattr(api_mod.evesettings_codec, "read_document", read_document)
+    monkeypatch.setattr(api_mod.evesettings_codec, "write_document", write_document)
+    monkeypatch.setattr(
+        api_mod.evesettings_codec, "codec_available", lambda **kw: available
+    )
+    return store
+
+
+FORMATION_DOC = {
+    "bytes:ui": {
+        "bytes:probescanning.customFormations": {
+            "tuple": [
+                "long:1",
+                {
+                    "int:0": {
+                        "tuple": [
+                            "utf8:Test",
+                            [{"tuple": [{"tuple": [1.0, 2.0, 3.0]}, 4.0]}],
+                        ]
+                    },
+                    "int:-4": {"tuple": ["bytes:tempFormation", []]},
+                },
+            ]
+        },
+        "bytes:probescanning.selectedFormationID": {"tuple": ["long:1", 0]},
+    }
+}
+
+
+def test_state_reports_whether_formations_are_available(tmp_path, monkeypatch):
+    api = build(tmp_path, monkeypatch)
+    _fake_codec(monkeypatch, {}, available=False)
+    assert api.eve_settings_state()["formations_available"] is False
+    _fake_codec(monkeypatch, {}, available=True)
+    assert api.eve_settings_state()["formations_available"] is True
+
+
+def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    _fake_codec(monkeypatch, FORMATION_DOC)
+    got = api.eve_settings_formations(str(account))
+    assert got["ok"] is True
+    assert got["name"] == "Account 1"
+    assert got["formations"] == [
+        {
+            "id": 0,
+            "name": "Test",
+            "probes": [{"x": 1.0, "y": 2.0, "z": 3.0, "range": 4.0}],
+        }
+    ]
+
+
+def test_formations_read_refuses_a_path_outside_the_root(tmp_path, monkeypatch):
+    api, _account = account_setup(tmp_path, monkeypatch)
+    _fake_codec(monkeypatch, FORMATION_DOC)
+    outside = tmp_path / "elsewhere" / "core_user_9.dat"
+    outside.parent.mkdir()
+    outside.write_bytes(b"")
+    got = api.eve_settings_formations(str(outside))
+    assert got["ok"] is False and "outside" in got["error"]
+
+
+def test_formations_read_refuses_a_character_file(tmp_path, monkeypatch):
+    api, char = account_setup(tmp_path, monkeypatch, name="core_char_1.dat")
+    _fake_codec(monkeypatch, FORMATION_DOC)
+    got = api.eve_settings_formations(str(char))
+    assert got["ok"] is False and "account" in got["error"]
+
+
+def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
+    tmp_path, monkeypatch
+):
+    from wingman.evesettings import codec as codec_mod
+    from wingman.ui import api as api_mod
+
+    api, account = account_setup(tmp_path, monkeypatch)
+
+    def boom(path, **kw):
+        raise codec_mod.CodecError("bad header")
+
+    monkeypatch.setattr(api_mod.evesettings_codec, "read_document", boom)
+    got = api.eve_settings_formations(str(account))
+    assert got == {"ok": False, "error": "bad header"}
+
+    # A document that decodes cleanly but is not something read_formations
+    # understands must not open the editor on a partial parse either --
+    # write_formations would rebuild the key from whatever was returned and
+    # silently drop the part it could not read.
+    _fake_codec(monkeypatch, FORMATION_DOC)
+
+    def refuse(doc):
+        raise ValueError("This file has a formation entry Wingman does not understand.")
+
+    monkeypatch.setattr(api_mod.evesettings_formations, "read_formations", refuse)
+    got = api.eve_settings_formations(str(account))
+    assert got == {
+        "ok": False,
+        "error": "This file has a formation entry Wingman does not understand.",
+    }
+
+
+def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    store = _fake_codec(monkeypatch, FORMATION_DOC)
+    api._eve_client_running = lambda: False
+    backups = []
+    api._eve_auto_backup = lambda p: backups.append(p)
+    accepted = api.eve_settings_save_formations(
+        str(account),
+        [{"id": None, "name": "New", "probes": [{"x": 1, "y": 0, "z": 0, "range": 2}]}],
+    )
+    assert accepted is True
+    assert backups == [account]
+    ((path, document),) = store["written"]
+    assert path == account
+    entries = document.doc["bytes:ui"]["bytes:probescanning.customFormations"]["tuple"][
+        1
+    ]
+    assert sorted(entries) == ["int:-4", "int:1"]
+    assert entries["int:1"]["tuple"][0] == "utf8:New"
+    assert any(
+        "onEveSettingsDone" in js and '"ok": true' in js for js in api._window.calls
+    )
+
+
+def test_save_is_refused_while_an_eve_client_is_running(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    store = _fake_codec(monkeypatch, FORMATION_DOC)
+    api._eve_client_running = lambda: True
+    api.eve_settings_save_formations(str(account), [])
+    assert store["written"] == []
+    assert any("Close EVE" in js for js in api._window.calls)
+    assert any(
+        "onEveSettingsDone" in js and '"ok": false' in js for js in api._window.calls
+    )
+
+
+def test_save_rejects_an_invalid_formation_before_touching_the_file(
+    tmp_path, monkeypatch
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    store = _fake_codec(monkeypatch, FORMATION_DOC)
+    api._eve_client_running = lambda: False
+    backups = []
+    api._eve_auto_backup = lambda p: backups.append(p)
+    api.eve_settings_save_formations(
+        str(account), [{"id": None, "name": "", "probes": []}]
+    )
+    assert store["written"] == [] and backups == []
+    assert any("needs a name" in js for js in api._window.calls)
+
+
+def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    _fake_codec(monkeypatch, FORMATION_DOC)
+    api._eve_client_running = lambda: False
+    api.eve_settings_save_formations(str(account), [])
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()

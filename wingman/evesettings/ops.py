@@ -42,6 +42,13 @@ def _describe(error: BaseException) -> str:
     return str(error) or error.__class__.__name__
 
 
+# Public alias: api.py needs this same "in use -- close EVE" wording for the
+# formation save, and _eve_section's docstring there already argues against
+# reaching for a private name across the module boundary. Internal callers
+# in this module keep using _describe.
+describe = _describe
+
+
 def copy_to_targets(
     source, targets, *, root, backup, copy=atomicio.copy_atomic
 ) -> CopyReport:
