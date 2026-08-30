@@ -44,14 +44,20 @@ def test_a_degenerate_size_is_still_clickable():
 def test_the_label_pill_fits_its_text_and_holds_the_band_palette():
     """The overlay pill replaces the band: sized to the text, in the band's
     colours, rounded, transparent outside the pill so the video shows
-    around it."""
+    around it.
+
+    The palette is asserted at (2, mid-height): on the pill's straight
+    left edge inside the corner radius, which is padding by construction.
+    The centre pixel is NOT safe for this -- whether it lands on a glyph
+    stroke or between glyphs depends on the platform's FreeType metrics
+    (observed: same font, same Pillow, different pixel on ubuntu)."""
     img = chrome.render_label("Pilot", 300)
     assert img is not None
     assert 20 < img.width < 300  # fitted to the text, not the preview
     assert 18 < img.height < 40
-    centre = img.getpixel((img.width // 2, img.height // 2))
-    assert centre[3] > 200  # opaque band, readable over bright video
-    assert centre[:3] == chrome.LABEL_BG[:3]
+    edge = img.getpixel((2, img.height // 2))
+    assert edge[3] > 200  # opaque band, readable over bright video
+    assert edge[:3] == chrome.LABEL_BG[:3]
 
 
 def test_long_labels_ellipsize_against_the_preview_width():
