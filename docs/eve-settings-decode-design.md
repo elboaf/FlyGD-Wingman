@@ -216,6 +216,13 @@ Notes that cost a debugging session each if missed:
   correct and worth porting wholesale, including the presets that bake it in.
 - **The launcher holds 8 probes.** Cap new probes at 8, and say something about
   a file that already holds more rather than silently truncating.
+- **A file the parser does not fully understand is refused, not trimmed.** The
+  write rebuilds the whole formations key from what the read returned, so an
+  entry skipped on read would be deleted on the next save. Refuse to open the
+  editor and say why; the file is left untouched.
+- **Formation names must be unique (case-insensitive).** Not a file-format
+  rule — the client keys on id — but the editor's list is by name, so two
+  identical names are indistinguishable to the user. Editor-side validation.
 
 ## Scope
 
@@ -251,9 +258,12 @@ no group knows about still travels, so an unmapped setting behaves like a normal
 copy rather than silently not copying. It is easy to build backwards and the
 backwards version fails silently.
 
-**`eve_settings_state` gains a `decode_available` boolean** so Profiles can
-hide the formation entry point when the sidecar is missing (open question 4).
-Name it now: `test_bridge_contract.py` and `dev.js` both need it.
+**`eve_settings_state` gains a boolean** so Profiles can hide the formation
+entry point when the sidecar is missing (open question 4). Name it now:
+`test_bridge_contract.py` and `dev.js` both need it. The plan names it
+`formations_available` rather than `decode_available`: the page hides a
+feature, and a payload key naming the mechanism would outlive a pure-Python
+codec replacing the sidecar.
 
 **Deferred:** account aliases keyed on the numeric id (this is `eve-settings-design.md`'s
 deferred #6, and the id is the "stabler than the full path" key that
