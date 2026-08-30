@@ -30,9 +30,13 @@
     }
     .statusbar {
       /* The strip is a page here, not a footer: no border-top, no flex
-         grow, and the padding is the whole visual. */
+         grow, and the padding is the whole visual. flex (not inline-flex):
+         an inline box drags the body's line-height into the measured
+         height, and fit_sig_bar would size the window a few pixels too
+         tall. */
       border-top: none;
-      display: inline-flex;
+      display: flex;
+      width: max-content;
       padding: 6px 12px;
       /* Set from settings by sigbar.js as an rgba(): the ALPHA lives on
          the page background, never on the window, because window-level
@@ -54,9 +58,11 @@
        NOT shared verbatim: this page has no #eve-warn and no engine-state
        line -- those belong to the full app, and a bar that flashes a
        warning glyph nobody can click to is worse than one that shows only
-       what it can show. -->
+       what it can show. Never hidden: an empty floating pill is worse
+       than a row of placeholders, and a stable row keeps the bar's
+       width from jumping when the engine starts and stops. -->
   <div class="statusbar">
-    <span class="evestat" id="sigbar-stat" hidden>
+    <span class="evestat" id="sigbar-stat">
       <span class="evelabel">SIG</span><span id="bar-sig">&mdash;</span>
       <span class="evelabel">ROOT</span><span id="bar-root">&mdash;</span>
       <span class="evelabel">NEXT</span><span id="bar-next">&mdash;</span>

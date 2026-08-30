@@ -2198,6 +2198,10 @@ class Api:
                     sigbar.create(self, hidden=False)
                 else:
                     bar.show()
+                # The poll can be up to 3s away; a bar that opens empty for
+                # 3s reads as broken. The page pulls nothing at load, so
+                # this push is its content.
+                self._push_eve_status()
             elif bar is not None:
                 bar.hide()
         except Exception:

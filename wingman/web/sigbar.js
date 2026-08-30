@@ -70,13 +70,12 @@
   // ---- handlers (globals, called by Api._push) ------------------------
   window.onEveStatus = function (payload) {
     payload = payload || {};
-    var host = document.getElementById('sigbar-stat');
-    // Same rule as bookmarks.js: hidden entirely when the engine is off,
-    // values shown ONLY while running -- a stopped engine leaves its last
-    // status file on disk, and a plausible dead root system is worse than
-    // no readout.
-    host.hidden = (payload.state === 'off');
-    if (payload.state === 'off') { fit(); return; }
+    // Values are shown ONLY while running; every other state renders the
+    // same em-dash placeholders the markup opens with, dressed in the
+    // degraded (muted) tokens the main strip uses for the same meaning.
+    // Unlike the main strip, the row is never hidden: a floating pill
+    // that vanishes when the engine stops is indistinguishable from a
+    // bar that failed to open.
     var live = payload.state === 'running';
     document.getElementById('bar-sig').textContent =
       live && payload.sig ? payload.sig : '\u2014';
@@ -85,7 +84,7 @@
     document.getElementById('bar-next').textContent =
       live && payload.next_num
         ? payload.next_num + ' / ' + (payload.next_alpha || '\u2014') : '\u2014';
-    host.classList.toggle('degraded', !live);
+    document.getElementById('sigbar-stat').classList.toggle('degraded', !live);
     fit();
   };
 

@@ -24,17 +24,24 @@ from wingman.ui import window as window_mod
 
 logger = logging.getLogger(__name__)
 
-# Height is not fixed in Python: sigbar.js measures its own content and
-# calls Api.fit_sig_bar with both dimensions, so this is only the size the
-# window opens at before the first measurement lands.
-WIDTH = 360
-HEIGHT = 40
+# The opening guess only: sigbar.js measures the laid-out text and calls
+# Api.fit_sig_bar with both dimensions, so these never bound the real size.
+# Tight guesses just keep the first paint from flashing oversized.
+WIDTH = 260
+HEIGHT = 32
 
 # Where the bar opens when no position is stored: bottom-left of the
 # primary screen, raised clear of a taskbar. Logical units, like every
 # geometry pywebview is handed.
 DEFAULT_MARGIN = 60
 DEFAULT_BOTTOM_GAP = 90
+
+# pywebview's default minimum is (200, 100) -- sized for a real window,
+# and fatal here twice over: the 100px floor turns the strip into a tall
+# empty slab, and once the page's measured size drops below 200 wide the
+# overflow:hidden page clips the text entirely. The page is the only thing
+# that knows its own size, so the floor belongs to it.
+MIN_SIZE = (1, 1)
 
 
 def _default_placement(scale) -> tuple[int, int]:
@@ -92,6 +99,7 @@ def create(api, hidden: bool = True):
         # The native surface paints before the first HTML frame; a mismatch
         # is a white flash, same as the main window's BACKGROUND note.
         background_color=window_mod.BACKGROUND,
+        min_size=MIN_SIZE,
         hidden=hidden,
     )
     api._sigbar_window = bar
@@ -121,6 +129,9 @@ def restore(api) -> None:
     def reveal() -> None:
         try:
             bar.show()
+            # Same instant-content rule as Api.toggle_sig_bar: the poll is
+            # up to 3s away and an empty bar reads as broken.
+            api._push_eve_status()
         except Exception:
             logger.exception("sig bar window could not be shown")
 
