@@ -480,9 +480,7 @@ def build_preview_host(state, api_box):
         def selection_color():
             # Live, same as snap: the picker must recolour an open
             # preview's ring through _restyle, not on a restart.
-            return state.settings.get("preview", {}).get(
-                "selection_color", "#00c8dc"
-            )
+            return state.settings.get("preview", {}).get("selection_color", "#00c8dc")
 
         def lock_default():
             # Live, same as the roster it modifies. False when absent, so a

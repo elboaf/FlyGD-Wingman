@@ -544,7 +544,6 @@ def test_a_right_drag_resizes_the_preview():
     # from the pointer deltas these tests assert on.
     w.lock_aspect = False
 
-
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
     libs.cursor = (250, 260)
@@ -561,7 +560,6 @@ def test_a_right_drag_release_reports_the_new_rect():
     # Freeform: the locked aspect would re-shape the result away
     # from the pointer deltas these tests assert on.
     w.lock_aspect = False
-
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
@@ -600,7 +598,6 @@ def test_a_locked_preview_still_resizes_on_the_right_drag():
     # Freeform: the locked aspect would re-shape the result away
     # from the pointer deltas these tests assert on.
     w.lock_aspect = False
-
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
@@ -675,7 +672,6 @@ def test_a_both_button_drag_resizes_every_window_through_the_host():
     # Freeform: the locked aspect would re-shape the result away
     # from the pointer deltas these tests assert on.
     w.lock_aspect = False
-
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_LBUTTONDOWN, 1, 0)
