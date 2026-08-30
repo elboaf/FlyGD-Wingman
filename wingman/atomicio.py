@@ -54,6 +54,39 @@ def write_atomic(
         raise
 
 
+def write_bytes_atomic(
+    path: Path,
+    data: bytes,
+    *,
+    attempts: int = 5,
+    sleep=time.sleep,
+) -> None:
+    """Publish *data* at *path* by rename, leaving the old file intact on error.
+
+    The bytes sibling of write_atomic: the settings decoder hands back a whole
+    re-encoded file, so there is no source path for copy_atomic to stream from.
+    Same temp-in-destination-directory, fsync, replace_with_retry shape, so a
+    sharing violation from a running EVE client surfaces as PermissionError
+    with the original file untouched.
+    """
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        replace_with_retry(tmp_name, path, attempts=attempts, sleep=sleep)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
 def replace_with_retry(
     tmp_name: str, path: Path, attempts: int = 5, sleep=time.sleep
 ) -> None:
