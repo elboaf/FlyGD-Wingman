@@ -351,9 +351,6 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
-        # The debounce timer sigbar.on_moved re-arms; named so the next
-        # fire can cancel the pending one.
-        self._sigbar_pos_timer: threading.Timer | None = None
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory

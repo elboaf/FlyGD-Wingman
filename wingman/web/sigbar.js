@@ -94,6 +94,17 @@
     fit();
   };
 
+  // ---- drag position --------------------------------------------------
+  // Persisted from HERE, not from Python's `moved` event: a drag is dozens
+  // of WM_MOVEs a second, and every one of them spawning a Python handler
+  // thread against the UI thread is the race that hung the app (see the
+  // block comment at the bottom of ui/sigbar.py). mouseup fires once per
+  // drag; screenX/screenY are the window's screen position in CSS pixels
+  // -- the same logical units pywebview's move/geometry use.
+  document.addEventListener('mouseup', function () {
+    send('save_sig_bar_pos', window.screenX, window.screenY);
+  });
+
   // ---- boot ----------------------------------------------------------
   ready.then(function () {
     // Pulled once, not pushed: style is configuration, not a live event,

@@ -18,7 +18,6 @@ WebView2 host, which the already-running previews subsystem dwarfs.
 """
 
 import logging
-import sys
 import threading
 
 from wingman.ui import window as window_mod
@@ -36,11 +35,6 @@ HEIGHT = 40
 # geometry pywebview is handed.
 DEFAULT_MARGIN = 60
 DEFAULT_BOTTOM_GAP = 90
-
-# The drag-end debounce. window.events.moved fires continuously while the
-# bar is dragged; each fire would otherwise be a settings write, and a
-# drag is dozens of fires. One trailing timer, replaced on every move.
-_POS_SAVE_DEBOUNCE_S = 0.5
 
 
 def _default_placement(scale) -> tuple[int, int]:
@@ -68,10 +62,11 @@ def create(api, hidden: bool = True):
     RecursionError reason documented there (pywebview's js_api proxy walk
     over public attributes).
 
-    `on_top=True` is pywebview's own pinned flag. On the WinForms backend
-    it sets the form's TopMost at creation, which is the whole feature;
-    `on_shown` below re-asserts it natively in case a backend revision
-    drops or reorders that.
+    `on_top=True` is pywebview's own pinned flag: the WinForms backend sets
+    TopMost on the form at creation, on the UI thread, which is the whole
+    feature. There is deliberately NO handler on `shown` or `moved` here --
+    see the comment at the bottom of the file for the deadlock that taught
+    this module to leave pywebview's event threads alone.
     """
     import webview
 
@@ -100,65 +95,13 @@ def create(api, hidden: bool = True):
         hidden=hidden,
     )
     api._sigbar_window = bar
-    bar.events.shown += lambda: on_shown(bar)
-    # `moved` postdates some pywebview lines; a backend without it would
-    # raise here and kill the toggle. Position saving degrades to "the bar
-    # reopens at the default spot", which is the tolerable half.
-    moved = getattr(bar.events, "moved", None)
-    if moved is not None:
-        moved += lambda: on_moved(api)
     return bar
-
-
-def on_shown(bar) -> None:
-    """Re-assert topmost on the native form, once it exists.
-
-    window.native does not exist until the WinForms form is built -- the
-    same ordering chrome.enable_resize works around on the main window.
-    Off-Windows (tests, development) there is no native, and a pinned
-    bar is untestable anyway, so the whole body is guarded.
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        bar.native.TopMost = True
-    except Exception:
-        # A bar that is not pinned is degraded, not broken: log it and
-        # leave the window up.
-        logger.exception("Could not pin the sig bar window")
-
-
-def on_moved(api) -> None:
-    """Schedule a debounced persist of the bar's last drag position."""
-    timer = getattr(api, "_sigbar_pos_timer", None)
-    if timer is not None:
-        timer.cancel()
-    api._sigbar_pos_timer = threading.Timer(
-        _POS_SAVE_DEBOUNCE_S, _save_position, args=(api,)
-    )
-    api._sigbar_pos_timer.daemon = True
-    api._sigbar_pos_timer.start()
-
-
-def _save_position(api) -> None:
-    bar = api._sigbar_window
-    if bar is None:
-        return
-    try:
-        x, y = bar.x, bar.y
-    except Exception:
-        logger.debug("sig bar position unreadable", exc_info=True)
-        return
-    try:
-        api.save_sig_bar_pos(x, y)
-    except Exception:
-        logger.exception("sig bar position save failed")
 
 
 def restore(api) -> None:
     """Create the bar window at launch if the user left it enabled.
 
-    Called from the startup func handed to window_mod.run(), so pywebview's
+    Called from the main window's `shown` hook (__main__.py), so pywebview's
     event loop is already up and create_window is legal. Created hidden and
     shown only after the first style render, so the bar never flashes at
     the default placement before its stored style applies.
@@ -182,3 +125,31 @@ def restore(api) -> None:
             logger.exception("sig bar window could not be shown")
 
     threading.Timer(0.3, reveal).start()
+
+
+# WHY NO `shown`/`moved` HANDLERS (the drag hang, reproduced and caught
+# with faulthandler):
+#
+# The first revision subscribed to `shown` to re-assert TopMost
+# (`bar.native.TopMost = True`) and to `moved` to debounce-persist the
+# drag position. pywebview's Event.set() runs each handler on a freshly
+# spawned thread, and on the WinForms backend it fires `shown` from the
+# UI thread in the middle of window creation (winforms.py on_shown, under
+# BrowserView.create) -- blocking that thread in Thread.start() until the
+# handler thread has bootstrapped. The reproduced deadlock:
+#
+#   UI thread:      events.shown.set() -> Thread.start() -> waiting
+#   handler thread: bar.native.TopMost = True -> SendMessage that needs
+#                   the UI thread to pump
+#
+# ...and neither can proceed. The same shape is what hung the bar on its
+# first drag in the field: any handler pywebview has to babysit from the
+# UI thread turns every WM_MOVE into a UI-thread wait on a Python thread
+# that may itself be waiting on the UI thread.
+#
+# The rule this module now follows: the bar's drag must look to pywebview
+# exactly like the main window's, which has shipped for years -- ZERO
+# Python handlers on window events. TopMost comes from `on_top=True` at
+# creation; the position is persisted by sigbar.js, which reads
+# window.screenX/screenY on mouseup and calls save_sig_bar_pos once per
+# drag. No Python code runs per mouse-move.
