@@ -222,7 +222,7 @@ def _eve_settings_defaults() -> dict:
         "server": None,
         "profile": None,
         "auto_keep": 10,
-        "account_aliases": {},
+        "account_names": {},
         "account_characters": {},
     }
 
@@ -521,27 +521,37 @@ def validated_eve_settings(raw) -> dict:
         # taken moments earlier, which is the one nobody can afford to lose.
         section["auto_keep"] = max(1, min(100, keep))
 
-    aliases = raw.get("account_aliases")
-    if isinstance(aliases, dict):
-        for account_id, alias in aliases.items():
-            if not _decimal_id(account_id) or not isinstance(alias, str):
+    names = raw.get("account_names")
+    claimed_names: set[str] = set()
+    if isinstance(names, dict):
+        for account_id, name in names.items():
+            if not _decimal_id(account_id) or not isinstance(name, str):
                 continue
-            cleaned = alias.strip()[:80]
-            if cleaned:
-                section["account_aliases"][account_id] = cleaned
+            cleaned = name.strip()[:80]
+            folded = cleaned.casefold()
+            if not cleaned or folded in claimed_names:
+                continue
+            claimed_names.add(folded)
+            section["account_names"][account_id] = cleaned
 
     associations = raw.get("account_characters")
-    claimed = set()
+    claimed_characters: set[str] = set()
     if isinstance(associations, dict):
         for account_id, character_ids in associations.items():
-            if not _decimal_id(account_id) or not isinstance(character_ids, list):
+            if account_id not in section["account_names"] or not isinstance(character_ids, list):
                 continue
-            valid = []
+            valid: list[str] = []
             for character_id in character_ids:
-                if not _decimal_id(character_id) or character_id in claimed:
+                if (
+                    not _decimal_id(character_id)
+                    or character_id in claimed_characters
+                    or character_id in valid
+                ):
                     continue
-                claimed.add(character_id)
                 valid.append(character_id)
+                claimed_characters.add(character_id)
+                if len(valid) == 3:
+                    break
             if valid:
                 section["account_characters"][account_id] = valid
     return section
