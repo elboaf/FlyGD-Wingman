@@ -2626,6 +2626,29 @@ so these are the checks that matter and only a Windows machine can run them.
       label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **Identify one account through a controlled client session.** Switch to
+      Accounts, open `Identify accounts…`, and start identification with every
+      EVE client closed. Launch one character, enter the game, then fully close
+      that client and press `Check changes`. Expected: Wingman proposes the one
+      changed account and character and links nothing until `Link character` is
+      pressed. The account then reads with the character name first and its raw
+      numeric ID as secondary text.
+- [ ] **Identification never guesses.** Repeat while two account clients are
+      closed together. Expected: Wingman says more than one account changed and
+      creates no association. Check once while EVE is still running too: it asks
+      for the client to be closed rather than reading an incomplete write.
+- [ ] **Aliases and links survive EVE profile changes.** Name an account `Main
+      multibox`, manually link a second character, switch between the Default
+      and Alt EVE settings profiles, and return. Expected: the alias and
+      confirmed character summary follow the numeric account ID. Moving a
+      character already linked elsewhere asks before changing the link.
+- [ ] **Identification and mutations exclude each other.** While the observation
+      is active, Copy, backup Restore/Delete/Create, retention Apply, and
+      formation editing are disabled and a direct stale click is refused. Then
+      start a copy and reopen the account identity panel while it runs: Start
+      identification, alias Apply, Add character, and Remove are disabled until
+      the copy finishes. Leave Profiles and return: any observation was
+      cancelled.
 - [ ] **The roster reads alphabetically, down each column** (round 5's
       R1/D4). With a few dozen characters, look at the target list and the
       `Copy from` dropdown. Expected: both are in NAME order, not in the
@@ -2692,23 +2715,33 @@ so these are the checks that matter and only a Windows machine can run them.
       read from the pill.
 - [ ] With `auto_keep` at its default, copy the same character eleven times.
       Ten auto-backups remain; the manual ones are untouched.
-      **Read the retention note while you are there** — it sits UNDER
-      `Back up this profile` and above the list, not under the heading
+      **Read the retention note while you are there** — it sits UNDER the
+      profile-named backup button and above the list, not under the heading
       (round 5's R2: a policy was the first thing the card said and the
       action it qualifies came second). It must say ten, and it must say the newest ten *of each* thing — the
       prune is per character, account or profile, so eleven copies onto
       eleven different characters prune nothing. The number comes off the
-      payload, so setting `auto_keep` to 3 in `settings.json` and reopening
-      the route must change the sentence.
-- [ ] **The backup list is columns, and Delete does not look like Restore.**
-      Make several backups of different things. Expected: the dates line up
-      in a monospace column as `2026-08-24 14:03` — punctuated, not the
-      raw `20260824-140300` the filename carries — and `Restore` and
-      `Delete` sit at the same x on every row however long the name.
-      `Delete` carries the red outline Skills uses for Forget character,
-      and `Restore` does not. Every row says `automatic` or
-      `manual` in full — no bare `(auto)` on half the rows and nothing on
-      the other half.
+      payload. The `Automatic backups to keep per item` field shows the same
+      value. Lower it to 3 and press Apply: the confirmation states the exact
+      number of automatic backups that will be deleted. Decline once and verify
+      the value and files are unchanged; accept and verify only the excess
+      automatic backups are removed. Manual backups remain.
+- [ ] **The profile backup action names its object.** Switch between Default and
+      Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
+      profile`, rather than the generic `Back up this profile`. With no profile
+      selected it reads `Back up profile` and is disabled.
+- [ ] **The backup list uses the page width and human identities.** Make
+      character, account, and profile backups. Expected: the card is as wide as
+      Copy EVE settings, with Date (UTC), Target, Origin, and Actions columns. A
+      character row leads with its resolved name, an account row with its alias
+      or confirmed-character summary, and a profile row with its profile name;
+      raw IDs remain secondary. `Restore` and `Delete` align at the right edge.
+      `Delete` carries the red danger treatment and `Restore` does not.
+- [ ] **Backup history has one scrollbar.** Create more than 20 visible backups
+      and check at 840x625 and at a wide window. Expected: Profiles itself
+      scrolls, the backup list has no inner scrollbar, and `Show 20 older
+      backups` reveals the next batch without reordering rows. The target column
+      receives spare width and retains enough identity to choose a restore.
 - [ ] Check the packaged build: the Profiles route appears and the
       folder picker opens.
 

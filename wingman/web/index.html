@@ -1304,6 +1304,45 @@
             Accounts
           </label>
         </div>
+        <div id="es-account-tools" hidden>
+          <div class="row">
+            <button id="es-identify-open" class="btn" type="button">Identify accounts…</button>
+          </div>
+          <div id="es-identity-panel" class="es-identity" hidden>
+            <p class="hint">EVE does not store account login names in these files. Link a character or add a name so you can recognize each account.</p>
+            <div class="row">
+              <label class="lab" for="es-identity-account">Account</label>
+              <select id="es-identity-account" class="field"></select>
+            </div>
+            <div class="row">
+              <label class="lab" for="es-account-alias">Name</label>
+              <input id="es-account-alias" class="field" maxlength="80" placeholder="Optional account name">
+              <button id="es-alias-apply" class="btn" type="button">Apply</button>
+            </div>
+            <div class="row">
+              <span class="lab">Confirmed characters</span>
+              <div id="es-account-characters" class="es-account-characters"></div>
+            </div>
+            <div class="row">
+              <label class="lab" for="es-character-add">Add character</label>
+              <select id="es-character-add" class="field"></select>
+              <button id="es-character-add-btn" class="btn" type="button">Add</button>
+            </div>
+            <p id="es-identity-status" class="hint" role="status"></p>
+            <div class="row es-identify-actions">
+              <button id="es-identify-start" class="btn" type="button">Start identification</button>
+              <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
+              <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
+            </div>
+            <div id="es-identify-candidate" hidden>
+              <div class="row">
+                <label class="lab" for="es-identify-character">Changed character</label>
+                <select id="es-identify-character" class="field"></select>
+                <button id="es-identify-link" class="btn" type="button">Link character</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="row">
           <label class="lab" for="es-source">Copy from</label>
           <select id="es-source" class="field"></select>
@@ -1381,11 +1420,18 @@
         <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
-      <section class="card">
+      <section class="card es-backups-card">
         <h2>Backups</h2>
         <div class="row">
-          <button id="es-backup-profile" class="btn">Back up this profile</button>
+          <button id="es-backup-profile" class="btn">Back up profile</button>
         </div>
+        <div class="row es-retention-row">
+          <label class="lab" for="es-auto-keep">Automatic backups to keep per item</label>
+          <input id="es-auto-keep" class="field" type="number" min="1" max="100" step="1">
+          <button id="es-auto-keep-apply" class="btn" type="button">Apply</button>
+          <p id="es-auto-keep-status" class="hint"></p>
+        </div>
+        <p class="hint">Applies separately to each character, account, and profile. Manual backups are always kept.</p>
         <!-- R2. This paragraph OPENED the card, so a retention policy was
              the first thing said in the one card whose point is an action,
              and the button it qualifies came second. It is not cut,
@@ -1398,7 +1444,11 @@
              Filled by evesettings.js, because the keep depth is the
              payload's and must not be typed into the page. -->
         <p id="es-backup-note" class="hint"></p>
-        <div id="es-backups" class="list-scroll"></div>
+        <div id="es-backup-head" class="es-backup-grid es-backup-head" hidden>
+          <span>Date (UTC)</span><span>Target</span><span>Origin</span><span>Actions</span>
+        </div>
+        <div id="es-backups"></div>
+        <button id="es-backups-more" class="btn" type="button" hidden>Show 20 older backups</button>
       </section>
 
       <!-- The way into the probe formation editor, and the only one.

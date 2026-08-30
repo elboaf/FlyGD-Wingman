@@ -48,6 +48,34 @@ def test_booleans_are_not_accepted_as_auto_keep():
     assert out["auto_keep"] == settings._eve_settings_defaults()["auto_keep"]
 
 
+def test_account_identity_metadata_is_validated_per_entry():
+    out = settings.validated_eve_settings(
+        {
+            "account_aliases": {
+                "10": "  Main multibox  ",
+                "bad": "ignored",
+                "11": 42,
+                "12": "x" * 100,
+            },
+            "account_characters": {
+                "10": ["20", "20", "bad", 21],
+                "11": ["20", "22"],
+                "bad": ["23"],
+            },
+        }
+    )
+    assert out["account_aliases"] == {"10": "Main multibox", "12": "x" * 80}
+    assert out["account_characters"] == {"10": ["20"], "11": ["22"]}
+
+
+def test_account_identity_maps_are_fresh_defaults():
+    first = settings._eve_settings_defaults()
+    first["account_aliases"]["10"] = "changed"
+    first["account_characters"]["10"] = ["20"]
+    assert settings._eve_settings_defaults()["account_aliases"] == {}
+    assert settings._eve_settings_defaults()["account_characters"] == {}
+
+
 def test_section_survives_a_load_save_round_trip(tmp_path):
     target = tmp_path / "settings.json"
     data = settings.load(target)

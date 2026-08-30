@@ -1053,6 +1053,7 @@
     // has already been returned, and the pill's "Checking for EVE..." face
     // is the one a stub that guessed `false` would never show.
     eve_running: null,
+    identification_active: false,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
@@ -1065,16 +1066,27 @@
     // arrive in. Same key as api.py's `roster`: case-folded name, id as
     // the tie-break.
     characters: eveNames.map(function (name, i) {
-      return { path: 'c' + i, id: String(90000000 + i), name: name };
+      var id = String(90000000 + i);
+      return { path: 'c' + i, id: id, name: name,
+               display_name: name, display_meta: 'Character ID ' + id };
     }).sort(function (a, b) {
       var an = a.name.toLowerCase(), bn = b.name.toLowerCase();
       if (an !== bn) return an < bn ? -1 : 1;
       return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
     }),
+    identity_characters: eveNames.map(function (name, i) {
+      return { id: String(90000000 + i), name: name };
+    }),
     accounts: [
-      { path: 'a0', id: '1001', name: 'Account 1001' },
-      { path: 'a1', id: '1002', name: 'Account 1002' },
-      { path: 'a2', id: '1003', name: 'Account 1003' }
+      { path: 'a0', id: '1001', name: 'Main multibox · Alizabeth Vea + 2 · ID 1001',
+        display_name: 'Main multibox', display_meta: 'Alizabeth Vea + 2 · ID 1001',
+        alias: 'Main multibox', character_ids: ['90000000', '90000001', '90000002'] },
+      { path: 'a1', id: '1002', name: 'Renamed Jita · ID 1002',
+        display_name: 'Renamed Jita', display_meta: 'ID 1002',
+        alias: '', character_ids: ['90000003'] },
+      { path: 'a2', id: '1003', name: 'Unidentified · ID 1003',
+        display_name: 'Unidentified', display_meta: 'ID 1003',
+        alias: '', character_ids: [] }
     ],
     backups_unreadable: false,
     // True, so the harness shows the Probe formations card. The real
@@ -1086,11 +1098,14 @@
     auto_keep: 10,
     backups: [
       { path: 'b1', created: '20260824-140300', origin: 'auto',
-        kind: 'character', stem: 'core_char_90000001' },
+        kind: 'character', stem: 'core_char_90000001',
+        display_name: 'Aiga Otsolen', display_meta: 'Character ID 90000001' },
       { path: 'b2', created: '20260824-140300', origin: 'auto',
-        kind: 'character', stem: 'core_char_90000002' },
+        kind: 'account', stem: 'core_user_1001',
+        display_name: 'Main multibox', display_meta: 'Alizabeth Vea + 2 · ID 1001' },
       { path: 'b3', created: '20260821-091544', origin: 'manual',
-        kind: 'profile', stem: 'settings_Default' }
+        kind: 'profile', stem: 'Default',
+        display_name: 'Default', display_meta: 'Profile' }
     ]
   };
 
@@ -1119,6 +1134,65 @@
   api.eve_settings_resolve_names = function () {
     console.log('DEV api.eve_settings_resolve_names()');
     return Promise.resolve(null);
+  };
+  api.eve_settings_identification_start = function () {
+    eve.identification_active = true;
+    return Promise.resolve({ status: 'watching', error: null });
+  };
+  api.eve_settings_identification_check = function () {
+    return Promise.resolve({
+      status: 'candidate', error: null,
+      account: { id: '1003', primary: 'Unidentified',
+                 secondary: 'ID 1003', option: 'Unidentified · ID 1003' },
+      characters: [{ id: '90000004', name: eveNames[4] }]
+    });
+  };
+  api.eve_settings_identification_cancel = function () {
+    eve.identification_active = false;
+    return Promise.resolve(true);
+  };
+  function refreshDevAccount(account) {
+    var names = account.character_ids.map(function (id) {
+      return eve.identity_characters.filter(function (item) {
+        return item.id === id;
+      })[0];
+    }).filter(Boolean).map(function (item) { return item.name; }).sort();
+    var summary = names.length
+      ? names[0] + (names.length > 1 ? ' + ' + (names.length - 1) : '') : '';
+    account.display_name = account.alias || summary || 'Unidentified';
+    account.display_meta = (account.alias && summary ? summary + ' · ' : '')
+      + 'ID ' + account.id;
+    account.name = account.display_name + ' · ' + account.display_meta;
+  }
+
+  api.eve_settings_set_account_alias = function (accountId, alias) {
+    var account = eve.accounts.filter(function (item) {
+      return item.id === accountId;
+    })[0];
+    if (account) {
+      account.alias = String(alias || '').trim();
+      refreshDevAccount(account);
+    }
+    return Promise.resolve({ applied: !!account, persisted: !!account,
+                             error: account ? null : 'Choose a valid account.' });
+  };
+  api.eve_settings_set_account_characters = function (accountId, ids) {
+    eve.accounts.forEach(function (account) {
+      account.character_ids = account.id === accountId ? ids.slice() :
+        account.character_ids.filter(function (id) { return ids.indexOf(id) === -1; });
+      refreshDevAccount(account);
+    });
+    return Promise.resolve({ applied: true, persisted: true, error: null });
+  };
+  api.eve_settings_set_auto_keep = function (value) {
+    var wanted = Number(value);
+    if (wanted < 1 || wanted > 100 || Math.floor(wanted) !== wanted) {
+      return Promise.resolve({ accepted: false, value: eve.auto_keep,
+                               error: 'Enter a number from 1 to 100.' });
+    }
+    eve.auto_keep = wanted;
+    setTimeout(function () { window.onEveSettingsDone({ ok: true }); }, 600);
+    return Promise.resolve({ accepted: true, value: wanted, error: null });
   };
 
   // Every mutation returns "a worker started" and then pushes, because the

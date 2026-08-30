@@ -348,9 +348,9 @@ def test_the_card_re_collapses_on_every_visit():
     across visits gives that straight back.
     """
     route = re.search(
-        r"if \(event\.detail !== 'evesettings'\) return;(.*?)\}\);", CODE, re.DOTALL
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
     )
-    assert route and "expanded = false" in route.group(1), (
+    assert route and "expanded = false" in route.group(0), (
         "entering the route no longer re-collapses the folder card"
     )
 
@@ -409,8 +409,8 @@ def test_the_roster_is_columned_and_uncapped():
     nested scrollbars and rows clipped mid-name at both edges, with a
     half-legible name directly above a full-strength accent button.
 
-    The cap on #es-backups stays: a backup history is consulted one row at a
-    time and is not the record of what one irreversible press will do.
+    Backups now follow the same rule: the route owns scrolling and reveals a
+    long history in explicit batches rather than through a nested viewport.
     """
     assert '<div id="es-targets" class="es-roster"></div>' in BODY, (
         "the roster must not be a .list-scroll -- that is the inner scroller"
@@ -421,11 +421,10 @@ def test_the_roster_is_columned_and_uncapped():
     assert "max-height" not in rule.group(1), (
         "a cap here is what produced the nested scrollbars"
     )
-    cap = re.search(r"#es-backups \{([^}]*)\}", CSS)
-    assert cap and "max-height" in cap.group(1), "backups keep their cap"
-    assert "#es-targets, #es-backups" not in CSS, (
-        "the two lists no longer share a rule; they are not the same kind of list"
+    assert not re.search(r"#es-backups\s*\{[^}]*max-height", CSS), (
+        "backups must use the route scrollbar, not a nested capped viewport"
     )
+    assert 'id="es-backups" class="list-scroll"' not in BODY
 
 
 def test_a_name_may_not_break_across_a_column():
@@ -650,7 +649,7 @@ def test_the_retention_note_follows_the_action_it_qualifies():
     note = card.group(1).index('id="es-backup-note"')
     listing = card.group(1).index('id="es-backups"')
     assert button < note < listing, (
-        "the retention note is back above `Back up this profile`, or has "
+        "the retention note is back above the profile backup action, or has "
         "fallen below the list of backups it describes the pruning of"
     )
 
@@ -673,3 +672,100 @@ def test_the_collapsed_summary_names_the_server_and_the_profile():
         "a second .lab in the collapsed row: it is width:100% and stacks, "
         "which breaks the one-line summary the card collapses to"
     )
+
+
+# ---- account identity and full-width backup safety ---------------------
+
+
+def test_account_identification_is_inline_and_only_shown_in_account_mode():
+    for ident in (
+        "es-account-tools",
+        "es-identity-panel",
+        "es-identify-start",
+        "es-identify-check",
+        "es-identify-cancel",
+        "es-identify-candidate",
+    ):
+        assert f'id="{ident}"' in BODY
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render and "kind() === 'accounts'" in render.group(1)
+    assert "tools.hidden = !accountsMode" in render.group(1)
+
+
+def test_identification_uses_explicit_request_response_methods_and_cancels_on_leave():
+    for method in (
+        "eve_settings_identification_start",
+        "eve_settings_identification_check",
+        "eve_settings_identification_cancel",
+        "eve_settings_set_account_alias",
+        "eve_settings_set_account_characters",
+    ):
+        assert method in CODE
+    route = re.search(
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
+    )
+    assert route and "event.detail !== 'evesettings'" in route.group(0)
+    assert "eve_settings_identification_cancel" in route.group(0)
+
+
+def test_account_identity_actions_follow_the_profiles_busy_state():
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    for ident in (
+        "es-identify-start",
+        "es-alias-apply",
+        "es-character-add-btn",
+        "es-identity-account",
+        "es-account-alias",
+        "es-character-add",
+    ):
+        assert ident in busy.group(1), f"{ident} remains interactive during a mutation"
+    assert "setBusy(busy)" in CODE, (
+        "an identification refusal must not clear an existing mutation's busy state"
+    )
+    assert "'aria-label', 'Remove '" in CODE
+
+
+def test_account_targets_render_human_identity_with_secondary_id():
+    target = re.search(r"function renderTargets\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert target
+    assert "row.display_name || row.name" in target.group(1)
+    assert "row.display_meta" in target.group(1)
+    assert "es-target-name" in target.group(1)
+    assert "es-target-meta" in target.group(1)
+
+
+def test_backups_are_a_full_width_column_grid_without_nested_scrolling():
+    assert 'class="card es-backups-card"' in BODY
+    assert 'id="es-backups" class="list-scroll"' not in BODY
+    grid = re.search(r"\.es-backup-grid \{([^}]*)\}", CSS)
+    assert grid and "grid-template-columns" in grid.group(1)
+    assert "minmax(220px, 1fr)" in grid.group(1), (
+        "the target identity must own the flexible backup column"
+    )
+    assert re.search(r"\.es-backups-card\s*\{\s*max-width:\s*none", CSS), (
+        "the Backups card must use the route's available width"
+    )
+
+
+def test_backup_rows_use_resolved_labels_and_reveal_history_in_batches():
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert "item.display_name" in block and "item.display_meta" in block
+    assert "backups.slice(0, backupVisible)" in block
+    assert "backupVisible += 20" in CODE
+    assert "item.kind +" not in block and "item.stem" not in block
+
+
+def test_profile_backup_button_names_the_selected_profile():
+    assert "'Back up ' + profileName + ' profile'" in CODE
+    assert "backupButton.disabled" in CODE
+
+
+def test_retention_is_explicit_and_does_not_add_a_second_accent():
+    assert 'id="es-auto-keep"' in BODY
+    assert 'id="es-auto-keep-apply" class="btn"' in BODY
+    assert "eve_settings_set_auto_keep" in CODE
+    assert "event.key === 'Enter'" in CODE
+    assert BODY.count('class="btn acc"') == 1

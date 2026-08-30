@@ -59,6 +59,18 @@ class BackupInfo:
         return self.kind, self.src, self.stem
 
 
+@dataclass(frozen=True)
+class PruneFailure:
+    path: Path
+    reason: str
+
+
+@dataclass(frozen=True)
+class PruneReport:
+    deleted: tuple[Path, ...] = ()
+    failed: tuple[PruneFailure, ...] = ()
+
+
 def source_key(profile_dir) -> str:
     """Stable 8-hex identity for the settings set a backup came from.
 
@@ -245,27 +257,47 @@ def enumerate_backups(backup_dir) -> tuple[list, bool]:
     return found, False
 
 
-def prune(backup_dir, keep: int) -> list:
-    """Drop all but the newest *keep* auto-backups per (kind, src, stem)."""
+def prune_candidates(backup_dir, keep: int) -> list[Path]:
+    """The automatic backups a prune would remove, without mutating disk."""
     groups: dict = {}
-    # An unreadable store prunes nothing, which is what the empty list it
-    # comes back with already achieves: there is nothing to reason about
-    # and deleting on a guess is the one outcome that cannot be undone.
-    listed, _unreadable = enumerate_backups(backup_dir)
+    # An unreadable store prunes nothing: deleting from an incomplete view
+    # could remove the wrong member of a retention group.
+    listed, unreadable = enumerate_backups(backup_dir)
+    if unreadable:
+        return []
     for info in listed:
         if info.origin != "auto":
             continue
         groups.setdefault(info.group, []).append(info)
-    removed = []
+    candidates = []
     for infos in groups.values():
         infos.sort(key=lambda i: (i.created, i.seq), reverse=True)
-        for info in infos[max(0, keep) :]:
-            try:
-                info.path.unlink()
-                removed.append(info.path)
-            except OSError:
-                pass
-    return removed
+        candidates.extend(info.path for info in infos[max(0, keep) :])
+    return candidates
+
+
+def prune(backup_dir, keep: int, *, candidates=None) -> PruneReport:
+    """Drop old automatic backups and report every deletion failure.
+
+    A supplied candidate list lets a caller confirm an exact count and then
+    delete that same set. The paths are still contained at deletion time;
+    confirmation is not authority to unlink an arbitrary path.
+    """
+    selected = (
+        list(candidates)
+        if candidates is not None
+        else prune_candidates(backup_dir, keep)
+    )
+    deleted = []
+    failed = []
+    for path in selected:
+        try:
+            target = tree.require_under(backup_dir, path, suffix=".zip")
+            target.unlink()
+            deleted.append(target)
+        except (OSError, ValueError) as error:
+            failed.append(PruneFailure(Path(path), str(error)))
+    return PruneReport(tuple(deleted), tuple(failed))
 
 
 def read_manifest(archive_path) -> dict:
