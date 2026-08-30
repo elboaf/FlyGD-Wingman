@@ -180,6 +180,35 @@ def test_write_mints_ids_for_new_formations_above_every_existing_one():
     ]
 
 
+def test_write_mints_id_zero_when_the_file_holds_only_a_scratch_entry():
+    """Every fresh account's file holds only int:-4 (scratch). Minting above
+    the scratch id gave -3, which read_formations then hides as scratch too
+    -- the first formation a user ever creates vanished. The floor must
+    ignore negative ids and mint above zero instead."""
+    doc = doc_with({"int:-4": {"tuple": ["bytes:tempFormation", [probe(1.0)]]}})
+    new = [fm.Formation(None, "First", (fm.Probe(0, 0, 0, 1.0),))]
+    out = fm.write_formations(doc, new, now=0.0)
+    entries = out[fm.UI_KEY][fm.FORMATIONS_KEY]["tuple"][1]
+    assert sorted(entries) == ["int:-4", "int:0"]
+    assert fm.read_formations(out) == [
+        fm.Formation(id=0, name="First", probes=(fm.Probe(0, 0, 0, 1.0),))
+    ]
+
+
+def test_write_mints_above_the_highest_non_negative_id_ignoring_scratch():
+    doc = doc_with(
+        {
+            "int:-4": {"tuple": ["bytes:tempFormation", [probe(1.0)]]},
+            "int:2": {"tuple": ["utf8:A", [probe(1.0)]]},
+        }
+    )
+    kept = fm.read_formations(doc)
+    new = [*kept, fm.Formation(None, "B", (fm.Probe(0, 0, 0, 1.0),))]
+    out = fm.write_formations(doc, new, now=0.0)
+    entries = out[fm.UI_KEY][fm.FORMATIONS_KEY]["tuple"][1]
+    assert sorted(entries) == ["int:-4", "int:2", "int:3"]
+
+
 def test_write_keeps_the_selection_pointing_at_the_same_formation_after_a_reorder():
     doc = doc_with(
         {

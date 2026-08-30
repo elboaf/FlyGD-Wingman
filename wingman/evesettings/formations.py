@@ -169,7 +169,11 @@ def write_formations(doc: dict, formations: list[Formation], *, now: float) -> d
     Scratch entries (negative ids) travel through untouched. Ids travel with
     their formation, so reordering the list never moves the client's selected
     formation — the bug the design names in eve-wrench — and new formations
-    are minted above every id the file has ever held, scratch ids included.
+    are minted above every non-negative id the file has ever held. Scratch
+    ids are excluded from that floor: every fresh account's file holds only
+    a scratch entry (typically int:-4), and minting above it gave a negative
+    id that read_formations then hides as scratch too, silently vanishing
+    the first formation a user ever creates.
     Both keys get the same fresh stamp, which is what the client itself does
     when it creates a formation.
     """
@@ -186,7 +190,10 @@ def write_formations(doc: dict, formations: list[Formation], *, now: float) -> d
     read_formations(doc)  # refuse to rebuild a key we could not fully read
     taken = [i for i in map(_entry_id, existing) if i is not None]
     taken += [f.id for f in formations if f.id is not None]
-    next_id = max(taken, default=-1) + 1
+    # Only non-negative ids set the floor: a scratch-only file (every fresh
+    # account) would otherwise mint one id above its scratch entry, which
+    # read_formations then hides as scratch too. See the docstring above.
+    next_id = max((i for i in taken if i >= 0), default=-1) + 1
     ids = []
     for f in formations:
         ident = f.id
