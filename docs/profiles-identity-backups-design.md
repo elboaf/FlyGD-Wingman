@@ -2,6 +2,13 @@
 
 Design brief. Original base: `main` (`652dceb`), 2026-09-01. Account-identification follow-up revised from merged PR #128 (`13290ae`).
 
+**Delivery state:** PR #128 shipped account labels, backups, retention, and the
+first guided identification pass on `main`. This follow-up changes only the
+identification model and flow described below; the backup and retention design
+remains authoritative. No release tag contains `13290ae`: `v4.2.0` predates it,
+so the unreleased alias-shaped identity state is intentionally replaced rather
+than migrated.
+
 ## Outcome
 
 Profiles must identify every source, target, and backup in human terms before
@@ -101,8 +108,8 @@ Profiles identity surfaces, and never sent over the network. The UI says to use
 the username used to sign in and that it stays on this computer.
 
 `settings.validated_eve_settings()` owns both defaults and validation. This
-follow-up replaces the unused `account_aliases` model from PR #128 rather than
-migrating it: no compatibility read or write of that key remains.
+follow-up replaces the unreleased `account_aliases` model from PR #128 rather
+than migrating it: no compatibility read or write of that key remains.
 
 IDs are stored as decimal strings. Values loaded from `settings.json` are
 validated defensively:
@@ -177,10 +184,12 @@ Profiles. The copy card remains a copy form; no management panel expands
 between its mode switch and source picker. The trailing ellipsis is intentional
 because the button opens the focused flow.
 
-The flow has five semantic states: explanation, waiting, candidate
-confirmation, required account name, and optional account roster. Each state
-has one visually primary action. `‹ Profiles` remains available throughout and
-cancels any unpersisted observation or candidate.
+The flow has five steps: explanation, waiting, candidate confirmation,
+required account name, and optional account roster. No-change, ambiguity,
+invalidated selection, and EVE-still-running responses are variants of the
+waiting step rather than additional steps. Each step has one visually primary
+action. `‹ Profiles` remains available throughout and cancels any unpersisted
+observation or candidate.
 
 ### Start
 
@@ -254,6 +263,17 @@ pair for the next page state but does not yet persist metadata. A stale or
 fabricated confirmation may not substitute another discovered account or
 character.
 
+If the candidate account already has a valid account name, **Link character**
+calls `eve_settings_identification_confirm` with that existing name and opens
+the roster after the link is saved; it does not show the naming step. Name
+uniqueness always excludes the account being renamed or reconfirmed. A
+character already linked to that same account is a successful no-op that opens
+the roster. If the account already has three different links, identification
+may show the match but refuses another link and directs the user to account
+management. If the selected character belongs to another named account, the
+page uses `WM.confirm` to name both accounts before continuing. Python
+revalidates ownership and destination capacity before any write.
+
 Suggested failure copy:
 
 - No useful pair: `No account and character changes were found. Make a small settings change in the client, then close it completely and check again.`
@@ -268,8 +288,8 @@ After the user confirms the first character, show the pending match and require:
 
 > Use the username you sign in to EVE Online with. Stored only on this computer.
 
-The field commits only through **Save and continue**, not on blur. The button
-sends the name with the selected pending account and character to
+The field commits through **Save and continue** or Enter, never on blur. Both
+paths send the name with the selected pending account and character to
 `eve_settings_identification_confirm`. Python verifies that the pair belongs to
 the latest pending candidate, validates the name and uniqueness rules, and
 persists `account_names` plus the first `account_characters` entry in one
@@ -301,14 +321,31 @@ belong to this account. Each additional link requires an explicit user choice.
 The roster shows confirmed characters, one dropdown of remaining discovered
 characters, and **Add character**. Additions happen one at a time so a large
 multibox roster does not become a wall of checkboxes and each move can be
-confirmed separately. **Done** remains available after the first save, so
-one-character and two-character accounts are never forced to fill all slots.
-It returns to Profiles without a separate mostly empty completion screen.
+confirmed separately. While an addition is available, **Add character** carries
+the screen's single accent treatment and **Done** remains an ordinary button.
+Done remains available after the first save, so one-character and two-character
+accounts are never forced to fill all slots. It returns to Profiles without a
+separate mostly empty completion screen.
 
-At three links, hide the picker and Add action and show the `3 of 3` state.
-Python also refuses a fourth link. If the selected character belongs to another
-account, `WM.confirm` names both accounts before the request. A destination
-already at three does not offer a move and rejects a stale direct request.
+If no other unlinked character is discovered in the selected profile, hide the
+picker and Add action. Explain that only characters discovered in this EVE
+profile can be offered, and that another character can be made available later
+by launching it, making a small settings change, and closing EVE completely.
+In this state, and at the three-character maximum, **Done** becomes the single
+accent action.
+
+At three links, show the `3 of 3` state and point users to the management
+disclosure if a wrong or obsolete link must be removed. Python refuses a fourth
+link. If the selected character belongs to another account, `WM.confirm` names
+both accounts before the request. A destination already at three does not offer
+a move and rejects a stale direct request.
+
+Beside **Done**, offer a secondary **Identify another account** action. It
+returns to the explanation step without leaving the sub-screen; pressing
+**Start identification** there takes the fresh snapshot after the user has
+closed every EVE client. The roster also reports `<named> of <discovered>
+accounts identified in this profile`; both numbers derive from the current
+payload rather than being maintained separately by the page.
 
 ### Manual identity management
 
@@ -328,6 +365,10 @@ standard `{applied, persisted, error}` shape, and the page refetches state after
 an applied change. Account names may be changed but never cleared. Moving a
 character is confirmed by the page through `WM.confirm` before sending the new
 complete association set. No new push handler is required.
+
+Manual management remains scoped to accounts discovered in the selected EVE
+profile. Names and links for an account absent from that profile remain stored
+and become manageable again when that account appears in the selected profile.
 
 Removing or moving an association changes Wingman's labels only. It does not
 remove a character or modify EVE settings.
@@ -473,7 +514,8 @@ Python owns:
 
 - validation and atomic persistence of account names and associations;
 - case-insensitive account-name uniqueness and the three-character maximum;
-- the account display-label representation;
+- the account display-label representation, including the `account_name`
+  payload field that replaces `alias`;
 - identification snapshots, candidate classification, and the exact pending
   candidate that may be confirmed;
 - backup target resolution;
@@ -488,15 +530,21 @@ The page owns:
 - rendering backend-provided labels and semantic states.
 
 The observation and pending candidate are ephemeral and scoped to the selected
-root, server, and profile. Neither is written to `settings.json`. Account names
-and associations cross the bridge because they change labels Python computes.
+root, server, and profile. They remain underscore-prefixed `Api` attributes.
+Neither is written to `settings.json`. Candidate comparison, persistence, and
+clearing happen under the mutation lock so two concurrent confirmations cannot
+both succeed. Account names and associations cross the bridge because they
+change labels Python computes.
 
 This design adds bridge methods but no new Python push names. Identification
 and identity-management methods return their semantic results directly;
-retention reuses `onEveSettingsDone`. If implementation introduces any push
-instead, its literal name must be added to `WM.HANDLERS`, registered in the
-owning page module, and covered by `test_bridge_contract.py`. Workers push
-semantic completion or state events and never touch the page directly.
+retention reuses `onEveSettingsDone`. Every literal `WM.send` target must remain
+a callable `Api` method; renaming the account-name endpoint and adding the
+atomic confirmation endpoint update the bridge-contract and Profiles lexical
+tests. If implementation introduces any push instead, its literal name must be
+added to `WM.HANDLERS`, registered in the owning page module, and covered by
+`test_bridge_contract.py`. Workers push semantic completion or state events and
+never touch the page directly.
 
 ## Key states
 
@@ -515,14 +563,20 @@ The implementation, `?dev=1` harness, and smoke pass cover:
 - several changed accounts;
 - changed or unreadable profile during identification;
 - candidate confirmed but account name not yet saved;
+- candidate account already named;
+- candidate character already linked to another account;
+- candidate account already at three links;
 - blank, duplicate, overlong, and persistence-failed account names;
 - pending candidate discarded by cancel or route departure;
 - first name and character saved atomically;
 - optional remaining-character roster with Done available at one and two links;
+- no remaining discovered characters;
 - full three-character roster with no add affordance;
 - moving a character to an account with room;
 - refused move to a full account;
+- named account absent from the selected profile;
 - manual account rename and refused name clearing;
+- identifying another account without leaving the sub-screen;
 - no backups;
 - unreadable backup store;
 - fewer than, exactly, and more than 20 backups;
@@ -563,11 +617,16 @@ The implementation, `?dev=1` harness, and smoke pass cover:
 - Candidate confirmation persists nothing before a valid account name.
 - The atomic confirmation accepts only the latest offered account and one of
   its offered characters.
+- A candidate account with an existing name skips the naming step, and its own
+  name does not conflict with itself.
+- Initial confirmation refuses a full account and confirms before moving a
+  character linked elsewhere.
 - Blank, overlong, or case-insensitively duplicate account names persist
   neither the name nor the first link.
 - A persistence failure writes neither map and keeps the candidate retryable.
 - Successful confirmation writes the name and first link together and clears
   the observation.
+- Two concurrent confirmations cannot both consume one pending candidate.
 - Additional links stop at three in both guided and manual paths.
 - Moving a character validates destination capacity before changing its old
   account.
@@ -607,10 +666,14 @@ The implementation, `?dev=1` harness, and smoke pass cover:
 - Account controls use the generated human labels.
 - Waiting, candidate, account-name, and roster states each expose one primary
   action.
-- Done remains visible with one or two links; the add controls disappear at
-  three.
-- The dev harness can render idle, waiting, no-change, ambiguous,
-  multi-character candidate, pending-name, one/two/three-link roster, move,
+- Done remains visible with one or two links; the add controls disappear when
+  no candidate is available or at three.
+- Step changes move focus to the new step's heading. The roster count is a live
+  status, and inline account-name errors are associated with the field through
+  `aria-describedby`.
+- The dev harness accepts an explicit `?dev=1&identity=<state>` selector for
+  idle, waiting, no-change, ambiguous, multi-character candidate,
+  pending-name, existing-name, one/two/three-link roster, empty roster, move,
   and limit states at 840x625 and a wider viewport.
 - Every control has a visible focus state and an accessible name.
 
@@ -624,26 +687,30 @@ At minimum:
    verify that neither the name nor link was saved.
 3. Repeat, enter the EVE Online username, and verify the name plus first link
    are saved together.
-4. Add a second character from the launcher-confirmed roster, finish with Done,
-   and verify the identity follows the account ID across EVE profiles.
-5. Complete a three-character account and verify neither guided nor manual
+4. Add a second character from the launcher-confirmed roster, then use Identify
+   another account without leaving the sub-screen. Finish with Done and verify
+   each identity follows its account ID across EVE profiles.
+5. Re-identify an already named account and verify the naming step is skipped.
+6. Complete a three-character account and verify neither guided nor manual
    management offers a fourth; verify a stale direct request is refused.
-6. Attempt a case-only duplicate account name and verify it is refused without
+7. Attempt a case-only duplicate account name and verify it is refused without
    changing either account.
-7. Move a character between accounts after confirmation, then verify a move to
+8. Move a character between accounts after confirmation, then verify a move to
    a full account is refused without removing it from its current account.
-8. Exercise no-change and multiple-account ambiguity without creating a link;
+9. Exercise no-change and multiple-account ambiguity without creating a link;
    verify no-change recovery mentions making a small settings change.
-9. Copy account settings and verify the roster and confirmation use the same
-   label.
-10. Check the identification flow in `?dev=1` at 840x625 and a wider viewport,
+10. Exercise a profile with no other discovered character and verify the empty
+    roster explains how to make one available later while Done remains usable.
+11. Copy account settings and verify the roster and confirmation use the same
+    label.
+12. Check the identification flow in `?dev=1` at 840x625 and a wider viewport,
     including every state listed under Page conventions.
-11. Check the backup table at 840x625 and a wide window with more than 20 rows.
-12. Restore a character, account, and profile backup after verifying the target
+13. Check the backup table at 840x625 and a wide window with more than 20 rows.
+14. Restore a character, account, and profile backup after verifying the target
     label and date.
-13. Lower retention, verify the exact deletion count, decline once, then
+15. Lower retention, verify the exact deletion count, decline once, then
     accept.
-14. Confirm manual backups survive pruning.
+16. Confirm manual backups survive pruning.
 
 ## Non-goals
 
