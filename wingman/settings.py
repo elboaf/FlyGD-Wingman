@@ -538,7 +538,9 @@ def validated_eve_settings(raw) -> dict:
     claimed_characters: set[str] = set()
     if isinstance(associations, dict):
         for account_id, character_ids in associations.items():
-            if account_id not in section["account_names"] or not isinstance(character_ids, list):
+            if account_id not in section["account_names"] or not isinstance(
+                character_ids, list
+            ):
                 continue
             valid: list[str] = []
             for character_id in character_ids:

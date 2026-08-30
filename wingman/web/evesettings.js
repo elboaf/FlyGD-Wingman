@@ -893,8 +893,7 @@
 
     WM.el('es-identify-start').addEventListener('click', function () {
       WM.send('eve_settings_identification_start').then(function (result) {
-        var step = result && result.status === 'candidate' ? 'candidate'
-          : result && result.status === 'watching' ? 'watching' : 'idle';
+        var step = result && result.status === 'watching' ? 'watching' : 'idle';
         if (state) state.identification_active = step === 'watching';
         clearIdentification();
         paintIdentification(step, result && result.error);
