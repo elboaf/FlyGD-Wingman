@@ -183,7 +183,7 @@ Slice 1 shipped with four deviations from the plan above, all deliberate:
   `marshal` is a stdlib module name and same-named files have shadowed the
   stdlib in this repo's tooling before.
 - The sidecar is not a fetched `blue-marshal` binary but Wingman's own
-  ~50-line crate at `packaging/settings-codec/`, over `blue-marshal =1.0.1`,
+  ~60-line crate at `packaging/settings-codec/`, over `blue-marshal =1.0.1`,
   built by cargo in `.github/actions/build-installer/action.yml`. Upstream's
   own `marshal-tool` CLI is file-path based and always appends a checksum,
   which does not fit the pure-filter, `had_crc`-preserving seam this design
