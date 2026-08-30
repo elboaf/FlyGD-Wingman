@@ -181,6 +181,77 @@ def test_clone_source_then_restore_excluded_keeps_unmapped_source_values(
     )
 
 
+def test_section_exclusion_restores_all_typed_matches_and_ignores_unrelated_pairs():
+    source = {
+        "bytes:overview": {"tuple": ["source-bytes-overview"]},
+        "utf8:overview": {"tuple": ["source-utf8-overview"]},
+        "bytes:x": {"tuple": ["source-bytes-x"]},
+        "utf8:x": {"tuple": ["source-utf8-x"]},
+    }
+    target = {
+        "bytes:overview": {"tuple": ["target-bytes-overview"]},
+        "utf8:overview": {"tuple": ["target-utf8-overview"]},
+        "bytes:x": {"tuple": ["target-bytes-x"]},
+        "utf8:x": {"tuple": ["target-utf8-x"]},
+    }
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account", without={"overview"}),
+    )
+
+    assert result == {
+        "bytes:overview": target["bytes:overview"],
+        "utf8:overview": target["utf8:overview"],
+        "bytes:x": source["bytes:x"],
+        "utf8:x": source["utf8:x"],
+    }
+
+
+def test_all_groups_selected_clones_source_without_inspecting_opaque_ui():
+    source = {
+        "bytes:ui": ["opaque", {"nested": [1]}],
+        "utf8:ui": "also opaque",
+    }
+    target = {"bytes:ui": "opaque target"}
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account"),
+    )
+
+    assert result == source
+    assert result is not source
+    assert result["bytes:ui"] is not source["bytes:ui"]
+
+
+def test_section_only_exclusion_does_not_inspect_ui():
+    source = {
+        "bytes:overview": {"tuple": ["source"]},
+        "bytes:ui": ["opaque source ui"],
+    }
+    target = {
+        "bytes:overview": {"tuple": ["target"]},
+        "bytes:ui": "opaque target ui",
+    }
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account", without={"overview"}),
+    )
+
+    assert result == {
+        "bytes:overview": target["bytes:overview"],
+        "bytes:ui": source["bytes:ui"],
+    }
+
+
 def test_excluding_ui_group_preserves_source_when_neither_document_has_ui():
     source = {"bytes:wingmanUnmappedSection": {"tuple": ["source"]}}
     target = {"bytes:wingmanUnmappedSection": {"tuple": ["target"]}}
@@ -193,6 +264,39 @@ def test_excluding_ui_group_preserves_source_when_neither_document_has_ui():
     )
 
     assert result == source
+
+
+def test_excluded_ui_group_restores_every_matching_typed_leaf():
+    source = {
+        "bytes:ui": {
+            "bytes:market_foo": {"tuple": ["source-bytes"]},
+            "utf8:market_foo": {"tuple": ["source-utf8"]},
+            "bytes:x": {"tuple": ["source-unrelated-bytes"]},
+            "utf8:x": {"tuple": ["source-unrelated-utf8"]},
+        }
+    }
+    target = {
+        "bytes:ui": {
+            "bytes:market_foo": {"tuple": ["target-bytes"]},
+            "utf8:market_foo": {"tuple": ["target-utf8"]},
+            "bytes:x": {"tuple": ["target-unrelated-bytes"]},
+            "utf8:x": {"tuple": ["target-unrelated-utf8"]},
+        }
+    }
+
+    result = copy_selected(
+        source,
+        target,
+        kind="account",
+        selected_groups=_selected("account", without={"market"}),
+    )
+
+    assert result["bytes:ui"] == {
+        "bytes:market_foo": target["bytes:ui"]["bytes:market_foo"],
+        "utf8:market_foo": target["bytes:ui"]["utf8:market_foo"],
+        "bytes:x": source["bytes:ui"]["bytes:x"],
+        "utf8:x": source["bytes:ui"]["utf8:x"],
+    }
 
 
 def test_type_prefix_is_split_once_when_setting_name_contains_colon():
@@ -335,20 +439,31 @@ def test_group_selection_is_strict(bad, account_fixture):
         )
 
 
+@pytest.mark.parametrize("source,target", [([], {}), ({}, [])])
+def test_non_dict_root_is_refused_even_when_all_groups_are_selected(source, target):
+    with pytest.raises(ValueError):
+        copy_selected(
+            source,
+            target,
+            kind="account",
+            selected_groups=_selected("account"),
+        )
+
+
 @pytest.mark.parametrize(
     "source,target",
     [
-        ([], {}),
-        ({}, []),
         ({"bytes:ui": []}, {"bytes:ui": {}}),
         ({"bytes:ui": {}}, {"bytes:ui": []}),
         ({"bytes:ui": {}, "utf8:ui": {}}, {"bytes:ui": {}}),
-        (
-            {"bytes:ui": {"bytes:market_x": 1, "utf8:market_x": 2}},
-            {"bytes:ui": {}},
-        ),
+        ({"bytes:ui": {}}, {"bytes:ui": {}, "utf8:ui": {}}),
     ],
 )
-def test_malformed_root_or_ui_is_refused_not_trimmed(source, target):
+def test_excluded_ui_group_refuses_malformed_or_ambiguous_needed_ui(source, target):
     with pytest.raises(ValueError):
-        copy_selected(source, target, kind="account", selected_groups=[])
+        copy_selected(
+            source,
+            target,
+            kind="account",
+            selected_groups=_selected("account", without={"market"}),
+        )

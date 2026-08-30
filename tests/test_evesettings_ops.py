@@ -214,17 +214,22 @@ def test_duplicates_collapse_and_the_source_is_excluded(tmp_path):
     assert [o.path for o in report.outcomes] == [other]
 
 
-def test_selective_copy_reads_each_document_and_writes_transformed_target(tmp_path):
+def test_selective_copy_reads_source_once_and_each_target_once(tmp_path):
     source = make(tmp_path, "core_char_1.dat")
-    target = make(tmp_path, "core_char_2.dat")
+    first = make(tmp_path, "core_char_2.dat")
+    second = make(tmp_path, "core_char_3.dat")
     documents = {
         source: codec.Document(
             doc={"bytes:windows": {"tuple": ["source"]}, "bytes:ui": {}},
             had_crc=False,
         ),
-        target: codec.Document(
-            doc={"bytes:windows": {"tuple": ["target"]}, "bytes:ui": {}},
+        first: codec.Document(
+            doc={"bytes:windows": {"tuple": ["first"]}, "bytes:ui": {}},
             had_crc=True,
+        ),
+        second: codec.Document(
+            doc={"bytes:windows": {"tuple": ["second"]}, "bytes:ui": {}},
+            had_crc=False,
         ),
     }
     reads = []
@@ -240,7 +245,7 @@ def test_selective_copy_reads_each_document_and_writes_transformed_target(tmp_pa
 
     report = ops.copy_selected_to_targets(
         source,
-        [target],
+        [first, second],
         selected_groups=["windows"],
         root=tmp_path,
         backup=backup,
@@ -248,17 +253,23 @@ def test_selective_copy_reads_each_document_and_writes_transformed_target(tmp_pa
         write=write,
     )
 
-    assert reads == [source, target]
-    assert [o.path for o in report.succeeded] == [target]
+    assert reads == [source, first, second]
+    assert [o.path for o in report.succeeded] == [first, second]
     assert report.failed == []
     assert writes == [
         (
-            target,
+            first,
             codec.Document(doc=documents[source].doc, had_crc=True),
             {"backup": backup},
-        )
+        ),
+        (
+            second,
+            codec.Document(doc=documents[source].doc, had_crc=False),
+            {"backup": backup},
+        ),
     ]
-    assert writes[0][1].had_crc is documents[target].had_crc
+    assert writes[0][1].had_crc is documents[first].had_crc
+    assert writes[1][1].had_crc is documents[second].had_crc
 
 
 def test_selective_copy_filters_targets_like_plain_copy(tmp_path):

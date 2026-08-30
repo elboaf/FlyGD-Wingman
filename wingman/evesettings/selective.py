@@ -131,34 +131,30 @@ def _strip_type_prefix(key: str) -> str:
     return rest if separator else key
 
 
-def _index(mapping: dict, *, context: str) -> dict[str, str]:
-    index = {}
-    for key in mapping:
-        if not isinstance(key, str):
-            raise ValueError(f"{context} contains a non-text key.")
-        stripped = _strip_type_prefix(key)
-        if stripped in index:
-            raise ValueError(
-                f"{context} contains duplicate typed keys for {stripped!r}."
-            )
-        index[stripped] = key
-    return index
+def _matching_section_keys(mapping: dict, names: tuple[str, ...]) -> list[str]:
+    return [
+        key
+        for key in mapping
+        if isinstance(key, str) and _strip_type_prefix(key) in names
+    ]
 
 
-def _validate_document(
-    document, *, context: str
-) -> tuple[dict[str, str], dict | None, str | None]:
+def _validate_root(document, *, context: str) -> None:
     if not isinstance(document, dict):
         raise ValueError(f"{context} file has an unexpected root structure.")
-    sections = _index(document, context=f"{context} file")
-    ui_key = sections.get("ui")
-    if ui_key is None:
-        return sections, None, None
+
+
+def _ui_container(document: dict, *, context: str) -> tuple[dict | None, str | None]:
+    ui_keys = _matching_section_keys(document, ("ui",))
+    if len(ui_keys) > 1:
+        raise ValueError(f"{context} file contains ambiguous ui sections.")
+    if not ui_keys:
+        return None, None
+    ui_key = ui_keys[0]
     ui = document[ui_key]
     if not isinstance(ui, dict):
         raise ValueError(f"{context} file has an unexpected ui structure.")
-    _index(ui, context=f"{context} ui")
-    return sections, ui, ui_key
+    return ui, ui_key
 
 
 def _matches(key: str, prefixes: tuple[str, ...]) -> bool:
@@ -186,26 +182,25 @@ def copy_selected(
             "Selected groups must be a unique list offered for this file kind."
         )
 
-    source_sections, _source_ui, source_ui_key = _validate_document(
-        source, context="Source"
-    )
-    target_sections, target_ui, target_ui_key = _validate_document(
-        target, context="Target"
-    )
+    _validate_root(source, context="Source")
+    _validate_root(target, context="Target")
     result = copy.deepcopy(source)
 
     selected = set(selected_groups)
-    for rule in rules:
-        if rule.group.id in selected:
-            continue
+    excluded_rules = [rule for rule in rules if rule.group.id not in selected]
+    if any(rule.kind == "ui_prefixes" for rule in excluded_rules):
+        _source_ui, source_ui_key = _ui_container(source, context="Source")
+        target_ui, target_ui_key = _ui_container(target, context="Target")
+    else:
+        source_ui_key = target_ui_key = None
+        target_ui = None
+
+    for rule in excluded_rules:
         if rule.kind == "sections":
-            for name in rule.names:
-                source_key = source_sections.get(name)
-                if source_key is not None:
-                    result.pop(source_key, None)
-                target_key = target_sections.get(name)
-                if target_key is not None:
-                    result[target_key] = copy.deepcopy(target[target_key])
+            for source_key in _matching_section_keys(result, rule.names):
+                del result[source_key]
+            for target_key in _matching_section_keys(target, rule.names):
+                result[target_key] = copy.deepcopy(target[target_key])
             continue
 
         target_matches = (
