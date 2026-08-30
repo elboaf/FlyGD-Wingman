@@ -1576,6 +1576,20 @@
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
+      <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
+           .winbtn, not a .btn: it is chrome that lives beside chrome, and
+           the 44px square keeps the strip's height unchanged. `.active`
+           styling is shared with .winbtn.gear.active's treatment -- see
+           style.css, which colours the glyph and not the fill, so the
+           accent stays the strip's scarcity.
+
+           First child, deliberately: the strip is a plain flex row and the
+           progress track hides when nothing runs, so from the middle the
+           button floated in dead space with no visual neighbour to explain
+           it. Beside the EVE segment it reads as a control FOR that
+           segment, which is what it is. -->
+      <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
+              aria-pressed="false">&#8982;</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>
@@ -1603,14 +1617,6 @@
            enough here and no override is needed. -->
       <div class="track" id="track" hidden><div class="bar" id="bar"></div></div>
       <span class="pct" id="pct"></span>
-      <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
-           .winbtn, not a .btn: it is chrome that lives beside chrome, and
-           the 44px square keeps the strip's height unchanged. `.active`
-           styling is shared with .winbtn.gear.active's treatment -- see
-           style.css, which colours the glyph and not the fill, so the
-           accent stays the strip's scarcity. -->
-      <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
-              aria-pressed="false">&#8982;</button>
     </div>
   </div>
 
