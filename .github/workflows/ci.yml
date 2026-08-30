@@ -166,15 +166,22 @@ jobs:
         # a stale lockfile silently.
         run: uv sync --locked --extra dev
       - name: Test
-        # tee + re-exit: the exit code must stay pytest's, but the FAILED
-        # lines are re-emitted as ::error:: annotations so they are readable
-        # from the API without an authenticated log fetch -- which is the
-        # only way to see them when no human is signed in.
+        # junitxml: the "Surface failures" step turns it into ::error::
+        # annotations, which are readable from the API without an
+        # authenticated log fetch -- the only way to see which tests
+        # failed when no human is signed in.
+        run: uv run --no-sync python -m pytest tests/ -v --junitxml=pytest-result.xml
+      - name: Surface failures
+        if: failure()
+        shell: bash
         run: |
-          set -o pipefail
-          uv run --no-sync python -m pytest tests/ -v 2>&1 | tee pytest.log
-          code=$?
-          grep -E "^(FAILED|ERROR)" pytest.log | head -20 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          exit $code
+          uv run --no-sync python - <<'EOF'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pytest-result.xml").getroot()
+          for case in root.iter("testcase"):
+              for failure in (*case.findall("failure"), *case.findall("error")):
+                  name = f"{case.get('classname')}.{case.get('name')}"
+                  print(f"::error::{name}")
+                  break
+          EOF
