@@ -64,13 +64,28 @@ def _animation_off(libs):
     """Suspend the minimize/restore window animation for the block.
 
     Ported from EVE-O Preview (WindowManager.TurnOffAnimation /
-    RestoreAnimation), where it is the default: with the animation on, a
-    minimize plus a restore is ~200-250ms of window-zoom, and that is
-    the bulk of the visible lag between clicking a preview and seeing the
-    client. Toggled for the switch only and put back in a finally, so a
-    refused activation or an exception cannot leave the user's desktop
-    without its animation. Left alone when it is already off: nothing to
-    write, and nothing to "restore" to a value the user never had.
+    RestoreAnimation), where it is the default. What it buys is the
+    VISIBLE zoom, and only that -- measured 2026-08-30, cross-thread
+    SendMessageTimeoutW(SC_MINIMIZE) against a synthetic top-level
+    window, n=7 each: 12.6ms median with the animation ON, 14.2ms with
+    it OFF. The animation is composited by DWM, not run inside the
+    target's message handler, so it delays neither the send nor the
+    switch. An earlier version of this comment claimed ~200-250ms and
+    called it "the bulk of the visible lag"; the blocking half of that
+    claim is measurably false, and the duration of the zoom itself has
+    never been measured here. It is also a no-op for anyone whose
+    animation is already off -- including this repo's maintainer, whose
+    desktop reads iMinAnimate=0 -- so it explains no part of the field
+    reports that motivated the switch reorder.
+
+    Kept anyway: for the Windows default (animation ON) the zoom is real
+    and on screen for every minimize and every restore of a minimized
+    client, which is perceived latency even when nothing is blocked.
+
+    Toggled for the switch only and put back in a finally, so a refused
+    activation or an exception cannot leave the user's desktop without
+    its animation. Left alone when it is already off: nothing to write,
+    and nothing to "restore" to a value the user never had.
 
     fWinIni is 0 on both calls -- the live value changes, the user's
     registry preference does not.

@@ -2028,14 +2028,19 @@ foreground.
       straight through.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
-      target should appear with no window-zoom; that zoom was ~200-250 ms
-      of the old switch. Then open Windows' System > Accessibility >
-      Visual effects (or SystemPropertiesPerformance: "Animate windows
-      when minimizing and maximizing") and confirm the user's own setting
-      is still what it was — the switch toggles the LIVE value only, with
-      `fWinIni=0`, and puts it back in a `finally`. Do this check with the
-      animation ON to begin with; a machine that already has it off
-      exercises nothing.
+      target should appear with no window-zoom. Note what this is and is
+      not: the animation is composited by DWM and blocks nothing —
+      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
+      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
+      not about the switch finishing sooner. **This machine's own desktop
+      has the animation off (`iMinAnimate=0`), so the code path
+      early-returns here and the item cannot be walked without turning it
+      on first.** Windows' default is on, which is who it is for. Turn it
+      on under System > Accessibility > Visual effects (or
+      SystemPropertiesPerformance: "Animate windows when minimizing and
+      maximizing"), walk the switch, then confirm the setting is still on
+      afterwards — the switch toggles the LIVE value only, with
+      `fWinIni=0`, and puts it back in a `finally`.
 - [ ] A refused activation brings the outgoing client BACK. Windows refuses
       a foreground change from a process without recent input; with
       minimize-first the outgoing client is already down when that refusal

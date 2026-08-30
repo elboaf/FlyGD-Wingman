@@ -2287,9 +2287,9 @@ def test_the_switch_reads_the_foreground_minimizes_then_activates(monkeypatch):
     the preview thread at all.
 
     The animation is turned off around the whole sequence and restored
-    after it: a minimize plus a restore is ~200-250ms of window-zoom with
-    it on, which was the single most visible difference between the two
-    apps when cycling.
+    after it. That is a purely VISIBLE saving -- measured, it costs the
+    send nothing (12.6ms ON vs 14.2ms OFF) -- and none for a desktop that
+    already has it off. See _animation_off's docstring.
     """
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
 
