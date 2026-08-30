@@ -18,6 +18,15 @@
  * in this repo executes JavaScript, so what a legal formation IS lives in
  * wingman/evesettings/formations.py, which is tested. This file captures
  * edits, sends them, and renders the answer.
+ *
+ * `problem()` is the one exception, and it does not move the authority.
+ * A refusal from validate() discards the WHOLE save rather than the
+ * offending formation, so three states this editor can build -- an empty
+ * name, a duplicate name, a formation whose last probe was removed --
+ * would cost the user every other edit in the list. It restates three of
+ * validate()'s rules to keep Save from sending such a document at all;
+ * Python still decides, and still checks the rules the controls here
+ * cannot break.
  */
 (function () {
   'use strict';
@@ -124,13 +133,23 @@
   }
 
   /* ---- load / save: the only two places meters appear ---- */
-  // The range is rounded to six places on the way in; the positions are
-  // not. rangeSelect matches a range against RANGES by value, and float
-  // dust in the file's f64 would make an exact 4 AU miss the option list
-  // and get appended as `3.9999999996 AU` -- the escape hatch for a
-  // genuinely unusual value, spent on a value that is not unusual at all.
-  // Six places is well under a metre at one AU. A position is the user's
-  // own number and is left exactly as the file has it.
+  // The range is rounded to six decimal places OF AN AU on the way in;
+  // the positions are not.
+  //
+  // The tolerance is 1e-6 AU, which is about 150 km -- enormous in
+  // absolute terms, and irrelevant at this scale: the ranges the client
+  // offers are 0.25 AU apart, i.e. about 37 million km, so nothing this
+  // rounding can move is a range anybody chose. (An earlier version of
+  // this comment claimed "well under a metre at one AU", which is wrong
+  // by five orders of magnitude. A metre would be 1e-11 AU.)
+  //
+  // What it is FOR is narrow: rangeSelect matches a range against RANGES
+  // by value and appends anything else as a selectable option -- the
+  // escape hatch the design doc asks for, so an unusual value in an
+  // existing file is never silently rewritten. Float dust in the file's
+  // f64 would spend that escape hatch on `3.9999999996 AU`, which is not
+  // an unusual value at all. A position IS the user's own number, so it
+  // is left exactly as the file has it.
   function fromMeters(f) {
     return { id: f.id, name: f.name, probes: f.probes.map(function (p) {
       return { x: p.x / KM, y: p.y / KM, z: p.z / KM,
@@ -143,7 +162,10 @@
     }) };
   }
 
-  function load(path) {
+  // keepIndex survives the reload after a save: the list comes back with
+  // Python's minted ids, and dropping the user back on the first
+  // formation would make a save feel like a navigation.
+  function load(path, keepIndex) {
     state.busy = true; paintCommit();
     return WM.send('eve_settings_formations', path).then(function (reply) {
       state.busy = false;
@@ -165,6 +187,10 @@
       state.name = reply.name;
       state.formations = reply.formations.map(fromMeters);
       state.selected = 0;
+      if (typeof keepIndex === 'number' && state.formations.length) {
+        state.selected = Math.min(Math.max(0, keepIndex),
+                                  state.formations.length - 1);
+      }
       state.dirty = false;
       savingAt = -1;
       WM.el('fm-account').textContent = state.name;
@@ -194,10 +220,23 @@
   WM.formationsDone = function (payload) {
     if (WM.current_route !== 'formations') { return; }
     state.busy = false;
-    // Only what was actually written is clean. An edit landed since the
-    // send bumped the revision, and the push says nothing about it.
-    if (payload && payload.ok && revision === savingAt) { state.dirty = false; }
-    paintCommit();
+    if (!(payload && payload.ok)) { paintCommit(); return; }
+    // An edit landed after the send, and the push says nothing about it.
+    // Keeping it beats reloading over it: a reload here would throw away
+    // work the user can see on screen, while the cost of NOT reloading is
+    // that a brand-new formation keeps id null for one more save and gets
+    // re-minted (below). Losing an edit is worse than churning an id, and
+    // the next clean save reloads and settles it.
+    if (revision !== savingAt) { paintCommit(); return; }
+    state.dirty = false;
+    // Re-read, and this is not a refresh for its own sake. A new
+    // formation is sent with id null and Python MINTS one at write time;
+    // without reading it back the page still holds null, so the next save
+    // mints a second id and write_formations drops the first -- which
+    // repoints the client's selectedFormationID at whatever is now the
+    // head of the table. That is exactly the churn ids exist to prevent,
+    // and this file's header claims not to cause.
+    load(state.path, state.selected);
   };
 
   /* ---- rendering ---- */
@@ -406,6 +445,14 @@
     // coordinate below would be NaN.
     if (!f || w < 2 || h < 2) { return; }
     svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    // A formation with no probes left has no scale, and drawing rings
+    // against the fallback extent of 1 km printed `1 km`, `1 km`, `2 km`
+    // -- two rings claiming the same distance. The ship alone is the
+    // honest picture of it, and #fm-dirty is what says how to fix it.
+    if (!f.probes.length) {
+      svg.appendChild(el('circle', { cx: cx, cy: cy, r: 3, 'class': 'fm-ship' }));
+      return;
+    }
     f.probes.forEach(function (q) {
       extent = Math.max(extent, Math.abs(q.x), Math.abs(q.y), Math.abs(q.z));
     });
@@ -462,11 +509,68 @@
     }
   }
 
+  // The first reason this list cannot be written, or '' if it can.
+  //
+  // These are formations.py's own rules (validate), restated for ONE
+  // purpose: to keep Save from sending a document Python will refuse
+  // whole. The editor could build all three states with no signal at all
+  // -- an empty name after trim, two formations casefolding to the same
+  // name, a formation whose last probe was removed -- and a refusal
+  // discards the entire save, not the offending formation. Python stays
+  // the authority (it checks finiteness and range > 0 as well, which the
+  // controls here cannot produce); this is the half the user needs
+  // BEFORE the click, on the screen holding the mistake.
+  //
+  // Order matches validate(): unnamed, duplicate, empty. First one wins,
+  // because a line naming three problems is a paragraph.
+  function problem() {
+    var seen = {}, why = '', key, i, f;
+    for (i = 0; i < state.formations.length; i++) {
+      f = state.formations[i];
+      // 'Unnamed formation' is what the rail already paints for this one,
+      // so the line names it the way the screen does.
+      if (!f.name) { return 'Unnamed formation: needs a name'; }
+      key = f.name.toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(seen, key)) {
+        return f.name + ': name used twice';
+      }
+      seen[key] = true;
+      if (!why && !f.probes.length) { why = f.name + ': needs a probe'; }
+    }
+    return why;
+  }
+
+  // The first index no formation is using, so deleting one of three and
+  // adding another cannot mint a second `Formation 3` -- a duplicate name
+  // Python refuses, produced by the button whose whole job is to make a
+  // valid formation. Bounded by length + 1, where an unused index always
+  // exists.
+  function nextName() {
+    var used = {}, i, candidate;
+    state.formations.forEach(function (f) {
+      used[(f.name || '').toLowerCase()] = true;
+    });
+    for (i = 1; i <= state.formations.length + 1; i++) {
+      candidate = 'Formation ' + i;
+      if (!Object.prototype.hasOwnProperty.call(used, candidate.toLowerCase())) {
+        return candidate;
+      }
+    }
+    return 'Formation ' + (state.formations.length + 1);
+  }
+
   function paintCommit() {
-    WM.setEnabled('fm-save', state.dirty && !state.busy);
+    var why = state.busy ? '' : problem();
+    WM.setEnabled('fm-save', state.dirty && !state.busy && !why);
     WM.el('fm-dirty').textContent = state.busy
       ? 'Saving…'
-      : (state.dirty ? 'Unsaved changes' : '');
+      : (why || (state.dirty ? 'Unsaved changes' : ''));
+    // .hint is the faintest tone the sheet has, which is right for
+    // `Unsaved changes` and wrong for the one line explaining why the
+    // button beside it is dead -- the same inversion the bookmark
+    // engine's "Stopped" message was found in (style.css, .hint.err).
+    // One class toggle over one element; no second accent, no dialog.
+    WM.el('fm-dirty').className = why ? 'hint err' : 'hint';
     WM.setEnabled('fm-add', !state.busy);
   }
 
@@ -495,7 +599,7 @@
       })[0] || PRESETS[0];
       state.formations.push({
         id: null,
-        name: 'Formation ' + (state.formations.length + 1),
+        name: nextName(),
         probes: pr.probes()
       });
       state.selected = state.formations.length - 1;

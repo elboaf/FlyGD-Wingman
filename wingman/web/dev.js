@@ -1116,8 +1116,21 @@
       formations: JSON.parse(JSON.stringify(devFormations))
     });
   };
+  // The save MINTS an id for every `id: null`, because write_formations
+  // does -- above every id the file has ever held. Without this the stub
+  // stored the page's own nulls and handed them straight back, so the
+  // harness could not show the one behaviour that makes the editor reload
+  // after a save: a brand-new formation coming back with a real id.
+  // Highest id wins the next number, matching `max(taken) + 1`.
   api.eve_settings_save_formations = function (path, items) {
-    devFormations = JSON.parse(JSON.stringify(items));
+    var next = -1;
+    devFormations.concat(items).forEach(function (f) {
+      if (typeof f.id === 'number' && f.id > next) { next = f.id; }
+    });
+    devFormations = JSON.parse(JSON.stringify(items)).map(function (f) {
+      if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
+      return f;
+    });
     return eveMutation('eve_settings_save_formations')(path, items);
   };
 
