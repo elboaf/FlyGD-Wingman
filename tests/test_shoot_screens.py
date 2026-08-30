@@ -35,12 +35,12 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 9
+    assert len(to_shoot) == 10
     assert skipped == []
 
 
 def test_gate_off_shoots_only_the_four_reachable_screens():
-    """With EVE undetected the app hides two routes AND three sections.
+    """With EVE undetected the app hides three shot routes and three sections.
 
     Photographing them anyway would produce a set showing screens the user
     cannot reach -- the same kind of lie as a ?dev=1 capture, which is the
@@ -53,7 +53,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 5
+    assert len(skipped) == 6
 
 
 def _strip_js_comments(text: str) -> str:
@@ -259,6 +259,7 @@ def test_manifest_records_what_the_gate_skipped():
     assert manifest["eve_shown"] is False
     assert sorted(manifest["skipped"]) == [
         "profiles",
+        "profiles-account-identity",
         "settings-alerts",
         "settings-bookmarks",
         "settings-previews",

@@ -59,6 +59,13 @@ SCREENS = (
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
+    Screen(
+        "profiles-account-identity",
+        "Profiles - Identify accounts",
+        "accountidentity",
+        None,
+        True,
+    ),
     Screen("skills", "Skills", "skills", None, True),
     Screen("dialog", "Dialog", "main", None, False),
 )

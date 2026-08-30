@@ -29,6 +29,8 @@
   var identityExpanded = false;
   var backupVisible = 20;
   var identifyCandidate = null;
+  var identityComplete = '';
+  var identityRouteOpen = false;
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -224,14 +226,15 @@
     })[0] || null;
   }
 
-  function addCharacterLink(accountId, characterId, done) {
+  function addCharacterLink(accountId, characterId, done, statusId) {
     var account = accountById(accountId);
     var ids = account ? (account.character_ids || []).slice() : [];
     if (ids.indexOf(characterId) === -1) ids.push(characterId);
     var save = function () {
       WM.send('eve_settings_set_account_characters', accountId, ids)
         .then(function (result) {
-          WM.el('es-identity-status').textContent = result && result.error || '';
+          WM.el(statusId || 'es-identity-status').textContent =
+            result && result.error || '';
           if (result && result.applied) done();
         });
     };
@@ -249,28 +252,28 @@
 
   function renderIdentity() {
     var accountsMode = kind() === 'accounts';
-    var tools = WM.el('es-account-tools');
-    tools.hidden = !accountsMode;
-    if (!accountsMode) return;
+    WM.el('es-account-tools').hidden = !accountsMode;
+    if (WM.current_route !== 'accountidentity') return;
 
     var panel = WM.el('es-identity-panel');
-    WM.el('es-identify-open').textContent = identityExpanded
-      ? 'Close account identity' : 'Identify accounts…';
+    WM.el('es-manage-toggle').textContent = identityExpanded
+      ? 'Close names and character links' : 'Manage names and character links…';
     panel.hidden = !identityExpanded;
-    if (!identityExpanded) return;
-
-    var picker = WM.el('es-identity-account');
-    var keep = picker.value;
-    picker.textContent = '';
-    (state.accounts || []).forEach(function (account) {
-      var option = document.createElement('option');
-      option.value = account.id;
-      option.textContent = account.name;
-      picker.appendChild(option);
-    });
-    if (keep && accountById(keep)) picker.value = keep;
-    renderIdentityAccount();
-    paintIdentification(state.identification_active ? 'watching' : 'idle');
+    if (identityExpanded) {
+      var picker = WM.el('es-identity-account');
+      var keep = picker.value;
+      picker.textContent = '';
+      (state.accounts || []).forEach(function (account) {
+        var option = document.createElement('option');
+        option.value = account.id;
+        option.textContent = account.name;
+        picker.appendChild(option);
+      });
+      if (keep && accountById(keep)) picker.value = keep;
+      renderIdentityAccount();
+    }
+    paintIdentification(identityComplete ? 'complete' :
+      (state.identification_active ? 'watching' : 'idle'), identityComplete);
   }
 
   function renderIdentityAccount() {
@@ -293,7 +296,7 @@
         var remaining = linked.filter(function (id) { return id !== characterId; });
         WM.send('eve_settings_set_account_characters', account.id, remaining)
           .then(function (result) {
-            WM.el('es-identity-status').textContent = result && result.error || '';
+            WM.el('es-manage-status').textContent = result && result.error || '';
             if (result && result.applied) refresh();
           });
       });
@@ -318,15 +321,21 @@
 
   function paintIdentification(status, message) {
     var watching = status === 'watching';
-    WM.el('es-identify-start').hidden = watching;
+    var candidate = status === 'candidate';
+    var complete = status === 'complete';
+    WM.el('es-identify-start').hidden = watching || candidate || complete;
     WM.el('es-identify-check').hidden = !watching;
-    WM.el('es-identify-cancel').hidden = !watching;
-    if (status !== 'candidate') {
+    WM.el('es-identify-cancel').hidden = !(watching || candidate);
+    WM.el('ai-complete').hidden = !complete;
+    WM.el('ai-intro').hidden = complete;
+    WM.el('es-identify-start').classList.toggle('acc', !complete);
+    WM.el('ai-complete-back').classList.toggle('acc', complete);
+    if (!candidate) {
       WM.el('es-identify-candidate').hidden = true;
       identifyCandidate = null;
     }
     var defaultMessage = watching
-      ? 'Launch one character, enter the game, then close that client. Keep other EVE clients closed.'
+      ? 'Launch one character, enter the game, then close that client completely.'
       : '';
     WM.el('es-identity-status').textContent = message || defaultMessage;
   }
@@ -341,11 +350,11 @@
       option.textContent = character.name;
       select.appendChild(option);
     });
+    var message = payload.characters.length === 1
+      ? payload.characters[0].name + ' changed with ' + payload.account.option + '.'
+      : 'Choose which changed character belongs to ' + payload.account.option + '.';
+    paintIdentification('candidate', message);
     WM.el('es-identify-candidate').hidden = false;
-    WM.el('es-identity-status').textContent =
-      payload.characters.length === 1
-        ? payload.characters[0].name + ' changed with ' + payload.account.option + '.'
-        : 'Choose which changed character belongs to ' + payload.account.option + '.';
   }
 
   function renderCopyGroups() {
@@ -659,7 +668,8 @@
     WM.el('es-backup-profile').disabled = value || identifying
       || !(state && state.profile);
     ['es-auto-keep-apply', 'es-formations-open', 'es-backups-more',
-     'es-identify-start', 'es-alias-apply', 'es-character-add-btn'].forEach(function (id) {
+     'es-identify-open', 'es-identify-start', 'es-manage-toggle',
+     'es-alias-apply', 'es-character-add-btn'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
     });
     ['es-identity-account', 'es-account-alias', 'es-character-add'].forEach(function (id) {
@@ -764,9 +774,26 @@
     });
 
     WM.el('es-identify-open').addEventListener('click', function () {
+      identityExpanded = false;
+      identityComplete = '';
+      WM.route('accountidentity');
+    });
+
+    WM.el('es-manage-toggle').addEventListener('click', function () {
       identityExpanded = !identityExpanded;
       renderIdentity();
     });
+
+    function backToProfiles() {
+      WM.send('eve_settings_identification_cancel').then(function () {
+        if (state) state.identification_active = false;
+        identityComplete = '';
+        identityRouteOpen = false;
+        WM.route('evesettings');
+      });
+    }
+    WM.el('ai-back').addEventListener('click', backToProfiles);
+    WM.el('ai-complete-back').addEventListener('click', backToProfiles);
 
     WM.el('es-identity-account').addEventListener('change', renderIdentityAccount);
 
@@ -774,7 +801,7 @@
       var accountId = WM.el('es-identity-account').value;
       WM.send('eve_settings_set_account_alias', accountId,
               WM.el('es-account-alias').value).then(function (result) {
-        WM.el('es-identity-status').textContent = result && result.error || '';
+        WM.el('es-manage-status').textContent = result && result.error || '';
         if (result && result.applied) refresh();
       });
     });
@@ -783,7 +810,7 @@
       var accountId = WM.el('es-identity-account').value;
       var characterId = WM.el('es-character-add').value;
       if (!accountId || !characterId) return;
-      addCharacterLink(accountId, characterId, refresh);
+      addCharacterLink(accountId, characterId, refresh, 'es-manage-status');
     });
 
     WM.el('es-identify-start').addEventListener('click', function () {
@@ -820,6 +847,10 @@
         WM.send('eve_settings_identification_cancel').then(function () {
           state.identification_active = false;
           identifyCandidate = null;
+          setBusy(busy);
+          var character = characterById(characterId);
+          identityComplete = (character ? character.name : 'Character ' + characterId)
+            + ' linked to ' + accountId + '.';
           refresh();
         });
       });
@@ -874,14 +905,28 @@
     });
 
     document.addEventListener('wm:route', function (event) {
-      if (event.detail !== 'evesettings') {
-        WM.send('eve_settings_identification_cancel');
+      var leavingIdentity = identityRouteOpen
+        && event.detail !== 'accountidentity';
+      identityRouteOpen = event.detail === 'accountidentity';
+      if (identityRouteOpen) {
+        identityExpanded = false;
+        identityComplete = '';
+        refresh();
+        WM.send('eve_settings_resolve_names');
         return;
       }
+      // Every route away from the focused identity flow cancels its
+      // ephemeral snapshot. The durable links already confirmed stay.
+      if (leavingIdentity) {
+        WM.send('eve_settings_identification_cancel');
+        if (state) state.identification_active = false;
+      }
+      if (event.detail !== 'evesettings') return;
       // Every visit starts collapsed. render() is what repaints it, and it
       // runs off the refresh below.
       expanded = false;
       identityExpanded = false;
+      identityComplete = '';
       backupVisible = 20;
       refresh();
       // Names are resolved on first open, never at launch: the tray app

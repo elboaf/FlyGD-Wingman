@@ -22,16 +22,16 @@ def test_account_identity_prefers_alias_and_keeps_confirmed_characters_secondary
     )
     assert got == {
         "primary": "Main multibox",
-        "secondary": "Aiga + 2 · ID 10",
-        "option": "Main multibox · Aiga + 2 · ID 10",
+        "secondary": "Aiga + 2 · 10",
+        "option": "Main multibox · Aiga + 2 · 10",
     }
 
 
 def test_account_identity_degrades_without_inventing_a_roster():
     assert identity.account_identity("10", {}, {}, lambda _ident: "unused") == {
-        "primary": "Unidentified",
-        "secondary": "ID 10",
-        "option": "Unidentified · ID 10",
+        "primary": "10",
+        "secondary": "",
+        "option": "10",
     }
 
 

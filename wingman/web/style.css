@@ -2870,13 +2870,38 @@ button.btn:disabled,
 #es-formations-account { flex: 1; }
 
 #es-account-tools { width: 100%; }
-#es-account-tools[hidden], #es-identity-panel[hidden],
+#es-account-tools[hidden], #es-identity-panel[hidden], .es-identity[hidden],
+#ai-complete[hidden],
 #es-identify-candidate[hidden], .es-identify-actions > [hidden] {
   display: none;
 }
+
+#route-accountidentity { overflow-y: auto; padding: 12px; }
+.account-identity-shell {
+  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 620px;
+}
+.account-identity-shell h1 {
+  margin: 2px 0 0; color: var(--text); font-size: 20px; font-weight: 650;
+}
+.account-identity-shell h2 {
+  margin: 0; color: var(--text); font-size: 15px; font-weight: 650;
+}
+#ai-intro { display: flex; flex-direction: column; gap: 12px; }
+#ai-intro[hidden] { display: none; }
+#ai-intro p { margin: 0; max-width: 70ch; }
+.account-identity-shell .row {
+  margin-bottom: 0; flex-wrap: wrap; row-gap: 4px;
+}
+.account-identity-shell .row > .lab {
+  flex: 0 0 100%; color: var(--text-dim); font-size: var(--fs-body);
+}
+.ai-head { flex: none; }
+.ai-status { min-height: 20px; margin: 0; color: var(--text-dim); }
+.ai-manage-toggle { align-self: flex-start; margin-top: 10px; }
 .es-identity {
-  margin: 8px 0 12px; padding: 12px 0;
-  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 10px;
+  padding-top: 14px; border-top: 1px solid var(--border);
 }
 .es-account-characters { width: 100%; }
 .es-linked-character {

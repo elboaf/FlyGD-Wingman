@@ -18,11 +18,17 @@ WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
 JS = (WEB / "evesettings.js").read_text(encoding="utf-8")
+APP = (WEB / "app.js").read_text(encoding="utf-8")
 
 # The route's own markup. Every rule below is about this block and would
 # otherwise match a sibling screen that happens to use the same class.
 ROUTE = re.search(
     r'<div class="route" id="route-evesettings">.*?\n  </div>', HTML, re.DOTALL
+).group(0)
+ACCOUNT_ROUTE = re.search(
+    r'<div class="route" id="route-accountidentity">.*?\n  </div>',
+    HTML,
+    re.DOTALL,
 ).group(0)
 
 
@@ -677,19 +683,36 @@ def test_the_collapsed_summary_names_the_server_and_the_profile():
 # ---- account identity and full-width backup safety ---------------------
 
 
-def test_account_identification_is_inline_and_only_shown_in_account_mode():
+def test_account_identification_is_a_focused_subscreen_from_account_mode():
+    assert 'id="es-account-tools"' in BODY
+    assert 'id="es-identify-open"' in BODY
+    assert 'id="es-identity-panel"' not in BODY, (
+        "account management must not expand inside the copy form"
+    )
     for ident in (
-        "es-account-tools",
+        "ai-back",
         "es-identity-panel",
+        "es-manage-toggle",
         "es-identify-start",
         "es-identify-check",
         "es-identify-cancel",
         "es-identify-candidate",
     ):
-        assert f'id="{ident}"' in BODY
+        assert f'id="{ident}"' in ACCOUNT_ROUTE
     render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert render and "kind() === 'accounts'" in render.group(1)
-    assert "tools.hidden = !accountsMode" in render.group(1)
+    assert "WM.current_route !== 'accountidentity'" in render.group(1)
+    assert "WM.route('accountidentity')" in CODE
+
+
+def test_account_identity_route_is_a_chromeless_profiles_subscreen():
+    assert "accountidentity: 'route-accountidentity'" in APP
+    assert 'data-route="accountidentity"' not in HTML
+    chromeless = re.search(r"WM\.CHROMELESS_ROUTES = \[([^]]+)\]", APP)
+    eve_routes = re.search(r"WM\.EVE_ROUTES = \[([^]]+)\]", APP)
+    assert chromeless and "'accountidentity'" in chromeless.group(1)
+    assert eve_routes and "'accountidentity'" in eve_routes.group(1)
+    assert "name === 'accountidentity'" in APP
 
 
 def test_identification_uses_explicit_request_response_methods_and_cancels_on_leave():
@@ -704,8 +727,23 @@ def test_identification_uses_explicit_request_response_methods_and_cancels_on_le
     route = re.search(
         r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
     )
-    assert route and "event.detail !== 'evesettings'" in route.group(0)
+    assert route and "identityRouteOpen" in route.group(0)
+    assert "event.detail === 'accountidentity'" in route.group(0)
+    assert "if (leavingIdentity)" in route.group(0)
     assert "eve_settings_identification_cancel" in route.group(0)
+
+
+def test_identification_completion_replaces_setup_with_the_way_back():
+    paint = re.search(
+        r"function paintIdentification\(status, message\) \{(.*?)\n  \}",
+        CODE,
+        re.DOTALL,
+    )
+    assert paint
+    assert "ai-intro').hidden = complete" in paint.group(1)
+    assert "ai-complete').hidden = !complete" in paint.group(1)
+    assert "ai-complete-back').classList.toggle('acc', complete)" in paint.group(1)
+    assert "linked to " in CODE
 
 
 def test_account_identity_actions_follow_the_profiles_busy_state():
@@ -726,7 +764,12 @@ def test_account_identity_actions_follow_the_profiles_busy_state():
     assert "'aria-label', 'Remove '" in CODE
 
 
-def test_account_targets_render_human_identity_with_secondary_id():
+def test_account_labels_never_lead_with_an_unhelpful_missing_state():
+    assert "Unidentified" not in CODE
+    assert "Unidentified" not in ACCOUNT_ROUTE
+
+
+def test_account_targets_render_human_identity_with_secondary_number():
     target = re.search(r"function renderTargets\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert target
     assert "row.display_name || row.name" in target.group(1)
@@ -769,3 +812,4 @@ def test_retention_is_explicit_and_does_not_add_a_second_accent():
     assert "eve_settings_set_auto_keep" in CODE
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1
+    assert ACCOUNT_ROUTE.count('class="btn acc"') == 1

@@ -2627,28 +2627,31 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
 - [ ] **Identify one account through a controlled client session.** Switch to
-      Accounts, open `Identify accounts…`, and start identification with every
-      EVE client closed. Launch one character, enter the game, then fully close
-      that client and press `Check changes`. Expected: Wingman proposes the one
-      changed account and character and links nothing until `Link character` is
-      pressed. The account then reads with the character name first and its raw
-      numeric ID as secondary text.
+      Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
+      not a panel inserted into the copy card. Before anything starts it explains
+      what Wingman will watch, says to close every EVE client, and offers one
+      primary action. Start identification, launch one character, enter the
+      game, then fully close that client and press `Check changes`. Wingman
+      proposes the one changed account and character and links nothing until
+      `Link character` is pressed. Completion names the linked pair and makes
+      `Back to Profiles` the primary next action.
 - [ ] **Identification never guesses.** Repeat while two account clients are
       closed together. Expected: Wingman says more than one account changed and
       creates no association. Check once while EVE is still running too: it asks
       for the client to be closed rather than reading an incomplete write.
-- [ ] **Aliases and links survive EVE profile changes.** Name an account `Main
-      multibox`, manually link a second character, switch between the Default
-      and Alt EVE settings profiles, and return. Expected: the alias and
-      confirmed character summary follow the numeric account ID. Moving a
-      character already linked elsewhere asks before changing the link.
+- [ ] **Aliases and links survive EVE profile changes.** On the identity
+      sub-screen, open the secondary `Manage names and character links…`
+      disclosure. Name an account `Main multibox`, manually link a second
+      character, switch between the Default and Alt EVE settings profiles, and
+      return. Expected: the alias and confirmed character summary follow the
+      numeric account number. Moving a character already linked elsewhere asks
+      before changing the link.
 - [ ] **Identification and mutations exclude each other.** While the observation
       is active, Copy, backup Restore/Delete/Create, retention Apply, and
       formation editing are disabled and a direct stale click is refused. Then
-      start a copy and reopen the account identity panel while it runs: Start
-      identification, alias Apply, Add character, and Remove are disabled until
-      the copy finishes. Leave Profiles and return: any observation was
-      cancelled.
+      start a copy: `Identify accounts…` is disabled until it finishes. Leave
+      the identity sub-screen with `‹ Profiles` during an observation and return:
+      the observation was cancelled.
 - [ ] **The roster reads alphabetically, down each column** (round 5's
       R1/D4). With a few dozen characters, look at the target list and the
       `Copy from` dropdown. Expected: both are in NAME order, not in the
@@ -2735,7 +2738,8 @@ so these are the checks that matter and only a Windows machine can run them.
       Copy EVE settings, with Date (UTC), Target, Origin, and Actions columns. A
       character row leads with its resolved name, an account row with its alias
       or confirmed-character summary, and a profile row with its profile name;
-      raw IDs remain secondary. `Restore` and `Delete` align at the right edge.
+      raw account or character numbers remain secondary. `Restore` and `Delete`
+      align at the right edge.
       `Delete` carries the red danger treatment and `Restore` does not.
 - [ ] **Backup history has one scrollbar.** Create more than 20 visible backups
       and check at 840x625 and at a wide window. Expected: Profiles itself

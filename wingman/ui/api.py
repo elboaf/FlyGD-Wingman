@@ -3749,7 +3749,7 @@ class Api:
             primary = self._eve_names.label(int(ident))
             return {
                 "primary": primary,
-                "secondary": f"Character ID {ident}",
+                "secondary": f"Character {ident}",
                 "option": primary,
             }
         if kind == "account" and ident:
@@ -3767,7 +3767,12 @@ class Api:
             suffix = item.stem.removeprefix(prefix)
             if suffix != item.stem and suffix.isascii() and suffix.isdigit():
                 identity = self._eve_identity(f"{item.stem}.dat")
-                return identity["primary"], identity["secondary"]
+                metadata = (
+                    f"Account {suffix}"
+                    if item.kind == "account"
+                    else f"Character {suffix}"
+                )
+                return identity["primary"], metadata
             return item.stem, item.kind.title()
         if item.kind == "profile":
             return item.stem.removeprefix("settings_"), "Profile"

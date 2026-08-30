@@ -959,8 +959,8 @@ def test_account_labels_share_alias_character_summary_and_raw_id(tmp_path, monke
     account = api.eve_settings_state()["accounts"][0]
 
     assert account["display_name"] == "Main multibox"
-    assert account["display_meta"] == "Aiga Otsolen + 1 · ID 10"
-    assert account["name"] == "Main multibox · Aiga Otsolen + 1 · ID 10"
+    assert account["display_meta"] == "Aiga Otsolen + 1 · 10"
+    assert account["name"] == "Main multibox · Aiga Otsolen + 1 · 10"
 
 
 def test_backup_rows_resolve_human_targets_without_opening_archives(
@@ -983,8 +983,8 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
     rows = api.eve_settings_state()["backups"]
 
     assert {(row["display_name"], row["display_meta"]) for row in rows} == {
-        ("Main multibox", "ID 10"),
-        ("Aiga Otsolen", "Character ID 20"),
+        ("Main multibox", "Account 10"),
+        ("Aiga Otsolen", "Character 20"),
     }
 
 
@@ -1288,7 +1288,7 @@ def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeyp
     _fake_codec(monkeypatch, FORMATION_DOC)
     got = api.eve_settings_formations(str(account))
     assert got["ok"] is True
-    assert got["name"] == "Unidentified · ID 1"
+    assert got["name"] == "1"
     assert got["formations"] == [
         {
             "id": 0,

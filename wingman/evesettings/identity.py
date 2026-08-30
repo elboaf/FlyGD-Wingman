@@ -99,14 +99,15 @@ def account_identity(
         if len(names) > 1:
             character_summary += f" + {len(names) - 1}"
 
-    primary = alias or character_summary or "Unidentified"
+    primary = alias or character_summary or account_id
     secondary_parts = []
     if alias and character_summary:
         secondary_parts.append(character_summary)
-    secondary_parts.append(f"ID {account_id}")
+    if alias or character_summary:
+        secondary_parts.append(account_id)
     secondary = " · ".join(secondary_parts)
     return {
         "primary": primary,
         "secondary": secondary,
-        "option": f"{primary} · {secondary}",
+        "option": f"{primary} · {secondary}" if secondary else primary,
     }

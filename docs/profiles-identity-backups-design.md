@@ -37,8 +37,8 @@ object of an operation recognizable before it asks for confirmation.
 - **Scope:** production-ready behavior, persistence, bridge methods, page
   changes, automated tests, and Windows smoke coverage.
 
-No new destination or modal-first flow is introduced. Account identification
-is an inline task within Profiles.
+No new title-bar destination or modal-first flow is introduced. Account
+identification is a focused sub-screen of Profiles.
 
 ## Confirmed constraints
 
@@ -117,15 +117,16 @@ move is committed.
 
 ## Human-readable account labels
 
-Account controls use a primary human label and retain the raw account ID as
-secondary metadata.
+Account controls use a primary human label and retain the raw account number
+without repeating an `ID` label the surrounding Accounts context already
+provides.
 
 | Known data | Primary label | Secondary metadata |
 |---|---|---|
-| Alias and characters | `Main multibox` | `Aiga Otsolen + 2 · ID 19191934` |
-| Characters only | `Aiga Otsolen + 2` | `ID 19191934` |
-| Alias only | `Main multibox` | `ID 19191934` |
-| Neither | `Unidentified` | `ID 19191934` |
+| Alias and characters | `Main multibox` | `Aiga Otsolen + 2 · 19191934` |
+| Characters only | `Aiga Otsolen + 2` | `19191934` |
+| Alias only | `Main multibox` | `19191934` |
+| Neither | `19191934` | none |
 
 `+ N` counts only other confirmed associations. Wingman must not imply that it
 knows the complete launcher roster.
@@ -133,9 +134,9 @@ knows the complete launcher roster.
 Native select options cannot render two lines, so source and formation account
 pickers use a flattened form:
 
-- `Main multibox · Aiga Otsolen + 2 · ID 19191934`
-- `Aiga Otsolen · ID 19191934`
-- `Unidentified · ID 19191934`
+- `Main multibox · Aiga Otsolen + 2 · 19191934`
+- `Aiga Otsolen · 19191934`
+- `19191934`
 
 The label producer belongs in Python. Source lists, target rows, formation
 account selection, copy confirmations, completion or error text, and backup
@@ -155,18 +156,20 @@ offline or unresolved fallback.
 ## Guided account identification
 
 Accounts mode gains a plain `.btn` labelled **Identify accounts…**. It is
-hidden in Characters mode and expands an inline workflow above the account
-source and target controls rather than opening a modal. The trailing ellipsis
-is intentional because the button opens that workflow.
+hidden in Characters mode and opens the chromeless `accountidentity` sub-screen
+of Profiles. The copy card remains a copy form; no management panel expands
+between its mode switch and source picker. The trailing ellipsis is intentional
+because the button opens the focused flow.
 
 ### Start
 
 The opening state says:
 
-> EVE does not store account login names in these files. Wingman can identify
-> one account by watching which account and character settings change together.
+> EVE stores account settings under a number, not a name. Wingman can match that
+> number to a character by watching which settings change together.
 
-It asks the user to close other EVE clients. **Start identification** records a
+Before the action, it says to close every EVE client and explains that one
+character will be launched after identification starts. **Start identification** records a
 snapshot of every account and character file in the selected server and
 profile. The snapshot includes path, size, and high-resolution modification
 time so a same-size rewrite still counts and an unchanged file does not.
@@ -196,9 +199,11 @@ scan and file-stat class of work already accepted in `eve_settings_state`, so
 they run on the bridge thread and return semantic state directly. They do not
 add a Python push or a `WM.HANDLERS` entry.
 
-Leaving Profiles sends `eve_settings_identification_cancel` when the
-`wm:route` destination is not `evesettings`; changing root, server, or profile
-also cancels the Python-owned snapshot. Starting identification is refused
+Leaving the `accountidentity` sub-screen sends
+`eve_settings_identification_cancel`; changing root, server, or profile also
+cancels the Python-owned snapshot. The sub-screen follows Probe Formations'
+route pattern: the title-bar destinations are hidden and `‹ Profiles` is the
+explicit way back. Starting identification is refused
 while `_eve_mutation` is held, and `_eve_begin` refuses every EVE mutation
 while an identification snapshot exists. This mutual exclusion is enforced in
 Python as well as painted in the page.
@@ -216,10 +221,10 @@ Python as well as painted in the page.
   or a changed EVE root invalidates the session rather than producing a
   candidate.
 
-The candidate names both objects and requires **Link character**. It offers an
-optional account alias in the same inline step. Confirmation creates only the
-selected association and alias; it never adds every character that happened to
-change.
+The candidate names both objects and requires **Link character**. Confirmation
+creates only the selected association; it never adds every character that
+happened to change. Completion says which character was linked to which account
+number and makes **Back to Profiles** the primary next action.
 
 Suggested failure copy:
 
@@ -229,7 +234,8 @@ Suggested failure copy:
 
 ### Manual identity management
 
-The same inline surface lets users:
+A secondary **Manage names and character links…** disclosure on the sub-screen
+lets users:
 
 - add or edit an account alias;
 - associate additional discovered characters with an account;
@@ -256,14 +262,14 @@ kind and stem. Character and account IDs are recovered only from the exact
 legacy stem falls back unchanged rather than being partially interpreted:
 
 - character backup: resolved ESI name, falling back to `Character <id>`;
-- account backup: alias and confirmed-character summary, falling back to
-  `Unidentified`;
+- account backup: alias and confirmed-character summary, falling back to the
+  account number;
 - profile backup: the profile name already encoded in the stem.
 
 Raw identity remains available as secondary text:
 
-- `Character ID 2115754172`
-- `Account ID 19191934`
+- `Character 2115754172`
+- `Account 19191934`
 - `Profile`
 
 Old archives require no migration. If a stem is malformed or predates a known
@@ -394,7 +400,7 @@ Python owns:
 
 The page owns:
 
-- whether the inline identity surface is expanded;
+- whether the secondary names-and-links disclosure is expanded;
 - the currently visible batch of backup rows;
 - filter and selection state that changes only what is drawn;
 - rendering backend-provided labels and semantic states.

@@ -1304,44 +1304,8 @@
             Accounts
           </label>
         </div>
-        <div id="es-account-tools" hidden>
-          <div class="row">
-            <button id="es-identify-open" class="btn" type="button">Identify accounts…</button>
-          </div>
-          <div id="es-identity-panel" class="es-identity" hidden>
-            <p class="hint">EVE does not store account login names in these files. Link a character or add a name so you can recognize each account.</p>
-            <div class="row">
-              <label class="lab" for="es-identity-account">Account</label>
-              <select id="es-identity-account" class="field"></select>
-            </div>
-            <div class="row">
-              <label class="lab" for="es-account-alias">Name</label>
-              <input id="es-account-alias" class="field" maxlength="80" placeholder="Optional account name">
-              <button id="es-alias-apply" class="btn" type="button">Apply</button>
-            </div>
-            <div class="row">
-              <span class="lab">Confirmed characters</span>
-              <div id="es-account-characters" class="es-account-characters"></div>
-            </div>
-            <div class="row">
-              <label class="lab" for="es-character-add">Add character</label>
-              <select id="es-character-add" class="field"></select>
-              <button id="es-character-add-btn" class="btn" type="button">Add</button>
-            </div>
-            <p id="es-identity-status" class="hint" role="status"></p>
-            <div class="row es-identify-actions">
-              <button id="es-identify-start" class="btn" type="button">Start identification</button>
-              <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
-              <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
-            </div>
-            <div id="es-identify-candidate" hidden>
-              <div class="row">
-                <label class="lab" for="es-identify-character">Changed character</label>
-                <select id="es-identify-character" class="field"></select>
-                <button id="es-identify-link" class="btn" type="button">Link character</button>
-              </div>
-            </div>
-          </div>
+        <div class="row" id="es-account-tools" hidden>
+          <button id="es-identify-open" class="btn" type="button">Identify accounts…</button>
         </div>
         <div class="row">
           <label class="lab" for="es-source">Copy from</label>
@@ -1472,6 +1436,62 @@
           <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
         </div>
         <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- Account identity is setup work reached from Accounts mode, not part of
+       the copy form. The focused sub-screen explains the observation before
+       starting it; manual names and links stay behind a secondary disclosure. -->
+  <div class="route" id="route-accountidentity">
+    <div class="account-identity-shell">
+      <div class="row ai-head">
+        <button class="btn" id="ai-back" type="button">&lsaquo; Profiles</button>
+      </div>
+      <h1>Identify accounts</h1>
+      <div id="ai-intro">
+        <p>EVE stores account settings under a number, not a name. Wingman can match that number to a character by watching which settings change together.</p>
+        <p class="hint">Close every EVE client. You will launch one character after identification starts.</p>
+      </div>
+      <p id="es-identity-status" class="ai-status" role="status"></p>
+      <div class="row es-identify-actions">
+        <button id="es-identify-start" class="btn acc" type="button">Start identification</button>
+        <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
+        <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
+      </div>
+      <div id="es-identify-candidate" hidden>
+        <div class="row">
+          <label class="lab" for="es-identify-character">Changed character</label>
+          <select id="es-identify-character" class="field"></select>
+          <button id="es-identify-link" class="btn" type="button">Link character</button>
+        </div>
+      </div>
+      <div id="ai-complete" hidden>
+        <button id="ai-complete-back" class="btn" type="button">Back to Profiles</button>
+      </div>
+
+      <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage names and character links…</button>
+      <section id="es-identity-panel" class="es-identity" hidden>
+        <h2>Names and character links</h2>
+        <div class="row">
+          <label class="lab" for="es-identity-account">Account</label>
+          <select id="es-identity-account" class="field"></select>
+        </div>
+        <div class="row">
+          <label class="lab" for="es-account-alias">Name</label>
+          <input id="es-account-alias" class="field" maxlength="80" placeholder="Optional account name">
+          <button id="es-alias-apply" class="btn" type="button">Apply</button>
+        </div>
+        <div class="row">
+          <span class="lab">Confirmed characters</span>
+          <div id="es-account-characters" class="es-account-characters"></div>
+        </div>
+        <div class="row">
+          <label class="lab" for="es-character-add">Add character</label>
+          <select id="es-character-add" class="field"></select>
+          <button id="es-character-add-btn" class="btn" type="button">Add</button>
+        </div>
+        <p id="es-manage-status" class="hint" role="status"></p>
       </section>
     </div>
   </div>
