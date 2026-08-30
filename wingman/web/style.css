@@ -3518,6 +3518,149 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    check that test first, because it brace-matches every max-width:720px
    block in the file. */
 
+/* ================== probe formation editor ==========================
+   A sub-screen of Profiles on its own route id (index.html, app.js).
+
+   Laid out like #route-skills rather than like the rest of Profiles: a
+   rail of formations beside a pane that edits one of them is the same
+   two-pane workspace Skills is, and neither half is a form. The rail is
+   the same 214px, so switching between the two screens does not move the
+   edge.
+
+   The preview is the first SVG in the app. Every stroke and fill here
+   goes through a :root token exactly as the colour guard requires of the
+   rest of the sheet -- SVG presentation attributes would have been the
+   easy way to smuggle a literal past it. */
+
+/* .card sets no display today, so `hidden` alone works. This is the
+   standing override anyway: the trap DESIGN.md names in six places is an
+   author rule beating the UA stylesheet's [hidden], and this card is
+   hidden on every install without the decoder -- i.e. the common case is
+   the one that would break. */
+#es-formations-card[hidden] { display: none; }
+
+#route-formations {
+  display: none;
+  grid-template-columns: 214px minmax(0, 1fr);
+  gap: 12px; padding: 12px; min-height: 0;
+}
+#route-formations.active { display: grid; }
+/* .row carries a 10px bottom margin for stacked cards. Both columns here
+   are gap-spaced flex containers, so the margin is a second, unequal
+   gutter on the rows and nothing else. */
+#route-formations .row { margin-bottom: 0; }
+/* An INLINE label, deliberately unlike Settings' stacked full-width one:
+   that column exists so eight sections share one left edge, and this pane
+   has one labelled row in it. Same tone and size, so the two screens
+   still read as one app.
+
+   Scoped by CLASS, not by id, and that is deliberate. `.settings .row >
+   .lab` never reaches inside this route -- nothing here is `.settings` --
+   so this is a rule of its own rather than an override of the shared
+   column, and an id selector would have said the opposite. It would also
+   have been read as one by test_page_conventions.py, which asks every id
+   override of that column to restore its own 720px collapse; there is no
+   collapse to restore for a column this route does not have. */
+.fm-pane .row > .lab {
+  flex: none; color: var(--text-dim); font-size: var(--fs-body);
+}
+
+.fm-rail {
+  display: flex; flex-direction: column; gap: 10px; min-height: 0;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 12px;
+}
+.fm-rail-head { flex: none; }
+.fm-rail-add { flex: none; flex-wrap: wrap; row-gap: 6px; }
+.fm-rail-add > .btn { width: 100%; text-align: center; }
+.fm-account {
+  color: var(--text-dim); font-size: var(--fs-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 620px, the app's form measure, and for the reason `#route-evesettings >
+   .settings > .card` keeps it: this pane is a form. The roster one route
+   away lifts the cap because a 35-name list is meant to be SCANNED and
+   extra width becomes extra columns; eight coordinate rows are not that,
+   and uncapped they gave each number field ~300px at a 1400px window. */
+.fm-pane {
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 0; min-height: 0; max-width: 620px;
+}
+/* Everything except the commit row scrolls. See the note in index.html:
+   an eight-probe formation overflows the pane at the floor, and the one
+   control that may not be the thing that falls off is Save. */
+.fm-work {
+  flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
+  display: flex; flex-direction: column; gap: 10px;
+}
+#fm-commit { flex: none; }
+
+/* The three coordinate tracks are capped, not elastic. `1fr` handed them
+   every spare pixel, which is the same thing the recording list's
+   filename column was found doing (round 3, R1): a number field three
+   times wider than the widest number it can hold reads as misalignment,
+   not as spacing. 64px is what a five-digit value needs. */
+.fm-grid {
+  display: grid;
+  grid-template-columns: 2ch repeat(3, minmax(64px, 130px)) 96px auto;
+  gap: 4px 8px; align-items: center; justify-content: start;
+}
+/* NO .14em tracking here, and that is a decision rather than an omission:
+   test_page_conventions.py pins the uppercase-tracked group to exactly
+   four selectors, each with a stated rank. These name the six tracks of
+   one grid sitting inside a pane -- they are the quietest label on the
+   screen, not a fifth heading, and --fs-label with --text-faint is the
+   rank the sheet already gives that (see .alert-head > span's note). */
+.fm-head { font-size: var(--fs-label); color: var(--text-faint); }
+.fm-idx {
+  color: var(--text-faint); font-size: var(--fs-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#fm-all-range { flex: 0 0 150px; }
+#fm-balance-note { margin-top: 0; }
+#fm-dirty { margin-top: 0; }
+
+/* The preview ABSORBS the pane's slack; every other child keeps its
+   height. A fixed 300px square measured 603px of scroller content against
+   521 available at the 840x625 floor, and the thing that fell off the
+   bottom was the commit row.
+
+   Height comes from `flex`, width follows it through aspect-ratio, and
+   `align-self: center` is what stops the column's default stretch from
+   setting the width first and fighting the ratio. The drawing is round
+   and reads best in a square; a full-width box would only add dead
+   margin, since formations.js sizes the projection off the SMALLER
+   dimension either way. 150px is the floor below which the three rings
+   stop being tellable apart. */
+#fm-preview {
+  flex: 1 1 auto; min-height: 150px;
+  width: auto; max-width: 100%; aspect-ratio: 1; align-self: center;
+  background: var(--sunken); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); cursor: grab; touch-action: none;
+}
+#fm-preview:active { cursor: grabbing; }
+.fm-ring { fill: none; stroke: var(--panel-border); stroke-width: 1; }
+/* --fs-label and it MEANS it: formations.js sets the viewBox to the
+   element's own CSS pixel size on every draw, so one SVG user unit is one
+   CSS pixel here. A fixed square viewBox would have scaled this type down
+   to about 5px at the 840x625 floor. */
+.fm-ring-label, .fm-probe-label {
+  fill: var(--text-faint); font-size: var(--fs-label);
+}
+.fm-ring-label { text-anchor: end; }
+.fm-tether {
+  stroke: var(--panel-border); stroke-width: 1; stroke-dasharray: 2 3;
+}
+.fm-probe { fill: var(--brand-text); }
+.fm-ship { fill: var(--text); }
+/* --warn, not --err: an unbalanced formation is not a failure, it is a
+   fact about where the launch will land, and the Balance button beside
+   the note is what closes it. Same reasoning the readiness-state rule
+   records. */
+.fm-centroid { fill: none; stroke: var(--warn); stroke-width: 1.5; }
+
 /* ====================== first-run route ============================== */
 #route-firstrun { align-items: center; justify-content: center; padding: 24px; }
 
@@ -3751,10 +3894,17 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .rail-plan-actions > .linkbtn { margin-left: -6px; }
 
-/* .rail-item is the Settings rail and .rail-plan is the Skills rail: the
-   same affordance -- a list where exactly one entry is current -- so they
-   share one rule rather than keeping two copies that drift. */
-.rail-plan, .rail-item {
+/* .rail-item is the Settings rail, .rail-plan is the Skills rail and
+   .fm-item is the formation editor's: the same affordance -- a list where
+   exactly one entry is current -- so they share one rule rather than
+   keeping three copies that drift.
+
+   Three NAMES for one rule, though, and that part is not cosmetic.
+   app.js's WM.section sweeps every `.rail-item` on the page and toggles
+   `active` from its data-section, so a formation entry wearing that class
+   would be silently un-selected the next time a Settings section changed.
+   Same treatment, out of reach of that sweep. */
+.rail-plan, .rail-item, .fm-item {
   display: flex; align-items: center; gap: 8px; width: 100%;
   background: none; border: 0; border-left: 2px solid transparent;
   border-radius: var(--radius-sm); padding: 6px 8px;
@@ -3762,8 +3912,10 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   cursor: pointer; text-align: left;
 }
 .rail-item[hidden] { display: none; }
-.rail-plan:hover, .rail-item:hover { background: var(--hover); color: var(--text); }
-.rail-plan.active, .rail-item.active {
+.rail-plan:hover, .rail-item:hover, .fm-item:hover {
+  background: var(--hover); color: var(--text);
+}
+.rail-plan.active, .rail-item.active, .fm-item.active {
   background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
 .rail-plan-name { flex: 1; min-width: 0;

@@ -1021,6 +1021,12 @@
       { path: 'a2', id: '1003', name: 'Account 1003' }
     ],
     backups_unreadable: false,
+    // True, so the harness shows the Probe formations card. The real
+    // answer is Api.eve_settings_state's codec_available(), which is false
+    // on a checkout with no sidecar bundled -- and a harness that mirrored
+    // that would hide the one screen this fixture exists to let anyone
+    // eyeball.
+    formations_available: true,
     auto_keep: 10,
     backups: [
       { path: 'b1', created: '20260824-140300', origin: 'auto',
@@ -1076,6 +1082,44 @@
   ['eve_settings_copy', 'eve_settings_backup', 'eve_settings_restore',
    'eve_settings_delete_backup'
   ].forEach(function (name) { api[name] = eveMutation(name); });
+
+  // Probe formations, in METERS, exactly as the bridge returns them: the
+  // editor's whole km/AU boundary is in fromMeters/toMeters, so a fixture
+  // written in km would render correctly and prove nothing. `Test` is the
+  // real formation read back off a live account file during Slice 0 --
+  // four probes, f64 positions, a 4 AU range (598391482800 m) -- and
+  // `Drifter` is the two-probe wide pair the presets offer.
+  //
+  // Mutable, and the save stub writes into it, so a save-then-reopen in
+  // the harness round-trips through meters the way the app does. That is
+  // the only check the unit conversion gets anywhere: nothing in the test
+  // suite executes this file or formations.js.
+  var devFormations = [
+    { id: 0, name: 'Test', probes: [
+      { x: -2048, y: 0, z: 0, range: 598391482800 },
+      { x: -2048, y: 299195727872, z: 0, range: 598391482800 },
+      { x: 299195727872, y: 0, z: 0, range: 598391482800 },
+      { x: 92456566784, y: 0, z: 284552069120, range: 598391482800 }
+    ] },
+    { id: 3, name: 'Drifter', probes: [
+      { x: 11000000, y: 3400000, z: 0, range: 4787715862400 },
+      { x: -11000000, y: -3400000, z: 0, range: 4787715862400 }
+    ] }
+  ];
+  api.eve_settings_formations = function (path) {
+    console.log('DEV api.eve_settings_formations(', path, ')');
+    var account = eve.accounts.filter(function (a) {
+      return a.path === path;
+    })[0];
+    return Promise.resolve({
+      ok: true, path: path, name: account ? account.name : path,
+      formations: JSON.parse(JSON.stringify(devFormations))
+    });
+  };
+  api.eve_settings_save_formations = function (path, items) {
+    devFormations = JSON.parse(JSON.stringify(items));
+    return eveMutation('eve_settings_save_formations')(path, items);
+  };
 
   window.pywebview = { api: api };
   window.dispatchEvent(new Event('pywebviewready'));

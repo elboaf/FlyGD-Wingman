@@ -37,7 +37,15 @@ class Screen(NamedTuple):
 # shoots. It is named here rather than silently absent so the test can
 # assert it still EXISTS -- an exclusion nobody checks rots the day the
 # route is renamed.
-EXCLUDED_ROUTES = frozenset({"firstrun"})
+#
+# formations is excluded the same way and for a stronger reason. It is a
+# sub-screen of Profiles reached from that screen's account card, and it
+# draws nothing until WM.openFormations has loaded a real account file:
+# this tool reaches a screen only through WM.route (see shoot()), and
+# Screen carries no setup hook, so a capture would photograph an empty
+# editor and put it in the set as if that were the screen. Give Screen a
+# setup hook before adding it.
+EXCLUDED_ROUTES = frozenset({"firstrun", "formations"})
 
 # `gated` mirrors app.js's WM.EVE_ROUTES + WM.EVE_SECTIONS. Not retyped
 # from memory: test_shoot_screens.py asserts this column against app.js.

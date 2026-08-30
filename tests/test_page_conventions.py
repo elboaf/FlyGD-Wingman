@@ -879,6 +879,7 @@ def test_nothing_hides_itself_with_an_inline_display_style():
         "app.js",
         "firstrun.js",
         "evesettings.js",
+        "formations.js",
     ):
         src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
         assert ".style.display" not in src, (
@@ -2276,3 +2277,67 @@ def test_hide_on_lost_focus_is_wired_end_to_end():
         "the wm:settings read must treat an absent key as off; "
         "`!== false` would hide previews on every upgrading install"
     )
+
+
+# ---- the probe formation editor ----------------------------------------
+
+
+def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
+    """A sub-screen of Profiles, implemented as a route of its own.
+
+    DESIGN.md makes title-bar space the scarce resource and WM.EVE_ROUTES
+    already holds two entries, so the editor gets a route id and no nav
+    button: it is reached from the Profiles account card. The two halves
+    that would silently break it are a missing entry in WM.route's map (the
+    route element never gets `active`, so the screen is blank) and a
+    missing entry in WM.EVE_ROUTES (with the EVE gate off you could still
+    be standing on it, with the nav hidden and no way out -- the exact bug
+    app.js's last_destination comment records).
+    """
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    assert 'id="route-formations"' in HTML
+    assert "formations: 'route-formations'" in app
+    assert 'data-route="formations"' not in HTML, (
+        "the editor is reached from Profiles, not the title bar"
+    )
+    routes = re.search(r"WM\.EVE_ROUTES = \[(.*?)\]", app)
+    assert routes and "'formations'" in routes.group(1), (
+        "the editor hides with the other EVE destinations"
+    )
+
+
+def test_every_bridge_handler_has_exactly_one_owner():
+    """WM.handle assigns window[name]; a second registration silently wins.
+
+    formations.js must NOT register onEveSettingsDone -- Profiles owns it,
+    and a second registration would replace the Profiles handler outright,
+    leaving copy, backup and restore stuck busy for the rest of the
+    session with nothing in the console to say so.
+    """
+    owners: dict[str, list[str]] = {}
+    for path in sorted(WEB.glob("*.js")):
+        if path.name == "dev.js":
+            continue
+        text = _strip_js_comments(path.read_text(encoding="utf-8"))
+        for name in re.findall(r"WM\.handle\('([A-Za-z0-9_]+)'", text):
+            owners.setdefault(name, []).append(path.name)
+    doubled = {n: o for n, o in owners.items() if len(o) > 1}
+    assert not doubled, f"handlers registered twice: {doubled}"
+    js = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "WM.formationsDone" in js, (
+        "Profiles must forward onEveSettingsDone to the editor, which has "
+        "no handler of its own"
+    )
+
+
+def test_the_formation_editor_converts_units_only_at_the_boundary():
+    """The bridge speaks meters; the editor's fields are km and AU.
+
+    Both conversions live in load() and save(), so a third one anywhere
+    else is a double conversion -- and the failure is silent, because a
+    formation that comes back 1000x out still renders as a formation.
+    """
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+    assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
+    assert js.count("* AU") >= 1 and js.count("/ AU") >= 1
+    assert "149597870700" in js
