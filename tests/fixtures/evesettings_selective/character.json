@@ -1,0 +1,26 @@
+{
+  "source": {
+    "bytes:windows": {"tuple": ["source-windows"]},
+    "bytes:dockPanels": {"tuple": ["source-dock-panels"]},
+    "bytes:ui": {
+      "bytes:neocomButtonRawData": {"tuple": ["source-neocom"]},
+      "bytes:chatchannels": {"tuple": ["source-chat"]},
+      "bytes:InfoPanelModes_1": {"tuple": ["source-info-panels"]},
+      "bytes:market_searchText": {"tuple": ["source-market-search"]},
+      "bytes:wingmanUnmappedUi": {"tuple": ["source-unmapped-ui"]}
+    },
+    "bytes:wingmanUnmappedSection": {"tuple": ["source-unmapped-section"]}
+  },
+  "target": {
+    "bytes:windows": {"tuple": ["target-windows"]},
+    "bytes:dockPanels": {"tuple": ["target-dock-panels"]},
+    "bytes:ui": {
+      "bytes:neocomButtonRawData": {"tuple": ["target-neocom"]},
+      "bytes:chatchannels": {"tuple": ["target-chat"]},
+      "bytes:InfoPanelModes_1": {"tuple": ["target-info-panels"]},
+      "bytes:market_searchText": {"tuple": ["target-market-search"]},
+      "bytes:wingmanUnmappedUi": {"tuple": ["target-unmapped-ui"]}
+    },
+    "bytes:wingmanUnmappedSection": {"tuple": ["target-unmapped-section"]}
+  }
+}

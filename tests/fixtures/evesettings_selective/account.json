@@ -1,0 +1,43 @@
+{
+  "source": {
+    "bytes:overview": {"tuple": ["source-overview"]},
+    "bytes:defaultoverview": {"tuple": ["source-defaultoverview"]},
+    "bytes:suppress": {"tuple": ["source-suppress"]},
+    "bytes:audio": {"tuple": ["source-audio"]},
+    "bytes:tabgroups": {"tuple": ["source-tabgroups"]},
+    "bytes:ui": {
+      "bytes:probescanning.customFormations": {"tuple": ["source-probes"]},
+      "bytes:cameraOffset": {"tuple": ["source-camera"]},
+      "bytes:effectsEnabled": {"tuple": ["source-graphics"]},
+      "bytes:market_orders": {"tuple": ["source-market"]},
+      "bytes:contracts_search_status": {"tuple": ["source-contracts"]},
+      "bytes:slotOrder": {"tuple": ["source-slots"]},
+      "bytes:linkedWeapons_100": {"tuple": ["source-linked-weapons"]},
+      "bytes:editHistory": {"tuple": ["source-edit-history"]},
+      "bytes:market_searchText": {"tuple": ["source-market-search"]},
+      "bytes:wingmanUnmappedUi": {"tuple": ["source-unmapped-ui"]}
+    },
+    "bytes:wingmanUnmappedSection": {"tuple": ["source-unmapped-section"]}
+  },
+  "target": {
+    "bytes:overview": {"tuple": ["target-overview"]},
+    "bytes:defaultoverview": {"tuple": ["target-defaultoverview"]},
+    "bytes:suppress": {"tuple": ["target-suppress"]},
+    "bytes:audio": {"tuple": ["target-audio"]},
+    "bytes:tabgroups": {"tuple": ["target-tabgroups"]},
+    "bytes:ui": {
+      "bytes:probescanning.customFormations": {"tuple": ["target-probes"]},
+      "bytes:cameraOffset": {"tuple": ["target-camera"]},
+      "bytes:effectsEnabled": {"tuple": ["target-graphics"]},
+      "bytes:market_orders": {"tuple": ["target-market"]},
+      "bytes:contracts_search_status": {"tuple": ["target-contracts"]},
+      "bytes:slotOrder": {"tuple": ["target-slots"]},
+      "bytes:linkedWeapons_100": {"tuple": ["target-linked-weapons"]},
+      "bytes:linkedWeapons_targetOnly": {"tuple": ["target-only-linked-weapons"]},
+      "bytes:editHistory": {"tuple": ["target-edit-history"]},
+      "bytes:market_searchText": {"tuple": ["target-market-search"]},
+      "bytes:wingmanUnmappedUi": {"tuple": ["target-unmapped-ui"]}
+    },
+    "bytes:wingmanUnmappedSection": {"tuple": ["target-unmapped-section"]}
+  }
+}
