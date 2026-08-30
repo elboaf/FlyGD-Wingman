@@ -244,6 +244,12 @@
       .then(function (yes) { if (yes) done(); });
   }
 
+  function paintFieldError(id, error) {
+    var el = WM.el(id);
+    el.textContent = error || '';
+    el.classList.toggle('err', !!error);
+  }
+
   function addCharacterLink(accountId, characterId, done, statusId) {
     var account = accountById(accountId);
     var ids = account ? (account.character_ids || []).slice() : [];
@@ -251,8 +257,8 @@
     var save = function () {
       WM.send('eve_settings_set_account_characters', accountId, ids)
         .then(function (result) {
-          WM.el(statusId || 'es-identity-status').textContent =
-            result && result.error || '';
+          paintFieldError(statusId || 'es-identity-status',
+            result && result.error || '');
           if (result && result.applied) done();
         });
     };
@@ -266,7 +272,8 @@
 
     var panel = WM.el('es-identity-panel');
     WM.el('es-manage-toggle').textContent = identityExpanded
-      ? 'Close names and character links' : 'Manage names and character links…';
+      ? 'Close account names and character links'
+      : 'Manage account names and character links…';
     panel.hidden = !identityExpanded;
     if (identityExpanded) {
       var picker = WM.el('es-identity-account');
@@ -362,6 +369,7 @@
       ? 'This account has all 3 character links. Remove a wrong or obsolete link in account management.'
       : (additionAvailable ? ''
         : 'Only characters discovered in this EVE profile can be offered. Launch another character, make a small settings change, and close EVE completely to make it available later.');
+    paintFieldError('ai-roster-status', '');
   }
 
   function paintIdentification(step, message) {
@@ -875,7 +883,7 @@
       var accountId = WM.el('es-identity-account').value;
       WM.send('eve_settings_set_account_name', accountId,
               WM.el('es-manage-account-name').value).then(function (result) {
-        WM.el('es-manage-status').textContent = result && result.error || '';
+        paintFieldError('es-manage-status', result && result.error || '');
         if (result && result.applied) refresh();
       });
     }
@@ -907,16 +915,30 @@
           if (state) state.identification_active = true;
           renderCandidate(result);
         } else {
-          // Check failures are waiting variants: paint the returned result so
-          // a failed restart cannot leave stale page-local state on screen.
-          if (state) {
-            state.identification_active = !!result && (result.status === 'watching'
-              || result.status === 'none' || result.status === 'ambiguous');
+          var busyError = result && result.status === 'error'
+            && result.error === 'Another Profiles operation is running.';
+          var restart = result && (result.status === 'invalidated'
+            || (result.status === 'error' && !busyError));
+          if (restart) {
+            if (state) state.identification_active = false;
+            clearIdentification();
+            paintIdentification('idle', result.error);
+          } else if (busyError) {
+            // A worker may retain the snapshot while it owns the lock. Keep
+            // the local state rather than falsely offering a fresh start.
+            paintIdentification(identityStep === 'idle' && state
+              && state.identification_active ? 'watching' : identityStep,
+            result.error);
+          } else {
+            if (state) {
+              state.identification_active = !!result && (result.status === 'watching'
+                || result.status === 'none' || result.status === 'ambiguous');
+            }
+            identifyCandidate = null;
+            pendingCharacterId = '';
+            paintIdentification('watching', result && result.error
+              || 'No account and character changes were found. Make a small settings change in the client, then close it completely and check again.');
           }
-          identifyCandidate = null;
-          pendingCharacterId = '';
-          paintIdentification('watching', result && result.error
-            || 'No account and character changes were found. Make a small settings change in the client, then close it completely and check again.');
         }
         setBusy(busy);
       });
@@ -943,7 +965,7 @@
       WM.send('eve_settings_identification_confirm', accountId, characterId, accountName)
         .then(function (result) {
           var error = result && result.error || '';
-          WM.el('ai-name-status').textContent = error;
+          paintFieldError('ai-name-status', error);
           if (result && result.applied) {
             openRoster(accountId);
           } else if (identityStep !== 'name') {
@@ -979,7 +1001,7 @@
         WM.el('ai-name-match').textContent = (characterById(characterId) || {
           name: 'Character ' + characterId
         }).name + ' will be linked to ' + accountId + '.';
-        WM.el('ai-name-status').textContent = '';
+        paintFieldError('ai-name-status', '');
         paintIdentification('name');
       };
       confirmCharacterMove(accountId, characterId, continueLink);
@@ -991,7 +1013,7 @@
       addCharacterLink(rosterAccountId, characterId, function () {
         identityStep = 'roster';
         refresh();
-      }, 'ai-roster-empty');
+      }, 'ai-roster-status');
     });
 
     WM.el('ai-identify-another').addEventListener('click', function () {

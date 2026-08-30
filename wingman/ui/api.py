@@ -4182,64 +4182,92 @@ class Api:
             updated.pop(account_id, None)
         return updated, None
 
-    def eve_settings_set_account_name(self, account_id: str, name: str) -> dict:
-        if not self._eve_decimal_id(account_id) or not isinstance(name, str):
-            return self._field_refused("Choose a valid account.")
-        found = self._eve_discover()
-        if account_id not in {item.file_id for item in found.accounts}:
-            return self._field_refused("That account is not in this profile.")
-        names = dict(self._eve_section().get("account_names") or {})
-        cleaned, error = self._eve_validate_account_name(account_id, name, names)
-        if error:
-            return self._field_refused(error)
-        names[account_id] = cleaned
+    @contextlib.contextmanager
+    def _eve_identity_hold(self):
+        """Serialize synchronous identity edits without blocking the bridge.
+
+        A worker can hold this lock while awaiting a page confirmation. Manual
+        account edits must refuse in that state rather than block the bridge
+        that delivers the answer and leave the worker parked until its timeout.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            yield False
+            return
         try:
-            settings_mod.update_section(
-                self._state.settings, "eve_settings", {"account_names": names}
-            )
-        except OSError:
-            logger.exception("Could not persist EVE account name")
-            return self._field_refused("Could not save this account name.")
-        return self._field_ok()
+            yield True
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_set_account_name(self, account_id: str, name: str) -> dict:
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
+            if not self._eve_decimal_id(account_id) or not isinstance(name, str):
+                return self._field_refused("Choose a valid account.")
+            found = self._eve_discover()
+            if account_id not in {item.file_id for item in found.accounts}:
+                return self._field_refused("That account is not in this profile.")
+            names = dict(self._eve_section().get("account_names") or {})
+            cleaned, error = self._eve_validate_account_name(account_id, name, names)
+            if error:
+                return self._field_refused(error)
+            names[account_id] = cleaned
+            try:
+                settings_mod.update_section(
+                    self._state.settings, "eve_settings", {"account_names": names}
+                )
+            except OSError:
+                logger.exception("Could not persist EVE account name")
+                return self._field_refused("Could not save this account name.")
+            return self._field_ok()
 
     def eve_settings_set_account_characters(
         self, account_id: str, character_ids: list
     ) -> dict:
-        if not self._eve_decimal_id(account_id) or not isinstance(character_ids, list):
-            return self._field_refused("Choose a valid account and characters.")
-        found = self._eve_discover()
-        if account_id not in {item.file_id for item in found.accounts}:
-            return self._field_refused("That account is not in this profile.")
-        section = self._eve_section()
-        if account_id not in (section.get("account_names") or {}):
-            return self._field_refused("Name this account before adding characters.")
-        associations = {
-            key: list(value)
-            for key, value in (section.get("account_characters") or {}).items()
-        }
-        known = {item.file_id for item in found.characters}
-        known.update(value for values in associations.values() for value in values)
-        wanted = []
-        for value in character_ids:
-            if not self._eve_decimal_id(value) or value not in known:
-                return self._field_refused("That character is not known to Wingman.")
-            if value not in wanted:
-                wanted.append(value)
-        associations, error = self._eve_relink_account_characters(
-            associations, account_id, wanted, wanted
-        )
-        if error:
-            return self._field_refused(error)
-        try:
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"account_characters": associations},
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
+            if not self._eve_decimal_id(account_id) or not isinstance(
+                character_ids, list
+            ):
+                return self._field_refused("Choose a valid account and characters.")
+            found = self._eve_discover()
+            if account_id not in {item.file_id for item in found.accounts}:
+                return self._field_refused("That account is not in this profile.")
+            section = self._eve_section()
+            if account_id not in (section.get("account_names") or {}):
+                return self._field_refused(
+                    "Name this account before adding characters."
+                )
+            associations = {
+                key: list(value)
+                for key, value in (section.get("account_characters") or {}).items()
+            }
+            known = {item.file_id for item in found.characters}
+            known.update(value for values in associations.values() for value in values)
+            wanted = []
+            for value in character_ids:
+                if not self._eve_decimal_id(value) or value not in known:
+                    return self._field_refused(
+                        "That character is not known to Wingman."
+                    )
+                if value not in wanted:
+                    wanted.append(value)
+            associations, error = self._eve_relink_account_characters(
+                associations, account_id, wanted, wanted
             )
-        except OSError:
-            logger.exception("Could not persist EVE account characters")
-            return self._field_refused("Could not save these character links.")
-        return self._field_ok()
+            if error:
+                return self._field_refused(error)
+            try:
+                settings_mod.update_section(
+                    self._state.settings,
+                    "eve_settings",
+                    {"account_characters": associations},
+                )
+            except OSError:
+                logger.exception("Could not persist EVE account characters")
+                return self._field_refused("Could not save these character links.")
+            return self._field_ok()
 
     def eve_settings_identification_start(self) -> dict:
         if not self._eve_mutation.acquire(blocking=False):
@@ -4334,9 +4362,9 @@ class Api:
         self, account_id: str, character_id: str, account_name: str
     ) -> dict:
         """Persist one offered account/character pair as one settings update."""
-        if not self._eve_mutation.acquire(blocking=False):
-            return self._field_refused("Another Profiles operation is running.")
-        try:
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
             candidate = self._eve_identification_candidate
             if candidate is None:
                 return self._field_refused("Start account identification again.")
@@ -4393,8 +4421,6 @@ class Api:
                     return self._field_refused("Could not save this account identity.")
             self._eve_clear_identification()
             return self._field_ok()
-        finally:
-            self._eve_mutation.release()
 
     def eve_settings_identification_cancel(self) -> bool:
         self._eve_clear_identification()

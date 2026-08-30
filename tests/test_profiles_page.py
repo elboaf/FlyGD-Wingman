@@ -768,6 +768,9 @@ def test_identification_uses_atomic_confirmation_and_bounded_roster():
     assert "if (leavingIdentity)" in route.group(0)
     assert "eve_settings_identification_cancel" in route.group(0)
     assert "ai-identify-another" in CODE and "paintIdentification('idle')" in CODE
+    assert "result.status === 'invalidated'" in CODE
+    assert "result.status === 'error'" in CODE
+    assert "Another Profiles operation is running." in CODE
     assert "filter(function (account) { return account.account_name; }).length" in CODE
     assert "linked.length >= 3 || !add.options.length" in CODE
     assert "WM.confirm('Move character?'" in CODE
@@ -811,11 +814,21 @@ def test_identification_steps_are_focused_and_have_one_primary_action():
     assert 'id="ai-roster-count"' in ACCOUNT_ROUTE
     roster_count = re.search(r'<[^>]+id="ai-roster-count"[^>]*>', ACCOUNT_ROUTE)
     assert roster_count and 'role="status"' in roster_count.group(0)
+    roster_status = re.search(r'<[^>]+id="ai-roster-status"[^>]*>', ACCOUNT_ROUTE)
+    assert roster_status and 'role="status"' in roster_status.group(0)
+    for ident in ("ai-roster-identified", "ai-roster-empty"):
+        element = re.search(rf'<[^>]+id="{ident}"[^>]*>', ACCOUNT_ROUTE)
+        assert element and 'role="status"' not in element.group(0)
+    assert "}, 'ai-roster-status');" in CODE
     name_input = re.search(r'<input[^>]+id="es-account-name"[^>]*>', ACCOUNT_ROUTE)
     assert (
         name_input
         and 'aria-describedby="ai-name-hint ai-name-status"' in name_input.group(0)
     )
+    for ident in ("ai-name-status", "es-manage-status"):
+        element = re.search(rf'<[^>]+id="{ident}"[^>]*>', ACCOUNT_ROUTE)
+        assert element and 'class="field-msg"' in element.group(0)
+    assert "el.classList.toggle('err', !!error);" in CODE
     paint = re.search(
         r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
     )
@@ -864,6 +877,14 @@ def test_account_identity_actions_follow_the_profiles_busy_state():
         "an identification refusal must not clear an existing mutation's busy state"
     )
     assert "'aria-label', 'Remove '" in CODE
+
+
+def test_account_management_uses_the_specified_names_and_links_label():
+    assert "Manage account names and character links…" in ACCOUNT_ROUTE
+    assert "Manage account names and character links…" in CODE
+    assert "Close account names and character links" in CODE
+    assert "Manage names and character links…" not in CODE
+    assert "Close names and character links" not in CODE
 
 
 def test_account_labels_never_lead_with_an_unhelpful_missing_state():

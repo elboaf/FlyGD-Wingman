@@ -2,12 +2,14 @@
 
 import os
 import threading
+from pathlib import Path
 
 import pytest
 
 from tests import fakes
 from tests.fakes import FakeWindow
 from wingman import paths, settings
+from wingman.evesettings import identity as evesettings_identity
 from wingman.evesettings import tree
 from wingman.ui import api as api_mod
 
@@ -1033,6 +1035,89 @@ def test_account_name_is_trimmed_and_cannot_be_cleared(tmp_path, monkeypatch):
     assert api._eve_section()["account_names"] == {"10": "LoginName"}
 
 
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("eve_settings_set_account_name", ("10", "LoginName")),
+        ("eve_settings_set_account_characters", ("10", ["20"])),
+    ],
+)
+def test_manual_identity_endpoints_refuse_busy_without_reading_or_writing(
+    tmp_path, monkeypatch, method, args
+):
+    api = build(tmp_path, monkeypatch)
+    api._eve_discover = lambda: pytest.fail("busy calls must not inspect the profile")
+    api._eve_mutation.acquire()
+    try:
+        result = getattr(api, method)(*args)
+    finally:
+        api._eve_mutation.release()
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Another Profiles operation is running.",
+    }
+
+
+def test_manual_identity_name_and_roster_work_stays_under_the_mutation_lock(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    original_discover = api._eve_discover
+    original_update = api_mod.settings_mod.update_section
+
+    def checked_discover():
+        assert api._eve_mutation.locked()
+        return original_discover()
+
+    def checked_update(*args, **kwargs):
+        assert api._eve_mutation.locked()
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(api, "_eve_discover", checked_discover)
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", checked_update)
+
+    assert api.eve_settings_set_account_name("10", "LoginName")["applied"] is True
+    assert api.eve_settings_set_account_characters("10", ["20"])["applied"] is True
+
+
+def test_manual_identity_endpoint_does_not_interleave_a_blocked_save(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    writing = threading.Event()
+    release_write = threading.Event()
+    original = api_mod.settings_mod.update_section
+
+    def blocking_write(data, section, values):
+        writing.set()
+        assert release_write.wait(5), "test did not release the account-name write"
+        return original(data, section, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", blocking_write)
+    writer = threading.Thread(
+        target=lambda: api.eve_settings_set_account_name("10", "LoginName")
+    )
+    writer.start()
+    assert writing.wait(5), "account-name save never reached settings write"
+
+    result = api.eve_settings_set_account_characters("10", ["bad"])
+    release_write.set()
+    writer.join(5)
+
+    assert not writer.is_alive()
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Another Profiles operation is running.",
+    }
+
+
 def test_account_identity_helpers_preserve_shared_validation_and_relinking_rules(
     tmp_path, monkeypatch
 ):
@@ -1186,7 +1271,9 @@ def test_removing_every_character_retains_the_account_name(tmp_path, monkeypatch
 
 
 def _pending_identification(api, account_id="10", character_ids=("20",)):
-    api._eve_identification = object()
+    api._eve_identification = evesettings_identity.Snapshot(
+        Path("root"), Path("server"), Path("profile"), {}
+    )
     api._eve_identification_candidate = (account_id, tuple(character_ids))
 
 

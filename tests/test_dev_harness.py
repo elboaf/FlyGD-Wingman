@@ -194,7 +194,22 @@ def test_identity_scenario_selector_covers_every_visual_state_once():
     for token in required:
         assert table.count('"' + token + '":{') == 1, token
     assert "new URLSearchParams(window.location.search)" in DEV_JS
-    assert ".get('identity') || 'idle'" in DEV_JS
+    assert ".get('identity')" in DEV_JS
+    assert ".has('identity')" in DEV_JS
+    assert "if (identityScenarioRequested && !identityScenarioQueued)" in DEV_JS
+    assert "if (identityScenarioRequested) {" in DEV_JS
+
+
+def test_bare_dev_mode_does_not_open_an_identity_scenario():
+    """The explicit identity selector, not dev mode itself, owns this route.
+
+    The ordinary fixture must keep Profiles on its usual landing route so it
+    remains useful for reviewing the account source and backup list.
+    """
+    assert "var identityScenarioRequested = identitySearch.has('identity');" in DEV_JS
+    assert "var identityScenario = identitySearch.get('identity') || 'idle';" in DEV_JS
+    assert "if (identityScenarioRequested && !identityScenarioQueued)" in DEV_JS
+    assert "if (identityScenarioRequested) {\n    if (document.readyState" in DEV_JS
 
 
 def test_identity_scenario_rosters_obey_production_invariants():
@@ -213,6 +228,16 @@ def test_identity_scenario_rosters_obey_production_invariants():
             for character_id in character_ids:
                 assert character_id not in claimed, (scenario_name, character_id)
                 claimed.add(character_id)
+
+
+def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_backup():
+    scenarios = _identity_scenarios()
+    account = next(
+        item for item in scenarios["idle"]["accounts"] if item["id"] == "1001"
+    )
+    assert account["character_ids"] == ["90000000", "90000001", "90000002"]
+    assert 'display_name: "alpha@example"' in DEV_JS
+    assert 'display_meta: "Suartad Arsten + 2 · Account 1001"' in DEV_JS
 
 
 def test_identity_harness_doubles_atomic_endpoints_without_alias_compatibility():
