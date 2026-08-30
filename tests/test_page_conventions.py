@@ -119,6 +119,18 @@ def test_no_checkbox_or_radio_renders_as_a_native_control():
         )
 
 
+def test_profiles_generated_copy_checkbox_wraps_before_listeners():
+    """The dark wrapper is constructed immediately after the input type."""
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    match = re.search(
+        r"groupBox\.type\s*=\s*'checkbox';(.*?)groupBox\.addEventListener",
+        src,
+        re.DOTALL,
+    )
+    assert match, "Profiles copy-group checkbox or its listener is missing"
+    assert "'check'" in match.group(1) and "'box'" in match.group(1)
+
+
 def test_generated_controls_use_the_wrapper_too():
     """The markup is only half of it: the worst instance was built in JS,
     one row per character, so a check on index.html alone would have

@@ -11,6 +11,10 @@
 
   var state = null;
   var selected = {};
+  // Choices belong to a kind: both payloads may use the same id for groups
+  // with different settings semantics. Missing ids are initialized when
+  // first seen, so a later state repaint cannot overwrite a user's choice.
+  var copyGroupSelections = { characters: {}, accounts: {} };
   // The rows renderTargets() actually drew. Select-all and the copy list
   // are both taken from this rather than from rows(), so what the filter
   // shows and what the button acts on can never disagree.
@@ -67,6 +71,7 @@
     fill('es-server', payload.servers, payload.server, 'No folder chosen');
     fill('es-profile', payload.profiles, payload.profile, 'No folder chosen');
     renderSource();
+    renderCopyGroups();
     renderTargets();
     renderBackups();
     renderFormationsCard();
@@ -201,6 +206,47 @@
       option.selected = row.path === previous;
       el.appendChild(option);
     });
+  }
+
+  function renderCopyGroups() {
+    var row = WM.el('es-copy-options');
+    var host = WM.el('es-copy-groups');
+    var available = !!state.selective_copy_available;
+    row.hidden = !available;
+    host.innerHTML = '';
+    if (!available) return;
+
+    var currentKind = kind();
+    var choices = copyGroupSelections[currentKind];
+    var groups = (state.copy_groups && state.copy_groups[currentKind]) || [];
+    groups.forEach(function (group) {
+      if (!Object.prototype.hasOwnProperty.call(choices, group.id)) {
+        choices[group.id] = !!group.default_on;
+      }
+
+      var groupBox = document.createElement('input');
+      groupBox.type = 'checkbox';
+      // Construct the dark wrapper before wiring behavior. A bare generated
+      // checkbox is a native white Windows control in this dark card.
+      var groupLabel = WM.make('label', 'check', ' ' + group.label);
+      groupLabel.prepend(WM.make('span', 'box'));
+      groupLabel.prepend(groupBox);
+      groupBox.checked = choices[group.id];
+      groupBox.value = group.id;
+      groupBox.addEventListener('change', function () {
+        choices[group.id] = groupBox.checked;
+      });
+      host.appendChild(groupLabel);
+    });
+  }
+
+  function selectedGroupIds() {
+    var currentKind = kind();
+    var choices = copyGroupSelections[currentKind];
+    var groups = (state.copy_groups && state.copy_groups[currentKind]) || [];
+    return groups.filter(function (group) {
+      return !!choices[group.id];
+    }).map(function (group) { return group.id; });
   }
 
   function renderTargets() {
@@ -532,6 +578,7 @@
         radio.addEventListener('change', function () {
           selected = {};
           renderSource();
+          renderCopyGroups();
           renderTargets();
         });
       });
@@ -552,7 +599,12 @@
     WM.el('es-copy').addEventListener('click', function () {
       var targets = chosenTargets();
       if (!targets.length) return;
-      mutate('eve_settings_copy', WM.el('es-source').value, targets);
+      if (state.selective_copy_available) {
+        mutate('eve_settings_copy', WM.el('es-source').value, targets,
+               selectedGroupIds());
+      } else {
+        mutate('eve_settings_copy', WM.el('es-source').value, targets);
+      }
     });
 
     WM.el('es-formations-open').addEventListener('click', function () {

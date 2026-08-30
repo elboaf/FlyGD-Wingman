@@ -519,6 +519,44 @@ def test_change_is_a_button_not_a_link():
 # ---- X1's execution on this route --------------------------------------
 
 
+def test_selective_copy_controls_follow_the_payload_and_keep_plain_fallback():
+    """Structured copy extends the existing card without changing fallback."""
+    source_at = BODY.index('id="es-source"')
+    options_at = BODY.index('id="es-copy-options"')
+    filter_at = BODY.index('id="es-filter"')
+    assert source_at < options_at < filter_at
+    assert (
+        "Unchecked groups keep each target\u2019s own settings. Everything else is copied."
+        in BODY
+    )
+
+    render = re.search(r"function renderCopyGroups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render, "copy groups are not rendered"
+    block = render.group(1)
+    assert "state.copy_groups" in block
+    assert "default_on" in block
+    assert "copyGroupSelections" in block
+    assert "addEventListener" in block
+
+    click = re.search(
+        r"WM\.el\('es-copy'\)\.addEventListener\('click'.*?\n    \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert click
+    assert "state.selective_copy_available" in click.group(0)
+    assert "selectedGroupIds()" in click.group(0)
+    assert re.search(
+        r"mutate\('eve_settings_copy',\s*WM\.el\('es-source'\)\.value,\s*targets\);",
+        click.group(0),
+    ), "codec fallback must preserve the two-argument call"
+
+
+def test_profiles_keeps_one_existing_primary_action():
+    assert BODY.count('class="btn acc"') == 1
+    assert 'id="es-copy" class="btn acc"' in BODY
+
+
 def test_copy_is_inert_when_it_cannot_act():
     """X1. The disabled treatment already existed and worked; the attribute
     was missing, so `Copy to selected` was full-strength accent with nothing

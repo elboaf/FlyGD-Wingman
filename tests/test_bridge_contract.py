@@ -111,6 +111,23 @@ def test_the_eve_settings_route_registers_all_three_of_its_pushes():
         assert "evesettings.js" in registered.get(name, []), name
 
 
+def test_selective_copy_reuses_the_existing_bridge_contract():
+    """Task 4 adds an argument, not an endpoint, push, or handler owner."""
+    from wingman.ui.api import Api
+
+    assert callable(getattr(Api, "eve_settings_copy", None))
+    registered = registered_names()
+    assert set(registered) & {
+        "onEveSettingsNames",
+        "onEveSettingsRunning",
+        "onEveSettingsDone",
+    } == {"onEveSettingsNames", "onEveSettingsRunning", "onEveSettingsDone"}
+    assert all(
+        set(registered[name]) == {"evesettings.js"}
+        for name in ("onEveSettingsNames", "onEveSettingsRunning", "onEveSettingsDone")
+    )
+
+
 def test_the_watch_url_is_written_exactly_once():
     """One place decides what a YouTube watch URL looks like, and it is
     uploader.watch_url.
