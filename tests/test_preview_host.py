@@ -2415,17 +2415,59 @@ def test_a_refused_switch_brings_the_minimized_client_back(monkeypatch):
     ]
 
 
-def test_a_refused_switch_after_a_failed_minimize_restores_nothing(monkeypatch):
-    """A zero send means the client never processed the message and is
-    still where it was. Nothing to bring back; a restore would be a second
-    unexplained foreground change."""
+def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
+    """A zero send is not proof the client stayed up: a send that timed
+    out is still delivered and processed later, so it can minimize the
+    client 50ms after the refusal. Restoring anyway costs nothing when
+    the send really did fail -- activate() on the window that still
+    holds the foreground is its own early return."""
     h, libs, order = _switching_host(
         monkeypatch, foreground=0x1111, activated=False, send_result=0
     )
 
     assert h._activate_client(libs, h._clients["Bravo"]) is False
 
-    assert [e for e in order if e[0] == "activate"] == [("activate", 0x2222)]
+    assert [e for e in order if e[0] == "activate"] == [
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+    ]
+
+
+def test_a_refused_switch_logs_whether_the_rollback_took(monkeypatch, caplog):
+    """The refusal that stopped the switch -- no recent input in this
+    process -- applies to the rollback too. Without a line of its own the
+    log shows two 'did not take' lines for two hwnds and nothing saying
+    the second was a rollback; a refused rollback IS the empty-desktop
+    case the smoke checklist says to watch for."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, activated=False)
+
+    with caplog.at_level("INFO", logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    lines = [r.message for r in caplog.records if "refused" in r.message]
+    assert lines == ["Switch to 0x2222 refused; could not restore 0x1111"]
+
+
+def test_a_failed_animation_restore_is_not_silent(monkeypatch, caplog):
+    """The one outcome _animation_off exists to prevent is the user's
+    desktop left without its animation. When the restore call is refused
+    there is nothing to retry, but it must reach the log."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+    real = libs.user32.SystemParametersInfoW
+
+    def refuse_restore(action, size, info, winini):
+        if action == host.win32.SPI_SETANIMATION and info.contents.iMinAnimate:
+            return False
+        return real(action, size, info, winini)
+
+    monkeypatch.setattr(libs.user32, "SystemParametersInfoW", refuse_restore)
+
+    with caplog.at_level("WARNING", logger="wingman.preview.host"):
+        assert h._activate_client(libs, h._clients["Bravo"]) is True
+
+    assert any(
+        "Could not restore the window animation" in r.message for r in caplog.records
+    )
 
 
 def test_a_failed_minimize_still_activates(monkeypatch):

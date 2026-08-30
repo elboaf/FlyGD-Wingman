@@ -37,7 +37,7 @@ def should_minimize(*, enabled, previous_key, next_key, never) -> bool:
     return previous_key not in (never or [])
 
 
-def should_restore(*, activated, minimized) -> bool:
+def should_restore(*, activated, attempted) -> bool:
     """Whether a refused switch must bring the outgoing client back.
 
     TriffView's safety property was "a failed switch minimizes nothing",
@@ -48,8 +48,11 @@ def should_restore(*, activated, minimized) -> bool:
     their old client gone and the new one never arrived, strictly worse
     than the switch simply not working.
 
-    Only after a minimize that actually went through: a send that timed
-    out or was refused left the client where it was, and "restoring" it
-    would be a second unexplained foreground change.
+    `attempted`, not "minimized": the send's verdict is not trusted here.
+    A send that timed out is still delivered and processed later, so a
+    client the host believes is "still where it was" can go down 50ms
+    after a refused switch. Restoring on every attempt covers that, and
+    costs nothing when the send really did fail -- activate() on a window
+    that still holds the foreground is its own early return.
     """
-    return minimized and not activated
+    return attempted and not activated

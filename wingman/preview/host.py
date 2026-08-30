@@ -86,25 +86,41 @@ def _animation_off(libs):
         yield
         return
     info = win32.ANIMATIONINFO()
-    info.cbSize = ctypes.sizeof(info)
-    size = ctypes.sizeof(info)
+    size = info.cbSize = ctypes.sizeof(info)
     got = libs.user32.SystemParametersInfoW(
         win32.SPI_GETANIMATION, size, ctypes.pointer(info), 0
     )
     if not got or not info.iMinAnimate:
         yield
         return
+    # Restored to what was read, not to a literal 1: the field is
+    # documented as a flag but it is the user's value, and it goes back
+    # exactly as it came.
+    original = info.iMinAnimate
     info.iMinAnimate = 0
-    libs.user32.SystemParametersInfoW(
+    if not libs.user32.SystemParametersInfoW(
         win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
-    )
+    ):
+        # Nothing changed, so nothing to put back -- and the zoom the
+        # user came to lose is still there, which is worth one line.
+        logger.info("Could not suspend the window animation for the switch")
+        yield
+        return
     try:
         yield
     finally:
-        info.iMinAnimate = 1
-        libs.user32.SystemParametersInfoW(
+        info.iMinAnimate = original
+        if not libs.user32.SystemParametersInfoW(
             win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
-        )
+        ):
+            # The one outcome this block exists to prevent: the user's
+            # desktop left without its animation for the session. It
+            # cannot be retried usefully from here, but it must not be
+            # silent.
+            logger.warning(
+                "Could not restore the window animation after the switch; "
+                "it stays off until the next switch or logon"
+            )
 
 
 def reconcile(current: set, desired: set):
@@ -1112,7 +1128,8 @@ class PreviewHost:
         )
 
         with _animation_off(libs):
-            minimized = minimize and self._minimize(libs, previous.hwnd)
+            if minimize:
+                self._minimize(libs, previous.hwnd)
             ok = window_mod.activate(libs, client.hwnd)
             if ok:
                 # The ring moves HERE, inline, the instant the switch is
@@ -1133,17 +1150,33 @@ class PreviewHost:
                 # OUTGOING client's ring.
                 self._foreground = client.hwnd
                 self._apply_selection(libs)
-            elif switching.should_restore(activated=ok, minimized=minimized):
+            elif switching.should_restore(activated=ok, attempted=minimize):
                 # activate() restores an iconic window before raising it,
                 # so this one call undoes the minimize AND hands the
-                # foreground back. Its verdict is deliberately not read:
-                # the switch already failed, and the caller's bool is
-                # about the client they asked for.
-                window_mod.activate(libs, previous.hwnd)
+                # foreground back. Its verdict does not reach the caller
+                # -- their bool is about the client they asked for -- but
+                # it is logged: the refusal that stopped the switch (no
+                # recent input in this process) applies to the rollback
+                # too, and without this line the user's log shows two
+                # "did not take" lines for two hwnds with nothing saying
+                # the second was a rollback. A refused rollback IS the
+                # empty-desktop case the smoke checklist says to watch.
+                restored = window_mod.activate(libs, previous.hwnd)
+                logger.info(
+                    "Switch to 0x%x refused; %s 0x%x",
+                    client.hwnd,
+                    "restored" if restored else "could not restore",
+                    previous.hwnd,
+                )
         return ok
 
-    def _minimize(self, libs, hwnd) -> bool:
-        """Send SC_MINIMIZE to *hwnd*; True only if the client processed it."""
+    def _minimize(self, libs, hwnd) -> None:
+        """Send SC_MINIMIZE to *hwnd*, logging a send that did not complete.
+
+        No verdict is returned on purpose: a timed-out send is still
+        delivered later, so the caller could not act on "it did not
+        minimize" even if told -- see switching.should_restore.
+        """
         started = time.perf_counter()
         sent = libs.user32.SendMessageTimeoutW(
             hwnd,
@@ -1155,7 +1188,7 @@ class PreviewHost:
             None,
         )
         if sent:
-            return True
+            return
         # Zero covers three cases the API does not separate: the send
         # timed out, it was abandoned because the client was hung
         # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
@@ -1180,7 +1213,6 @@ class PreviewHost:
             (time.perf_counter() - started) * 1000,
             MINIMIZE_TIMEOUT_MS,
         )
-        return False
 
     def _apply_alerts(self, libs, pending) -> None:
         """Arm the preview each event names, then make sure the tick timer
