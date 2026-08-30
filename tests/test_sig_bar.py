@@ -15,12 +15,15 @@ from wingman import settings
 
 class SigBarWindow(FakeWindow):
     """A FakeWindow plus the window-level calls the bar's bridge makes:
-    show/hide (toggle) and resize (the page's fit round-trip)."""
+    show/hide (toggle), resize (the page's fit round-trip), and the
+    width/height readbacks fit_sig_bar verifies against."""
 
     def __init__(self):
         super().__init__()
         self.hidden = False
         self.resized = []
+        self.width = 0
+        self.height = 0
 
     def show(self):
         self.hidden = False
@@ -30,6 +33,8 @@ class SigBarWindow(FakeWindow):
 
     def resize(self, width, height):
         self.resized.append((width, height))
+        self.width = width
+        self.height = height
 
 
 @pytest.fixture

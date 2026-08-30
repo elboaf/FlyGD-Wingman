@@ -723,6 +723,18 @@ def main() -> int:
         # which is the recoverable half of the two failures.
         if not api._confirm_quit_if_busy():
             return
+        # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
+        # Application.Run() with no context: it pumps until Application.
+        # Exit(), which fires only when the LAST window is gone. Leaving
+        # the bar alive parks the process inside window_mod.run() forever
+        # after the user chose Quit -- reproduced, not theorised.
+        bar = api._sigbar_window
+        if bar is not None:
+            try:
+                bar.destroy()
+                api._sigbar_window = None
+            except Exception:
+                logger.exception("Sig bar window did not destroy cleanly")
         window.destroy()  # unblocks window_mod.run() below
 
     icon = build_tray(on_open=on_open, on_quit=on_quit)

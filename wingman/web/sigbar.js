@@ -55,15 +55,14 @@
 
   // ---- fit -----------------------------------------------------------
   // pywebview's resize takes the CLIENT size in logical units; the page
-  // measures the laid-out content, which is exactly that. Called after
-  // every render because text (and so width) changes with each tick.
-  var lastW = 0;
-  var lastH = 0;
+  // measures the laid-out content, which is exactly that. Sent on EVERY
+  // render with no dedup: an early fit can land before the native handle
+  // exists and be lost, and a "nothing changed" guard would then suppress
+  // every retry forever -- a window frozen at its opening size. A resize
+  // per 3s poll tick costs nothing.
   function fit() {
     var w = document.body.scrollWidth;
     var h = document.body.scrollHeight;
-    if (w === lastW && h === lastH) return;
-    lastW = w; lastH = h;
     send('fit_sig_bar', w, h);
   }
 
@@ -117,8 +116,11 @@
 
   // The Inter face is font-display:block, but the FIRST fit can still run
   // before the font resolves; a fallback-metrics width would leave a
-  // window the wrong width until the next tick. Re-fit once fonts settle.
+  // window the wrong width until the next tick. Re-fit once fonts settle,
+  // and once more shortly after boot in case the first fit landed before
+  // the native handle existed.
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(fit);
   }
+  setTimeout(fit, 500);
 })();

@@ -28,6 +28,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from dataclasses import dataclass, replace
@@ -2255,6 +2256,14 @@ class Api:
         The page measures in CSS pixels and pywebview resizes in logical
         units -- the same units (see ui/window.py's placement notes), so
         the values are handed through unscaled.
+
+        Verify-and-retry, not fire-and-forget: pywebview's resize is
+        intermittently lost while the window is still materialising --
+        reproduced, three correct resizes inside the first half-second all
+        no-oped while the identical call at five seconds stuck. The page
+        sends one fit per poll tick, so an unverified call could leave the
+        bar at its broken birth size for the session. The caller is a
+        per-call bridge thread, so parking here costs nothing else.
         """
         bar = self._sigbar_window
         if bar is None:
@@ -2265,12 +2274,23 @@ class Api:
             return
         if width <= 0 or height <= 0:
             return
-        try:
-            bar.resize(width, height)
-        except Exception:
-            # Before `shown`, resize can raise; the page re-fits on every
-            # render, so dropping this one costs nothing.
-            logger.debug("sig bar resize failed", exc_info=True)
+        for _ in range(12):
+            try:
+                bar.resize(width, height)
+            except Exception:
+                # Before `shown`, resize can raise; the retry below is the
+                # whole reason this loop exists.
+                logger.debug("sig bar resize failed", exc_info=True)
+            try:
+                # +-1: logical->physical->logical round-trips through two
+                # integer truncations, which drifts a pixel at fractional
+                # scalings.
+                if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+                    return
+            except Exception:  # noqa: BLE001 -- no readable size (test doubles, headless): nothing to verify against, and the first call is then the whole contract.
+                return
+            time.sleep(0.25)
+        logger.debug("sig bar resize never stuck at %sx%s", width, height)
 
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.

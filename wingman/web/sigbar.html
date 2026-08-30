@@ -44,6 +44,13 @@
          --sigbar-bg is a channel triplet like --brand-rgb, written by JS. */
       background: rgb(var(--sigbar-bg) / var(--sigbar-alpha, 0.9));
     }
+    /* style.css hides .evestat below a 720px viewport -- a rule for the
+       MAIN window's narrow floor, which this bar NEVER exceeds. Without
+       this override the bar's only content is display:none at every size
+       it can have: the page measures its own padding (24x12), fit_sig_bar
+       sizes the window to that, and the user sees an empty sliver they can
+       only defeat by widening past a threshold no bar should have. */
+    .statusbar .evestat { display: flex; }
     .evestat {
       flex: 0 0 auto;
       overflow: visible;
