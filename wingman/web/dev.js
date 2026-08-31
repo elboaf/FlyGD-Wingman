@@ -1113,7 +1113,7 @@
         display_name: 'Aiga Otsolen', display_meta: 'Character 90000001' },
       { path: 'b2', created: '20260824-140300', origin: 'auto',
         kind: 'account', stem: 'core_user_1001',
-        display_name: "alpha@example", display_meta: "Account 1001" },
+        display_name: "alpha@example", display_meta: "Suartad Arsten + 2 · Account 1001" },
       { path: 'b3', created: '20260821-091544', origin: 'manual',
         kind: 'profile', stem: 'Default',
         display_name: 'Default', display_meta: 'Profile' }
@@ -1476,7 +1476,7 @@
       if (backupsScenario === 'filtered') {
         window.setTimeout(function () {
           var filter = WM.el('es-backup-filter');
-          filter.value = 'alpha@example';
+          filter.value = 'no matching backup';
           filter.dispatchEvent(new Event('input'));
         }, 0);
       }

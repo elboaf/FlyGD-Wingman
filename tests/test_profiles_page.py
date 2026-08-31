@@ -630,8 +630,10 @@ def test_copy_followup_tracks_only_a_successful_copy_lifecycle():
         CODE,
         re.DOTALL,
     )
+    assert root and "var previousRoot = state && state.root;" in root.group(1)
+    assert "clearCopyFollowup();" not in root.group(1).split("WM.send", 1)[0]
+    assert "payload && payload.root !== previousRoot" in root.group(1)
     for name, handler in (
-        ("root", root),
         ("server/profile", select),
         ("kind", kind),
         ("source", source),
@@ -1149,6 +1151,14 @@ def test_formation_account_selector_is_disabled_while_busy():
     assert "WM.setEnabled('fm-account', !state.busy" in FORMATIONS
 
 
+def test_formation_tool_is_hidden_when_it_cannot_open():
+    tool = re.search(r"function paintFormationsTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert tool
+    body = tool.group(1)
+    assert "formationsButton.hidden = !available;" in body
+    assert "#es-formations-open[hidden]" in CSS
+
+
 def test_formation_tool_owns_its_availability_through_busy_repaints():
     tool = re.search(r"function paintFormationsTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert tool
@@ -1170,6 +1180,21 @@ def test_formation_account_switch_guards_dirty_edits():
     assert "state.dirty" in switch
     assert "Discard changes?" in switch
     assert "WM.el('fm-account').value = selectedAccountPath" in switch
+
+
+def test_formation_switch_response_does_not_overwrite_an_edit_made_while_loading():
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    stale = re.search(
+        r"if \(mode === 'switch' && revision !== startedAt\) \{(.*?)\n      \}",
+        load,
+        re.DOTALL,
+    )
+    assert stale, "a switch reply must consult the revision captured before its read"
+    assert "state.dirty = true;" in stale.group(1)
+    assert "WM.el('fm-account').value = selectedAccountPath;" in stale.group(1)
+    assert "return;" in stale.group(1)
 
 
 def test_formation_switch_failure_keeps_the_editor_open_but_entry_failure_ejects():
@@ -1283,9 +1308,22 @@ def test_backup_filter_and_disclosures_remain_usable_during_mutations():
     assert "es-auto-keep-apply" in body
 
 
+def test_empty_backups_explain_that_copies_create_automatic_backups():
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "No backups yet. Copies create backups automatically." in render.group(1)
+
+
 def test_profile_backup_button_names_the_selected_profile():
     assert "'Back up ' + profileName + ' profile'" in CODE
     assert "backupButton.disabled" in CODE
+
+
+def test_profile_backup_is_the_backups_routes_primary_action():
+    button = re.search(r'<button id="es-backup-profile" class="([^"]*)"', BACKUPS_ROUTE)
+    assert (
+        button and "btn" in button.group(1).split() and "acc" in button.group(1).split()
+    )
 
 
 def test_retention_is_explicit_and_does_not_add_a_second_accent():

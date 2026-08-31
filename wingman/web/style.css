@@ -2533,6 +2533,7 @@ button.btn:disabled,
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
 }
 .es-profile-tools[hidden] { display: none; }
++#es-formations-open[hidden] { display: none; }
 
 /* Backups are a focused Profiles child with one route-level scrollbar. The
    content is bounded for scan length, while the archive itself is uncapped

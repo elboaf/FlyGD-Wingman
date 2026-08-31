@@ -252,6 +252,17 @@
                    (reply && reply.error) || 'The file could not be read.');
         return;
       }
+      // The editor stays live while an account read is in flight. If an
+      // edit lands before a switch answer, retain the document it changed
+      // and restore its account choice rather than painting another account
+      // over it. The save reload has the same revision guard below, but its
+      // selector already represents the document on screen.
+      if (mode === 'switch' && revision !== startedAt) {
+        state.dirty = true;
+        WM.el('fm-account').value = selectedAccountPath;
+        paintCommit();
+        return;
+      }
       // The edit on screen wins over the answer to a question asked
       // before it existed. Nothing is written and nothing is discarded:
       // the list keeps its `id: null` for any new formation, so the next

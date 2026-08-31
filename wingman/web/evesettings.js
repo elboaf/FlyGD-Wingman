@@ -50,7 +50,10 @@
   }
 
   function refresh() {
-    return WM.send('eve_settings_state').then(render);
+    return WM.send('eve_settings_state').then(function (payload) {
+      render(payload);
+      return payload;
+    });
   }
 
   function render(payload) {
@@ -635,7 +638,7 @@
       empty.className = 'hint';
       empty.textContent = state.backups_unreadable
         ? "Couldn't read the backups folder. Check it is still readable."
-        : (!backups.length ? 'No backups yet.'
+        : (!backups.length ? 'No backups yet. Copies create backups automatically.'
           : 'No backups match this filter.');
       host.appendChild(empty);
     }
@@ -693,8 +696,11 @@
   // account names are passed through unchanged, so the editor never tries to
   // reconstruct an identity from a file name or account id.
   function paintFormationsTool() {
-    WM.setEnabled('es-formations-open', !!(state && state.formations_available
-                  && state.accounts && state.accounts.length) && !busy
+    var formationsButton = WM.el('es-formations-open');
+    var available = !!(state && state.formations_available
+                  && state.accounts && state.accounts.length);
+    formationsButton.hidden = !available;
+    WM.setEnabled('es-formations-open', available && !busy
                   && !state.identification_active);
   }
 
@@ -844,9 +850,10 @@
     });
 
     // Profiles 4. Both controls answer the same question -- where is the
-    // EVE settings folder -- so they end the same way: selection dropped
-    // (a source picked in the old tree does not exist in the new one),
-    // state re-read, names re-resolved.
+    // EVE settings folder. A changed root drops the old selection (its
+    // source does not exist in the new tree); a refusal, cancel, or no-op
+    // leaves both selection and the completed-copy follow-up intact.
+    // Every outcome re-reads state and resolves names.
     //
     // Neither reads the return value, and Detect's is not special. The
     // bridge writes the root itself and returns "" for all three of "the
@@ -856,11 +863,15 @@
     // given the user. refresh() is what shows the outcome, in every case.
     function chooseRoot(method) {
       return function () {
-        clearCopyFollowup();
+        var previousRoot = state && state.root;
         WM.send(method).then(function () {
-          selected = {};
-          refresh();
-          WM.send('eve_settings_resolve_names');
+          refresh().then(function (payload) {
+            if (payload && payload.root !== previousRoot) {
+              clearCopyFollowup();
+              selected = {};
+            }
+            WM.send('eve_settings_resolve_names');
+          });
         });
       };
     }
