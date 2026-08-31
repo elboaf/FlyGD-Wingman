@@ -1156,7 +1156,9 @@ def test_formation_tool_is_hidden_when_it_cannot_open():
     assert tool
     body = tool.group(1)
     assert "formationsButton.hidden = !available;" in body
-    assert "#es-formations-open[hidden]" in CSS
+    assert re.search(
+        r"(?m)^#es-formations-open\[hidden\]\s*\{\s*display:\s*none;\s*\}", CSS
+    ), "the Formations hidden override must be a valid standalone CSS rule"
 
 
 def test_formation_tool_owns_its_availability_through_busy_repaints():
