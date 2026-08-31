@@ -43,7 +43,7 @@
   var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
 
   var state = {
-    path: '', name: '', formations: [], selected: 0, dirty: false, busy: false
+    path: '', formations: [], selected: 0, dirty: false, busy: false
   };
   // Account paths in the supplied choice list are UI identities. Python
   // resolves a requested path before reading it, so the returned path can
@@ -275,7 +275,6 @@
         return;
       }
       state.path = reply.path;
-      state.name = reply.name;
       selectedAccountPath = path;
       lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);

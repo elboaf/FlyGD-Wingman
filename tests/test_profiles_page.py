@@ -886,6 +886,16 @@ def test_account_identification_summary_and_entry_match_backend_preconditions():
     assert re.search(r"#es-identify-open\[hidden\]\s*\{[^}]*display:\s*none", CSS)
 
 
+def test_account_guidance_is_available_only_inside_a_selected_profile():
+    """A missing root/profile must not masquerade as failed account discovery."""
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert "var profileSelected" in block
+    assert "state.root" in block and "state.profile" in block
+    assert "es-account-tools').hidden = !accountsMode || !profileSelected" in block
+
+
 def test_account_identity_route_is_a_chromeless_profiles_subscreen():
     assert "accountidentity: 'route-accountidentity'" in APP
     assert 'data-route="accountidentity"' not in HTML
@@ -1156,6 +1166,10 @@ def test_formation_tool_is_hidden_when_it_cannot_open():
     assert tool
     body = tool.group(1)
     assert "formationsButton.hidden = !available;" in body
+    markup = re.search(r'<button[^>]+id="es-formations-open"[^>]*>', BODY)
+    assert markup and "hidden" in markup.group(0), (
+        "the unavailable Formations tool flashes before its first state payload"
+    )
     assert re.search(
         r"(?m)^#es-formations-open\[hidden\]\s*\{\s*display:\s*none;\s*\}", CSS
     ), "the Formations hidden override must be a valid standalone CSS rule"
@@ -1326,6 +1340,47 @@ def test_profile_backup_is_the_backups_routes_primary_action():
     assert (
         button and "btn" in button.group(1).split() and "acc" in button.group(1).split()
     )
+    assert BACKUPS_ROUTE.count('class="btn acc"') == 1, (
+        "Backups must retain one accent action: manual profile backup"
+    )
+
+
+def test_root_changes_repaint_cleared_targets_and_commit_state():
+    """refresh() paints the old selection, so root changes need a second paint."""
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    changed = re.search(
+        r"if \(payload && payload\.root !== previousRoot\) \{(.*?)\n            \}",
+        root.group(1),
+        re.DOTALL,
+    )
+    assert changed
+    body = changed.group(1)
+    assert body.index("selected = {};") < body.index("renderTargets();"), (
+        "clearing targets after refresh must repaint the roster and commit label"
+    )
+
+
+def test_successful_noncopy_completion_clears_copy_followup():
+    """A later mutation replaces the global result, so Copy complete cannot linger."""
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    completion = done.group(1)
+    noncopy = re.search(
+        r"else if \(payload\.ok\) \{(.*?)\n    \}", completion, re.DOTALL
+    )
+    assert noncopy and "clearCopyFollowup();" in noncopy.group(1), (
+        "successful non-copy completions must replace stale copy feedback"
+    )
+
+
+def test_formation_commit_keeps_the_eve_closed_requirement_next_to_save():
+    commit = re.search(r'<div class="row" id="fm-commit">(.*?)</div>', HTML, re.DOTALL)
+    assert commit and "Saving needs every EVE client closed." in commit.group(1)
 
 
 def test_retention_is_explicit_and_does_not_add_a_second_accent():

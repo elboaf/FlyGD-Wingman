@@ -192,7 +192,7 @@ The design does not group backups into copy events. Current backup metadata has 
 
 **Retention…** reveals the current numeric control and **Apply** action inline. Lowering retention keeps the existing confirmation and continues to state the exact number of automatic backups that will be deleted. Manual backups remain exempt.
 
-Restore, Delete, manual backup, retention, and pagination controls remain disabled while another Profiles mutation or account-identification operation owns the lock.
+Restore, Delete, manual backup, and retention controls remain disabled while another Profiles mutation or account-identification operation owns the lock. Filtering, disclosure navigation, route exit, and pagination remain available so the user can inspect the archive while a mutation runs.
 
 ## Formation editor
 

@@ -2343,7 +2343,7 @@ def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
 
     DESIGN.md makes title-bar space the scarce resource and WM.EVE_ROUTES
     already holds two entries, so the editor gets a route id and no nav
-    button: it is reached from the Profiles account card. The two halves
+    button: it is reached from the Profiles tool row. The two halves
     that would silently break it are a missing entry in WM.route's map (the
     route element never gets `active`, so the screen is blank) and a
     missing entry in WM.EVE_ROUTES (with the EVE gate off you could still

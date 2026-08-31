@@ -1110,7 +1110,7 @@
     backups: [
       { path: 'b1', created: '20260824-140300', origin: 'auto',
         kind: 'character', stem: 'core_char_90000001',
-        display_name: 'Aiga Otsolen', display_meta: 'Character 90000001' },
+        display_name: 'Yas Kalkoken', display_meta: 'Character 90000001' },
       { path: 'b2', created: '20260824-140300', origin: 'auto',
         kind: 'account', stem: 'core_user_1001',
         display_name: "alpha@example", display_meta: "Suartad Arsten + 2 · Account 1001" },

@@ -255,9 +255,9 @@
   //
   // With both destinations hidden the nav has one entry left, so it hides
   // altogether -- which is the single-screen app the README describes.
-  // The two Profiles sub-screens have no navbtn to hide, so the first loop
-  // below is a no-op for them. They are listed anyway for the SECOND half:
-  // with the gate off, a user standing in either has to be moved off it like
+  // Profiles child routes have no navbtn to hide, so the first loop below
+  // is a no-op for them. They are listed anyway for the SECOND half: with
+  // the gate off, a user standing in one has to be moved off it like
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
   WM.EVE_ROUTES = ['evesettings', 'skills', 'formations', 'accountidentity', 'backups'];

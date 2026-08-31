@@ -2555,9 +2555,12 @@ so these are the checks that matter and only a Windows machine can run them.
       the dynamic selected count and noun, changes to the neutral `Copy
       operation in progress…` while busy, then global completion clears the
       selection and shows local `Copy complete.` with **View backups**.
-      Follow that link, return with `‹ Profiles`, and verify source, target
-      filter, and selection state are preserved according to the route's
-      round-trip contract.
+      After the copy completes, select a target again and set a target filter,
+      then follow that link and return with `‹ Profiles`. The source, target
+      filter, selected target, and `Copy complete.` follow-up all survive the
+      round trip. In Backups, set a backup filter and reveal older backups;
+      leave and re-enter. Its filter is blank and pagination starts at the
+      newest 20 entries on each entry.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
 - [ ] **The folder card is one line on every visit after the first.** With a
@@ -2807,8 +2810,10 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] Open **Backups** from Profiles and verify an empty history, an unreadable
       backup directory, a matching filter, a no-match filtered state, and the
-      cleared-filter state each say the right thing. Returning to Profiles and
-      opening Backups again preserves the intended round-trip state.
+      cleared-filter state each say the right thing. While a Profiles mutation
+      is pending, filtering, disclosure navigation, route exit, and `Show 20
+      older backups` remain usable while Restore, Delete, manual backup, and
+      retention Apply remain disabled.
 - [ ] **The manager has one route scrollbar.** At 840×625 and at wide widths,
       its history scrolls with the route rather than an inner list. `Show 20
       older backups` reveals the next batch without reordering rows, and the
@@ -2833,7 +2838,8 @@ so these are the checks that matter and only a Windows machine can run them.
 
 ## Probe formations (Profiles → Edit formations…)
 
-Needs a real install and every EVE client closed for the write lines.
+Needs a real install for the write lines; the editor itself states the
+close-EVE requirement beside Save.
 
 - [ ] The **Edit formations…** tool is present when the codec is bundled and
       absent (not broken) when `bin/wingman-settings-codec.exe` is removed from
@@ -2842,7 +2848,9 @@ Needs a real install and every EVE client closed for the write lines.
       from Characters mode and from Accounts mode: the initial account follows
       the stated choice, its canonical account label is selected, and its
       formations load. With no edits, switch to another account and verify its
-      own formations replace the first account's data.
+      own formations replace the first account's data. In `?dev=1&formations-account=switch`,
+      wait for the fixture's 150 ms formation-read delay before judging the
+      replacement; the delay deliberately exposes the asynchronous switch path.
 - [ ] **Dirty and failed account changes preserve visible work.** Make an edit,
       choose another account, decline the discard confirmation, and verify the
       original account and edit remain selected. Accept on a later attempt and

@@ -290,7 +290,11 @@
     }).length;
     var canIdentify = !!(state && state.accounts.length
       && state.characters.length);
-    WM.el('es-account-tools').hidden = !accountsMode;
+    // Discovery guidance only has meaning after Python has identified the
+    // selected profile it searched. Before then, folder/profile setup owns
+    // recovery; showing account guidance would diagnose an empty search.
+    var profileSelected = !!(state && state.root && state.profile);
+    WM.el('es-account-tools').hidden = !accountsMode || !profileSelected;
     WM.el('es-account-summary').textContent = identified + ' of '
       + accounts.length + ' accounts identified';
     WM.el('es-account-guidance').textContent = !accounts.length
@@ -869,6 +873,10 @@
             if (payload && payload.root !== previousRoot) {
               clearCopyFollowup();
               selected = {};
+              // refresh() has already painted the old local selection over
+              // the newly loaded tree. Repaint it so the roster, count and
+              // disabled Copy action agree with the cleared state.
+              renderTargets();
             }
             WM.send('eve_settings_resolve_names');
           });
@@ -1238,6 +1246,10 @@
     if (completedMutation === 'eve_settings_copy') {
       copyFollowup = !!payload.ok;
       if (payload.ok) selected = {};
+    } else if (payload.ok) {
+      // The global status now describes a later operation, so the quiet
+      // copy-specific follow-up cannot remain beside unrelated feedback.
+      clearCopyFollowup();
     }
     setBusy(false);
     refresh();

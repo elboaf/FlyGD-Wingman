@@ -242,6 +242,14 @@ def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_
     assert account["character_ids"] == ["90000000", "90000001", "90000002"]
     assert 'display_name: "alpha@example"' in DEV_JS
     assert 'display_meta: "Suartad Arsten + 2 · Account 1001"' in DEV_JS
+    character_backup = re.search(
+        r"kind: 'character', stem: 'core_char_90000001',\s*"
+        r"display_name: '([^']+)', display_meta: 'Character 90000001'",
+        DEV_JS,
+    )
+    assert character_backup and character_backup.group(1) == "Yas Kalkoken", (
+        "the character backup must use the name belonging to its file id"
+    )
 
 
 def test_profiles_fixture_covers_new_visual_states():
@@ -333,6 +341,19 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
     assert "devAccountLabels" not in DEV_JS
     assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
     assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+def test_formation_switch_fixture_keeps_its_read_delay_visible():
+    """The switch screenshot needs the async gap before it changes account data."""
+    load = re.search(
+        r"api\.eve_settings_formations = function \(path\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert load and "setTimeout(function ()" in load.group(1)
+    assert "}, 150);" in load.group(1), (
+        "the dev switch checkpoint depends on the 150ms formation-read delay"
+    )
 
 
 def test_copy_fixture_has_stable_busy_and_settled_success_states():

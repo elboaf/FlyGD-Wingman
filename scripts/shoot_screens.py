@@ -39,8 +39,8 @@ class Screen(NamedTuple):
 # route is renamed.
 #
 # formations is excluded the same way and for a stronger reason. It is a
-# sub-screen of Profiles reached from that screen's account card, and it
-# draws nothing until WM.openFormations has loaded a real account file:
+# sub-screen of Profiles reached from that screen's tool row, and it draws
+# nothing until WM.openFormations has loaded a real account file:
 # this tool reaches a screen only through WM.route (see shoot()), and
 # Screen carries no setup hook, so a capture would photograph an empty
 # editor and put it in the set as if that were the screen. Give Screen a

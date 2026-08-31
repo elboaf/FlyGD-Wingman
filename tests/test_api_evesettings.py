@@ -1024,7 +1024,9 @@ def test_unidentified_account_backup_is_explicit_without_duplicating_id(
 
     assert row["display_name"] == "Account 10"
     assert row["display_meta"] == "Not identified"
-    assert "10" not in row["display_meta"]
+    assert (
+        " · ".join((row["display_name"], row["display_meta"])).count("Account 10") == 1
+    )
 
 
 def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
