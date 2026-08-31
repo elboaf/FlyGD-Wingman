@@ -692,6 +692,22 @@ def test_preview_layout_sources_include_valid_offline_entries_and_mark_online(
     ]
 
 
+def test_preview_layout_sources_do_not_claim_offline_when_host_is_stopped(
+    monkeypatch, tmp_path
+):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _FakeSizeHost(
+        is_running=False,
+        layouts={"Saved": layout.Entry(geometry.Rect(3, 4, 640, 360))},
+    )
+
+    assert api.get_preview_hotkey_state()["layout_sources"] == [
+        {"name": "Saved", "online": None}
+    ]
+
+
 def test_copy_preview_layout_delegates_to_the_host_snapshot(monkeypatch, tmp_path):
     from wingman.preview import geometry, layout
 

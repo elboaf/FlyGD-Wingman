@@ -1942,6 +1942,9 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
 
     assert picker.index("endCapture();") < picker.index("WM.choose(")
     assert "'Online'" in picker and "'Offline'" in picker
+    assert "'Saved placements'" in picker
+    assert "source.online === true" in picker
+    assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
     assert "focusCopyTarget(name)" in picker
@@ -1954,11 +1957,19 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     html = _strip_html_comments(HTML)
     assert 'id="preview-copy-empty"' in html
     assert 'id="preview-copy-status"' in html
-    assert 'role="status"' in html.split('id="preview-copy-status"', 1)[1][:100]
+    status = html.split('id="preview-copy-status"', 1)[1][:100]
+    assert 'role="status"' in status
+    assert "hidden" in status
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     assert "preview-copy-empty" in src
     assert "preview-copy-status" in src
+    assert "status.classList.toggle('err', !!error)" in src
+    assert "status.hidden = !status.textContent" in src
     assert "function focusCopyTarget(" in src
+
+    section = src.split("document.addEventListener('wm:section'", 1)
+    assert len(section) == 2
+    assert "copyStatus('', false)" in section[1].split("});", 1)[0]
 
 
 def test_clear_is_not_drawn_where_it_could_only_refuse():

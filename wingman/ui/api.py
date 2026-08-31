@@ -2652,7 +2652,7 @@ class Api:
         live = host is not None and host.is_running
         online = set(host.characters() if live else [])
         layout_sources = [
-            {"name": name, "online": name in online}
+            {"name": name, "online": name in online if live else None}
             for name in sorted(
                 self._preview_layout_entries(),
                 key=lambda name: (name not in online, name.casefold(), name),

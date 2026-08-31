@@ -475,7 +475,8 @@
     var status = WM.el('preview-copy-status');
     if (!status) { return; }
     status.textContent = text || '';
-    status.classList.toggle('error', !!error);
+    status.classList.toggle('err', !!error);
+    status.hidden = !status.textContent;
   }
 
   function makeCopyButton(name, off) {
@@ -484,13 +485,17 @@
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
       endCapture();
+      copyStatus('', false);
       var sources = copySources(name);
       var groups = [
         {label: 'Online', options: []},
-        {label: 'Offline', options: []}
+        {label: 'Offline', options: []},
+        {label: 'Saved placements', options: []}
       ];
       sources.forEach(function (source) {
-        groups[source.online ? 0 : 1].options.push({
+        var group = source.online === true ? 0
+                  : (source.online === false ? 1 : 2);
+        groups[group].options.push({
           value: source.name, label: source.name
         });
       });
@@ -1391,6 +1396,7 @@
   // fire on a plain tab switch and was the wrong event to listen for here.
   // wm:section, not wm:route -- see the matching comment in bookmarks.js.
   document.addEventListener('wm:section', function (event) {
+    copyStatus('', false);
     if (event.detail === 'previews') {
       refresh();
       return;
