@@ -1766,6 +1766,14 @@ pytest — the engine is AutoHotkey.
       finisher wrote it into a real bookmark with nothing flagging it.
       Then confirm the normal path still works — select a scanner row,
       Grab Sig, and check the readout shows that row's signature.
+- [ ] **Correcting a finisher with the OTHER family does not eat a slot.**
+      Root `1`, Grab Sig, C1 finisher, then HS. Expected: next num `11`,
+      next alpha `1B` — the superseded C1 slot is released because the
+      pasted key replaced the bookmark outright (`1-XXX 1` became
+      `1A-XXX H`), and only the H key's slot is consumed. The bug: next
+      num read `12`, the C1 slot still marked used with no 1-key bookmark
+      on anything. Same-family corrections keep their existing meaning:
+      C1 then C1 again consumes exactly one slot, as do HS then LS.
 - [ ] **Set Root on an ENTIRE bookmark list fills gaps.** This is the
       "Entire bookmark list" row of `docs/bookmarks_reference.md`. Select
       the whole list of a scanned system — **including the system's own
