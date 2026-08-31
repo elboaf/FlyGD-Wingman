@@ -1179,7 +1179,7 @@
 
   <div class="route" id="route-evesettings">
     <div class="settings">
-      <section class="card">
+      <section class="card es-context-card">
         <!-- The pill lives in the heading, not in a row: the folder row it
              used to share is the half of this card that collapses away, and
              "EVE running" is the hazard the copy below is guarded against,
@@ -1270,6 +1270,10 @@
         </div>
         <p id="es-warning" class="hint" hidden></p>
       </section>
+
+      <div class="es-profile-tools">
+        <button class="btn" id="es-backups-open" type="button">Backups…</button>
+      </div>
 
       <section class="card">
         <h2>Copy EVE settings</h2>
@@ -1384,6 +1388,37 @@
         <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
+      <!-- The way into the probe formation editor, and the only one.
+           Formations live in the ACCOUNT file (core_user_*.dat), so this
+           card offers accounts and never characters -- which is also why
+           it is a card of its own rather than a control on the copy card,
+           whose Characters/Accounts switch would otherwise decide whether
+           the entry point exists.
+
+           Hidden outright when the decoder is not present, rather than
+           offered and then refused: eve_settings_formations answers "not
+           available in this installation", and a control whose only
+           possible outcome is that sentence is worse than no control.
+           evesettings.js reads formations_available off the state
+           payload. -->
+      <section class="card" id="es-formations-card" hidden>
+        <h2>Probe formations</h2>
+        <div class="row">
+          <label class="lab" for="es-formations-account">Account</label>
+          <select id="es-formations-account" class="field"></select>
+          <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
+        </div>
+        <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
+      </section>
+    </div>
+  </div>
+
+  <div class="route" id="route-backups">
+    <div class="backups-shell">
+      <div class="row backups-head">
+        <button class="btn" id="es-backups-back">&lsaquo; Profiles</button>
+        <h1>Backups</h1>
+      </div>
       <section class="card es-backups-card">
         <h2>Backups</h2>
         <div class="row">
@@ -1413,29 +1448,6 @@
         </div>
         <div id="es-backups"></div>
         <button id="es-backups-more" class="btn" type="button" hidden>Show 20 older backups</button>
-      </section>
-
-      <!-- The way into the probe formation editor, and the only one.
-           Formations live in the ACCOUNT file (core_user_*.dat), so this
-           card offers accounts and never characters -- which is also why
-           it is a card of its own rather than a control on the copy card,
-           whose Characters/Accounts switch would otherwise decide whether
-           the entry point exists.
-
-           Hidden outright when the decoder is not present, rather than
-           offered and then refused: eve_settings_formations answers "not
-           available in this installation", and a control whose only
-           possible outcome is that sentence is worse than no control.
-           evesettings.js reads formations_available off the state
-           payload. -->
-      <section class="card" id="es-formations-card" hidden>
-        <h2>Probe formations</h2>
-        <div class="row">
-          <label class="lab" for="es-formations-account">Account</label>
-          <select id="es-formations-account" class="field"></select>
-          <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
-        </div>
-        <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
       </section>
     </div>
   </div>

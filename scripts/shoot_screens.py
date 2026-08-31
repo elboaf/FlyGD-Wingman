@@ -45,7 +45,11 @@ class Screen(NamedTuple):
 # Screen carries no setup hook, so a capture would photograph an empty
 # editor and put it in the set as if that were the screen. Give Screen a
 # setup hook before adding it.
-EXCLUDED_ROUTES = frozenset({"firstrun", "formations"})
+#
+# backups is excluded while its route shell is the only implemented slice.
+# The screenshot inventory adds it once the manager's deterministic visual
+# states land, so intermediate route work still keeps this derived list honest.
+EXCLUDED_ROUTES = frozenset({"firstrun", "formations", "backups"})
 
 # `gated` mirrors app.js's WM.EVE_ROUTES + WM.EVE_SECTIONS. Not retyped
 # from memory: test_shoot_screens.py asserts this column against app.js.

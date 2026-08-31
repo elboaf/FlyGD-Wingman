@@ -2513,7 +2513,7 @@ button.btn:disabled,
    shares the copy card's edge. */
 #route-evesettings > .settings > .card { max-width: 620px; margin-inline: 0; }
 #route-evesettings > .settings > .card:has(> .es-roster),
-#route-evesettings > .settings > .es-backups-card { max-width: none; }
+#route-evesettings > .settings > .es-context-card { max-width: none; }
 /* The card grew; its form rows and its prose did not. 586px, not 620:
    inside the card the 620 wrapper only ever gave them 586, and this is
    holding that measure rather than restoring a number from one level up. */
@@ -2521,9 +2521,46 @@ button.btn:disabled,
   max-width: 586px;
 }
 
-/* Backups use the route scrollbar. Restore is a high-cost choice, so its
-   identity gets the page's width instead of a short nested viewport. */
-.es-backups-card > :not(#es-backups):not(#es-backup-head) { max-width: 586px; }
+/* The context is part of the copy decision, so it uses the same route width
+   as the roster below it. .es-path retains min-width:0 and ellipsis, keeping
+   a long root from pushing Change beyond that width. */
+.es-context-card { width: 100%; }
+
+/* Quiet tools sit between context and work rather than becoming another
+   card in the copy flow. They wrap at the window floor instead of creating
+   horizontal overflow. */
+.es-profile-tools {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
+}
+.es-profile-tools[hidden] { display: none; }
+
+/* Backups are a focused Profiles child with one route-level scrollbar. The
+   content is bounded for scan length, while the archive itself is uncapped
+   and uses the whole column rather than introducing a nested viewport. */
+#route-backups { flex-direction: column; overflow-y: auto; padding: 12px; }
+.backups-shell {
+  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 900px;
+}
+.backups-shell[hidden] { display: none; }
+.backups-head { flex-wrap: wrap; margin-bottom: 0; }
+.backups-head[hidden] { display: none; }
+.backups-head h1 {
+  margin: 0; color: var(--text); font-size: 20px; font-weight: 650;
+}
+#route-backups .es-backups-card { width: 100%; max-width: none; }
+
+/* Task 3 mounts the existing retention controls in this native disclosure.
+   It belongs to the page flow, not inside another card treatment. */
+#es-retention {
+  padding-block: 8px; border-block: 1px solid var(--border);
+}
+#es-retention[hidden] { display: none; }
+#es-retention > summary {
+  display: inline-flex; align-items: center; cursor: pointer;
+  color: var(--text-dim); font-size: var(--fs-body);
+}
+#es-retention > summary[hidden] { display: none; }
 
 .es-backup-grid {
   display: grid;

@@ -30,6 +30,11 @@ ACCOUNT_ROUTE = re.search(
     HTML,
     re.DOTALL,
 ).group(0)
+BACKUPS_ROUTE = re.search(
+    r'<div class="route" id="route-backups">.*?\n  </div>',
+    HTML,
+    re.DOTALL,
+).group(0)
 
 
 def _strip_html_comments(text: str) -> str:
@@ -86,14 +91,9 @@ def test_the_backup_note_takes_its_number_off_the_payload():
     assert 'id="es-copy-backup-note"' in HTML, (
         "the commit row has no mount point, so the note renders nowhere"
     )
-    commit_at = HTML.index('id="es-commit"')
-    note_at = HTML.index('id="es-copy-backup-note"')
-    backups_at = HTML.index("<h2>Backups</h2>")
-    assert commit_at < note_at < backups_at, (
-        "the note must sit between the commit row and the Backups card: "
-        "above the button it reassures, and not inside the card that "
-        "already carries the full sentence"
-    )
+    commit_at = BODY.index('id="es-commit"')
+    note_at = BODY.index('id="es-copy-backup-note"')
+    assert commit_at < note_at, "the note must follow the copy commit row it reassures"
     assert CODE.count("Every copy backs up what it is about to overwrite") == 1, (
         "the backup sentence is written twice; paintPill's pattern is one "
         "string over two mount points, for this exact reason"
@@ -430,7 +430,7 @@ def test_the_roster_is_columned_and_uncapped():
     assert not re.search(r"#es-backups\s*\{[^}]*max-height", CSS), (
         "backups must use the route scrollbar, not a nested capped viewport"
     )
-    assert 'id="es-backups" class="list-scroll"' not in BODY
+    assert 'id="es-backups" class="list-scroll"' not in BACKUPS_ROUTE
 
 
 def test_a_name_may_not_break_across_a_column():
@@ -643,13 +643,30 @@ def test_copy_is_inert_when_it_cannot_act():
 # ---- round 5: the roster, the summary and the retention note -----------
 
 
+def test_profiles_opens_backups_without_mounting_the_archive_inline():
+    assert 'id="es-backups-open"' in BODY
+    assert "<h2>Backups</h2>" not in BODY
+    assert "function openBackups()" in CODE
+    assert "WM.route('backups')" in CODE
+
+
+def test_backups_is_a_chromeless_profiles_subroute():
+    assert 'id="route-backups"' in HTML
+    assert "backups: 'route-backups'" in APP
+    assert 'data-route="backups"' not in HTML
+    for declaration in ("WM.CHROMELESS_ROUTES", "WM.EVE_ROUTES"):
+        block = re.search(declaration + r" = \[([^]]+)\]", APP)
+        assert block and "'backups'" in block.group(1)
+    assert "name === 'backups'" in APP
+
+
 def test_the_retention_note_follows_the_action_it_qualifies():
     """R2. A retention policy opened the Backups card, ahead of the one
     control in it. The note is not cut -- it is the promise that makes the
     copy card above it safe -- but a card whose point is an action may not
     lead with the policy that governs it.
     """
-    card = re.search(r"<h2>Backups</h2>(.*?)</section>", BODY, re.DOTALL)
+    card = re.search(r"<h2>Backups</h2>(.*?)</section>", BACKUPS_ROUTE, re.DOTALL)
     assert card, "the Backups card no longer opens with its own heading"
     button = card.group(1).index('id="es-backup-profile"')
     note = card.group(1).index('id="es-backup-note"')
@@ -930,16 +947,16 @@ def test_account_targets_render_human_identity_with_secondary_number():
 
 
 def test_backups_are_a_full_width_column_grid_without_nested_scrolling():
-    assert 'class="card es-backups-card"' in BODY
-    assert 'id="es-backups" class="list-scroll"' not in BODY
+    assert 'class="card es-backups-card"' in BACKUPS_ROUTE
+    assert 'id="es-backups" class="list-scroll"' not in BACKUPS_ROUTE
     grid = re.search(r"\.es-backup-grid \{([^}]*)\}", CSS)
     assert grid and "grid-template-columns" in grid.group(1)
     assert "minmax(220px, 1fr)" in grid.group(1), (
         "the target identity must own the flexible backup column"
     )
-    assert re.search(r"\.es-backups-card\s*\{\s*max-width:\s*none", CSS), (
-        "the Backups card must use the route's available width"
-    )
+    assert re.search(
+        r"#route-backups\s+\.es-backups-card\s*\{[^}]*width:\s*100%", CSS
+    ), "the Backups card must use the route's available width"
 
 
 def test_backup_rows_use_resolved_labels_and_reveal_history_in_batches():
@@ -958,8 +975,8 @@ def test_profile_backup_button_names_the_selected_profile():
 
 
 def test_retention_is_explicit_and_does_not_add_a_second_accent():
-    assert 'id="es-auto-keep"' in BODY
-    assert 'id="es-auto-keep-apply" class="btn"' in BODY
+    assert 'id="es-auto-keep"' in BACKUPS_ROUTE
+    assert 'id="es-auto-keep-apply" class="btn"' in BACKUPS_ROUTE
     assert "eve_settings_set_auto_keep" in CODE
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1

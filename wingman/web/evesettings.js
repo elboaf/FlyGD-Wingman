@@ -570,6 +570,13 @@
       + ' ' + stamp[4] + ':' + stamp[5];
   }
 
+  function openBackups() {
+    backupVisible = 20;
+    WM.route('backups');
+    renderBackups();
+    refresh();
+  }
+
   function renderBackups() {
     var host = WM.el('es-backups');
     var backups = state.backups || [];
@@ -625,7 +632,6 @@
     });
     var more = WM.el('es-backups-more');
     more.hidden = backups.length <= backupVisible;
-    more.disabled = busy || !!state.identification_active;
     if (!more.hidden) {
       more.textContent = 'Show ' + Math.min(20, backups.length - backupVisible)
         + ' older backups';
@@ -746,7 +752,7 @@
     var identifying = !!(state && state.identification_active);
     WM.el('es-backup-profile').disabled = value || identifying
       || !(state && state.profile);
-    ['es-auto-keep-apply', 'es-formations-open', 'es-backups-more',
+    ['es-auto-keep-apply', 'es-formations-open',
      'es-identify-open', 'es-identify-start', 'es-manage-toggle',
      'es-account-name-apply', 'es-character-add-btn'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
@@ -864,6 +870,11 @@
       pendingCharacterId = '';
       rosterAccountId = '';
       WM.route('accountidentity');
+    });
+
+    WM.el('es-backups-open').addEventListener('click', openBackups);
+    WM.el('es-backups-back').addEventListener('click', function () {
+      WM.route('evesettings');
     });
 
     WM.el('es-manage-toggle').addEventListener('click', function () {
@@ -1103,14 +1114,18 @@
         WM.send('eve_settings_identification_cancel');
         if (state) state.identification_active = false;
       }
-      if (event.detail !== 'evesettings') return;
-      // Every visit starts collapsed. render() is what repaints it, and it
-      // runs off the refresh below.
-      expanded = false;
-      identityExpanded = false;
-      clearIdentification();
-      identityStep = 'idle';
-      backupVisible = 20;
+      var stateRoute = event.detail === 'evesettings'
+        || event.detail === 'backups';
+      if (!stateRoute) return;
+      if (event.detail === 'evesettings') {
+        // Every Profiles visit starts collapsed. render() is what repaints
+        // it, and it runs off the refresh below.
+        expanded = false;
+        identityExpanded = false;
+        clearIdentification();
+        identityStep = 'idle';
+        backupVisible = 20;
+      }
       refresh();
       // Names are resolved on first open, never at launch: the tray app
       // starts hidden and must not make a network call nobody asked for.
