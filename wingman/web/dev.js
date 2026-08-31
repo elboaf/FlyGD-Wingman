@@ -48,7 +48,7 @@
    // read `applied`/`error` the same way, even though neither reverts a
    // control state on refusal -- Size… is a one-shot dialog, not a
    // persistent checkbox.
-   'set_preview_size', 'reset_preview_layouts',
+   'set_preview_size', 'copy_preview_layout', 'reset_preview_layouts',
    // Task 9: same shape; settings.js reverts the checkbox on anything
    // that is not `applied`, same as show_labels/opacity above.
    'set_preview_snap',
@@ -825,6 +825,12 @@
       // this listed everyone the fixture would hide the whole point of the
       // gate, which is that most of a real roster cannot be sized.
       sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
+      // Sources deliberately cross the online boundary: the picker groups
+      // both in words, and offline geometry is the feature's primary value.
+      layout_sources: [
+        {name: 'Aiga Otsolen', online: true},
+        {name: 'Tanuki Solette', online: false}
+      ],
       // ACTIVE, matching what Api._bookmark_chords would return for the
       // get_bookmarks fixture above: it ships `enabled: true` with
       // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a

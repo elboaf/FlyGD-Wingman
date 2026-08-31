@@ -253,6 +253,26 @@ def test_layout_and_roster_writes_share_one_transaction():
     assert "Alice" in live["preview"]["layouts"]
 
 
+def test_replace_supersedes_a_pending_delta_for_the_same_character():
+    """A drag queued before Copy must not fire afterward and put the old
+    target rectangle back on disk after Copy already reported success."""
+    live = {"preview": {"layouts": {}}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    old = Entry(Rect(1, 2, 320, 210))
+    copied = Entry(Rect(50, 60, 640, 360))
+    store.record("Alice", old)
+    old_timer = store._timer
+
+    assert store.replace("Alice", copied) is True
+    old_timer.fire()
+
+    assert old_timer.cancelled is True
+    assert (
+        live["preview"]["layouts"]["Alice"]
+        == layout.serialize({"Alice": copied})["Alice"]
+    )
+
+
 def test_clear_empties_every_saved_layout():
     live = {"preview": {"layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4}}}}
     store = LayoutStore(_updater(live), timer=FakeTimer)

@@ -904,6 +904,13 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty">Start an EVE client to
             add a character here.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-copy-empty" hidden>Move or resize
+            another character's preview to make its placement available
+            here.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-copy-status"
+                aria-live="polite"></span></div>
       </section>
     </div>
 
@@ -1820,6 +1827,8 @@
              window.prompt, which WebView2 captions with the page origin. -->
         <input class="field mono" id="dlg-input" type="text"
                spellcheck="false" autocomplete="off" hidden>
+        <label class="lab" id="dlg-select-label" for="dlg-select" hidden></label>
+        <select class="field" id="dlg-select" hidden></select>
         <div class="buttons">
           <button class="btn" id="dlg-cancel" hidden>Cancel</button>
           <button class="btn acc" id="dlg-ok">OK</button>

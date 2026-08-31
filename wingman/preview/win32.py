@@ -89,6 +89,7 @@ WM_APP_RESTYLE = WM_APP + 5
 WM_APP_RESET_LAYOUTS = WM_APP + 6
 WM_APP_RESIZE_ONE = WM_APP + 7
 WM_APP_RESIZE_ALL = WM_APP + 8
+WM_APP_APPLY_LAYOUTS = WM_APP + 9
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02

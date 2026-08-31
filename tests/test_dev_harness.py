@@ -490,6 +490,14 @@ def test_the_preview_fixture_uses_real_gesture_strings():
         )
 
 
+def test_the_preview_fixture_carries_online_and_offline_layout_sources():
+    block = _fixture_body("api.get_preview_hotkey_state")
+    assert "layout_sources" in block
+    assert re.search(r"name:\s*'[^']+',\s*online:\s*true", block)
+    assert re.search(r"name:\s*'[^']+',\s*online:\s*false", block)
+    assert "copy_preview_layout" in _stubbed()
+
+
 def test_the_bookmark_fixture_uses_real_ahk_strings():
     """The mirror of the above, for the subsystem that really does use AHK.
 

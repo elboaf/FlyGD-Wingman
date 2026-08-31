@@ -2036,6 +2036,9 @@ button.btn:disabled,
    [hidden] would otherwise lose to it. */
 #dlg-input { width: 100%; margin-top: 14px; }
 #dlg-input[hidden] { display: none; }
+#dlg-select-label { display: block; margin-top: 14px; color: var(--text-dim); }
+#dlg-select-label[hidden], #dlg-select[hidden] { display: none; }
+#dlg-select { width: 100%; margin-top: 4px; }
 
 /* ====================== settings route ==============================
    A route in this window, not a second OS window.
@@ -2262,10 +2265,10 @@ button.btn:disabled,
   /* A fixed name column, four content-sized control tracks, then one
      flexible one. The character name sits in track 1 rather than taking a
      line of its own -- the `.lab` override below no longer spans -- and
-     the four that follow size the CONTROLS beside it: Off, bind button,
-     the actions cell (Clear/Edit… together, `.rowacts`), Size… --
-     exactly the four children previews.js's makeRow appends after the
-     label. Clear and Edit… used to be two of those children, one track
+     the four that follow size the CONTROLS beside it: Preview, bind button,
+     the keybind actions cell (Clear/Edit… together, `.rowacts`), and the
+     Geometry actions cell (Size…/Copy… together) -- exactly the four
+     children previews.js's makeRow appends after the label. Clear and Edit… used to be two of those children, one track
      each; they now share the one `.rowacts` span, which is what dropped
      the count from five. Lock and Never minimize used to sit here too, as
      a sixth and a conditional seventh; both now render once, in their own
@@ -2455,6 +2458,7 @@ button.btn:disabled,
    both, so a row without Clear reads as an empty slot rather than as a
    shifted control. */
 .rowacts { display: flex; gap: 2px; justify-content: flex-end; }
+.geometry-actions { display: flex; align-items: center; gap: 8px; }
 
 /* ====================== EVE Settings route ==========================
    Same card markup as the settings and bookmarks routes, so it needs the

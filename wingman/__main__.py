@@ -511,9 +511,10 @@ def build_preview_host(state, api_box):
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
             flush_layouts=store.flush,
-            # Same reasoning as flush_layouts above: a bound method, never a
-            # lambda wrapping it.
+            # Same reasoning as flush_layouts above: bound methods, never
+            # lambdas wrapping them.
             clear_layouts=store.clear,
+            replace_layout=store.replace,
             on_clients_changed=on_clients_changed,
             on_hotkey_status=on_hotkey_status,
             on_bind_captured=on_bind_captured,

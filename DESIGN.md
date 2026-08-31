@@ -489,10 +489,19 @@ between them:
 
 | the action runs… | use | why |
 |---|---|---|
-| page-side, page-owned | `WM.confirm` (`panel.js:280`) | the app's own overlay, and the only one safe on the bridge thread |
+| page-side, page-owned | `WM.confirm`, `WM.prompt`, or `WM.choose` (`panel.js`) | the app's own overlay, and the only one safe on the bridge thread |
 | on a Python worker | `Api._confirm` (`api.py:412`) | blocks the calling thread until `dialog_response` arrives — from a bridge method that deadlocks the very thread that has to deliver the answer |
 | on a worker **holding the mutation lock** | `Api._eve_confirm` (`api.py:2851`) | `_confirm` bounded by `EVE_CONFIRM_TIMEOUT_S`, with a missing answer read as **no** |
 | where the row is the only surface for the action | inline two-step (`skills.js:717`) | a dialog would cover the thing being acted on |
+
+`WM.choose` is the compact source-picker variant, not a reason to turn every
+selection into a modal. It is for a bounded choice whose inline form would
+break the surface it belongs to, such as the Previews table's shared grid.
+Options are built with DOM text properties, grouped in words rather than by
+colour, and its `<select>` participates in the same focus trap, Escape-is-
+Cancel behavior, queue, and focus restoration as the other page-owned
+requests. A keybind-capture screen disarms capture before opening any of the
+three: its document listener consumes Tab as well as printable keys.
 
 The third row's bound is not caution. `_push` swallows every `evaluate_js`
 failure, so a confirmation whose push never reached the page would park its

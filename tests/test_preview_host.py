@@ -253,6 +253,237 @@ def test_characters_excludes_clients_at_character_select(monkeypatch):
     assert h.characters() == ["Alice"]
 
 
+def test_same_process_at_character_select_keeps_its_current_rect_with_restore_off(
+    monkeypatch,
+):
+    """Character selection continues an existing physical client; it does
+    not reopen a character layout, so the restore setting must not move it."""
+    arranged = geometry.Rect(40, 50, 640, 360)
+    created = []
+
+    class _Window:
+        def __init__(self, client, rect):
+            self.client = client
+            self.rect = rect
+            self.locked = False
+
+        def close(self):
+            pass
+
+        def set_focused(self, _focused):
+            pass
+
+        def set_selected(self, _selected):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kwargs):
+        created.append((client.stable_key, rect))
+        return _Window(client, rect)
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        restore_positions=lambda: False,
+    )
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    h._windows = {"Alice": _Window(h._clients["Alice"], arranged)}
+    unidentified = host.discovery.Client(0x1234, "EVE", 4242, None, "hwnd:0x1234")
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [unidentified])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+
+    h._sweep(libs=None)
+
+    assert created == [("hwnd:0x1234", arranged)]
+    assert set(h._windows) == {"hwnd:0x1234"}
+    assert h.characters() == []
+
+
+def test_character_select_does_not_create_a_preview_for_an_excluded_owner(
+    monkeypatch,
+):
+    """Opt-out follows the physical client only far enough to avoid a
+    generic preview appearing; the old character does not stay online."""
+    created = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        excluded=lambda: ["Alice"],
+    )
+    h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
+    unidentified = host.discovery.Client(0x1234, "EVE", 4242, None, "hwnd:0x1234")
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [unidentified])
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(
+        host.PreviewWindow,
+        "create",
+        classmethod(lambda cls, *a, **k: created.append(1)),
+    )
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+
+    h._sweep(libs=None)
+
+    assert created == []
+    assert h._windows == {}
+    assert h.characters() == []
+
+
+@pytest.mark.parametrize("observed_close", [False, True])
+def test_character_select_does_not_inherit_across_process_change_or_close(
+    monkeypatch, observed_close
+):
+    arranged = geometry.Rect(40, 50, 640, 360)
+    created = []
+
+    class _Window:
+        def __init__(self, client, rect):
+            self.client = client
+            self.rect = rect
+            self.locked = False
+
+        def close(self):
+            pass
+
+        def set_focused(self, _focused):
+            pass
+
+        def set_selected(self, _selected):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kwargs):
+        created.append(rect)
+        return _Window(client, rect)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    alice = _FakeClient("Alice", hwnd=0x1234)
+    h._clients = {"Alice": alice}
+    h._windows = {"Alice": _Window(alice, arranged)}
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    if observed_close:
+        monkeypatch.setattr(host.discovery, "list_clients", lambda: [])
+        h._sweep(libs=None)
+    unidentified = host.discovery.Client(
+        0x1234,
+        "EVE",
+        4242 if observed_close else 9000,
+        None,
+        "hwnd:0x1234",
+    )
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [unidentified])
+
+    h._sweep(libs=None)
+
+    assert created[-1] == geometry.Rect(1582, 18, 320, 210)
+
+
+def test_character_b_uses_its_own_layout_after_character_select(monkeypatch):
+    a_rect = geometry.Rect(40, 50, 640, 360)
+    b_rect = geometry.Rect(800, 90, 480, 300)
+    created = []
+
+    class _Window:
+        def __init__(self, client, rect):
+            self.client = client
+            self.rect = rect
+            self.locked = False
+
+        def close(self):
+            pass
+
+        def set_focused(self, _focused):
+            pass
+
+        def set_selected(self, _selected):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kwargs):
+        created.append((client.stable_key, rect))
+        return _Window(client, rect)
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Bob": layout.Entry(b_rect)},
+    )
+    alice = _FakeClient("Alice", hwnd=0x1234)
+    h._clients = {"Alice": alice}
+    h._windows = {"Alice": _Window(alice, a_rect)}
+    sequence = iter(
+        [
+            [host.discovery.Client(0x1234, "EVE", 4242, None, "hwnd:0x1234")],
+            [_FakeClient("Bob", hwnd=0x1234)],
+        ]
+    )
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: next(sequence))
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+
+    h._sweep(libs=None)
+    h._sweep(libs=None)
+
+    assert created == [("hwnd:0x1234", a_rect), ("Bob", b_rect)]
+
+
+def test_one_client_logging_out_does_not_move_another_preview(monkeypatch):
+    a_rect = geometry.Rect(40, 50, 640, 360)
+    b_rect = geometry.Rect(800, 90, 480, 300)
+    created = []
+
+    class _Window:
+        def __init__(self, client, rect):
+            self.client = client
+            self.rect = rect
+            self.locked = False
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+        def set_focused(self, _focused):
+            pass
+
+        def set_selected(self, _selected):
+            pass
+
+    def fake_create(cls, libs, client, rect, **kwargs):
+        created.append((client.stable_key, rect))
+        return _Window(client, rect)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    alice = _FakeClient("Alice", hwnd=0x1111)
+    bob = _FakeClient("Bob", hwnd=0x2222)
+    bob_window = _Window(bob, b_rect)
+    h._clients = {"Alice": alice, "Bob": bob}
+    h._windows = {
+        "Alice": _Window(alice, a_rect),
+        "Bob": bob_window,
+    }
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: [
+            host.discovery.Client(0x1111, "EVE", 4242, None, "hwnd:0x1111"),
+            bob,
+        ],
+    )
+    monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+
+    h._sweep(libs=None)
+
+    assert created == [("hwnd:0x1111", a_rect)]
+    assert h._windows["Bob"] is bob_window
+    assert bob_window.rect == b_rect
+    assert bob_window.closed is False
+
+
 def test_a_changed_client_set_is_reported_once(monkeypatch):
     seen = []
     h = host.PreviewHost(
@@ -289,8 +520,10 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_RESTYLE,
         host.win32.WM_APP_RESET_LAYOUTS,
         host.win32.WM_APP_RESIZE_ONE,
+        host.win32.WM_APP_RESIZE_ALL,
+        host.win32.WM_APP_APPLY_LAYOUTS,
     }
-    assert len(commands) == 7
+    assert len(commands) == 9
     assert all(c >= host.win32.WM_APP for c in commands)
 
 
@@ -2593,7 +2826,86 @@ def test_switching_without_libs_touches_no_animation(monkeypatch):
     assert [e for e in order if e[0] == "animation"] == []
 
 
-# --- resize_preview()/reset_layouts(): on-demand sizing ---------------------
+# --- copy_layout()/resize_preview()/reset_layouts(): on-demand geometry -----
+
+
+def test_copy_layout_uses_the_latest_source_and_preserves_the_target_lock():
+    source = layout.Entry(geometry.Rect(50, 60, 640, 360), False)
+    target = layout.Entry(geometry.Rect(1, 2, 320, 210), True)
+    replaced = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Source": source, "Target": target},
+        replace_layout=lambda key, entry: replaced.append((key, entry)) or True,
+    )
+
+    assert h.copy_layout("Target", "Source") is True
+
+    expected = layout.Entry(source.rect, True)
+    assert replaced == [("Target", expected)]
+    assert h.layout_entries()["Target"] == expected
+    assert h._pending_layouts == {}, (
+        "a stopped host must not replay this movement after a later restart"
+    )
+
+
+def test_copy_layout_does_not_change_the_cache_when_persistence_fails():
+    original = layout.Entry(geometry.Rect(1, 2, 320, 210), False)
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={
+            "Source": layout.Entry(geometry.Rect(50, 60, 640, 360), False),
+            "Target": original,
+        },
+        replace_layout=lambda key, entry: False,
+    )
+
+    assert h.copy_layout("Target", "Source") is False
+    assert h.layout_entries()["Target"] == original
+
+
+def test_copy_layout_posts_only_a_signal_for_a_running_host(monkeypatch):
+    posted = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Source": layout.Entry(geometry.Rect(50, 60, 640, 360))},
+        replace_layout=lambda key, entry: True,
+    )
+    h._hwnd = 1
+    monkeypatch.setattr(h, "_post", posted.append)
+
+    assert h.copy_layout("Target", "Source") is True
+    assert posted == [host.win32.WM_APP_APPLY_LAYOUTS]
+
+
+def test_apply_copied_layout_clamps_the_window_but_keeps_saved_coordinates(
+    monkeypatch,
+):
+    copied = geometry.Rect(-9000, 400, 320, 210)
+
+    class _Window:
+        def __init__(self):
+            self.rect = geometry.Rect(10, 20, 320, 210)
+            self.moved = []
+
+        def move(self, rect):
+            self.rect = rect
+            self.moved.append(rect)
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Source": layout.Entry(copied)},
+        replace_layout=lambda key, entry: True,
+    )
+    target = _Window()
+    h._windows = {"Target": target}
+    monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
+    assert h.copy_layout("Target", "Source") is True
+
+    h._apply_layouts()
+
+    assert _on_a_monitor(target.rect)
+    assert h.layout_entries()["Target"].rect == copied
 
 
 def test_resize_preview_stashes_the_payload_and_posts_only_a_signal(monkeypatch):
