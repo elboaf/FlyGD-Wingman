@@ -4461,6 +4461,7 @@ button.btn.danger:hover:not(:disabled) {
   .track.indeterminate .bar {
     animation: none;
     width: 100%;
+    transform: scaleX(1);
     opacity: .45;
   }
   .pill.warn .led { animation: none; }

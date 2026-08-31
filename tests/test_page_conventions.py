@@ -1212,9 +1212,15 @@ def test_determinate_progress_animates_transform_not_layout():
     bar = re.search(r"\.bar\s*\{([^}]*)\}", CSS)
     assert bar
     assert "transition: transform" in bar.group(1)
-    assert "transition: width" not in CSS
+    assert "transition: width" not in bar.group(1)
     assert "bar.style.transform" in panel
     assert "bar.style.width" not in panel
+    reduced = re.search(
+        r"@media \(prefers-reduced-motion: reduce\) \{\s*"
+        r"\.track\.indeterminate \.bar \{([^}]*)\}",
+        CSS,
+    )
+    assert reduced and "transform: scaleX(1)" in reduced.group(1)
 
 
 def test_every_offered_alert_colour_has_a_name():
