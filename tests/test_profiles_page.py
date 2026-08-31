@@ -365,6 +365,25 @@ def test_the_card_re_collapses_on_every_visit():
 # ---- the commit says what it will do, and to how many ------------------
 
 
+def test_the_commit_context_stays_visible_over_the_target_roster():
+    """The roster stays fully visible, but its source, cost, hazard and action
+    must not scroll away while the user verifies a large target set.
+    """
+    context_at = BODY.index('id="es-commit-context"')
+    roster_at = BODY.index('id="es-targets"')
+    assert context_at < roster_at
+    assert 'id="es-copy-source"' in BODY[context_at:roster_at]
+    assert 'id="es-copy-followup"' in BODY[context_at:roster_at]
+
+    rule = re.search(r"\.es-commit-context \{([^}]*)\}", CSS)
+    assert rule and "position: sticky" in rule.group(1)
+    assert "top: 0" in rule.group(1)
+
+    paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert paint and "es-copy-source" in paint.group(1)
+    assert "es-source" in paint.group(1)
+
+
 def test_the_commit_row_carries_the_count_and_the_hazard():
     """Profiles 1. `Copy to selected` sits at the bottom of the second card;
     the `EVE running` pill lives in the first card's heading, and in the
@@ -788,6 +807,15 @@ def test_backups_route_has_one_heading_and_native_retention_disclosure():
     assert 'id="es-backup-filter-clear"' in BACKUPS_ROUTE
 
 
+def test_backups_retention_has_a_visible_native_state_affordance():
+    assert re.search(r"#es-retention > summary::before \{[^}]*content:", CSS, re.DOTALL)
+    assert re.search(
+        r"#es-retention\[open\] > summary::before \{[^}]*transform:",
+        CSS,
+        re.DOTALL,
+    )
+
+
 def test_backups_route_preserves_a_readable_measure_for_prose_and_controls():
     measure = re.search(
         r"#route-backups\s+\.es-backups-card\s*>\s*"
@@ -905,6 +933,25 @@ def test_account_identity_route_is_a_chromeless_profiles_subscreen():
     assert chromeless and "'accountidentity'" in chromeless.group(1)
     assert eve_routes and "'accountidentity'" in eve_routes.group(1)
     assert "name === 'accountidentity'" in APP
+
+
+def test_identification_exposes_its_existing_five_step_progress():
+    progress = re.search(r'<p[^>]+id="ai-progress"[^>]*>', ACCOUNT_ROUTE)
+    assert progress and "aria-live" not in progress.group(0)
+
+    paint = re.search(
+        r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert paint
+    for label in (
+        "Step 1 of 5 · Start",
+        "Step 2 of 5 · Watch for changes",
+        "Step 3 of 5 · Confirm character",
+        "Step 4 of 5 · Name account",
+        "Step 5 of 5 · Review roster",
+    ):
+        assert label in paint.group(1)
+    assert "WM.el('ai-progress').textContent" in paint.group(1)
 
 
 def test_identification_uses_the_five_step_markup_and_required_copy():

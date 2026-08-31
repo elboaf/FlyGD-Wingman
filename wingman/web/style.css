@@ -479,7 +479,6 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
      the one spot on the title bar where dragging would appear to be dead.
      The span this replaced could not have this problem. */
   pointer-events: none; -webkit-user-drag: none; user-select: none;
-  box-shadow: 0 0 12px rgb(var(--brand-rgb) / .45);
 }
 .name { font-weight: 650; letter-spacing: .3px; }
 /* Dimmed and below body size: it is an identifier for a bug report, not
@@ -1910,7 +1909,6 @@ button.btn:disabled,
 .bar {
   height: 100%; width: 100%; border-radius: 2px;
   background: linear-gradient(90deg, var(--brand-deep), var(--brand));
-  box-shadow: 0 0 10px rgb(var(--brand-rgb) / .6);
   transform: scaleX(0); transform-origin: left center;
   transition: transform .12s linear;
 }
@@ -2011,11 +2009,10 @@ button.btn:disabled,
   content: ""; width: 3px; height: 15px; border-radius: 2px; flex: none;
   background: var(--text-faint);
 }
-.dialog.error h3::before   { background: var(--err); box-shadow: 0 0 9px var(--err); }
-.dialog.warning h3::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
+.dialog.error h3::before   { background: var(--err); }
+.dialog.warning h3::before { background: var(--warn); }
 .dialog.confirm h3::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
-  box-shadow: 0 0 9px rgb(var(--brand-rgb) / .5);
 }
 /* A destructive confirm takes --danger, the token minted at :root for
    "this control destroys something", so the heading agrees with the
@@ -2023,10 +2020,7 @@ button.btn:disabled,
    .dialog.confirm and equal specificity (0,2,0), which is what lets a
    dialog carry both classes -- panel.js sets `dialog confirm destructive`
    so a page that never passes the flag is unchanged. */
-.dialog.confirm.destructive h3::before {
-  background: var(--danger);
-  box-shadow: 0 0 9px var(--danger);
-}
+.dialog.confirm.destructive h3::before { background: var(--danger); }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
      (n/total) titles in it; pre-wrap is what keeps that layout. */
@@ -2570,6 +2564,11 @@ button.btn:disabled,
   border-radius: var(--radius-sm); cursor: pointer;
   color: var(--text-dim); font-size: var(--fs-body);
 }
+#es-retention > summary::before {
+  content: "›"; margin-right: 6px; transform: rotate(0deg);
+  color: var(--text-faint); font-size: 16px; line-height: 1;
+}
+#es-retention[open] > summary::before { transform: rotate(90deg); }
 #es-retention > summary[hidden] { display: none; }
 #es-retention > summary:hover { color: var(--text); background: var(--hover); }
 #es-retention > summary:focus-visible {
@@ -2878,24 +2877,20 @@ button.btn:disabled,
   flex: none; color: var(--text-dim); font-size: var(--fs-muted);
 }
 
-/* Profiles 1 -- the commit row. The button keeps the left edge every other
-   control on this screen starts at; the cost and the hazard follow it, in
-   that order, and the pill is pushed to the right edge so it reads as a
-   condition of the screen rather than as a third word in the sentence.
-   Nothing here is accent: the one accent on this screen is the button, and
-   a warning that competed with it would be arguing about which is primary.
-
-   flex-wrap, because three things on one row at the 840 floor is the case
-   this screen has been caught by before -- at 586px of card the count and
-   the pill drop to their own line rather than squeezing the button.
-
-   The top margin is the other half of Profiles 2's collision. .row has a
-   bottom margin and no top one, so with the roster's inner scroller gone
-   the last name sat directly on the accent button -- which is what the
-   walkthrough saw through the clipped scroll boundary, minus the clipping.
-   Uncapping the list removed the half-drawn name; this is what stops the
-   whole one from touching the button. */
-#es-commit { flex-wrap: wrap; row-gap: 8px; margin-top: 14px; }
+/* Profiles' commitment context precedes the uncapped roster and sticks at
+   the route's top while targets move beneath it. The button keeps the left
+   edge every other control starts at; cost and source follow, and the pill
+   takes the right edge as a condition of the action. flex-wrap prevents the
+   four items from squeezing at the 840px floor. Its own background and
+   border are functional while sticky: roster text must not show through it. */
+.es-commit-context {
+  position: sticky; top: 0; z-index: 1;
+  margin: 0 0 12px; padding: 10px 0;
+  border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.es-commit-context > .hint { margin: 6px 0 0; }
+.es-commit-context > .es-copy-followup { margin: 8px 0 0; }
+#es-commit { flex-wrap: wrap; row-gap: 8px; margin-bottom: 0; }
 
 /* The quantity, stated before the irreversible action (PRODUCT.md). Body
    size, not muted: it is the number the user is meant to check, and the
@@ -2904,6 +2899,7 @@ button.btn:disabled,
    a disabled button would read as a layout gap rather than as an answer. */
 .es-count { color: var(--text); font-size: var(--fs-body); }
 .es-count.none { color: var(--text-faint); }
+.es-copy-source { color: var(--text-dim); font-size: var(--fs-body); }
 
 /* Right edge, so the hazard is the last thing before the eye leaves the
    row -- and so it lands in the same place whether or not the count wrapped.
@@ -2970,7 +2966,11 @@ button.btn:disabled,
   width: 100%; max-width: 620px;
 }
 .account-identity-shell h1 {
-  margin: 2px 0 0; color: var(--text); font-size: 20px; font-weight: 650;
+  margin: 0; color: var(--text); font-size: 20px; font-weight: 650;
+}
+.ai-progress {
+  margin: 2px 0 -6px; color: var(--text-faint); font-size: var(--fs-label);
+  font-weight: 650; letter-spacing: .1em; text-transform: uppercase;
 }
 .account-identity-shell h2 {
   margin: 0; color: var(--text); font-size: 15px; font-weight: 650;
@@ -3601,7 +3601,7 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .led {
   width: 7px; height: 7px; border-radius: 50%; flex: none;
-  background: currentColor; box-shadow: 0 0 9px currentColor;
+  background: currentColor;
 }
 .pill.ok   { color: var(--ok); }
 .pill.warn { color: var(--warn); }
@@ -3622,7 +3622,6 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 }
 .radio input:checked + .ring {
   border: 4.5px solid var(--brand); background: var(--field);
-  box-shadow: 0 0 10px rgb(var(--brand-rgb) / .5);
 }
 /* Paired with .check's, and for the same reason. */
 .radio input:focus-visible + .ring {
@@ -3660,6 +3659,10 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    one severity reads the same everywhere in the app. */
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
+/* A live region that is display:none when text lands may never announce it.
+   Keep the relationship-level alert warning mounted, matching the two
+   card-level alert status regions DESIGN.md names as the exception. */
+#alerts-collision { min-height: 17px; }
 
 /* ---- the floor this block used to be written against -----------------
    There was a `@media (max-width: 720px)` block here that stacked the

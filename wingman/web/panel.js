@@ -347,12 +347,23 @@
   // on a dialog_response that never comes.
   var queue = [];
   var active = null;
+  var returnFocus = null;
+  var lastPageFocus = null;
 
   var overlay = WM.el('overlay');
   var dlg = WM.el('dialog');
   var btnOk = WM.el('dlg-ok');
   var btnCancel = WM.el('dlg-cancel');
   var dlgInput = WM.el('dlg-input');
+
+  // A worker may disable its trigger before its confirmation reaches the
+  // page. Remember focus while the page still owns it, then fall back to an
+  // enabled control on the same route if that trigger remains unavailable.
+  document.addEventListener('focusin', function (ev) {
+    if (overlay.hidden && !overlay.contains(ev.target)) {
+      lastPageFocus = ev.target;
+    }
+  });
 
   function show(item) {
     active = item;
@@ -394,14 +405,54 @@
     if (destructive) { dlg.className = 'dialog confirm destructive'; }
     overlay.hidden = false;
     // The field, not the button: a prompt exists to be typed into, and
-    // landing on OK means every user starts with a Tab.
-    if (isPrompt) { dlgInput.focus(); dlgInput.select(); } else { btnOk.focus(); }
+    // landing on OK means every user starts with a Tab. A destructive
+    // confirm starts on its safe answer; Enter then follows the focused
+    // native button rather than acting as a hidden second shortcut to Yes.
+    if (isPrompt) {
+      dlgInput.focus();
+      dlgInput.select();
+    } else if (destructive) {
+      btnCancel.focus();
+    } else {
+      btnOk.focus();
+    }
+  }
+
+  function enqueue(item) {
+    if (active) {
+      queue.push(item);
+      return;
+    }
+    returnFocus = document.activeElement;
+    if (!returnFocus || returnFocus === document.body) {
+      returnFocus = lastPageFocus;
+    }
+    show(item);
+  }
+
+  function restorePageFocus(target) {
+    if (target && document.contains(target) && !target.disabled && target.focus) {
+      target.focus();
+      return;
+    }
+    var route = target && target.closest ? target.closest('.route') : null;
+    if (!route) { route = document.querySelector('.route.active'); }
+    var fallback = route && route.querySelector(
+      'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled), [tabindex="0"]');
+    if (fallback) { fallback.focus(); }
   }
 
   function next() {
     active = null;
+    if (queue.length) {
+      show(queue.shift());
+      return;
+    }
     overlay.hidden = true;
-    if (queue.length) show(queue.shift());
+    var target = returnFocus;
+    returnFocus = null;
+    restorePageFocus(target);
   }
 
   function answer(ok) {
@@ -443,7 +494,7 @@
       var item = { kind: 'confirm', title: title, body: body,
                    destructive: !!(opts && opts.destructive),
                    resolve: resolve };
-      if (active) { queue.push(item); } else { show(item); }
+      enqueue(item);
     });
   };
 
@@ -453,12 +504,18 @@
     return new Promise(function (resolve) {
       var item = { kind: 'prompt', title: title, body: body,
                    value: value, resolve: resolve };
-      if (active) { queue.push(item); } else { show(item); }
+      enqueue(item);
     });
   };
 
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
+  dlgInput.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && active && active.kind === 'prompt') {
+      ev.preventDefault();
+      answer(true);
+    }
+  });
 
   document.addEventListener('keydown', function (ev) {
     if (overlay.hidden) return;
@@ -470,13 +527,27 @@
       // field.
       answer(active && (active.kind === 'confirm' || active.kind === 'prompt')
              ? false : true);
-    } else if (ev.key === 'Enter') {
-      ev.preventDefault();
-      answer(true);
+    } else if (ev.key === 'Tab') {
+      var focusable = dlg.querySelectorAll(
+        'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled)');
+      if (!focusable.length) {
+        ev.preventDefault();
+        return;
+      }
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      if (ev.shiftKey && document.activeElement === first) {
+        ev.preventDefault();
+        last.focus();
+      } else if (!ev.shiftKey && document.activeElement === last) {
+        ev.preventDefault();
+        first.focus();
+      } else if (!dlg.contains(document.activeElement)) {
+        ev.preventDefault();
+        first.focus();
+      }
     }
   }, true);
 
-  WM.handle('onDialog', function (p) {
-    if (active) queue.push(p); else show(p);
-  });
+  WM.handle('onDialog', function (p) { enqueue(p); });
 }());

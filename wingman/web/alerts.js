@@ -23,6 +23,7 @@
   var healthLine = WM.el('alerts-health');
   var status = WM.el('alerts-status');
   var depends = WM.el('alerts-depends');
+  var collision = WM.el('alerts-collision');
 
   // Everything below the master switch is a preference that CAN be
   // recorded for later, so none of it is disabled -- that is S3's rule,
@@ -176,16 +177,12 @@
      Colour is the channel, not sound. The ring is what you read in
      peripheral vision on a small tile over moving game content, which is
      COLOURS' own argument; the sound is secondary and may be off, muted,
-     or lost under comms. So a shared colour warns on its own, and a
-     shared sound is named only when it compounds -- when both match there
-     is no channel left to tell the two apart.
+     or lost under comms. So a shared colour warns on its own, and changing
+     only the sound neither makes nor clears that collision.
 
-     Keyed `dataset.collision` so it can be cleared without touching a
-     row's own errors, the same convention clearWhileOffNotes uses for
-     `whileOff`. A refused write outranks this: a row already showing
-     something that is not a collision note is left alone, because "the
-     colour could not be set" is about what just happened and this is
-     about a standing configuration.
+     One relationship-level live region sits below the table. Per-row live
+     regions remain exclusively for the outcome of the control beside them,
+     so clearing a standing collision can never clear a refused write.
 
      The app does this for keybinds already (.bindbtn.clash). Keybinds are
      configuration you check twice ever; alerts are the only thing in the
@@ -202,40 +199,18 @@
       byColour[key].push(id);
     });
 
-    EVENTS.forEach(function (id) {
-      var row = eventRow(id);
-      if (!row.msg) { return; }
-      // Leave a row's own message alone unless it is one of ours.
-      if (row.msg.hidden === false && !row.msg.dataset.collision) { return; }
-      var good = lastGood[id] || {};
-      // A DISABLED row never collides, and the `other !== id` filter alone
-      // does not say so: a disabled Combat is absent from byColour, but an
-      // enabled Decloak on the same colour still puts that colour in the
-      // map, so Combat found a peer and warned about an alert it cannot
-      // raise. Caught in the harness by disabling one of a colliding pair
-      // and watching the wrong half keep the note.
-      var live = row.enabled && row.enabled.checked;
-      var peers = !live ? [] : (byColour[String(good.color).toLowerCase()] || [])
-        .filter(function (other) { return other !== id; });
-      if (!peers.length) {
-        if (row.msg.dataset.collision) {
-          delete row.msg.dataset.collision;
-          sayRow(row, '');
-        }
-        return;
-      }
-      var names = peers.map(eventLabel);
-      var alsoSound = peers.some(function (other) {
-        return (lastGood[other] || {}).sound === good.sound;
-      });
-      var text = colourName(good.color) + ', the same as '
-        + names.join(' and ')
-        + (alsoSound
-           ? ', and the same sound. Nothing tells them apart.'
-           : '. The pulse cannot tell them apart.');
-      row.msg.dataset.collision = '1';
-      sayRow(row, text, 'warn');
+    var warnings = [];
+    Object.keys(byColour).forEach(function (key) {
+      var ids = byColour[key];
+      if (ids.length < 2) { return; }
+      var names = ids.map(eventLabel);
+      var subject = names.length === 2
+        ? names[0] + ' and ' + names[1]
+        : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+      warnings.push(subject + (ids.length === 2 ? ' both use ' : ' use ')
+        + colourName(key) + '. Their preview pulses are indistinguishable.');
     });
+    setText(collision, warnings.join(' '));
   }
 
   // Drops every note that was only true while alerts were off. Keyed on
@@ -428,10 +403,6 @@
         } else {
           sayRow(row, '');
         }
-        // A sound cannot create a collision on its own -- the key is the
-        // colour -- but it decides whether an existing one is "nothing
-        // tells them apart" or only the pulse.
-        flagCollisions();
       });
     });
     row.test.addEventListener('click', function () {
