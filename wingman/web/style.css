@@ -2949,7 +2949,6 @@ button.btn:disabled,
    the card. `.settings .row > .field`'s own flex is what a full-measure
    field is; this only stops the select opting out of it. */
 #es-source { flex: 1; }
-#es-formations-account { flex: 1; }
 
 #es-account-tools { width: 100%; align-items: flex-start; }
 .es-account-summary {
@@ -3706,13 +3705,6 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    rest of the sheet -- SVG presentation attributes would have been the
    easy way to smuggle a literal past it. */
 
-/* .card sets no display today, so `hidden` alone works. This is the
-   standing override anyway: the trap DESIGN.md names in six places is an
-   author rule beating the UA stylesheet's [hidden], and this card is
-   hidden on every install without the decoder -- i.e. the common case is
-   the one that would break. */
-#es-formations-card[hidden] { display: none; }
-
 #route-formations {
   display: none;
   grid-template-columns: 214px minmax(0, 1fr);
@@ -3745,12 +3737,9 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   border-radius: var(--radius); padding: 12px;
 }
 .fm-rail-head { flex: none; }
+.fm-rail-head > #fm-account { flex: 1; min-width: 0; }
 .fm-rail-add { flex: none; flex-wrap: wrap; row-gap: 6px; }
 .fm-rail-add > .btn { width: 100%; text-align: center; }
-.fm-account {
-  color: var(--text-dim); font-size: var(--fs-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 
 /* 620px, the app's form measure, and for the reason `#route-evesettings >
    .settings > .card` keeps it: this pane is a form. The roster one route

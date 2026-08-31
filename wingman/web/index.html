@@ -1273,6 +1273,7 @@
 
       <div class="es-profile-tools">
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
+        <button class="btn" id="es-formations-open" type="button" disabled>Edit formations…</button>
       </div>
 
       <section class="card">
@@ -1396,28 +1397,6 @@
         <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
-      <!-- The way into the probe formation editor, and the only one.
-           Formations live in the ACCOUNT file (core_user_*.dat), so this
-           card offers accounts and never characters -- which is also why
-           it is a card of its own rather than a control on the copy card,
-           whose Characters/Accounts switch would otherwise decide whether
-           the entry point exists.
-
-           Hidden outright when the decoder is not present, rather than
-           offered and then refused: eve_settings_formations answers "not
-           available in this installation", and a control whose only
-           possible outcome is that sentence is worse than no control.
-           evesettings.js reads formations_available off the state
-           payload. -->
-      <section class="card" id="es-formations-card" hidden>
-        <h2>Probe formations</h2>
-        <div class="row">
-          <label class="lab" for="es-formations-account">Account</label>
-          <select id="es-formations-account" class="field"></select>
-          <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
-        </div>
-        <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
-      </section>
     </div>
   </div>
 
@@ -1561,7 +1540,7 @@
     <div class="fm-rail">
       <div class="row fm-rail-head">
         <button class="btn" id="fm-back" type="button">&lsaquo; Profiles</button>
-        <span class="fm-account" id="fm-account"></span>
+        <select id="fm-account" class="field" aria-label="Account"></select>
       </div>
       <div class="list-scroll" id="fm-list"></div>
       <div class="row fm-rail-add">

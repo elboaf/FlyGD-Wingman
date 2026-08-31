@@ -87,7 +87,7 @@
     renderCopyGroups();
     renderTargets();
     renderBackups();
-    renderFormationsCard();
+    paintFormationsTool();
   }
 
   // No root, or a folder Python could not read through: there is nothing
@@ -688,35 +688,14 @@
     WM.el('es-auto-keep-apply').disabled = busy || !!state.identification_active;
   }
 
-  // The way into the probe formation editor. Accounts only, always: a
-  // formation lives in the account file, so the Characters/Accounts switch
-  // above deliberately does NOT reach this card -- it would otherwise
-  // decide whether the entry point exists at all.
-  //
-  // The whole card is hidden when Python reports no decoder, rather than
-  // shown and then refused: eve_settings_formations' answer in that state
-  // is a sentence, and a control whose only outcome is that sentence is
-  // worse than no control.
-  function renderFormationsCard() {
-    var card = WM.el('es-formations-card');
-    var sel = WM.el('es-formations-account');
-    card.hidden = !(state && state.formations_available
-                    && state.accounts && state.accounts.length);
-    if (card.hidden) return;
-    // The chosen account survives a refresh: onEveSettingsDone refreshes
-    // after every mutation, and rebuilding the list would silently reset
-    // the pick back to the first account between two clicks.
-    var keep = sel.value;
-    sel.textContent = '';
-    state.accounts.forEach(function (account) {
-      var option = document.createElement('option');
-      option.value = account.path;
-      option.textContent = account.name;
-      sel.appendChild(option);
-    });
-    if (keep) sel.value = keep;
-    WM.setEnabled('es-formations-open', !busy && !!sel.value
-                  && !(state && state.identification_active));
+  // Formations live in account files, but account choice belongs in the
+  // editor where it can be changed without returning to Profiles. Python's
+  // account names are passed through unchanged, so the editor never tries to
+  // reconstruct an identity from a file name or account id.
+  function paintFormationsTool() {
+    WM.setEnabled('es-formations-open', !!(state && state.formations_available
+                  && state.accounts && state.accounts.length) && !busy
+                  && !state.identification_active);
   }
 
   function button(text, handler, extra) {
@@ -800,14 +779,14 @@
     // owns the whole of it, so a copy that finishes cannot re-enable a
     // button whose selection was cleared by the same push.
     paintCommit();
-    // Same reason: the formations card's button is inert while a copy or a
-    // restore is in flight, and paintCommit does not own it.
-    renderFormationsCard();
+    // The editor entry is inert while a copy or restore is in flight, and
+    // paintCommit does not own that availability decision.
+    paintFormationsTool();
     var identifying = !!(state && state.identification_active);
     WM.el('es-backup-profile').disabled = value || identifying
       || !(state && state.profile);
-    ['es-auto-keep-apply', 'es-formations-open',
-     'es-identify-open', 'es-identify-start', 'es-manage-toggle',
+    ['es-auto-keep-apply', 'es-identify-open', 'es-identify-start',
+     'es-manage-toggle',
      'es-account-name-apply', 'es-character-add-btn'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
     });
@@ -1131,11 +1110,12 @@
     });
 
     WM.el('es-formations-open').addEventListener('click', function () {
-      var path = WM.el('es-formations-account').value;
       // Guarded on WM.openFormations rather than assumed: formations.js
       // loads after this file, and a page that lost the script tag would
       // otherwise throw inside a click handler where nothing reports it.
-      if (path && WM.openFormations) WM.openFormations(path);
+      if (!state || !WM.openFormations) return;
+      var preferred = kind() === 'accounts' ? WM.el('es-source').value : '';
+      WM.openFormations(state.accounts, preferred);
     });
 
     WM.el('es-backup-profile').addEventListener('click', function () {

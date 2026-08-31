@@ -19,6 +19,7 @@ HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
 JS = (WEB / "evesettings.js").read_text(encoding="utf-8")
 APP = (WEB / "app.js").read_text(encoding="utf-8")
+FORMATIONS = (WEB / "formations.js").read_text(encoding="utf-8")
 
 # The route's own markup. Every rule below is about this block and would
 # otherwise match a sibling screen that happens to use the same class.
@@ -868,9 +869,7 @@ def test_account_identification_summary_and_entry_match_backend_preconditions():
     assert "account.account_name" in block
     assert "state.accounts.length" in block
     assert "var characters = (state && state.characters) || [];" in block
-    assert re.search(
-        r"state\.accounts\.length\s*&&\s*state\.characters\.length", block
-    )
+    assert re.search(r"state\.accounts\.length\s*&&\s*state\.characters\.length", block)
     assert "state.identity_characters" not in block
     assert (
         "No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely."
@@ -1138,6 +1137,57 @@ def test_backups_route_reuses_profiles_state_and_completion_owner():
     assert "event.detail === 'backups'" in CODE
     assert CODE.count("WM.handle('onEveSettingsDone'") == 1
     assert "WM.formationsDone" in CODE
+
+
+def test_profiles_passes_accounts_into_the_formation_editor():
+    assert "WM.openFormations(state.accounts" in CODE
+    assert "WM.openFormations = function (accounts, preferredPath)" in FORMATIONS
+    assert "option.textContent = account.name;" in FORMATIONS
+
+
+def test_formation_account_selector_is_disabled_while_busy():
+    assert "WM.setEnabled('fm-account', !state.busy" in FORMATIONS
+
+
+def test_formation_tool_owns_its_availability_through_busy_repaints():
+    tool = re.search(r"function paintFormationsTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert tool
+    for condition in ("state.formations_available", "state.accounts.length", "!busy"):
+        assert condition in tool.group(1)
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    assert "paintFormationsTool();" in busy.group(1)
+    assert "'es-formations-open'" not in busy.group(1), (
+        "the generic busy loop must not overwrite the tool's availability"
+    )
+
+
+def test_formation_account_switch_guards_dirty_edits():
+    assert "WM.el('fm-account').addEventListener('change'" in FORMATIONS
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    assert "state.dirty" in switch
+    assert "Discard changes?" in switch
+    assert "WM.el('fm-account').value = state.path" in switch
+
+
+def test_formation_switch_failure_keeps_the_editor_open_but_entry_failure_ejects():
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    failure = load[load.index("if (!reply || !reply.ok)") :]
+    switch = re.search(
+        r"if \(mode === 'switch'\) \{(.*?)\n        \}", failure, re.DOTALL
+    )
+    assert switch, "a failed account switch needs its own failure branch"
+    assert "WM.el('fm-account').value = state.path" in switch.group(1)
+    assert "WM.route('evesettings')" not in switch.group(1), (
+        "a failed switch must retain the editor and its prior formations"
+    )
+    assert "WM.route('evesettings')" in failure[switch.end() :], (
+        "the initial formation load must still return to Profiles on failure"
+    )
 
 
 def test_backup_filter_matches_tokens_and_visible_words():

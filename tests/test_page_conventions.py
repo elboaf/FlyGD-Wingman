@@ -2352,6 +2352,9 @@ def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
     """
     app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
     assert 'id="route-formations"' in HTML
+    assert (
+        '<select id="fm-account" class="field" aria-label="Account"></select>' in HTML
+    )
     assert "formations: 'route-formations'" in app
     assert 'data-route="formations"' not in HTML, (
         "the editor is reached from Profiles, not the title bar"
