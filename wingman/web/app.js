@@ -132,17 +132,16 @@
   // Routes that show no title-bar chrome: no destination buttons, no
   // gear. These entries are here because the screen must not be leavable
   // sideways -- see the block inside WM.route that reads this list.
-  WM.CHROMELESS_ROUTES = ['firstrun', 'formations', 'accountidentity', 'backups'];
+  WM.CHROMELESS_ROUTES = ['firstrun', 'formations', 'accountidentity'];
 
   WM.route = function (name) {
     // Bookmarks and Previews are NOT here any more: both are sections of
     // the Settings route, reached through WM.section.
     // formations, accountidentity and backups have no title-bar buttons:
-    // all are focused SUB-SCREENS of Profiles, reached from that destination.
-    // DESIGN.md makes title-bar space the scarce resource and the nav
-    // already holds two EVE destinations, so the editor gets a route id
-    // and nothing in the bar. It goes further than that -- while it is
-    // showing the bar is hidden outright; see CHROMELESS_ROUTES.
+    // all are SUB-SCREENS of Profiles, reached from that destination.
+    // The formation editor and account identification are focused workflows,
+    // so they hide the bar outright; see CHROMELESS_ROUTES. Backups is ordinary
+    // management and keeps the destination chrome, with Profiles lit below.
     var routes = { main: 'route-main', settings: 'route-settings',
                    firstrun: 'route-firstrun',
                    evesettings: 'route-evesettings',
@@ -153,14 +152,12 @@
     Object.keys(routes).forEach(function (key) {
       WM.el(routes[key]).classList.toggle('active', key === name);
     });
-    // Standing in either sub-screen lights PROFILES, because that is where you
+    // Standing in any Profiles sub-screen lights PROFILES, because that is where you
     // are: a sub-screen with no button of its own would otherwise darken
     // the whole bar and read as having left the destination entirely.
-    // The bar is now hidden on that route (see chromeless below), so this
-    // mapping paints nothing anyone can see. It stays because the class is
-    // the answer to "where am I", not "what is on screen": leaving the nav
-    // marked on a stale destination while the bar is down would come back
-    // wrong the moment the bar's visibility rule is revisited.
+    // This mapping is the answer to "where am I", not merely "what button was
+    // clicked". It keeps Profiles visibly selected on Backups and preserves
+    // the correct state behind the hidden bar on the two focused workflows.
     var lit = (name === 'formations' || name === 'accountidentity'
       || name === 'backups') ? 'evesettings' : name;
     Array.prototype.forEach.call(
@@ -168,19 +165,15 @@
         btn.classList.toggle('active', btn.dataset.route === lit);
       });
     WM.el('btn-settings').classList.toggle('active', name === 'settings');
-    // Four routes offer no chrome. First run is not dismissable: there is
+    // Three routes offer no chrome. First run is not dismissable: there is
     // nowhere else to go yet. Account identity is a focused setup flow whose
-    // Back control cancels its ephemeral observation. Backups has its own Back
-    // control, while the formation editor holds unsaved edits and `< Profiles`
-    // is the only exit that asks before discarding them. The nav and the gear
-    // call WM.route straight through and know nothing about the editor's
-    // dirty flag, so leaving them up gave the screen five exits of which
-    // four threw the edits away in silence -- the next openFormations
-    // then loading over them. Visibility is decided HERE, per route,
-    // rather than by the editor toggling it on entry and exit: an entry
-    // hook has to be matched by an exit hook, and the eviction path in
-    // apply_eve_gate below routes away from the editor without passing
-    // through its back button at all.
+    // Back control cancels its ephemeral observation. The formation editor
+    // holds unsaved edits and `< Profiles` is the only exit that asks before
+    // discarding them. The nav and gear call WM.route straight through and
+    // know nothing about the editor's dirty flag, so leaving them up gave the
+    // editor five exits of which four threw edits away in silence. Visibility
+    // is decided HERE, per route, rather than by each editor toggling it on
+    // entry and exit: apply_eve_gate below can route away without using Back.
     var chromeless = WM.CHROMELESS_ROUTES.indexOf(name) !== -1;
     WM.el('btn-settings').hidden = chromeless;
     WM.el('routenav').hidden = chromeless;

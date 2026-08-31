@@ -89,5 +89,26 @@ register at the top of each module's IIFE, so one bad name throws mid-module
 and every registration below it silently never runs. In `ls` output that is
 indistinguishable from a good screen.
 
-Review what you see against `DESIGN.md` (how a screen is built) and `PRODUCT.md`
-(what belongs in the product).
+## Step 4 — run the full Impeccable critique
+
+Do not substitute a lightweight inline UX review. Invoke the `impeccable` skill
+and follow its `critique` workflow in full, using the captured PNG set as the
+visual target and the selected checkout as the source target:
+
+- Load `PRODUCT.md` and `DESIGN.md` from the selected checkout.
+- Run the two required isolated assessments. The design assessment must inspect
+  every PNG; the automated assessment must run the deterministic detector
+  against `<checkout>/wingman/web` and distinguish real findings from contextual
+  false positives.
+- Synthesize Nielsen heuristic scores, cognitive-load results, anti-pattern
+  findings, prioritized issues, and relevant persona walkthroughs. Separate
+  what the screenshots prove from interaction behavior they cannot prove.
+- Treat the captured set as a static target. Unless a separately reachable live
+  browser tab already exists, report that browser overlays were skipped; do not
+  relaunch the shooter or app solely to inject overlays.
+- Review recommendations against `DESIGN.md` (how a screen is built) and
+  `PRODUCT.md` (what belongs in the product), rather than applying generic web
+  conventions over documented product decisions.
+
+Ask the critique's targeted follow-up questions and wait for the user's answers
+before presenting its final recommended-action sequence.

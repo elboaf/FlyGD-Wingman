@@ -1200,6 +1200,29 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     )
 
 
+def test_confirm_dialog_accepts_a_specific_affirming_label():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    api = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
+    assert "item.confirm_label || 'Confirm'" in panel
+    assert '"confirm_label": confirm_label' in api
+
+
+def test_determinate_progress_animates_transform_not_layout():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    bar = re.search(r"\.bar\s*\{([^}]*)\}", CSS)
+    assert bar
+    assert "transition: transform" in bar.group(1)
+    assert "transition: width" not in bar.group(1)
+    assert "bar.style.transform" in panel
+    assert "bar.style.width" not in panel
+    reduced = re.search(
+        r"@media \(prefers-reduced-motion: reduce\) \{\s*"
+        r"\.track\.indeterminate \.bar \{([^}]*)\}",
+        CSS,
+    )
+    assert reduced and "transform: scaleX(1)" in reduced.group(1)
+
+
 def test_every_offered_alert_colour_has_a_name():
     """Round 6, P2-5. The swatches carried their hex as the accessible name.
 

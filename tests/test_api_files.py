@@ -57,6 +57,7 @@ def test_delete_confirms_by_naming_every_file_and_saying_it_is_final(tmp_path):
     # copy, which is what shipped: panel.js hard-coded `btn acc` on every
     # confirm. The flag is what lets the page render .btn.danger instead.
     assert api._confirm.destructive == [True]
+    assert api._confirm.confirm_labels == ["Delete 2 files"]
 
 
 def test_declining_the_delete_leaves_the_files_alone(tmp_path):
@@ -64,6 +65,7 @@ def test_declining_the_delete_leaves_the_files_alone(tmp_path):
     api._confirm = fakes.Answers(answer=False)
     api.delete_selected(["r0"])
     join_delete(api)
+    assert api._confirm.confirm_labels == ["Delete 1 file"]
     assert (tmp_path / "a.mkv").exists()
 
 

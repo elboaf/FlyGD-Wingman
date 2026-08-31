@@ -323,6 +323,22 @@ def test_restore_incumbent_keeps_source_build_arguments_intact(monkeypatch):
     assert "-m wingman" in called_with
 
 
+def test_staged_dialog_matches_the_production_delete_payload():
+    """The capture must exercise the same bridge payload production sends.
+
+    Dropping the specific affirming label made a successful product change look
+    broken in the screenshot that was supposed to verify it.
+    """
+    assert shoot.dialog_payload() == {
+        "kind": "confirm",
+        "title": "Confirm Delete",
+        "body": shoot.DIALOG_BODY,
+        "request_id": None,
+        "destructive": True,
+        "confirm_label": "Delete 2 files",
+    }
+
+
 def test_dialog_body_matches_the_shape_the_app_actually_raises():
     """The staged confirm stands in for Api._delete_worker's dialog, and a
     screenshot of a dialog the app cannot produce is worse than no shot.
