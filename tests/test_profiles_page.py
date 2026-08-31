@@ -542,10 +542,109 @@ def test_selective_copy_controls_are_inside_the_copy_card_in_action_order():
     assert BODY.count('id="es-copy-options"') == 1, (
         "the copy options must not also be mounted outside the copy card"
     )
+
+
+def test_selective_copy_explains_recognized_and_other_settings():
     assert (
-        "Unchecked groups keep each target\u2019s own settings. Everything else is copied."
-        in copy_body
+        "Checked groups are copied as a unit. Unchecked groups stay unchanged. "
+        "Everything else is copied."
+    ) in BODY
+
+
+def test_bulk_controls_name_their_scope():
+    assert ">Select shown</button>" in BODY
+    assert ">Clear selection</button>" in BODY
+
+
+def test_copy_button_and_followup_do_not_infer_python_results():
+    paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL).group(
+        1
     )
+    assert "Copy to " in paint
+    assert "Copy operation in progress" in paint
+    assert ">Copy to selected</button>" not in BODY
+    assert 'id="es-copy-followup"' in BODY
+    assert 'id="es-copy-view-backups"' in BODY
+    assert "backups created" not in CODE.lower()
+
+
+def test_copy_followup_tracks_only_a_successful_copy_lifecycle():
+    mutate = re.search(r"function mutate\(method\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert mutate
+    block = mutate.group(1)
+    assert "pendingMutation = method;" in block
+    assert "if (method === 'eve_settings_copy')" in block
+    assert block.index(
+        "pendingMutation = '';", block.index("if (!accepted)")
+    ) < block.index("setBusy(false);", block.index("if (!accepted)"))
+
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    completion = done.group(1)
+    assert "var completedMutation = pendingMutation;" in completion
+    assert completion.index("pendingMutation = '';") < completion.index(
+        "setBusy(false);"
+    )
+    assert re.search(
+        r"completedMutation === 'eve_settings_copy'.*?payload\.ok",
+        completion,
+        re.DOTALL,
+    )
+    copy_branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy'\) \{(.*?)\n    \}",
+        completion,
+        re.DOTALL,
+    )
+    assert copy_branch and "selected = {};" in copy_branch.group(1)
+    assert "copyFollowup" in copy_branch.group(1)
+    assert "selected = {};" not in completion.replace(copy_branch.group(0), "")
+
+    route = re.search(
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
+    )
+    assert route and "clearCopyFollowup()" not in route.group(0)
+    opener = re.search(r"function openBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert opener and "clearCopyFollowup()" not in opener.group(1)
+
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    select = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    kind = re.search(
+        r"querySelectorAll\('input\[name=\"es-kind\"\]'\).*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n        \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    source = re.search(
+        r"WM\.el\('es-source'\)\.addEventListener\('change', function \(\) \{"
+        r"(.*?)\n    \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    for name, handler in (
+        ("root", root),
+        ("server/profile", select),
+        ("kind", kind),
+        ("source", source),
+    ):
+        assert handler and "clearCopyFollowup();" in handler.group(1), name
+    assert (
+        "WM.el('es-copy-view-backups').addEventListener('click', openBackups);" in CODE
+    )
+
+
+def test_copy_followup_is_quiet_and_hideable():
+    followup = re.search(r'<[^>]+id="es-copy-followup"[^>]*>', BODY)
+    assert followup and 'role="status"' not in followup.group(0)
+    assert re.search(r"\.es-copy-followup\[hidden\]\s*\{[^}]*display:\s*none", CSS)
 
 
 def test_copy_group_rendering_uses_kind_payload_and_remembers_seen_ids():
@@ -740,6 +839,8 @@ def test_the_collapsed_summary_names_the_server_and_the_profile():
 
 def test_account_identification_is_a_focused_subscreen_from_account_mode():
     assert 'id="es-account-tools"' in BODY
+    assert 'id="es-account-summary"' in BODY
+    assert 'id="es-account-guidance"' in BODY
     assert 'id="es-identify-open"' in BODY
     assert 'id="es-identity-panel"' not in BODY, (
         "account management must not expand inside the copy form"
@@ -758,6 +859,29 @@ def test_account_identification_is_a_focused_subscreen_from_account_mode():
     assert render and "kind() === 'accounts'" in render.group(1)
     assert "WM.current_route !== 'accountidentity'" in render.group(1)
     assert "WM.route('accountidentity')" in CODE
+
+
+def test_account_identification_summary_and_entry_match_backend_preconditions():
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert "account.account_name" in block
+    assert "state.accounts.length" in block
+    assert "state.identity_characters.length" in block
+    assert re.search(
+        r"state\.accounts\.length\s*&&\s*state\.identity_characters\.length", block
+    )
+    assert (
+        "No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely."
+        in block
+    )
+    assert (
+        "No characters found in this profile. Launch a character, make a small settings change, then close EVE completely."
+        in block
+    )
+    assert "Identify accounts to replace internal IDs with names." in block
+    assert "es-identify-open').hidden" in block
+    assert re.search(r"#es-identify-open\[hidden\]\s*\{[^}]*display:\s*none", CSS)
 
 
 def test_account_identity_route_is_a_chromeless_profiles_subscreen():

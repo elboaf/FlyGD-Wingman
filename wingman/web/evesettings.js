@@ -20,6 +20,8 @@
   // shows and what the button acts on can never disagree.
   var visible = [];
   var busy = false;
+  var pendingMutation = '';
+  var copyFollowup = false;
   // The folder card's second face. Collapsed on every entry to the route
   // rather than remembered: the point of collapsing it is that the target
   // list is on screen at open, and a card that stayed expanded across
@@ -278,7 +280,22 @@
 
   function renderIdentity() {
     var accountsMode = kind() === 'accounts';
+    var accounts = (state && state.accounts) || [];
+    var characters = (state && state.identity_characters) || [];
+    var identified = accounts.filter(function (account) {
+      return account.account_name;
+    }).length;
+    var canIdentify = !!(state && state.accounts.length
+      && state.identity_characters.length);
     WM.el('es-account-tools').hidden = !accountsMode;
+    WM.el('es-account-summary').textContent = identified + ' of '
+      + accounts.length + ' accounts identified';
+    WM.el('es-account-guidance').textContent = !accounts.length
+      ? 'No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely.'
+      : (!characters.length
+        ? 'No characters found in this profile. Launch a character, make a small settings change, then close EVE completely.'
+        : 'Identify accounts to replace internal IDs with names.');
+    WM.el('es-identify-open').hidden = !canIdentify;
     if (WM.current_route !== 'accountidentity') return;
 
     var panel = WM.el('es-identity-panel');
@@ -741,6 +758,11 @@
   function paintCommit() {
     var count = chosenTargets().length;
     var noun = kind() === 'accounts' ? 'account' : 'character';
+    var copyButton = WM.el('es-copy');
+    copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
+      ? 'Copy operation in progress\u2026'
+      : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');
+    WM.el('es-copy-followup').hidden = !copyFollowup;
     var label = WM.el('es-copy-count');
     label.textContent = count
       ? count + ' ' + noun + (count === 1 ? '' : 's') + ' will be overwritten'
@@ -807,6 +829,11 @@
       });
   }
 
+  function clearCopyFollowup() {
+    copyFollowup = false;
+    WM.el('es-copy-followup').hidden = true;
+  }
+
   function mutate(method) {
     // Every mutation goes through here. The bridge returns as soon as the
     // worker is spawned, so a falsy answer means no worker started (the
@@ -814,9 +841,14 @@
     // anything else waits for onEveSettingsDone.
     var args = Array.prototype.slice.call(arguments);
     if (busy) return;
+    pendingMutation = method;
+    if (method === 'eve_settings_copy') clearCopyFollowup();
     setBusy(true);
     WM.send.apply(null, args).then(function (accepted) {
-      if (!accepted) setBusy(false);
+      if (!accepted) {
+        pendingMutation = '';
+        setBusy(false);
+      }
     });
   }
 
@@ -845,6 +877,7 @@
     // given the user. refresh() is what shows the outcome, in every case.
     function chooseRoot(method) {
       return function () {
+        clearCopyFollowup();
         WM.send(method).then(function () {
           selected = {};
           refresh();
@@ -862,6 +895,7 @@
       WM.el(id).addEventListener('change', function () {
         // A source picked in the old settings set does not exist in the new
         // one, so the selection is dropped rather than carried.
+        clearCopyFollowup();
         selected = {};
         WM.send('eve_settings_select', WM.el('es-server').value,
                 WM.el('es-profile').value).then(function () {
@@ -874,6 +908,7 @@
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="es-kind"]'), function (radio) {
         radio.addEventListener('change', function () {
+          clearCopyFollowup();
           selected = {};
           renderSource();
           renderIdentity();
@@ -883,7 +918,10 @@
       });
 
     WM.el('es-filter').addEventListener('input', renderTargets);
-    WM.el('es-source').addEventListener('change', renderTargets);
+    WM.el('es-source').addEventListener('change', function () {
+      clearCopyFollowup();
+      renderTargets();
+    });
 
     WM.el('es-all').addEventListener('click', function () {
       visible.forEach(function (row) { selected[row.path] = true; });
@@ -905,6 +943,7 @@
     });
 
     WM.el('es-backups-open').addEventListener('click', openBackups);
+    WM.el('es-copy-view-backups').addEventListener('click', openBackups);
     WM.el('es-backups-back').addEventListener('click', function () {
       WM.route('evesettings');
     });
@@ -1110,10 +1149,12 @@
     WM.el('es-auto-keep-apply').addEventListener('click', function () {
       if (busy) return;
       WM.el('es-auto-keep-status').textContent = '';
+      pendingMutation = 'eve_settings_set_auto_keep';
       setBusy(true);
       WM.send('eve_settings_set_auto_keep', WM.el('es-auto-keep').value)
         .then(function (result) {
           if (result && result.accepted) return;
+          pendingMutation = '';
           setBusy(false);
           if (result) WM.el('es-auto-keep').value = result.value;
           WM.el('es-auto-keep-status').textContent = result && result.error || '';
@@ -1200,8 +1241,13 @@
   // forwarded instead; formations.js exposes WM.formationsDone and ignores
   // anything that arrives while its route is not showing.
   WM.handle('onEveSettingsDone', function (payload) {
+    var completedMutation = pendingMutation;
+    pendingMutation = '';
     if (WM.formationsDone) WM.formationsDone(payload);
-    if (payload.ok) selected = {};
+    if (completedMutation === 'eve_settings_copy') {
+      copyFollowup = !!payload.ok;
+      if (payload.ok) selected = {};
+    }
     setBusy(false);
     refresh();
   });

@@ -2915,6 +2915,14 @@ button.btn:disabled,
 #es-eve-state-commit { margin-left: auto; }
 #es-eve-state-commit[hidden] { display: none; }
 
+/* The global status strip owns the completion announcement. This is a quiet
+   next step, kept outside a live region so the same outcome is not spoken
+   twice. The link treatment makes it subordinate to the completed action. */
+.es-copy-followup {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 10px;
+  color: var(--text-dim); font-size: var(--fs-body);
+}
+
 /* P3 -- the most consequential control on the screen was the smallest.
 
    The walkthrough measured `Copy from` at ~149 CSS px against the
@@ -2943,7 +2951,13 @@ button.btn:disabled,
 #es-source { flex: 1; }
 #es-formations-account { flex: 1; }
 
-#es-account-tools { width: 100%; }
+#es-account-tools { width: 100%; align-items: flex-start; }
+.es-account-summary {
+  display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px;
+}
+.es-account-summary .hint { margin: 0; }
+#es-identify-open[hidden] { display: none; }
+.es-copy-followup[hidden] { display: none; }
 #es-account-tools[hidden], #es-identity-panel[hidden], .es-identity[hidden],
 #es-identify-candidate[hidden], #ai-watching-step[hidden], #ai-name-step[hidden],
 #ai-roster-step[hidden], #ai-roster-add-row[hidden], #es-character-add-row[hidden],
