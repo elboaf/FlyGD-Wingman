@@ -867,10 +867,11 @@ def test_account_identification_summary_and_entry_match_backend_preconditions():
     block = render.group(1)
     assert "account.account_name" in block
     assert "state.accounts.length" in block
-    assert "state.identity_characters.length" in block
+    assert "var characters = (state && state.characters) || [];" in block
     assert re.search(
-        r"state\.accounts\.length\s*&&\s*state\.identity_characters\.length", block
+        r"state\.accounts\.length\s*&&\s*state\.characters\.length", block
     )
+    assert "state.identity_characters" not in block
     assert (
         "No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely."
         in block

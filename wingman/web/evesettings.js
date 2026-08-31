@@ -281,12 +281,12 @@
   function renderIdentity() {
     var accountsMode = kind() === 'accounts';
     var accounts = (state && state.accounts) || [];
-    var characters = (state && state.identity_characters) || [];
+    var characters = (state && state.characters) || [];
     var identified = accounts.filter(function (account) {
       return account.account_name;
     }).length;
     var canIdentify = !!(state && state.accounts.length
-      && state.identity_characters.length);
+      && state.characters.length);
     WM.el('es-account-tools').hidden = !accountsMode;
     WM.el('es-account-summary').textContent = identified + ' of '
       + accounts.length + ' accounts identified';
