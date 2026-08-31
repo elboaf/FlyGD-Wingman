@@ -101,19 +101,21 @@ class Answers:
     """Stands in for _confirm, which normally blocks on the page.
 
     `asked` stays a list of (title, body) pairs, because that is what a
-    dozen call sites unpack. The round-6 `destructive` keyword is recorded
-    separately in `destructive`, indexed the same way, so a test can assert
-    the flag without every existing unpack having to grow a third element.
+    dozen call sites unpack. Optional presentation fields are recorded in
+    parallel lists, indexed the same way, so focused tests can assert them
+    without every existing unpack having to grow another element.
     """
 
     def __init__(self, answer=True):
         self.answer = answer
         self.asked = []
         self.destructive = []
+        self.confirm_labels = []
 
-    def __call__(self, title, body, *, destructive=False):
+    def __call__(self, title, body, *, destructive=False, confirm_label=None):
         self.asked.append((title, body))
         self.destructive.append(destructive)
+        self.confirm_labels.append(confirm_label)
         return self.answer
 
 

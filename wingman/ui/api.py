@@ -612,7 +612,14 @@ class Api:
             "onDialog", {"kind": kind, "title": title, "body": body, "request_id": None}
         )
 
-    def _confirm(self, title: str, body: str, *, destructive: bool = False) -> bool:
+    def _confirm(
+        self,
+        title: str,
+        body: str,
+        *,
+        destructive: bool = False,
+        confirm_label: str | None = None,
+    ) -> bool:
         """Ask the page a yes/no question and block until it answers.
 
         This blocks the CALLING thread, which must be a worker -- exactly as
@@ -625,9 +632,16 @@ class Api:
         can complete and the user can answer before this method resumes.
 
         `destructive` picks the affirming button's treatment on the page.
-        See _ask.
+        `confirm_label` may make that answer name a specific action and cost;
+        the page retains its generic label when it is omitted. See _ask.
         """
-        return self._ask(title, body, timeout=None, destructive=destructive)
+        return self._ask(
+            title,
+            body,
+            timeout=None,
+            destructive=destructive,
+            confirm_label=confirm_label,
+        )
 
     def _ask(
         self,
@@ -636,6 +650,7 @@ class Api:
         *,
         timeout: float | None,
         destructive: bool = False,
+        confirm_label: str | None = None,
     ) -> bool:
         """The body of _confirm, with the wait made optional.
 
@@ -671,6 +686,7 @@ class Api:
                     "body": body,
                     "request_id": request_id,
                     "destructive": destructive,
+                    "confirm_label": confirm_label,
                 },
             )
             if not event.wait(timeout):
@@ -845,6 +861,7 @@ class Api:
             f"Permanently delete these files from disk?\n\n{names}"
             "\n\nThis cannot be undone.",
             destructive=True,
+            confirm_label=f"Delete {len(infos)} {'file' if len(infos) == 1 else 'files'}",
         ):
             return
         deleted, failures = library.delete([i.path for i in infos])

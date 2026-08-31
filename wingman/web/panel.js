@@ -212,10 +212,10 @@
     setStatus(IDLE, 'FG');
     WM.el('track').classList.remove('indeterminate');
     // Back to the markup's resting state: the track HIDDEN (G1), no inline
-    // width, and an EMPTY percentage rather than `0%`, which would read as
+    // transform, and an EMPTY percentage rather than `0%`, which would read as
     // a stalled job.
     WM.el('track').hidden = true;
-    WM.el('bar').style.width = '';
+    WM.el('bar').style.transform = '';
     WM.el('pct').textContent = '';
   }
 
@@ -234,12 +234,12 @@
       // A stitch reports no readable percentage. The bar must say
       // "working" without claiming one, so the number is blanked too.
       track.classList.add('indeterminate');
-      bar.style.width = '';
+      bar.style.transform = '';
       pct.textContent = '';
     } else {
       track.classList.remove('indeterminate');
       value = Math.max(0, Math.min(100, Number(p.pct) || 0));
-      bar.style.width = value + '%';
+      bar.style.transform = 'scaleX(' + (value / 100) + ')';
       pct.textContent = Math.round(value) + '%';
     }
     // G1: the track is drawn only while there is a job to report. A push
@@ -365,7 +365,9 @@
     if (isPrompt) { dlgInput.value = item.value || ''; }
     // A prompt is answerable too, so it needs the same way out.
     btnCancel.hidden = !(isConfirm || isPrompt);
-    btnOk.textContent = isConfirm ? 'Confirm' : (isPrompt ? 'Set' : 'OK');
+    btnOk.textContent = isConfirm
+      ? (item.confirm_label || 'Confirm')
+      : (isPrompt ? 'Set' : 'OK');
     // The affirming button of a destructive confirm is .btn.danger, not
     // .btn.acc.
     //

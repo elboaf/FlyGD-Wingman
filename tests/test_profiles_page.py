@@ -752,13 +752,14 @@ def test_profiles_opens_backups_without_mounting_the_archive_inline():
     assert "WM.route('backups')" in CODE
 
 
-def test_backups_is_a_chromeless_profiles_subroute():
+def test_backups_is_a_profiles_subroute_with_destination_chrome():
     assert 'id="route-backups"' in HTML
     assert "backups: 'route-backups'" in APP
     assert 'data-route="backups"' not in HTML
-    for declaration in ("WM.CHROMELESS_ROUTES", "WM.EVE_ROUTES"):
-        block = re.search(declaration + r" = \[([^]]+)\]", APP)
-        assert block and "'backups'" in block.group(1)
+    chromeless = re.search(r"WM\.CHROMELESS_ROUTES = \[([^]]+)\]", APP)
+    assert chromeless and "'backups'" not in chromeless.group(1)
+    eve_routes = re.search(r"WM\.EVE_ROUTES = \[([^]]+)\]", APP)
+    assert eve_routes and "'backups'" in eve_routes.group(1)
     assert "name === 'backups'" in APP
 
 
