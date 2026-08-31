@@ -45,7 +45,11 @@
   var state = {
     path: '', name: '', formations: [], selected: 0, dirty: false, busy: false
   };
-  var accountChoices = [], lastSuccessfulPath = '';
+  // Account paths in the supplied choice list are UI identities. Python
+  // resolves a requested path before reading it, so the returned path can
+  // differ for a junction, symlink, or Windows case normalization; that
+  // resolved path is only the save target.
+  var accountChoices = [], selectedAccountPath = '', lastSuccessfulPath = '';
   // Bumped by every edit, and sampled when a save is sent. A save takes a
   // worker and a push to finish, and the pane stays live throughout -- so
   // without this, an edit made WHILE saving is marked clean by the push
@@ -223,7 +227,7 @@
           // Keep the old document after a failed switch. The select changed
           // before the request was sent, so put it back on the only document
           // still represented by state rather than leaving the two disagreeing.
-          WM.el('fm-account').value = state.path;
+          WM.el('fm-account').value = selectedAccountPath;
           paintCommit();
           WM.confirm('Formations',
                      (reply && reply.error) || 'The file could not be read.');
@@ -261,7 +265,8 @@
       }
       state.path = reply.path;
       state.name = reply.name;
-      lastSuccessfulPath = state.path;
+      selectedAccountPath = path;
+      lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);
       state.selected = 0;
       if (typeof keepIndex === 'number' && state.formations.length) {
@@ -270,7 +275,7 @@
       }
       state.dirty = false;
       savingAt = -1;
-      renderAccounts(state.path);
+      renderAccounts(selectedAccountPath);
       renderAll();
     });
   }
@@ -313,7 +318,7 @@
     // repoints the client's selectedFormationID at whatever is now the
     // head of the table. That is exactly the churn ids exist to prevent,
     // and this file's header claims not to cause.
-    load(state.path, 'reload', state.selected, true);
+    load(selectedAccountPath, 'reload', state.selected, true);
   };
 
   /* ---- rendering ---- */
@@ -737,7 +742,7 @@
 
     WM.el('fm-account').addEventListener('change', function () {
       var nextPath = WM.el('fm-account').value;
-      if (!nextPath || nextPath === state.path || state.busy) return;
+      if (!nextPath || nextPath === selectedAccountPath || state.busy) return;
       if (!state.dirty) {
         load(nextPath, 'switch');
         return;
@@ -746,10 +751,9 @@
                  'Your formation edits have not been saved.',
                  { destructive: true }).then(function (yes) {
         if (yes) {
-          state.dirty = false;
           load(nextPath, 'switch');
         } else {
-          WM.el('fm-account').value = state.path;
+          WM.el('fm-account').value = selectedAccountPath;
         }
       });
     });

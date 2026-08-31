@@ -1169,7 +1169,7 @@ def test_formation_account_switch_guards_dirty_edits():
     ]
     assert "state.dirty" in switch
     assert "Discard changes?" in switch
-    assert "WM.el('fm-account').value = state.path" in switch
+    assert "WM.el('fm-account').value = selectedAccountPath" in switch
 
 
 def test_formation_switch_failure_keeps_the_editor_open_but_entry_failure_ejects():
@@ -1181,12 +1181,55 @@ def test_formation_switch_failure_keeps_the_editor_open_but_entry_failure_ejects
         r"if \(mode === 'switch'\) \{(.*?)\n        \}", failure, re.DOTALL
     )
     assert switch, "a failed account switch needs its own failure branch"
-    assert "WM.el('fm-account').value = state.path" in switch.group(1)
+    assert "WM.el('fm-account').value = selectedAccountPath" in switch.group(1)
     assert "WM.route('evesettings')" not in switch.group(1), (
         "a failed switch must retain the editor and its prior formations"
     )
     assert "WM.route('evesettings')" in failure[switch.end() :], (
         "the initial formation load must still return to Profiles on failure"
+    )
+
+
+def test_formation_account_selection_stays_in_the_supplied_option_space():
+    """The API resolves a file path; the <select> holds discovered paths.
+
+    A junction, symlink, or Windows case normalization can make those strings
+    differ for the same file. The resolved reply remains the save target, but
+    every select operation has to retain the requested account-list value.
+    """
+    assert (
+        "var accountChoices = [], selectedAccountPath = '', lastSuccessfulPath = '';"
+        in FORMATIONS
+    )
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    assert "state.path = reply.path;" in load, "saves must keep the resolved file path"
+    assert "selectedAccountPath = path;" in load
+    assert "lastSuccessfulPath = path;" in load
+    assert "renderAccounts(selectedAccountPath);" in load
+    assert "lastSuccessfulPath = state.path;" not in load
+
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    assert "nextPath === selectedAccountPath" in switch
+    assert "WM.el('fm-account').value = selectedAccountPath;" in switch
+
+    done = FORMATIONS[FORMATIONS.index("WM.formationsDone") :]
+    assert "load(selectedAccountPath, 'reload', state.selected, true);" in done
+
+
+def test_failed_formation_switch_keeps_dirty_edits_saveable():
+    """Discard confirmation is provisional until the replacement read works."""
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    confirmed = re.search(r"if \(yes\) \{(.*?)\n        \}", switch, re.DOTALL)
+    assert confirmed, "the dirty switch confirmation no longer loads an account"
+    assert "load(nextPath, 'switch');" in confirmed.group(1)
+    assert "state.dirty = false;" not in confirmed.group(1), (
+        "a failed replacement read must leave the visible old edits dirty and saveable"
     )
 
 
