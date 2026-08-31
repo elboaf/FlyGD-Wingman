@@ -376,6 +376,9 @@ class Api:
         # A snapshot exists only during an explicit identification pass.
         # Timestamps are evidence for that pass, never durable identity.
         self._eve_identification = None
+        # The latest observed account and the characters it offered. This is
+        # ephemeral authorization for confirmation, not persisted identity.
+        self._eve_identification_candidate: tuple[str, tuple[str, ...]] | None = None
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
         # Last known answer for the advisory "EVE running" pill, or None
@@ -3732,11 +3735,16 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
+    def _eve_clear_identification(self) -> None:
+        """Discard the observation and any pair it authorized."""
+        self._eve_identification = None
+        self._eve_identification_candidate = None
+
     def _eve_account_identity(self, account_id: str) -> dict:
         section = self._eve_section()
         return evesettings_identity.account_identity(
             account_id,
-            section.get("account_aliases") or {},
+            section.get("account_names") or {},
             section.get("account_characters") or {},
             lambda character_id: self._eve_names.label(int(character_id)),
         )
@@ -3803,7 +3811,7 @@ class Api:
                 "display_meta": identity["secondary"],
             }
             if record.kind == "account":
-                item["alias"] = (section.get("account_aliases") or {}).get(
+                item["account_name"] = (section.get("account_names") or {}).get(
                     record.file_id, ""
                 )
                 item["character_ids"] = list(
@@ -4034,7 +4042,7 @@ class Api:
             picked = str(chosen[0])
             # Selection is cleared, not carried: the old server and profile
             # belong to a tree that is no longer the one on screen.
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4096,7 +4104,7 @@ class Api:
                     f"Already set to the detected folder:\n{found}",
                 )
                 return ""
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4108,7 +4116,7 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return False
-            self._eve_identification = None
+            self._eve_clear_identification()
             settings_mod.update_section(
                 self._state.settings,
                 "eve_settings",
@@ -4126,79 +4134,149 @@ class Api:
     def _eve_decimal_id(value) -> bool:
         return isinstance(value, str) and value.isascii() and value.isdigit()
 
-    def eve_settings_set_account_alias(self, account_id: str, alias: str) -> dict:
-        if not self._eve_decimal_id(account_id) or not isinstance(alias, str):
-            return self._field_refused("Choose a valid account.")
-        found = self._eve_discover()
-        if account_id not in {item.file_id for item in found.accounts}:
-            return self._field_refused("That account is not in this profile.")
-        cleaned = alias.strip()
+    @staticmethod
+    def _eve_validate_account_name(
+        account_id: str, name: str, names: dict
+    ) -> tuple[str | None, str | None]:
+        cleaned = name.strip()
+        if not cleaned:
+            return None, "Enter an EVE Online username."
         if len(cleaned) > 80:
-            return self._field_refused("Account names can be up to 80 characters.")
-        aliases = dict(self._eve_section().get("account_aliases") or {})
-        if cleaned:
-            aliases[account_id] = cleaned
-        else:
-            aliases.pop(account_id, None)
-        try:
-            settings_mod.update_section(
-                self._state.settings, "eve_settings", {"account_aliases": aliases}
+            return None, "Account names can be up to 80 characters."
+        folded = cleaned.casefold()
+        if any(
+            other_id != account_id and str(other_name).strip().casefold() == folded
+            for other_id, other_name in names.items()
+        ):
+            return (
+                None,
+                "That EVE Online username is already assigned to another account.",
             )
-        except OSError:
-            logger.exception("Could not persist EVE account alias")
-            return self._field_refused("Could not save this account name.")
-        return self._field_ok()
+        return cleaned, None
+
+    @staticmethod
+    def _eve_relink_account_characters(
+        associations: dict,
+        account_id: str,
+        remove_character_ids: list[str],
+        account_characters: list[str],
+    ) -> tuple[dict | None, str | None]:
+        if len(set(account_characters)) > 3:
+            return None, "An EVE account can have up to three characters."
+        updated = {
+            saved_account: [
+                saved_character
+                for saved_character in saved_characters
+                if saved_character not in remove_character_ids
+            ]
+            for saved_account, saved_characters in associations.items()
+        }
+        updated = {
+            saved_account: saved_characters
+            for saved_account, saved_characters in updated.items()
+            if saved_characters
+        }
+        if account_characters:
+            updated[account_id] = account_characters
+        else:
+            updated.pop(account_id, None)
+        return updated, None
+
+    @contextlib.contextmanager
+    def _eve_identity_hold(self):
+        """Serialize synchronous identity edits without blocking the bridge.
+
+        A worker can hold this lock while awaiting a page confirmation. Manual
+        account edits must refuse in that state rather than block the bridge
+        that delivers the answer and leave the worker parked until its timeout.
+        """
+        if not self._eve_mutation.acquire(blocking=False):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_set_account_name(self, account_id: str, name: str) -> dict:
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
+            if not self._eve_decimal_id(account_id) or not isinstance(name, str):
+                return self._field_refused("Choose a valid account.")
+            found = self._eve_discover()
+            if account_id not in {item.file_id for item in found.accounts}:
+                return self._field_refused("That account is not in this profile.")
+            names = dict(self._eve_section().get("account_names") or {})
+            cleaned, error = self._eve_validate_account_name(account_id, name, names)
+            if error:
+                return self._field_refused(error)
+            names[account_id] = cleaned
+            try:
+                settings_mod.update_section(
+                    self._state.settings, "eve_settings", {"account_names": names}
+                )
+            except OSError:
+                logger.exception("Could not persist EVE account name")
+                return self._field_refused("Could not save this account name.")
+            return self._field_ok()
 
     def eve_settings_set_account_characters(
         self, account_id: str, character_ids: list
     ) -> dict:
-        if not self._eve_decimal_id(account_id) or not isinstance(character_ids, list):
-            return self._field_refused("Choose a valid account and characters.")
-        found = self._eve_discover()
-        if account_id not in {item.file_id for item in found.accounts}:
-            return self._field_refused("That account is not in this profile.")
-        associations = {
-            key: list(value)
-            for key, value in (
-                self._eve_section().get("account_characters") or {}
-            ).items()
-        }
-        known = {item.file_id for item in found.characters}
-        known.update(value for values in associations.values() for value in values)
-        wanted = []
-        for value in character_ids:
-            if not self._eve_decimal_id(value) or value not in known:
-                return self._field_refused("That character is not known to Wingman.")
-            if value not in wanted:
-                wanted.append(value)
-        for key in list(associations):
-            associations[key] = [
-                value for value in associations[key] if value not in wanted
-            ]
-            if not associations[key]:
-                associations.pop(key)
-        if wanted:
-            associations[account_id] = wanted
-        else:
-            associations.pop(account_id, None)
-        try:
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"account_characters": associations},
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
+            if not self._eve_decimal_id(account_id) or not isinstance(
+                character_ids, list
+            ):
+                return self._field_refused("Choose a valid account and characters.")
+            found = self._eve_discover()
+            if account_id not in {item.file_id for item in found.accounts}:
+                return self._field_refused("That account is not in this profile.")
+            section = self._eve_section()
+            if account_id not in (section.get("account_names") or {}):
+                return self._field_refused(
+                    "Name this account before adding characters."
+                )
+            associations = {
+                key: list(value)
+                for key, value in (section.get("account_characters") or {}).items()
+            }
+            known = {item.file_id for item in found.characters}
+            known.update(value for values in associations.values() for value in values)
+            wanted = []
+            for value in character_ids:
+                if not self._eve_decimal_id(value) or value not in known:
+                    return self._field_refused(
+                        "That character is not known to Wingman."
+                    )
+                if value not in wanted:
+                    wanted.append(value)
+            associations, error = self._eve_relink_account_characters(
+                associations, account_id, wanted, wanted
             )
-        except OSError:
-            logger.exception("Could not persist EVE account characters")
-            return self._field_refused("Could not save these character links.")
-        return self._field_ok()
+            if error:
+                return self._field_refused(error)
+            try:
+                settings_mod.update_section(
+                    self._state.settings,
+                    "eve_settings",
+                    {"account_characters": associations},
+                )
+            except OSError:
+                logger.exception("Could not persist EVE account characters")
+                return self._field_refused("Could not save these character links.")
+            return self._field_ok()
 
     def eve_settings_identification_start(self) -> dict:
         if not self._eve_mutation.acquire(blocking=False):
             return {
-                "status": "error",
+                "status": "busy",
                 "error": "Another Profiles operation is running.",
             }
         try:
+            self._eve_clear_identification()
             found = self._eve_discover()
             snapshot = evesettings_identity.take_snapshot(found)
             if not found.accounts or not found.characters:
@@ -4213,58 +4291,139 @@ class Api:
         return {"status": "watching", "error": None}
 
     def eve_settings_identification_check(self) -> dict:
-        snapshot = self._eve_identification
-        if snapshot is None:
-            return {"status": "error", "error": "Start account identification first."}
+        # A worker can hold this lock while parked on a bridge confirmation.
+        # Refusing preserves the bridge thread that must deliver that answer.
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "status": "busy",
+                "error": "Another Profiles operation is running.",
+            }
         try:
-            if self._eve_client_running_strict():
+            snapshot = self._eve_identification
+            if snapshot is None:
+                return {
+                    "status": "error",
+                    "error": "Start account identification first.",
+                }
+            # A new check supersedes every former offer, including one that
+            # cannot compare because EVE has not closed yet.
+            self._eve_identification_candidate = None
+            try:
+                if self._eve_client_running_strict():
+                    return {
+                        "status": "watching",
+                        "error": "EVE is still running. Close that client, then check again.",
+                    }
+            except Exception:
+                # Fail closed: an unverified running state must not be treated as
+                # the clean shutdown whose file changes identify an account.
+                logger.warning(
+                    "Could not verify EVE state during identification", exc_info=True
+                )
                 return {
                     "status": "watching",
-                    "error": "EVE is still running. Close that client, then check again.",
+                    "error": "Could not confirm that EVE is closed. Close it and try again.",
                 }
-        except Exception:
-            # Fail closed: an unverified running state must not be treated as
-            # the clean shutdown whose file changes identify an account.
-            logger.warning(
-                "Could not verify EVE state during identification", exc_info=True
+            changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
+            if changed.invalidated:
+                self._eve_clear_identification()
+                return {
+                    "status": "invalidated",
+                    "error": "The selected EVE profile changed. Start identification again.",
+                }
+            if len(changed.accounts) > 1:
+                return {
+                    "status": "ambiguous",
+                    "error": "More than one account changed. Close the other EVE clients and start again.",
+                }
+            if len(changed.accounts) != 1 or not changed.characters:
+                return {
+                    "status": "none",
+                    "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+                }
+            account_id = changed.accounts[0]
+            self._eve_identification_candidate = (account_id, tuple(changed.characters))
+            return {
+                "status": "candidate",
+                "error": None,
+                "account": {"id": account_id, **self._eve_account_identity(account_id)},
+                "characters": [
+                    {
+                        "id": character_id,
+                        "name": self._eve_names.label(int(character_id)),
+                    }
+                    for character_id in changed.characters
+                ],
+            }
+        finally:
+            self._eve_mutation.release()
+
+    def eve_settings_identification_confirm(
+        self, account_id: str, character_id: str, account_name: str
+    ) -> dict:
+        """Persist one offered account/character pair as one settings update."""
+        with self._eve_identity_hold() as held:
+            if not held:
+                return self._field_refused("Another Profiles operation is running.")
+            candidate = self._eve_identification_candidate
+            if candidate is None:
+                return self._field_refused("Start account identification again.")
+            candidate_account, candidate_characters = candidate
+            if (
+                account_id != candidate_account
+                or character_id not in candidate_characters
+            ):
+                return self._field_refused("That account match is no longer available.")
+            if not isinstance(account_name, str):
+                return self._field_refused("Enter an EVE Online username.")
+
+            section = self._eve_section()
+            names = dict(section.get("account_names") or {})
+            cleaned_name, error = self._eve_validate_account_name(
+                account_id, account_name, names
             )
-            return {
-                "status": "watching",
-                "error": "Could not confirm that EVE is closed. Close it and try again.",
+            if error:
+                return self._field_refused(error)
+            associations = {
+                saved_account: list(character_ids)
+                for saved_account, character_ids in (
+                    section.get("account_characters") or {}
+                ).items()
             }
-        changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
-        if changed.invalidated:
-            self._eve_identification = None
-            return {
-                "status": "invalidated",
-                "error": "The selected EVE profile changed. Start identification again.",
-            }
-        if len(changed.accounts) > 1:
-            return {
-                "status": "ambiguous",
-                "error": "More than one account changed. Close the other EVE clients and start again.",
-            }
-        if len(changed.accounts) != 1 or not changed.characters:
-            return {
-                "status": "none",
-                "error": "No account and character changes were found. Close the client fully, then check again.",
-            }
-        account_id = changed.accounts[0]
-        return {
-            "status": "candidate",
-            "error": None,
-            "account": {"id": account_id, **self._eve_account_identity(account_id)},
-            "characters": [
-                {
-                    "id": character_id,
-                    "name": self._eve_names.label(int(character_id)),
-                }
-                for character_id in changed.characters
-            ],
-        }
+            destination = associations.get(account_id, [])
+
+            final_names = {**names, account_id: cleaned_name}
+            final_associations = associations
+            if character_id not in destination:
+                final_associations, error = self._eve_relink_account_characters(
+                    associations,
+                    account_id,
+                    [character_id],
+                    [*destination, character_id],
+                )
+                if error:
+                    return self._field_refused(error)
+
+            if final_names != names or final_associations != associations:
+                try:
+                    settings_mod.update_section(
+                        self._state.settings,
+                        "eve_settings",
+                        {
+                            "account_names": final_names,
+                            "account_characters": final_associations,
+                        },
+                    )
+                except OSError:
+                    # Account names are private local metadata; never include the
+                    # supplied username in diagnostics.
+                    logger.exception("Could not persist identified EVE account")
+                    return self._field_refused("Could not save this account identity.")
+            self._eve_clear_identification()
+            return self._field_ok()
 
     def eve_settings_identification_cancel(self) -> bool:
-        self._eve_identification = None
+        self._eve_clear_identification()
         return True
 
     def eve_settings_resolve_names(self) -> None:

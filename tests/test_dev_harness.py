@@ -13,6 +13,7 @@ rendered three cards, their headings, their prose and a Reset button with
 zero keybind rows, and five sessions verified through it.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -159,6 +160,109 @@ def test_no_load_time_read_is_left_undoubled():
         "a screen's own content comes from these, so the harness renders "
         "that screen as a finished-looking shell without them: " + repr(undoubled)
     )
+
+
+def _identity_scenarios() -> dict:
+    match = re.search(
+        r"var identityScenarios = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL
+    )
+    assert match, "dev.js must declare one JSON-backed identity scenario table"
+    return json.loads(match.group(1))
+
+
+def test_identity_scenario_selector_covers_every_visual_state_once():
+    required = {
+        "idle",
+        "waiting",
+        "none",
+        "ambiguous",
+        "candidate-multiple",
+        "pending-name",
+        "existing-name",
+        "roster-one",
+        "roster-two",
+        "roster-three",
+        "roster-empty",
+        "move",
+        "full",
+    }
+    scenarios = _identity_scenarios()
+    assert set(scenarios) == required
+    table = re.search(
+        r"var identityScenarios = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL
+    ).group(1)
+    for token in required:
+        assert table.count('"' + token + '":{') == 1, token
+    assert "new URLSearchParams(window.location.search)" in DEV_JS
+    assert ".get('identity')" in DEV_JS
+    assert ".has('identity')" in DEV_JS
+    assert "if (identityScenarioRequested && !identityScenarioQueued)" in DEV_JS
+    assert "if (identityScenarioRequested) {" in DEV_JS
+
+
+def test_bare_dev_mode_does_not_open_an_identity_scenario():
+    """The explicit identity selector, not dev mode itself, owns this route.
+
+    The ordinary fixture must keep Profiles on its usual landing route so it
+    remains useful for reviewing the account source and backup list.
+    """
+    assert "var identityScenarioRequested = identitySearch.has('identity');" in DEV_JS
+    assert "var identityScenario = identitySearch.get('identity') || 'idle';" in DEV_JS
+    assert "if (identityScenarioRequested && !identityScenarioQueued)" in DEV_JS
+    assert "if (identityScenarioRequested) {" in DEV_JS
+    assert "document.readyState === 'loading'" in DEV_JS
+
+
+def test_identity_scenario_rosters_obey_production_invariants():
+    for scenario_name, scenario in _identity_scenarios().items():
+        claimed = set()
+        names = set()
+        for account in scenario["accounts"]:
+            character_ids = account["character_ids"]
+            assert len(character_ids) <= 3, (scenario_name, account)
+            account_name = account["account_name"].strip()
+            if character_ids:
+                assert account_name, (scenario_name, account)
+            if account_name:
+                folded = account_name.casefold()
+                assert folded not in names, (scenario_name, account_name)
+                names.add(folded)
+            for character_id in character_ids:
+                assert character_id not in claimed, (scenario_name, character_id)
+                claimed.add(character_id)
+
+
+def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_backup():
+    scenarios = _identity_scenarios()
+    account = next(
+        item for item in scenarios["idle"]["accounts"] if item["id"] == "1001"
+    )
+    assert account["character_ids"] == ["90000000", "90000001", "90000002"]
+    assert 'display_name: "alpha@example"' in DEV_JS
+    assert 'display_meta: "Account 1001"' in DEV_JS
+
+
+def test_move_scenario_uses_the_guided_candidate_path():
+    move = _identity_scenarios()["move"]
+    assert move["stage"] == "move"
+    assert move["check"] == {
+        "status": "candidate",
+        "error": None,
+        "account_id": "1002",
+        "character_ids": ["90000000"],
+    }
+    assert "move_account" not in move
+    assert "move_character" not in move
+    assert "stage === 'move'" in DEV_JS
+
+
+def test_identity_harness_doubles_atomic_endpoints_without_alias_compatibility():
+    stubbed = _stubbed()
+    assert "eve_settings_identification_confirm" in stubbed
+    assert "eve_settings_set_account_name" in stubbed
+    assert "eve_settings_set_account_characters" in stubbed
+    assert "eve_settings_set_account_alias" not in stubbed
+    assert "eve_settings_set_account_alias" not in DEV_JS
 
 
 def test_the_harness_assigns_each_bridge_method_once():

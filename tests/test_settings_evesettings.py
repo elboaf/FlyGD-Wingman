@@ -48,31 +48,56 @@ def test_booleans_are_not_accepted_as_auto_keep():
     assert out["auto_keep"] == settings._eve_settings_defaults()["auto_keep"]
 
 
-def test_account_identity_metadata_is_validated_per_entry():
+def test_account_names_are_trimmed_bounded_and_casefold_unique():
     out = settings.validated_eve_settings(
         {
-            "account_aliases": {
-                "10": "  Main multibox  ",
-                "bad": "ignored",
-                "11": 42,
+            "account_names": {
+                "10": "  LoginName  ",
+                "11": "loginname",
                 "12": "x" * 100,
-            },
+                "bad": "ignored",
+            }
+        }
+    )
+    assert out["account_names"] == {"10": "LoginName", "12": "x" * 80}
+
+
+def test_links_require_a_name_and_keep_first_three_valid_unclaimed_ids():
+    out = settings.validated_eve_settings(
+        {
+            "account_names": {"10": "First", "11": "Second"},
             "account_characters": {
-                "10": ["20", "20", "bad", 21],
-                "11": ["20", "22"],
-                "bad": ["23"],
+                "10": ["20", "20", "bad", "21", "22", "23"],
+                "11": ["20", "24", "25", "26"],
+                "12": ["27"],
             },
         }
     )
-    assert out["account_aliases"] == {"10": "Main multibox", "12": "x" * 80}
-    assert out["account_characters"] == {"10": ["20"], "11": ["22"]}
+    assert out["account_characters"] == {
+        "10": ["20", "21", "22"],
+        "11": ["24", "25", "26"],
+    }
+
+
+def test_unreleased_alias_key_is_dropped():
+    out = settings.validated_eve_settings(
+        {"account_aliases": {"10": "Old"}, "account_characters": {"10": ["20"]}}
+    )
+    assert out["account_names"] == {}
+    assert out["account_characters"] == {}
+
+
+def test_named_account_without_links_is_retained():
+    out = settings.validated_eve_settings({"account_names": {"10": "Solo"}})
+    assert out["account_names"] == {"10": "Solo"}
+    assert out["account_characters"] == {}
 
 
 def test_account_identity_maps_are_fresh_defaults():
     first = settings._eve_settings_defaults()
-    first["account_aliases"]["10"] = "changed"
+    first["account_names"]["10"] = "changed"
     first["account_characters"]["10"] = ["20"]
-    assert settings._eve_settings_defaults()["account_aliases"] == {}
+    assert settings._eve_settings_defaults()["account_names"] == {}
     assert settings._eve_settings_defaults()["account_characters"] == {}
 
 

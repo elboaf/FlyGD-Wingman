@@ -85,12 +85,12 @@ def changes_since(before: Snapshot, found: tree.Tree) -> Changes:
 
 def account_identity(
     account_id: str,
-    aliases: dict,
+    account_names: dict,
     associations: dict,
     character_name,
 ) -> dict:
     """One display representation for every account surface."""
-    alias = str(aliases.get(account_id) or "").strip()
+    account_name = str(account_names.get(account_id) or "").strip()
     character_ids = associations.get(account_id) or []
     names = sorted((character_name(cid) for cid in character_ids), key=str.casefold)
     character_summary = ""
@@ -99,11 +99,11 @@ def account_identity(
         if len(names) > 1:
             character_summary += f" + {len(names) - 1}"
 
-    primary = alias or character_summary or account_id
+    primary = account_name or character_summary or account_id
     secondary_parts = []
-    if alias and character_summary:
+    if account_name and character_summary:
         secondary_parts.append(character_summary)
-    if alias or character_summary:
+    if account_name or character_summary:
         secondary_parts.append(account_id)
     secondary = " · ".join(secondary_parts)
     return {

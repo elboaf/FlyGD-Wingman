@@ -715,15 +715,51 @@ def test_account_identity_route_is_a_chromeless_profiles_subscreen():
     assert "name === 'accountidentity'" in APP
 
 
-def test_identification_uses_explicit_request_response_methods_and_cancels_on_leave():
+def test_identification_uses_the_five_step_markup_and_required_copy():
+    for ident in (
+        "ai-intro",
+        "es-identify-candidate",
+        "ai-name-step",
+        "es-account-name",
+        "es-account-name-save",
+        "ai-roster-step",
+        "ai-roster-heading",
+        "ai-roster-count",
+        "ai-roster-characters",
+        "ai-roster-add-row",
+        "ai-roster-character",
+        "ai-roster-add",
+        "ai-roster-empty",
+        "ai-roster-done",
+        "ai-identify-another",
+    ):
+        assert f'id="{ident}"' in ACCOUNT_ROUTE
+    for copy in (
+        "Launch one character, enter the game, make a small settings change, then close the client completely.",
+        "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+        "Use the username you sign in to EVE Online with. Stored only on this computer.",
+        "Check this account in the EVE launcher, then add any other characters shown there.",
+    ):
+        assert copy in ACCOUNT_ROUTE or copy in CODE
+    assert "Optional account name" not in ACCOUNT_ROUTE
+    assert "account alias" not in _strip_html_comments(ACCOUNT_ROUTE).casefold()
+
+
+def test_identification_uses_atomic_confirmation_and_bounded_roster():
     for method in (
         "eve_settings_identification_start",
         "eve_settings_identification_check",
         "eve_settings_identification_cancel",
-        "eve_settings_set_account_alias",
+        "eve_settings_identification_confirm",
+        "eve_settings_set_account_name",
         "eve_settings_set_account_characters",
     ):
-        assert method in CODE
+        assert f"WM.send('{method}'" in CODE
+    assert "eve_settings_set_account_alias" not in CODE
+    assert "es-account-name-save').click()" in CODE
+    assert "account.account_name" in CODE
+    assert "eve_settings_identification_confirm', accountId, characterId," in CODE
+    assert "WM.route('evesettings')" in CODE
     route = re.search(
         r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
     )
@@ -731,19 +767,96 @@ def test_identification_uses_explicit_request_response_methods_and_cancels_on_le
     assert "event.detail === 'accountidentity'" in route.group(0)
     assert "if (leavingIdentity)" in route.group(0)
     assert "eve_settings_identification_cancel" in route.group(0)
+    assert "ai-identify-another" in CODE and "paintIdentification('idle')" in CODE
+    assert "result.status === 'invalidated'" in CODE
+    assert "result.status === 'error'" in CODE
+    assert "result.status === 'busy'" in CODE
+    assert "result.error === 'Another Profiles operation is running.'" not in CODE
+    assert "filter(function (account) { return account.account_name; }).length" in CODE
+    assert "linked.length >= 3 || !add.options.length" in CODE
+    assert "WM.confirm('Move character?'" in CODE
+    assert "owner.display_name" in CODE and "account.display_name" in CODE
 
 
-def test_identification_completion_replaces_setup_with_the_way_back():
+def test_watching_has_a_visible_focusable_step_heading():
+    heading = re.search(r'<h2[^>]*id="ai-watching-heading"[^>]*>', ACCOUNT_ROUTE)
+    assert heading and 'tabindex="-1"' in heading.group(0)
     paint = re.search(
-        r"function paintIdentification\(status, message\) \{(.*?)\n  \}",
-        CODE,
-        re.DOTALL,
+        r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
     )
     assert paint
-    assert "ai-intro').hidden = complete" in paint.group(1)
-    assert "ai-complete').hidden = !complete" in paint.group(1)
-    assert "ai-complete-back').classList.toggle('acc', complete)" in paint.group(1)
-    assert "linked to " in CODE
+    assert "WM.el('ai-watching-step').hidden = !watching;" in paint.group(1)
+    assert "step === 'watching' ? 'ai-watching-heading'" in paint.group(1)
+
+
+def test_state_repaint_transitions_from_idle_to_watching_through_the_focus_path():
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "identityStep = 'watching';" not in render.group(1)
+    assert (
+        "identityStep === 'idle' && state.identification_active ? 'watching' : identityStep"
+        in render.group(1)
+    )
+    assert "paintIdentification(step, identityMessage);" in render.group(1)
+
+
+def test_identification_steps_are_focused_and_have_one_primary_action():
+    for ident in (
+        "ai-intro-heading",
+        "ai-watching-heading",
+        "es-identify-candidate-heading",
+        "ai-name-heading",
+        "ai-roster-heading",
+    ):
+        assert f'id="{ident}"' in ACCOUNT_ROUTE
+        assert 'tabindex="-1"' in re.search(
+            rf'<h2[^>]*id="{ident}"[^>]*>', ACCOUNT_ROUTE
+        ).group(0)
+    assert 'id="ai-roster-count"' in ACCOUNT_ROUTE
+    roster_count = re.search(r'<[^>]+id="ai-roster-count"[^>]*>', ACCOUNT_ROUTE)
+    assert roster_count and 'role="status"' in roster_count.group(0)
+    roster_status = re.search(r'<[^>]+id="ai-roster-status"[^>]*>', ACCOUNT_ROUTE)
+    assert roster_status and 'role="status"' in roster_status.group(0)
+    for ident in ("ai-roster-identified", "ai-roster-empty"):
+        element = re.search(rf'<[^>]+id="{ident}"[^>]*>', ACCOUNT_ROUTE)
+        assert element and 'role="status"' not in element.group(0)
+    assert "}, 'ai-roster-status');" in CODE
+    name_input = re.search(r'<input[^>]+id="es-account-name"[^>]*>', ACCOUNT_ROUTE)
+    assert (
+        name_input
+        and 'aria-describedby="ai-name-hint ai-name-status"' in name_input.group(0)
+    )
+    for ident in ("ai-name-status", "es-manage-status"):
+        element = re.search(rf'<[^>]+id="{ident}"[^>]*>', ACCOUNT_ROUTE)
+        assert element and 'class="field-msg"' in element.group(0)
+    assert "el.classList.toggle('err', !!error);" in CODE
+    paint = re.search(
+        r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert paint and ".focus()" in paint.group(1)
+    block = paint.group(1)
+    assert "es-identify-check').classList.toggle('acc', watching)" in block
+    assert "es-identify-link').classList.toggle('acc', candidate)" in block
+    assert "es-account-name-save').classList.toggle('acc', name)" in block
+    assert (
+        "ai-roster-add').classList.toggle('acc', roster && additionAvailable)" in block
+    )
+    assert (
+        "ai-roster-done').classList.toggle('acc', roster && !additionAvailable)"
+        in block
+    )
+
+
+def test_open_roster_changes_step_after_refresh_so_the_roster_heading_receives_focus():
+    open_roster = re.search(
+        r"function openRoster\(accountId\) \{(.*?)\n    \}", CODE, re.DOTALL
+    )
+    assert open_roster
+    assert "identityStep = 'roster';" not in open_roster.group(1)
+    assert (
+        "refresh().then(function () { paintIdentification('roster');"
+        in open_roster.group(1)
+    )
 
 
 def test_account_identity_actions_follow_the_profiles_busy_state():
@@ -751,17 +864,55 @@ def test_account_identity_actions_follow_the_profiles_busy_state():
     assert busy
     for ident in (
         "es-identify-start",
-        "es-alias-apply",
+        "es-account-name-save",
+        "ai-roster-add",
         "es-character-add-btn",
         "es-identity-account",
-        "es-account-alias",
         "es-character-add",
     ):
         assert ident in busy.group(1), f"{ident} remains interactive during a mutation"
+    assert re.search(
+        r"WM\.el\('es-account-name'\)\.disabled = value;", busy.group(1)
+    ), "the guided account-name field remains editable during a mutation"
     assert "setBusy(busy)" in CODE, (
         "an identification refusal must not clear an existing mutation's busy state"
     )
     assert "'aria-label', 'Remove '" in CODE
+
+
+def test_account_management_uses_the_specified_names_and_links_label():
+    assert "Manage account names and character links…" in ACCOUNT_ROUTE
+    assert "Manage account names and character links…" in CODE
+    assert "Close account names and character links" in CODE
+    assert "Manage names and character links…" not in CODE
+    assert "Close names and character links" not in CODE
+
+
+def test_switching_managed_accounts_clears_the_previous_inline_error():
+    render = re.search(
+        r"function renderIdentityAccount\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert render
+    assert "paintFieldError('es-manage-status', '');" in render.group(1)
+
+
+def test_add_dropdowns_exclude_characters_linked_to_any_account():
+    helper = re.search(
+        r"function linkedCharacterIds\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert helper
+    assert "state.accounts" in helper.group(1)
+    assert "account.character_ids" in helper.group(1)
+
+    manual = re.search(
+        r"function renderIdentityAccount\(\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    roster = re.search(r"function renderRoster\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert manual and roster
+    assert "linkedCharacterIds()" in manual.group(1)
+    assert "linkedCharacterIds()" in roster.group(1)
+    assert "if (claimed[character.id]) return;" in manual.group(1)
+    assert "if (claimed[character.id]) return;" in roster.group(1)
 
 
 def test_account_labels_never_lead_with_an_unhelpful_missing_state():

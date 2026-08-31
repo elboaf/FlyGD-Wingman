@@ -29,7 +29,11 @@
   var identityExpanded = false;
   var backupVisible = 20;
   var identifyCandidate = null;
-  var identityComplete = '';
+  var identityStep = 'idle';
+  var identityMessage = '';
+  var pendingCharacterId = '';
+  var rosterAccountId = '';
+  var additionAvailable = false;
   var identityRouteOpen = false;
 
   function kind() {
@@ -43,7 +47,7 @@
   }
 
   function refresh() {
-    WM.send('eve_settings_state').then(render);
+    return WM.send('eve_settings_state').then(render);
   }
 
   function render(payload) {
@@ -226,6 +230,36 @@
     })[0] || null;
   }
 
+  function linkedCharacterIds() {
+    var claimed = {};
+    ((state && state.accounts) || []).forEach(function (account) {
+      (account.character_ids || []).forEach(function (characterId) {
+        claimed[characterId] = true;
+      });
+    });
+    return claimed;
+  }
+
+  function confirmCharacterMove(accountId, characterId, done) {
+    var account = accountById(accountId);
+    var owner = (state.accounts || []).filter(function (other) {
+      return other.id !== accountId
+        && (other.character_ids || []).indexOf(characterId) !== -1;
+    })[0];
+    if (!owner || !account) { done(); return; }
+    var character = characterById(characterId);
+    WM.confirm('Move character?',
+      (character ? character.name : 'This character') + ' is linked to '
+      + owner.display_name + '. Move the link to ' + account.display_name + '?')
+      .then(function (yes) { if (yes) done(); });
+  }
+
+  function paintFieldError(id, error) {
+    var el = WM.el(id);
+    el.textContent = error || '';
+    el.classList.toggle('err', !!error);
+  }
+
   function addCharacterLink(accountId, characterId, done, statusId) {
     var account = accountById(accountId);
     var ids = account ? (account.character_ids || []).slice() : [];
@@ -233,21 +267,12 @@
     var save = function () {
       WM.send('eve_settings_set_account_characters', accountId, ids)
         .then(function (result) {
-          WM.el(statusId || 'es-identity-status').textContent =
-            result && result.error || '';
+          paintFieldError(statusId || 'es-identity-status',
+            result && result.error || '');
           if (result && result.applied) done();
         });
     };
-    var owner = (state.accounts || []).filter(function (other) {
-      return other.id !== accountId
-        && (other.character_ids || []).indexOf(characterId) !== -1;
-    })[0];
-    if (!owner) { save(); return; }
-    var character = characterById(characterId);
-    WM.confirm('Move character?',
-      (character ? character.name : 'This character') + ' is linked to '
-      + owner.display_name + '. Move the link to ' + account.display_name + '?')
-      .then(function (yes) { if (yes) save(); });
+    confirmCharacterMove(accountId, characterId, save);
   }
 
   function renderIdentity() {
@@ -257,7 +282,8 @@
 
     var panel = WM.el('es-identity-panel');
     WM.el('es-manage-toggle').textContent = identityExpanded
-      ? 'Close names and character links' : 'Manage names and character links…';
+      ? 'Close account names and character links'
+      : 'Manage account names and character links…';
     panel.hidden = !identityExpanded;
     if (identityExpanded) {
       var picker = WM.el('es-identity-account');
@@ -272,13 +298,15 @@
       if (keep && accountById(keep)) picker.value = keep;
       renderIdentityAccount();
     }
-    paintIdentification(identityComplete ? 'complete' :
-      (state.identification_active ? 'watching' : 'idle'), identityComplete);
+    var step = identityStep === 'idle' && state.identification_active ? 'watching' : identityStep;
+    renderRoster();
+    paintIdentification(step, identityMessage);
   }
 
   function renderIdentityAccount() {
     var account = accountById(WM.el('es-identity-account').value);
-    WM.el('es-account-alias').value = account ? account.alias : '';
+    paintFieldError('es-manage-status', '');
+    WM.el('es-manage-account-name').value = account ? account.account_name : '';
     var linked = account ? account.character_ids || [] : [];
     var host = WM.el('es-account-characters');
     host.textContent = '';
@@ -308,36 +336,88 @@
     }
 
     var add = WM.el('es-character-add');
+    var claimed = linkedCharacterIds();
     add.textContent = '';
     ((state && state.identity_characters) || []).forEach(function (character) {
-      if (linked.indexOf(character.id) !== -1) return;
+      if (claimed[character.id]) return;
       var option = document.createElement('option');
       option.value = character.id;
       option.textContent = character.name;
       add.appendChild(option);
     });
-    WM.el('es-character-add-btn').disabled = !account || !add.options.length;
+    var cannotAdd = !account || linked.length >= 3 || !add.options.length;
+    WM.el('es-character-add-row').hidden = cannotAdd;
+    WM.el('es-character-add-btn').disabled = cannotAdd;
   }
 
-  function paintIdentification(status, message) {
-    var watching = status === 'watching';
-    var candidate = status === 'candidate';
-    var complete = status === 'complete';
-    WM.el('es-identify-start').hidden = watching || candidate || complete;
+  function renderRoster() {
+    var account = accountById(rosterAccountId);
+    var linked = account ? account.character_ids || [] : [];
+    var host = WM.el('ai-roster-characters');
+    host.textContent = '';
+    linked.forEach(function (characterId) {
+      var character = characterById(characterId);
+      host.appendChild(WM.make('div', 'es-linked-character', character
+        ? character.name : 'Character ' + characterId));
+    });
+    WM.el('ai-roster-heading').textContent = account
+      ? account.account_name : 'Account roster';
+    WM.el('ai-roster-count').textContent = linked.length + ' of 3 characters linked';
+    var add = WM.el('ai-roster-character');
+    var claimed = linkedCharacterIds();
+    add.textContent = '';
+    ((state && state.identity_characters) || []).forEach(function (character) {
+      if (claimed[character.id]) return;
+      var option = document.createElement('option');
+      option.value = character.id;
+      option.textContent = character.name;
+      add.appendChild(option);
+    });
+    additionAvailable = !!account && linked.length < 3 && !!add.options.length;
+    WM.el('ai-roster-add-row').hidden = !additionAvailable;
+    var identified = (state.accounts || []).filter(function (account) { return account.account_name; }).length;
+    WM.el('ai-roster-identified').textContent = identified + ' of '
+      + (state.accounts || []).length + ' accounts identified in this profile';
+    WM.el('ai-roster-empty').textContent = linked.length >= 3
+      ? 'This account has all 3 character links. Remove a wrong or obsolete link in account management.'
+      : (additionAvailable ? ''
+        : 'Only characters discovered in this EVE profile can be offered. Launch another character, make a small settings change, and close EVE completely to make it available later.');
+    paintFieldError('ai-roster-status', '');
+  }
+
+  function paintIdentification(step, message) {
+    var previous = identityStep;
+    var watching = step === 'watching';
+    var candidate = step === 'candidate';
+    var name = step === 'name';
+    var roster = step === 'roster';
+    identityStep = step;
+    identityMessage = message || '';
+    WM.el('ai-intro').hidden = watching || candidate || name || roster;
+    WM.el('ai-watching-step').hidden = !watching;
+    WM.el('es-identify-candidate').hidden = !candidate;
+    WM.el('ai-name-step').hidden = !name;
+    WM.el('ai-roster-step').hidden = !roster;
+    WM.el('es-identify-start').hidden = watching || candidate || name || roster;
     WM.el('es-identify-check').hidden = !watching;
-    WM.el('es-identify-cancel').hidden = !(watching || candidate);
-    WM.el('ai-complete').hidden = !complete;
-    WM.el('ai-intro').hidden = complete;
-    WM.el('es-identify-start').classList.toggle('acc', !complete);
-    WM.el('ai-complete-back').classList.toggle('acc', complete);
-    if (!candidate) {
-      WM.el('es-identify-candidate').hidden = true;
-      identifyCandidate = null;
-    }
+    WM.el('es-identify-cancel').hidden = !(watching || candidate || name);
+    WM.el('es-identify-start').classList.toggle('acc', step === 'idle');
+    WM.el('es-identify-check').classList.toggle('acc', watching);
+    WM.el('es-identify-link').classList.toggle('acc', candidate);
+    WM.el('es-account-name-save').classList.toggle('acc', name);
+    WM.el('ai-roster-add').classList.toggle('acc', roster && additionAvailable);
+    WM.el('ai-roster-done').classList.toggle('acc', roster && !additionAvailable);
     var defaultMessage = watching
-      ? 'Launch one character, enter the game, then close that client completely.'
+      ? 'Launch one character, enter the game, make a small settings change, then close the client completely.'
       : '';
     WM.el('es-identity-status').textContent = message || defaultMessage;
+    if (previous !== step) {
+      var heading = WM.el(step === 'watching' ? 'ai-watching-heading'
+        : step === 'candidate' ? 'es-identify-candidate-heading'
+        : step === 'name' ? 'ai-name-heading'
+        : step === 'roster' ? 'ai-roster-heading' : 'ai-intro-heading');
+      heading.focus();
+    }
   }
 
   function renderCandidate(payload) {
@@ -354,7 +434,6 @@
       ? payload.characters[0].name + ' changed with ' + payload.account.option + '.'
       : 'Choose which changed character belongs to ' + payload.account.option + '.';
     paintIdentification('candidate', message);
-    WM.el('es-identify-candidate').hidden = false;
   }
 
   function renderCopyGroups() {
@@ -669,11 +748,16 @@
       || !(state && state.profile);
     ['es-auto-keep-apply', 'es-formations-open', 'es-backups-more',
      'es-identify-open', 'es-identify-start', 'es-manage-toggle',
-     'es-alias-apply', 'es-character-add-btn'].forEach(function (id) {
+     'es-account-name-apply', 'es-character-add-btn'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
     });
-    ['es-identity-account', 'es-account-alias', 'es-character-add'].forEach(function (id) {
+    ['es-identify-check', 'es-identify-cancel', 'es-account-name-save',
+     'ai-roster-add', 'ai-roster-done', 'ai-identify-another'].forEach(function (id) {
       WM.el(id).disabled = value;
+    });
+    WM.el('es-account-name').disabled = value;
+    ['es-identity-account', 'es-manage-account-name', 'es-character-add'].forEach(function (id) {
+      WM.el(id).disabled = value || identifying;
     });
     Array.prototype.forEach.call(
       WM.el('es-backups').querySelectorAll('button'), function (el) {
@@ -775,7 +859,10 @@
 
     WM.el('es-identify-open').addEventListener('click', function () {
       identityExpanded = false;
-      identityComplete = '';
+      identityStep = 'idle';
+      identityMessage = '';
+      pendingCharacterId = '';
+      rosterAccountId = '';
       WM.route('accountidentity');
     });
 
@@ -784,26 +871,38 @@
       renderIdentity();
     });
 
+    function clearIdentification() {
+      identifyCandidate = null;
+      pendingCharacterId = '';
+      rosterAccountId = '';
+      identityMessage = '';
+    }
+
     function backToProfiles() {
       WM.send('eve_settings_identification_cancel').then(function () {
         if (state) state.identification_active = false;
-        identityComplete = '';
+        clearIdentification();
+        identityStep = 'idle';
         identityRouteOpen = false;
         WM.route('evesettings');
       });
     }
     WM.el('ai-back').addEventListener('click', backToProfiles);
-    WM.el('ai-complete-back').addEventListener('click', backToProfiles);
+    WM.el('ai-roster-done').addEventListener('click', backToProfiles);
 
     WM.el('es-identity-account').addEventListener('change', renderIdentityAccount);
 
-    WM.el('es-alias-apply').addEventListener('click', function () {
+    function saveManagedAccountName() {
       var accountId = WM.el('es-identity-account').value;
-      WM.send('eve_settings_set_account_alias', accountId,
-              WM.el('es-account-alias').value).then(function (result) {
-        WM.el('es-manage-status').textContent = result && result.error || '';
+      WM.send('eve_settings_set_account_name', accountId,
+              WM.el('es-manage-account-name').value).then(function (result) {
+        paintFieldError('es-manage-status', result && result.error || '');
         if (result && result.applied) refresh();
       });
+    }
+    WM.el('es-account-name-apply').addEventListener('click', saveManagedAccountName);
+    WM.el('es-manage-account-name').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') saveManagedAccountName();
     });
 
     WM.el('es-character-add-btn').addEventListener('click', function () {
@@ -815,44 +914,126 @@
 
     WM.el('es-identify-start').addEventListener('click', function () {
       WM.send('eve_settings_identification_start').then(function (result) {
-        if (result.status === 'watching') state.identification_active = true;
-        paintIdentification(result.status, result.error);
+        var step = result && result.status === 'watching' ? 'watching' : 'idle';
+        if (state) state.identification_active = step === 'watching';
+        clearIdentification();
+        paintIdentification(step, result && result.error);
         setBusy(busy);
       });
     });
 
     WM.el('es-identify-check').addEventListener('click', function () {
       WM.send('eve_settings_identification_check').then(function (result) {
-        if (result.status === 'candidate') renderCandidate(result);
-        else paintIdentification(
-          result.status === 'ambiguous' || result.status === 'none'
-            ? 'watching' : result.status,
-          result.error);
+        if (result && result.status === 'candidate') {
+          if (state) state.identification_active = true;
+          renderCandidate(result);
+        } else {
+          var busyError = result && result.status === 'busy';
+          var restart = result && (result.status === 'invalidated'
+            || result.status === 'error');
+          if (restart) {
+            if (state) state.identification_active = false;
+            clearIdentification();
+            paintIdentification('idle', result.error);
+          } else if (busyError) {
+            // A worker may retain the snapshot while it owns the lock. Keep
+            // the local state rather than falsely offering a fresh start.
+            paintIdentification(identityStep === 'idle' && state
+              && state.identification_active ? 'watching' : identityStep,
+            result.error);
+          } else {
+            if (state) {
+              state.identification_active = !!result && (result.status === 'watching'
+                || result.status === 'none' || result.status === 'ambiguous');
+            }
+            identifyCandidate = null;
+            pendingCharacterId = '';
+            paintIdentification('watching', result && result.error
+              || 'No account and character changes were found. Make a small settings change in the client, then close it completely and check again.');
+          }
+        }
+        setBusy(busy);
       });
     });
 
     WM.el('es-identify-cancel').addEventListener('click', function () {
       WM.send('eve_settings_identification_cancel').then(function () {
         if (state) state.identification_active = false;
+        clearIdentification();
         paintIdentification('idle');
         setBusy(busy);
       });
+    });
+
+    function openRoster(accountId) {
+      rosterAccountId = accountId;
+      pendingCharacterId = '';
+      identifyCandidate = null;
+      identityMessage = '';
+      refresh().then(function () { paintIdentification('roster'); setBusy(busy); });
+    }
+
+    function confirmIdentification(accountId, characterId, accountName) {
+      WM.send('eve_settings_identification_confirm', accountId, characterId, accountName)
+        .then(function (result) {
+          var error = result && result.error || '';
+          paintFieldError('ai-name-status', error);
+          if (result && result.applied) {
+            openRoster(accountId);
+          } else if (identityStep !== 'name') {
+            paintIdentification(identityStep, error);
+          }
+        });
+    }
+
+    function saveIdentificationName() {
+      if (!identifyCandidate || !pendingCharacterId) return;
+      confirmIdentification(identifyCandidate.account.id, pendingCharacterId,
+        WM.el('es-account-name').value);
+    }
+    WM.el('es-account-name-save').addEventListener('click', saveIdentificationName);
+    WM.el('es-account-name').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') WM.el('es-account-name-save').click();
     });
 
     WM.el('es-identify-link').addEventListener('click', function () {
       if (!identifyCandidate) return;
       var accountId = identifyCandidate.account.id;
       var characterId = WM.el('es-identify-character').value;
-      addCharacterLink(accountId, characterId, function () {
-        WM.send('eve_settings_identification_cancel').then(function () {
-          state.identification_active = false;
-          identifyCandidate = null;
-          setBusy(busy);
-          var character = characterById(characterId);
-          identityComplete = (character ? character.name : 'Character ' + characterId)
-            + ' linked to ' + accountId + '.';
-          refresh();
-        });
+      if (!identifyCandidate.characters.some(function (character) {
+        return character.id === characterId;
+      })) return;
+      var account = accountById(accountId);
+      var continueLink = function () {
+        if (account && account.account_name) {
+          confirmIdentification(accountId, characterId, account.account_name);
+          return;
+        }
+        pendingCharacterId = characterId;
+        WM.el('ai-name-match').textContent = (characterById(characterId) || {
+          name: 'Character ' + characterId
+        }).name + ' will be linked to ' + accountId + '.';
+        paintFieldError('ai-name-status', '');
+        paintIdentification('name');
+      };
+      confirmCharacterMove(accountId, characterId, continueLink);
+    });
+
+    WM.el('ai-roster-add').addEventListener('click', function () {
+      var characterId = WM.el('ai-roster-character').value;
+      if (!rosterAccountId || !characterId || !additionAvailable) return;
+      addCharacterLink(rosterAccountId, characterId, function () {
+        identityStep = 'roster';
+        refresh();
+      }, 'ai-roster-status');
+    });
+
+    WM.el('ai-identify-another').addEventListener('click', function () {
+      WM.send('eve_settings_identification_cancel').then(function () {
+        if (state) state.identification_active = false;
+        clearIdentification();
+        paintIdentification('idle');
+        setBusy(busy);
       });
     });
 
@@ -910,7 +1091,8 @@
       identityRouteOpen = event.detail === 'accountidentity';
       if (identityRouteOpen) {
         identityExpanded = false;
-        identityComplete = '';
+        clearIdentification();
+        identityStep = 'idle';
         refresh();
         WM.send('eve_settings_resolve_names');
         return;
@@ -926,7 +1108,8 @@
       // runs off the refresh below.
       expanded = false;
       identityExpanded = false;
-      identityComplete = '';
+      clearIdentification();
+      identityStep = 'idle';
       backupVisible = 20;
       refresh();
       // Names are resolved on first open, never at launch: the tray app

@@ -1,12 +1,15 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
 
 import os
+import threading
+from pathlib import Path
 
 import pytest
 
 from tests import fakes
 from tests.fakes import FakeWindow
 from wingman import paths, settings
+from wingman.evesettings import identity as evesettings_identity
 from wingman.evesettings import tree
 from wingman.ui import api as api_mod
 
@@ -945,22 +948,36 @@ def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch
     assert api.eve_settings_state()["auto_keep"] == 3
 
 
-def test_account_labels_share_alias_character_summary_and_raw_id(tmp_path, monkeypatch):
+def test_account_payload_uses_name_character_summary_and_raw_id(tmp_path, monkeypatch):
     eve_tree(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
     section = api._eve_section()
     section["root"] = str(tmp_path / "EVE")
-    section["account_aliases"] = {"10": "Main multibox"}
+    section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
     api._eve_names.names.update({20: "Aiga Otsolen", 21: "Beta"})
 
     account = api.eve_settings_state()["accounts"][0]
 
-    assert account["display_name"] == "Main multibox"
+    assert account["account_name"] == "LoginName"
+    assert "alias" not in account
+    assert account["display_name"] == "LoginName"
     assert account["display_meta"] == "Aiga Otsolen + 1 · 10"
-    assert account["name"] == "Main multibox · Aiga Otsolen + 1 · 10"
+    assert account["name"] == "LoginName · Aiga Otsolen + 1 · 10"
+
+
+def test_unidentified_account_payload_falls_back_to_raw_id(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    account = api.eve_settings_state()["accounts"][0]
+
+    assert account["account_name"] == ""
+    assert account["display_name"] == "10"
+    assert account["display_meta"] == ""
 
 
 def test_backup_rows_resolve_human_targets_without_opening_archives(
@@ -970,7 +987,7 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
     api = build(tmp_path, monkeypatch)
     section = api._eve_section()
     section["root"] = str(tmp_path / "EVE")
-    section["account_aliases"] = {"10": "Main multibox"}
+    section["account_names"] = {"10": "LoginName"}
     api._eve_names.names[20] = "Aiga Otsolen"
     store = paths.eve_settings_backup_dir()
     api_mod.evesettings_backup.create_file_backup(
@@ -983,7 +1000,7 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
     rows = api.eve_settings_state()["backups"]
 
     assert {(row["display_name"], row["display_meta"]) for row in rows} == {
-        ("Main multibox", "Account 10"),
+        ("LoginName", "Account 10"),
         ("Aiga Otsolen", "Character 20"),
     }
 
@@ -995,6 +1012,7 @@ def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
     api = build(tmp_path, monkeypatch)
     section = api._eve_section()
     section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "99"]}
 
     identities = api.eve_settings_state()["identity_characters"]
@@ -1005,18 +1023,222 @@ def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
     )
 
 
-def test_account_alias_can_be_saved_and_cleared(tmp_path, monkeypatch):
+def test_account_name_is_trimmed_and_cannot_be_cleared(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat",))
     api = build(tmp_path, monkeypatch)
     api._eve_section()["root"] = str(tmp_path / "EVE")
 
-    assert api.eve_settings_set_account_alias("10", " Main ")["applied"] is True
-    assert api._eve_section()["account_aliases"] == {"10": "Main"}
-    assert api.eve_settings_set_account_alias("10", "")["applied"] is True
-    assert api._eve_section()["account_aliases"] == {}
+    assert api.eve_settings_set_account_name("10", " LoginName ")["applied"] is True
+    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api.eve_settings_set_account_name("10", "")["applied"] is False
+    assert api.eve_settings_set_account_name("10", "x" * 81)["applied"] is False
+    assert api._eve_section()["account_names"] == {"10": "LoginName"}
 
 
-def test_associating_a_character_moves_it_from_the_previous_account(
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("eve_settings_set_account_name", ("10", "LoginName")),
+        ("eve_settings_set_account_characters", ("10", ["20"])),
+    ],
+)
+def test_manual_identity_endpoints_refuse_busy_without_reading_or_writing(
+    tmp_path, monkeypatch, method, args
+):
+    api = build(tmp_path, monkeypatch)
+    api._eve_discover = lambda: pytest.fail("busy calls must not inspect the profile")
+    api._eve_mutation.acquire()
+    try:
+        result = getattr(api, method)(*args)
+    finally:
+        api._eve_mutation.release()
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Another Profiles operation is running.",
+    }
+
+
+def test_manual_identity_name_and_roster_work_stays_under_the_mutation_lock(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    original_discover = api._eve_discover
+    original_update = api_mod.settings_mod.update_section
+
+    def checked_discover():
+        assert api._eve_mutation.locked()
+        return original_discover()
+
+    def checked_update(*args, **kwargs):
+        assert api._eve_mutation.locked()
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(api, "_eve_discover", checked_discover)
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", checked_update)
+
+    assert api.eve_settings_set_account_name("10", "LoginName")["applied"] is True
+    assert api.eve_settings_set_account_characters("10", ["20"])["applied"] is True
+
+
+def test_manual_identity_endpoint_does_not_interleave_a_blocked_save(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    writing = threading.Event()
+    release_write = threading.Event()
+    original = api_mod.settings_mod.update_section
+
+    def blocking_write(data, section, values):
+        writing.set()
+        assert release_write.wait(5), "test did not release the account-name write"
+        return original(data, section, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", blocking_write)
+    writer = threading.Thread(
+        target=lambda: api.eve_settings_set_account_name("10", "LoginName")
+    )
+    writer.start()
+    assert writing.wait(5), "account-name save never reached settings write"
+
+    result = api.eve_settings_set_account_characters("10", ["bad"])
+    release_write.set()
+    writer.join(5)
+
+    assert not writer.is_alive()
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Another Profiles operation is running.",
+    }
+
+
+def test_account_identity_helpers_preserve_shared_validation_and_relinking_rules(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+
+    assert api._eve_validate_account_name("10", " Login ", {"11": "Other"}) == (
+        "Login",
+        None,
+    )
+    assert api._eve_validate_account_name("10", "other", {"11": "Other"}) == (
+        None,
+        "That EVE Online username is already assigned to another account.",
+    )
+    assert api._eve_relink_account_characters(
+        {"10": ["21"], "11": ["20"]}, "10", ["20"], ["21", "20"]
+    ) == ({"10": ["21", "20"]}, None)
+    assert api._eve_relink_account_characters(
+        {"10": ["21", "22", "23"]}, "10", ["20"], ["21", "22", "23", "20"]
+    ) == (None, "An EVE account can have up to three characters.")
+
+
+def test_account_name_is_unique_case_insensitively_except_for_itself(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_user_11.dat"))
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20"]}
+
+    result = api.eve_settings_set_account_name("11", "loginname")
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "That EVE Online username is already assigned to another account.",
+    }
+    assert api.eve_settings_set_account_name("10", "LOGINNAME")["applied"] is True
+    assert api._eve_section()["account_names"] == {"10": "LOGINNAME"}
+    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+
+
+def test_unnamed_account_refuses_character_links(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    result = api.eve_settings_set_account_characters("10", ["20"])
+
+    assert result["error"] == "Name this account before adding characters."
+    assert api._eve_section()["account_characters"] == {}
+
+
+def test_three_unique_characters_apply_and_duplicates_do_not_consume_slots(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path,
+        files=(
+            "core_user_10.dat",
+            "core_char_20.dat",
+            "core_char_21.dat",
+            "core_char_22.dat",
+        ),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+
+    result = api.eve_settings_set_account_characters("10", ["20", "20", "21", "22"])
+
+    assert result["applied"] is True
+    assert api._eve_section()["account_characters"] == {"10": ["20", "21", "22"]}
+
+
+def test_fourth_unique_character_is_refused_without_mutating_either_account(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path,
+        files=(
+            "core_user_10.dat",
+            "core_user_11.dat",
+            "core_char_20.dat",
+            "core_char_21.dat",
+            "core_char_22.dat",
+            "core_char_23.dat",
+        ),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "Source", "11": "Destination"}
+    section["account_characters"] = {"10": ["23"], "11": ["20", "21", "22"]}
+
+    result = api.eve_settings_set_account_characters("11", ["20", "21", "22", "23"])
+
+    assert result["error"] == "An EVE account can have up to three characters."
+    assert api._eve_section()["account_characters"] == {
+        "10": ["23"],
+        "11": ["20", "21", "22"],
+    }
+
+
+def test_unknown_character_is_refused_without_mutation(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20"]}
+
+    result = api.eve_settings_set_account_characters("10", ["99"])
+
+    assert result["applied"] is False
+    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+
+
+def test_associating_a_character_moves_it_to_a_named_account_with_room(
     tmp_path, monkeypatch
 ):
     eve_tree(
@@ -1026,12 +1248,344 @@ def test_associating_a_character_moves_it_from_the_previous_account(
     api = build(tmp_path, monkeypatch)
     section = api._eve_section()
     section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "Source", "11": "Destination"}
     section["account_characters"] = {"10": ["20"]}
 
     result = api.eve_settings_set_account_characters("11", ["20"])
 
     assert result["applied"] is True
     assert api._eve_section()["account_characters"] == {"11": ["20"]}
+
+
+def test_removing_every_character_retains_the_account_name(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20"]}
+
+    assert api.eve_settings_set_account_characters("10", [])["applied"] is True
+    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api._eve_section()["account_characters"] == {}
+
+
+def _pending_identification(api, account_id="10", character_ids=("20",)):
+    api._eve_identification = evesettings_identity.Snapshot(
+        Path("root"), Path("server"), Path("profile"), {}
+    )
+    api._eve_identification_candidate = (account_id, tuple(character_ids))
+
+
+def test_identification_starts_with_no_snapshot_or_candidate(tmp_path, monkeypatch):
+    api = build(tmp_path, monkeypatch)
+
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_start_replaces_an_old_candidate_and_check_records_latest_pair(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_identification_candidate = ("old", ("candidate",))
+    api._eve_client_running_strict = lambda: False
+
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    assert api._eve_identification_candidate is None
+    (profile / "core_user_10.dat").write_bytes(b"changed account")
+    (profile / "core_char_20.dat").write_bytes(b"changed character")
+
+    assert api.eve_settings_identification_check()["status"] == "candidate"
+    assert api._eve_identification_candidate == ("10", ("20",))
+
+
+def test_identification_start_and_check_report_busy_with_stable_status(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_mutation.acquire()
+    try:
+        start = api.eve_settings_identification_start()
+        check = api.eve_settings_identification_check()
+    finally:
+        api._eve_mutation.release()
+
+    assert start == {
+        "status": "busy",
+        "error": "Another Profiles operation is running.",
+    }
+    assert check == start
+
+
+def test_identification_check_clears_obsolete_candidate_on_no_change(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    api._eve_identification_candidate = ("10", ("20",))
+
+    result = api.eve_settings_identification_check()
+
+    assert result == {
+        "status": "none",
+        "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+    }
+    assert api._eve_identification is not None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_check_clears_candidate_on_ambiguity_and_invalidation(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(
+        tmp_path,
+        files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
+    )
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    api._eve_identification_candidate = ("10", ("20",))
+    for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
+        (profile / name).write_bytes(b"changed with a different size " + name.encode())
+
+    assert api.eve_settings_identification_check()["status"] == "ambiguous"
+    assert api._eve_identification_candidate is None
+    api._eve_identification_candidate = ("10", ("20",))
+    (profile / "core_char_20.dat").unlink()
+
+    assert api.eve_settings_identification_check()["status"] == "invalidated"
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_check_preserves_snapshot_but_clears_candidate_while_eve_runs(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    snapshot = api._eve_identification
+    api._eve_identification_candidate = ("10", ("20",))
+    api._eve_client_running_strict = lambda: True
+
+    assert api.eve_settings_identification_check()["status"] == "watching"
+    assert api._eve_identification is snapshot
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_cancellation_and_selection_changes_clear_snapshot_and_candidate(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    _pending_identification(api)
+    assert api.eve_settings_identification_cancel() is True
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+    _pending_identification(api)
+    assert api.eve_settings_select("server", "profile") is True
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+    _pending_identification(api)
+    api._window.create_file_dialog = lambda *args, **kwargs: [str(tmp_path / "other")]
+    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
+    assert api.eve_settings_pick_root() == str(tmp_path / "other")
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_confirmation_refuses_missing_or_stale_candidates(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+
+    assert (
+        api.eve_settings_identification_confirm("10", "20", "Login")["applied"] is False
+    )
+    _pending_identification(api)
+    assert (
+        api.eve_settings_identification_confirm("11", "20", "Login")["applied"] is False
+    )
+    assert (
+        api.eve_settings_identification_confirm("10", "21", "Login")["applied"] is False
+    )
+    assert api._eve_section()["account_names"] == {}
+    assert api._eve_section()["account_characters"] == {}
+
+
+@pytest.mark.parametrize("name", ["", "x" * 81, "other"])
+def test_identification_confirmation_rejects_invalid_names_without_partial_write(
+    tmp_path, monkeypatch, name
+):
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["account_names"] = {"11": "Other"}
+    section["account_characters"] = {"11": ["21"]}
+    _pending_identification(api)
+
+    result = api.eve_settings_identification_confirm("10", "20", name)
+
+    assert result["applied"] is False
+    assert api._eve_section()["account_names"] == {"11": "Other"}
+    assert api._eve_section()["account_characters"] == {"11": ["21"]}
+    assert api._eve_identification_candidate == ("10", ("20",))
+
+
+def test_identification_confirmation_persists_name_and_link_in_one_write(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    _pending_identification(api)
+    original = api_mod.settings_mod.update_section
+    writes = []
+
+    def record_write(data, section, values):
+        writes.append((section, values))
+        return original(data, section, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", record_write)
+
+    assert api.eve_settings_identification_confirm("10", "20", " Login ") == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert writes == [
+        (
+            "eve_settings",
+            {"account_names": {"10": "Login"}, "account_characters": {"10": ["20"]}},
+        )
+    ]
+    assert api._eve_section()["account_names"] == {"10": "Login"}
+    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_confirmation_retains_candidate_when_atomic_write_fails(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    _pending_identification(api)
+
+    def fail_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", fail_write)
+
+    result = api.eve_settings_identification_confirm("10", "20", "Login")
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Could not save this account identity.",
+    }
+    assert api._eve_section()["account_names"] == {}
+    assert api._eve_section()["account_characters"] == {}
+    assert api._eve_identification is not None
+    assert api._eve_identification_candidate == ("10", ("20",))
+
+
+def test_identification_confirmation_accepts_its_existing_name_and_link_as_a_noop(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["account_names"] = {"10": "Login"}
+    section["account_characters"] = {"10": ["20"]}
+    _pending_identification(api)
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "update_section",
+        lambda *args, **kwargs: pytest.fail("an unchanged link must not be written"),
+    )
+
+    assert (
+        api.eve_settings_identification_confirm("10", "20", "Login")["applied"] is True
+    )
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+
+
+def test_identification_confirmation_refuses_a_fourth_link_without_moving_it(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["account_names"] = {"10": "Destination", "11": "Source"}
+    section["account_characters"] = {"10": ["21", "22", "23"], "11": ["20"]}
+    _pending_identification(api)
+
+    result = api.eve_settings_identification_confirm("10", "20", "Destination")
+
+    assert result["applied"] is False
+    assert api._eve_section()["account_characters"] == {
+        "10": ["21", "22", "23"],
+        "11": ["20"],
+    }
+
+
+def test_identification_confirmation_moves_an_owned_character_only_when_room_exists(
+    tmp_path, monkeypatch
+):
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["account_names"] = {"10": "Destination", "11": "Source"}
+    section["account_characters"] = {"10": ["21"], "11": ["20"]}
+    _pending_identification(api)
+
+    assert (
+        api.eve_settings_identification_confirm("10", "20", "Destination")["applied"]
+        is True
+    )
+    assert api._eve_section()["account_characters"] == {"10": ["21", "20"]}
+
+
+def test_identification_confirmation_cannot_be_consumed_twice(tmp_path, monkeypatch):
+    api = build(tmp_path, monkeypatch)
+    _pending_identification(api)
+    original = api_mod.settings_mod.update_section
+    writing = threading.Event()
+    release_write = threading.Event()
+    results = []
+
+    def blocking_write(data, section, values):
+        writing.set()
+        assert release_write.wait(5), "test did not release the atomic write"
+        return original(data, section, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", blocking_write)
+    first = threading.Thread(
+        target=lambda: results.append(
+            api.eve_settings_identification_confirm("10", "20", "Login")
+        )
+    )
+    first.start()
+    assert writing.wait(5), "confirmation never reached the settings write"
+
+    results.append(api.eve_settings_identification_confirm("10", "20", "Login"))
+    release_write.set()
+    first.join(5)
+
+    assert not first.is_alive()
+    assert [result["applied"] for result in results].count(True) == 1
+    assert [result["applied"] for result in results].count(False) == 1
+    assert api._eve_section()["account_names"] == {"10": "Login"}
+    assert api._eve_section()["account_characters"] == {"10": ["20"]}
 
 
 def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch):

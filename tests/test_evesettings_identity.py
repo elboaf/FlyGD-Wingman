@@ -13,17 +13,17 @@ def build(tmp_path):
     return tree.discover(tmp_path / "EVE")
 
 
-def test_account_identity_prefers_alias_and_keeps_confirmed_characters_secondary():
+def test_account_identity_prefers_account_name_and_keeps_confirmed_characters_secondary():
     got = identity.account_identity(
         "10",
-        {"10": "Main multibox"},
+        {"10": "LoginName"},
         {"10": ["20", "21", "22"]},
         lambda ident: {"20": "Aiga", "21": "Beta", "22": "Gamma"}[ident],
     )
     assert got == {
-        "primary": "Main multibox",
+        "primary": "LoginName",
         "secondary": "Aiga + 2 · 10",
-        "option": "Main multibox · Aiga + 2 · 10",
+        "option": "LoginName · Aiga + 2 · 10",
     }
 
 
