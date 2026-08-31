@@ -191,8 +191,9 @@ somewhere stale and nothing on that screen is worth reviewing.
 ## Look and feel
 
 - [ ] **The screenshot shooter produces a complete set.** Run
-      `scripts/shoot_screens.py` with Wingman idle. Expected: `9/9 screens`
-      (or a `4/9` plus an explicit "EVE gate off, skipped:" line), every PNG
+      `scripts/shoot_screens.py` with Wingman idle. Expected: `11/11 screens`
+      (or a `4/11` plus an explicit "EVE gate off, skipped:" line and seven
+      EVE-gated screens skipped), every PNG
       showing populated content, `manifest.json` naming the checkout you
       meant to shoot, and the previously-running Wingman restored. A blank
       screen in the set is a real defect, not a capture artifact -- one bad
@@ -2535,6 +2536,27 @@ evesettings.js and the `eve_settings_*` bridge methods.
 The suite cannot exercise Windows file locking or a real `os.replace` retry,
 so these are the checks that matter and only a Windows machine can run them.
 
+- [ ] **Profiles opens with compact context and tools.** With a selected EVE
+      profile, the full-width context row identifies the folder, server, and
+      profile without competing with the top tool row. The tools include
+      account identification, **Probe formations…** when the codec is
+      available, and **Backups**; none is an inline card below Copy.
+- [ ] **Account identities are recognizable.** In Accounts mode, the summary
+      reports the identified count. A named account leads with its username
+      and retains its character summary and `Account <id>` secondarily; an
+      unidentified account leads with `Account <id>` and says `Not identified`.
+- [ ] **Missing discovery explains, rather than enables.** With no accounts,
+      and separately with accounts but no characters, the appropriate guidance
+      says what to launch/change/close. **Identify accounts…** is unavailable
+      in both states.
+- [ ] **Copy selection and completion stay local and legible.** Use **Select
+      shown** and **Clear selection** after filtering. The copy button names
+      the dynamic selected count and noun, changes to the neutral `Copy
+      operation in progress…` while busy, then global completion clears the
+      selection and shows local `Copy complete.` with **View backups**.
+      Follow that link, return with `‹ Profiles`, and verify source, target
+      filter, and selection state are preserved according to the route's
+      round-trip contract.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
 - [ ] **The folder card is one line on every visit after the first.** With a
@@ -2780,49 +2802,60 @@ so these are the checks that matter and only a Windows machine can run them.
       thing before the write. Close every client and confirm the sentence
       disappears — it is probed fresh each time the dialog is raised, not
       read from the pill.
-- [ ] With `auto_keep` at its default, copy the same character eleven times.
-      Ten auto-backups remain; the manual ones are untouched.
-      **Read the retention note while you are there** — it sits UNDER the
-      profile-named backup button and above the list, not under the heading
-      (round 5's R2: a policy was the first thing the card said and the
-      action it qualifies came second). It must say ten, and it must say the newest ten *of each* thing — the
-      prune is per character, account or profile, so eleven copies onto
-      eleven different characters prune nothing. The number comes off the
-      payload. The `Automatic backups to keep per item` field shows the same
-      value. Lower it to 3 and press Apply: the confirmation states the exact
-      number of automatic backups that will be deleted. Decline once and verify
-      the value and files are unchanged; accept and verify only the excess
-      automatic backups are removed. Manual backups remain.
+### Backups
+
+- [ ] Open **Backups** from Profiles and verify an empty history, an unreadable
+      backup directory, a matching filter, a no-match filtered state, and the
+      cleared-filter state each say the right thing. Returning to Profiles and
+      opening Backups again preserves the intended round-trip state.
+- [ ] **The manager has one route scrollbar.** At 840×625 and at wide widths,
+      its history scrolls with the route rather than an inner list. `Show 20
+      older backups` reveals the next batch without reordering rows, and the
+      target column retains enough human identity to choose a restore.
+- [ ] **Restore is visible; Delete is disclosed.** Each row exposes Restore and
+      a keyboard-accessible More disclosure for its single Delete action; Delete
+      retains danger treatment. Opening one disclosure closes any other without
+      moving focus. Escape closes the current disclosure and returns focus to
+      its More control.
+- [ ] **Retention is explicit and protects manual backups.** With `auto_keep`
+      at ten, eleven copies of one target retain the newest ten automatic
+      backups, while manual backups remain. Lower it to 3 and Apply: the
+      confirmation states the exact automatic-backup deletions. Decline leaves
+      value and files unchanged; accept removes only excess automatic backups.
+      Eleven different targets prune nothing because retention is per item.
 - [ ] **The profile backup action names its object.** Switch between Default and
       Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
-      profile`, rather than the generic `Back up this profile`. With no profile
-      selected it reads `Back up profile` and is disabled.
-- [ ] **The backup list uses the page width and human identities.** Make
-      character, account, and profile backups. Expected: the card is as wide as
-      Copy EVE settings, with Date (UTC), Target, Origin, and Actions columns. A
-      character row leads with its resolved name, an account row with its alias
-      or confirmed-character summary, and a profile row with its profile name;
-      raw account or character numbers remain secondary. `Restore` and `Delete`
-      align at the right edge.
-      `Delete` carries the red danger treatment and `Restore` does not.
-- [ ] **Backup history has one scrollbar.** Create more than 20 visible backups
-      and check at 840x625 and at a wide window. Expected: Profiles itself
-      scrolls, the backup list has no inner scrollbar, and `Show 20 older
-      backups` reveals the next batch without reordering rows. The target column
-      receives spare width and retains enough identity to choose a restore.
-- [ ] Check the packaged build: the Profiles route appears and the
-      folder picker opens.
+      profile`; with no profile selected it reads `Back up profile` and is
+      disabled.
+- [ ] Check the packaged build: Profiles and Backups open, and the folder picker
+      opens.
 
 ## Probe formations (Profiles → Probe formations)
 
 Needs a real install and every EVE client closed for the write lines.
 
-- [ ] The card is present when the codec is bundled and absent (not broken) when `bin/wingman-settings-codec.exe` is removed from the install; Copy and Backups still work in both cases.
+- [ ] The **Probe formations…** tool is present when the codec is bundled and
+      absent (not broken) when `bin/wingman-settings-codec.exe` is removed from
+      the install; Copy and Backups still work in both cases.
+- [ ] **The editor starts on the intended account and switches cleanly.** Open
+      from Characters mode and from Accounts mode: the initial account follows
+      the stated choice, its canonical account label is selected, and its
+      formations load. With no edits, switch to another account and verify its
+      own formations replace the first account's data.
+- [ ] **Dirty and failed account changes preserve visible work.** Make an edit,
+      choose another account, decline the discard confirmation, and verify the
+      original account and edit remain selected. Accept on a later attempt and
+      verify the requested account loads. Use a damaged account file both on
+      entry and while switching: failed entry returns to Profiles with the
+      reason, while a failed switch retains the current account and its edits.
+- [ ] **Last formation account is session-only.** After a successful switch,
+      leave and reopen the editor in the same session: it reopens that account.
+      Restart Wingman and verify no formation-account choice was persisted.
 - [ ] Open an account with a formation created in-game: it lists with the right name and probe count; ranges read as AU powers of two.
 - [ ] **Version gate:** Save with no edits, then launch the client on that account. UI layout, overview, and the formation are all intact. (The client writes version 0; Wingman writes version 1. Proven once on 2026-08-29 — design doc finding 10 — and re-walked here so a client update that changes the answer is caught before a user meets it.)
 - [ ] Edit a formation, save, launch the client: the probe scanner shows the edit; the client's selected formation is unchanged.
 - [ ] Save with a client running: refused with "The file is in use. Close EVE and retry."; file bytes unchanged.
-- [ ] Restore the pre-edit auto backup from the Backups card: the old formation returns.
+- [ ] Restore the pre-edit auto backup from the Backups manager: the old formation returns.
 - [ ] Reorder by deleting and re-adding: the client's selected formation still points at the same formation, not the same slot.
 - [ ] Save a formation in Wingman, edit it in the client (move a probe, rename), close the client, reopen in Wingman: the client's edit is what Wingman shows, and Save then round-trips it again.
 - [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.

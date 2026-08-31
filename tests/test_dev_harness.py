@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 from wingman import bookmarks
-from wingman.evesettings import selective
+from wingman.evesettings import identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -240,6 +240,47 @@ def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_
     assert account["character_ids"] == ["90000000", "90000001", "90000002"]
     assert 'display_name: "alpha@example"' in DEV_JS
     assert 'display_meta: "Account 1001"' in DEV_JS
+
+
+def test_profiles_fixture_covers_new_visual_states():
+    for query in ("backups", "copy", "formations-account"):
+        assert ".get('" + query + "')" in DEV_JS
+    for state in ("empty", "unreadable", "filtered"):
+        assert "'" + state + "'" in DEV_JS
+    assert "Copy operation in progress" in DEV_JS
+    assert "Copy complete" in DEV_JS
+
+
+def test_dev_account_labels_match_the_python_identity_contract():
+    match = re.search(
+        r"var devAccountLabels = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL
+    )
+    assert match, "dev.js must serialize its account-label fixtures"
+    labels = json.loads(match.group(1))
+    character_names = {
+        "90000000": "Suartad Arsten",
+        "90000001": "Yas Kalkoken",
+        "90000002": "Zuelo Parvi",
+        "90000003": "Mikan Antollare",
+    }
+    expected = {
+        "1001": identity.account_identity(
+            "1001",
+            {"1001": "alpha@example"},
+            {"1001": ["90000000", "90000001", "90000002"]},
+            character_names.__getitem__,
+        ),
+        "1002": identity.account_identity(
+            "1002",
+            {"1002": "beta@example"},
+            {"1002": ["90000003"]},
+            character_names.__getitem__,
+        ),
+        "1003": identity.account_identity("1003", {}, {}, character_names.__getitem__),
+    }
+    assert labels == expected
+    assert "Account " in DEV_JS
+    assert "Not identified" in DEV_JS
 
 
 def test_move_scenario_uses_the_guided_candidate_path():

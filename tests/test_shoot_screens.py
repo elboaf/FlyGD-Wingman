@@ -35,7 +35,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 10
+    assert len(to_shoot) == 11
     assert skipped == []
 
 
@@ -53,7 +53,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 6
+    assert len(skipped) == 7
 
 
 def _strip_js_comments(text: str) -> str:
@@ -260,6 +260,7 @@ def test_manifest_records_what_the_gate_skipped():
     assert sorted(manifest["skipped"]) == [
         "profiles",
         "profiles-account-identity",
+        "profiles-backups",
         "settings-alerts",
         "settings-bookmarks",
         "settings-previews",
