@@ -417,6 +417,41 @@ FireRootFinisher(finChar, isAlpha) {
     global UsedNums, UsedAlphas, NextNum, NextAlpha
     global ReadyToIncrement, LastUsedNum, LastUsedAlpha
 
+    ; Cross-family correction. The first finisher after a Grab Sig
+    ; reserves a slot in ITS family -- a number for C1..C6/C13, a letter
+    ; for HS/LS/NS -- and a second finisher in the SAME family is the
+    ; correct-in-place below: it reuses LastUsedNum/LastUsedAlpha and
+    ; consumes nothing. But a second finisher in the OTHER family
+    ; replaces the bookmark outright -- the pasted key moves from
+    ; "1-XXX 1" to "1A-XXX H" -- so the superseded family's reservation
+    ; has to be released and the new family's slot properly consumed,
+    ; or the chain number stays incremented by a finisher that is no
+    ; longer on any bookmark. Repro before this block: root 1, Grab Sig,
+    ; C1, HS left the counter at 12 instead of 11 -- the C1 slot was
+    ; still marked used even though the 1-key bookmark no longer exists.
+    ; LastFinisherWasAlpha was recorded for exactly this decision and
+    ; was read by nothing until this block existed.
+    ;
+    ; The LastUsed guard keeps a fresh Set Root (both LastUsed empty,
+    ; nothing reserved yet) on the plain correct-in-place path below.
+    if (!ReadyToIncrement && LastFinisherWasAlpha != isAlpha
+            && LastUsedNum . LastUsedAlpha != "") {
+        if (LastFinisherWasAlpha) {
+            UsedAlphas[LastUsedAlpha] := False
+            NextAlpha := 1
+            FindNextAlpha()
+            LastUsedAlpha := ""
+        } else {
+            UsedNums[LastUsedNum] := False
+            NextNum := 1
+            FindNextNum()
+            LastUsedNum := ""
+        }
+        ; The new family now consumes a fresh slot through the normal
+        ; path below, exactly as if it were the first finisher.
+        ReadyToIncrement := True
+    }
+
     if (isAlpha) {
         if (ReadyToIncrement) {
             ; Use next available and mark as used

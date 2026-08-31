@@ -425,3 +425,45 @@ def test_grab_sig_reports_a_failed_copy(source):
         "DoQ ignores ClipWait's ErrorLevel, so a failed copy is silent"
     )
     assert "ToolTip" in body, "DoQ has no way to tell the user the copy failed"
+
+
+def _function_body(source, name):
+    match = re.search(
+        r"^" + name + r"\s*\([^)]*\)\s*\{(.*?)^\}", source, re.DOTALL | re.MULTILINE
+    )
+    assert match, f"{name}() not found"
+    return match.group(1)
+
+
+def test_cross_family_finisher_correction_releases_the_superseded_slot(source):
+    """A finisher of the OTHER family replaces the bookmark outright
+    (1-XXX 1 becomes 1A-XXX H), so the superseded family's slot must be
+    released and its counter rewound, and the new family's slot consumed
+    -- or the chain counter stays incremented by a finisher that is no
+    longer on any bookmark. Repro: root 1, Grab Sig, C1, HS read
+    `next num 12`; the C1 slot was still marked used with no 1-key
+    bookmark left.
+
+    LastFinisherWasAlpha is the decision input and was recorded by
+    FireRootFinisher while being read by NOTHING until this block
+    existed -- the exact failure shape this file exists to catch, a
+    feature present as dead state. The release of BOTH pools is
+    asserted so deleting either half still goes red.
+    """
+    body = _function_body(source, "FireRootFinisher")
+    assert re.search(r"LastFinisherWasAlpha\s*!=\s*isAlpha", body), (
+        "FireRootFinisher never reads LastFinisherWasAlpha -- cross-family "
+        "correction releases no slot and the chain counter over-increments"
+    )
+    assert "UsedNums[LastUsedNum] := False" in body, (
+        "the superseded NUM slot is never released"
+    )
+    assert "UsedAlphas[LastUsedAlpha] := False" in body, (
+        "the superseded ALPHA slot is never released"
+    )
+    assert re.search(r"NextNum\s*:=\s*1\s*\n\s*FindNextNum\(\)", body) and re.search(
+        r"NextAlpha\s*:=\s*1\s*\n\s*FindNextAlpha\(\)", body
+    ), "the released family's counter is not rewound to the first free slot"
+    assert "ReadyToIncrement := True" in body, (
+        "the new family's slot is not consumed after the release"
+    )
