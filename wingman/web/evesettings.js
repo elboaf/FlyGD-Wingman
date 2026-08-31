@@ -27,6 +27,7 @@
   // no bridge method on this screen carries page state.
   var expanded = false;
   var identityExpanded = false;
+  var backupFilter = '';
   var backupVisible = 20;
   var identifyCandidate = null;
   var identityStep = 'idle';
@@ -570,7 +571,15 @@
       + ' ' + stamp[4] + ':' + stamp[5];
   }
 
+  function backupMatches(item, needle) {
+    var origin = item.origin === 'auto' ? 'Automatic' : 'Manual';
+    return [item.display_name, item.display_meta, item.kind, item.origin, origin]
+      .join(' ').toLowerCase().indexOf(needle) !== -1;
+  }
+
   function openBackups() {
+    backupFilter = '';
+    WM.el('es-backup-filter').value = '';
     backupVisible = 20;
     WM.route('backups');
   }
@@ -578,6 +587,10 @@
   function renderBackups() {
     var host = WM.el('es-backups');
     var backups = state.backups || [];
+    var needle = backupFilter.toLowerCase();
+    var filtered = backups.filter(function (item) {
+      return backupMatches(item, needle);
+    });
     host.innerHTML = '';
     var profileName = nameOf(state.profiles, state.profile);
     var backupButton = WM.el('es-backup-profile');
@@ -599,16 +612,17 @@
     if (commitNote) commitNote.textContent = note.split('. ')[0] + '.';
 
     var head = WM.el('es-backup-head');
-    head.hidden = !backups.length || state.backups_unreadable;
-    if (state.backups_unreadable || !backups.length) {
+    head.hidden = !filtered.length || state.backups_unreadable;
+    if (state.backups_unreadable || !backups.length || !filtered.length) {
       var empty = document.createElement('p');
       empty.className = 'hint';
       empty.textContent = state.backups_unreadable
         ? "Couldn't read the backups folder. Check it is still readable."
-        : 'No backups yet.';
+        : (!backups.length ? 'No backups yet.'
+          : 'No backups match this filter.');
       host.appendChild(empty);
     }
-    backups.slice(0, backupVisible).forEach(function (item) {
+    filtered.slice(0, backupVisible).forEach(function (item) {
       var line = WM.make('div', 'es-backup-grid es-backup-row');
       line.appendChild(WM.make('span', 'bk-when', whenText(item.created)));
       var target = WM.make('span', 'bk-what');
@@ -622,16 +636,36 @@
       actions.appendChild(button('Restore', function () {
         mutate('eve_settings_restore', item.path);
       }));
-      actions.appendChild(button('Delete', function () {
+      var menu = WM.make('details', 'bk-menu');
+      var trigger = WM.make('summary', 'bk-menu-trigger', 'More');
+      trigger.setAttribute('aria-label', 'More actions for ' + item.display_name
+        + ' backup from ' + whenText(item.created));
+      menu.appendChild(trigger);
+      menu.appendChild(button('Delete', function () {
         mutate('eve_settings_delete_backup', item.path);
       }, 'danger'));
+      menu.addEventListener('toggle', function () {
+        if (!menu.open) return;
+        Array.prototype.forEach.call(
+          host.querySelectorAll('.bk-menu[open]'), function (other) {
+            if (other !== menu) other.open = false;
+          });
+      });
+      menu.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && menu.open) {
+          event.preventDefault();
+          menu.open = false;
+          trigger.focus();
+        }
+      });
+      actions.appendChild(menu);
       line.appendChild(actions);
       host.appendChild(line);
     });
     var more = WM.el('es-backups-more');
-    more.hidden = backups.length <= backupVisible;
+    more.hidden = filtered.length <= backupVisible;
     if (!more.hidden) {
-      more.textContent = 'Show ' + Math.min(20, backups.length - backupVisible)
+      more.textContent = 'Show ' + Math.min(20, filtered.length - backupVisible)
         + ' older backups';
     }
     WM.el('es-auto-keep-apply').disabled = busy || !!state.identification_active;
@@ -1089,6 +1123,18 @@
       if (event.key === 'Enter') WM.el('es-auto-keep-apply').click();
     });
 
+    WM.el('es-backup-filter').addEventListener('input', function (event) {
+      backupFilter = event.target.value;
+      backupVisible = 20;
+      renderBackups();
+    });
+    WM.el('es-backup-filter-clear').addEventListener('click', function () {
+      backupFilter = '';
+      WM.el('es-backup-filter').value = '';
+      backupVisible = 20;
+      renderBackups();
+      WM.el('es-backup-filter').focus();
+    });
     WM.el('es-backups-more').addEventListener('click', function () {
       backupVisible += 20;
       renderBackups();

@@ -1416,33 +1416,31 @@
   <div class="route" id="route-backups">
     <div class="backups-shell">
       <div class="row backups-head">
-        <button class="btn" id="es-backups-back">&lsaquo; Profiles</button>
+        <button class="btn" id="es-backups-back" type="button">&lsaquo; Profiles</button>
         <h1>Backups</h1>
       </div>
       <section class="card es-backups-card">
-        <h2>Backups</h2>
         <div class="row">
-          <button id="es-backup-profile" class="btn">Back up profile</button>
+          <button id="es-backup-profile" class="btn" type="button">Back up profile</button>
         </div>
-        <div class="row es-retention-row">
-          <label class="lab" for="es-auto-keep">Automatic backups to keep per item</label>
-          <input id="es-auto-keep" class="field" type="number" min="1" max="100" step="1">
-          <button id="es-auto-keep-apply" class="btn" type="button">Apply</button>
-          <p id="es-auto-keep-status" class="hint"></p>
-        </div>
-        <p class="hint">Applies separately to each character, account, and profile. Manual backups are always kept.</p>
-        <!-- R2. This paragraph OPENED the card, so a retention policy was
-             the first thing said in the one card whose point is an action,
-             and the button it qualifies came second. It is not cut,
-             because it is the promise that makes the copy in the card
-             above this one safe -- it is moved to where a trailing note
-             belongs, under the control it describes and above the list of
-             what that control has produced. Settings > Uploading states its
-             cost the same way, at #detect-note.
-
-             Filled by evesettings.js, because the keep depth is the
+        <details id="es-retention">
+          <summary>Retention</summary>
+          <div class="row es-retention-row">
+            <label class="lab" for="es-auto-keep">Automatic backups to keep per item</label>
+            <input id="es-auto-keep" class="field" type="number" min="1" max="100" step="1">
+            <button id="es-auto-keep-apply" class="btn" type="button">Apply</button>
+            <p id="es-auto-keep-status" class="hint"></p>
+          </div>
+          <p class="hint">Applies separately to each character, account, and profile. Manual backups are always kept.</p>
+        </details>
+        <!-- Filled by evesettings.js, because the keep depth is the
              payload's and must not be typed into the page. -->
         <p id="es-backup-note" class="hint"></p>
+        <div class="row es-backup-filter-row">
+          <label class="lab" for="es-backup-filter">Filter backups</label>
+          <input id="es-backup-filter" class="field" type="text" placeholder="Target, type, or origin">
+          <button id="es-backup-filter-clear" class="linkbtn" type="button">Clear filter</button>
+        </div>
         <div id="es-backup-head" class="es-backup-grid es-backup-head" hidden>
           <span>Date (UTC)</span><span>Target</span><span>Origin</span><span>Actions</span>
         </div>

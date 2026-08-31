@@ -675,6 +675,16 @@ def test_backups_entry_routes_once_and_leaves_refresh_to_the_route_listener():
     assert "refresh();" in listener.group(0)
 
 
+def test_backups_route_has_one_heading_and_native_retention_disclosure():
+    assert BACKUPS_ROUTE.count("<h1>Backups</h1>") == 1
+    assert "<h2>Backups</h2>" not in BACKUPS_ROUTE
+    assert '<button class="btn" id="es-backups-back" type="button">' in BACKUPS_ROUTE
+    assert '<details id="es-retention">' in BACKUPS_ROUTE
+    assert "<summary>Retention</summary>" in BACKUPS_ROUTE
+    assert 'id="es-backup-filter"' in BACKUPS_ROUTE
+    assert 'id="es-backup-filter-clear"' in BACKUPS_ROUTE
+
+
 def test_backups_route_preserves_a_readable_measure_for_prose_and_controls():
     measure = re.search(
         r"#route-backups\s+\.es-backups-card\s*>\s*"
@@ -690,8 +700,12 @@ def test_the_retention_note_follows_the_action_it_qualifies():
     copy card above it safe -- but a card whose point is an action may not
     lead with the policy that governs it.
     """
-    card = re.search(r"<h2>Backups</h2>(.*?)</section>", BACKUPS_ROUTE, re.DOTALL)
-    assert card, "the Backups card no longer opens with its own heading"
+    card = re.search(
+        r'<section class="card es-backups-card">(.*?)</section>',
+        BACKUPS_ROUTE,
+        re.DOTALL,
+    )
+    assert card, "the Backups card is missing"
     button = card.group(1).index('id="es-backup-profile"')
     note = card.group(1).index('id="es-backup-note"')
     listing = card.group(1).index('id="es-backups"')
@@ -988,9 +1002,67 @@ def test_backup_rows_use_resolved_labels_and_reveal_history_in_batches():
     assert render
     block = render.group(1)
     assert "item.display_name" in block and "item.display_meta" in block
-    assert "backups.slice(0, backupVisible)" in block
+    assert "filtered.slice(0, backupVisible)" in block
     assert "backupVisible += 20" in CODE
     assert "item.kind +" not in block and "item.stem" not in block
+
+
+def test_backups_route_reuses_profiles_state_and_completion_owner():
+    """The subroute uses the existing Profiles bridge lifecycle."""
+    assert "WM.route('backups')" in CODE
+    assert "event.detail === 'backups'" in CODE
+    assert CODE.count("WM.handle('onEveSettingsDone'") == 1
+    assert "WM.formationsDone" in CODE
+
+
+def test_backup_filter_matches_tokens_and_visible_words():
+    """Filtering covers both payload terms and the labels shown in the row."""
+    matcher = re.search(
+        r"function backupMatches\(item, needle\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert matcher
+    body = matcher.group(1)
+    for value in (
+        "display_name",
+        "display_meta",
+        "item.kind",
+        "item.origin",
+        "Automatic",
+        "Manual",
+    ):
+        assert value in body
+
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert block.index(".filter(") < block.index(".slice(0, backupVisible)")
+    assert "No backups match this filter" in block
+    assert "Clear filter" in BACKUPS_ROUTE
+
+
+def test_backup_actions_use_an_accessible_disclosure():
+    """Delete is named, keyboard-dismissible, and only one menu opens at once."""
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "details" in body and "summary" in body
+    assert "aria-label" in body
+    assert "Escape" in body
+    assert ".focus()" in body
+    assert "querySelectorAll('.bk-menu[open]')" in body
+    assert "other !== menu" in body and "other.open = false" in body
+
+
+def test_backup_filter_and_disclosures_remain_usable_during_mutations():
+    """Busy blocks mutations without trapping route or archive navigation."""
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    body = busy.group(1)
+    for control in ("es-backups-back", "es-backup-filter", "es-backups-more"):
+        assert control not in body
+    assert "querySelectorAll('button')" in body
+    assert "es-backup-profile').disabled" in body
+    assert "es-auto-keep-apply" in body
 
 
 def test_profile_backup_button_names_the_selected_profile():
