@@ -2549,6 +2549,12 @@ button.btn:disabled,
   margin: 0; color: var(--text); font-size: 20px; font-weight: 650;
 }
 #route-backups .es-backups-card { width: 100%; max-width: none; }
+/* The archive rows need the full route width, but prose and controls do not.
+   Keep their measured 586px line length while leaving the list and its
+   column headings uncapped. */
+#route-backups .es-backups-card > :not(#es-backups):not(#es-backup-head) {
+  max-width: 586px;
+}
 
 /* Task 3 mounts the existing retention controls in this native disclosure.
    It belongs to the page flow, not inside another card treatment. */

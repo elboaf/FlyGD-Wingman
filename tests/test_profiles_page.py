@@ -660,6 +660,30 @@ def test_backups_is_a_chromeless_profiles_subroute():
     assert "name === 'backups'" in APP
 
 
+def test_backups_entry_routes_once_and_leaves_refresh_to_the_route_listener():
+    opener = re.search(r"function openBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert opener
+    assert "backupVisible = 20;" in opener.group(1)
+    assert "WM.route('backups');" in opener.group(1)
+    assert "renderBackups()" not in opener.group(1)
+    assert "refresh()" not in opener.group(1)
+
+    listener = re.search(
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
+    )
+    assert listener and "event.detail === 'backups'" in listener.group(0)
+    assert "refresh();" in listener.group(0)
+
+
+def test_backups_route_preserves_a_readable_measure_for_prose_and_controls():
+    measure = re.search(
+        r"#route-backups\s+\.es-backups-card\s*>\s*"
+        r":not\(#es-backups\):not\(#es-backup-head\)\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert measure and "max-width: 586px" in measure.group(1)
+
+
 def test_the_retention_note_follows_the_action_it_qualifies():
     """R2. A retention policy opened the Backups card, ahead of the one
     control in it. The note is not cut -- it is the promise that makes the

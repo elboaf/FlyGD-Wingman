@@ -573,8 +573,6 @@
   function openBackups() {
     backupVisible = 20;
     WM.route('backups');
-    renderBackups();
-    refresh();
   }
 
   function renderBackups() {
