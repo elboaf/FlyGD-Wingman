@@ -796,6 +796,9 @@ class _FakeHost:
         # field existed.
         return {}
 
+    def layout_entries(self):
+        return {}
+
     def start(self):
         self.started = True
         self.is_running = True

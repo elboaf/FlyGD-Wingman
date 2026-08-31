@@ -38,6 +38,10 @@ class LayoutStore:
         self._pending_names = []
         self._timer = None
         self._lock = threading.Lock()
+        # Orders settings writes without making record() wait for disk. In
+        # particular, an old debounce that has already woken cannot land
+        # after replace() and silently undo the explicit operation.
+        self._write_lock = threading.Lock()
 
     def record(self, stable_key: str, entry) -> None:
         """Note a preview's new position. Safe from the preview thread."""
@@ -45,8 +49,9 @@ class LayoutStore:
             self._pending[stable_key] = entry
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = self._timer_factory(self._debounce_s, self._write)
-        self._timer.start()
+            timer = self._timer_factory(self._debounce_s, self._write)
+            self._timer = timer
+        timer.start()
 
     def record_character(self, name: str) -> None:
         """Note that *name* was seen. Safe from the preview thread.
@@ -61,8 +66,9 @@ class LayoutStore:
             self._pending_names.append(name)
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = self._timer_factory(self._debounce_s, self._write)
-        self._timer.start()
+            timer = self._timer_factory(self._debounce_s, self._write)
+            self._timer = timer
+        timer.start()
 
     def flush(self) -> None:
         """Write now. The host calls this during shutdown, before windows
@@ -88,6 +94,44 @@ class LayoutStore:
             section.get("excluded", []) or []
         )
 
+    def replace(self, stable_key: str, entry) -> bool:
+        """Persist one explicit layout, superseding an older pending delta.
+
+        Unlike record(), this is a user-facing commit and returns only after
+        the settings transaction has completed. Other characters already in
+        the debounce remain pending and retain a timer of their own.
+        """
+        with self._write_lock:
+            with self._lock:
+                superseded = self._pending.pop(stable_key, None)
+                if self._timer is not None:
+                    self._timer.cancel()
+                    self._timer = None
+                timer = None
+                if self._pending or self._pending_names:
+                    timer = self._timer_factory(self._debounce_s, self._write)
+                    self._timer = timer
+            try:
+                with self._update_settings() as live:
+                    section = live.setdefault("preview", {})
+                    layouts = dict(section.setdefault("layouts", {}))
+                    layouts.update(layout.serialize({stable_key: entry}))
+                    section["layouts"] = layouts
+            except OSError:
+                logger.exception("Could not replace preview layout for %s", stable_key)
+                with self._lock:
+                    if superseded is not None:
+                        self._pending.setdefault(stable_key, superseded)
+                    if self._timer is not None:
+                        self._timer.cancel()
+                    timer = self._timer_factory(self._debounce_s, self._write)
+                    self._timer = timer
+                timer.start()
+                return False
+        if timer is not None:
+            timer.start()
+        return True
+
     def clear(self) -> None:
         """Discard every saved layout. The one wholesale write this class allows.
 
@@ -101,50 +145,52 @@ class LayoutStore:
         before the reset -- and with it any binding whose row that character
         is the only reason to show.
         """
-        with self._lock:
-            self._pending = {}
-            names, self._pending_names = list(self._pending_names), []
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
-        try:
-            with self._update_settings() as live:
-                section = live.setdefault("preview", {})
-                section["layouts"] = {}
-                for name in names:
-                    section["seen"] = roster.touch(
-                        section.get("seen", []),
-                        name,
-                        protected=self._protected(section),
-                    )
-        except OSError:
-            logger.exception("Could not clear preview layouts")
+        with self._write_lock:
+            with self._lock:
+                self._pending = {}
+                names, self._pending_names = list(self._pending_names), []
+                if self._timer is not None:
+                    self._timer.cancel()
+                    self._timer = None
+            try:
+                with self._update_settings() as live:
+                    section = live.setdefault("preview", {})
+                    section["layouts"] = {}
+                    for name in names:
+                        section["seen"] = roster.touch(
+                            section.get("seen", []),
+                            name,
+                            protected=self._protected(section),
+                        )
+            except OSError:
+                logger.exception("Could not clear preview layouts")
 
     def _write(self) -> None:
-        with self._lock:
-            pending, self._pending = dict(self._pending), {}
-            names, self._pending_names = list(self._pending_names), []
-            self._timer = None
-        if not pending and not names:
-            return
-        try:
-            with self._update_settings() as live:
-                section = live.setdefault("preview", {})
-                if pending:
-                    layouts = dict(section.setdefault("layouts", {}))
-                    layouts.update(layout.serialize(pending))  # per-key merge
-                    section["layouts"] = layouts
-                for name in names:
-                    # Bound and opted-out characters are protected: see
-                    # _protected above for why each would otherwise leave a
-                    # setting with no row to change it from.
-                    section["seen"] = roster.touch(
-                        section.get("seen", []),
-                        name,
-                        protected=self._protected(section),
-                    )
-        except OSError:
-            # A settings file that cannot be written must not take the
-            # preview thread down -- same posture as ui/api.py's channel
-            # persist, which swallows OSError for the same reason.
-            logger.exception("Could not persist preview state")
+        with self._write_lock:
+            with self._lock:
+                pending, self._pending = dict(self._pending), {}
+                names, self._pending_names = list(self._pending_names), []
+                self._timer = None
+            if not pending and not names:
+                return
+            try:
+                with self._update_settings() as live:
+                    section = live.setdefault("preview", {})
+                    if pending:
+                        layouts = dict(section.setdefault("layouts", {}))
+                        layouts.update(layout.serialize(pending))  # per-key merge
+                        section["layouts"] = layouts
+                    for name in names:
+                        # Bound and opted-out characters are protected: see
+                        # _protected above for why each would otherwise leave a
+                        # setting with no row to change it from.
+                        section["seen"] = roster.touch(
+                            section.get("seen", []),
+                            name,
+                            protected=self._protected(section),
+                        )
+            except OSError:
+                # A settings file that cannot be written must not take the
+                # preview thread down -- same posture as ui/api.py's channel
+                # persist, which swallows OSError for the same reason.
+                logger.exception("Could not persist preview state")

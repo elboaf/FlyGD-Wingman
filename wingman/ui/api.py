@@ -62,6 +62,8 @@ from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
+from ..preview import host as preview_host_mod
+from ..preview import layout as preview_layout
 from ..preview import window as preview_window
 from . import copy as copy_mod
 from .rows import RowSnapshot
@@ -2612,6 +2614,24 @@ class Api:
         """A registered chord, redirected to the armed bind row."""
         self._push("onPreviewBindCaptured", {"gesture": gesture})
 
+    def _preview_layout_entries(self) -> dict:
+        """Latest valid layouts, including the host's undebounced state."""
+        host = self._preview_host
+        if host is not None:
+            return {
+                name: entry
+                for name, entry in host.layout_entries().items()
+                if self._usable_preview_character(name)
+            }
+        section = self._state.settings.get("preview", {})
+        return {
+            name: entry
+            for name, entry in preview_layout.deserialize(
+                section.get("layouts")
+            ).items()
+            if self._usable_preview_character(name)
+        }
+
     def get_preview_hotkey_state(self) -> dict:
         """Everything the bind list needs, in one read.
 
@@ -2630,6 +2650,14 @@ class Api:
         # all, rather than serving whatever characters()/hotkey_status()
         # last held.
         live = host is not None and host.is_running
+        online = set(host.characters() if live else [])
+        layout_sources = [
+            {"name": name, "online": name in online if live else None}
+            for name in sorted(
+                self._preview_layout_entries(),
+                key=lambda name: (name not in online, name.casefold(), name),
+            )
+        ]
         return {
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
@@ -2663,6 +2691,10 @@ class Api:
             # bridge thread never touches an HWND.
             "sizes": self._preview_sizes(),
             "client_sizes": host.client_sizes() if live else {},
+            # Saved geometry sources are separate from row targets: old
+            # settings may retain a valid offline layout after its roster entry
+            # aged out, and that geometry is still useful to copy.
+            "layout_sources": layout_sources,
             # Which characters set_preview_size can actually succeed for.
             #
             # It refuses outright for a character that is neither running
@@ -2994,7 +3026,70 @@ class Api:
             )
         entry = dict(layouts[name])
         entry["w"], entry["h"] = width, height
-        return self._write_preview_setting(("layouts", name), entry)
+        result = self._write_preview_setting(("layouts", name), entry)
+        if result["applied"] and host is not None:
+            host.sync_layout(
+                name,
+                preview_layout.Entry(
+                    preview_geometry.Rect(
+                        int(entry["x"]), int(entry["y"]), width, height
+                    ),
+                    bool(entry.get("locked", False)),
+                ),
+            )
+        return result
+
+    @staticmethod
+    def _usable_preview_character(name) -> bool:
+        return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
+
+    def _preview_known_characters(self) -> set:
+        """Names that can produce a target row on the Previews page."""
+        section = self._state.settings.get("preview", {})
+        names = set(section.get("seen") or []) | set(
+            (section.get("hotkeys") or {}).get("characters") or {}
+        )
+        host = self._preview_host
+        if host is not None and host.is_running:
+            names |= set(host.characters())
+        return {name for name in names if self._usable_preview_character(name)}
+
+    def copy_preview_layout(self, target, source) -> dict:
+        """Copy only a saved preview rectangle from source to target."""
+        if (
+            target == source
+            or not self._usable_preview_character(target)
+            or not self._usable_preview_character(source)
+        ):
+            return self._field_refused("Choose two different characters.")
+        if target not in self._preview_known_characters():
+            return self._field_refused("That target character is no longer available.")
+
+        host = self._preview_host
+        if host is not None:
+            outcome = host.copy_layout(target, source)
+            if outcome == preview_host_mod.COPY_PERSIST_FAILED:
+                return self._field_refused("Could not save this to settings.")
+            if outcome != preview_host_mod.COPY_OK:
+                return self._field_refused(
+                    "That saved preview placement is no longer available."
+                )
+            return self._field_ok()
+
+        section = self._state.settings.get("preview", {})
+        entries = preview_layout.deserialize(section.get("layouts"))
+        source_entry = entries.get(source)
+        if source_entry is None:
+            return self._field_refused(
+                "That saved preview placement is no longer available."
+            )
+        target_entry = entries.get(target)
+        copied = preview_layout.Entry(
+            source_entry.rect,
+            target_entry.locked if target_entry is not None else False,
+        )
+        raw = preview_layout.serialize({target: copied})[target]
+        return self._write_preview_setting(("layouts", target), raw)
 
     def reset_preview_layouts(self) -> dict:
         """Forget every saved preview position and size.
@@ -3030,6 +3125,9 @@ class Api:
         except OSError:
             logger.exception("Could not clear preview layouts")
             return self._field_refused("Could not save this to settings.")
+        if self._preview_host is not None:
+            self._preview_host.clear_layout_entries()
+        self.push_preview_hotkeys()
         return self._field_ok()
 
     def _preview_sizes(self) -> dict:

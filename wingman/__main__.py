@@ -392,6 +392,11 @@ def build_preview_host(state, api_box):
             if api is not None:
                 api.push_preview_hotkeys()
 
+        def on_layouts_changed():
+            api = api_box.get("api")
+            if api is not None:
+                api.push_preview_hotkeys()
+
         def on_hotkey_status(status):
             api = api_box.get("api")
             if api is not None:
@@ -511,10 +516,12 @@ def build_preview_host(state, api_box):
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
             flush_layouts=store.flush,
-            # Same reasoning as flush_layouts above: a bound method, never a
-            # lambda wrapping it.
+            # Same reasoning as flush_layouts above: bound methods, never
+            # lambdas wrapping them.
             clear_layouts=store.clear,
+            replace_layout=store.replace,
             on_clients_changed=on_clients_changed,
+            on_layouts_changed=on_layouts_changed,
             on_hotkey_status=on_hotkey_status,
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,

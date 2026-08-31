@@ -12,7 +12,7 @@
                bookmark_chords: {active: [], latent: []}, enabled: false,
                locked: [], lock_default: false,
                never_minimize: [], excluded: [],
-               sizes: {}, client_sizes: {}, sizable: []};
+               sizes: {}, client_sizes: {}, sizable: [], layout_sources: []};
   var capturing = null;
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -321,34 +321,19 @@
     acts.appendChild(typed);
     row.appendChild(acts);
 
-    // Size... only where it can succeed, and a filler where it cannot.
+    // One Geometry cell on every character row. Size... appears only where
+    // set_preview_size can succeed; Copy... appears only with another saved
+    // source; a dash fills the cell when neither action exists. The cell
+    // itself never disappears: `.row` is display:contents, so changing the
+    // number of children would break the shared row/track count.
     //
-    // set_preview_size refuses for a character that is neither running nor
-    // already in `layouts`: there is no x/y to write, and an entry without
-    // a full rect is dropped at the next load. A layouts entry appears
-    // when a preview is DRAGGED or RESIZED, not when its client starts --
-    // so on a fresh install this control was a guaranteed refusal for
-    // every offline character, which on a normal roster is most of the
-    // list. That is D6's rule (do not draw a control in the state where it
-    // can do nothing) applied to the column that broke it worst.
-    //
-    // A filler and not a missing cell. `.row` is display:contents, so a
-    // row that skipped this cell would leave its remaining controls one
-    // track to the left -- Never minimize sitting under the Size heading.
-    // The damage is confined to that row, but a row whose controls sit
-    // under the wrong headings is exactly the lie the headings were added
-    // to stop. One appendChild with a ternary, for the same reason the
-    // opt-out box at the top of this function uses one.
-    //
-    // What confines it is `#preview-binds .row > :first-child
+    // What confines each row is `#preview-binds .row > :first-child
     // { grid-column-start: 1 }` in style.css. The full-width `.lab` used
     // to force a fresh grid row for free; the name sits in track 1 now,
     // so that rule is the only thing resetting the auto-placement cursor
     // and a short row would otherwise pull EVERY row after it left.
     if (character) {
-      row.appendChild(isSizable(character)
-                      ? makeSizeButton(character, off)
-                      : makeSizeFiller());
+      row.appendChild(makeGeometryActions(character, off));
     }
 
     // Cycle forward/back have no `character` -- they are chords, not
@@ -464,6 +449,87 @@
 
   // Plain prose: panel.js sets the dialog body with textContent, so no
   // markup survives here.
+  function copySources(name) {
+    return (state.layout_sources || []).filter(function (source) {
+      return source && source.name !== name;
+    });
+  }
+
+  function focusCopyTarget(name) {
+    var buttons = document.querySelectorAll('button[data-copy-target]');
+    var i;
+    for (i = 0; i < buttons.length; i += 1) {
+      if (buttons[i].getAttribute('data-copy-target') === name) {
+        buttons[i].focus();
+        return;
+      }
+    }
+    var section = WM.el('section-previews');
+    var fallback = section && section.querySelector(
+      'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
+  }
+
+  function copyStatus(text, error) {
+    var status = WM.el('preview-copy-status');
+    if (!status) { return; }
+    status.textContent = text || '';
+    status.classList.toggle('err', !!error);
+    status.hidden = !status.textContent;
+  }
+
+  function makeCopyButton(name, off) {
+    var btn = WM.make('button', 'linkbtn', 'Copy…');
+    btn.setAttribute('data-copy-target', name);
+    WM.setEnabled(btn, !off);
+    btn.addEventListener('click', function () {
+      endCapture();
+      copyStatus('', false);
+      var sources = copySources(name);
+      var groups = [
+        {label: 'Online', options: []},
+        {label: 'Offline', options: []},
+        {label: 'Saved placements', options: []}
+      ];
+      sources.forEach(function (source) {
+        var group = source.online === true ? 0
+                  : (source.online === false ? 1 : 2);
+        groups[group].options.push({
+          value: source.name, label: source.name
+        });
+      });
+      groups = groups.filter(function (group) { return group.options.length; });
+      WM.choose('Copy preview geometry',
+                'Copy saved size and position to "' + name + '".',
+                groups, 'Copy').then(function (source) {
+        if (source === null) { return; }
+        WM.send('copy_preview_layout', name, source).then(function (result) {
+          if (!result || !result.applied) {
+            copyStatus(result && result.error
+                       ? result.error
+                       : 'That preview placement could not be copied.', true);
+            refresh().then(function () { focusCopyTarget(name); });
+            return;
+          }
+          copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
+          refresh().then(function () { focusCopyTarget(name); });
+        });
+      });
+    });
+    return btn;
+  }
+
+  function makeGeometryActions(name, off) {
+    var actions = WM.make('span', 'geometry-actions');
+    if (isSizable(name)) { actions.appendChild(makeSizeButton(name, off)); }
+    if (copySources(name).length) {
+      actions.appendChild(makeCopyButton(name, off));
+    }
+    if (!actions.children.length) { actions.appendChild(makeSizeFiller()); }
+    return actions;
+  }
+
   function sizeHint(name) {
     var client = (state.client_sizes || {})[name];
     if (!client) {
@@ -905,7 +971,7 @@
   // hazard arrived with the inline name rather than with the grid.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Character', 'Preview', 'Keybind', '', 'Size'];
+    var cells = ['Character', 'Preview', 'Keybind', '', 'Geometry'];
     cells.forEach(function (text) {
       row.appendChild(WM.make('span', '', text));
     });
@@ -1121,6 +1187,12 @@
 
     var empty = WM.el('preview-binds-empty');
     if (empty) { empty.hidden = list.length > 0; }
+    var copyEmpty = WM.el('preview-copy-empty');
+    if (copyEmpty) {
+      copyEmpty.hidden = !list.length || list.some(function (entry) {
+        return copySources(entry.name).length > 0;
+      });
+    }
     renderLockBlock();
     renderNeverMinimizeBlock();
   }
@@ -1181,7 +1253,7 @@
   }
 
   function refresh() {
-    WM.send('get_preview_hotkey_state').then(function (payload) {
+    return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
       state = payload;
       pushes += 1;
@@ -1324,6 +1396,7 @@
   // fire on a plain tab switch and was the wrong event to listen for here.
   // wm:section, not wm:route -- see the matching comment in bookmarks.js.
   document.addEventListener('wm:section', function (event) {
+    copyStatus('', false);
     if (event.detail === 'previews') {
       refresh();
       return;

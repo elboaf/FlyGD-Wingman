@@ -1239,6 +1239,40 @@ def test_confirm_dialog_accepts_a_specific_affirming_label():
     assert '"confirm_label": confirm_label' in api
 
 
+def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    html = _strip_html_comments(HTML)
+
+    assert 'for="dlg-select"' in html
+    assert 'id="dlg-select"' in html
+    assert "WM.choose = function" in panel
+    assert "var isChoice = item.kind === 'choice';" in panel
+    assert "dlgSelect.focus();" in panel
+    assert "active.kind === 'choice'" in panel
+    assert "dlgSelect.value" in panel
+
+    document_keys = re.search(
+        r"document\.addEventListener\('keydown'.*?\n  \}, true\);",
+        panel,
+        re.DOTALL,
+    )
+    assert document_keys
+    assert "select:not([hidden]):not(:disabled)" in document_keys.group(0)
+    escape = (
+        document_keys.group(0)
+        .split("ev.key === 'Escape'", 1)[1]
+        .split("ev.key === 'Tab'", 1)[0]
+    )
+    assert "active.kind === 'choice'" in escape
+
+
+def test_the_previews_table_names_geometry_as_geometry():
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+    assert "'Geometry'" in head
+    assert "'Size'" not in head
+
+
 def test_state_shapes_do_not_add_soft_halos_on_the_dark_surface():
     outward_halo = re.compile(r"box-shadow:\s*0 0 (?!0(?:px)?\b)")
     assert not outward_halo.search(CSS)
@@ -1664,7 +1698,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
-        ("Size", "makeSizeButton"),
+        ("Geometry", "makeGeometryActions"),
     )
 
     for heading, token in owners:
@@ -1878,45 +1912,64 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     )
 
 
-def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
-    """Size... renders only for a character set_preview_size can succeed
-    for, and a filler cell holds the column open where it cannot.
-
-    Two halves, and both matter. The GATE is the D6 rule -- a character
-    that is neither running nor already in `layouts` gets a refusal from
-    the endpoint ("Start this client once, or drag its preview"), and a
-    layouts entry is written on a drag or a resize, not when the client
-    starts, so on a fresh install that was every offline character.
-
-    The FILLER is the grid invariant. `.row` is display:contents, so a row
-    that skipped this cell would leave its remaining controls one track to
-    the left -- Lock under the Size heading, Never minimize under Lock's.
-    The damage stays inside that row (every row leads with a full-width
-    `.lab`, which forces a fresh grid row; measured in the header guard
-    above), but controls sitting under the wrong headings is exactly the
-    lie the headings were added to stop. Hence a ternary inside one
-    appendChild rather than an `if` around it -- the same shape the opt-out
-    box uses, and the same reason.
-    """
+def test_the_geometry_cell_gates_size_and_copy_on_backend_payloads():
+    """One cell owns both geometry actions without duplicating backend rules."""
     body = _makerow_body()
-    assert re.search(r"isSizable\(character\)", body), (
-        "makeRow no longer gates Size... on whether the character can be "
-        "sized, so it is drawn for rows where it can only refuse"
-    )
-    gate = body.split("isSizable(character)", 1)[1].split(";", 1)[0]
-    assert "makeSizeButton" in gate and "makeSizeFiller" in gate, (
-        "the Size... gate no longer chooses between the button and a "
-        "filler cell -- a missing cell puts every later control on that "
-        "row under the wrong heading"
-    )
+    assert "makeGeometryActions(character, off)" in body
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    helper = src.split("function isSizable(", 1)
-    assert len(helper) == 2, "previews.js has no isSizable"
-    assert "state.sizable" in helper[1].split("}", 1)[0], (
-        "isSizable no longer reads the payload's own answer, so the page "
-        "has its own copy of a rule that belongs to layout.deserialize"
-    )
+    geometry_actions = src.split("function makeGeometryActions(", 1)
+    assert len(geometry_actions) == 2
+    geometry_actions = geometry_actions[1].split("\n  }", 1)[0]
+    assert "isSizable(name)" in geometry_actions
+    assert "makeSizeButton" in geometry_actions
+    assert "makeSizeFiller" in geometry_actions
+    assert "makeCopyButton" in geometry_actions
+
+    sizable = src.split("function isSizable(", 1)
+    assert len(sizable) == 2
+    assert "state.sizable" in sizable[1].split("}", 1)[0]
+    sources = src.split("function copySources(", 1)
+    assert len(sources) == 2
+    assert "state.layout_sources" in sources[1].split("}", 1)[0]
+
+
+def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    picker = src.split("function makeCopyButton(", 1)
+    assert len(picker) == 2
+    picker = picker[1].split("\n  }", 1)[0]
+
+    assert picker.index("endCapture();") < picker.index("WM.choose(")
+    assert "'Online'" in picker and "'Offline'" in picker
+    assert "'Saved placements'" in picker
+    assert "source.online === true" in picker
+    assert "source.online === false" in picker
+    assert "copy_preview_layout" in picker
+    assert "data-copy-target" in picker
+    assert "focusCopyTarget(name)" in picker
+    assert "state.characters" not in picker
+    assert "It applies next time" not in picker
+    assert "source.name !== name" in src
+
+
+def test_copy_picker_has_collapsing_empty_and_status_lines():
+    html = _strip_html_comments(HTML)
+    assert 'id="preview-copy-empty"' in html
+    assert 'id="preview-copy-status"' in html
+    status = html.split('id="preview-copy-status"', 1)[1][:100]
+    assert 'role="status"' in status
+    assert "hidden" in status
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "preview-copy-empty" in src
+    assert "preview-copy-status" in src
+    assert "status.classList.toggle('err', !!error)" in src
+    assert "status.hidden = !status.textContent" in src
+    assert "function focusCopyTarget(" in src
+
+    section = src.split("document.addEventListener('wm:section'", 1)
+    assert len(section) == 2
+    assert "copyStatus('', false)" in section[1].split("});", 1)[0]
 
 
 def test_clear_is_not_drawn_where_it_could_only_refuse():
@@ -1994,7 +2047,7 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     # the second argument at the call site leaves the control live and
     # undimmed with the whole suite green -- which is the exact failure
     # this test's docstring claims to prevent.
-    for builder in ("makeSizeButton",):
+    for builder in ("makeGeometryActions",):
         assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
             f"makeRow does not pass the row's opted-out state to {builder}"
         )

@@ -57,6 +57,9 @@ DEFAULT_SIZE = (320, 210)
 # a lot of characters are in a fight at once -- raise_alert's docstring
 # has the reasoning.
 PENDING_ALERTS_MAX = 10
+COPY_OK = "ok"
+COPY_MISSING = "missing"
+COPY_PERSIST_FAILED = "persist_failed"
 
 
 @contextlib.contextmanager
@@ -223,6 +226,7 @@ class PreviewHost:
         size=DEFAULT_SIZE,
         flush_layouts=None,
         on_clients_changed=None,
+        on_layouts_changed=None,
         on_hotkey_status=None,
         on_bind_captured=None,
         restore_positions=None,
@@ -237,6 +241,7 @@ class PreviewHost:
         lock_aspect=None,
         selection_color=None,
         clear_layouts=None,
+        replace_layout=None,
         hide_on_lost_focus=None,
     ):
         self._on_layout_changed = on_layout_changed
@@ -248,11 +253,18 @@ class PreviewHost:
         # flush_layouts above being called by _teardown: the store owns
         # persistence, the host only tells it when to act.
         self._clear_layouts = clear_layouts
+        # Synchronous per-key persistence for an explicit Copy operation.
+        # LayoutStore owns pending-delta ordering; the host changes its cache
+        # and windows only after this reports that the write landed.
+        self._replace_layout = replace_layout
         # Reported outward when the discovered set changes, so the page can
         # order the bind list by who is actually online. Nothing else
         # carries that out of the subsystem: _settings_payload returns
         # persisted settings only.
         self._on_clients_changed = on_clients_changed
+        # Announces only when source eligibility changes (a character gains
+        # its first complete layout), not on every drag coordinate.
+        self._on_layouts_changed = on_layouts_changed
         self._saved = dict(saved_layouts or {})
         # Read per placement, never captured: a preview is created whenever
         # its client appears, which is usually mid-session, so the value
@@ -326,6 +338,11 @@ class PreviewHost:
         # drops any whose creation failed, and a chord aimed at a running
         # client must not depend on its preview having been created.
         self._clients = {}
+        # Physical client -> last positively identified character, for the
+        # consecutive sweeps where that HWND and PID remain present. This is
+        # not character identity: it carries only placement continuity and
+        # preview exclusion while the title is generic, and is never persisted.
+        self._last_character_by_process = {}
         self._hook = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -375,6 +392,10 @@ class PreviewHost:
         # _pending_resize there is no keying to do. Swapped to None under
         # the lock when drained, same as the dict above.
         self._pending_resize_all = None
+        # Complete copied layouts waiting to be applied on the preview thread.
+        # Persistence and the in-memory cache are updated before they enter
+        # this queue; the message only performs monitor-safe live movement.
+        self._pending_layouts = {}
         # Last sampled client-area size per character, refreshed every
         # sweep by _record_client_sizes. Read from the UI thread through
         # client_sizes(), like hotkey_status() below.
@@ -448,8 +469,25 @@ class PreviewHost:
         would be placed by default_stack and the position the user dragged
         it to would not return until the whole app was restarted.
         """
-        self._saved[stable_key] = layout.Entry(rect, locked)
+        with self._lock:
+            first_layout = (
+                self._usable_character(stable_key) and stable_key not in self._saved
+            )
+            saved = dict(self._saved)
+            saved[stable_key] = layout.Entry(rect, locked)
+            self._saved = saved
         self._on_layout_changed(stable_key, rect, locked)
+        if first_layout:
+            self._announce_layouts_changed()
+
+    def _announce_layouts_changed(self) -> None:
+        if self._on_layouts_changed is None:
+            return
+        try:
+            self._on_layouts_changed()
+        except Exception:
+            # A page refresh is secondary to keeping the preview pump alive.
+            logger.exception("on_layouts_changed callback raised")
 
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
@@ -589,6 +627,68 @@ class PreviewHost:
             win.move(win.rect._replace(w=rect.w, h=rect.h))
             self._layout_changed(key, win.rect, win.locked)
 
+    def layout_entries(self) -> dict:
+        """Latest complete layouts, including undebounced drags."""
+        with self._lock:
+            return dict(self._saved)
+
+    def _layout_entry(self, stable_key: str):
+        with self._lock:
+            return self._saved.get(stable_key)
+
+    def sync_layout(self, stable_key: str, entry) -> None:
+        """Mirror a layout already persisted by an offline API path."""
+        with self._lock:
+            saved = dict(self._saved)
+            saved[stable_key] = entry
+            self._saved = saved
+
+    def clear_layout_entries(self) -> None:
+        """Mirror a layout clear already persisted by an offline API path."""
+        with self._lock:
+            self._saved = {}
+            self._pending_layouts = {}
+
+    @staticmethod
+    def _usable_character(name) -> bool:
+        return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
+
+    def copy_layout(self, target: str, source: str) -> str:
+        """Persist source geometry for target, then queue live movement."""
+        if (
+            target == source
+            or not self._usable_character(target)
+            or not self._usable_character(source)
+            or self._replace_layout is None
+        ):
+            return COPY_MISSING
+        with self._lock:
+            source_entry = self._saved.get(source)
+            target_entry = self._saved.get(target)
+        if source_entry is None:
+            return COPY_MISSING
+        entry = layout.Entry(
+            source_entry.rect,
+            target_entry.locked if target_entry is not None else False,
+        )
+        if not self._replace_layout(target, entry):
+            return COPY_PERSIST_FAILED
+        with self._lock:
+            # A drag that landed while the settings transaction was in
+            # progress is the later user action. LayoutStore has its delta;
+            # do not move the window/cache back to the copied rectangle.
+            if self._saved.get(target) != target_entry:
+                return COPY_OK
+            saved = dict(self._saved)
+            saved[target] = entry
+            self._saved = saved
+            should_post = bool(self._hwnd)
+            if should_post:
+                self._pending_layouts[target] = entry
+        if should_post:
+            self._post(win32.WM_APP_APPLY_LAYOUTS)
+        return COPY_OK
+
     def reset_layouts(self) -> None:
         """Forget every saved position and re-place. Safe from any thread."""
         self._post(win32.WM_APP_RESET_LAYOUTS)
@@ -719,6 +819,9 @@ class PreviewHost:
         if msg == win32.WM_APP_RESET_LAYOUTS:
             self._reset_layouts()
             return 0
+        if msg == win32.WM_APP_APPLY_LAYOUTS:
+            self._apply_layouts()
+            return 0
         if msg == win32.WM_HOTKEY:
             self._on_hotkey(libs, wparam)
             return 0
@@ -757,6 +860,38 @@ class PreviewHost:
 
     def _sweep(self, libs) -> None:
         clients = {c.stable_key: c for c in discovery.list_clients()}
+        # A title change from a named character to character selection changes
+        # the stable key even though the physical client continues. Capture the
+        # live rect before reconciliation closes the named window. This is
+        # continuity, not restoration, so restore_preview_positions does not
+        # decide whether the rect survives.
+        previous_by_process = {
+            (client.hwnd, client.pid): self._windows.get(key)
+            for key, client in self._clients.items()
+            if client.character
+        }
+        last_character = dict(self._last_character_by_process)
+        for client in self._clients.values():
+            if client.character:
+                last_character[(client.hwnd, client.pid)] = client.character
+        present_processes = {(client.hwnd, client.pid) for client in clients.values()}
+        last_character = {
+            process: character
+            for process, character in last_character.items()
+            if process in present_processes
+        }
+        for client in clients.values():
+            if client.character:
+                last_character[(client.hwnd, client.pid)] = client.character
+        self._last_character_by_process = last_character
+
+        continuity_rects = {}
+        for key, client in clients.items():
+            if client.character:
+                continue
+            previous = previous_by_process.get((client.hwnd, client.pid))
+            if previous is not None:
+                continuity_rects[key] = previous.rect
         # Guarded like _apply_selection's libs.user32 read below: several
         # tests drive _sweep with libs=None to exercise placement without
         # standing up the whole Win32 surface, and GetClientRect is not
@@ -779,7 +914,13 @@ class PreviewHost:
         #
         # Filtering `clients` itself instead would take the character off
         # the page's row list, leaving no row to untick.
-        desired = {key for key in clients if not self._is_excluded(key)}
+        desired = {
+            key
+            for key, client in clients.items()
+            if not self._is_excluded(
+                client.character or last_character.get((client.hwnd, client.pid)) or key
+            )
+        }
         added, removed, _kept = reconcile(set(self._windows), desired)
 
         for key in removed:
@@ -792,8 +933,13 @@ class PreviewHost:
 
         for key in added:
             client = clients[key]
-            entry = self._saved.get(key)
-            rect = self._resolve_rect(key, len(self._windows), monitors, entry)
+            entry = self._layout_entry(key)
+            continuity = continuity_rects.get(key)
+            rect = (
+                geometry.clamp_to_monitors(continuity, monitors)
+                if continuity is not None
+                else self._resolve_rect(key, len(self._windows), monitors, entry)
+            )
             win = PreviewWindow.create(
                 libs,
                 client,
@@ -1488,7 +1634,7 @@ class PreviewHost:
         enumeration fails, one log line rather than one per preview.
         """
         if entry is None:
-            entry = self._saved.get(key)
+            entry = self._layout_entry(key)
         if entry and self._restoring():
             # A saved rect is the user's own choice. Only rescued when it
             # is on no display at all -- pulling a preview they deliberately
@@ -1823,6 +1969,23 @@ class PreviewHost:
         # about to be repainted anyway would push a bitmap nobody can see.
         self._apply_visibility(libs, self._foreground)
 
+    def _apply_layouts(self) -> None:
+        """Apply copied layouts to targets that are open on this thread.
+
+        The saved coordinates stay byte-for-byte copied. Clamping is a display
+        rescue, as it is in _resolve_rect, so reconnecting a monitor can restore
+        the arrangement the user chose rather than a rewritten rescue point.
+        """
+        with self._lock:
+            pending, self._pending_layouts = dict(self._pending_layouts), {}
+        if not pending:
+            return
+        monitors = self._monitors()
+        for key, entry in pending.items():
+            win = self._windows.get(key)
+            if win is not None:
+                win.move(geometry.clamp_to_monitors(entry.rect, monitors))
+
     def _apply_resizes(self) -> None:
         """Apply every pending typed size to its still-open window.
 
@@ -1871,9 +2034,12 @@ class PreviewHost:
         writing them back would repopulate the very table this just cleared --
         a reset that leaves the file exactly as full as it found it.
         """
+        had_layouts = bool(self.layout_entries())
         if self._clear_layouts is not None:
             self._clear_layouts()
-        self._saved.clear()
+        self.clear_layout_entries()
+        if had_layouts:
+            self._announce_layouts_changed()
         monitors = self._monitors()
         for index, (key, win) in enumerate(self._windows.items()):
             win.move(self._resolve_rect(key, index, monitors, None))
@@ -1939,6 +2105,7 @@ class PreviewHost:
         self._focused_key = None
         self._selected_key = None
         self._foreground = 0
+        self._last_character_by_process = {}
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)  # 1. hook
             self._hook = None
