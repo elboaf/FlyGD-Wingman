@@ -282,6 +282,20 @@ def _fixture_labels_from_identity_scenario(scenario: dict) -> dict[str, dict]:
 
 
 def _run_dev_initial_account_labels(scenario: dict) -> dict[str, dict]:
+    known_character = re.search(
+        r"  function devKnownCharacter\(characterId\) \{.*?\n  \}\n\n"
+        r"  function devCharacter",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert known_character, "dev.js must resolve account labels from all known names"
+    character = re.search(
+        r"  function devCharacter\(characterId\) \{.*?\n  \}\n\n"
+        r"  function devAccountLabel",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert character, "dev.js must retain the filtered character picker resolver"
     formatter = re.search(
         r"  function devAccountLabel\(account\) \{.*?\n  \}\n\n"
         r"  function refreshDevAccount",
@@ -297,15 +311,19 @@ def _run_dev_initial_account_labels(scenario: dict) -> dict[str, dict]:
     )
     assert builder, "dev.js must derive each scenario's initial account labels"
     source = (
-        "var characters = "
+        "var scenario = "
+        + json.dumps(scenario)
+        + ";\nvar characters = "
         + json.dumps(_identity_character_names())
-        + ";\nvar eve = { identity_characters: Object.keys(characters).map(function (id) { return { id: id, name: characters[id] }; }) };\n"
-        + "function devCharacter(id) { return eve.identity_characters.filter(function (item) { return item.id === id; })[0]; }\n"
+        + ";\nvar knownIdentityCharacters = Object.keys(characters).map(function (id) { return { id: id, name: characters[id] }; });\n"
+        + "var eve = { identity_characters: knownIdentityCharacters.filter(function (character) { return !scenario.discovered || scenario.discovered.indexOf(character.id) !== -1; }) };\n"
+        + known_character.group(0).removesuffix("\n\n  function devCharacter")
+        + "\n"
+        + character.group(0).removesuffix("\n\n  function devAccountLabel")
+        + "\n"
         + formatter.group(0).removesuffix("\n\n  function refreshDevAccount")
         + "\n"
         + builder.group(0).removesuffix("\n\n  eve.accounts = devFixtureAccounts")
-        + "\nvar scenario = "
-        + json.dumps(scenario)
         + ";\nvar accounts = devFixtureAccounts(scenario);\n"
         + "process.stdout.write(JSON.stringify(accounts.map(function (account) { return { primary: account.display_name, secondary: account.display_meta, option: account.name }; })));"
     )

@@ -1030,6 +1030,14 @@
     'Corr Sevaine', 'Dain Holloway', 'Eir Sandvik'
   ];
 
+  // The account-label resolver knows every character Wingman has named.
+  // `identity_characters` below remains the narrower picker list for a
+  // checkpoint, just as the production account label resolves associations
+  // through the names service instead of through that picker.
+  var knownIdentityCharacters = eveNames.map(function (name, i) {
+    return { id: String(90000000 + i), name: name };
+  });
+
   // Exact Python payload shape, asserted against selective.groups_payload
   // so this visual fixture cannot drift from the decoder's public groups.
   var selective = {
@@ -1087,9 +1095,7 @@
       if (an !== bn) return an < bn ? -1 : 1;
       return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
     }),
-    identity_characters: eveNames.map(function (name, i) {
-      return { id: String(90000000 + i), name: name };
-    }).filter(function (character) {
+    identity_characters: knownIdentityCharacters.filter(function (character) {
       return !selectedIdentityScenario.discovered
         || selectedIdentityScenario.discovered.indexOf(character.id) !== -1;
     }),
@@ -1169,6 +1175,12 @@
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
   }
 
+  function devKnownCharacter(characterId) {
+    return knownIdentityCharacters.filter(function (item) {
+      return item.id === characterId;
+    })[0];
+  }
+
   function devCharacter(characterId) {
     return eve.identity_characters.filter(function (item) {
       return item.id === characterId;
@@ -1176,7 +1188,7 @@
   }
 
   function devAccountLabel(account) {
-    var names = account.character_ids.map(devCharacter).filter(Boolean)
+    var names = account.character_ids.map(devKnownCharacter).filter(Boolean)
       .map(function (item) { return item.name; }).sort();
     var summary = names.length
       ? names[0] + (names.length > 1 ? ' + ' + (names.length - 1) : '') : '';
