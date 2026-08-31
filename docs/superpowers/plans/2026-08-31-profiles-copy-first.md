@@ -25,6 +25,7 @@
 ## File map
 
 - `wingman/evesettings/identity.py`: canonical account display identity.
+- `wingman/ui/api.py`: canonical identity propagation into backup payloads.
 - `wingman/web/index.html`: Profiles shell, Backups subroute, copy follow-up, and formation account selector markup.
 - `wingman/web/app.js`: route registration, Profiles-child highlighting, chromeless routing, and EVE-gate eviction.
 - `wingman/web/evesettings.js`: Profiles and Backups state/rendering, filtering, disclosures, copy labels, and completion follow-up.
@@ -45,16 +46,19 @@
 
 **Files:**
 - Modify: `wingman/evesettings/identity.py:88-112`
+- Modify: `wingman/ui/api.py:3772-3832`
 - Modify: `tests/test_evesettings_identity.py:17-36`
+- Modify: `tests/test_api_evesettings.py:983-1005`
 - Test: `tests/test_evesettings_identity.py`
+- Test: `tests/test_api_evesettings.py`
 
 **Interfaces:**
 - Consumes: `account_identity(account_id: str, account_names: dict, associations: dict, character_name: Callable) -> dict`
-- Produces: one canonical `{primary, secondary, option}` representation consumed by `Api._eve_identity()`, source options, target rows, copy confirmations, backup rows, and formation account choices.
+- Produces: one canonical `{primary, secondary, option}` representation consumed by `Api._eve_identity()`, source options, target rows, copy confirmations, and formation account choices; `_eve_backup_identity()` explicitly preserves its primary and secondary strings in backup payloads.
 
-- [ ] **Step 1: Add failing tests for all three account states**
+- [ ] **Step 1: Add failing tests for both reachable account states**
 
-Replace the two current display tests with explicit named, linked-but-unnamed, and unknown cases:
+Persisted character links require a named account, so do not add a formatter-only linked-but-unnamed case. Replace the two current display tests with explicit named and unknown cases:
 
 ```python
 def test_named_account_leads_with_name_and_keeps_roster_and_id_secondary():
@@ -68,17 +72,6 @@ def test_named_account_leads_with_name_and_keeps_roster_and_id_secondary():
         "primary": "LoginName",
         "secondary": "Aiga + 2 · Account 10",
         "option": "LoginName · Aiga + 2 · Account 10",
-    }
-
-
-def test_linked_unnamed_account_leads_with_recognizable_character():
-    got = identity.account_identity(
-        "10", {}, {"10": ["20", "21"]}, lambda ident: {"20": "Aiga", "21": "Beta"}[ident]
-    )
-    assert got == {
-        "primary": "Aiga + 1",
-        "secondary": "Account 10 · Name not set",
-        "option": "Aiga + 1 · Account 10 · Name not set",
     }
 
 
@@ -99,7 +92,7 @@ uv sync --locked --extra dev
 uv run --no-sync python -m pytest tests/test_evesettings_identity.py -q
 ```
 
-Expected: the three display tests fail because IDs are currently emitted without the `Account` noun and unknown accounts have no secondary status.
+Expected: both display tests fail because IDs are currently emitted without the `Account` noun and unknown accounts have no secondary status.
 
 - [ ] **Step 3: Update the canonical identity composition**
 
@@ -110,9 +103,6 @@ if account_name:
     primary = account_name
     secondary_parts = [character_summary] if character_summary else []
     secondary_parts.append(f"Account {account_id}")
-elif character_summary:
-    primary = character_summary
-    secondary_parts = [f"Account {account_id}", "Name not set"]
 else:
     primary = f"Account {account_id}"
     secondary_parts = ["Not identified"]
@@ -120,6 +110,15 @@ secondary = " · ".join(secondary_parts)
 ```
 
 Keep `option` derived from `primary` and `secondary`; do not add page-side identity formatting.
+
+Update `_eve_backup_identity()` so an account backup returns the canonical identity without replacing its secondary text:
+
+```python
+identity = self._eve_identity(f"{item.stem}.dat")
+return identity["primary"], identity["secondary"]
+```
+
+Retain the existing character and profile behavior. Add API tests showing that a named account backup carries its character summary plus `Account <id>`, while an unidentified backup carries `Account <id>` plus `Not identified` without duplicating the ID.
 
 - [ ] **Step 4: Run identity and API tests**
 
@@ -134,7 +133,8 @@ Expected: PASS. Update API expectations only where they assert the old canonical
 - [ ] **Step 5: Commit the identity contract**
 
 ```bash
-git add wingman/evesettings/identity.py tests/test_evesettings_identity.py tests/test_api_evesettings.py
+git add wingman/evesettings/identity.py wingman/ui/api.py \
+  tests/test_evesettings_identity.py tests/test_api_evesettings.py
 git commit -m "fix: make EVE account identities recognizable"
 ```
 
@@ -457,7 +457,12 @@ Clear `copyFollowup` when root, server, profile, kind, or source changes. Do not
 
 Reuse `state.accounts` and `account.account_name` to calculate the named count. Render the summary and **Identify accounts…** only in Accounts mode. Source and target labels must use Python's `name`, `display_name`, and `display_meta`; do not recreate the three identity branches in JavaScript.
 
-For an empty account list, render the existing discovery guidance and keep the source disabled.
+Offer **Identify accounts…** only when both `state.accounts.length` and `state.identity_characters.length` are nonzero, matching `eve_settings_identification_start()` preconditions. Otherwise keep the source disabled where its list is empty and render one exact primary-route message:
+
+- No accounts: `No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely.`
+- No characters: `No characters found in this profile. Launch a character, make a small settings change, then close EVE completely.`
+
+Add lexical tests for both messages and for the button-availability guard, so the page cannot route into a guaranteed backend refusal.
 
 - [ ] **Step 5: Style feedback and verify accessibility**
 
@@ -490,6 +495,7 @@ git commit -m "feat: focus Profiles copy workflow"
 ### Task 5: Move account selection into the formation editor
 
 **Files:**
+- Modify: `wingman/web/index.html:1431-1439,1542-1547`
 - Modify: `wingman/web/evesettings.js:636-665,1048-1058`
 - Modify: `wingman/web/formations.js:42-48,185-245,620-750`
 - Modify: `wingman/web/style.css:3637-3667`
@@ -533,9 +539,15 @@ uv run --no-sync python -m pytest tests/test_page_conventions.py tests/test_prof
 
 Expected: FAIL because `WM.openFormations` accepts only a path and the rail has no account selector.
 
-- [ ] **Step 3: Pass canonical account choices from Profiles**
+- [ ] **Step 3: Move the formation entry markup and pass canonical account choices**
 
-In `evesettings.js`, remove `renderFormationsCard()` and its dedicated selector. Paint the top tool's availability from `state.formations_available && state.accounts.length`. On click:
+In `index.html`:
+
+- Move the existing `es-formations-open` button into the `es-profile-tools` row created in Task 2.
+- Remove the old `es-formations-card` and `es-formations-account` selector completely.
+- Replace `<span class="fm-account" id="fm-account"></span>` in the formation rail with `<select id="fm-account" class="field" aria-label="Account"></select>`.
+
+In `evesettings.js`, remove `renderFormationsCard()` and its dedicated selector references. Paint the top tool's availability from `state.formations_available && state.accounts.length`. On click:
 
 ```javascript
 var preferred = kind() === 'accounts' ? WM.el('es-source').value : '';
@@ -586,8 +598,8 @@ Expected: PASS. Existing unit conversion, ID stability, mutation-lock, and async
 - [ ] **Step 7: Commit formation account switching**
 
 ```bash
-git add wingman/web/evesettings.js wingman/web/formations.js wingman/web/style.css \
-  tests/test_page_conventions.py tests/test_profiles_page.py
+git add wingman/web/index.html wingman/web/evesettings.js wingman/web/formations.js \
+  wingman/web/style.css tests/test_page_conventions.py tests/test_profiles_page.py
 git commit -m "feat: switch accounts inside formation editor"
 ```
 
@@ -625,7 +637,6 @@ def test_profiles_fixture_covers_new_visual_states():
 def test_dev_account_labels_match_the_python_identity_contract():
     assert "Account " in DEV_JS
     assert "Not identified" in DEV_JS
-    assert "Name not set" in DEV_JS
 ```
 
 Prefer deriving expected account representations in Python tests from `identity.account_identity()` rather than hand-maintaining a second algorithm.
@@ -652,7 +663,7 @@ Expected: FAIL until `dev.js` and the screenshot inventory agree with the new ro
 
 In `dev.js`:
 
-- Build fixture account labels with the same three-state contract as `identity.account_identity()` and add a test that compares serialized expected values from Python.
+- Build fixture account labels with the same two reachable states as `identity.account_identity()` and add a test that compares serialized expected values from Python.
 - Support `?backups=empty`, `?backups=unreadable`, and `?backups=filtered`; route to `backups` after the first Profiles payload renders.
 - Support `?copy=busy` and `?copy=success` without changing production code paths.
 - Supply at least two formation accounts and support a formation-account switching scenario.
@@ -663,7 +674,8 @@ In `dev.js`:
 Revise `## Profiles` so it checks:
 
 - Full-width compact profile context and top tool row
-- Account identification count and the three account-label states
+- Account identification count and the named and unidentified account-label states
+- No-account and no-character guidance, with **Identify accounts…** unavailable in both states
 - **Select shown**, **Clear selection**, dynamic copy labels, neutral busy wording, global completion, and local **View backups** follow-up
 - Backups round-trip state preservation
 

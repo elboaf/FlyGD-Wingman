@@ -107,18 +107,24 @@ Accounts mode shows an identification summary before source and target selection
 
 The existing **Identify accounts…** action remains the route into the Account Identity flow.
 
-Account display identity remains owned by `evesettings.identity.account_identity()`, not reconstructed in JavaScript. Update that function so every account surface receives the same representation:
+Account display identity remains owned by `evesettings.identity.account_identity()`, not reconstructed in JavaScript. Persisted settings require every character association to belong to a named account, and the live endpoint enforces the same invariant. The UI therefore supports two reachable states:
 
 - Named account: account name is primary; linked-character summary and `Account <id>` are secondary.
-- Unnamed account with confirmed character links: character summary is primary; `Account <id> · Name not set` is secondary.
-- Account with neither a name nor confirmed links: `Account <id>` is primary; `Not identified` is secondary.
+- Unidentified account with neither a name nor confirmed links: `Account <id>` is primary; `Not identified` is secondary.
 - A bare numeric identifier is never the only visible label.
 
-Its `option` value must continue to derive from the same primary and secondary strings. This intentionally updates every existing consumer: source options, target rows, Confirm Copy labels, formation account choices, and backup-row identity. Python tests in `tests/test_evesettings_identity.py` must pin all three states and their downstream representation.
+Its `option` value must continue to derive from the same primary and secondary strings. This intentionally updates source options, target rows, Confirm Copy labels, and formation account choices.
+
+Backup rows use a separate `_eve_backup_identity()` path. Update it to preserve the canonical account identity's primary and secondary strings instead of replacing the secondary value with another `Account <id>`. This prevents duplicate IDs for unidentified accounts and keeps all account surfaces aligned. Python tests in `tests/test_evesettings_identity.py` and `tests/test_api_evesettings.py` must pin both reachable states and their downstream representations.
 
 Unidentified accounts remain usable. Identification is encouraged but not required. The summary is absent in Characters mode.
 
-If there are no accounts, the page explains how to make them discoverable rather than presenting an inert identification or source control.
+The **Identify accounts…** action is offered only when the selected profile contains at least one account file and one character file, which are the backend's preconditions for starting identification. Otherwise Accounts mode shows guidance naming the missing discovery state:
+
+- No accounts: `No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely.`
+- No characters: `No characters found in this profile. Launch a character, make a small settings change, then close EVE completely.`
+
+The source remains disabled when its corresponding list is empty.
 
 ## Copy lifecycle feedback
 
@@ -248,8 +254,10 @@ Add or update coverage for:
 - Dynamic copy labels for singular and plural characters and accounts
 - Neutral copy busy state before confirmation, global success ownership, local follow-up, partial failure, and complete failure
 - Persistence of the local follow-up across a Backups round trip and clearing it when context changes
-- Named, linked-but-unnamed, and fully unidentified account rendering in `tests/test_evesettings_identity.py`
-- Consistent account identity in source options, target rows, confirmations, formation choices, and backup rows
+- Named and unidentified account rendering in `tests/test_evesettings_identity.py`
+- Canonical account identity in source options, target rows, confirmations, and formation choices
+- Named and unidentified account backup identities in `tests/test_api_evesettings.py`
+- No-account and no-character guidance, with identification unavailable when its backend preconditions are absent
 - Formation account-list handoff and selection on entry
 - Clean account switching
 - Dirty switching with confirm and cancel outcomes
