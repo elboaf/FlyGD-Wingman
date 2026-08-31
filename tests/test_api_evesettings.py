@@ -948,7 +948,9 @@ def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch
     assert api.eve_settings_state()["auto_keep"] == 3
 
 
-def test_account_payload_uses_name_character_summary_and_raw_id(tmp_path, monkeypatch):
+def test_account_payload_uses_name_character_summary_and_account_id(
+    tmp_path, monkeypatch
+):
     eve_tree(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
@@ -964,11 +966,11 @@ def test_account_payload_uses_name_character_summary_and_raw_id(tmp_path, monkey
     assert account["account_name"] == "LoginName"
     assert "alias" not in account
     assert account["display_name"] == "LoginName"
-    assert account["display_meta"] == "Aiga Otsolen + 1 · 10"
-    assert account["name"] == "LoginName · Aiga Otsolen + 1 · 10"
+    assert account["display_meta"] == "Aiga Otsolen + 1 · Account 10"
+    assert account["name"] == "LoginName · Aiga Otsolen + 1 · Account 10"
 
 
-def test_unidentified_account_payload_falls_back_to_raw_id(tmp_path, monkeypatch):
+def test_unidentified_account_payload_is_explicit(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat",))
     api = build(tmp_path, monkeypatch)
     api._eve_section()["root"] = str(tmp_path / "EVE")
@@ -976,8 +978,8 @@ def test_unidentified_account_payload_falls_back_to_raw_id(tmp_path, monkeypatch
     account = api.eve_settings_state()["accounts"][0]
 
     assert account["account_name"] == ""
-    assert account["display_name"] == "10"
-    assert account["display_meta"] == ""
+    assert account["display_name"] == "Account 10"
+    assert account["display_meta"] == "Not identified"
 
 
 def test_backup_rows_resolve_human_targets_without_opening_archives(
@@ -988,6 +990,7 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
     section = api._eve_section()
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20"]}
     api._eve_names.names[20] = "Aiga Otsolen"
     store = paths.eve_settings_backup_dir()
     api_mod.evesettings_backup.create_file_backup(
@@ -1000,9 +1003,30 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
     rows = api.eve_settings_state()["backups"]
 
     assert {(row["display_name"], row["display_meta"]) for row in rows} == {
-        ("LoginName", "Account 10"),
+        ("LoginName", "Aiga Otsolen · Account 10"),
         ("Aiga Otsolen", "Character 20"),
     }
+
+
+def test_unidentified_account_backup_is_explicit_without_duplicating_id(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path, files=("core_user_10.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api_mod.evesettings_backup.create_file_backup(
+        paths.eve_settings_backup_dir(),
+        profile / "core_user_10.dat",
+        origin="manual",
+    )
+
+    row = api.eve_settings_state()["backups"][0]
+
+    assert row["display_name"] == "Account 10"
+    assert row["display_meta"] == "Not identified"
+    assert (
+        " · ".join((row["display_name"], row["display_meta"])).count("Account 10") == 1
+    )
 
 
 def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
@@ -1842,7 +1866,7 @@ def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeyp
     _fake_codec(monkeypatch, FORMATION_DOC)
     got = api.eve_settings_formations(str(account))
     assert got["ok"] is True
-    assert got["name"] == "1"
+    assert got["name"] == "Account 1 · Not identified"
     assert got["formations"] == [
         {
             "id": 0,

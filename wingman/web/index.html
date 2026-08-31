@@ -1179,7 +1179,7 @@
 
   <div class="route" id="route-evesettings">
     <div class="settings">
-      <section class="card">
+      <section class="card es-context-card">
         <!-- The pill lives in the heading, not in a row: the folder row it
              used to share is the half of this card that collapses away, and
              "EVE running" is the hazard the copy below is guarded against,
@@ -1271,6 +1271,11 @@
         <p id="es-warning" class="hint" hidden></p>
       </section>
 
+      <div class="es-profile-tools">
+        <button class="btn" id="es-backups-open" type="button">Backups…</button>
+        <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
+      </div>
+
       <section class="card">
         <h2>Copy EVE settings</h2>
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
@@ -1305,6 +1310,10 @@
           </label>
         </div>
         <div class="row" id="es-account-tools" hidden>
+          <span class="es-account-summary">
+            <strong id="es-account-summary"></strong>
+            <span id="es-account-guidance" class="hint"></span>
+          </span>
           <button id="es-identify-open" class="btn" type="button">Identify accounts…</button>
         </div>
         <div class="row">
@@ -1314,13 +1323,13 @@
         <div class="row" id="es-copy-options" hidden>
           <span class="lab">What to copy</span>
           <div id="es-copy-groups" class="es-copy-groups"></div>
-          <p class="hint">Unchecked groups keep each target’s own settings. Everything else is copied.</p>
+          <p class="hint">Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.</p>
         </div>
         <div class="row">
           <input id="es-filter" class="field" type="search" placeholder="Filter…"
                 aria-label="Filter characters or accounts">
-          <button id="es-all" class="btn">Select all</button>
-          <button id="es-none" class="btn">Clear</button>
+          <button id="es-all" class="btn">Select shown</button>
+          <button id="es-none" class="btn">Clear selection</button>
         </div>
         <!-- Profiles 2: NOT .list-scroll any more. The roster is a picking
              surface being used as a verification surface -- "select all" is
@@ -1348,7 +1357,7 @@
              of its own: #es-eve-state's only job is undoing the .card > h2
              treatment, and nothing here is a heading. -->
         <div class="row" id="es-commit">
-          <button id="es-copy" class="btn acc">Copy to selected</button>
+          <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
           <span id="es-copy-count" class="es-count">Nothing selected</span>
           <!-- No `hidden` attribute here, and evesettings.js sets one at
                wire() instead. Not a style choice: .pill sets a display and
@@ -1381,61 +1390,49 @@
              The EVE hazard is deliberately NOT restated: it is what the
              pill beside the button is for, and copy.py states it in
              full at the moment of commitment. -->
+        <div id="es-copy-followup" class="es-copy-followup" hidden>
+          <span>Copy complete.</span>
+          <button id="es-copy-view-backups" class="linkbtn" type="button">View backups</button>
+        </div>
         <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
-      <section class="card es-backups-card">
-        <h2>Backups</h2>
-        <div class="row">
-          <button id="es-backup-profile" class="btn">Back up profile</button>
-        </div>
-        <div class="row es-retention-row">
-          <label class="lab" for="es-auto-keep">Automatic backups to keep per item</label>
-          <input id="es-auto-keep" class="field" type="number" min="1" max="100" step="1">
-          <button id="es-auto-keep-apply" class="btn" type="button">Apply</button>
-          <p id="es-auto-keep-status" class="hint"></p>
-        </div>
-        <p class="hint">Applies separately to each character, account, and profile. Manual backups are always kept.</p>
-        <!-- R2. This paragraph OPENED the card, so a retention policy was
-             the first thing said in the one card whose point is an action,
-             and the button it qualifies came second. It is not cut,
-             because it is the promise that makes the copy in the card
-             above this one safe -- it is moved to where a trailing note
-             belongs, under the control it describes and above the list of
-             what that control has produced. Settings > Uploading states its
-             cost the same way, at #detect-note.
+    </div>
+  </div>
 
-             Filled by evesettings.js, because the keep depth is the
+  <div class="route" id="route-backups">
+    <div class="backups-shell">
+      <div class="row backups-head">
+        <button class="btn" id="es-backups-back" type="button">&lsaquo; Profiles</button>
+        <h1>Backups</h1>
+      </div>
+      <section class="card es-backups-card">
+        <div class="row">
+          <button id="es-backup-profile" class="btn acc" type="button">Back up profile</button>
+        </div>
+        <details id="es-retention">
+          <summary>Retention</summary>
+          <div class="row es-retention-row">
+            <label class="lab" for="es-auto-keep">Automatic backups to keep per item</label>
+            <input id="es-auto-keep" class="field" type="number" min="1" max="100" step="1">
+            <button id="es-auto-keep-apply" class="btn" type="button">Apply</button>
+            <p id="es-auto-keep-status" class="hint"></p>
+          </div>
+          <p class="hint">Applies separately to each character, account, and profile. Manual backups are always kept.</p>
+        </details>
+        <!-- Filled by evesettings.js, because the keep depth is the
              payload's and must not be typed into the page. -->
         <p id="es-backup-note" class="hint"></p>
+        <div class="row es-backup-filter-row">
+          <label class="lab" for="es-backup-filter">Filter backups</label>
+          <input id="es-backup-filter" class="field" type="text" placeholder="Target, type, or origin">
+          <button id="es-backup-filter-clear" class="linkbtn" type="button">Clear filter</button>
+        </div>
         <div id="es-backup-head" class="es-backup-grid es-backup-head" hidden>
           <span>Date (UTC)</span><span>Target</span><span>Origin</span><span>Actions</span>
         </div>
         <div id="es-backups"></div>
         <button id="es-backups-more" class="btn" type="button" hidden>Show 20 older backups</button>
-      </section>
-
-      <!-- The way into the probe formation editor, and the only one.
-           Formations live in the ACCOUNT file (core_user_*.dat), so this
-           card offers accounts and never characters -- which is also why
-           it is a card of its own rather than a control on the copy card,
-           whose Characters/Accounts switch would otherwise decide whether
-           the entry point exists.
-
-           Hidden outright when the decoder is not present, rather than
-           offered and then refused: eve_settings_formations answers "not
-           available in this installation", and a control whose only
-           possible outcome is that sentence is worse than no control.
-           evesettings.js reads formations_available off the state
-           payload. -->
-      <section class="card" id="es-formations-card" hidden>
-        <h2>Probe formations</h2>
-        <div class="row">
-          <label class="lab" for="es-formations-account">Account</label>
-          <select id="es-formations-account" class="field"></select>
-          <button class="btn" id="es-formations-open" type="button">Edit formations…</button>
-        </div>
-        <p class="hint">Formations are stored per account. Saving needs every EVE client closed.</p>
       </section>
     </div>
   </div>
@@ -1543,7 +1540,7 @@
     <div class="fm-rail">
       <div class="row fm-rail-head">
         <button class="btn" id="fm-back" type="button">&lsaquo; Profiles</button>
-        <span class="fm-account" id="fm-account"></span>
+        <select id="fm-account" class="field" aria-label="Account"></select>
       </div>
       <div class="list-scroll" id="fm-list"></div>
       <div class="row fm-rail-add">
@@ -1586,6 +1583,7 @@
       <div class="row" id="fm-commit">
         <button class="btn acc" id="fm-save" type="button">Save formations</button>
         <span class="hint" id="fm-dirty"></span>
+        <span class="hint">Saving needs every EVE client closed.</span>
       </div>
     </div>
   </div>

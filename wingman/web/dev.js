@@ -1009,6 +1009,11 @@
   var identitySearch = new URLSearchParams(window.location.search);
   var identityScenarioRequested = identitySearch.has('identity');
   var identityScenario = identitySearch.get('identity') || 'idle';
+  var backupsScenario = identitySearch.get('backups') || '';
+  var copyScenario = identitySearch.get('copy') || '';
+  var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  var profilesScenarioRequested = !!(backupsScenario || copyScenario
+    || formationsAccountScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -1024,6 +1029,14 @@
     'Yrsa Halvorsen', 'Zeth Karidan', 'Aria Nostrade', 'Brann Ulvsson',
     'Corr Sevaine', 'Dain Holloway', 'Eir Sandvik'
   ];
+
+  // The account-label resolver knows every character Wingman has named.
+  // `identity_characters` below remains the narrower picker list for a
+  // checkpoint, just as the production account label resolves associations
+  // through the names service instead of through that picker.
+  var knownIdentityCharacters = eveNames.map(function (name, i) {
+    return { id: String(90000000 + i), name: name };
+  });
 
   // Exact Python payload shape, asserted against selective.groups_payload
   // so this visual fixture cannot drift from the decoder's public groups.
@@ -1082,20 +1095,12 @@
       if (an !== bn) return an < bn ? -1 : 1;
       return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
     }),
-    identity_characters: eveNames.map(function (name, i) {
-      return { id: String(90000000 + i), name: name };
-    }).filter(function (character) {
+    identity_characters: knownIdentityCharacters.filter(function (character) {
       return !selectedIdentityScenario.discovered
         || selectedIdentityScenario.discovered.indexOf(character.id) !== -1;
     }),
-    accounts: selectedIdentityScenario.accounts.map(function (seed, i) {
-      return { path: 'a' + i, id: seed.id, name: seed.id,
-        display_name: seed.id, display_meta: '',
-        account_name: seed.account_name,
-        character_ids: seed.character_ids.slice() };
-    }),
     backups_unreadable: false,
-    // True, so the harness shows the Probe formations card. The real
+    // True, so the harness shows the Probe formations tool. The real
     // answer is Api.eve_settings_state's codec_available(), which is false
     // on a checkout with no sidecar bundled -- and a harness that mirrored
     // that would hide the one screen this fixture exists to let anyone
@@ -1105,17 +1110,26 @@
     backups: [
       { path: 'b1', created: '20260824-140300', origin: 'auto',
         kind: 'character', stem: 'core_char_90000001',
-        display_name: 'Aiga Otsolen', display_meta: 'Character 90000001' },
+        display_name: 'Yas Kalkoken', display_meta: 'Character 90000001' },
       { path: 'b2', created: '20260824-140300', origin: 'auto',
         kind: 'account', stem: 'core_user_1001',
-        display_name: "alpha@example", display_meta: "Account 1001" },
+        display_name: "alpha@example", display_meta: "Suartad Arsten + 2 · Account 1001" },
       { path: 'b3', created: '20260821-091544', origin: 'manual',
         kind: 'profile', stem: 'Default',
         display_name: 'Default', display_meta: 'Profile' }
     ]
   };
 
+  if (backupsScenario === 'empty') {
+    eve.backups = [];
+  } else if (backupsScenario === 'unreadable') {
+    // enumerate_backups() returns no rows when it cannot read the directory.
+    eve.backups_unreadable = true;
+    eve.backups = [];
+  }
+
   var identityScenarioQueued = false;
+  var profilesScenarioQueued = false;
   api.eve_settings_state = function () {
     console.log('DEV api.eve_settings_state()');
     if (identityScenarioRequested && !identityScenarioQueued) {
@@ -1124,6 +1138,12 @@
       // visual transition to the read avoids a machine-speed delay that can
       // click before the route owns its state.
       window.setTimeout(paintIdentityScenario, 0);
+    }
+    if (profilesScenarioRequested && !profilesScenarioQueued) {
+      profilesScenarioQueued = true;
+      // As with identity, use the real route after the payload has painted.
+      // The route-entry refresh is part of what these fixtures exercise.
+      window.setTimeout(paintProfilesScenario, 0);
     }
     return Promise.resolve(JSON.parse(JSON.stringify(eve)));
   };
@@ -1155,25 +1175,54 @@
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
   }
 
+  function devKnownCharacter(characterId) {
+    return knownIdentityCharacters.filter(function (item) {
+      return item.id === characterId;
+    })[0];
+  }
+
   function devCharacter(characterId) {
     return eve.identity_characters.filter(function (item) {
       return item.id === characterId;
     })[0];
   }
 
-  function refreshDevAccount(account) {
-    var names = account.character_ids.map(devCharacter).filter(Boolean)
+  function devAccountLabel(account) {
+    var names = account.character_ids.map(devKnownCharacter).filter(Boolean)
       .map(function (item) { return item.name; }).sort();
     var summary = names.length
       ? names[0] + (names.length > 1 ? ' + ' + (names.length - 1) : '') : '';
-    account.display_name = account.account_name || account.id;
-    account.display_meta = account.account_name
-      ? (summary ? summary + ' · ' : '') + account.id : '';
-    account.name = account.display_meta
-      ? account.display_name + ' · ' + account.display_meta
-      : account.display_name;
+    var primary = account.account_name || 'Account ' + account.id;
+    var secondary = account.account_name
+      ? (summary ? summary + ' · ' : '') + 'Account ' + account.id
+      : 'Not identified';
+    return { primary: primary, secondary: secondary,
+             option: primary + ' · ' + secondary };
   }
-  eve.accounts.forEach(refreshDevAccount);
+
+  function refreshDevAccount(account) {
+    var label = devAccountLabel(account);
+    account.display_name = label.primary;
+    account.display_meta = label.secondary;
+    account.name = label.option;
+  }
+
+  // Each identity scenario changes its account associations. Build this
+  // initial route payload after eve's character lookup exists rather than
+  // applying the idle scenario's labels to every visual checkpoint.
+  function devFixtureAccounts(scenario) {
+    return scenario.accounts.map(function (seed, i) {
+      var label = devAccountLabel(seed);
+      return { path: 'a' + i, id: seed.id,
+        name: label.option,
+        display_name: label.primary,
+        display_meta: label.secondary,
+        account_name: seed.account_name,
+        character_ids: seed.character_ids.slice() };
+    });
+  }
+
+  eve.accounts = devFixtureAccounts(selectedIdentityScenario);
 
   function validateDevName(accountId, value) {
     var name = typeof value === 'string' ? value.trim() : '';
@@ -1302,9 +1351,14 @@
     return function () {
       console.log('DEV api.' + name + '(',
                   Array.prototype.slice.call(arguments), ')');
-      setTimeout(function () {
-        window.onEveSettingsDone({ ok: true });
-      }, 600);
+      // ?copy=busy intentionally leaves the worker pending so its disabled
+      // controls remain inspectable; ?copy=success uses the normal delayed
+      // completion and therefore settles on the production follow-up.
+      if (name !== 'eve_settings_copy' || copyScenario !== 'busy') {
+        setTimeout(function () {
+          window.onEveSettingsDone({ ok: true });
+        }, 600);
+      }
       return Promise.resolve(true);
     };
   }
@@ -1319,10 +1373,10 @@
   // four probes, f64 positions, a 4 AU range (598391482800 m) -- and
   // `Drifter` is the two-probe wide pair the presets offer.
   //
-  // Mutable, and the save stub writes into it, so a save-then-reopen in
-  // the harness round-trips through meters the way the app does. That is
-  // the only check the unit conversion gets anywhere: nothing in the test
-  // suite executes this file or formations.js.
+  // Copied per account below, and the save stub writes into that account's
+  // copy, so a save-then-reopen in the harness round-trips through meters
+  // the way the app does. That is the only check the unit conversion gets
+  // anywhere: nothing in the test suite executes this file or formations.js.
   var devFormations = [
     { id: 0, name: 'Test', probes: [
       { x: -2048, y: 0, z: 0, range: 598391482800 },
@@ -1335,6 +1389,15 @@
       { x: -11000000, y: -3400000, z: 0, range: 4787715862400 }
     ] }
   ];
+  // Each account has its own file and therefore its own formations. The
+  // second fixture differs visibly, so ?formations-account=switch proves
+  // the clean account switch replaces the editor rather than only its label.
+  var devFormationsByAccount = {};
+  eve.accounts.forEach(function (account, index) {
+    var formations = JSON.parse(JSON.stringify(devFormations));
+    if (index === 1) formations[0].name = 'Second account test';
+    devFormationsByAccount[account.path] = formations;
+  });
   // Deliberately SLOW, the way eveMutation deliberately is. This is a
   // read, so the obvious stub resolves at once -- and resolving at once
   // erases the window formations.js's reload runs in, which is where an
@@ -1350,7 +1413,7 @@
       setTimeout(function () {
         resolve({
           ok: true, path: path, name: account ? account.name : path,
-          formations: JSON.parse(JSON.stringify(devFormations))
+          formations: JSON.parse(JSON.stringify(devFormationsByAccount[path] || []))
         });
       }, 150);
     });
@@ -1362,11 +1425,12 @@
   // after a save: a brand-new formation coming back with a real id.
   // Highest id wins the next number, matching `max(taken) + 1`.
   api.eve_settings_save_formations = function (path, items) {
+    var existing = devFormationsByAccount[path] || [];
     var next = -1;
-    devFormations.concat(items).forEach(function (f) {
+    existing.concat(items).forEach(function (f) {
       if (typeof f.id === 'number' && f.id > next) { next = f.id; }
     });
-    devFormations = JSON.parse(JSON.stringify(items)).map(function (f) {
+    devFormationsByAccount[path] = JSON.parse(JSON.stringify(items)).map(function (f) {
       if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
       return f;
     });
@@ -1403,14 +1467,61 @@
     }
   }
 
+  function paintProfilesScenario() {
+    if (backupsScenario === 'empty' || backupsScenario === 'unreadable'
+        || backupsScenario === 'filtered') {
+      // Backups is entered through its real route handler. For the filtered
+      // state, set the real field after that handler's refresh has painted.
+      WM.route('backups');
+      if (backupsScenario === 'filtered') {
+        window.setTimeout(function () {
+          var filter = WM.el('es-backup-filter');
+          filter.value = 'no matching backup';
+          filter.dispatchEvent(new Event('input'));
+        }, 0);
+      }
+      return;
+    }
+    if (copyScenario === 'busy' || copyScenario === 'success') {
+      // The actual target and Copy click retain the delayed worker window:
+      // busy displays "Copy operation in progress…", while success waits for
+      // its push and displays the page's "Copy complete." follow-up.
+      var target = WM.el('es-targets').querySelector('input[type="checkbox"]');
+      if (target) target.click();
+      WM.el('es-copy').click();
+      return;
+    }
+    if (formationsAccountScenario) {
+      WM.openFormations(eve.accounts, eve.accounts[0].path);
+      if (formationsAccountScenario === 'switch' && eve.accounts[1]) {
+        window.setTimeout(function () {
+          var picker = WM.el('fm-account');
+          picker.value = eve.accounts[1].path;
+          picker.dispatchEvent(new Event('change'));
+        }, 250);
+      }
+    }
+  }
+
   function showIdentityScenario() {
     WM.route('accountidentity');
   }
+
+  function showProfilesScenario() {
+    WM.route('evesettings');
+  }
+
   if (identityScenarioRequested) {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', showIdentityScenario, { once: true });
     } else {
       showIdentityScenario();
+    }
+  } else if (profilesScenarioRequested) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', showProfilesScenario, { once: true });
+    } else {
+      showProfilesScenario();
     }
   }
 }());

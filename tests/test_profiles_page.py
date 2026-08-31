@@ -19,6 +19,7 @@ HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
 JS = (WEB / "evesettings.js").read_text(encoding="utf-8")
 APP = (WEB / "app.js").read_text(encoding="utf-8")
+FORMATIONS = (WEB / "formations.js").read_text(encoding="utf-8")
 
 # The route's own markup. Every rule below is about this block and would
 # otherwise match a sibling screen that happens to use the same class.
@@ -27,6 +28,11 @@ ROUTE = re.search(
 ).group(0)
 ACCOUNT_ROUTE = re.search(
     r'<div class="route" id="route-accountidentity">.*?\n  </div>',
+    HTML,
+    re.DOTALL,
+).group(0)
+BACKUPS_ROUTE = re.search(
+    r'<div class="route" id="route-backups">.*?\n  </div>',
     HTML,
     re.DOTALL,
 ).group(0)
@@ -86,14 +92,9 @@ def test_the_backup_note_takes_its_number_off_the_payload():
     assert 'id="es-copy-backup-note"' in HTML, (
         "the commit row has no mount point, so the note renders nowhere"
     )
-    commit_at = HTML.index('id="es-commit"')
-    note_at = HTML.index('id="es-copy-backup-note"')
-    backups_at = HTML.index("<h2>Backups</h2>")
-    assert commit_at < note_at < backups_at, (
-        "the note must sit between the commit row and the Backups card: "
-        "above the button it reassures, and not inside the card that "
-        "already carries the full sentence"
-    )
+    commit_at = BODY.index('id="es-commit"')
+    note_at = BODY.index('id="es-copy-backup-note"')
+    assert commit_at < note_at, "the note must follow the copy commit row it reassures"
     assert CODE.count("Every copy backs up what it is about to overwrite") == 1, (
         "the backup sentence is written twice; paintPill's pattern is one "
         "string over two mount points, for this exact reason"
@@ -430,7 +431,7 @@ def test_the_roster_is_columned_and_uncapped():
     assert not re.search(r"#es-backups\s*\{[^}]*max-height", CSS), (
         "backups must use the route scrollbar, not a nested capped viewport"
     )
-    assert 'id="es-backups" class="list-scroll"' not in BODY
+    assert 'id="es-backups" class="list-scroll"' not in BACKUPS_ROUTE
 
 
 def test_a_name_may_not_break_across_a_column():
@@ -542,10 +543,111 @@ def test_selective_copy_controls_are_inside_the_copy_card_in_action_order():
     assert BODY.count('id="es-copy-options"') == 1, (
         "the copy options must not also be mounted outside the copy card"
     )
+
+
+def test_selective_copy_explains_recognized_and_other_settings():
     assert (
-        "Unchecked groups keep each target\u2019s own settings. Everything else is copied."
-        in copy_body
+        "Checked groups are copied as a unit. Unchecked groups stay unchanged. "
+        "Everything else is copied."
+    ) in BODY
+
+
+def test_bulk_controls_name_their_scope():
+    assert ">Select shown</button>" in BODY
+    assert ">Clear selection</button>" in BODY
+
+
+def test_copy_button_and_followup_do_not_infer_python_results():
+    paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL).group(
+        1
     )
+    assert "Copy to " in paint
+    assert "Copy operation in progress" in paint
+    assert ">Copy to selected</button>" not in BODY
+    assert 'id="es-copy-followup"' in BODY
+    assert 'id="es-copy-view-backups"' in BODY
+    assert "backups created" not in CODE.lower()
+
+
+def test_copy_followup_tracks_only_a_successful_copy_lifecycle():
+    mutate = re.search(r"function mutate\(method\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert mutate
+    block = mutate.group(1)
+    assert "pendingMutation = method;" in block
+    assert "if (method === 'eve_settings_copy')" in block
+    assert block.index(
+        "pendingMutation = '';", block.index("if (!accepted)")
+    ) < block.index("setBusy(false);", block.index("if (!accepted)"))
+
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    completion = done.group(1)
+    assert "var completedMutation = pendingMutation;" in completion
+    assert completion.index("pendingMutation = '';") < completion.index(
+        "setBusy(false);"
+    )
+    assert re.search(
+        r"completedMutation === 'eve_settings_copy'.*?payload\.ok",
+        completion,
+        re.DOTALL,
+    )
+    copy_branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy'\) \{(.*?)\n    \}",
+        completion,
+        re.DOTALL,
+    )
+    assert copy_branch and "selected = {};" in copy_branch.group(1)
+    assert "copyFollowup" in copy_branch.group(1)
+    assert "selected = {};" not in completion.replace(copy_branch.group(0), "")
+
+    route = re.search(
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
+    )
+    assert route and "clearCopyFollowup()" not in route.group(0)
+    opener = re.search(r"function openBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert opener and "clearCopyFollowup()" not in opener.group(1)
+
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    select = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    kind = re.search(
+        r"querySelectorAll\('input\[name=\"es-kind\"\]'\).*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n        \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    source = re.search(
+        r"WM\.el\('es-source'\)\.addEventListener\('change', function \(\) \{"
+        r"(.*?)\n    \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert root and "var previousRoot = state && state.root;" in root.group(1)
+    assert "clearCopyFollowup();" not in root.group(1).split("WM.send", 1)[0]
+    assert "payload && payload.root !== previousRoot" in root.group(1)
+    for name, handler in (
+        ("server/profile", select),
+        ("kind", kind),
+        ("source", source),
+    ):
+        assert handler and "clearCopyFollowup();" in handler.group(1), name
+    assert (
+        "WM.el('es-copy-view-backups').addEventListener('click', openBackups);" in CODE
+    )
+
+
+def test_copy_followup_is_quiet_and_hideable():
+    followup = re.search(r'<[^>]+id="es-copy-followup"[^>]*>', BODY)
+    assert followup and 'role="status"' not in followup.group(0)
+    assert re.search(r"\.es-copy-followup\[hidden\]\s*\{[^}]*display:\s*none", CSS)
 
 
 def test_copy_group_rendering_uses_kind_payload_and_remembers_seen_ids():
@@ -643,14 +745,69 @@ def test_copy_is_inert_when_it_cannot_act():
 # ---- round 5: the roster, the summary and the retention note -----------
 
 
+def test_profiles_opens_backups_without_mounting_the_archive_inline():
+    assert 'id="es-backups-open"' in BODY
+    assert "<h2>Backups</h2>" not in BODY
+    assert "function openBackups()" in CODE
+    assert "WM.route('backups')" in CODE
+
+
+def test_backups_is_a_chromeless_profiles_subroute():
+    assert 'id="route-backups"' in HTML
+    assert "backups: 'route-backups'" in APP
+    assert 'data-route="backups"' not in HTML
+    for declaration in ("WM.CHROMELESS_ROUTES", "WM.EVE_ROUTES"):
+        block = re.search(declaration + r" = \[([^]]+)\]", APP)
+        assert block and "'backups'" in block.group(1)
+    assert "name === 'backups'" in APP
+
+
+def test_backups_entry_routes_once_and_leaves_refresh_to_the_route_listener():
+    opener = re.search(r"function openBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert opener
+    assert "backupVisible = 20;" in opener.group(1)
+    assert "WM.route('backups');" in opener.group(1)
+    assert "renderBackups()" not in opener.group(1)
+    assert "refresh()" not in opener.group(1)
+
+    listener = re.search(
+        r"document\.addEventListener\('wm:route'.*?\n    \}\);", CODE, re.DOTALL
+    )
+    assert listener and "event.detail === 'backups'" in listener.group(0)
+    assert "refresh();" in listener.group(0)
+
+
+def test_backups_route_has_one_heading_and_native_retention_disclosure():
+    assert BACKUPS_ROUTE.count("<h1>Backups</h1>") == 1
+    assert "<h2>Backups</h2>" not in BACKUPS_ROUTE
+    assert '<button class="btn" id="es-backups-back" type="button">' in BACKUPS_ROUTE
+    assert '<details id="es-retention">' in BACKUPS_ROUTE
+    assert "<summary>Retention</summary>" in BACKUPS_ROUTE
+    assert 'id="es-backup-filter"' in BACKUPS_ROUTE
+    assert 'id="es-backup-filter-clear"' in BACKUPS_ROUTE
+
+
+def test_backups_route_preserves_a_readable_measure_for_prose_and_controls():
+    measure = re.search(
+        r"#route-backups\s+\.es-backups-card\s*>\s*"
+        r":not\(#es-backups\):not\(#es-backup-head\)\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert measure and "max-width: 586px" in measure.group(1)
+
+
 def test_the_retention_note_follows_the_action_it_qualifies():
     """R2. A retention policy opened the Backups card, ahead of the one
     control in it. The note is not cut -- it is the promise that makes the
     copy card above it safe -- but a card whose point is an action may not
     lead with the policy that governs it.
     """
-    card = re.search(r"<h2>Backups</h2>(.*?)</section>", BODY, re.DOTALL)
-    assert card, "the Backups card no longer opens with its own heading"
+    card = re.search(
+        r'<section class="card es-backups-card">(.*?)</section>',
+        BACKUPS_ROUTE,
+        re.DOTALL,
+    )
+    assert card, "the Backups card is missing"
     button = card.group(1).index('id="es-backup-profile"')
     note = card.group(1).index('id="es-backup-note"')
     listing = card.group(1).index('id="es-backups"')
@@ -685,6 +842,8 @@ def test_the_collapsed_summary_names_the_server_and_the_profile():
 
 def test_account_identification_is_a_focused_subscreen_from_account_mode():
     assert 'id="es-account-tools"' in BODY
+    assert 'id="es-account-summary"' in BODY
+    assert 'id="es-account-guidance"' in BODY
     assert 'id="es-identify-open"' in BODY
     assert 'id="es-identity-panel"' not in BODY, (
         "account management must not expand inside the copy form"
@@ -703,6 +862,38 @@ def test_account_identification_is_a_focused_subscreen_from_account_mode():
     assert render and "kind() === 'accounts'" in render.group(1)
     assert "WM.current_route !== 'accountidentity'" in render.group(1)
     assert "WM.route('accountidentity')" in CODE
+
+
+def test_account_identification_summary_and_entry_match_backend_preconditions():
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert "account.account_name" in block
+    assert "state.accounts.length" in block
+    assert "var characters = (state && state.characters) || [];" in block
+    assert re.search(r"state\.accounts\.length\s*&&\s*state\.characters\.length", block)
+    assert "state.identity_characters" not in block
+    assert (
+        "No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely."
+        in block
+    )
+    assert (
+        "No characters found in this profile. Launch a character, make a small settings change, then close EVE completely."
+        in block
+    )
+    assert "Identify accounts to replace internal IDs with names." in block
+    assert "es-identify-open').hidden" in block
+    assert re.search(r"#es-identify-open\[hidden\]\s*\{[^}]*display:\s*none", CSS)
+
+
+def test_account_guidance_is_available_only_inside_a_selected_profile():
+    """A missing root/profile must not masquerade as failed account discovery."""
+    render = re.search(r"function renderIdentity\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert "var profileSelected" in block
+    assert "state.root" in block and "state.profile" in block
+    assert "es-account-tools').hidden = !accountsMode || !profileSelected" in block
 
 
 def test_account_identity_route_is_a_chromeless_profiles_subscreen():
@@ -930,16 +1121,16 @@ def test_account_targets_render_human_identity_with_secondary_number():
 
 
 def test_backups_are_a_full_width_column_grid_without_nested_scrolling():
-    assert 'class="card es-backups-card"' in BODY
-    assert 'id="es-backups" class="list-scroll"' not in BODY
+    assert 'class="card es-backups-card"' in BACKUPS_ROUTE
+    assert 'id="es-backups" class="list-scroll"' not in BACKUPS_ROUTE
     grid = re.search(r"\.es-backup-grid \{([^}]*)\}", CSS)
     assert grid and "grid-template-columns" in grid.group(1)
     assert "minmax(220px, 1fr)" in grid.group(1), (
         "the target identity must own the flexible backup column"
     )
-    assert re.search(r"\.es-backups-card\s*\{\s*max-width:\s*none", CSS), (
-        "the Backups card must use the route's available width"
-    )
+    assert re.search(
+        r"#route-backups\s+\.es-backups-card\s*\{[^}]*width:\s*100%", CSS
+    ), "the Backups card must use the route's available width"
 
 
 def test_backup_rows_use_resolved_labels_and_reveal_history_in_batches():
@@ -947,9 +1138,196 @@ def test_backup_rows_use_resolved_labels_and_reveal_history_in_batches():
     assert render
     block = render.group(1)
     assert "item.display_name" in block and "item.display_meta" in block
-    assert "backups.slice(0, backupVisible)" in block
+    assert "filtered.slice(0, backupVisible)" in block
     assert "backupVisible += 20" in CODE
     assert "item.kind +" not in block and "item.stem" not in block
+
+
+def test_backups_route_reuses_profiles_state_and_completion_owner():
+    """The subroute uses the existing Profiles bridge lifecycle."""
+    assert "WM.route('backups')" in CODE
+    assert "event.detail === 'backups'" in CODE
+    assert CODE.count("WM.handle('onEveSettingsDone'") == 1
+    assert "WM.formationsDone" in CODE
+
+
+def test_profiles_passes_accounts_into_the_formation_editor():
+    assert "WM.openFormations(state.accounts" in CODE
+    assert "WM.openFormations = function (accounts, preferredPath)" in FORMATIONS
+    assert "option.textContent = account.name;" in FORMATIONS
+
+
+def test_formation_account_selector_is_disabled_while_busy():
+    assert "WM.setEnabled('fm-account', !state.busy" in FORMATIONS
+
+
+def test_formation_tool_is_hidden_when_it_cannot_open():
+    tool = re.search(r"function paintFormationsTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert tool
+    body = tool.group(1)
+    assert "formationsButton.hidden = !available;" in body
+    markup = re.search(r'<button[^>]+id="es-formations-open"[^>]*>', BODY)
+    assert markup and "hidden" in markup.group(0), (
+        "the unavailable Formations tool flashes before its first state payload"
+    )
+    assert re.search(
+        r"(?m)^#es-formations-open\[hidden\]\s*\{\s*display:\s*none;\s*\}", CSS
+    ), "the Formations hidden override must be a valid standalone CSS rule"
+
+
+def test_formation_tool_owns_its_availability_through_busy_repaints():
+    tool = re.search(r"function paintFormationsTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert tool
+    for condition in ("state.formations_available", "state.accounts.length", "!busy"):
+        assert condition in tool.group(1)
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    assert "paintFormationsTool();" in busy.group(1)
+    assert "'es-formations-open'" not in busy.group(1), (
+        "the generic busy loop must not overwrite the tool's availability"
+    )
+
+
+def test_formation_account_switch_guards_dirty_edits():
+    assert "WM.el('fm-account').addEventListener('change'" in FORMATIONS
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    assert "state.dirty" in switch
+    assert "Discard changes?" in switch
+    assert "WM.el('fm-account').value = selectedAccountPath" in switch
+
+
+def test_formation_switch_response_does_not_overwrite_an_edit_made_while_loading():
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    stale = re.search(
+        r"if \(mode === 'switch' && revision !== startedAt\) \{(.*?)\n      \}",
+        load,
+        re.DOTALL,
+    )
+    assert stale, "a switch reply must consult the revision captured before its read"
+    assert "state.dirty = true;" in stale.group(1)
+    assert "WM.el('fm-account').value = selectedAccountPath;" in stale.group(1)
+    assert "return;" in stale.group(1)
+
+
+def test_formation_switch_failure_keeps_the_editor_open_but_entry_failure_ejects():
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    failure = load[load.index("if (!reply || !reply.ok)") :]
+    switch = re.search(
+        r"if \(mode === 'switch'\) \{(.*?)\n        \}", failure, re.DOTALL
+    )
+    assert switch, "a failed account switch needs its own failure branch"
+    assert "WM.el('fm-account').value = selectedAccountPath" in switch.group(1)
+    assert "WM.route('evesettings')" not in switch.group(1), (
+        "a failed switch must retain the editor and its prior formations"
+    )
+    assert "WM.route('evesettings')" in failure[switch.end() :], (
+        "the initial formation load must still return to Profiles on failure"
+    )
+
+
+def test_formation_account_selection_stays_in_the_supplied_option_space():
+    """The API resolves a file path; the <select> holds discovered paths.
+
+    A junction, symlink, or Windows case normalization can make those strings
+    differ for the same file. The resolved reply remains the save target, but
+    every select operation has to retain the requested account-list value.
+    """
+    assert (
+        "var accountChoices = [], selectedAccountPath = '', lastSuccessfulPath = '';"
+        in FORMATIONS
+    )
+    load = FORMATIONS[
+        FORMATIONS.index("function load(") : FORMATIONS.index("function save(")
+    ]
+    assert "state.path = reply.path;" in load, "saves must keep the resolved file path"
+    assert "selectedAccountPath = path;" in load
+    assert "lastSuccessfulPath = path;" in load
+    assert "renderAccounts(selectedAccountPath);" in load
+    assert "lastSuccessfulPath = state.path;" not in load
+
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    assert "nextPath === selectedAccountPath" in switch
+    assert "WM.el('fm-account').value = selectedAccountPath;" in switch
+
+    done = FORMATIONS[FORMATIONS.index("WM.formationsDone") :]
+    assert "load(selectedAccountPath, 'reload', state.selected, true);" in done
+
+
+def test_failed_formation_switch_keeps_dirty_edits_saveable():
+    """Discard confirmation is provisional until the replacement read works."""
+    switch = FORMATIONS[
+        FORMATIONS.index("WM.el('fm-account').addEventListener('change'") :
+    ]
+    confirmed = re.search(r"if \(yes\) \{(.*?)\n        \}", switch, re.DOTALL)
+    assert confirmed, "the dirty switch confirmation no longer loads an account"
+    assert "load(nextPath, 'switch');" in confirmed.group(1)
+    assert "state.dirty = false;" not in confirmed.group(1), (
+        "a failed replacement read must leave the visible old edits dirty and saveable"
+    )
+
+
+def test_backup_filter_matches_tokens_and_visible_words():
+    """Filtering covers both payload terms and the labels shown in the row."""
+    matcher = re.search(
+        r"function backupMatches\(item, needle\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert matcher
+    body = matcher.group(1)
+    for value in (
+        "display_name",
+        "display_meta",
+        "item.kind",
+        "item.origin",
+        "Automatic",
+        "Manual",
+    ):
+        assert value in body
+
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    block = render.group(1)
+    assert block.index(".filter(") < block.index(".slice(0, backupVisible)")
+    assert "No backups match this filter" in block
+    assert "Clear filter" in BACKUPS_ROUTE
+
+
+def test_backup_actions_use_an_accessible_disclosure():
+    """Delete is named, keyboard-dismissible, and only one menu opens at once."""
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "details" in body and "summary" in body
+    assert "aria-label" in body
+    assert "Escape" in body
+    assert ".focus()" in body
+    assert "querySelectorAll('.bk-menu[open]')" in body
+    assert "other !== menu" in body and "other.open = false" in body
+
+
+def test_backup_filter_and_disclosures_remain_usable_during_mutations():
+    """Busy blocks mutations without trapping route or archive navigation."""
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    body = busy.group(1)
+    for control in ("es-backups-back", "es-backup-filter", "es-backups-more"):
+        assert control not in body
+    assert "querySelectorAll('button')" in body
+    assert "es-backup-profile').disabled" in body
+    assert "es-auto-keep-apply" in body
+
+
+def test_empty_backups_explain_that_copies_create_automatic_backups():
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "No backups yet. Copies create backups automatically." in render.group(1)
 
 
 def test_profile_backup_button_names_the_selected_profile():
@@ -957,9 +1335,57 @@ def test_profile_backup_button_names_the_selected_profile():
     assert "backupButton.disabled" in CODE
 
 
+def test_profile_backup_is_the_backups_routes_primary_action():
+    button = re.search(r'<button id="es-backup-profile" class="([^"]*)"', BACKUPS_ROUTE)
+    assert (
+        button and "btn" in button.group(1).split() and "acc" in button.group(1).split()
+    )
+    assert BACKUPS_ROUTE.count('class="btn acc"') == 1, (
+        "Backups must retain one accent action: manual profile backup"
+    )
+
+
+def test_root_changes_repaint_cleared_targets_and_commit_state():
+    """refresh() paints the old selection, so root changes need a second paint."""
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    changed = re.search(
+        r"if \(payload && payload\.root !== previousRoot\) \{(.*?)\n            \}",
+        root.group(1),
+        re.DOTALL,
+    )
+    assert changed
+    body = changed.group(1)
+    assert body.index("selected = {};") < body.index("renderTargets();"), (
+        "clearing targets after refresh must repaint the roster and commit label"
+    )
+
+
+def test_successful_noncopy_completion_clears_copy_followup():
+    """A later mutation replaces the global result, so Copy complete cannot linger."""
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    completion = done.group(1)
+    noncopy = re.search(
+        r"else if \(payload\.ok\) \{(.*?)\n    \}", completion, re.DOTALL
+    )
+    assert noncopy and "clearCopyFollowup();" in noncopy.group(1), (
+        "successful non-copy completions must replace stale copy feedback"
+    )
+
+
+def test_formation_commit_keeps_the_eve_closed_requirement_next_to_save():
+    commit = re.search(r'<div class="row" id="fm-commit">(.*?)</div>', HTML, re.DOTALL)
+    assert commit and "Saving needs every EVE client closed." in commit.group(1)
+
+
 def test_retention_is_explicit_and_does_not_add_a_second_accent():
-    assert 'id="es-auto-keep"' in BODY
-    assert 'id="es-auto-keep-apply" class="btn"' in BODY
+    assert 'id="es-auto-keep"' in BACKUPS_ROUTE
+    assert 'id="es-auto-keep-apply" class="btn"' in BACKUPS_ROUTE
     assert "eve_settings_set_auto_keep" in CODE
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1

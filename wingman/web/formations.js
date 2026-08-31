@@ -43,8 +43,13 @@
   var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
 
   var state = {
-    path: '', name: '', formations: [], selected: 0, dirty: false, busy: false
+    path: '', formations: [], selected: 0, dirty: false, busy: false
   };
+  // Account paths in the supplied choice list are UI identities. Python
+  // resolves a requested path before reading it, so the returned path can
+  // differ for a junction, symlink, or Windows case normalization; that
+  // resolved path is only the save target.
+  var accountChoices = [], selectedAccountPath = '', lastSuccessfulPath = '';
   // Bumped by every edit, and sampled when a save is sent. A save takes a
   // worker and a push to finish, and the pane stays live throughout -- so
   // without this, an edit made WHILE saving is marked clean by the push
@@ -165,6 +170,25 @@
     }) };
   }
 
+  function renderAccounts(path) {
+    var select = WM.el('fm-account');
+    select.textContent = '';
+    accountChoices.forEach(function (account) {
+      var option = document.createElement('option');
+      option.value = account.path;
+      option.textContent = account.name;
+      select.appendChild(option);
+    });
+    select.value = path;
+  }
+
+  function accountPath(preferredPath) {
+    var paths = accountChoices.map(function (account) { return account.path; });
+    if (paths.indexOf(lastSuccessfulPath) !== -1) return lastSuccessfulPath;
+    if (paths.indexOf(preferredPath) !== -1) return preferredPath;
+    return paths[0] || '';
+  }
+
   // Two optional arguments, both only for the reload after a save.
   //
   // keepIndex: the list comes back with Python's minted ids, and dropping
@@ -182,7 +206,7 @@
   // An INITIAL open passes neither: it is a replacement, not a refresh --
   // the pane is still showing whatever the last account held, and there is
   // nothing there worth protecting from the file being opened.
-  function load(path, keepIndex, protect) {
+  function load(path, mode, keepIndex, protect) {
     var startedAt = revision;
     state.busy = true; paintCommit();
     return WM.send('eve_settings_formations', path).then(function (reply) {
@@ -199,6 +223,16 @@
         // `dirty` is deliberately not touched: formationsDone cleared it
         // before calling, and markDirty will have set it again if an edit
         // landed. Either way it already says the truth.
+        if (mode === 'switch') {
+          // Keep the old document after a failed switch. The select changed
+          // before the request was sent, so put it back on the only document
+          // still represented by state rather than leaving the two disagreeing.
+          WM.el('fm-account').value = selectedAccountPath;
+          paintCommit();
+          WM.confirm('Formations',
+                     (reply && reply.error) || 'The file could not be read.');
+          return;
+        }
         if (protect) {
           paintCommit();
           WM.confirm('Formations',
@@ -218,6 +252,17 @@
                    (reply && reply.error) || 'The file could not be read.');
         return;
       }
+      // The editor stays live while an account read is in flight. If an
+      // edit lands before a switch answer, retain the document it changed
+      // and restore its account choice rather than painting another account
+      // over it. The save reload has the same revision guard below, but its
+      // selector already represents the document on screen.
+      if (mode === 'switch' && revision !== startedAt) {
+        state.dirty = true;
+        WM.el('fm-account').value = selectedAccountPath;
+        paintCommit();
+        return;
+      }
       // The edit on screen wins over the answer to a question asked
       // before it existed. Nothing is written and nothing is discarded:
       // the list keeps its `id: null` for any new formation, so the next
@@ -230,7 +275,8 @@
         return;
       }
       state.path = reply.path;
-      state.name = reply.name;
+      selectedAccountPath = path;
+      lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);
       state.selected = 0;
       if (typeof keepIndex === 'number' && state.formations.length) {
@@ -239,7 +285,7 @@
       }
       state.dirty = false;
       savingAt = -1;
-      WM.el('fm-account').textContent = state.name;
+      renderAccounts(selectedAccountPath);
       renderAll();
     });
   }
@@ -282,7 +328,7 @@
     // repoints the client's selectedFormationID at whatever is now the
     // head of the table. That is exactly the churn ids exist to prevent,
     // and this file's header claims not to cause.
-    load(state.path, state.selected, true);
+    load(selectedAccountPath, 'reload', state.selected, true);
   };
 
   /* ---- rendering ---- */
@@ -621,6 +667,7 @@
     // One class toggle over one element; no second accent, no dialog.
     WM.el('fm-dirty').className = why ? 'hint err' : 'hint';
     WM.setEnabled('fm-add', !state.busy);
+    WM.setEnabled('fm-account', !state.busy && accountChoices.length > 0);
   }
 
   /* ---- wiring ---- */
@@ -703,6 +750,24 @@
     WM.el('fm-balance').addEventListener('click', balance);
     WM.el('fm-save').addEventListener('click', save);
 
+    WM.el('fm-account').addEventListener('change', function () {
+      var nextPath = WM.el('fm-account').value;
+      if (!nextPath || nextPath === selectedAccountPath || state.busy) return;
+      if (!state.dirty) {
+        load(nextPath, 'switch');
+        return;
+      }
+      WM.confirm('Discard changes?',
+                 'Your formation edits have not been saved.',
+                 { destructive: true }).then(function (yes) {
+        if (yes) {
+          load(nextPath, 'switch');
+        } else {
+          WM.el('fm-account').value = selectedAccountPath;
+        }
+      });
+    });
+
     svg.addEventListener('mousedown', function (e) {
       e.preventDefault();
       dragging = true;
@@ -735,10 +800,16 @@
     });
   }
 
-  // The Profiles card's entry point, and the only way in.
-  WM.openFormations = function (path) {
+  // The Profiles tool's entry point, and the only way in. Keep only the
+  // account identity the editor needs: Python owns the canonical name.
+  WM.openFormations = function (accounts, preferredPath) {
+    accountChoices = (accounts || []).map(function (account) {
+      return { path: account.path, name: account.name };
+    });
+    var path = accountPath(preferredPath);
+    renderAccounts(path);
     WM.route('formations');
-    load(path);
+    load(path, 'entry');
   };
 
   if (document.readyState === 'loading') {

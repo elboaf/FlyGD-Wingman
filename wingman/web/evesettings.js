@@ -20,6 +20,8 @@
   // shows and what the button acts on can never disagree.
   var visible = [];
   var busy = false;
+  var pendingMutation = '';
+  var copyFollowup = false;
   // The folder card's second face. Collapsed on every entry to the route
   // rather than remembered: the point of collapsing it is that the target
   // list is on screen at open, and a card that stayed expanded across
@@ -27,6 +29,7 @@
   // no bridge method on this screen carries page state.
   var expanded = false;
   var identityExpanded = false;
+  var backupFilter = '';
   var backupVisible = 20;
   var identifyCandidate = null;
   var identityStep = 'idle';
@@ -47,7 +50,10 @@
   }
 
   function refresh() {
-    return WM.send('eve_settings_state').then(render);
+    return WM.send('eve_settings_state').then(function (payload) {
+      render(payload);
+      return payload;
+    });
   }
 
   function render(payload) {
@@ -84,7 +90,7 @@
     renderCopyGroups();
     renderTargets();
     renderBackups();
-    renderFormationsCard();
+    paintFormationsTool();
   }
 
   // No root, or a folder Python could not read through: there is nothing
@@ -277,7 +283,26 @@
 
   function renderIdentity() {
     var accountsMode = kind() === 'accounts';
-    WM.el('es-account-tools').hidden = !accountsMode;
+    var accounts = (state && state.accounts) || [];
+    var characters = (state && state.characters) || [];
+    var identified = accounts.filter(function (account) {
+      return account.account_name;
+    }).length;
+    var canIdentify = !!(state && state.accounts.length
+      && state.characters.length);
+    // Discovery guidance only has meaning after Python has identified the
+    // selected profile it searched. Before then, folder/profile setup owns
+    // recovery; showing account guidance would diagnose an empty search.
+    var profileSelected = !!(state && state.root && state.profile);
+    WM.el('es-account-tools').hidden = !accountsMode || !profileSelected;
+    WM.el('es-account-summary').textContent = identified + ' of '
+      + accounts.length + ' accounts identified';
+    WM.el('es-account-guidance').textContent = !accounts.length
+      ? 'No accounts found in this profile. Launch a character, make a small settings change, then close EVE completely.'
+      : (!characters.length
+        ? 'No characters found in this profile. Launch a character, make a small settings change, then close EVE completely.'
+        : 'Identify accounts to replace internal IDs with names.');
+    WM.el('es-identify-open').hidden = !canIdentify;
     if (WM.current_route !== 'accountidentity') return;
 
     var panel = WM.el('es-identity-panel');
@@ -570,9 +595,26 @@
       + ' ' + stamp[4] + ':' + stamp[5];
   }
 
+  function backupMatches(item, needle) {
+    var origin = item.origin === 'auto' ? 'Automatic' : 'Manual';
+    return [item.display_name, item.display_meta, item.kind, item.origin, origin]
+      .join(' ').toLowerCase().indexOf(needle) !== -1;
+  }
+
+  function openBackups() {
+    backupFilter = '';
+    WM.el('es-backup-filter').value = '';
+    backupVisible = 20;
+    WM.route('backups');
+  }
+
   function renderBackups() {
     var host = WM.el('es-backups');
     var backups = state.backups || [];
+    var needle = backupFilter.toLowerCase();
+    var filtered = backups.filter(function (item) {
+      return backupMatches(item, needle);
+    });
     host.innerHTML = '';
     var profileName = nameOf(state.profiles, state.profile);
     var backupButton = WM.el('es-backup-profile');
@@ -594,16 +636,17 @@
     if (commitNote) commitNote.textContent = note.split('. ')[0] + '.';
 
     var head = WM.el('es-backup-head');
-    head.hidden = !backups.length || state.backups_unreadable;
-    if (state.backups_unreadable || !backups.length) {
+    head.hidden = !filtered.length || state.backups_unreadable;
+    if (state.backups_unreadable || !backups.length || !filtered.length) {
       var empty = document.createElement('p');
       empty.className = 'hint';
       empty.textContent = state.backups_unreadable
         ? "Couldn't read the backups folder. Check it is still readable."
-        : 'No backups yet.';
+        : (!backups.length ? 'No backups yet. Copies create backups automatically.'
+          : 'No backups match this filter.');
       host.appendChild(empty);
     }
-    backups.slice(0, backupVisible).forEach(function (item) {
+    filtered.slice(0, backupVisible).forEach(function (item) {
       var line = WM.make('div', 'es-backup-grid es-backup-row');
       line.appendChild(WM.make('span', 'bk-when', whenText(item.created)));
       var target = WM.make('span', 'bk-what');
@@ -617,51 +660,52 @@
       actions.appendChild(button('Restore', function () {
         mutate('eve_settings_restore', item.path);
       }));
-      actions.appendChild(button('Delete', function () {
+      var menu = WM.make('details', 'bk-menu');
+      var trigger = WM.make('summary', 'bk-menu-trigger', 'More');
+      trigger.setAttribute('aria-label', 'More actions for ' + item.display_name
+        + ' backup from ' + whenText(item.created));
+      menu.appendChild(trigger);
+      menu.appendChild(button('Delete', function () {
         mutate('eve_settings_delete_backup', item.path);
       }, 'danger'));
+      menu.addEventListener('toggle', function () {
+        if (!menu.open) return;
+        Array.prototype.forEach.call(
+          host.querySelectorAll('.bk-menu[open]'), function (other) {
+            if (other !== menu) other.open = false;
+          });
+      });
+      menu.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && menu.open) {
+          event.preventDefault();
+          menu.open = false;
+          trigger.focus();
+        }
+      });
+      actions.appendChild(menu);
       line.appendChild(actions);
       host.appendChild(line);
     });
     var more = WM.el('es-backups-more');
-    more.hidden = backups.length <= backupVisible;
-    more.disabled = busy || !!state.identification_active;
+    more.hidden = filtered.length <= backupVisible;
     if (!more.hidden) {
-      more.textContent = 'Show ' + Math.min(20, backups.length - backupVisible)
+      more.textContent = 'Show ' + Math.min(20, filtered.length - backupVisible)
         + ' older backups';
     }
     WM.el('es-auto-keep-apply').disabled = busy || !!state.identification_active;
   }
 
-  // The way into the probe formation editor. Accounts only, always: a
-  // formation lives in the account file, so the Characters/Accounts switch
-  // above deliberately does NOT reach this card -- it would otherwise
-  // decide whether the entry point exists at all.
-  //
-  // The whole card is hidden when Python reports no decoder, rather than
-  // shown and then refused: eve_settings_formations' answer in that state
-  // is a sentence, and a control whose only outcome is that sentence is
-  // worse than no control.
-  function renderFormationsCard() {
-    var card = WM.el('es-formations-card');
-    var sel = WM.el('es-formations-account');
-    card.hidden = !(state && state.formations_available
-                    && state.accounts && state.accounts.length);
-    if (card.hidden) return;
-    // The chosen account survives a refresh: onEveSettingsDone refreshes
-    // after every mutation, and rebuilding the list would silently reset
-    // the pick back to the first account between two clicks.
-    var keep = sel.value;
-    sel.textContent = '';
-    state.accounts.forEach(function (account) {
-      var option = document.createElement('option');
-      option.value = account.path;
-      option.textContent = account.name;
-      sel.appendChild(option);
-    });
-    if (keep) sel.value = keep;
-    WM.setEnabled('es-formations-open', !busy && !!sel.value
-                  && !(state && state.identification_active));
+  // Formations live in account files, but account choice belongs in the
+  // editor where it can be changed without returning to Profiles. Python's
+  // account names are passed through unchanged, so the editor never tries to
+  // reconstruct an identity from a file name or account id.
+  function paintFormationsTool() {
+    var formationsButton = WM.el('es-formations-open');
+    var available = !!(state && state.formations_available
+                  && state.accounts && state.accounts.length);
+    formationsButton.hidden = !available;
+    WM.setEnabled('es-formations-open', available && !busy
+                  && !state.identification_active);
   }
 
   function button(text, handler, extra) {
@@ -703,6 +747,11 @@
   function paintCommit() {
     var count = chosenTargets().length;
     var noun = kind() === 'accounts' ? 'account' : 'character';
+    var copyButton = WM.el('es-copy');
+    copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
+      ? 'Copy operation in progress\u2026'
+      : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');
+    WM.el('es-copy-followup').hidden = !copyFollowup;
     var label = WM.el('es-copy-count');
     label.textContent = count
       ? count + ' ' + noun + (count === 1 ? '' : 's') + ' will be overwritten'
@@ -740,14 +789,14 @@
     // owns the whole of it, so a copy that finishes cannot re-enable a
     // button whose selection was cleared by the same push.
     paintCommit();
-    // Same reason: the formations card's button is inert while a copy or a
-    // restore is in flight, and paintCommit does not own it.
-    renderFormationsCard();
+    // The editor entry is inert while a copy or restore is in flight, and
+    // paintCommit does not own that availability decision.
+    paintFormationsTool();
     var identifying = !!(state && state.identification_active);
     WM.el('es-backup-profile').disabled = value || identifying
       || !(state && state.profile);
-    ['es-auto-keep-apply', 'es-formations-open', 'es-backups-more',
-     'es-identify-open', 'es-identify-start', 'es-manage-toggle',
+    ['es-auto-keep-apply', 'es-identify-open', 'es-identify-start',
+     'es-manage-toggle',
      'es-account-name-apply', 'es-character-add-btn'].forEach(function (id) {
       WM.el(id).disabled = value || identifying;
     });
@@ -769,6 +818,11 @@
       });
   }
 
+  function clearCopyFollowup() {
+    copyFollowup = false;
+    WM.el('es-copy-followup').hidden = true;
+  }
+
   function mutate(method) {
     // Every mutation goes through here. The bridge returns as soon as the
     // worker is spawned, so a falsy answer means no worker started (the
@@ -776,9 +830,14 @@
     // anything else waits for onEveSettingsDone.
     var args = Array.prototype.slice.call(arguments);
     if (busy) return;
+    pendingMutation = method;
+    if (method === 'eve_settings_copy') clearCopyFollowup();
     setBusy(true);
     WM.send.apply(null, args).then(function (accepted) {
-      if (!accepted) setBusy(false);
+      if (!accepted) {
+        pendingMutation = '';
+        setBusy(false);
+      }
     });
   }
 
@@ -795,9 +854,10 @@
     });
 
     // Profiles 4. Both controls answer the same question -- where is the
-    // EVE settings folder -- so they end the same way: selection dropped
-    // (a source picked in the old tree does not exist in the new one),
-    // state re-read, names re-resolved.
+    // EVE settings folder. A changed root drops the old selection (its
+    // source does not exist in the new tree); a refusal, cancel, or no-op
+    // leaves both selection and the completed-copy follow-up intact.
+    // Every outcome re-reads state and resolves names.
     //
     // Neither reads the return value, and Detect's is not special. The
     // bridge writes the root itself and returns "" for all three of "the
@@ -807,10 +867,19 @@
     // given the user. refresh() is what shows the outcome, in every case.
     function chooseRoot(method) {
       return function () {
+        var previousRoot = state && state.root;
         WM.send(method).then(function () {
-          selected = {};
-          refresh();
-          WM.send('eve_settings_resolve_names');
+          refresh().then(function (payload) {
+            if (payload && payload.root !== previousRoot) {
+              clearCopyFollowup();
+              selected = {};
+              // refresh() has already painted the old local selection over
+              // the newly loaded tree. Repaint it so the roster, count and
+              // disabled Copy action agree with the cleared state.
+              renderTargets();
+            }
+            WM.send('eve_settings_resolve_names');
+          });
         });
       };
     }
@@ -824,6 +893,7 @@
       WM.el(id).addEventListener('change', function () {
         // A source picked in the old settings set does not exist in the new
         // one, so the selection is dropped rather than carried.
+        clearCopyFollowup();
         selected = {};
         WM.send('eve_settings_select', WM.el('es-server').value,
                 WM.el('es-profile').value).then(function () {
@@ -836,6 +906,7 @@
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="es-kind"]'), function (radio) {
         radio.addEventListener('change', function () {
+          clearCopyFollowup();
           selected = {};
           renderSource();
           renderIdentity();
@@ -845,7 +916,10 @@
       });
 
     WM.el('es-filter').addEventListener('input', renderTargets);
-    WM.el('es-source').addEventListener('change', renderTargets);
+    WM.el('es-source').addEventListener('change', function () {
+      clearCopyFollowup();
+      renderTargets();
+    });
 
     WM.el('es-all').addEventListener('click', function () {
       visible.forEach(function (row) { selected[row.path] = true; });
@@ -864,6 +938,12 @@
       pendingCharacterId = '';
       rosterAccountId = '';
       WM.route('accountidentity');
+    });
+
+    WM.el('es-backups-open').addEventListener('click', openBackups);
+    WM.el('es-copy-view-backups').addEventListener('click', openBackups);
+    WM.el('es-backups-back').addEventListener('click', function () {
+      WM.route('evesettings');
     });
 
     WM.el('es-manage-toggle').addEventListener('click', function () {
@@ -1049,11 +1129,12 @@
     });
 
     WM.el('es-formations-open').addEventListener('click', function () {
-      var path = WM.el('es-formations-account').value;
       // Guarded on WM.openFormations rather than assumed: formations.js
       // loads after this file, and a page that lost the script tag would
       // otherwise throw inside a click handler where nothing reports it.
-      if (path && WM.openFormations) WM.openFormations(path);
+      if (!state || !WM.openFormations) return;
+      var preferred = kind() === 'accounts' ? WM.el('es-source').value : '';
+      WM.openFormations(state.accounts, preferred);
     });
 
     WM.el('es-backup-profile').addEventListener('click', function () {
@@ -1067,10 +1148,12 @@
     WM.el('es-auto-keep-apply').addEventListener('click', function () {
       if (busy) return;
       WM.el('es-auto-keep-status').textContent = '';
+      pendingMutation = 'eve_settings_set_auto_keep';
       setBusy(true);
       WM.send('eve_settings_set_auto_keep', WM.el('es-auto-keep').value)
         .then(function (result) {
           if (result && result.accepted) return;
+          pendingMutation = '';
           setBusy(false);
           if (result) WM.el('es-auto-keep').value = result.value;
           WM.el('es-auto-keep-status').textContent = result && result.error || '';
@@ -1080,6 +1163,18 @@
       if (event.key === 'Enter') WM.el('es-auto-keep-apply').click();
     });
 
+    WM.el('es-backup-filter').addEventListener('input', function (event) {
+      backupFilter = event.target.value;
+      backupVisible = 20;
+      renderBackups();
+    });
+    WM.el('es-backup-filter-clear').addEventListener('click', function () {
+      backupFilter = '';
+      WM.el('es-backup-filter').value = '';
+      backupVisible = 20;
+      renderBackups();
+      WM.el('es-backup-filter').focus();
+    });
     WM.el('es-backups-more').addEventListener('click', function () {
       backupVisible += 20;
       renderBackups();
@@ -1103,14 +1198,18 @@
         WM.send('eve_settings_identification_cancel');
         if (state) state.identification_active = false;
       }
-      if (event.detail !== 'evesettings') return;
-      // Every visit starts collapsed. render() is what repaints it, and it
-      // runs off the refresh below.
-      expanded = false;
-      identityExpanded = false;
-      clearIdentification();
-      identityStep = 'idle';
-      backupVisible = 20;
+      var stateRoute = event.detail === 'evesettings'
+        || event.detail === 'backups';
+      if (!stateRoute) return;
+      if (event.detail === 'evesettings') {
+        // Every Profiles visit starts collapsed. render() is what repaints
+        // it, and it runs off the refresh below.
+        expanded = false;
+        identityExpanded = false;
+        clearIdentification();
+        identityStep = 'idle';
+        backupVisible = 20;
+      }
       refresh();
       // Names are resolved on first open, never at launch: the tray app
       // starts hidden and must not make a network call nobody asked for.
@@ -1141,8 +1240,17 @@
   // forwarded instead; formations.js exposes WM.formationsDone and ignores
   // anything that arrives while its route is not showing.
   WM.handle('onEveSettingsDone', function (payload) {
+    var completedMutation = pendingMutation;
+    pendingMutation = '';
     if (WM.formationsDone) WM.formationsDone(payload);
-    if (payload.ok) selected = {};
+    if (completedMutation === 'eve_settings_copy') {
+      copyFollowup = !!payload.ok;
+      if (payload.ok) selected = {};
+    } else if (payload.ok) {
+      // The global status now describes a later operation, so the quiet
+      // copy-specific follow-up cannot remain beside unrelated feedback.
+      clearCopyFollowup();
+    }
     setBusy(false);
     refresh();
   });

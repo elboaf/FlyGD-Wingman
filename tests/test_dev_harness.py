@@ -18,10 +18,12 @@ import re
 from pathlib import Path
 
 from wingman import bookmarks
-from wingman.evesettings import selective
+from wingman.evesettings import identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
+EVE_SETTINGS_JS = (WEB / "evesettings.js").read_text(encoding="utf-8")
+INDEX_HTML = (WEB / "index.html").read_text(encoding="utf-8")
 
 # Every page module, so a WM.send anywhere is covered rather than only the
 # ones someone remembered to list.
@@ -239,7 +241,138 @@ def test_ordinary_profiles_fixture_keeps_a_three_character_account_and_matching_
     )
     assert account["character_ids"] == ["90000000", "90000001", "90000002"]
     assert 'display_name: "alpha@example"' in DEV_JS
-    assert 'display_meta: "Account 1001"' in DEV_JS
+    assert 'display_meta: "Suartad Arsten + 2 · Account 1001"' in DEV_JS
+    character_backup = re.search(
+        r"kind: 'character', stem: 'core_char_90000001',\s*"
+        r"display_name: '([^']+)', display_meta: 'Character 90000001'",
+        DEV_JS,
+    )
+    assert character_backup and character_backup.group(1) == "Yas Kalkoken", (
+        "the character backup must use the name belonging to its file id"
+    )
+
+
+def test_profiles_fixture_covers_new_visual_states():
+    for query in ("backups", "copy", "formations-account"):
+        assert ".get('" + query + "')" in DEV_JS
+    for state in ("empty", "unreadable", "filtered"):
+        assert "'" + state + "'" in DEV_JS
+    assert "Copy operation in progress" in DEV_JS
+    assert "Copy complete" in DEV_JS
+
+
+def test_filtered_backups_fixture_uses_a_nonmatching_filter():
+    scenario = re.search(
+        r"if \(backupsScenario === 'filtered'\) \{(.*?)\n      \}", DEV_JS, re.DOTALL
+    )
+    assert scenario, "the filtered backup fixture is missing"
+    assert "no matching backup" in scenario.group(1).lower(), (
+        "the filtered checkpoint must render the no-match state, not a matching row"
+    )
+
+
+def _identity_character_names() -> dict[str, str]:
+    block = DEV_JS[
+        DEV_JS.index("var eveNames = [") : DEV_JS.index(
+            "];", DEV_JS.index("var eveNames = [")
+        )
+    ]
+    return {
+        str(90000000 + index): name
+        for index, name in enumerate(re.findall(r"'([^']+)'", block))
+    }
+
+
+def _fixture_labels_from_identity_scenario(scenario: dict) -> dict[str, dict]:
+    names = _identity_character_names()
+    return {
+        account["id"]: identity.account_identity(
+            account["id"],
+            {account["id"]: account["account_name"]} if account["account_name"] else {},
+            {account["id"]: account["character_ids"]}
+            if account["character_ids"]
+            else {},
+            names.__getitem__,
+        )
+        for account in scenario["accounts"]
+    }
+
+
+def test_dev_account_labels_use_the_python_identity_data_without_node():
+    """The fixture needs the same two account identities without subprocesses.
+
+    pytest's contract is Python-only lexical verification; executing extracted
+    JavaScript through an undeclared Node binary made the suite environment
+    dependent. The scenario data remains checked by the Python formatter, and
+    these assertions pin the JavaScript boundary that consumes it.
+    """
+    expected = {
+        name: _fixture_labels_from_identity_scenario(scenario)
+        for name, scenario in _identity_scenarios().items()
+    }
+    assert expected["idle"]["1001"] == {
+        "primary": "alpha@example",
+        "secondary": "Suartad Arsten + 2 · Account 1001",
+        "option": "alpha@example · Suartad Arsten + 2 · Account 1001",
+    }
+    assert expected["idle"]["1003"] == {
+        "primary": "Account 1003",
+        "secondary": "Not identified",
+        "option": "Account 1003 · Not identified",
+    }
+    formatter = re.search(
+        r"  function devAccountLabel\(account\) \{(.*?)\n  \}", DEV_JS, re.DOTALL
+    )
+    assert formatter, "dev.js must format the canonical account identity"
+    body = formatter.group(1)
+    assert "account.character_ids.map(devKnownCharacter)" in body
+    for token in (
+        "Account ' + account.id",
+        "Not identified",
+        "primary + ' · ' + secondary",
+    ):
+        assert token in body
+    builder = re.search(
+        r"  function devFixtureAccounts\(scenario\) \{(.*?)\n  \}", DEV_JS, re.DOTALL
+    )
+    assert builder, "dev.js must derive each scenario's initial account labels"
+    for field in ("label.option", "label.primary", "label.secondary"):
+        assert field in builder.group(1)
+    assert "devAccountLabels" not in DEV_JS
+    assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
+    assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+def test_formation_switch_fixture_keeps_its_read_delay_visible():
+    """The switch screenshot needs the async gap before it changes account data."""
+    load = re.search(
+        r"api\.eve_settings_formations = function \(path\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert load and "setTimeout(function ()" in load.group(1)
+    assert "}, 150);" in load.group(1), (
+        "the dev switch checkpoint depends on the 150ms formation-read delay"
+    )
+
+
+def test_copy_fixture_has_stable_busy_and_settled_success_states():
+    paint = re.search(
+        r"function paintCommit\(\) \{(.*?)\n  \}", EVE_SETTINGS_JS, re.DOTALL
+    )
+    assert paint and "Copy operation in progress\\u2026" in paint.group(1)
+    followup = re.search(r'<div id="es-copy-followup".*?</div>', INDEX_HTML, re.DOTALL)
+    assert followup and "Copy complete." in followup.group(0)
+    mutation = re.search(
+        r"  function eveMutation\(name\) \{(.*?)\n  \}", DEV_JS, re.DOTALL
+    )
+    assert mutation, "dev.js must retain the delayed mutation fixture"
+    body = mutation.group(1)
+    guard = "name !== 'eve_settings_copy' || copyScenario !== 'busy'"
+    assert guard in body
+    assert body.index(guard) < body.index("window.onEveSettingsDone"), (
+        "only the busy copy fixture may suppress the completion push"
+    )
 
 
 def test_move_scenario_uses_the_guided_candidate_path():
