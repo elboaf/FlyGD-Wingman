@@ -62,6 +62,7 @@ from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
+from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
 from . import copy as copy_mod
@@ -3066,7 +3067,10 @@ class Api:
 
         host = self._preview_host
         if host is not None:
-            if not host.copy_layout(target, source):
+            outcome = host.copy_layout(target, source)
+            if outcome == preview_host_mod.COPY_PERSIST_FAILED:
+                return self._field_refused("Could not save this to settings.")
+            if outcome != preview_host_mod.COPY_OK:
                 return self._field_refused(
                     "That saved preview placement is no longer available."
                 )
@@ -3123,6 +3127,7 @@ class Api:
             return self._field_refused("Could not save this to settings.")
         if self._preview_host is not None:
             self._preview_host.clear_layout_entries()
+        self.push_preview_hotkeys()
         return self._field_ok()
 
     def _preview_sizes(self) -> dict:

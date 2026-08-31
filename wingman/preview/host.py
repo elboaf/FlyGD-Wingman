@@ -57,6 +57,9 @@ DEFAULT_SIZE = (320, 210)
 # a lot of characters are in a fight at once -- raise_alert's docstring
 # has the reasoning.
 PENDING_ALERTS_MAX = 10
+COPY_OK = "ok"
+COPY_MISSING = "missing"
+COPY_PERSIST_FAILED = "persist_failed"
 
 
 @contextlib.contextmanager
@@ -223,6 +226,7 @@ class PreviewHost:
         size=DEFAULT_SIZE,
         flush_layouts=None,
         on_clients_changed=None,
+        on_layouts_changed=None,
         on_hotkey_status=None,
         on_bind_captured=None,
         restore_positions=None,
@@ -258,6 +262,9 @@ class PreviewHost:
         # carries that out of the subsystem: _settings_payload returns
         # persisted settings only.
         self._on_clients_changed = on_clients_changed
+        # Announces only when source eligibility changes (a character gains
+        # its first complete layout), not on every drag coordinate.
+        self._on_layouts_changed = on_layouts_changed
         self._saved = dict(saved_layouts or {})
         # Read per placement, never captured: a preview is created whenever
         # its client appears, which is usually mid-session, so the value
@@ -463,10 +470,24 @@ class PreviewHost:
         it to would not return until the whole app was restarted.
         """
         with self._lock:
+            first_layout = (
+                self._usable_character(stable_key) and stable_key not in self._saved
+            )
             saved = dict(self._saved)
             saved[stable_key] = layout.Entry(rect, locked)
             self._saved = saved
         self._on_layout_changed(stable_key, rect, locked)
+        if first_layout:
+            self._announce_layouts_changed()
+
+    def _announce_layouts_changed(self) -> None:
+        if self._on_layouts_changed is None:
+            return
+        try:
+            self._on_layouts_changed()
+        except Exception:
+            # A page refresh is secondary to keeping the preview pump alive.
+            logger.exception("on_layouts_changed callback raised")
 
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
@@ -632,7 +653,7 @@ class PreviewHost:
     def _usable_character(name) -> bool:
         return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
 
-    def copy_layout(self, target: str, source: str) -> bool:
+    def copy_layout(self, target: str, source: str) -> str:
         """Persist source geometry for target, then queue live movement."""
         if (
             target == source
@@ -640,19 +661,24 @@ class PreviewHost:
             or not self._usable_character(source)
             or self._replace_layout is None
         ):
-            return False
+            return COPY_MISSING
         with self._lock:
             source_entry = self._saved.get(source)
             target_entry = self._saved.get(target)
         if source_entry is None:
-            return False
+            return COPY_MISSING
         entry = layout.Entry(
             source_entry.rect,
             target_entry.locked if target_entry is not None else False,
         )
         if not self._replace_layout(target, entry):
-            return False
+            return COPY_PERSIST_FAILED
         with self._lock:
+            # A drag that landed while the settings transaction was in
+            # progress is the later user action. LayoutStore has its delta;
+            # do not move the window/cache back to the copied rectangle.
+            if self._saved.get(target) != target_entry:
+                return COPY_OK
             saved = dict(self._saved)
             saved[target] = entry
             self._saved = saved
@@ -661,7 +687,7 @@ class PreviewHost:
                 self._pending_layouts[target] = entry
         if should_post:
             self._post(win32.WM_APP_APPLY_LAYOUTS)
-        return True
+        return COPY_OK
 
     def reset_layouts(self) -> None:
         """Forget every saved position and re-place. Safe from any thread."""
@@ -2008,9 +2034,12 @@ class PreviewHost:
         writing them back would repopulate the very table this just cleared --
         a reset that leaves the file exactly as full as it found it.
         """
+        had_layouts = bool(self.layout_entries())
         if self._clear_layouts is not None:
             self._clear_layouts()
         self.clear_layout_entries()
+        if had_layouts:
+            self._announce_layouts_changed()
         monitors = self._monitors()
         for index, (key, win) in enumerate(self._windows.items()):
             win.move(self._resolve_rect(key, index, monitors, None))

@@ -321,26 +321,13 @@
     acts.appendChild(typed);
     row.appendChild(acts);
 
-    // Size... only where it can succeed, and a filler where it cannot.
+    // One Geometry cell on every character row. Size... appears only where
+    // set_preview_size can succeed; Copy... appears only with another saved
+    // source; a dash fills the cell when neither action exists. The cell
+    // itself never disappears: `.row` is display:contents, so changing the
+    // number of children would break the shared row/track count.
     //
-    // set_preview_size refuses for a character that is neither running nor
-    // already in `layouts`: there is no x/y to write, and an entry without
-    // a full rect is dropped at the next load. A layouts entry appears
-    // when a preview is DRAGGED or RESIZED, not when its client starts --
-    // so on a fresh install this control was a guaranteed refusal for
-    // every offline character, which on a normal roster is most of the
-    // list. That is D6's rule (do not draw a control in the state where it
-    // can do nothing) applied to the column that broke it worst.
-    //
-    // A filler and not a missing cell. `.row` is display:contents, so a
-    // row that skipped this cell would leave its remaining controls one
-    // track to the left -- Never minimize sitting under the Size heading.
-    // The damage is confined to that row, but a row whose controls sit
-    // under the wrong headings is exactly the lie the headings were added
-    // to stop. One appendChild with a ternary, for the same reason the
-    // opt-out box at the top of this function uses one.
-    //
-    // What confines it is `#preview-binds .row > :first-child
+    // What confines each row is `#preview-binds .row > :first-child
     // { grid-column-start: 1 }` in style.css. The full-width `.lab` used
     // to force a fresh grid row for free; the name sits in track 1 now,
     // so that rule is the only thing resetting the auto-placement cursor
@@ -520,11 +507,7 @@
             refresh().then(function () { focusCopyTarget(name); });
             return;
           }
-          var online = (state.characters || []).indexOf(name) !== -1;
-          copyStatus(online
-                     ? 'Copied ' + source + '’s geometry to ' + name + '.'
-                     : 'Copied ' + source + '’s geometry to ' + name
-                       + '. It applies next time that preview opens.', false);
+          copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
           refresh().then(function () { focusCopyTarget(name); });
         });
       });

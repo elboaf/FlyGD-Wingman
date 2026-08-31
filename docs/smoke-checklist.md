@@ -1640,9 +1640,10 @@ only ever checked by hand.
       preference are unchanged. A copied rectangle from a disconnected
       monitor is rescued onto an attached display without rewriting the
       source character.
-- [ ] **Copy handles empty and stale state.** With fewer than two eligible
-      character layouts, no dead Copy control renders and one hint explains
-      how to create a source. Open a picker, remove/reset its source before
+- [ ] **Copy handles empty and stale state.** With no row that has another
+      character's saved layout available, no dead Copy control renders and
+      one hint explains how to create a source. One saved layout is enough
+      for Copy on every other roster target, so verify that state too. Open a picker, remove/reset its source before
       committing, then choose it: the refusal names that the placement is no
       longer available, the rows refresh, and focus returns to the same target
       by character name or to the first safe control if that row disappeared.

@@ -49,8 +49,9 @@ class LayoutStore:
             self._pending[stable_key] = entry
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = self._timer_factory(self._debounce_s, self._write)
-        self._timer.start()
+            timer = self._timer_factory(self._debounce_s, self._write)
+            self._timer = timer
+        timer.start()
 
     def record_character(self, name: str) -> None:
         """Note that *name* was seen. Safe from the preview thread.
@@ -65,8 +66,9 @@ class LayoutStore:
             self._pending_names.append(name)
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = self._timer_factory(self._debounce_s, self._write)
-        self._timer.start()
+            timer = self._timer_factory(self._debounce_s, self._write)
+            self._timer = timer
+        timer.start()
 
     def flush(self) -> None:
         """Write now. The host calls this during shutdown, before windows

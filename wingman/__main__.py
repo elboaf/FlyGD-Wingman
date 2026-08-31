@@ -392,6 +392,11 @@ def build_preview_host(state, api_box):
             if api is not None:
                 api.push_preview_hotkeys()
 
+        def on_layouts_changed():
+            api = api_box.get("api")
+            if api is not None:
+                api.push_preview_hotkeys()
+
         def on_hotkey_status(status):
             api = api_box.get("api")
             if api is not None:
@@ -516,6 +521,7 @@ def build_preview_host(state, api_box):
             clear_layouts=store.clear,
             replace_layout=store.replace,
             on_clients_changed=on_clients_changed,
+            on_layouts_changed=on_layouts_changed,
             on_hotkey_status=on_hotkey_status,
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,

@@ -1945,6 +1945,8 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
     assert "focusCopyTarget(name)" in picker
+    assert "state.characters" not in picker
+    assert "It applies next time" not in picker
     assert "source.name !== name" in src
 
 
@@ -1952,7 +1954,7 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     html = _strip_html_comments(HTML)
     assert 'id="preview-copy-empty"' in html
     assert 'id="preview-copy-status"' in html
-    assert 'aria-live="polite"' in html.split('id="preview-copy-status"', 1)[1][:120]
+    assert 'role="status"' in html.split('id="preview-copy-status"', 1)[1][:100]
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     assert "preview-copy-empty" in src
     assert "preview-copy-status" in src

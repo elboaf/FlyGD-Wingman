@@ -637,12 +637,13 @@ def test_copy_preview_layout_changes_only_geometry_without_a_host(
 class _FakeSizeHost:
     """Just enough of PreviewHost for size, source and capture tests."""
 
-    def __init__(self, characters=(), is_running=True, layouts=None):
+    def __init__(self, characters=(), is_running=True, layouts=None, copy_result=None):
         self._characters = list(characters)
         self.is_running = is_running
         self.captures = []
         self.layouts = dict(layouts or {})
         self.copies = []
+        self.copy_result = copy_result
 
     def characters(self):
         return list(self._characters)
@@ -658,7 +659,7 @@ class _FakeSizeHost:
 
     def copy_layout(self, target, source):
         self.copies.append((target, source))
-        return source in self.layouts
+        return self.copy_result or ("ok" if source in self.layouts else "missing")
 
     def sync_layout(self, name, entry):
         self.layouts[name] = entry
@@ -735,9 +736,22 @@ def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
         layouts={"Alice": layout.Entry(geometry.Rect(5, 6, 320, 210))},
     )
     api._preview_host = host
+    pushed = fakes.record_pushes(api)
 
     assert api.reset_preview_layouts()["applied"] is True
     assert host.layouts == {}
+    assert [name for name, _payload in pushed] == ["onPreviewHotkeys"]
+
+
+def test_copy_preview_layout_reports_a_persistence_failure(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["seen"] = ["Target"]
+    api._preview_host = _FakeSizeHost(copy_result="persist_failed")
+
+    result = api.copy_preview_layout("Target", "Source")
+
+    assert result["applied"] is False
+    assert result["error"] == "Could not save this to settings."
 
 
 def test_preview_sizes_falls_back_to_the_configured_default(monkeypatch, tmp_path):

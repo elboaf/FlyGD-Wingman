@@ -133,6 +133,19 @@ def test_a_layout_change_updates_the_in_session_cache():
     assert sent == [("Pilot", Rect(10, 20, 320, 210), False)]
 
 
+def test_the_first_layout_for_a_character_announces_source_availability_once():
+    announced = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        on_layouts_changed=lambda: announced.append(1),
+    )
+
+    h._layout_changed("Alice", geometry.Rect(1, 2, 320, 210), False)
+    h._layout_changed("Alice", geometry.Rect(3, 4, 320, 210), False)
+
+    assert announced == [1]
+
+
 def test_a_saved_layout_entry_keeps_its_lock_flag():
     """layout.Entry carries `locked` and deserialize restores it onto
     _saved. That flag no longer decides how a window OPENS -- Task 1 moved
@@ -364,7 +377,7 @@ def test_character_select_does_not_inherit_across_process_change_or_close(
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
     monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
     if observed_close:
-        monkeypatch.setattr(host.discovery, "list_clients", lambda: [])
+        monkeypatch.setattr(host.discovery, "list_clients", list)
         h._sweep(libs=None)
     unidentified = host.discovery.Client(
         0x1234,
@@ -2839,7 +2852,7 @@ def test_copy_layout_uses_the_latest_source_and_preserves_the_target_lock():
         replace_layout=lambda key, entry: replaced.append((key, entry)) or True,
     )
 
-    assert h.copy_layout("Target", "Source") is True
+    assert h.copy_layout("Target", "Source") == host.COPY_OK
 
     expected = layout.Entry(source.rect, True)
     assert replaced == [("Target", expected)]
@@ -2847,6 +2860,25 @@ def test_copy_layout_uses_the_latest_source_and_preserves_the_target_lock():
     assert h._pending_layouts == {}, (
         "a stopped host must not replay this movement after a later restart"
     )
+
+
+def test_a_target_drag_during_copy_persistence_wins_the_cache_race():
+    source = layout.Entry(geometry.Rect(50, 60, 640, 360), False)
+    dragged = layout.Entry(geometry.Rect(700, 80, 500, 280), False)
+    h = None
+
+    def replace(key, entry):
+        h._layout_changed("Target", dragged.rect, dragged.locked)
+        return True
+
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        saved_layouts={"Source": source},
+        replace_layout=replace,
+    )
+
+    assert h.copy_layout("Target", "Source") == host.COPY_OK
+    assert h.layout_entries()["Target"] == dragged
 
 
 def test_copy_layout_does_not_change_the_cache_when_persistence_fails():
@@ -2860,7 +2892,7 @@ def test_copy_layout_does_not_change_the_cache_when_persistence_fails():
         replace_layout=lambda key, entry: False,
     )
 
-    assert h.copy_layout("Target", "Source") is False
+    assert h.copy_layout("Target", "Source") == host.COPY_PERSIST_FAILED
     assert h.layout_entries()["Target"] == original
 
 
@@ -2874,7 +2906,7 @@ def test_copy_layout_posts_only_a_signal_for_a_running_host(monkeypatch):
     h._hwnd = 1
     monkeypatch.setattr(h, "_post", posted.append)
 
-    assert h.copy_layout("Target", "Source") is True
+    assert h.copy_layout("Target", "Source") == host.COPY_OK
     assert posted == [host.win32.WM_APP_APPLY_LAYOUTS]
 
 
@@ -2900,7 +2932,7 @@ def test_apply_copied_layout_clamps_the_window_but_keeps_saved_coordinates(
     target = _Window()
     h._windows = {"Target": target}
     monkeypatch.setattr(h, "_monitors", lambda: MONITORS)
-    assert h.copy_layout("Target", "Source") is True
+    assert h.copy_layout("Target", "Source") == host.COPY_OK
 
     h._apply_layouts()
 
@@ -2937,6 +2969,20 @@ class _MovableWindow:
 
     def move(self, rect):
         self.rect = rect
+
+
+def test_reset_announces_that_layout_sources_were_cleared(monkeypatch):
+    announced = []
+    h = _placement_host(
+        monkeypatch,
+        saved={"Alice": layout.Entry(geometry.Rect(1, 2, 320, 210))},
+        on_layouts_changed=lambda: announced.append(1),
+    )
+    monkeypatch.setattr(h, "_monitors", list)
+
+    h._reset_layouts()
+
+    assert announced == [1]
 
 
 def test_reset_does_not_record_the_defaults_it_just_placed(monkeypatch):

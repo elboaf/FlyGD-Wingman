@@ -29,6 +29,25 @@ class FakeTimer:
         self.fn()
 
 
+class _ExitHookLock:
+    """Force one competing operation between a with-block and its next line."""
+
+    def __init__(self, hook):
+        import threading
+
+        self._lock = threading.Lock()
+        self._hook = hook
+
+    def __enter__(self):
+        self._lock.acquire()
+
+    def __exit__(self, *_exc):
+        self._lock.release()
+        hook, self._hook = self._hook, None
+        if hook is not None:
+            hook()
+
+
 class _ImmediateTimer:
     """Fires on start() instead of after a delay, so debounce does not make
     the test sleep."""
@@ -251,6 +270,17 @@ def test_layout_and_roster_writes_share_one_transaction():
     assert opened.count("enter") == 1
     assert live["preview"]["seen"] == ["Alice"]
     assert "Alice" in live["preview"]["layouts"]
+
+
+def test_record_starts_the_timer_it_created_during_a_concurrent_replace():
+    live = {"preview": {"layouts": {}}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    copied = Entry(Rect(50, 60, 640, 360))
+    store._lock = _ExitHookLock(lambda: store.replace("Alice", copied))
+
+    store.record("Alice", Entry(Rect(1, 2, 320, 210)))
+
+    assert live["preview"]["layouts"]["Alice"]["x"] == 50
 
 
 def test_replace_supersedes_a_pending_delta_for_the_same_character():
