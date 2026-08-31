@@ -13,7 +13,7 @@ def build(tmp_path):
     return tree.discover(tmp_path / "EVE")
 
 
-def test_account_identity_prefers_account_name_and_keeps_confirmed_characters_secondary():
+def test_named_account_leads_with_name_and_keeps_roster_and_id_secondary():
     got = identity.account_identity(
         "10",
         {"10": "LoginName"},
@@ -22,16 +22,16 @@ def test_account_identity_prefers_account_name_and_keeps_confirmed_characters_se
     )
     assert got == {
         "primary": "LoginName",
-        "secondary": "Aiga + 2 · 10",
-        "option": "LoginName · Aiga + 2 · 10",
+        "secondary": "Aiga + 2 · Account 10",
+        "option": "LoginName · Aiga + 2 · Account 10",
     }
 
 
-def test_account_identity_degrades_without_inventing_a_roster():
+def test_unknown_account_never_renders_as_a_bare_number():
     assert identity.account_identity("10", {}, {}, lambda _ident: "unused") == {
-        "primary": "10",
-        "secondary": "",
-        "option": "10",
+        "primary": "Account 10",
+        "secondary": "Not identified",
+        "option": "Account 10 · Not identified",
     }
 
 
