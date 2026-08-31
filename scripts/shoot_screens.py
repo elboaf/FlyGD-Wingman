@@ -97,6 +97,19 @@ DIALOG_BODY = (
 )
 
 
+def dialog_payload() -> dict:
+    """Mirror the bridge payload raised by Api._delete_worker."""
+    count = len(DIALOG_NAMES)
+    return {
+        "kind": "confirm",
+        "title": DIALOG_TITLE,
+        "body": DIALOG_BODY,
+        "request_id": None,
+        "destructive": True,
+        "confirm_label": f"Delete {count} {'file' if count == 1 else 'files'}",
+    }
+
+
 def screens_for_gate(eve_shown: bool) -> tuple[list[Screen], list[Screen]]:
     """Split SCREENS into what to shoot and what the EVE gate hides.
 
@@ -454,17 +467,10 @@ def walk(
         try:
             if screen.key == "dialog":
                 cdp.evaluate("WM.route('main')")
-                # Concatenated rather than an f-string: the third argument
-                # is a JS object literal, and doubling its braces to escape
-                # them reads as a typo in the one line whose point is that
-                # the flag is passed.
-                cdp.evaluate(
-                    "WM.confirm("
-                    + json.dumps(DIALOG_TITLE)
-                    + ", "
-                    + json.dumps(DIALOG_BODY)
-                    + ", {destructive: true})"
-                )
+                # Drive the same handler and payload shape used by Python.
+                # WM.confirm is a separate page-owned path and silently lost
+                # production-only fields such as the specific action label.
+                cdp.evaluate("window.onDialog(" + json.dumps(dialog_payload()) + ")")
             else:
                 cdp.evaluate(f"WM.route({screen.route!r})")
                 if screen.section:
