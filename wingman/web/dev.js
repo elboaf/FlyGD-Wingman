@@ -1188,18 +1188,25 @@
     })[0];
   }
 
-  function refreshDevAccount(account) {
+  function devAccountLabel(account) {
     var names = account.character_ids.map(devCharacter).filter(Boolean)
       .map(function (item) { return item.name; }).sort();
     var summary = names.length
       ? names[0] + (names.length > 1 ? ' + ' + (names.length - 1) : '') : '';
-    account.display_name = account.account_name || 'Account ' + account.id;
-    account.display_meta = account.account_name
+    var primary = account.account_name || 'Account ' + account.id;
+    var secondary = account.account_name
       ? (summary ? summary + ' · ' : '') + 'Account ' + account.id
       : 'Not identified';
-    account.name = account.display_name + ' · ' + account.display_meta;
+    return { primary: primary, secondary: secondary,
+             option: primary + ' · ' + secondary };
   }
-  eve.accounts.forEach(refreshDevAccount);
+
+  function refreshDevAccount(account) {
+    var label = devAccountLabel(account);
+    account.display_name = label.primary;
+    account.display_meta = label.secondary;
+    account.name = label.option;
+  }
 
   function validateDevName(accountId, value) {
     var name = typeof value === 'string' ? value.trim() : '';
@@ -1328,9 +1335,14 @@
     return function () {
       console.log('DEV api.' + name + '(',
                   Array.prototype.slice.call(arguments), ')');
-      setTimeout(function () {
-        window.onEveSettingsDone({ ok: true });
-      }, 600);
+      // ?copy=busy intentionally leaves the worker pending so its disabled
+      // controls remain inspectable; ?copy=success uses the normal delayed
+      // completion and therefore settles on the production follow-up.
+      if (name !== 'eve_settings_copy' || copyScenario !== 'busy') {
+        setTimeout(function () {
+          window.onEveSettingsDone({ ok: true });
+        }, 600);
+      }
       return Promise.resolve(true);
     };
   }

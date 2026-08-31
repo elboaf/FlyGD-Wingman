@@ -15,6 +15,7 @@ zero keybind rows, and five sessions verified through it.
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from wingman import bookmarks
@@ -22,6 +23,8 @@ from wingman.evesettings import identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
+EVE_SETTINGS_JS = (WEB / "evesettings.js").read_text(encoding="utf-8")
+INDEX_HTML = (WEB / "index.html").read_text(encoding="utf-8")
 
 # Every page module, so a WM.send anywhere is covered rather than only the
 # ones someone remembered to list.
@@ -251,36 +254,106 @@ def test_profiles_fixture_covers_new_visual_states():
     assert "Copy complete" in DEV_JS
 
 
+def _identity_character_names() -> dict[str, str]:
+    block = DEV_JS[
+        DEV_JS.index("var eveNames = [") : DEV_JS.index(
+            "];", DEV_JS.index("var eveNames = [")
+        )
+    ]
+    return {
+        str(90000000 + index): name
+        for index, name in enumerate(re.findall(r"'([^']+)'", block))
+    }
+
+
+def _fixture_labels_from_identity_scenario() -> dict[str, dict]:
+    scenario = _identity_scenarios()["idle"]
+    names = _identity_character_names()
+    return {
+        account["id"]: identity.account_identity(
+            account["id"],
+            {account["id"]: account["account_name"]} if account["account_name"] else {},
+            {account["id"]: account["character_ids"]}
+            if account["character_ids"]
+            else {},
+            names.__getitem__,
+        )
+        for account in scenario["accounts"]
+    }
+
+
+def _run_dev_account_label_formatter() -> dict[str, dict]:
+    formatter = re.search(
+        r"  function devAccountLabel\(account\) \{.*?\n  \}\n\n"
+        r"  function refreshDevAccount",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert formatter, "dev.js must have one formatter for refreshed account labels"
+    source = (
+        "var characters = "
+        + json.dumps(_identity_character_names())
+        + ";\nfunction devCharacter(id) { return characters[id] ? { name: characters[id] } : null; }\n"
+        + formatter.group(0).removesuffix("\n\n  function refreshDevAccount")
+        + "\nvar accounts = "
+        + json.dumps(_identity_scenarios()["idle"]["accounts"])
+        + ";\nprocess.stdout.write(JSON.stringify(accounts.map(devAccountLabel)));"
+    )
+    completed = subprocess.run(
+        ["node", "-e", source], check=True, capture_output=True, text=True
+    )
+    return {
+        account["id"]: label
+        for account, label in zip(
+            _identity_scenarios()["idle"]["accounts"],
+            json.loads(completed.stdout),
+            strict=True,
+        )
+    }
+
+
 def test_dev_account_labels_match_the_python_identity_contract():
     match = re.search(
         r"var devAccountLabels = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL
     )
     assert match, "dev.js must serialize its account-label fixtures"
     labels = json.loads(match.group(1))
-    character_names = {
-        "90000000": "Suartad Arsten",
-        "90000001": "Yas Kalkoken",
-        "90000002": "Zuelo Parvi",
-        "90000003": "Mikan Antollare",
-    }
-    expected = {
-        "1001": identity.account_identity(
-            "1001",
-            {"1001": "alpha@example"},
-            {"1001": ["90000000", "90000001", "90000002"]},
-            character_names.__getitem__,
-        ),
-        "1002": identity.account_identity(
-            "1002",
-            {"1002": "beta@example"},
-            {"1002": ["90000003"]},
-            character_names.__getitem__,
-        ),
-        "1003": identity.account_identity("1003", {}, {}, character_names.__getitem__),
-    }
+    expected = _fixture_labels_from_identity_scenario()
     assert labels == expected
-    assert "Account " in DEV_JS
-    assert "Not identified" in DEV_JS
+    assert _run_dev_account_label_formatter() == expected
+    assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+def _copy_fixture_completion(copy_scenario: str) -> int:
+    mutation = re.search(
+        r"  function eveMutation\(name\) \{.*?\n  \}\n  \['eve_settings_copy'",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert mutation, "dev.js must retain the delayed mutation fixture"
+    source = (
+        "var copyScenario = " + json.dumps(copy_scenario) + "; var completions = 0;\n"
+        "var window = { onEveSettingsDone: function () { completions += 1; } };\n"
+        "var setTimeout = function (callback) { callback(); };\n"
+        + mutation.group(0).removesuffix("\n  ['eve_settings_copy'")
+        + "\neveMutation('eve_settings_copy')();\n"
+        "process.stdout.write(String(completions));"
+    )
+    completed = subprocess.run(
+        ["node", "-e", source], check=True, capture_output=True, text=True
+    )
+    return int(completed.stdout.rsplit("\n", 1)[-1])
+
+
+def test_copy_fixture_has_stable_busy_and_settled_success_states():
+    paint = re.search(
+        r"function paintCommit\(\) \{(.*?)\n  \}", EVE_SETTINGS_JS, re.DOTALL
+    )
+    assert paint and "Copy operation in progress\\u2026" in paint.group(1)
+    followup = re.search(r'<div id="es-copy-followup".*?</div>', INDEX_HTML, re.DOTALL)
+    assert followup and "Copy complete." in followup.group(0)
+    assert _copy_fixture_completion("busy") == 0
+    assert _copy_fixture_completion("success") == 1
 
 
 def test_move_scenario_uses_the_guided_candidate_path():

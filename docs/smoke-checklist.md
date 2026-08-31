@@ -2538,9 +2538,10 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] **Profiles opens with compact context and tools.** With a selected EVE
       profile, the full-width context row identifies the folder, server, and
-      profile without competing with the top tool row. The tools include
-      account identification, **Probe formations…** when the codec is
-      available, and **Backups**; none is an inline card below Copy.
+      profile without competing with the top tool row. That row contains
+      **Backups…** and **Edit formations…** when the codec is available. In
+      Accounts mode, the Copy card contains **Identify accounts…**; none of
+      these tools is an inline card below Copy.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -2830,11 +2831,11 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
-## Probe formations (Profiles → Probe formations)
+## Probe formations (Profiles → Edit formations…)
 
 Needs a real install and every EVE client closed for the write lines.
 
-- [ ] The **Probe formations…** tool is present when the codec is bundled and
+- [ ] The **Edit formations…** tool is present when the codec is bundled and
       absent (not broken) when `bin/wingman-settings-codec.exe` is removed from
       the install; Copy and Backups still work in both cases.
 - [ ] **The editor starts on the intended account and switches cleanly.** Open
