@@ -1046,6 +1046,10 @@
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
+        <!-- A colour collision is one relationship, so it is stated once
+             below the table rather than repeated under every participating
+             row. Per-row live regions remain reserved for write outcomes. -->
+        <p id="alerts-collision" class="field-msg warn" role="status"></p>
         <!-- Round 5, A4. These two were the third and fourth checkboxes on
              the card, directly under the master switch and rendered at its
              indent and weight -- so the card offered five peer switches, of
@@ -1331,6 +1335,32 @@
           <button id="es-all" class="btn">Select shown</button>
           <button id="es-none" class="btn">Clear selection</button>
         </div>
+        <!-- The hazard and cost belong at the commit. The uncapped roster is
+             deliberately a verification surface, but with 30+ targets it
+             pushed the source, count, EVE state, backup policy and action
+             into different viewports. This context precedes the roster and
+             sticks while the route scrolls; the roster itself remains fully
+             visible and never regains the nested scroller Profiles 2 removed.
+
+             The EVE pill is still the SAME pill painted by paintPill over two
+             mount points, not a second hazard sentence free to drift from
+             ui/copy.py. The backup sentence is likewise rendered from the
+             Backups payload in one place. Only the source label is new, and
+             paintCommit derives it from the selected option rather than
+             keeping another selection state. -->
+        <div id="es-commit-context" class="es-commit-context">
+          <div class="row" id="es-commit">
+            <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
+            <span id="es-copy-count" class="es-count">Nothing selected</span>
+            <span id="es-copy-source" class="es-copy-source"></span>
+            <span id="es-eve-state-commit" class="pill">EVE closed</span>
+          </div>
+          <p id="es-copy-backup-note" class="hint"></p>
+          <div id="es-copy-followup" class="es-copy-followup" hidden>
+            <span>Copy complete.</span>
+            <button id="es-copy-view-backups" class="linkbtn" type="button">View backups</button>
+          </div>
+        </div>
         <!-- Profiles 2: NOT .list-scroll any more. The roster is a picking
              surface being used as a verification surface -- "select all" is
              the normal path, so what is wanted here is to SEE who is about
@@ -1342,59 +1372,6 @@
              beside every name; the route's own overflow-y is now the one
              scrollbar on the screen. See .es-roster in style.css. -->
         <div id="es-targets" class="es-roster"></div>
-        <!-- Profiles 1. The hazard and the cost both belong AT the commit,
-             and neither was here: the "EVE running" pill lives in the
-             folder card at the top of the page, and in the scrolled capture
-             the button is on screen and the pill is not -- the card has left
-             the viewport entirely. The count is the other half of Profiles 3
-             (ui/copy.py puts it in the confirm; the page had no quantity at
-             all, while the Uploader prints "1 selected - 108.8 MB").
-
-             The pill is the SAME pill, painted by the same paintPill over
-             both mount points, not a second sentence about the same fact --
-             a hand-written copy of the hazard here would be free to drift
-             from the one ui/copy.py states in the dialog. It needs no rule
-             of its own: #es-eve-state's only job is undoing the .card > h2
-             treatment, and nothing here is a heading. -->
-        <div class="row" id="es-commit">
-          <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
-          <span id="es-copy-count" class="es-count">Nothing selected</span>
-          <!-- No `hidden` attribute here, and evesettings.js sets one at
-               wire() instead. Not a style choice: .pill sets a display and
-               has no [hidden] override of its own (that rule is S2's), so
-               test_page_conventions' hidden guard reads this element as
-               unhideable through its CLASS. It is hideable through its id
-               -- #es-eve-state-commit[hidden] outranks .pill on specificity
-               -- but the guard does not model that, and it is right to be
-               conservative about the trap DESIGN.md says six rules in
-               style.css nearly shipped. Handoff recorded for S2: .pill
-               wants the override, and this screen is the first to need it. -->
-          <span id="es-eve-state-commit" class="pill">EVE closed</span>
-        </div>
-        <!-- Round 6, P1-3. The copy confirm is the best writing in the app
-             -- ui/copy.py names the source, up to six targets, the
-             overflow count, the backup policy and the EVE-running hazard
-             -- and every word of it arrived AFTER the click. Before it,
-             this screen showed 37 checkboxes, a dimmed button and a pill,
-             with the safety story two cards down and below the fold at a
-             633px window.
-
-             The backup sentence, NOT a new one. evesettings.js renders the
-             same string into both mount points from one place, the way
-             paintPill already paints one pill over two -- the note above
-             refuses to hand-write the EVE hazard here precisely because a
-             second copy is free to drift from copy.py's, and that argument
-             applies to this sentence too. So there is one string and two
-             homes for it, and the Backups card keeps its own.
-
-             The EVE hazard is deliberately NOT restated: it is what the
-             pill beside the button is for, and copy.py states it in
-             full at the moment of commitment. -->
-        <div id="es-copy-followup" class="es-copy-followup" hidden>
-          <span>Copy complete.</span>
-          <button id="es-copy-view-backups" class="linkbtn" type="button">View backups</button>
-        </div>
-        <p id="es-copy-backup-note" class="hint"></p>
       </section>
 
     </div>
@@ -1445,6 +1422,10 @@
       <div class="row ai-head">
         <button class="btn" id="ai-back" type="button">&lsaquo; Profiles</button>
       </div>
+      <!-- This flow sends the user out to EVE between steps. Keep the
+           current place visible on return, but leave announcements to the
+           focusable step headings so a transition is not spoken twice. -->
+      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Start</p>
       <h1>Identify accounts</h1>
       <section id="ai-intro">
         <h2 id="ai-intro-heading" tabindex="-1">Match an account</h2>

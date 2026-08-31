@@ -418,6 +418,12 @@
     var roster = step === 'roster';
     identityStep = step;
     identityMessage = message || '';
+    var progress = step === 'watching' ? 'Step 2 of 5 · Watch for changes'
+      : step === 'candidate' ? 'Step 3 of 5 · Confirm character'
+      : step === 'name' ? 'Step 4 of 5 · Name account'
+      : step === 'roster' ? 'Step 5 of 5 · Review roster'
+      : 'Step 1 of 5 · Start';
+    WM.el('ai-progress').textContent = progress;
     WM.el('ai-intro').hidden = watching || candidate || name || roster;
     WM.el('ai-watching-step').hidden = !watching;
     WM.el('es-identify-candidate').hidden = !candidate;
@@ -748,6 +754,11 @@
     var count = chosenTargets().length;
     var noun = kind() === 'accounts' ? 'account' : 'character';
     var copyButton = WM.el('es-copy');
+    var source = WM.el('es-source');
+    var sourceOption = source.options[source.selectedIndex];
+    WM.el('es-copy-source').textContent = source.value && sourceOption
+      ? 'From ' + sourceOption.textContent
+      : 'No source';
     copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
       ? 'Copy operation in progress\u2026'
       : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');

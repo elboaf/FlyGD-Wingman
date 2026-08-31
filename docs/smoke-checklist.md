@@ -1240,7 +1240,11 @@ response leaves a worker waiting forever, which presents as a hung upload.
       upload)" rather than being blank.
 - [ ] **The delete confirmation lists the correct filenames,** warns it
       cannot be undone, Cancel deletes nothing, Confirm removes and
-      refreshes.
+      refreshes. It opens with focus on Cancel. Tab and Shift+Tab stay inside
+      the dialog; Enter activates whichever button has focus; Escape cancels;
+      closing returns focus to Delete selected when it is available, or to
+      the first enabled control on the same route while a worker keeps the
+      invoking action disabled.
 - [ ] **The no-selection and busy warnings are distinct messages.** Press
       Upload and Delete selected each with nothing selected, and read both.
       Then start an upload and press the other mid-flight. These are
@@ -2433,17 +2437,14 @@ headless.
 - [ ] **Confirm sounds play in the frozen build.** This is the only place
       the winsound module's packaging entry can be verified. Launch the
       installed build, trigger an alert, and confirm you hear the sound.
-- [ ] **The colour input renders correctly in dark theme.** Open Settings >
-      Previews and scroll to the Alerts card. Each event type (Combat, Warp
-      scramble, Decloak) has a colour picker (`<input type="color">`).
-      Expected: each appears as a clickable swatch matching your Windows
-      theme (dark or light), not as a browser's native light-theme colour
-      widget. You can also verify this with `?dev=1` appended to the URL
-      (e.g., `http://localhost:…/?dev=1`) — `web/dev.js` carries a
-      `preview.alerts` payload so the Alerts card renders. Click one to
-      confirm the colour picker opens and works. If the colour input does not
-      render, the documented fallback is three fixed swatches per event —
-      verify that they are offered instead.
+- [ ] **Alert colours stay distinct without native chrome.** Open Settings >
+      Alerts. Each event offers the same five named swatches: Red, Amber,
+      Green, Cyan, and Magenta. They render as dark-theme controls rather than
+      opening a native Windows colour picker. Give two enabled events the same
+      colour. Expected: one warning below the table names both events and says
+      their preview pulses are indistinguishable; the warning is not repeated
+      under both rows. Disable either event or choose a distinct colour and it
+      clears without clearing a row-local save error.
 
 ### The alert render path
 
@@ -2551,9 +2552,12 @@ so these are the checks that matter and only a Windows machine can run them.
       says what to launch/change/close. **Identify accounts…** is unavailable
       in both states.
 - [ ] **Copy selection and completion stay local and legible.** Use **Select
-      shown** and **Clear selection** after filtering. The copy button names
-      the dynamic selected count and noun, changes to the neutral `Copy
-      operation in progress…` while busy, then global completion clears the
+      shown** and **Clear selection** after filtering. The commitment context
+      precedes the roster and stays at the route's top while a long roster
+      scrolls beneath it. It names the source, selected count, EVE state,
+      automatic-backup policy, and Copy action without hiding any target. The
+      copy button changes to the neutral `Copy operation in progress…` while
+      busy, then global completion clears the
       selection and shows local `Copy complete.` with **View backups**.
       After the copy completes, select a target again and set a target filter,
       then follow that link and return with `‹ Profiles`. The source, target
@@ -2656,7 +2660,9 @@ so these are the checks that matter and only a Windows machine can run them.
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
       what Wingman will watch, says to close every EVE client, and offers one
-      primary action. Start identification, launch one character, enter the
+      primary action. A quiet `Step N of 5` line stays above the title and
+      advances through Start, Watch for changes, Confirm character, Name
+      account, and Review roster. Start identification, launch one character, enter the
       game, make a small settings change, fully close that client, and press
       `Check changes`. Wingman proposes the one changed account and character
       and persists nothing when `Link character` opens the required account-name
@@ -2823,7 +2829,9 @@ so these are the checks that matter and only a Windows machine can run them.
       retains danger treatment. Opening one disclosure closes any other without
       moving focus. Escape closes the current disclosure and returns focus to
       its More control.
-- [ ] **Retention is explicit and protects manual backups.** With `auto_keep`
+- [ ] **Retention is explicit and protects manual backups.** The collapsed
+      Retention summary shows a chevron, rotates it when opened, and remains
+      keyboard-operable through the native disclosure. With `auto_keep`
       at ten, eleven copies of one target retain the newest ten automatic
       backups, while manual backups remain. Lower it to 3 and Apply: the
       confirmation states the exact automatic-backup deletions. Decline leaves

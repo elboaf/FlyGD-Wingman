@@ -1200,11 +1200,48 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     )
 
 
+def test_dialog_keyboard_behavior_follows_focus_and_contains_it():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    show = re.search(r"function show\(item\) \{(.*?)\n  \}", panel, re.DOTALL)
+    assert show
+    assert re.search(
+        r"else if \(destructive\) \{\s*btnCancel\.focus\(\);", show.group(1)
+    )
+
+    document_keys = re.search(
+        r"document\.addEventListener\('keydown'.*?\n  \}, true\);",
+        panel,
+        re.DOTALL,
+    )
+    assert document_keys
+    assert "ev.key === 'Tab'" in document_keys.group(0)
+    assert "ev.key === 'Enter'" not in document_keys.group(0)
+    assert "dlgInput.addEventListener('keydown'" in panel
+    assert "active.kind === 'prompt'" in panel
+
+
+def test_dialog_restores_the_invoker_after_the_queue_empties():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    assert "var returnFocus = null;" in panel
+    assert "var lastPageFocus = null;" in panel
+    assert "returnFocus = document.activeElement;" in panel
+    assert "lastPageFocus" in panel
+    assert "if (queue.length)" in panel
+    assert "document.contains(target)" in panel
+    assert "target.focus();" in panel
+    assert "button:not([hidden]):not(:disabled)" in panel
+
+
 def test_confirm_dialog_accepts_a_specific_affirming_label():
     panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
     api = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
     assert "item.confirm_label || 'Confirm'" in panel
     assert '"confirm_label": confirm_label' in api
+
+
+def test_state_shapes_do_not_add_soft_halos_on_the_dark_surface():
+    outward_halo = re.compile(r"box-shadow:\s*0 0 (?!0(?:px)?\b)")
+    assert not outward_halo.search(CSS)
 
 
 def test_determinate_progress_animates_transform_not_layout():
@@ -1283,9 +1320,9 @@ def test_two_enabled_alerts_on_one_colour_are_flagged():
     body = alerts[alerts.index("function flagCollisions()") :]
     del body
     calls = alerts.count("flagCollisions();")
-    assert calls >= 4, (
-        "flagCollisions must run after a repaint, a colour change, a sound "
-        f"change and an enable toggle -- found {calls} call sites"
+    assert calls == 3, (
+        "flagCollisions must run after a repaint, a colour change and an "
+        f"enable toggle, but not a sound-only change -- found {calls} call sites"
     )
 
     # THE BUG THIS TEST EXISTS FOR, found in the harness rather than here:
@@ -1293,21 +1330,21 @@ def test_two_enabled_alerts_on_one_colour_are_flagged():
     # Decloak on the same colour still puts that colour IN the map, so
     # Combat found a peer and warned about an alert it cannot raise. The
     # `other !== id` filter does not cover it; an enabled check does.
-    assert re.search(r"row\.enabled && row\.enabled\.checked", alerts), (
-        "flagCollisions must skip disabled rows when DISPLAYING, not only "
-        "when grouping: a disabled event cannot collide with anything"
+    assert "!row.enabled || !row.enabled.checked" in alerts, (
+        "flagCollisions must exclude a disabled event before grouping: "
+        "a disabled event cannot collide with anything"
     )
 
-    # The note is a warning, not an error: the config is legal, just
-    # ambiguous. And it must be tagged so it can be cleared without
-    # stamping on a row's own refused-write message.
-    assert "dataset.collision" in alerts, (
-        "collision notes must be tagged the way clearWhileOffNotes tags "
-        "its own, or clearing one will clear a real error instead"
-    )
-    assert re.search(r"sayRow\(row, text, 'warn'\)", alerts), (
-        "a colour collision is a warning, not an error"
-    )
+    # One relationship-level warning, not the same relationship repeated
+    # under every row. Its dedicated slot cannot overwrite a refused write.
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    collision = re.search(r'<[^>]+id="alerts-collision"[^>]*>', html)
+    assert collision and "hidden" not in collision.group(0)
+    assert "WM.el('alerts-collision')" in alerts
+    assert "collision.hidden" not in alerts
+    assert "dataset.collision" not in alerts
+    assert "sayRow(row, text, 'warn')" not in alerts
+    assert "Their preview pulses are indistinguishable." in alerts
 
 
 def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
