@@ -1014,10 +1014,6 @@
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
     || formationsAccountScenario);
-  // These serialized examples are checked against identity.account_identity()
-  // in test_dev_harness.py. The mutable harness still derives fresh labels
-  // below after an identification change, just as the real payload does.
-  var devAccountLabels = JSON.parse('{"1001":{"primary":"alpha@example","secondary":"Suartad Arsten + 2 · Account 1001","option":"alpha@example · Suartad Arsten + 2 · Account 1001"},"1002":{"primary":"beta@example","secondary":"Mikan Antollare · Account 1002","option":"beta@example · Mikan Antollare · Account 1002"},"1003":{"primary":"Account 1003","secondary":"Not identified","option":"Account 1003 · Not identified"}}');
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -1096,15 +1092,6 @@
     }).filter(function (character) {
       return !selectedIdentityScenario.discovered
         || selectedIdentityScenario.discovered.indexOf(character.id) !== -1;
-    }),
-    accounts: selectedIdentityScenario.accounts.map(function (seed, i) {
-      var label = devAccountLabels[seed.id];
-      return { path: 'a' + i, id: seed.id,
-        name: label ? label.option : seed.id,
-        display_name: label ? label.primary : seed.id,
-        display_meta: label ? label.secondary : '',
-        account_name: seed.account_name,
-        character_ids: seed.character_ids.slice() };
     }),
     backups_unreadable: false,
     // True, so the harness shows the Probe formations tool. The real
@@ -1207,6 +1194,23 @@
     account.display_meta = label.secondary;
     account.name = label.option;
   }
+
+  // Each identity scenario changes its account associations. Build this
+  // initial route payload after eve's character lookup exists rather than
+  // applying the idle scenario's labels to every visual checkpoint.
+  function devFixtureAccounts(scenario) {
+    return scenario.accounts.map(function (seed, i) {
+      var label = devAccountLabel(seed);
+      return { path: 'a' + i, id: seed.id,
+        name: label.option,
+        display_name: label.primary,
+        display_meta: label.secondary,
+        account_name: seed.account_name,
+        character_ids: seed.character_ids.slice() };
+    });
+  }
+
+  eve.accounts = devFixtureAccounts(selectedIdentityScenario);
 
   function validateDevName(accountId, value) {
     var name = typeof value === 'string' ? value.trim() : '';

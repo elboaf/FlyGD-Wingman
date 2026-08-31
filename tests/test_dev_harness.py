@@ -266,8 +266,7 @@ def _identity_character_names() -> dict[str, str]:
     }
 
 
-def _fixture_labels_from_identity_scenario() -> dict[str, dict]:
-    scenario = _identity_scenarios()["idle"]
+def _fixture_labels_from_identity_scenario(scenario: dict) -> dict[str, dict]:
     names = _identity_character_names()
     return {
         account["id"]: identity.account_identity(
@@ -282,7 +281,7 @@ def _fixture_labels_from_identity_scenario() -> dict[str, dict]:
     }
 
 
-def _run_dev_account_label_formatter() -> dict[str, dict]:
+def _run_dev_initial_account_labels(scenario: dict) -> dict[str, dict]:
     formatter = re.search(
         r"  function devAccountLabel\(account\) \{.*?\n  \}\n\n"
         r"  function refreshDevAccount",
@@ -290,14 +289,25 @@ def _run_dev_account_label_formatter() -> dict[str, dict]:
         re.DOTALL,
     )
     assert formatter, "dev.js must have one formatter for refreshed account labels"
+    builder = re.search(
+        r"  function devFixtureAccounts\(scenario\) \{.*?\n  \}\n\n"
+        r"  eve\.accounts = devFixtureAccounts",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert builder, "dev.js must derive each scenario's initial account labels"
     source = (
         "var characters = "
         + json.dumps(_identity_character_names())
-        + ";\nfunction devCharacter(id) { return characters[id] ? { name: characters[id] } : null; }\n"
+        + ";\nvar eve = { identity_characters: Object.keys(characters).map(function (id) { return { id: id, name: characters[id] }; }) };\n"
+        + "function devCharacter(id) { return eve.identity_characters.filter(function (item) { return item.id === id; })[0]; }\n"
         + formatter.group(0).removesuffix("\n\n  function refreshDevAccount")
-        + "\nvar accounts = "
-        + json.dumps(_identity_scenarios()["idle"]["accounts"])
-        + ";\nprocess.stdout.write(JSON.stringify(accounts.map(devAccountLabel)));"
+        + "\n"
+        + builder.group(0).removesuffix("\n\n  eve.accounts = devFixtureAccounts")
+        + "\nvar scenario = "
+        + json.dumps(scenario)
+        + ";\nvar accounts = devFixtureAccounts(scenario);\n"
+        + "process.stdout.write(JSON.stringify(accounts.map(function (account) { return { primary: account.display_name, secondary: account.display_meta, option: account.name }; })));"
     )
     completed = subprocess.run(
         ["node", "-e", source], check=True, capture_output=True, text=True
@@ -305,22 +315,17 @@ def _run_dev_account_label_formatter() -> dict[str, dict]:
     return {
         account["id"]: label
         for account, label in zip(
-            _identity_scenarios()["idle"]["accounts"],
-            json.loads(completed.stdout),
-            strict=True,
+            scenario["accounts"], json.loads(completed.stdout), strict=True
         )
     }
 
 
 def test_dev_account_labels_match_the_python_identity_contract():
-    match = re.search(
-        r"var devAccountLabels = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL
-    )
-    assert match, "dev.js must serialize its account-label fixtures"
-    labels = json.loads(match.group(1))
-    expected = _fixture_labels_from_identity_scenario()
-    assert labels == expected
-    assert _run_dev_account_label_formatter() == expected
+    for scenario_name, scenario in _identity_scenarios().items():
+        expected = _fixture_labels_from_identity_scenario(scenario)
+        assert _run_dev_initial_account_labels(scenario) == expected, scenario_name
+    assert "devAccountLabels" not in DEV_JS
+    assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
     assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
 
 
