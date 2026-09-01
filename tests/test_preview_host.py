@@ -2761,6 +2761,132 @@ def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatc
     assert [entry for entry in order if entry[0] == "ring"] == []
 
 
+def test_a_target_that_becomes_iconic_after_the_host_probe_rolls_back_before_pending(
+    monkeypatch,
+):
+    """The host probe can see a normal target just before activate() sees it iconic.
+
+    Minimize-first has already sent the outgoing client down in that interval.
+    Roll it back before retaining the pending request: otherwise the safety
+    exception for an iconic target leaves the user on the desktop anyway.
+    The saved decision remains on the pending request for the retry that wins.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=False,
+    )
+    h._hwnd = 0x99
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+
+    result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert [entry for entry in order if entry[0] in {"send", "activate"}] == [
+        MINIMIZE_ALICE,
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+    ]
+    assert h._pending_switch.stable_key == "Bravo"
+    assert h._pending_switch.previous_key == "Alice"
+    assert h._pending_switch.previous_hwnd == 0x1111
+    assert h._pending_switch.minimize is True
+    assert h._pending_switch.attempts == 0
+    assert h._pending_activation_timer is True
+    assert libs.user32.timers[-1][1:] == (
+        host.ACTIVATE_RETRY_TIMER_ID,
+        host.ACTIVATE_RETRY_MS,
+    )
+    assert h._selected_key == "Alice"
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+def test_a_pending_transition_does_not_roll_back_a_recreated_outgoing_client(
+    monkeypatch, caplog
+):
+    """The external target activation can outlive the outgoing client's HWND.
+
+    Reusing the stale HWND for rollback risks activating an unrelated recycled
+    window. A recreated client is not the client this switch minimized.
+    """
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+
+    def activate_and_replace(_libs, hwnd):
+        order.append(("activate", hwnd))
+        if hwnd == 0x2222:
+            h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+            return host.window_mod.ActivationResult.PENDING_RESTORE
+        raise AssertionError(f"rollback targeted stale HWND 0x{hwnd:x}")
+
+    monkeypatch.setattr(host.window_mod, "activate", activate_and_replace)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+    assert h._pending_switch.previous_key == "Alice"
+    assert h._pending_switch.previous_hwnd == 0x1111
+    assert h._pending_switch.minimize is True
+    assert any(
+        "rollback skipped; previous Alice exited or changed" in r.message
+        for r in caplog.records
+    )
+
+
+def test_pending_transition_rollback_refusal_is_logged_and_keeps_newest_request_bounded(
+    monkeypatch, caplog
+):
+    """A failed rollback does not discard the target's bounded, newest-wins retry.
+
+    The rollback has a separate refusal verdict from the pending target. Losing
+    either distinction makes the log misleading or lets an obsolete timer win.
+    """
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+
+    def activate(_libs, hwnd):
+        order.append(("activate", hwnd))
+        if hwnd == 0x1111:
+            return host.window_mod.ActivationResult.REFUSED
+        return host.window_mod.ActivationResult.PENDING_RESTORE
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+        h._activate_client(libs, h._clients["Carol"])
+        assert h._pending_switch.stable_key == "Carol"
+        assert h._pending_activation_timer is True
+        for _ in range(host.ACTIVATE_RETRY_MAX):
+            h._retry_pending_activation(libs)
+
+    assert any(
+        "Pending activation of 0x2222 after minimizing 0x1111: rollback was refused"
+        in r.message
+        for r in caplog.records
+    )
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [
+        (0x99, host.ACTIVATE_RETRY_TIMER_ID),
+        (0x99, host.ACTIVATE_RETRY_TIMER_ID),
+    ]
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+        ("activate", 0x3333),
+        ("activate", 0x1111),
+        *[("activate", 0x3333)] * host.ACTIVATE_RETRY_MAX,
+    ]
+
+
 def test_an_iconic_target_that_activates_immediately_completes_its_minimize(
     monkeypatch,
 ):

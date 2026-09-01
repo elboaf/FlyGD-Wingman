@@ -2267,9 +2267,9 @@ foreground.
 
 **Known limitation:** **Minimize inactive clients** still minimizes the
 outgoing client before activating the requested client. A refused or delayed
-activation can briefly expose the desktop or a preview, and this change does
-not claim to fix that gap. Record the source client, target client, and what
-became foreground if it occurs.
+activation can briefly expose the desktop or a preview; the retained
+minimize-first ordering does not close that gap. Record the source client,
+target client, and what became foreground if it occurs.
 
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
@@ -2339,9 +2339,13 @@ became foreground if it occurs.
       repeatedly to a target that Minimize inactive clients put down. It must
       either restore and become foreground within the bounded retry period or
       stop retrying while Wingman remains responsive. During a pending restore,
-      the outgoing client must remain visible; after success it may minimize.
-      Start another click or hotkey immediately and confirm the newer request
-      wins rather than waiting behind the older restore.
+      the outgoing client normally remains visible; if it was already minimized
+      in the narrow interval where the target became iconic between the host and
+      activation probes, Wingman must request its rollback before retaining the
+      retry. A refused or late rollback can still flash the desktop. After
+      success the outgoing client may minimize. Start another click or hotkey
+      immediately and confirm the newer request wins rather than waiting behind
+      the older restore.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
       target should appear with no window-zoom. Note what this is and is
@@ -2360,8 +2364,8 @@ became foreground if it occurs.
 - [ ] A refused activation attempts to bring the outgoing client back. If
       Windows refuses a switch after the outgoing client minimizes, it should
       return to the foreground. A desktop/preview flash or failure to restore
-      remains a known limitation; record it rather than treating this release
-      as proof that the gap is closed.
+      remains a known limitation; record it rather than treating one successful
+      switch as proof that the gap is closed.
 - [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
       a client with visible motion — undocked, drones out, or the camera
       spinning. Do NOT use a docked ship on a static scene: it looks

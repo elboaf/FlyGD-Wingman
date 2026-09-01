@@ -112,7 +112,7 @@ The activate-first/asynchronous-minimize candidate required independent transiti
 
 General non-iconic switching remains minimize-first. If activation is refused after the outgoing client was minimized, Wingman attempts to restore that outgoing client. This preserves the previous rollback behavior but cannot guarantee that the desktop or a preview is never exposed between those operations. A timed-out synchronous minimize may also be delivered later, which is why an unvalidated asynchronous replacement would not be a safe cleanup.
 
-An iconic target is the narrow exception required by pending restoration: Wingman leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. The saved stable key and HWND are revalidated first. This exception does not establish that activate-first is safe for ordinary switches.
+An iconic target is the narrow exception required by pending restoration: Wingman normally leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. The host's initial `IsIconic` probe can lose a race to `activate()`'s own probe, however. If the first probe chose ordinary minimize-first and `activate()` subsequently returns pending restore, Wingman revalidates the saved stable key and HWND and requests rollback before retaining pending state; the saved minimize decision remains for a later successful retry. A refused rollback or a minimize delivered late can still expose the desktop briefly, so this narrow recovery does not close the retained minimize-first gap. This exception does not establish that activate-first is safe for ordinary switches.
 
 No minimize-recovery generation, foreground observer recovery, or asynchronous minimize was added. `switching.should_minimize()` remains a before-switch decision, `switching.should_restore()` remains the refusal rollback decision, and desktop-animation suppression remains scoped around the existing switch operation. No `SetWindowPos` fallback exists.
 
@@ -126,7 +126,7 @@ Click acknowledgement remains guaranteed even when activation fails. If clearing
 
 - Unknown hotkey IDs remain logged no-ops.
 - A drained action whose character is offline does not resurrect an older discarded request.
-- A pending restore minimizes nothing until the target is observed in the foreground.
+- A pending restore normally minimizes nothing until the target is observed in the foreground; if its target became iconic between the host and activation probes, any already-attempted outgoing minimize is revalidated and rolled back before pending state is retained.
 - A refused non-iconic switch attempts to restore the outgoing client after the existing minimize-first operation; a visible desktop gap remains possible.
 - Failure to attach an input queue does not raise by itself; the bounded attempt still runs and observed foreground remains authoritative.
 - Exceptions detach every successful input attachment before propagating.

@@ -1530,14 +1530,19 @@ class PreviewHost:
           that handles hotkeys, alerts, sweeps, and preview mouse messages --
           solely to separate a post-activation minimize and compensating
           re-activation that this ordering removed.
-        - A pending restore does not minimize at all while Windows catches
-          up. Its timer retries from the pump; only an observed success,
-          including an iconic target that succeeds immediately, applies the
-          already-recorded outgoing minimize decision. This is deliberately
-          limited to the iconic/pending continuation: minimizing after an
-          ordinary activation can steal foreground from the target. The
-          external transition probe supplied no safe basis for changing that
-          general order, so only the pending-restore case differs.
+        - A pending restore normally does not minimize at all while Windows
+          catches up. The host's first IsIconic probe can lose a race to
+          activate()'s second probe, though: if that interval already sent the
+          outgoing client a minimize, the host revalidates and requests its
+          rollback before retaining pending state. The request can be refused,
+          so minimize-first still cannot promise no desktop gap. Its timer
+          retries from the pump; only an observed success, including an iconic
+          target that succeeds immediately, applies the already-recorded
+          outgoing minimize decision. This is deliberately limited to the
+          iconic/pending continuation: minimizing after an ordinary activation
+          can steal foreground from the target. The external transition probe
+          supplied no safe basis for changing that general order, so only the
+          pending-restore case differs.
         - A refused non-iconic activation attempts to bring the outgoing
           client back (switching.should_restore); the restore can itself be
           refused, so the desktop-gap risk remains with minimize-first.
@@ -1611,6 +1616,41 @@ class PreviewHost:
                     window_mod.activate(libs, previous.hwnd)
                 raise
             if result is window_mod.ActivationResult.PENDING_RESTORE:
+                # The host's ordering probe can see a normal target just before
+                # activate() sees it iconic. Minimize-first has then already
+                # sent the outgoing client down, so roll it back before keeping
+                # the pending request. The saved decision stays on `pending`:
+                # a later observed success still minimizes this exact client.
+                if switching.should_restore(
+                    activated=False, attempted=minimize and not target_was_iconic
+                ):
+                    current_previous = self._clients.get(previous_key)
+                    if (
+                        current_previous is None
+                        or current_previous.hwnd != previous_hwnd
+                    ):
+                        logger.info(
+                            "Pending activation of 0x%x after minimizing 0x%x: "
+                            "rollback skipped; previous %s exited or changed",
+                            client.hwnd,
+                            previous_hwnd,
+                            previous_key,
+                        )
+                    else:
+                        restored = window_mod.activate(libs, current_previous.hwnd)
+                        if restored is window_mod.ActivationResult.ACTIVATED:
+                            outcome = "restored"
+                        elif restored is window_mod.ActivationResult.PENDING_RESTORE:
+                            outcome = "is still pending"
+                        else:
+                            outcome = "was refused"
+                        logger.info(
+                            "Pending activation of 0x%x after minimizing 0x%x: "
+                            "rollback %s",
+                            client.hwnd,
+                            current_previous.hwnd,
+                            outcome,
+                        )
                 self._arm_pending_activation(libs, pending)
                 return result
             if result is window_mod.ActivationResult.ACTIVATED:
