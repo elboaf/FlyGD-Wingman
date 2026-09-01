@@ -1720,3 +1720,154 @@ def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
         {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
     ]
     assert payload["hotkeys"]["group_by_character"] == {"Alice": "g1"}
+
+
+# ---------------------------------------------------------------------------
+# Round-1 / Finding 1 & 2 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_pre_lock_refusal_excludes_transient_rolled_back_mutation(
+    tmp_path, monkeypatch
+):
+    """A pre-lock refusal must return the authoritative post-rollback table,
+    not a snapshot of a concurrent writer's transient mutation.
+
+    Mechanism: a fake settings_mod.update that has real rollback semantics
+    (deep-copy-before, restore-on-exception) pauses after the mutation lands
+    on the live dict but before the CM exits.  A concurrent invalid operation
+    that hits the pre-lock path should not capture the transient state; after
+    the fix it blocks on _preview_hotkey_lock until the rollback completes.
+    """
+    from wingman.ui import api as api_mod
+
+    writer_mutated = threading.Event()  # transient state is now live
+    allow_writer_complete = threading.Event()  # let the writer proceed to failure
+    refusal_captured = threading.Event()  # refusal result is ready
+    refusal_result = {}
+
+    def rollback_update(data, path=None):
+        """Real rollback semantics: deep copy + restore on BaseException."""
+
+        @contextlib.contextmanager
+        def _cm():
+            before = copy.deepcopy(data)
+            try:
+                yield data  # API code mutates live dict here
+                # After yield: transient mutation is live but not yet normalized.
+                writer_mutated.set()  # signal: live dict is dirty
+                assert allow_writer_complete.wait(2)
+                raise OSError("injected failure")  # forces real rollback below
+            except BaseException:
+                data.clear()
+                data.update(before)  # identical to settings.update rollback
+                raise
+
+        return _cm()
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", rollback_update)
+
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [],
+            "group_by_character": {},
+        }
+    }
+
+    def do_write():
+        # create_preview_cycle_group acquires _preview_hotkey_lock, enters
+        # rollback_update, appends the group to the live dict, then pauses.
+        api.create_preview_cycle_group("DPS")
+
+    writer = threading.Thread(target=do_write)
+    writer.start()
+    assert writer_mutated.wait(2), "writer never signalled transient state"
+
+    # Live dict now has the transient DPS group.  Issue an invalid refusal
+    # request from a separate thread so the test-coordinator (main thread)
+    # can still signal allow_writer_complete.
+    def do_invalid_refusal():
+        # Non-string name forces the pre-lock early-return path, which reads
+        # _preview_hotkeys() outside the lock (the bug) or inside (the fix).
+        result = api.create_preview_cycle_group(123)
+        refusal_result.update(result)
+        refusal_captured.set()
+
+    refusal_thread = threading.Thread(target=do_invalid_refusal)
+    refusal_thread.start()
+
+    # With the fix: refusal_thread blocks on _preview_hotkey_lock (writer holds it).
+    # With the bug:  refusal_thread completes immediately and sees transient DPS.
+    # This wait is intentional but the result is not used for assertions; the
+    # assertion that matters is on refusal_result after both threads join.
+    refusal_captured.wait(0.1)  # short probe; not a hard assertion
+
+    # Allow the writer to fail (triggers rollback).
+    allow_writer_complete.set()
+    writer.join(2)
+    refusal_thread.join(2)
+
+    assert refusal_captured.is_set(), "refusal thread did not complete"
+
+    # After rollback, the group must not exist in settings.
+    assert api._state.settings["preview"]["hotkeys"]["groups"] == []
+
+    # The authoritative table returned by the refusal must reflect the
+    # post-rollback state: no transient DPS group.
+    assert refusal_result["hotkeys"]["groups"] == [], (
+        "Pre-lock refusal captured transient data that was subsequently rolled back; "
+        f"got: {refusal_result['hotkeys']['groups']!r}"
+    )
+
+
+def test_character_group_assignment_over_64_member_cap_is_refused(
+    tmp_path, monkeypatch
+):
+    """Assigning a 65th character to a group must be refused when the
+    normalizer enforces the 64-entry roster cap on group_by_character.
+
+    Uses real settings.update() (no _no_disk fake) with the test-isolated
+    temp path to exercise real normalization.  The result must have
+    applied=False, persisted=False, the mapping must be absent from the
+    authoritative returned table, and the host must not be called.
+    """
+    # Do NOT call _no_disk — we need real normalization + real disk writes
+    # to the test's temp-isolated LOCALAPPDATA directory.
+
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "grp", preview_host=host)
+
+    # Prime the settings with a group and 64 character-to-group mappings.
+    memberships = {f"Char{i:02d}": "grp" for i in range(64)}
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "grp", "name": "DPS", "cycle": ""}],
+            "group_by_character": memberships,
+        }
+    }
+
+    # Assign one more character beyond the cap.
+    new_char = "ExtraChar"
+    result = api.set_preview_character_group(new_char, "grp")
+
+    # Must be refused because normalization drops the assignment.
+    assert result["applied"] is False, (
+        f"Expected refused result, got applied=True; result={result!r}"
+    )
+    assert result["persisted"] is False
+    assert new_char not in result["hotkeys"]["group_by_character"], (
+        "Refused result must not include the dropped mapping"
+    )
+
+    # Host must not be called with a table that claims the assignment.
+    if host.hotkeys is not None:
+        assert new_char not in host.hotkeys.get("group_by_character", {}), (
+            "Host was delivered a table claiming the dropped assignment"
+        )

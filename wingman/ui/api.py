@@ -3155,7 +3155,11 @@ class Api:
         the authoritative normalized table after the mutation.
         """
         if not isinstance(name, str) or not name.strip():
-            empty = self._preview_hotkeys()
+            # Acquire the writer lock before reading so the refusal table
+            # reflects the authoritative post-commit (or post-rollback) state
+            # rather than a transient mutation from a concurrent writer.
+            with self._preview_hotkey_lock:
+                empty = self._preview_hotkeys()
             return self._preview_group_result(
                 False, "Group name must be a non-empty string", empty
             )
@@ -3194,10 +3198,12 @@ class Api:
         Returns {applied, persisted, error, hotkeys}.
         """
         if not isinstance(group_id, str) or not group_id:
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(False, "Invalid group_id", current)
         if not isinstance(name, str) or not name.strip():
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(
                 False, "Group name must be a non-empty string", current
             )
@@ -3235,7 +3241,8 @@ class Api:
         Returns {applied, persisted, error, hotkeys}.
         """
         if not isinstance(group_id, str) or not group_id:
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(False, "Invalid group_id", current)
         with self._preview_hotkey_lock:
             try:
@@ -3269,10 +3276,12 @@ class Api:
         the bind. A non-empty string that does not parse is refused.
         """
         if not isinstance(group_id, str) or not group_id:
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(False, "Invalid group_id", current)
         if not isinstance(gesture, str):
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(
                 False, "gesture must be a string", current
             )
@@ -3280,7 +3289,8 @@ class Api:
         if gesture.strip():
             parsed = preview_gestures.parse(gesture)
             if parsed is None:
-                current = self._preview_hotkeys()
+                with self._preview_hotkey_lock:
+                    current = self._preview_hotkeys()
                 return self._preview_group_result(
                     False, f"Unparseable gesture: {gesture!r}", current
                 )
@@ -3314,12 +3324,14 @@ class Api:
         Uses the same stable-name boundary as other preview APIs.
         """
         if not self._usable_preview_character(name):
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(
                 False, f"Invalid character name: {name!r}", current
             )
         if not isinstance(group_id, str):
-            current = self._preview_hotkeys()
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
             return self._preview_group_result(
                 False, "group_id must be a string", current
             )
@@ -3344,6 +3356,16 @@ class Api:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, "Persist error", current)
             result_table = self._preview_hotkeys()
+            # Finding 2: the normalizer enforces a 64-entry roster cap on
+            # group_by_character.  If the assignment was silently discarded,
+            # the operation did not really apply; refuse it truthfully and do
+            # not deliver a table that claims the dropped assignment to the host.
+            if group_id and name not in result_table.get("group_by_character", {}):
+                return self._preview_group_result(
+                    False,
+                    f"Roster cap reached; {name!r} was not assigned to {group_id!r}",
+                    result_table,
+                )
             if self._preview_host is not None:
                 self._preview_host.set_hotkeys(result_table)
         return self._preview_group_result(True, None, result_table)
