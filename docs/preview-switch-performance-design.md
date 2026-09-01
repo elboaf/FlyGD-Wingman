@@ -275,6 +275,18 @@ ships activate/mark/async-minimize without recovery generation. The next Windows
 smoke pass must verify B appears without a browser or desktop frame and assess
 the residual rapid-return/late-async-minimize risk.
 
+### Final Windows/EVE smoke results — 2026-09-01
+
+User retest on the updated candidate reported:
+
+- browser -> EVE A was clean;
+- EVE A -> EVE B showed no browser flash;
+- rapid EVE A -> EVE B -> EVE A showed no late minimize;
+- the outgoing client minimized;
+- the outgoing client's preview remained live.
+
+The user concluded, "test completed, all looks good."
+
 ## Non-goals
 
 - Redesigning preview mouse gestures.
