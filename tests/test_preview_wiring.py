@@ -7,6 +7,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import contextlib
 import copy
+import threading
 import types
 
 from tests.test_api import make_api
@@ -1388,3 +1389,334 @@ def test_set_preview_selection_color_works_without_a_host(tmp_path, monkeypatch)
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
     assert api.set_preview_selection_color("#ff5a00")["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Serialized, operation-specific group API writes
+# ---------------------------------------------------------------------------
+
+# --- Step 1: Construction and preservation tests ---
+
+
+def test_preview_hotkey_lock_is_private(tmp_path):
+    """The lock must not be a public attribute (pywebview recurses into it)."""
+    api = make_api(tmp_path)
+    assert hasattr(api, "_preview_hotkey_lock"), "lock not created"
+    assert not hasattr(api, "preview_hotkey_lock"), (
+        "lock is public — RecursionError risk"
+    )
+
+
+def test_set_preview_binds_preserves_cycle_groups(tmp_path, monkeypatch):
+    """set_preview_binds owns characters/cycle_next/cycle_prev only.
+    Pre-existing groups and group_by_character must survive the write."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "dps"},
+        }
+    }
+    assert (
+        api.set_preview_binds(
+            {
+                "characters": {"Bob": "Ctrl+F2"},
+                "cycle_next": "Ctrl+F1",
+                "cycle_prev": "",
+            }
+        )
+        is True
+    )
+    hotkeys = api._state.settings["preview"]["hotkeys"]
+    assert hotkeys["groups"][0]["id"] == "dps"
+    assert hotkeys["group_by_character"] == {"Alice": "dps"}
+    # Owned fields were still applied:
+    assert hotkeys["characters"] == {"Bob": "Ctrl+F2"}
+    assert hotkeys["cycle_next"] == "Ctrl+F1"
+
+
+# --- Step 5: Lifecycle and assignment tests ---
+
+
+def test_create_rename_assign_and_delete_cycle_group(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "group-id")
+    created = api.create_preview_cycle_group(" DPS ")
+    assert created["applied"] is True
+    assert created["hotkeys"]["groups"] == [
+        {"id": "group-id", "name": "DPS", "cycle": ""}
+    ]
+    assert api.set_preview_character_group("Alice", "group-id")["applied"]
+    assert api.rename_preview_cycle_group("group-id", "Damage")["applied"]
+    deleted = api.delete_preview_cycle_group("group-id")
+    assert deleted["hotkeys"]["groups"] == []
+    assert deleted["hotkeys"]["group_by_character"] == {}
+
+
+def test_create_cycle_group_rejects_empty_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.create_preview_cycle_group("   ")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_create_cycle_group_rejects_non_string_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.create_preview_cycle_group(42)
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_create_cycle_group_rejects_duplicate_name(tmp_path, monkeypatch):
+    """Case-insensitive name uniqueness across groups."""
+    _no_disk(monkeypatch)
+    seq = iter(["id-1", "id-2"])
+    api = make_api(tmp_path, id_factory=lambda: next(seq))
+    api.create_preview_cycle_group("DPS")
+    result = api.create_preview_cycle_group("dps")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_rename_cycle_group_trims_whitespace(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.rename_preview_cycle_group("g1", "  Tank  ")
+    assert result["applied"] is True
+    assert result["hotkeys"]["groups"][0]["name"] == "Tank"
+
+
+def test_rename_cycle_group_rejects_stale_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.rename_preview_cycle_group("no-such-id", "Name")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_delete_cycle_group_rejects_stale_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.delete_preview_cycle_group("no-such-id")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_cycle_group_bind_canonicalizes_gesture(tmp_path, monkeypatch):
+    """Valid chord string → canonical display form persisted."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_cycle_group_bind("g1", "ctrl+f3")
+    assert result["applied"] is True
+    assert result["hotkeys"]["groups"][0]["cycle"] == "Ctrl+F3"
+
+
+def test_set_preview_cycle_group_bind_rejects_bad_gesture(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_cycle_group_bind("g1", "not-a-chord")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_character_group_removes_mapping_on_empty_id(tmp_path, monkeypatch):
+    """Empty group_id clears the character's mapping (All-only)."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    api.set_preview_character_group("Alice", "g1")
+    result = api.set_preview_character_group("Alice", "")
+    assert result["applied"] is True
+    assert "Alice" not in result["hotkeys"]["group_by_character"]
+
+
+def test_set_preview_character_group_rejects_hwnd_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_character_group("hwnd:12345", "g1")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_character_group_rejects_stale_group_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.set_preview_character_group("Alice", "no-such-group")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_cycle_group_methods_work_without_host(tmp_path, monkeypatch):
+    """Persistence-only path when there is no preview host running."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    result = api.create_preview_cycle_group("DPS")
+    assert result["applied"] is True
+    assert result["persisted"] is True
+
+
+def test_cycle_group_methods_deliver_to_host_when_present(tmp_path, monkeypatch):
+    """After a successful mutation the host receives the full table."""
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "g1", preview_host=host)
+    api.create_preview_cycle_group("DPS")
+    assert host.hotkeys is not None
+    assert host.hotkeys["groups"] == [{"id": "g1", "name": "DPS", "cycle": ""}]
+
+
+def test_failed_persist_does_not_invoke_host_set_hotkeys(tmp_path, monkeypatch):
+    """If settings.update raises, host.set_hotkeys must never be called."""
+    from wingman.ui import api as api_mod
+
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "g1", preview_host=host)
+
+    def boom(data, path=None):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            yield data
+            raise OSError("disk full")
+
+        return _cm()
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    result = api.create_preview_cycle_group("DPS")
+    assert result["applied"] is False
+    # Host was never touched.
+    assert host.hotkeys is None
+
+
+# --- Step 7: Concurrency-order tests ---
+
+
+def test_preview_hotkey_writer_keeps_host_delivery_in_persist_order(
+    tmp_path, monkeypatch
+):
+    """Two concurrent group mutations must not reorder host delivery past
+    their persist order: the first update's host call must complete before
+    the second update can even begin persisting."""
+    _no_disk(monkeypatch)
+    first_delivery = threading.Event()
+    release_first = threading.Event()
+    second_done = threading.Event()
+    deliveries = []
+
+    class BlockingHost(FakeHost):
+        def set_hotkeys(self, table):
+            deliveries.append(copy.deepcopy(table))
+            if len(deliveries) == 1:
+                first_delivery.set()
+                assert release_first.wait(1)
+
+    api = make_api(tmp_path, preview_host=BlockingHost())
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "dps", "name": "DPS", "cycle": ""}],
+            "group_by_character": {},
+        }
+    }
+
+    first = threading.Thread(
+        target=lambda: api.rename_preview_cycle_group("dps", "Damage")
+    )
+
+    def assign():
+        api.set_preview_character_group("Alice", "dps")
+        second_done.set()
+
+    first.start()
+    assert first_delivery.wait(1)
+    second = threading.Thread(target=assign)
+    second.start()
+    # While first holds the lock, second cannot yet complete its persist.
+    assert not second_done.wait(0.05)
+    # The settings dict was NOT mutated by second (it is blocked on the lock).
+    assert api._state.settings["preview"]["hotkeys"]["group_by_character"] == {}
+    release_first.set()
+    first.join(1)
+    second.join(1)
+    # Both deliveries arrived and in the correct order.
+    assert [table["group_by_character"] for table in deliveries] == [
+        {},
+        {"Alice": "dps"},
+    ]
+
+
+def test_stale_rename_cannot_resurrect_deleted_group(tmp_path, monkeypatch):
+    """A rename whose ID no longer exists after a delete must fail cleanly
+    rather than re-inserting the group. Simulates a delayed thread arriving
+    after the delete has committed."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    api.delete_preview_cycle_group("g1")
+    result = api.rename_preview_cycle_group("g1", "Healers")
+    assert result["applied"] is False
+    assert result["hotkeys"]["groups"] == []
+
+
+# --- Step 8: Hotkey-state payload tests ---
+
+
+def test_get_preview_hotkey_state_includes_groups_and_membership(tmp_path):
+    """groups and group_by_character must appear in the hotkey-state payload
+    whether a host is running or not."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "g1"},
+        }
+    }
+    state = api.get_preview_hotkey_state()
+    assert state["hotkeys"]["groups"] == [
+        {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
+    ]
+    assert state["hotkeys"]["group_by_character"] == {"Alice": "g1"}
+
+
+def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
+    """push_preview_hotkeys must carry the full hotkeys table including groups."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "g1"},
+        }
+    }
+    api.push_preview_hotkeys()
+    pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
+    assert len(pushes) == 1
+    import json
+
+    payload_str = pushes[0]
+    # Extract the JSON argument from the JS call.
+    start = payload_str.index("(", payload_str.rindex("onPreviewHotkeys")) + 1
+    end = payload_str.rindex(")")
+    payload = json.loads(payload_str[start:end])
+    assert payload["hotkeys"]["groups"] == [
+        {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
+    ]
+    assert payload["hotkeys"]["group_by_character"] == {"Alice": "g1"}
