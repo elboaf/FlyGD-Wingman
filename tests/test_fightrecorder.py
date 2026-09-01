@@ -7,31 +7,39 @@ covered by the smoke checklist, not here.
 """
 
 import hashlib
+import os
 
 import pytest
 
 from wingman import fightrecorder as fr
 
 # ---- OBS discovery ------------------------------------------------------
+#
+# Expected paths are built with os.path.join, never typed with
+# separators: the code joins with os.path.join, and a typed "\" answer
+# passes on Windows and fails on Linux CI (observed both ways).
 
 
 def test_obs_plugins_directory_is_required(monkeypatch):
-    monkeypatch.setattr(fr, "_registry_install_location", lambda: "R:\\obs-studio")
+    location = os.path.join("R:", "obs-studio")
+    monkeypatch.setattr(fr, "_registry_install_location", lambda: location)
     monkeypatch.setattr(fr.os.path, "isdir", lambda p: p.endswith("obs-plugins"))
     made = []
     monkeypatch.setattr(fr.os, "mkdir", lambda p: made.append(p))
 
-    assert fr.find_obs_plugin_dir() == "R:\\obs-studio\\obs-plugins\\64bit"
-    assert made == ["R:\\obs-studio\\obs-plugins\\64bit"]
+    expected = os.path.join(location, "obs-plugins", "64bit")
+    assert fr.find_obs_plugin_dir() == expected
+    assert made == [expected]
 
 
 def test_an_existing_64bit_directory_is_returned_as_is(monkeypatch):
-    monkeypatch.setattr(fr, "_registry_install_location", lambda: "R:\\obs-studio")
+    location = os.path.join("R:", "obs-studio")
+    monkeypatch.setattr(fr, "_registry_install_location", lambda: location)
     monkeypatch.setattr(fr.os.path, "isdir", lambda p: True)
     made = []
     monkeypatch.setattr(fr.os, "mkdir", lambda p: made.append(p))
 
-    assert fr.find_obs_plugin_dir() == "R:\\obs-studio\\obs-plugins\\64bit"
+    assert fr.find_obs_plugin_dir() == os.path.join(location, "obs-plugins", "64bit")
     assert made == []  # already there; nothing created
 
 
@@ -47,12 +55,13 @@ def test_a_failed_mkdir_reports_no_obs(monkeypatch):
 
 
 def test_dll_path_is_none_without_the_file(monkeypatch):
-    monkeypatch.setattr(fr, "find_obs_plugin_dir", lambda: "D:\\64bit")
+    plugin_dir = os.path.join("D:", "64bit")
+    monkeypatch.setattr(fr, "find_obs_plugin_dir", lambda: plugin_dir)
     monkeypatch.setattr(fr.os.path, "isfile", lambda p: False)
     assert fr.dll_path() is None
 
     monkeypatch.setattr(fr.os.path, "isfile", lambda p: True)
-    assert fr.dll_path() == "D:\\64bit\\" + fr.DLL_NAME
+    assert fr.dll_path() == os.path.join(plugin_dir, fr.DLL_NAME)
 
 
 # ---- the release lookup -------------------------------------------------
